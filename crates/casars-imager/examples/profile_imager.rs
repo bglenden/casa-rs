@@ -531,6 +531,7 @@ fn parse_weighting_mode(text: &str, robust: f32) -> Result<WeightingMode, String
         "natural" => Ok(WeightingMode::Natural),
         "uniform" => Ok(WeightingMode::Uniform),
         "briggs" | "robust" => Ok(WeightingMode::Briggs { robust }),
+        "briggsbwtaper" => Ok(WeightingMode::BriggsBwTaper { robust }),
         _ => Err(format!("unsupported --weighting value {text:?}")),
     }
 }
@@ -636,7 +637,7 @@ Options:
   --corr XX|YY|RR|LL
   --specmode mfs|cube
   --interpolation nearest|linear
-  --weighting natural|uniform|briggs
+  --weighting natural|uniform|briggs|briggsbwtaper
   --robust VALUE
   --usepointing
   --deconvolver hogbom|clark|multiscale|mtmfs

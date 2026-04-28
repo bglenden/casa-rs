@@ -129,4 +129,6 @@ def _weighting_request(weighting: str, robust: float) -> dict[str, Any]:
         return {"kind": "uniform"}
     if weighting == "briggs":
         return {"kind": "briggs", "robust": robust}
-    raise ValueError("weighting must be 'natural', 'uniform', or 'briggs'")
+    if weighting == "briggsbwtaper":
+        return {"kind": "briggs_bw_taper", "robust": robust}
+    raise ValueError("weighting must be 'natural', 'uniform', 'briggs', or 'briggsbwtaper'")

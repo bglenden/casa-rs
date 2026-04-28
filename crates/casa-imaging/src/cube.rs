@@ -5,6 +5,7 @@ use std::{fs, path::PathBuf};
 use ndarray::s;
 
 use super::*;
+use crate::weighting::fractional_bandwidth_from_frequency_range;
 
 /// Run spectral-cube imaging for an ordered set of spectral planes.
 ///
@@ -16,7 +17,13 @@ use super::*;
 /// CLEAN currently supports [`Deconvolver::Hogbom`], [`Deconvolver::Clark`],
 /// and per-plane [`Deconvolver::Multiscale`].
 pub fn run_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, ImagingError> {
-    if request.clean.niter > 0 {
+    if request.clean.niter > 0
+        || matches!(request.weight_density_mode, WeightDensityMode::PerPlane)
+        || request
+            .channels
+            .iter()
+            .any(|channel| !channel.density_batches.is_empty())
+    {
         return run_clean_cube(request);
     }
     let total_started = Instant::now();
@@ -296,6 +303,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 .flat_map(|channel| channel.visibility_batches.iter().cloned())
                 .collect::<Vec<_>>()
         });
+    let cube_fractional_bandwidth = cube_fractional_bandwidth(request);
     let mut planes = Vec::with_capacity(nchan);
     for channel in &request.channels {
         let plane_request = ImagingRequest {
@@ -325,13 +333,17 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             WeightDensityMode::Combined => combined_density_batches
                 .as_deref()
                 .expect("combined cube density batches prepared"),
-            WeightDensityMode::PerPlane => &plane_request.visibility_batches,
+            WeightDensityMode::PerPlane if channel.density_batches.is_empty() => {
+                &plane_request.visibility_batches
+            }
+            WeightDensityMode::PerPlane => &channel.density_batches,
         };
         let weighting_started = Instant::now();
         let weighted_batches = apply_weighting_with_density_source(
             plane_request.weighting,
             request.weight_density_mode,
             request.uv_taper,
+            cube_fractional_bandwidth,
             &plane_request.visibility_batches,
             density_batches,
             &gridder,
@@ -956,6 +968,19 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             image_units: "Jy/beam".to_string(),
         },
     })
+}
+
+fn cube_fractional_bandwidth(request: &CubeImagingRequest) -> f64 {
+    let Some(first) = request.channels.first() else {
+        return 0.0;
+    };
+    let Some(last) = request.channels.last() else {
+        return 0.0;
+    };
+    fractional_bandwidth_from_frequency_range([
+        first.channel_frequency_hz,
+        last.channel_frequency_hz,
+    ])
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

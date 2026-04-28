@@ -406,6 +406,14 @@ impl StandardGridder {
         self.weight_density_cell_anchor(u_lambda, v_lambda, convention)
     }
 
+    pub(crate) fn cube_briggs_uv_cell_radius(&self, u_lambda: f64, v_lambda: f64) -> f64 {
+        let nx = self.geometry.nx() as f64;
+        let ny = self.geometry.ny() as f64;
+        let u_cells = u_lambda * nx * self.geometry.cell_size_rad[0];
+        let v_cells = v_lambda * ny * self.geometry.cell_size_rad[1];
+        (u_cells * u_cells + v_cells * v_cells).sqrt()
+    }
+
     fn grid_coordinate_x(&self, u_lambda: f64) -> f64 {
         u_lambda / self.du_lambda + self.grid_shape[0] as f64 / 2.0
     }
@@ -435,7 +443,7 @@ impl StandardGridder {
                 )
             }
             DensityCellConvention::CubeBriggsWeightor => (
-                -u_lambda * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
+                u_lambda * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
                 -v_lambda * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
             ),
         };
@@ -1478,7 +1486,7 @@ mod tests {
                 -0.51 * dv,
                 DensityCellConvention::CubeBriggsWeightor,
             ),
-            Some((center.0 - 1, center.1 + 1))
+            Some((center.0 + 1, center.1 + 1))
         );
     }
 

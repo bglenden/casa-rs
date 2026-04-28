@@ -262,6 +262,11 @@ pub enum ImagerWeighting {
         /// CASA-style robust parameter in `[-2, 2]`.
         robust: f32,
     },
+    /// CASA Briggs bandwidth taper weighting.
+    BriggsBwTaper {
+        /// CASA-style robust parameter in `[-2, 2]`.
+        robust: f32,
+    },
 }
 
 impl From<WeightingMode> for ImagerWeighting {
@@ -270,6 +275,7 @@ impl From<WeightingMode> for ImagerWeighting {
             WeightingMode::Natural => Self::Natural,
             WeightingMode::Uniform => Self::Uniform,
             WeightingMode::Briggs { robust } => Self::Briggs { robust },
+            WeightingMode::BriggsBwTaper { robust } => Self::BriggsBwTaper { robust },
         }
     }
 }
@@ -280,6 +286,7 @@ impl From<ImagerWeighting> for WeightingMode {
             ImagerWeighting::Natural => Self::Natural,
             ImagerWeighting::Uniform => Self::Uniform,
             ImagerWeighting::Briggs { robust } => Self::Briggs { robust },
+            ImagerWeighting::BriggsBwTaper { robust } => Self::BriggsBwTaper { robust },
         }
     }
 }
@@ -1587,6 +1594,18 @@ mod tests {
     }
 
     #[test]
+    fn briggs_bandwidth_taper_weighting_round_trips() {
+        assert_eq!(
+            ImagerWeighting::from(WeightingMode::BriggsBwTaper { robust: 0.25 }),
+            ImagerWeighting::BriggsBwTaper { robust: 0.25 }
+        );
+        assert_eq!(
+            WeightingMode::from(ImagerWeighting::BriggsBwTaper { robust: 0.25 }),
+            WeightingMode::BriggsBwTaper { robust: 0.25 }
+        );
+    }
+
+    #[test]
     fn plane_selection_and_enum_conversions_cover_public_variants() {
         for (text, plane) in [
             ("I", ImagerPlaneSelection::StokesI),
@@ -1618,6 +1637,10 @@ mod tests {
         assert_eq!(
             WeightingMode::from(ImagerWeighting::Briggs { robust: 1.0 }),
             WeightingMode::Briggs { robust: 1.0 }
+        );
+        assert_eq!(
+            WeightingMode::from(ImagerWeighting::BriggsBwTaper { robust: 1.0 }),
+            WeightingMode::BriggsBwTaper { robust: 1.0 }
         );
         assert_eq!(
             ImagerRestoringBeamMode::from(RestoringBeamMode::Common),

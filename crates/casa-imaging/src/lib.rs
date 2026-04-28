@@ -4769,6 +4769,7 @@ mod tests {
         CubeChannelRequest {
             channel_frequency_hz,
             visibility_batches,
+            density_batches: Vec::new(),
             model_interpolation_batches,
         }
     }
@@ -5306,6 +5307,7 @@ mod tests {
         let channel_zero = CubeChannelRequest {
             channel_frequency_hz: 1.0e9,
             visibility_batches: vec![batch.clone()],
+            density_batches: Vec::new(),
             model_interpolation_batches: vec![CubeModelInterpolationBatch {
                 sample_contributions: (0..batch.len())
                     .map(|_| {
@@ -6333,6 +6335,7 @@ mod tests {
         let channel1 = CubeChannelRequest {
             channel_frequency_hz: 1.41e9,
             visibility_batches: vec![channel1_batch.clone()],
+            density_batches: Vec::new(),
             model_interpolation_batches: identity_cube_model_interpolation_batches(
                 0,
                 &[channel1_batch],

@@ -70,16 +70,23 @@ pub enum WeightingMode {
         /// Robustness parameter in the usual CASA range `[-2, 2]`.
         robust: f32,
     },
+    /// Briggs robust weighting using CASA `rmode='bwtaper'` bandwidth tapering.
+    BriggsBwTaper {
+        /// Robustness parameter in the usual CASA range `[-2, 2]`.
+        robust: f32,
+    },
 }
 
 impl WeightingMode {
     pub(crate) fn validate(self) -> Result<(), ImagingError> {
         match self {
             Self::Natural | Self::Uniform => Ok(()),
-            Self::Briggs { robust } if robust.is_finite() && (-2.0..=2.0).contains(&robust) => {
+            Self::Briggs { robust } | Self::BriggsBwTaper { robust }
+                if robust.is_finite() && (-2.0..=2.0).contains(&robust) =>
+            {
                 Ok(())
             }
-            Self::Briggs { .. } => Err(ImagingError::InvalidRequest(
+            Self::Briggs { .. } | Self::BriggsBwTaper { .. } => Err(ImagingError::InvalidRequest(
                 "Briggs robust must be finite and in the interval [-2, 2]".to_string(),
             )),
         }
@@ -371,6 +378,9 @@ pub struct CubeChannelRequest {
     pub channel_frequency_hz: f64,
     /// Chunked scalar visibility samples for this spectral plane.
     pub visibility_batches: Vec<VisibilityBatch>,
+    /// Optional source-channel samples used only to build per-plane cube
+    /// weighting density.
+    pub density_batches: Vec<VisibilityBatch>,
     /// Per-sample model-channel interpolation state used during cube
     /// prediction and residual refresh.
     pub model_interpolation_batches: Vec<CubeModelInterpolationBatch>,
@@ -387,6 +397,9 @@ impl CubeChannelRequest {
             return Err(ImagingError::InvalidRequest(
                 "each cube channel requires at least one visibility batch".to_string(),
             ));
+        }
+        for batch in &self.density_batches {
+            batch.validate()?;
         }
         if self.model_interpolation_batches.len() != self.visibility_batches.len() {
             return Err(ImagingError::InvalidRequest(format!(

@@ -75,7 +75,9 @@ impl<'a> ParityCase<'a> {
 
     fn robust(self) -> Option<f32> {
         match self.weighting {
-            WeightingMode::Briggs { robust } => Some(robust),
+            WeightingMode::Briggs { robust } | WeightingMode::BriggsBwTaper { robust } => {
+                Some(robust)
+            }
             _ => None,
         }
     }
@@ -85,6 +87,7 @@ impl<'a> ParityCase<'a> {
             WeightingMode::Natural => "natural",
             WeightingMode::Uniform => "uniform",
             WeightingMode::Briggs { .. } => "briggs",
+            WeightingMode::BriggsBwTaper { .. } => "briggsbwtaper",
         }
     }
 }
@@ -6601,7 +6604,7 @@ fn assert_m51_dirty_products_track_casa_headers_and_pixels(weighting: WeightingM
     let casa_psf = read_image(&casa_product(&casa_prefix, "psf"));
     let psf_stats = image_difference_stats(&rust_psf, &casa_psf);
     let psf_rms_tol = match weighting {
-        WeightingMode::Briggs { .. } => 1.1e-3,
+        WeightingMode::Briggs { .. } | WeightingMode::BriggsBwTaper { .. } => 1.1e-3,
         _ => 5.0e-4,
     };
     assert!(

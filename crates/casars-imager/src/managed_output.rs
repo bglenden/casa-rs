@@ -202,6 +202,9 @@ impl ManagedImagingOutput {
                     ImagerWeighting::Natural => "natural".to_string(),
                     ImagerWeighting::Uniform => "uniform".to_string(),
                     ImagerWeighting::Briggs { robust } => format!("briggs:{robust}"),
+                    ImagerWeighting::BriggsBwTaper { robust } => {
+                        format!("briggsbwtaper:{robust}")
+                    }
                 },
                 deconvolver: match request.deconvolver {
                     ImagerDeconvolver::Hogbom => "hogbom".to_string(),

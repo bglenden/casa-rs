@@ -123,6 +123,23 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["mask_boxes"] == [[100, 100, 150, 150]]
 
 
+def test_wrapper_encodes_briggs_bandwidth_taper(tmp_path: Path) -> None:
+    binary = _write_stub_binary(tmp_path / "ok" / "casars-imager", version="ok")
+
+    result = imager.mfs(
+        "twhya_calibrated.ms",
+        "products/twhya",
+        image_size=128,
+        cell_arcsec=0.1,
+        weighting="briggsbwtaper",
+        robust=-0.5,
+        binary=binary,
+    )
+
+    request = result["result"]["request"]
+    assert request["weighting"] == {"kind": "briggs_bw_taper", "robust": -0.5}
+
+
 def _write_stub_binary(
     path: Path,
     *,
