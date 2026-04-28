@@ -3231,17 +3231,16 @@ fn compute_residual(
         }
         WTermMode::None => {}
     }
-    let use_direct_point_predict = matches!(
-        request.deconvolver,
-        Deconvolver::Hogbom | Deconvolver::Clark
-    ) && model.iter().filter(|&&v| v.abs() > 0.0).count() <= 100;
     compute_residual_standard(
         request.geometry,
         batches,
         gridder,
         model,
         psf_state,
-        use_direct_point_predict,
+        matches!(
+            request.deconvolver,
+            Deconvolver::Hogbom | Deconvolver::Clark
+        ),
         stage_timings,
     )
 }
