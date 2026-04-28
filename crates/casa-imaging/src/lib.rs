@@ -87,6 +87,41 @@ pub use types::{
     WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
 };
 
+/// FFT-backed predictor for a standard MFS component model.
+///
+/// This mirrors the standard-gridder model prediction path used during major
+/// cycle residual refreshes, but exposes only the per-sample model visibility
+/// needed by frontends that persist a `MODEL_DATA` column.
+pub struct StandardMfsModelPredictor {
+    gridder: StandardGridder,
+    model_grid: Option<Array2<Complex32>>,
+}
+
+impl StandardMfsModelPredictor {
+    /// Build a predictor for one image geometry and final model plane.
+    pub fn new(geometry: ImageGeometry, model: &Array2<f32>) -> Result<Self, ImagingError> {
+        let gridder = StandardGridder::new(geometry)?;
+        let model_has_components = model.iter().any(|value| value.abs() > 0.0);
+        let model_grid = model_has_components.then(|| centered_fft2(&gridder.apodize_model(model)));
+        Ok(Self {
+            gridder,
+            model_grid,
+        })
+    }
+
+    /// Predict the model visibility at one `(u, v)` coordinate in wavelengths.
+    pub fn predict(&self, u_lambda: f64, v_lambda: f64) -> Complex32 {
+        let Some(model_grid) = self.model_grid.as_ref() else {
+            return Complex32::new(0.0, 0.0);
+        };
+        let Some(plan) = self.gridder.plan_sample(u_lambda, v_lambda) else {
+            return Complex32::new(0.0, 0.0);
+        };
+        self.gridder
+            .degrid_sample_product_planned_normalized(model_grid, &plan.positive)
+    }
+}
+
 /// Fit a CASA-style restoring beam directly from a PSF image plane.
 ///
 /// This exposes the same beam-fit path used internally by [`run_imaging`] and

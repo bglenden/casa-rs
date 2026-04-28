@@ -35,6 +35,7 @@ fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -87,6 +88,7 @@ fn solve_gain_phase_g_uses_model_data_column_downstream() {
             parang: false,
             model_source: GainSolveModelSource::ModelColumn,
             normalize_average_amplitude: false,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -105,6 +107,73 @@ fn solve_gain_phase_g_uses_model_data_column_downstream() {
     .expect("apply model-column solved G table");
 
     common::assert_corrected_rows_match_model_column(&ms_path);
+}
+
+#[test]
+fn solve_gain_min_snr_flags_low_snr_solutions_and_writes_diagnostics() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    let caltable_path = dir.path().join("solved-minsnr.gcal");
+
+    solve_gain_from_path(
+        &ms_path,
+        &GainSolveRequest {
+            selection: MsSelection::new(),
+            output_table: caltable_path.clone(),
+            gain_type: GainType::G,
+            solve_mode: GainSolveMode::Phase,
+            solve_interval: GainSolveInterval::Infinite,
+            combine: GainSolveCombine::default(),
+            refant: RefAntSelector::AntennaId(0),
+            prior_calibration_tables: Vec::new(),
+            parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 1.0e9,
+            smodel: [1.0, 0.0, 0.0, 0.0],
+        },
+    )
+    .expect("solve synthetic G gains with strict SNR threshold");
+
+    let table = Table::open(TableOptions::new(&caltable_path)).expect("open gain table");
+    let mut saw_finite_snr = false;
+    let mut saw_positive_error = false;
+    for row in 0..table.row_count() {
+        let flags = match table
+            .cell_accessor(row, "FLAG")
+            .and_then(|cell| cell.array())
+            .expect("FLAG cell")
+        {
+            ArrayValue::Bool(values) => values.iter().copied().collect::<Vec<_>>(),
+            other => panic!("unexpected FLAG value: {other:?}"),
+        };
+        assert!(flags.iter().all(|flag| *flag));
+
+        let snrs = match table
+            .cell_accessor(row, "SNR")
+            .and_then(|cell| cell.array())
+            .expect("SNR cell")
+        {
+            ArrayValue::Float32(values) => values.iter().copied().collect::<Vec<_>>(),
+            other => panic!("unexpected SNR value: {other:?}"),
+        };
+        saw_finite_snr |= snrs.iter().any(|snr| snr.is_finite() && *snr > 0.0);
+
+        let param_errors = match table
+            .cell_accessor(row, "PARAMERR")
+            .and_then(|cell| cell.array())
+            .expect("PARAMERR cell")
+        {
+            ArrayValue::Float32(values) => values.iter().copied().collect::<Vec<_>>(),
+            other => panic!("unexpected PARAMERR value: {other:?}"),
+        };
+        saw_positive_error |= param_errors
+            .iter()
+            .any(|error| error.is_finite() && *error > 0.0);
+    }
+    assert!(saw_finite_snr);
+    assert!(saw_positive_error);
 }
 
 #[test]
@@ -128,6 +197,7 @@ fn solve_gain_phase_t_corrects_synthetic_ms_downstream() {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -175,6 +245,7 @@ fn solve_gain_amplitude_phase_g_corrects_synthetic_ms_downstream() {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -222,6 +293,7 @@ fn solve_gain_amplitude_phase_t_corrects_synthetic_ms_downstream() {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -269,6 +341,7 @@ fn solve_gain_amplitude_phase_t_with_solnorm_normalizes_average_amplitude() {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: true,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -372,6 +445,7 @@ fn solve_gain_phase_g_solint_integration_writes_per_integration_solutions() {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -463,6 +537,7 @@ fn solve_gain_phase_g_solint_seconds_groups_nearby_integrations() {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -533,6 +608,7 @@ fn solve_gain_phase_g_combine_scans_writes_one_solution_group_across_scans() {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -607,6 +683,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -725,6 +802,7 @@ fn solve_gain_phase_g_with_prior_caltable_corrects_residual_downstream() {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
+            min_snr: 0.0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )

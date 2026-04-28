@@ -27,9 +27,9 @@ use casa_imaging::{
     CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode, HogbomIterationMode,
     ImageGeometry, ImagingRequest, ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig,
     MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics,
-    RestoringBeamMode, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch, WProjectDiagnostics,
-    WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, run_cube, run_imaging,
-    run_mtmfs, trace_cube_channel_residual_refresh,
+    RestoringBeamMode, StandardMfsModelPredictor, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
+    WeightingMode, run_cube, run_imaging, run_mtmfs, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
     trace_w_project_plan,
 };
@@ -5286,8 +5286,9 @@ fn write_model_column(
             config.cell_arcsec * arcsec_to_rad(),
         ],
     };
-    let components = model_column_components(&model_plane, geometry);
-    ensure_model_data_column(ms)?;
+    let predictor = StandardMfsModelPredictor::new(geometry, &model_plane)
+        .map_err(|error| format!("prepare MODEL_DATA predictor: {error}"))?;
+    let created_model_data_column = ensure_model_data_column(ms)?;
 
     let mut rows = BTreeMap::<usize, ArrayD<Complex32>>::new();
     let mut written_samples = 0usize;
@@ -5307,17 +5308,11 @@ fn write_model_column(
             .get_mut(&sample.row_index)
             .expect("row model was just inserted");
         for contribution in &sample.source_contributions {
-            let predicted = if components.is_empty() {
-                Complex32::new(0.0, 0.0)
-            } else {
-                let lambda_scale = contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-                predict_model_column_visibility(
-                    &components,
-                    sample.imaging_uvw_m[0] * lambda_scale,
-                    sample.imaging_uvw_m[1] * lambda_scale,
-                    sample.imaging_uvw_m[2] * lambda_scale,
-                )
-            };
+            let lambda_scale = contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+            let predicted = predictor.predict(
+                sample.imaging_uvw_m[0] * lambda_scale,
+                sample.imaging_uvw_m[1] * lambda_scale,
+            );
             let predicted = phase_rotate_visibility(
                 predicted,
                 -sample.phase_shift_m,
@@ -5333,28 +5328,45 @@ fn write_model_column(
         }
     }
 
+    let changed_rows = rows.keys().copied().collect::<Vec<_>>();
     for (row_index, row_model) in rows {
         ms.main_table_mut()
-            .cell_accessor_mut(row_index, VisibilityDataColumn::ModelData.name())
-            .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(row_model))))
+            .column_accessor_mut(VisibilityDataColumn::ModelData.name())
+            .and_then(|mut column| {
+                column.set_array_assuming_valid(row_index, ArrayValue::Complex32(row_model))
+            })
             .map_err(|error| format!("write MODEL_DATA row {row_index}: {error}"))?;
     }
-    ms.save_main_table_only_assuming_valid().map_err(|error| {
-        format!(
-            "save MODEL_DATA updates to {}: {error}",
-            config.ms.display()
-        )
-    })?;
+    if created_model_data_column {
+        ms.save_main_table_only_assuming_valid().map_err(|error| {
+            format!(
+                "save MODEL_DATA updates to {}: {error}",
+                config.ms.display()
+            )
+        })?;
+    } else {
+        ms.main_table()
+            .save_selected_rows_in_place_assuming_valid(
+                &[VisibilityDataColumn::ModelData.name()],
+                &changed_rows,
+            )
+            .map_err(|error| {
+                format!(
+                    "save MODEL_DATA updates to {}: {error}",
+                    config.ms.display()
+                )
+            })?;
+    }
     Ok(written_samples)
 }
 
-fn ensure_model_data_column(ms: &mut MeasurementSet) -> Result<(), String> {
+fn ensure_model_data_column(ms: &mut MeasurementSet) -> Result<bool, String> {
     if ms
         .main_table()
         .schema()
         .is_some_and(|schema| schema.contains_column(VisibilityDataColumn::ModelData.name()))
     {
-        return Ok(());
+        return Ok(false);
     }
     let zero_rows = (0..ms.row_count())
         .map(|row_index| zero_model_row_like_data(ms, row_index).map(|row| (row_index, row)))
@@ -5375,7 +5387,7 @@ fn ensure_model_data_column(ms: &mut MeasurementSet) -> Result<(), String> {
             .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(row_model))))
             .map_err(|error| format!("initialize MODEL_DATA row {row_index}: {error}"))?;
     }
-    Ok(())
+    Ok(true)
 }
 
 fn read_or_zero_model_row(
@@ -5413,60 +5425,6 @@ fn zero_model_row_like_data(
         ));
     }
     Ok(ArrayD::from_elem(IxDyn(&shape), Complex32::new(0.0, 0.0)))
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ModelColumnComponent {
-    value: f32,
-    l: f64,
-    m: f64,
-    n_minus_one: f64,
-}
-
-fn model_column_components(
-    model: &Array2<f32>,
-    geometry: ImageGeometry,
-) -> Vec<ModelColumnComponent> {
-    let [nx, ny] = geometry.image_shape;
-    let center_x = nx as f64 / 2.0;
-    let center_y = ny as f64 / 2.0;
-    let mut components = Vec::new();
-    for ((x, y), &value) in model.indexed_iter() {
-        if value.abs() <= 0.0 {
-            continue;
-        }
-        let l = (x as f64 - center_x) * geometry.cell_size_rad[0];
-        let m = (center_y - y as f64) * geometry.cell_size_rad[1];
-        let radius_sq = l * l + m * m;
-        let n_minus_one = if radius_sq < 1.0 {
-            (1.0 - radius_sq).sqrt() - 1.0
-        } else {
-            -1.0
-        };
-        components.push(ModelColumnComponent {
-            value,
-            l,
-            m,
-            n_minus_one,
-        });
-    }
-    components
-}
-
-fn predict_model_column_visibility(
-    components: &[ModelColumnComponent],
-    u_lambda: f64,
-    v_lambda: f64,
-    w_lambda: f64,
-) -> Complex32 {
-    let mut predicted = Complex32::new(0.0, 0.0);
-    for component in components {
-        let phase = std::f64::consts::TAU
-            * (u_lambda * component.l + v_lambda * component.m + w_lambda * component.n_minus_one);
-        predicted.re += component.value * phase.cos() as f32;
-        predicted.im -= component.value * phase.sin() as f32;
-    }
-    predicted
 }
 
 #[allow(clippy::too_many_arguments)]

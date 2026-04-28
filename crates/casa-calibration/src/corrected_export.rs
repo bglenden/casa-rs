@@ -8,7 +8,6 @@ use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::{MsError, selection::MsSelection};
 use casa_tables::TableError;
-use casa_types::Value;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -152,20 +151,39 @@ pub fn export_corrected_data(
             path: request.input_ms.display().to_string(),
         });
     }
+    if selected_rows.len() == ms.row_count() {
+        let row_count = selected_rows.len();
+        drop(ms);
+        export_all_corrected_data_by_copy(&request.input_ms, &request.output_ms)?;
+        return Ok(ExportCorrectedDataReport {
+            input_ms: request.input_ms.clone(),
+            output_ms: request.output_ms.clone(),
+            row_count,
+            source_column: VisibilityDataColumn::CorrectedData.name().to_string(),
+            output_column: VisibilityDataColumn::Data.name().to_string(),
+        });
+    }
 
-    for &row_index in &selected_rows {
-        let corrected = ms
-            .main_table()
-            .cell_accessor(row_index, VisibilityDataColumn::CorrectedData.name())
-            .and_then(|cell| cell.array())
-            .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+    let corrected_rows = ms
+        .main_table()
+        .column_accessor(VisibilityDataColumn::CorrectedData.name())
+        .and_then(|column| column.array_cells_owned(&selected_rows))
+        .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+            path: request.input_ms.display().to_string(),
+            source: Box::new(source),
+        })?;
+    for (&row_index, corrected) in selected_rows.iter().zip(corrected_rows) {
+        let corrected =
+            corrected.ok_or_else(|| ExportCorrectedDataError::MutateMeasurementSet {
                 path: request.input_ms.display().to_string(),
-                source: Box::new(source),
-            })?
-            .clone();
+                source: Box::new(TableError::ColumnNotFound {
+                    row_index,
+                    column: VisibilityDataColumn::CorrectedData.name().to_string(),
+                }),
+            })?;
         ms.main_table_mut()
-            .cell_accessor_mut(row_index, VisibilityDataColumn::Data.name())
-            .and_then(|mut cell| cell.set(Value::Array(corrected)))
+            .column_accessor_mut(VisibilityDataColumn::Data.name())
+            .and_then(|mut column| column.set_array_assuming_valid(row_index, corrected))
             .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
                 path: request.input_ms.display().to_string(),
                 source: Box::new(source),
@@ -206,6 +224,63 @@ pub fn export_corrected_data(
     })
 }
 
+fn export_all_corrected_data_by_copy(
+    input_ms: &Path,
+    output_ms: &Path,
+) -> Result<(), ExportCorrectedDataError> {
+    prepare_output_root(output_ms)?;
+    copy_dir_recursive(input_ms, output_ms).map_err(|error| {
+        ExportCorrectedDataError::PrepareOutput {
+            path: output_ms.display().to_string(),
+            reason: error.to_string(),
+        }
+    })?;
+    let mut output = MeasurementSet::open(output_ms).map_err(|source| {
+        ExportCorrectedDataError::OpenMeasurementSet {
+            path: output_ms.display().to_string(),
+            source,
+        }
+    })?;
+    let row_indices = (0..output.row_count()).collect::<Vec<_>>();
+    let corrected_rows = output
+        .main_table()
+        .column_accessor(VisibilityDataColumn::CorrectedData.name())
+        .and_then(|column| column.array_cells_owned(&row_indices))
+        .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+            path: output_ms.display().to_string(),
+            source: Box::new(source),
+        })?;
+    for (row_index, corrected) in row_indices.iter().copied().zip(corrected_rows) {
+        let corrected =
+            corrected.ok_or_else(|| ExportCorrectedDataError::MutateMeasurementSet {
+                path: output_ms.display().to_string(),
+                source: Box::new(TableError::ColumnNotFound {
+                    row_index,
+                    column: VisibilityDataColumn::CorrectedData.name().to_string(),
+                }),
+            })?;
+        output
+            .main_table_mut()
+            .column_accessor_mut(VisibilityDataColumn::Data.name())
+            .and_then(|mut column| column.set_array_assuming_valid(row_index, corrected))
+            .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+                path: output_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+    }
+    output
+        .main_table()
+        .save_selected_rows_in_place_assuming_valid(
+            &[VisibilityDataColumn::Data.name()],
+            &row_indices,
+        )
+        .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+            path: output_ms.display().to_string(),
+            source: Box::new(source),
+        })?;
+    Ok(())
+}
+
 fn prepare_output_root(path: &Path) -> Result<(), ExportCorrectedDataError> {
     if path.exists() {
         fs::remove_dir_all(path)
@@ -220,6 +295,25 @@ fn prepare_output_root(path: &Path) -> Result<(), ExportCorrectedDataError> {
             path: path.display().to_string(),
             reason: error.to_string(),
         })?;
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &destination_path)?;
+        } else if file_type.is_symlink() {
+            let target = fs::read_link(&source_path)?;
+            std::os::unix::fs::symlink(target, destination_path)?;
+        }
     }
     Ok(())
 }

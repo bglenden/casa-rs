@@ -646,6 +646,7 @@ fn solve_bandpass_group(
                 solve_graph(
                     &group.receptor_graphs[receptor][chan_index],
                     &group.receptor_weights[receptor][chan_index],
+                    &HashMap::new(),
                     GainSolveMode::AmplitudePhase,
                     refant_id,
                     group.field_id,

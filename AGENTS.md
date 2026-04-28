@@ -29,6 +29,7 @@ persistent data while preserving on-disk interoperability.
 - Performance release evidence: `just release-perf`
 - Slow parity: `scripts/test-slow.sh`
 - Release: `scripts/release.sh <version>`
+- Local CASA/C++ task runs use `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python`, which has the `~/SoftwareProjects/casa` built `casatasks` and `casatools` wheels installed.
 
 ## WDAD Workflow
 

@@ -92,6 +92,7 @@ struct SolveGainOptions {
     parang: bool,
     model_source: GainSolveModelSource,
     normalize_average_amplitude: bool,
+    min_snr: f32,
     format: OutputFormat,
     output: Option<PathBuf>,
     overwrite: bool,
@@ -236,6 +237,7 @@ impl Command {
                 parang: options.parang,
                 model_source: options.model_source,
                 normalize_average_amplitude: options.normalize_average_amplitude,
+                min_snr: options.min_snr,
                 smodel: [1.0, 0.0, 0.0, 0.0],
             }),
             Self::SolveBandpass(options) => {
@@ -749,9 +751,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 advanced: false,
             }),
             option_argument(OptionArgumentConfig {
+                id: "min_snr",
+                label: "Minimum SNR",
+                order: 22,
+                flags: &["--minsnr"],
+                metavar: "SNR",
+                value_kind: UiValueKind::Float,
+                default: Some("3.0"),
+                choices: &[],
+                help: "Minimum gain solution SNR before flagging",
+                group: "Solve Gain",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "bandpass_combine",
                 label: "Bandpass Combine",
-                order: 22,
+                order: 23,
                 flags: &["--combine-bandpass"],
                 metavar: "AXES",
                 value_kind: UiValueKind::Choice,
@@ -1653,6 +1669,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
     let mut parang = false;
     let mut model_source = GainSolveModelSource::PointSource;
     let mut normalize_average_amplitude = false;
+    let mut min_snr = 3.0_f32;
     let mut format = OutputFormat::Text;
     let mut output = None;
     let mut overwrite = false;
@@ -1734,6 +1751,15 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
             "--point-model" => model_source = GainSolveModelSource::PointSource,
             "--solnorm" => normalize_average_amplitude = true,
             "--no-solnorm" => normalize_average_amplitude = false,
+            "--minsnr" | "--min-snr" => {
+                index += 1;
+                min_snr = take_string_value(index, args, raw)?
+                    .parse::<f32>()
+                    .map_err(|error| format!("failed to parse {raw} as float: {error}"))?;
+                if min_snr < 0.0 || !min_snr.is_finite() {
+                    return Err(format!("{raw} must be a finite non-negative float"));
+                }
+            }
             "--refant" => {
                 index += 1;
                 refant = Some(parse_refant_selector(&take_string_value(
@@ -1822,6 +1848,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
             parang,
             model_source,
             normalize_average_amplitude,
+            min_snr,
             format,
             output,
             overwrite,
@@ -3694,6 +3721,8 @@ mod tests {
             "--combine".into(),
             "scan,field".into(),
             "--model-column".into(),
+            "--minsnr".into(),
+            "2.5".into(),
             "--gaintables".into(),
             "prior.gcal".into(),
             "--format".into(),
@@ -3715,6 +3744,7 @@ mod tests {
                 assert!(options.combine.scans);
                 assert!(options.combine.fields);
                 assert_eq!(options.model_source, GainSolveModelSource::ModelColumn);
+                assert_eq!(options.min_snr, 2.5);
                 assert_eq!(
                     options.refant,
                     RefAntSelector::AntennaName("VA15".to_string())

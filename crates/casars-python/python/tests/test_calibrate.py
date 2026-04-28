@@ -120,6 +120,7 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         ],
         parang=True,
         model_source="model_column",
+        min_snr=2.5,
         smodel=(1.0, 0.0, 0.0, 0.0),
         binary=binary,
     )
@@ -138,6 +139,7 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["prior_calibration_tables"][0]["gainfield"] == "Nearest"
     assert request["prior_calibration_tables"][0]["calwt"] is True
     assert request["model_source"] == "ModelColumn"
+    assert request["min_snr"] == 2.5
 
 
 def test_signature_parity_against_rust_schema() -> None:

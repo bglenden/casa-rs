@@ -14,7 +14,7 @@ use super::{
 };
 use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
-use crate::solve::kernel::accumulate_edge;
+use crate::solve::kernel::accumulate_edge_with_stats;
 
 pub(crate) fn validate_solve_interval(
     solve_interval: GainSolveInterval,
@@ -340,6 +340,13 @@ pub(crate) struct SolveAccumulator {
     pub(crate) antenna_ids: BTreeSet<i32>,
     pub(crate) receptor_graphs: Vec<HashMap<(i32, i32), Complex32>>,
     pub(crate) receptor_weights: Vec<HashMap<(i32, i32), f32>>,
+    pub(crate) receptor_stats: Vec<HashMap<(i32, i32), SolveEdgeStats>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SolveEdgeStats {
+    pub(crate) weighted_sample_power: f64,
+    pub(crate) sample_count: usize,
 }
 
 impl SolveAccumulator {
@@ -356,6 +363,7 @@ impl SolveAccumulator {
             antenna_ids: BTreeSet::new(),
             receptor_graphs: Vec::new(),
             receptor_weights: Vec::new(),
+            receptor_stats: Vec::new(),
         }
     }
 
@@ -481,6 +489,7 @@ impl SolveAccumulator {
         if self.receptor_graphs.len() < graph_count {
             self.receptor_graphs.resize_with(graph_count, HashMap::new);
             self.receptor_weights.resize_with(graph_count, HashMap::new);
+            self.receptor_stats.resize_with(graph_count, HashMap::new);
         }
 
         self.min_time = self.min_time.min(row.time_seconds);
@@ -529,13 +538,14 @@ impl SolveAccumulator {
                     continue;
                 }
                 let effective_weight = weight * model_norm_sqr;
-                accumulate_edge(
+                accumulate_edge_with_stats(
                     &mut self.receptor_graphs[graph_index],
                     &mut self.receptor_weights[graph_index],
-                    row.antenna1,
-                    row.antenna2,
+                    &mut self.receptor_stats[graph_index],
+                    (row.antenna1, row.antenna2),
                     effective_weight,
                     sample * Complex32::new(effective_weight, 0.0),
+                    f64::from(effective_weight) * f64::from(sample.norm_sqr()),
                 );
             }
         }

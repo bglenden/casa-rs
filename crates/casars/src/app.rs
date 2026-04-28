@@ -13951,9 +13951,8 @@ fn calibrate_argument_applies_to_mode(field_id: &str, mode: &str) -> bool {
         "summary_paths" => mode == "summary",
         "table_path" | "stats_axis" | "stats_datacolumn" | "use_flags" => mode == "stats",
         "out_table" | "refant" => matches!(mode, "solve_gain" | "solve_bandpass"),
-        "gain_type" | "solve_mode" | "solint" | "gain_combine" | "gain_model_source" => {
-            mode == "solve_gain"
-        }
+        "gain_type" | "solve_mode" | "solint" | "gain_combine" | "gain_model_source"
+        | "min_snr" => mode == "solve_gain",
         "solnorm" => matches!(mode, "solve_gain" | "solve_bandpass"),
         "bandpass_combine" | "bandtype" => mode == "solve_bandpass",
         "fluxscale_input" | "reference_fields" | "transfer_fields" | "refspwmap"

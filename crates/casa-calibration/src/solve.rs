@@ -127,6 +127,8 @@ pub struct GainSolveRequest {
     pub model_source: GainSolveModelSource,
     /// Whether to normalize average solution amplitudes to unity.
     pub normalize_average_amplitude: bool,
+    /// Minimum solution SNR required to keep a solved parameter unflagged.
+    pub min_snr: f32,
     /// Point-source Stokes model used when `model_source` is `PointSource`.
     pub smodel: [f32; 4],
 }
@@ -331,6 +333,7 @@ pub fn solve_gain(
             request.gain_type,
             request.solve_mode,
             refant_id,
+            request.min_snr,
         )?;
         if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
             && request.normalize_average_amplitude

@@ -7,7 +7,7 @@ use std::f64::consts::PI;
 use casa_types::Complex32;
 
 use super::{GainSolveError, GainSolveMode, GainType};
-use crate::solve::grouping::SolveAccumulator;
+use crate::solve::grouping::{SolveAccumulator, SolveEdgeStats};
 
 #[derive(Debug, Clone)]
 pub(crate) struct SolutionRow {
@@ -20,12 +20,18 @@ pub(crate) struct SolutionRow {
     pub(crate) observation_id: i32,
     pub(crate) gains: Vec<Complex32>,
     pub(crate) flags: Vec<bool>,
+    pub(crate) param_errors: Vec<f32>,
+    pub(crate) snrs: Vec<f32>,
+    pub(crate) weights: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct SolvedPhaseGraph {
     pub(crate) gains: HashMap<i32, Complex32>,
     pub(crate) reachable: BTreeSet<i32>,
+    pub(crate) hessian: HashMap<i32, f32>,
+    pub(crate) param_error: HashMap<i32, f32>,
+    pub(crate) snr: HashMap<i32, f32>,
 }
 
 pub(crate) fn solve_group(
@@ -34,6 +40,7 @@ pub(crate) fn solve_group(
     gain_type: GainType,
     solve_mode: GainSolveMode,
     refant_id: i32,
+    min_snr: f32,
 ) -> Result<Vec<SolutionRow>, GainSolveError> {
     let averaged_time = (group.min_time + group.max_time) / 2.0;
     let averaged_interval = group.total_interval / group.sample_rows.max(1) as f64;
@@ -42,10 +49,12 @@ pub(crate) fn solve_group(
         .receptor_graphs
         .iter()
         .zip(group.receptor_weights.iter())
-        .map(|(graph, weights)| {
+        .zip(group.receptor_stats.iter())
+        .map(|((graph, weights), stats)| {
             solve_graph(
                 graph,
                 weights,
+                stats,
                 solve_mode,
                 refant_id,
                 group.field_id,
@@ -82,12 +91,83 @@ pub(crate) fn solve_group(
                 GainType::G => solved
                     .iter()
                     .map(|per_receptor| {
-                        antenna_id != refant_id && !per_receptor.reachable.contains(&antenna_id)
+                        let connected =
+                            antenna_id == refant_id || per_receptor.reachable.contains(&antenna_id);
+                        let snr = per_receptor
+                            .snr
+                            .get(&antenna_id)
+                            .copied()
+                            .unwrap_or_default();
+                        let param_error = per_receptor
+                            .param_error
+                            .get(&antenna_id)
+                            .copied()
+                            .unwrap_or_default();
+                        !connected || snr <= min_snr || !param_error.is_finite()
                     })
                     .collect(),
                 GainType::T => {
-                    vec![antenna_id != refant_id && !solved[0].reachable.contains(&antenna_id)]
+                    let connected =
+                        antenna_id == refant_id || solved[0].reachable.contains(&antenna_id);
+                    let snr = solved[0].snr.get(&antenna_id).copied().unwrap_or_default();
+                    let param_error = solved[0]
+                        .param_error
+                        .get(&antenna_id)
+                        .copied()
+                        .unwrap_or_default();
+                    vec![!connected || snr <= min_snr || !param_error.is_finite()]
                 }
+            };
+            let param_errors = match gain_type {
+                GainType::G => solved
+                    .iter()
+                    .map(|per_receptor| {
+                        per_receptor
+                            .param_error
+                            .get(&antenna_id)
+                            .copied()
+                            .unwrap_or_default()
+                    })
+                    .collect(),
+                GainType::T => vec![
+                    solved[0]
+                        .param_error
+                        .get(&antenna_id)
+                        .copied()
+                        .unwrap_or_default(),
+                ],
+            };
+            let snrs = match gain_type {
+                GainType::G => solved
+                    .iter()
+                    .map(|per_receptor| {
+                        per_receptor
+                            .snr
+                            .get(&antenna_id)
+                            .copied()
+                            .unwrap_or_default()
+                    })
+                    .collect(),
+                GainType::T => vec![solved[0].snr.get(&antenna_id).copied().unwrap_or_default()],
+            };
+            let weights = match gain_type {
+                GainType::G => solved
+                    .iter()
+                    .map(|per_receptor| {
+                        per_receptor
+                            .hessian
+                            .get(&antenna_id)
+                            .copied()
+                            .unwrap_or_default()
+                    })
+                    .collect(),
+                GainType::T => vec![
+                    solved[0]
+                        .hessian
+                        .get(&antenna_id)
+                        .copied()
+                        .unwrap_or_default(),
+                ],
             };
             SolutionRow {
                 time_seconds: averaged_time,
@@ -99,6 +179,9 @@ pub(crate) fn solve_group(
                 observation_id: group.observation_id,
                 gains,
                 flags,
+                param_errors,
+                snrs,
+                weights,
             }
         })
         .collect();
@@ -109,6 +192,7 @@ pub(crate) fn solve_group(
 pub(crate) fn solve_graph(
     graph: &HashMap<(i32, i32), Complex32>,
     weights: &HashMap<(i32, i32), f32>,
+    stats: &HashMap<(i32, i32), SolveEdgeStats>,
     solve_mode: GainSolveMode,
     refant_id: i32,
     field_id: i32,
@@ -201,7 +285,127 @@ pub(crate) fn solve_graph(
         rereference_gains(&mut gains, refant_id, solve_mode);
     }
 
-    Ok(SolvedPhaseGraph { gains, reachable })
+    let hessian = hessian(graph, weights, &gains, &reachable);
+    let chi_square = chi_square(graph, weights, stats, &gains);
+    let good_count = antenna_ids
+        .iter()
+        .filter(|antenna_id| reachable.contains(antenna_id))
+        .count();
+    let sample_count = undirected_sample_count(stats);
+    let degrees_of_freedom = (2 * sample_count.saturating_sub(good_count)).max(1);
+    let reduced_chi_square = chi_square / degrees_of_freedom as f64;
+    let param_error = param_errors(&hessian, reduced_chi_square);
+    let snr = gains
+        .iter()
+        .map(|(antenna_id, gain)| {
+            let error = param_error.get(antenna_id).copied().unwrap_or_default();
+            let value = if error > 0.0 {
+                gain.norm() / error
+            } else if reachable.contains(antenna_id) {
+                9_999_999.0
+            } else {
+                0.0
+            };
+            (*antenna_id, value)
+        })
+        .collect();
+
+    Ok(SolvedPhaseGraph {
+        gains,
+        reachable,
+        hessian,
+        param_error,
+        snr,
+    })
+}
+
+fn hessian(
+    graph: &HashMap<(i32, i32), Complex32>,
+    weights: &HashMap<(i32, i32), f32>,
+    gains: &HashMap<i32, Complex32>,
+    reachable: &BTreeSet<i32>,
+) -> HashMap<i32, f32> {
+    let mut hessian = HashMap::new();
+    for &(antenna_id, other_id) in graph.keys() {
+        if !reachable.contains(&antenna_id) || !reachable.contains(&other_id) {
+            continue;
+        }
+        let weight = weights
+            .get(&(antenna_id, other_id))
+            .copied()
+            .unwrap_or_default();
+        if weight <= f32::EPSILON {
+            continue;
+        }
+        let other_power = gains
+            .get(&other_id)
+            .map(|gain| gain.norm_sqr())
+            .unwrap_or(1.0);
+        *hessian.entry(antenna_id).or_insert(0.0) += weight * other_power;
+    }
+    hessian
+}
+
+fn chi_square(
+    graph: &HashMap<(i32, i32), Complex32>,
+    weights: &HashMap<(i32, i32), f32>,
+    stats: &HashMap<(i32, i32), SolveEdgeStats>,
+    gains: &HashMap<i32, Complex32>,
+) -> f64 {
+    let mut total = 0.0_f64;
+    for (&(antenna1, antenna2), stat) in stats {
+        if antenna1 > antenna2 {
+            continue;
+        }
+        let Some(gain1) = gains.get(&antenna1) else {
+            continue;
+        };
+        let Some(gain2) = gains.get(&antenna2) else {
+            continue;
+        };
+        let weight = f64::from(
+            weights
+                .get(&(antenna1, antenna2))
+                .copied()
+                .unwrap_or_default(),
+        );
+        if weight <= f64::EPSILON {
+            continue;
+        }
+        let observed = graph
+            .get(&(antenna1, antenna2))
+            .copied()
+            .unwrap_or_else(|| Complex32::new(0.0, 0.0));
+        let model = *gain1 * gain2.conj();
+        let cross = (model.conj() * observed).re;
+        let contribution = stat.weighted_sample_power - 2.0 * f64::from(cross)
+            + weight * f64::from(model.norm_sqr());
+        total += contribution.max(0.0);
+    }
+    total
+}
+
+fn undirected_sample_count(stats: &HashMap<(i32, i32), SolveEdgeStats>) -> usize {
+    stats
+        .iter()
+        .filter_map(|(&(antenna1, antenna2), stat)| {
+            (antenna1 < antenna2).then_some(stat.sample_count)
+        })
+        .sum()
+}
+
+fn param_errors(hessian: &HashMap<i32, f32>, reduced_chi_square: f64) -> HashMap<i32, f32> {
+    hessian
+        .iter()
+        .map(|(antenna_id, hessian)| {
+            let value = if *hessian > 0.0 && reduced_chi_square.is_finite() {
+                (2.0 * reduced_chi_square / f64::from(*hessian)).sqrt() as f32
+            } else {
+                0.0
+            };
+            (*antenna_id, value)
+        })
+        .collect()
 }
 
 fn solve_log_amplitudes(
@@ -316,6 +520,39 @@ pub(crate) fn accumulate_edge(
         .entry((antenna2, antenna1))
         .and_modify(|value| *value += weight)
         .or_insert(weight);
+}
+
+pub(crate) fn accumulate_edge_with_stats(
+    graph: &mut HashMap<(i32, i32), Complex32>,
+    weights: &mut HashMap<(i32, i32), f32>,
+    stats: &mut HashMap<(i32, i32), SolveEdgeStats>,
+    baseline: (i32, i32),
+    weight: f32,
+    normalized: Complex32,
+    weighted_sample_power: f64,
+) {
+    let (antenna1, antenna2) = baseline;
+    accumulate_edge(graph, weights, antenna1, antenna2, weight, normalized);
+    stats
+        .entry((antenna1, antenna2))
+        .and_modify(|value| {
+            value.weighted_sample_power += weighted_sample_power;
+            value.sample_count += 1;
+        })
+        .or_insert(SolveEdgeStats {
+            weighted_sample_power,
+            sample_count: 1,
+        });
+    stats
+        .entry((antenna2, antenna1))
+        .and_modify(|value| {
+            value.weighted_sample_power += weighted_sample_power;
+            value.sample_count += 1;
+        })
+        .or_insert(SolveEdgeStats {
+            weighted_sample_power,
+            sample_count: 1,
+        });
 }
 
 fn reachable_antennas(graph: &HashMap<(i32, i32), Complex32>, refant_id: i32) -> BTreeSet<i32> {

@@ -260,6 +260,9 @@ pub struct SolveGainTaskRequest {
     /// Whether to normalize average solution amplitudes to unity.
     #[serde(default)]
     pub normalize_average_amplitude: bool,
+    /// Minimum solution SNR required to keep a solved parameter unflagged.
+    #[serde(default = "default_min_snr")]
+    pub min_snr: f32,
     /// Point-source Stokes model.
     #[serde(default = "default_smodel")]
     pub smodel: [f32; 4],
@@ -396,6 +399,7 @@ impl CalibrationTaskRequest {
                     parang: request.parang,
                     model_source: request.model_source,
                     normalize_average_amplitude: request.normalize_average_amplitude,
+                    min_snr: request.min_snr,
                     smodel: request.smodel,
                 },
             )
@@ -428,6 +432,10 @@ impl CalibrationTaskRequest {
 
 fn default_smodel() -> [f32; 4] {
     [1.0, 0.0, 0.0, 0.0]
+}
+
+fn default_min_snr() -> f32 {
+    3.0
 }
 
 fn default_polynomial_degree() -> usize {

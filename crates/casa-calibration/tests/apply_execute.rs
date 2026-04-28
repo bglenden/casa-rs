@@ -11,7 +11,8 @@ use casa_calibration::{
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::selection::MsSelection;
-use casa_types::ArrayValue;
+use casa_types::{ArrayValue, ScalarValue};
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 #[test]
 fn execute_apply_trial_does_not_mutate_measurement_set() {
@@ -590,6 +591,84 @@ fn execute_apply_calflag_marks_samples_when_solution_is_missing_without_seeded_c
     };
     assert!(flags.iter().all(|flag| *flag));
     assert!(ms.flag_row_column().get(0).expect("flag row"));
+}
+
+#[test]
+fn execute_apply_calflag_does_not_rewrite_unchanged_flags_or_flag_row() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_apply_fixture_ms(dir.path(), true);
+    {
+        let mut ms = MeasurementSet::open(&ms_path).expect("open measurement set");
+        ms.main_table_mut()
+            .column_accessor_mut("FLAG")
+            .and_then(|mut column| {
+                column.set_array_assuming_valid(
+                    0,
+                    ArrayValue::Bool(
+                        ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![true; 4]).unwrap(),
+                    ),
+                )
+            })
+            .expect("seed fully flagged samples");
+        ms.main_table_mut()
+            .column_accessor_mut("FLAG_ROW")
+            .and_then(|mut column| column.set_scalar_assuming_valid(0, ScalarValue::Bool(false)))
+            .expect("seed unflagged row flag");
+        ms.main_table()
+            .save_selected_rows_in_place_assuming_valid(&["FLAG", "FLAG_ROW"], &[0])
+            .expect("save seeded flags");
+    }
+    let caltable_path = common::create_apply_gain_caltable(
+        &dir.path().join("phase.gcal"),
+        &["TARGET0"],
+        &[
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 0,
+                gains: vec![
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
+                ],
+                flags: vec![false, false],
+            },
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 1,
+                gains: vec![
+                    casa_types::Complex32::new(5.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
+                ],
+                flags: vec![false, false],
+            },
+        ],
+    );
+
+    let report = execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new().spw(&[0]),
+            apply_mode: ApplyMode::CalFlag,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+        },
+    )
+    .expect("apply calibration with unchanged flags");
+
+    assert_eq!(report.flagged_sample_count, 0);
+    assert_eq!(report.flagged_row_count, 0);
+
+    let ms = MeasurementSet::open(&ms_path).expect("reopen measurement set");
+    let flag_column = ms.flag_column();
+    let flags = flag_column.get(0).expect("read flags");
+    let ArrayValue::Bool(flags) = flags else {
+        panic!("expected bool flags");
+    };
+    assert!(flags.iter().all(|flag| *flag));
+    assert!(!ms.flag_row_column().get(0).expect("flag row"));
 }
 
 #[test]

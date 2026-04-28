@@ -1494,10 +1494,12 @@ fn apply_row(
         }
     }
 
-    let row_became_fully_flagged = flags.iter().all(|flag| *flag);
+    let flags_changed = newly_flagged_samples > 0;
+    let row_became_fully_flagged = flags_changed && flags.iter().all(|flag| *flag);
     Ok(ExecutionRowResult {
         corrected_data: ArrayValue::Complex32(corrected),
-        updated_flags: (plan.apply_mode == ApplyMode::CalFlag).then_some(ArrayValue::Bool(flags)),
+        updated_flags: (plan.apply_mode == ApplyMode::CalFlag && flags_changed)
+            .then_some(ArrayValue::Bool(flags)),
         updated_weight: any_calwt.then(|| ArrayValue::Float32(weight.expect("calwt weight"))),
         updated_weight_spectrum: weight_spectrum.map(ArrayValue::Float32),
         newly_flagged_samples,
