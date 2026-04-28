@@ -216,6 +216,7 @@ def export_corrected_data(
     input_ms: StrPath,
     output_ms: StrPath,
     *,
+    selection: Selection | None = None,
     binary: StrPath | None = None,
 ) -> TaskResult:
     """Create an imaging-ready MS with ``CORRECTED_DATA`` copied into ``DATA``."""
@@ -225,6 +226,7 @@ def export_corrected_data(
         request={
             "input_ms": os.fspath(input_ms),
             "output_ms": os.fspath(output_ms),
+            "selection": _selection_request(selection),
         },
         binary=binary,
     )
@@ -507,9 +509,9 @@ _WRAPPER_CONTRACTS: dict[str, dict[str, Any]] = {
     },
     "export_corrected_data": {
         "schema": "ExportCorrectedDataTaskRequest",
-        "request_fields": ["input_ms", "output_ms"],
-        "signature": ["input_ms", "output_ms", "binary"],
-        "defaults": {"binary": None},
+        "request_fields": ["input_ms", "output_ms", "selection"],
+        "signature": ["input_ms", "output_ms", "selection", "binary"],
+        "defaults": {"selection": None, "binary": None},
     },
     "solve_gain": {
         "schema": "SolveGainTaskRequest",

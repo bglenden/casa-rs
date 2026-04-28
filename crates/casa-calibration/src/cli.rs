@@ -102,6 +102,7 @@ struct SolveGainOptions {
 struct ExportCorrectedDataOptions {
     input_ms: PathBuf,
     output_ms: PathBuf,
+    selection: SelectionOptions,
     format: OutputFormat,
     output: Option<PathBuf>,
     overwrite: bool,
@@ -219,6 +220,7 @@ impl Command {
                 CalibrationTaskRequest::ExportCorrectedData(ExportCorrectedDataTaskRequest {
                     input_ms: options.input_ms,
                     output_ms: options.output_ms,
+                    selection: options.selection,
                 })
             }
             Self::SolveGain(options) => CalibrationTaskRequest::SolveGain(SolveGainTaskRequest {
@@ -1540,6 +1542,10 @@ fn parse_export_corrected_data_args(
     let mut format = OutputFormat::Text;
     let mut output = None;
     let mut overwrite = false;
+    let mut selection = SelectionOptions {
+        selectdata: true,
+        ..SelectionOptions::default()
+    };
 
     let mut index = 0;
     while index < args.len() {
@@ -1573,6 +1579,40 @@ fn parse_export_corrected_data_args(
                 ));
             }
             "--overwrite" => overwrite = true,
+            "--selectdata" => selection.selectdata = true,
+            "--no-selectdata" => selection.selectdata = false,
+            "--field" => {
+                index += 1;
+                selection.field = Some(take_string_value(index, args, "--field")?);
+            }
+            "--spw" => {
+                index += 1;
+                selection.spw = Some(take_string_value(index, args, "--spw")?);
+            }
+            "--antenna" => {
+                index += 1;
+                selection.antenna = Some(take_string_value(index, args, "--antenna")?);
+            }
+            "--scan" => {
+                index += 1;
+                selection.scan = Some(take_string_value(index, args, "--scan")?);
+            }
+            "--observation" => {
+                index += 1;
+                selection.observation = Some(take_string_value(index, args, "--observation")?);
+            }
+            "--array" => {
+                index += 1;
+                selection.array = Some(take_string_value(index, args, "--array")?);
+            }
+            "--timerange" => {
+                index += 1;
+                selection.timerange = Some(take_string_value(index, args, "--timerange")?);
+            }
+            "--msselect" => {
+                index += 1;
+                selection.msselect = Some(take_string_value(index, args, "--msselect")?);
+            }
             _ if raw.starts_with('-') => return Err(format!("unsupported argument {raw:?}")),
             _ => return Err(format!("unexpected positional argument {raw:?}")),
         }
@@ -1589,6 +1629,7 @@ fn parse_export_corrected_data_args(
         command: Command::ExportCorrectedData(ExportCorrectedDataOptions {
             input_ms,
             output_ms,
+            selection,
             format,
             output,
             overwrite,
@@ -3726,6 +3767,10 @@ mod tests {
             "selfcal.ms".into(),
             "--format".into(),
             "json".into(),
+            "--field".into(),
+            "5".into(),
+            "--spw".into(),
+            "0".into(),
         ])
         .expect("parse succeeds");
         match action {
@@ -3736,6 +3781,8 @@ mod tests {
                 assert_eq!(options.input_ms, PathBuf::from("calibrated.ms"));
                 assert_eq!(options.output_ms, PathBuf::from("selfcal.ms"));
                 assert_eq!(options.format, OutputFormat::Json);
+                assert_eq!(options.selection.field.as_deref(), Some("5"));
+                assert_eq!(options.selection.spw.as_deref(), Some("0"));
             }
             _ => panic!("expected export-corrected action"),
         }

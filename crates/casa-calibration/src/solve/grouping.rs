@@ -520,20 +520,22 @@ impl SolveAccumulator {
                     .as_ref()
                     .map(|model_data| model_data[[corr_index, chan_index]])
                     .unwrap_or_else(|| Complex32::new(stokes_i, 0.0));
-                if model.norm() <= f32::EPSILON {
+                let model_norm_sqr = model.norm_sqr();
+                if model_norm_sqr <= f32::EPSILON {
                     continue;
                 }
                 let sample = data[[corr_index, chan_index]] / model;
                 if sample.norm() <= f32::EPSILON {
                     continue;
                 }
+                let effective_weight = weight * model_norm_sqr;
                 accumulate_edge(
                     &mut self.receptor_graphs[graph_index],
                     &mut self.receptor_weights[graph_index],
                     row.antenna1,
                     row.antenna2,
-                    weight,
-                    sample * Complex32::new(weight, 0.0),
+                    effective_weight,
+                    sample * Complex32::new(effective_weight, 0.0),
                 );
             }
         }

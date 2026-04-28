@@ -96,12 +96,15 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     export_result = calibrate.export_corrected_data(
         "calibrated.ms",
         "selfcal.ms",
+        selection=calibrate.Selection(field="5", spw="0"),
         binary=binary,
     )
     export_request = export_result["report"]["request"]
     assert export_result["kind"] == "export_corrected_data"
     assert export_request["input_ms"] == "calibrated.ms"
     assert export_request["output_ms"] == "selfcal.ms"
+    assert export_request["selection"]["field"] == "5"
+    assert export_request["selection"]["spw"] == "0"
 
     result = calibrate.solve_gain(
         "dataset.ms",

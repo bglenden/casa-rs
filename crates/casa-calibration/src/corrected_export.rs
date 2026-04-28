@@ -4,9 +4,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
+use casa_ms::{MsError, selection::MsSelection};
 use casa_tables::TableError;
 use casa_types::Value;
 use schemars::JsonSchema;
@@ -14,12 +14,14 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Request to materialize an MS with `CORRECTED_DATA` copied into `DATA`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone)]
 pub struct ExportCorrectedDataRequest {
     /// Input MeasurementSet root path.
     pub input_ms: PathBuf,
     /// Output MeasurementSet root path.
     pub output_ms: PathBuf,
+    /// Optional row selection to materialize in the output MS.
+    pub selection: MsSelection,
 }
 
 /// Report returned after exporting corrected data.
@@ -53,6 +55,23 @@ pub enum ExportCorrectedDataError {
     /// The input lacks `CORRECTED_DATA`.
     #[error("MeasurementSet {path} does not contain CORRECTED_DATA")]
     MissingCorrectedData {
+        /// Input MS path.
+        path: String,
+    },
+
+    /// The selection could not be evaluated.
+    #[error("failed to select rows from MeasurementSet {path}: {source}")]
+    SelectRows {
+        /// Input MS path.
+        path: String,
+        /// Underlying MS error.
+        #[source]
+        source: MsError,
+    },
+
+    /// The selection produced no rows.
+    #[error("corrected-data export selection produced no rows for {path}")]
+    EmptySelection {
         /// Input MS path.
         path: String,
     },
@@ -120,7 +139,21 @@ pub fn export_corrected_data(
         });
     }
 
-    for row_index in 0..ms.row_count() {
+    let selected_rows =
+        request
+            .selection
+            .apply(&ms)
+            .map_err(|source| ExportCorrectedDataError::SelectRows {
+                path: request.input_ms.display().to_string(),
+                source,
+            })?;
+    if selected_rows.is_empty() {
+        return Err(ExportCorrectedDataError::EmptySelection {
+            path: request.input_ms.display().to_string(),
+        });
+    }
+
+    for &row_index in &selected_rows {
         let corrected = ms
             .main_table()
             .cell_accessor(row_index, VisibilityDataColumn::CorrectedData.name())
@@ -139,6 +172,24 @@ pub fn export_corrected_data(
             })?;
     }
 
+    if selected_rows.len() != ms.row_count() {
+        let mut keep = vec![false; ms.row_count()];
+        for &row_index in &selected_rows {
+            keep[row_index] = true;
+        }
+        let rows_to_remove = keep
+            .into_iter()
+            .enumerate()
+            .filter_map(|(row_index, keep)| (!keep).then_some(row_index))
+            .collect::<Vec<_>>();
+        ms.main_table_mut()
+            .remove_rows(&rows_to_remove)
+            .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+                path: request.input_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+    }
+
     prepare_output_root(&request.output_ms)?;
     ms.save_as_assuming_valid(&request.output_ms)
         .map_err(|source| ExportCorrectedDataError::SaveMeasurementSet {
@@ -149,7 +200,7 @@ pub fn export_corrected_data(
     Ok(ExportCorrectedDataReport {
         input_ms: request.input_ms.clone(),
         output_ms: request.output_ms.clone(),
-        row_count: ms.row_count(),
+        row_count: selected_rows.len(),
         source_column: VisibilityDataColumn::CorrectedData.name().to_string(),
         output_column: VisibilityDataColumn::Data.name().to_string(),
     })

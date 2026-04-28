@@ -175,6 +175,7 @@ fn export_corrected_data_writes_imaging_ready_data_column() {
     let report = export_corrected_data(&ExportCorrectedDataRequest {
         input_ms: ms_path.clone(),
         output_ms: output_ms.clone(),
+        selection: MsSelection::new(),
     })
     .expect("export corrected data");
     assert_eq!(report.row_count, 2);
@@ -193,6 +194,96 @@ fn export_corrected_data_writes_imaging_ready_data_column() {
             output_data.get(row).expect("output data row")
         );
     }
+}
+
+#[test]
+fn export_corrected_data_applies_ms_selection_to_output_rows() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_apply_fixture_ms(dir.path(), false);
+    let caltable_path = common::create_apply_gain_caltable(
+        &dir.path().join("phase.gcal"),
+        &["TARGET0", "TARGET1"],
+        &[
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 0,
+                gains: vec![
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(4.0, 0.0),
+                ],
+                flags: vec![false, false],
+            },
+            common::SyntheticGainSolutionRow {
+                time_seconds: 100.0,
+                field_id: 0,
+                spectral_window_id: 0,
+                antenna_id: 1,
+                gains: vec![
+                    casa_types::Complex32::new(5.0, 0.0),
+                    casa_types::Complex32::new(10.0, 0.0),
+                ],
+                flags: vec![false, false],
+            },
+            common::SyntheticGainSolutionRow {
+                time_seconds: 200.0,
+                field_id: 1,
+                spectral_window_id: 1,
+                antenna_id: 0,
+                gains: vec![
+                    casa_types::Complex32::new(2.0, 0.0),
+                    casa_types::Complex32::new(2.0, 0.0),
+                ],
+                flags: vec![false, false],
+            },
+            common::SyntheticGainSolutionRow {
+                time_seconds: 200.0,
+                field_id: 1,
+                spectral_window_id: 1,
+                antenna_id: 1,
+                gains: vec![
+                    casa_types::Complex32::new(10.0, 0.0),
+                    casa_types::Complex32::new(20.0, 0.0),
+                ],
+                flags: vec![false, false],
+            },
+        ],
+    );
+
+    execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new(),
+            apply_mode: ApplyMode::CalOnly,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+        },
+    )
+    .expect("apply calibration");
+
+    let output_ms = dir.path().join("corrected-selected.ms");
+    let report = export_corrected_data(&ExportCorrectedDataRequest {
+        input_ms: ms_path.clone(),
+        output_ms: output_ms.clone(),
+        selection: MsSelection::new().field(&[1]).spw(&[1]),
+    })
+    .expect("export selected corrected data");
+    assert_eq!(report.row_count, 1);
+
+    let input = MeasurementSet::open(&ms_path).expect("reopen input measurement set");
+    let output = MeasurementSet::open(&output_ms).expect("reopen output measurement set");
+    assert_eq!(output.row_count(), 1);
+    let input_corrected = input
+        .data_column(VisibilityDataColumn::CorrectedData)
+        .expect("input corrected column");
+    let output_data = output
+        .data_column(VisibilityDataColumn::Data)
+        .expect("output data column");
+    assert_eq!(
+        input_corrected.get(1).expect("input selected row"),
+        output_data.get(0).expect("output selected row")
+    );
 }
 
 #[test]

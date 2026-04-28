@@ -222,6 +222,9 @@ pub struct ExportCorrectedDataTaskRequest {
     pub input_ms: PathBuf,
     /// Output MeasurementSet root path.
     pub output_ms: PathBuf,
+    /// Structured MS selection controls.
+    #[serde(default)]
+    pub selection: MsSelectionSpec,
 }
 
 /// Request for solving antenna gains.
@@ -374,6 +377,7 @@ impl CalibrationTaskRequest {
                 export_corrected_data(&crate::ExportCorrectedDataRequest {
                     input_ms: request.input_ms.clone(),
                     output_ms: request.output_ms.clone(),
+                    selection: selection_from_spec(&request.selection)?,
                 })
                 .map(CalibrationTaskResult::ExportCorrectedData)
                 .map_err(|error| error.to_string())
