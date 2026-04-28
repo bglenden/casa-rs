@@ -95,11 +95,22 @@ Solution SNR/flag comparison:
 | `phase_3.cal` | `706 / 1690` | `672 / 1690` | `5.881750` | `5.970596` |
 | `amp.cal` | `43 / 156` | `43 / 156` | `13.271138` | `18.246287` |
 
-The remaining differences are within the expected tolerance for this
-first-wave native solver: the final restored images agree visually and
-numerically, low-SNR solutions are now represented in the caltable instead of
-being silently treated as valid, and subsequent apply/split/imaging stages
-accept the corrected data.
+The final restored images agree visually and numerically, and subsequent
+apply/split/imaging stages accept the corrected data, but the gain tables are
+not yet strong closeout evidence for calibration-solution parity. A matched
+solution-rank comparison on the final CASA/casa-rs runs shows visibly broad
+tails:
+
+| Table | Metric | Median | 95th percentile | 98th percentile | 99th percentile | Max |
+|---|---|---:|---:|---:|---:|---:|
+| `phase.cal` | abs phase diff rad | `0.0121` | `0.0735` | `0.0840` | `0.0991` | `0.1715` |
+| `phase_2.cal` | abs phase diff rad | `0.0124` | `0.1054` | `0.1553` | `0.1810` | `0.4423` |
+| `phase_3.cal` | abs phase diff rad | `0.0246` | `0.1612` | `0.2388` | `0.2974` | `0.5847` |
+| `amp.cal` | fractional amplitude diff | `0.0196` | `0.0731` | `0.1031` | `0.1309` | `0.2581` |
+
+The prior RMS-only summary understated the visible spread. Treat this as an
+open #118 calibration-solver parity gap until the CASA and casa-rs gain
+solutions themselves are tighter, not merely the final restored images.
 
 ## Timing Evidence
 
