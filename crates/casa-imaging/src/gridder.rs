@@ -289,9 +289,7 @@ impl StandardGridder {
                 let grid_x = self.image_blc[0] + x;
                 let grid_y = self.image_blc[1] + y;
                 let correction = self.correction_x[grid_x] * self.correction_y[grid_y];
-                if correction > 1.0e-6 {
-                    apodized[(grid_x, grid_y)] = model[(x, y)] / correction;
-                }
+                apodized[(grid_x, grid_y)] = model[(x, y)] * correction;
             }
         }
         apodized
@@ -1614,7 +1612,7 @@ mod tests {
     }
 
     #[test]
-    fn apodize_model_inverts_corrected_image_from_grid() {
+    fn apodize_model_applies_casa_degrid_correction() {
         let geometry = ImageGeometry {
             image_shape: [32, 32],
             cell_size_rad: [8.0 / 206_264.806_247, 8.0 / 206_264.806_247],
@@ -1626,12 +1624,18 @@ mod tests {
         model[(25, 7)] = 0.5;
 
         let apodized = gridder.apodize_model(&model);
-        let restored = gridder.corrected_image_from_grid(&apodized);
-        for (&expected, &actual) in model.iter().zip(restored.iter()) {
-            assert!(
-                (expected - actual).abs() < 1.0e-6,
-                "model correction round-trip mismatch: expected={expected} actual={actual}"
-            );
+        for x in 0..geometry.nx() {
+            for y in 0..geometry.ny() {
+                let grid_x = gridder.image_blc[0] + x;
+                let grid_y = gridder.image_blc[1] + y;
+                let correction = gridder.correction_x[grid_x] * gridder.correction_y[grid_y];
+                let expected = model[(x, y)] * correction;
+                let actual = apodized[(grid_x, grid_y)].re;
+                assert!(
+                    (expected - actual).abs() < 1.0e-6,
+                    "model degrid correction mismatch at ({x}, {y}): expected={expected} actual={actual}"
+                );
+            }
         }
     }
 

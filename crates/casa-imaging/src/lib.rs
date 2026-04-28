@@ -3237,10 +3237,7 @@ fn compute_residual(
         gridder,
         model,
         psf_state,
-        matches!(
-            request.deconvolver,
-            Deconvolver::Hogbom | Deconvolver::Clark
-        ),
+        false,
         stage_timings,
     )
 }
@@ -3332,6 +3329,8 @@ fn compute_residual_standard_internal(
     capture_samples: bool,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<ResidualRefreshTraceInternal, ImagingError> {
+    let trace_timing = env::var_os("CASA_RS_TRACE_RESIDUAL_TIMING").is_some();
+    let total_started = trace_timing.then(Instant::now);
     let [nx, ny] = gridder.grid_shape();
     let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
     let mut timings = ResidualComputationTimings::default();
@@ -3340,11 +3339,14 @@ fn compute_residual_standard_internal(
     } else {
         Vec::new()
     };
+    let model_nonzero_components = model.iter().filter(|&&value| value.abs() > 0.0).count();
+    let direct_setup_started = trace_timing.then(Instant::now);
     let direct_pixels = use_direct_point_predict.then(|| build_direct_pixel_coordinates(geometry));
     let direct_components = direct_pixels
         .as_ref()
         .map(|pixels| build_direct_components(model, pixels, geometry.image_shape[1]));
-    let model_grid = if !use_direct_point_predict && model.iter().any(|value| value.abs() > 0.0) {
+    let direct_setup_elapsed = direct_setup_started.map(|started| started.elapsed());
+    let model_grid = if !use_direct_point_predict && model_nonzero_components > 0 {
         let model_fft_started = Instant::now();
         let transformed = centered_fft2(&gridder.apodize_model(model));
         timings.model_fft = model_fft_started.elapsed();
@@ -3354,21 +3356,28 @@ fn compute_residual_standard_internal(
     };
 
     let degrid_grid_started = Instant::now();
+    let mut valid_samples = 0usize;
+    let mut planned_samples = 0usize;
+    let mut gridded_residual_samples = 0usize;
     for (batch_index, batch) in batches.iter().enumerate() {
         for index in 0..batch.len() {
             let weight = batch.weight[index];
             let observed_visibility = batch.visibility[index];
             let gridable = batch.gridable[index];
-            let planned_sample = if gridable
+            let valid_sample = gridable
                 && weight.is_finite()
                 && weight > 0.0
                 && observed_visibility.re.is_finite()
-                && observed_visibility.im.is_finite()
-            {
+                && observed_visibility.im.is_finite();
+            let planned_sample = if valid_sample {
+                valid_samples += 1;
                 gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
             } else {
                 None
             };
+            if planned_sample.is_some() {
+                planned_samples += 1;
+            }
             let predicted_visibility = if let Some(plan) = planned_sample.as_ref() {
                 if use_direct_point_predict {
                     direct_components.as_ref().map_or_else(
@@ -3415,6 +3424,7 @@ fn compute_residual_standard_internal(
             if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
                 continue;
             }
+            gridded_residual_samples += 1;
             let residual_weight = f64::from(weight * sumwt_factor);
             let residual = Complex64::new(
                 f64::from(residual_visibility.re) * residual_weight,
@@ -3436,6 +3446,31 @@ fn compute_residual_standard_internal(
     stage_timings.residual_degrid_grid += timings.degrid_grid;
     stage_timings.residual_fft += timings.fft;
     stage_timings.residual_normalize += timings.normalize;
+    if trace_timing {
+        eprintln!(
+            "CASA_RS_TRACE_RESIDUAL_TIMING residual_refresh mode={} batches={} input_samples={} valid_samples={} planned_samples={} gridded_residual_samples={} model_nonzero={} direct_components={} direct_setup_ms={:.3} model_fft_ms={:.3} degrid_grid_ms={:.3} residual_fft_ms={:.3} normalize_ms={:.3} total_ms={:.3}",
+            if use_direct_point_predict {
+                "direct"
+            } else {
+                "fft_grid"
+            },
+            batches.len(),
+            batches.iter().map(VisibilityBatch::len).sum::<usize>(),
+            valid_samples,
+            planned_samples,
+            gridded_residual_samples,
+            model_nonzero_components,
+            direct_components.as_ref().map_or(0, Vec::len),
+            direct_setup_elapsed.unwrap_or_default().as_secs_f64() * 1000.0,
+            timings.model_fft.as_secs_f64() * 1000.0,
+            timings.degrid_grid.as_secs_f64() * 1000.0,
+            timings.fft.as_secs_f64() * 1000.0,
+            timings.normalize.as_secs_f64() * 1000.0,
+            total_started
+                .map(|started| started.elapsed().as_secs_f64() * 1000.0)
+                .unwrap_or_default()
+        );
+    }
     Ok(ResidualRefreshTraceInternal {
         samples,
         residual_image: image,

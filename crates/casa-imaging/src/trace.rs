@@ -337,10 +337,7 @@ pub fn trace_residual_refresh(
         &gridder,
         model,
         &psf_state,
-        matches!(
-            request.deconvolver,
-            Deconvolver::Hogbom | Deconvolver::Clark | Deconvolver::Multiscale
-        ),
+        false,
         &mut stage_timings,
     )?;
     Ok(public_residual_refresh_diagnostics(trace))

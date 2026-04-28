@@ -4211,7 +4211,7 @@ impl PreparedSelection {
             mfs_imaging_frequency_scale(
                 mfs_freq_ref,
                 reference_frequency_hz,
-                &selected_row,
+                selected_row,
                 derived_engine,
             )?
         } else {
@@ -7763,12 +7763,14 @@ mod tests {
                 .filter(|sample| sample.batch_index == batch_index)
             {
                 let sumwt_factor = batch.sumwt_factor[sample.sample_index];
-                if !sample.gridable
-                    || !(sample.weight.is_finite() && sample.weight > 0.0)
-                    || !(sumwt_factor.is_finite() && sumwt_factor > 0.0)
-                    || !sample.residual_visibility.re.is_finite()
-                    || !sample.residual_visibility.im.is_finite()
-                {
+                let usable = sample.gridable
+                    && sample.weight.is_finite()
+                    && sample.weight > 0.0
+                    && sumwt_factor.is_finite()
+                    && sumwt_factor > 0.0
+                    && sample.residual_visibility.re.is_finite()
+                    && sample.residual_visibility.im.is_finite();
+                if !usable {
                     continue;
                 }
                 let residual_weight = f64::from(sample.weight) * f64::from(sumwt_factor);
@@ -7789,12 +7791,14 @@ mod tests {
             for sample in trace.samples.iter().take(prefix_len) {
                 let batch = &request.visibility_batches[sample.batch_index];
                 let sumwt_factor = batch.sumwt_factor[sample.sample_index];
-                if !sample.gridable
-                    || !(sample.weight.is_finite() && sample.weight > 0.0)
-                    || !(sumwt_factor.is_finite() && sumwt_factor > 0.0)
-                    || !sample.residual_visibility.re.is_finite()
-                    || !sample.residual_visibility.im.is_finite()
-                {
+                let usable = sample.gridable
+                    && sample.weight.is_finite()
+                    && sample.weight > 0.0
+                    && sumwt_factor.is_finite()
+                    && sumwt_factor > 0.0
+                    && sample.residual_visibility.re.is_finite()
+                    && sample.residual_visibility.im.is_finite();
+                if !usable {
                     continue;
                 }
                 let residual_weight = f64::from(sample.weight) * f64::from(sumwt_factor);

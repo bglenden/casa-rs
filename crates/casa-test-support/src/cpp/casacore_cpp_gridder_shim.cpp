@@ -311,7 +311,7 @@ extern "C" int cpp_convolve_gridder_predict_visibility_2d(
                     continue;
                 }
                 model_grid(casacore::IPosition(2, grid_x, grid_y)) = casacore::Complex(
-                    model_image_out[x * image_ny + y] * correction_value,
+                    model_image_out[x * image_ny + y] / correction_value,
                     0.0f
                 );
             }
@@ -395,7 +395,7 @@ extern "C" int cpp_convolve_gridder_make_model_residual_image_2d(
                     continue;
                 }
                 model_grid(casacore::IPosition(2, grid_x, grid_y)) = casacore::Complex(
-                    model_image_out[x * image_ny + y] * correction_value,
+                    model_image_out[x * image_ny + y] / correction_value,
                     0.0f
                 );
             }

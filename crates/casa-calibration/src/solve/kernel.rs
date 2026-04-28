@@ -191,7 +191,7 @@ pub(crate) fn solve_graph(
 
     if matches!(solve_mode, GainSolveMode::AmplitudePhase) {
         let amplitudes = solve_log_amplitudes(graph, weights, &antenna_ids, &reachable);
-        for antenna_id in antenna_ids.iter().copied() {
+        for &antenna_id in &antenna_ids {
             if let (Some(gain), Some(amplitude)) =
                 (gains.get_mut(&antenna_id), amplitudes.get(&antenna_id))
             {
