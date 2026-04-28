@@ -16,7 +16,8 @@ use crate::{
     ApplyCalibrationTableSpec, ApplyExecutionReport, ApplyInterpolationMode, ApplyMode, ApplyPlan,
     BandpassSolveCombine, BandpassSolveReport, BandpassType, CalibrationProtocolInfo,
     CalibrationStatsAxis, CalibrationStatsReport, CalibrationTableSummary, CalibrationTaskRequest,
-    CalibrationTaskResult, CalibrationTaskSchemaBundle, ExecuteApplyTaskRequest,
+    CalibrationTaskResult, CalibrationTaskSchemaBundle, ContinuumSubtractionDataColumn,
+    ContinuumSubtractionReport, ContinuumSubtractionTaskRequest, ExecuteApplyTaskRequest,
     ExportCorrectedDataReport, ExportCorrectedDataTaskRequest, FluxScaleReport, FluxScaleRequest,
     GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
     GainSolveReport, GainType, PlanApplyTaskRequest, RefAntSelector, SolveBandpassTaskRequest,
@@ -110,6 +111,19 @@ struct ExportCorrectedDataOptions {
 }
 
 #[derive(Debug)]
+struct ContinuumSubtractionOptions {
+    input_ms: PathBuf,
+    output_ms: PathBuf,
+    fit_spw: String,
+    fit_order: usize,
+    data_column: ContinuumSubtractionDataColumn,
+    selection: SelectionOptions,
+    format: OutputFormat,
+    output: Option<PathBuf>,
+    overwrite: bool,
+}
+
+#[derive(Debug)]
 struct SolveBandpassOptions {
     measurement_set: PathBuf,
     output_table: PathBuf,
@@ -148,6 +162,7 @@ enum Command {
     PlanApply(ApplyPlanOptions),
     Stats(StatsOptions),
     ExportCorrectedData(ExportCorrectedDataOptions),
+    ContinuumSubtract(ContinuumSubtractionOptions),
     SolveGain(SolveGainOptions),
     SolveBandpass(SolveBandpassOptions),
     FluxScale(FluxScaleOptions),
@@ -161,6 +176,7 @@ impl Command {
             Self::PlanApply(options) => options.format,
             Self::Stats(options) => options.format,
             Self::ExportCorrectedData(options) => options.format,
+            Self::ContinuumSubtract(options) => options.format,
             Self::SolveGain(options) => options.format,
             Self::SolveBandpass(options) => options.format,
             Self::FluxScale(options) => options.format,
@@ -174,6 +190,7 @@ impl Command {
             Self::PlanApply(options) => options.output.as_deref(),
             Self::Stats(options) => options.output.as_deref(),
             Self::ExportCorrectedData(options) => options.output.as_deref(),
+            Self::ContinuumSubtract(options) => options.output.as_deref(),
             Self::SolveGain(options) => options.output.as_deref(),
             Self::SolveBandpass(options) => options.output.as_deref(),
             Self::FluxScale(options) => options.output.as_deref(),
@@ -187,6 +204,7 @@ impl Command {
             Self::PlanApply(options) => options.overwrite,
             Self::Stats(options) => options.overwrite,
             Self::ExportCorrectedData(options) => options.overwrite,
+            Self::ContinuumSubtract(options) => options.overwrite,
             Self::SolveGain(options) => options.overwrite,
             Self::SolveBandpass(options) => options.overwrite,
             Self::FluxScale(options) => options.overwrite,
@@ -221,6 +239,16 @@ impl Command {
                 CalibrationTaskRequest::ExportCorrectedData(ExportCorrectedDataTaskRequest {
                     input_ms: options.input_ms,
                     output_ms: options.output_ms,
+                    selection: options.selection,
+                })
+            }
+            Self::ContinuumSubtract(options) => {
+                CalibrationTaskRequest::ContinuumSubtract(ContinuumSubtractionTaskRequest {
+                    input_ms: options.input_ms,
+                    output_ms: options.output_ms,
+                    fit_spw: options.fit_spw,
+                    fit_order: options.fit_order,
+                    data_column: options.data_column,
                     selection: options.selection,
                 })
             }
@@ -400,6 +428,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                     "summary",
                     "stats",
                     "export_corrected_data",
+                    "continuum_subtract",
                     "solve_gain",
                     "solve_bandpass",
                     "fluxscale",
@@ -432,7 +461,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 value_kind: UiValueKind::Path,
                 default: None,
                 choices: &[],
-                help: "Output MeasurementSet path for corrected-data export",
+                help: "Output MeasurementSet path for corrected-data export or continuum subtraction",
                 group: "Input",
                 required: false,
                 advanced: false,
@@ -624,6 +653,34 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 choices: &["amp", "phase", "real", "imag"],
                 help: "Complex axis to summarize in stats mode",
                 group: "Inspect",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "fit_spw",
+                label: "Line-free Channels",
+                order: 14,
+                flags: &["--fitspw"],
+                metavar: "SPW:CHANNELS",
+                value_kind: UiValueKind::String,
+                default: None,
+                choices: &[],
+                help: "CASA-style line-free channel selector for uvcontsub, e.g. 0:0~500;900~1919",
+                group: "Continuum Subtraction",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "fit_order",
+                label: "Fit Order",
+                order: 15,
+                flags: &["--fitorder"],
+                metavar: "ORDER",
+                value_kind: UiValueKind::String,
+                default: Some("0"),
+                choices: &[],
+                help: "Polynomial order for continuum fitting",
+                group: "Continuum Subtraction",
                 required: false,
                 advanced: false,
             }),
@@ -1103,6 +1160,9 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         Some("plan-apply") => parse_apply_plan_args(&args[1..], managed_output),
         Some("stats") => parse_stats_args(&args[1..], managed_output),
         Some("export-corrected") => parse_export_corrected_data_args(&args[1..], managed_output),
+        Some("uvcontsub") | Some("continuum-subtract") => {
+            parse_continuum_subtraction_args(&args[1..], managed_output)
+        }
         Some("solve-gain") => parse_solve_gain_args(&args[1..], managed_output),
         Some("solve-bandpass") => parse_solve_bandpass_args(&args[1..], managed_output),
         Some("fluxscale") => parse_fluxscale_args(&args[1..], managed_output),
@@ -1116,13 +1176,16 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 Some("export_corrected_data") => {
                     parse_export_corrected_data_args(&remaining_args, managed_output)
                 }
+                Some("continuum_subtract") | Some("uvcontsub") => {
+                    parse_continuum_subtraction_args(&remaining_args, managed_output)
+                }
                 Some("solve_gain") => parse_solve_gain_args(&remaining_args, managed_output),
                 Some("solve_bandpass") => {
                     parse_solve_bandpass_args(&remaining_args, managed_output)
                 }
                 Some("fluxscale") => parse_fluxscale_args(&remaining_args, managed_output),
                 Some(other) => Err(format!(
-                    "unsupported --mode {other:?}; expected apply, summary, stats, export_corrected_data, solve_gain, solve_bandpass, or fluxscale"
+                    "unsupported --mode {other:?}; expected apply, summary, stats, export_corrected_data, continuum_subtract, solve_gain, solve_bandpass, or fluxscale"
                 )),
                 None => parse_apply_args(&args, managed_output),
             }
@@ -1653,6 +1716,134 @@ fn parse_export_corrected_data_args(
     })))
 }
 
+fn parse_continuum_subtraction_args(
+    args: &[OsString],
+    managed_output: bool,
+) -> Result<CliAction, String> {
+    let mut input_ms = None;
+    let mut output_ms = None;
+    let mut fit_spw = None;
+    let mut fit_order = 0usize;
+    let mut data_column = ContinuumSubtractionDataColumn::default();
+    let mut format = OutputFormat::Text;
+    let mut output = None;
+    let mut overwrite = false;
+    let mut selection = SelectionOptions {
+        selectdata: true,
+        ..SelectionOptions::default()
+    };
+
+    let mut index = 0;
+    while index < args.len() {
+        let raw = args[index]
+            .to_str()
+            .ok_or_else(|| "arguments must be valid UTF-8".to_string())?;
+        match raw {
+            "--ms" => {
+                index += 1;
+                input_ms = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| "missing value for --ms".to_string())?,
+                ));
+            }
+            "--out" | "--output-ms" => {
+                index += 1;
+                output_ms = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| format!("missing value for {raw}"))?,
+                ));
+            }
+            "--fitspw" => {
+                index += 1;
+                fit_spw = Some(take_string_value(index, args, "--fitspw")?);
+            }
+            "--fitorder" => {
+                index += 1;
+                let value = take_string_value(index, args, "--fitorder")?;
+                fit_order = value
+                    .parse::<usize>()
+                    .map_err(|error| format!("failed to parse --fitorder {value:?}: {error}"))?;
+            }
+            "--datacolumn" => {
+                index += 1;
+                data_column =
+                    parse_continuum_data_column(&take_string_value(index, args, "--datacolumn")?)?;
+            }
+            "--format" => {
+                index += 1;
+                format = parse_output_format(raw, &take_string_value(index, args, raw)?)?;
+            }
+            "-o" | "--output" => {
+                index += 1;
+                output = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| "missing value for --output".to_string())?,
+                ));
+            }
+            "--overwrite" => overwrite = true,
+            "--selectdata" => selection.selectdata = true,
+            "--no-selectdata" => selection.selectdata = false,
+            "--field" => {
+                index += 1;
+                selection.field = Some(take_string_value(index, args, "--field")?);
+            }
+            "--spw" => {
+                index += 1;
+                selection.spw = Some(take_string_value(index, args, "--spw")?);
+            }
+            "--antenna" => {
+                index += 1;
+                selection.antenna = Some(take_string_value(index, args, "--antenna")?);
+            }
+            "--scan" => {
+                index += 1;
+                selection.scan = Some(take_string_value(index, args, "--scan")?);
+            }
+            "--observation" => {
+                index += 1;
+                selection.observation = Some(take_string_value(index, args, "--observation")?);
+            }
+            "--array" => {
+                index += 1;
+                selection.array = Some(take_string_value(index, args, "--array")?);
+            }
+            "--timerange" => {
+                index += 1;
+                selection.timerange = Some(take_string_value(index, args, "--timerange")?);
+            }
+            "--msselect" => {
+                index += 1;
+                selection.msselect = Some(take_string_value(index, args, "--msselect")?);
+            }
+            _ if raw.starts_with('-') => return Err(format!("unsupported argument {raw:?}")),
+            _ => return Err(format!("unexpected positional argument {raw:?}")),
+        }
+        index += 1;
+    }
+
+    let input_ms =
+        input_ms.ok_or_else(|| "uvcontsub requires --ms <measurement-set>".to_string())?;
+    let output_ms =
+        output_ms.ok_or_else(|| "uvcontsub requires --out <output-measurement-set>".to_string())?;
+    let fit_spw =
+        fit_spw.ok_or_else(|| "uvcontsub requires --fitspw <spw:channels>".to_string())?;
+
+    Ok(CliAction::Run(Box::new(RunRequest {
+        managed_output,
+        command: Command::ContinuumSubtract(ContinuumSubtractionOptions {
+            input_ms,
+            output_ms,
+            fit_spw,
+            fit_order,
+            data_column,
+            selection,
+            format,
+            output,
+            overwrite,
+        }),
+    })))
+}
+
 fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliAction, String> {
     let mut measurement_set = None;
     let mut output_table = None;
@@ -2164,6 +2355,16 @@ fn parse_bool_literal(value: &str) -> Result<bool, String> {
     }
 }
 
+fn parse_continuum_data_column(value: &str) -> Result<ContinuumSubtractionDataColumn, String> {
+    match value.to_ascii_uppercase().as_str() {
+        "DATA" => Ok(ContinuumSubtractionDataColumn::Data),
+        "CORRECTED_DATA" | "CORRECTED" => Ok(ContinuumSubtractionDataColumn::CorrectedData),
+        other => Err(format!(
+            "unsupported --datacolumn {other:?}; expected DATA or CORRECTED_DATA"
+        )),
+    }
+}
+
 fn parse_apply_mode(value: &str) -> Result<ApplyMode, String> {
     match value {
         "calflag" => Ok(ApplyMode::CalFlag),
@@ -2603,8 +2804,9 @@ fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
 
 fn render_help(schema: &UiCommandSchema) -> String {
     format!(
-        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical calibration task JSON schema\n  --protocol-info          Emit the calibration task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON CalibrationTaskRequest from SOURCE or - for stdin\n\nDeveloper subcommands:\n  {} summary [SUMMARY OPTIONS] <caltable>...\n  {} stats [STATS OPTIONS] <caltable>\n  {} plan-apply --ms <measurement-set> [PLAN OPTIONS] <caltable>...\n  {} solve-gain --ms <measurement-set> --out <caltable> --refant <antenna> [SOLVE OPTIONS]\n  {} solve-bandpass --ms <measurement-set> --out <caltable> --refant <antenna> [BANDPASS OPTIONS]\n  {} fluxscale --in <gain-table> --out <flux-table> --reference FIELD[,FIELD...] [FLUXSCALE OPTIONS]\n",
+        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical calibration task JSON schema\n  --protocol-info          Emit the calibration task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON CalibrationTaskRequest from SOURCE or - for stdin\n\nDeveloper subcommands:\n  {} summary [SUMMARY OPTIONS] <caltable>...\n  {} stats [STATS OPTIONS] <caltable>\n  {} plan-apply --ms <measurement-set> [PLAN OPTIONS] <caltable>...\n  {} uvcontsub --ms <measurement-set> --out <measurement-set> --fitspw <spw:channels> [UVCONTSUB OPTIONS]\n  {} solve-gain --ms <measurement-set> --out <caltable> --refant <antenna> [SOLVE OPTIONS]\n  {} solve-bandpass --ms <measurement-set> --out <caltable> --refant <antenna> [BANDPASS OPTIONS]\n  {} fluxscale --in <gain-table> --out <flux-table> --reference FIELD[,FIELD...] [FLUXSCALE OPTIONS]\n",
         schema.render_help(),
+        schema.invocation_name,
         schema.invocation_name,
         schema.invocation_name,
         schema.invocation_name,
@@ -2942,6 +3144,35 @@ fn render_export_corrected_data_report_text(report: &ExportCorrectedDataReport) 
     out
 }
 
+fn render_continuum_subtraction_report_text(report: &ContinuumSubtractionReport) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "Continuum Subtraction Report: {}",
+        report.output_ms.display()
+    );
+    let _ = writeln!(out, "  input_ms={}", report.input_ms.display());
+    let _ = writeln!(out, "  rows={}", report.row_count);
+    let _ = writeln!(out, "  fitted_rows={}", report.fitted_row_count);
+    let _ = writeln!(out, "  skipped_fits={}", report.skipped_fit_count);
+    let _ = writeln!(out, "  fitspw={}", report.fit_spw);
+    let _ = writeln!(out, "  fitorder={}", report.fit_order);
+    let _ = writeln!(
+        out,
+        "  spectral_window_ids={:?}",
+        report.spectral_window_ids
+    );
+    let _ = writeln!(
+        out,
+        "  subtracted {} -> {}",
+        report.source_column, report.output_column
+    );
+    let _ = writeln!(out, "  elapsed={}", format_duration_ns(report.elapsed_ns));
+    out
+}
+
 fn render_bandpass_solve_report_text(report: &BandpassSolveReport) -> String {
     use std::fmt::Write;
 
@@ -3042,6 +3273,10 @@ fn render_json_task_result(
                 serde_json::to_string_pretty(report)
                     .map_err(|error| format!("serialize corrected-data export report: {error}"))
             }
+            CalibrationTaskResult::ContinuumSubtract(report) => {
+                serde_json::to_string_pretty(report)
+                    .map_err(|error| format!("serialize continuum-subtraction report: {error}"))
+            }
             CalibrationTaskResult::Summary(report) => serde_json::to_string_pretty(report)
                 .map_err(|error| format!("serialize summary report: {error}")),
             CalibrationTaskResult::PlanApply(report) => serde_json::to_string_pretty(report)
@@ -3063,6 +3298,9 @@ fn render_text_task_result(result: &CalibrationTaskResult) -> String {
         CalibrationTaskResult::Apply(report) => render_apply_report_text(report),
         CalibrationTaskResult::ExportCorrectedData(report) => {
             render_export_corrected_data_report_text(report)
+        }
+        CalibrationTaskResult::ContinuumSubtract(report) => {
+            render_continuum_subtraction_report_text(report)
         }
         CalibrationTaskResult::Summary(report) => render_summary_text(report),
         CalibrationTaskResult::PlanApply(report) => render_apply_plan_text(report),
@@ -3815,6 +4053,46 @@ mod tests {
                 assert_eq!(options.selection.spw.as_deref(), Some("0"));
             }
             _ => panic!("expected export-corrected action"),
+        }
+    }
+
+    #[test]
+    fn parse_args_accepts_uvcontsub_command() {
+        let action = parse_args([
+            "uvcontsub".into(),
+            "--ms".into(),
+            "selfcal.ms".into(),
+            "--out".into(),
+            "selfcal.contsub.ms".into(),
+            "--fitspw".into(),
+            "0:0~500;900~1919".into(),
+            "--fitorder".into(),
+            "1".into(),
+            "--datacolumn".into(),
+            "DATA".into(),
+            "--format".into(),
+            "json".into(),
+            "--field".into(),
+            "5".into(),
+        ])
+        .expect("parse succeeds");
+        match action {
+            CliAction::Run(request) => {
+                let Command::ContinuumSubtract(options) = request.command else {
+                    panic!("expected uvcontsub action");
+                };
+                assert_eq!(options.input_ms, PathBuf::from("selfcal.ms"));
+                assert_eq!(options.output_ms, PathBuf::from("selfcal.contsub.ms"));
+                assert_eq!(options.fit_spw, "0:0~500;900~1919");
+                assert_eq!(options.fit_order, 1);
+                assert_eq!(
+                    options.data_column,
+                    crate::ContinuumSubtractionDataColumn::Data
+                );
+                assert_eq!(options.format, OutputFormat::Json);
+                assert_eq!(options.selection.field.as_deref(), Some("5"));
+            }
+            _ => panic!("expected uvcontsub action"),
         }
     }
 

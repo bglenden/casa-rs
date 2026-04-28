@@ -29,6 +29,7 @@ BandpassType: TypeAlias = Literal["b", "bpoly"]
 GainFieldValue: TypeAlias = int | str | Literal["nearest"]
 ReferenceAntenna: TypeAlias = int | str
 StatsAxis: TypeAlias = Literal["amp", "phase", "real", "imag"] | str
+ContinuumDataColumn: TypeAlias = Literal["data", "corrected_data", "corrected"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +227,32 @@ def export_corrected_data(
         request={
             "input_ms": os.fspath(input_ms),
             "output_ms": os.fspath(output_ms),
+            "selection": _selection_request(selection),
+        },
+        binary=binary,
+    )
+
+
+def continuum_subtract(
+    input_ms: StrPath,
+    output_ms: StrPath,
+    *,
+    fit_spw: str,
+    fit_order: int = 0,
+    data_column: ContinuumDataColumn = "corrected_data",
+    selection: Selection | None = None,
+    binary: StrPath | None = None,
+) -> TaskResult:
+    """Create a continuum-subtracted MS for spectral-line imaging."""
+
+    return invoke_calibration_task(
+        kind="continuum_subtract",
+        request={
+            "input_ms": os.fspath(input_ms),
+            "output_ms": os.fspath(output_ms),
+            "fit_spw": fit_spw,
+            "fit_order": int(fit_order),
+            "data_column": _encode_continuum_data_column(data_column),
             "selection": _selection_request(selection),
         },
         binary=binary,
@@ -459,6 +486,15 @@ def _encode_stats_axis(value: StatsAxis) -> Any:
     return {"Column": value.upper()}
 
 
+def _encode_continuum_data_column(value: ContinuumDataColumn) -> str:
+    normalized = str(value).lower()
+    if normalized == "data":
+        return "Data"
+    if normalized in {"corrected", "corrected_data", "corrected-data"}:
+        return "CorrectedData"
+    raise ValueError(f"unsupported continuum data column: {value!r}")
+
+
 def _encode_smodel(value: Sequence[float]) -> list[float]:
     encoded = [float(component) for component in value]
     if len(encoded) != 4:
@@ -514,6 +550,25 @@ _WRAPPER_CONTRACTS: dict[str, dict[str, Any]] = {
         "request_fields": ["input_ms", "output_ms", "selection"],
         "signature": ["input_ms", "output_ms", "selection", "binary"],
         "defaults": {"selection": None, "binary": None},
+    },
+    "continuum_subtract": {
+        "schema": "ContinuumSubtractionTaskRequest",
+        "request_fields": ["input_ms", "output_ms", "fit_spw", "fit_order", "data_column", "selection"],
+        "signature": [
+            "input_ms",
+            "output_ms",
+            "fit_spw",
+            "fit_order",
+            "data_column",
+            "selection",
+            "binary",
+        ],
+        "defaults": {
+            "fit_order": 0,
+            "data_column": "corrected_data",
+            "selection": None,
+            "binary": None,
+        },
     },
     "solve_gain": {
         "schema": "SolveGainTaskRequest",
@@ -645,6 +700,7 @@ __all__ = [
     "ApplyTableSelection",
     "BandpassType",
     "CalibrationTableSpec",
+    "ContinuumDataColumn",
     "GainFieldValue",
     "GainSolveInterval",
     "GainSolveMode",
@@ -659,6 +715,7 @@ __all__ = [
     "TaskResult",
     "configure",
     "execute_apply",
+    "continuum_subtract",
     "export_corrected_data",
     "fluxscale",
     "plan_apply",

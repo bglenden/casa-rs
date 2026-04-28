@@ -24,9 +24,11 @@ mod bandpass;
 mod callib;
 mod cli;
 pub mod constants;
+mod continuum_subtract;
 mod corrected_export;
 mod execute;
 mod fluxscale;
+mod least_squares;
 mod managed_output;
 mod model;
 mod plan;
@@ -42,6 +44,10 @@ pub use bandpass::{
 };
 pub use callib::{CallibError, load_apply_specs_from_callib, save_apply_specs_to_callib};
 pub use cli::{command_schema, run_env};
+pub use continuum_subtract::{
+    ContinuumSubtractionDataColumn, ContinuumSubtractionError, ContinuumSubtractionReport,
+    ContinuumSubtractionRequest, continuum_subtract,
+};
 pub use corrected_export::{
     ExportCorrectedDataError, ExportCorrectedDataReport, ExportCorrectedDataRequest,
     export_corrected_data,
@@ -81,7 +87,7 @@ pub use stats::{
 pub use summary::{CalibrationTableError, summarize_table, summarize_tables};
 pub use task_contract::{
     CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationProtocolInfo,
-    CalibrationTaskRequest, CalibrationTaskSchemaBundle, ExecuteApplyTaskRequest,
-    ExportCorrectedDataTaskRequest, PlanApplyTaskRequest, SolveBandpassTaskRequest,
-    SolveGainTaskRequest, StatsTaskRequest, SummaryTaskRequest,
+    CalibrationTaskRequest, CalibrationTaskSchemaBundle, ContinuumSubtractionTaskRequest,
+    ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest, PlanApplyTaskRequest,
+    SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest, SummaryTaskRequest,
 };

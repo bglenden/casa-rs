@@ -10030,6 +10030,9 @@ impl AppState {
             ManagedCalibrationOutput::ExportCorrectedData(_) => {
                 self.activate_result_tab(ResultTab::Overview);
             }
+            ManagedCalibrationOutput::ContinuumSubtract(_) => {
+                self.activate_result_tab(ResultTab::Overview);
+            }
             ManagedCalibrationOutput::Summary(_) => {
                 self.activate_result_tab(ResultTab::Overview);
             }
@@ -10106,6 +10109,15 @@ impl AppState {
                 vec![
                     format!("output={}", report.output_ms.display()),
                     format!("rows={}", report.row_count),
+                ],
+            ),
+            ManagedCalibrationOutput::ContinuumSubtract(report) => (
+                Some(WorkflowStageId::Apply),
+                "Continuum Subtract".to_string(),
+                vec![
+                    format!("output={}", report.output_ms.display()),
+                    format!("rows={}", report.row_count),
+                    format!("fit_order={}", report.fit_order),
                 ],
             ),
             ManagedCalibrationOutput::Summary(summaries) => (
@@ -12984,6 +12996,7 @@ impl AppState {
             ManagedCalibrationOutput::SolveBandpass(report) => &report.output_table,
             ManagedCalibrationOutput::FluxScale(report) => &report.output_table,
             ManagedCalibrationOutput::Apply(_)
+            | ManagedCalibrationOutput::ContinuumSubtract(_)
             | ManagedCalibrationOutput::ExportCorrectedData(_)
             | ManagedCalibrationOutput::Summary(_)
             | ManagedCalibrationOutput::PlanApply(_)
@@ -13747,6 +13760,19 @@ fn build_calibration_overview_lines(report: &ManagedCalibrationOutput) -> Vec<St
                 report.row_count, report.source_column, report.output_column
             ),
         ],
+        ManagedCalibrationOutput::ContinuumSubtract(report) => vec![
+            "Continuum Subtraction".to_string(),
+            format!("Input MS: {}", report.input_ms.display()),
+            format!("Output MS: {}", report.output_ms.display()),
+            format!(
+                "Rows: {}   Fitted rows: {}   Skipped fits: {}",
+                report.row_count, report.fitted_row_count, report.skipped_fit_count
+            ),
+            format!(
+                "Source: {}   Output: {}   Fit order: {}",
+                report.source_column, report.output_column, report.fit_order
+            ),
+        ],
         ManagedCalibrationOutput::Summary(summaries) => {
             let mut lines = vec![
                 "Calibration Table Summary".to_string(),
@@ -13935,21 +13961,33 @@ fn render_managed_stage_timing_summary(timings: &ManagedImagingStageTimings) -> 
 fn calibrate_argument_applies_to_mode(field_id: &str, mode: &str) -> bool {
     match field_id {
         "mode" | "format" | "output" | "overwrite" => true,
-        "selectdata" => matches!(mode, "apply" | "solve_gain" | "solve_bandpass"),
+        "selectdata" => matches!(
+            mode,
+            "apply" | "continuum_subtract" | "solve_gain" | "solve_bandpass"
+        ),
         "measurement_set" => {
             matches!(
                 mode,
-                "apply" | "export_corrected_data" | "solve_gain" | "solve_bandpass"
+                "apply"
+                    | "export_corrected_data"
+                    | "continuum_subtract"
+                    | "solve_gain"
+                    | "solve_bandpass"
             )
         }
-        "output_measurement_set" => mode == "export_corrected_data",
+        "output_measurement_set" => matches!(mode, "export_corrected_data" | "continuum_subtract"),
         "gaintables" | "callib" | "gainfield" | "interp" | "spwmap" | "parang" | "field"
         | "spw" | "antenna" | "scan" | "observation" | "array" | "timerange" | "msselect" => {
-            matches!(mode, "apply" | "solve_gain" | "solve_bandpass")
+            matches!(
+                mode,
+                "apply" | "continuum_subtract" | "solve_gain" | "solve_bandpass"
+            )
         }
         "apply_mode" | "calwt" => mode == "apply",
         "summary_paths" => mode == "summary",
-        "table_path" | "stats_axis" | "stats_datacolumn" | "use_flags" => mode == "stats",
+        "table_path" | "stats_axis" | "use_flags" => mode == "stats",
+        "fit_spw" | "fit_order" => mode == "continuum_subtract",
+        "stats_datacolumn" => matches!(mode, "stats" | "continuum_subtract"),
         "out_table" | "refant" => matches!(mode, "solve_gain" | "solve_bandpass"),
         "gain_type" | "solve_mode" | "solint" | "gain_combine" | "gain_model_source"
         | "min_snr" => mode == "solve_gain",

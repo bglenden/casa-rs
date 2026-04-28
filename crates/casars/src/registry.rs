@@ -603,6 +603,7 @@ mod tests {
                 "summary",
                 "stats",
                 "export_corrected_data",
+                "continuum_subtract",
                 "solve_gain",
                 "solve_bandpass",
                 "fluxscale",

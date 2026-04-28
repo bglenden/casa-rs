@@ -106,6 +106,24 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert export_request["selection"]["field"] == "5"
     assert export_request["selection"]["spw"] == "0"
 
+    contsub_result = calibrate.continuum_subtract(
+        "selfcal.ms",
+        "selfcal.contsub.ms",
+        fit_spw="0:0~1;3~4",
+        fit_order=1,
+        data_column="data",
+        selection=calibrate.Selection(field="5", spw="0"),
+        binary=binary,
+    )
+    contsub_request = contsub_result["report"]["request"]
+    assert contsub_result["kind"] == "continuum_subtract"
+    assert contsub_request["input_ms"] == "selfcal.ms"
+    assert contsub_request["output_ms"] == "selfcal.contsub.ms"
+    assert contsub_request["fit_spw"] == "0:0~1;3~4"
+    assert contsub_request["fit_order"] == 1
+    assert contsub_request["data_column"] == "Data"
+    assert contsub_request["selection"]["field"] == "5"
+
     result = calibrate.solve_gain(
         "dataset.ms",
         "gain.gcal",

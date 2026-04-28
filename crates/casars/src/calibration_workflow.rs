@@ -308,6 +308,7 @@ pub(crate) fn workflow_stage_from_report(
     match report {
         ManagedCalibrationOutput::Apply(_) => Some(WorkflowStageId::Apply),
         ManagedCalibrationOutput::ExportCorrectedData(_) => Some(WorkflowStageId::Apply),
+        ManagedCalibrationOutput::ContinuumSubtract(_) => Some(WorkflowStageId::Apply),
         ManagedCalibrationOutput::Summary(_) => Some(WorkflowStageId::InspectDataset),
         ManagedCalibrationOutput::Stats(_) => Some(WorkflowStageId::InspectResults),
         ManagedCalibrationOutput::SolveGain(_) => Some(WorkflowStageId::SolveGain),
@@ -354,6 +355,12 @@ pub(crate) fn workflow_product_metadata_from_report(
             WorkflowStageId::Apply,
             "CorrectedData".to_string(),
             "exported corrected measurement set".to_string(),
+        )),
+        ManagedCalibrationOutput::ContinuumSubtract(report) => Some((
+            report.output_ms.clone(),
+            WorkflowStageId::Apply,
+            "ContinuumSubtractedData".to_string(),
+            "continuum-subtracted measurement set".to_string(),
         )),
         ManagedCalibrationOutput::Summary(_)
         | ManagedCalibrationOutput::PlanApply(_)

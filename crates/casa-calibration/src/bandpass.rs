@@ -39,6 +39,7 @@ use crate::constants::{
     TABLE_INFO_TYPE,
 };
 use crate::execute::{ApplyExecutionError, EvaluatedApplyRow, evaluate_apply_rows};
+use crate::least_squares::solve_weighted_least_squares;
 use crate::plan::{ApplyPlanError, ApplyPlanRequest, plan_apply};
 use crate::solve::grouping::{
     SelectedSolveRow, collect_selected_rows, correlation_types_for_ddid, resolve_refant,
@@ -1472,15 +1473,9 @@ fn fit_legacy_bpoly_coefficients(
     if coefficient_count == 0 {
         return Ok(Vec::new());
     }
-    if coefficient_count == 1 {
-        return Ok(vec![
-            2.0 * values.iter().copied().sum::<f64>() / values.len().max(1) as f64,
-        ]);
-    }
 
-    let mut ata = vec![vec![0.0_f64; coefficient_count]; coefficient_count];
-    let mut aty = vec![0.0_f64; coefficient_count];
     let mut basis = vec![0.0_f64; coefficient_count];
+    let mut rows = Vec::with_capacity(channel_frequencies_hz.len());
     for (frequency_hz, value) in channel_frequencies_hz
         .iter()
         .copied()
@@ -1492,18 +1487,15 @@ fn fit_legacy_bpoly_coefficients(
             frequency_hz,
             &mut basis,
         );
-        for i in 0..coefficient_count {
-            aty[i] += basis[i] * value;
-            for j in 0..coefficient_count {
-                ata[i][j] += basis[i] * basis[j];
-            }
-        }
+        rows.push((basis.clone(), value, 1.0));
     }
-    solve_linear_system(&mut ata, &mut aty).ok_or_else(|| BandpassSolveError::FitPolynomial {
-        antenna_id: row.antenna_id,
-        field_id: row.field_id,
-        spw_id: row.spw_id,
-        reason: "normal equations were singular".to_string(),
+    solve_weighted_least_squares(&rows, coefficient_count).ok_or_else(|| {
+        BandpassSolveError::FitPolynomial {
+            antenna_id: row.antenna_id,
+            field_id: row.field_id,
+            spw_id: row.spw_id,
+            reason: "least-squares system was singular".to_string(),
+        }
     })
 }
 
@@ -1546,46 +1538,6 @@ fn unwrap_phases(phases: &[f64]) -> Vec<f64> {
         previous = Some(phase);
     }
     unwrapped
-}
-
-fn solve_linear_system(matrix: &mut [Vec<f64>], rhs: &mut [f64]) -> Option<Vec<f64>> {
-    let size = matrix.len();
-    for pivot in 0..size {
-        let (pivot_row, pivot_value) = (pivot..size)
-            .map(|row| (row, matrix[row][pivot].abs()))
-            .max_by(|lhs, rhs| {
-                lhs.1
-                    .partial_cmp(&rhs.1)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })?;
-        if pivot_value <= f64::EPSILON {
-            return None;
-        }
-        if pivot_row != pivot {
-            matrix.swap(pivot, pivot_row);
-            rhs.swap(pivot, pivot_row);
-        }
-        let diagonal = matrix[pivot][pivot];
-        for value in matrix[pivot].iter_mut().skip(pivot) {
-            *value /= diagonal;
-        }
-        rhs[pivot] /= diagonal;
-        for row in 0..size {
-            if row == pivot {
-                continue;
-            }
-            let factor = matrix[row][pivot];
-            if factor.abs() <= f64::EPSILON {
-                continue;
-            }
-            let pivot_tail = matrix[pivot][pivot..size].to_vec();
-            for (row_value, pivot_value) in matrix[row][pivot..size].iter_mut().zip(pivot_tail) {
-                *row_value -= factor * pivot_value;
-            }
-            rhs[row] -= factor * rhs[pivot];
-        }
-    }
-    Some(rhs.to_vec())
 }
 
 fn write_bpoly_cal_desc_subtable(

@@ -1223,15 +1223,16 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
 
     let stage_start = Instant::now();
-    let coords = build_coordinate_system(
-        config.imsize,
-        phase_center.angles_rad,
-        config.cell_arcsec,
-        prepared_freq_ref,
-        phase_center.reference,
-        run_result.plane_stokes(),
-        run_result.channel_frequencies_hz(),
-    );
+    let coords = build_coordinate_system(CoordinateSystemBuild {
+        imsize: config.imsize,
+        phase_center: phase_center.angles_rad,
+        cell_arcsec: config.cell_arcsec,
+        freq_ref: prepared_freq_ref,
+        direction_ref: phase_center.reference,
+        plane_stokes: run_result.plane_stokes(),
+        channel_frequencies_hz: run_result.channel_frequencies_hz(),
+        requested_rest_frequency_hz: config.cube_axis.rest_frequency_hz,
+    });
     let build_coordinate_system = stage_start.elapsed();
     maybe_log_frontend_progress(
         "build_coordinate_system",
@@ -5169,7 +5170,7 @@ fn write_products(
             None,
             beam_set_from_channel_beams(&result.beams, RestoringBeamMode::PerPlane)?,
             beam_set_from_channel_beams(&result.beams, RestoringBeamMode::PerPlane)?,
-            beam_set_from_channel_beams(&result.restored_beams, RestoringBeamMode::PerPlane)?,
+            beam_set_from_channel_beams(&result.restored_beams, config.restoring_beam_mode)?,
             result.compatibility.psf_units.as_str(),
             result.compatibility.residual_units.as_str(),
             result.compatibility.model_units.as_str(),
@@ -5547,15 +5548,28 @@ fn write_preview_png(path: &Path, data: &Array4<f32>) -> Result<(), String> {
         .map_err(|error| format!("write preview {}: {error}", path.display()))
 }
 
-fn build_coordinate_system(
+struct CoordinateSystemBuild<'a> {
     imsize: usize,
     phase_center: [f64; 2],
     cell_arcsec: f64,
     freq_ref: FrequencyRef,
     direction_ref: DirectionRef,
     plane_stokes: PlaneStokes,
-    channel_frequencies_hz: &[f64],
-) -> CoordinateSystem {
+    channel_frequencies_hz: &'a [f64],
+    requested_rest_frequency_hz: Option<f64>,
+}
+
+fn build_coordinate_system(config: CoordinateSystemBuild<'_>) -> CoordinateSystem {
+    let CoordinateSystemBuild {
+        imsize,
+        phase_center,
+        cell_arcsec,
+        freq_ref,
+        direction_ref,
+        plane_stokes,
+        channel_frequencies_hz,
+        requested_rest_frequency_hz,
+    } = config;
     let cell_rad = cell_arcsec * arcsec_to_rad();
     let mut coords = CoordinateSystem::new();
     coords.add_coordinate(Box::new(DirectionCoordinate::new(
@@ -5571,6 +5585,7 @@ fn build_coordinate_system(
     coords.add_coordinate(Box::new(build_spectral_coordinate(
         freq_ref,
         channel_frequencies_hz,
+        requested_rest_frequency_hz,
     )));
     coords
 }
@@ -5578,15 +5593,19 @@ fn build_coordinate_system(
 fn build_spectral_coordinate(
     freq_ref: FrequencyRef,
     channel_frequencies_hz: &[f64],
+    requested_rest_frequency_hz: Option<f64>,
 ) -> SpectralCoordinate {
-    let rest_frequency = if channel_frequencies_hz.is_empty() {
-        0.0
-    } else {
-        0.5 * (channel_frequencies_hz[0] + channel_frequencies_hz[channel_frequencies_hz.len() - 1])
-    };
+    let rest_frequency = requested_rest_frequency_hz.unwrap_or_else(|| {
+        if channel_frequencies_hz.is_empty() {
+            0.0
+        } else {
+            0.5 * (channel_frequencies_hz[0]
+                + channel_frequencies_hz[channel_frequencies_hz.len() - 1])
+        }
+    });
     match channel_frequencies_hz {
         [] => SpectralCoordinate::new(freq_ref, 0.0, 1.0, 0.0, rest_frequency),
-        [single] => SpectralCoordinate::new(freq_ref, *single, 1.0, 0.0, *single),
+        [single] => SpectralCoordinate::new(freq_ref, *single, 1.0, 0.0, rest_frequency),
         frequencies => {
             let delta = frequencies[1] - frequencies[0];
             let is_linear = frequencies.windows(2).all(|window| {
@@ -7210,6 +7229,17 @@ mod tests {
         let padded = (padding_factor * image_len as f64 - 0.5).floor() as usize;
         let padded = padded.max(image_len);
         if padded % 2 == 0 { padded } else { padded + 1 }
+    }
+
+    #[test]
+    fn cube_spectral_coordinate_preserves_requested_rest_frequency() {
+        let coord = build_spectral_coordinate(
+            FrequencyRef::LSRK,
+            &[372_672_490_000.0, 372_671_868_449.0],
+            Some(372_672_490_000.0),
+        );
+
+        assert!((coord.rest_frequency() - 372_672_490_000.0).abs() < 1.0);
     }
 
     #[test]

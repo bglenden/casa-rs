@@ -17,8 +17,9 @@ use crate::managed_output::CalibrationTaskResult;
 use crate::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
     BandpassSolveRequest, BandpassType, CalibrationStatsAxis, CalibrationStatsRequest,
-    FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveRequest, GainType, RefAntSelector, calibration_stats, command_schema,
+    ContinuumSubtractionDataColumn, ContinuumSubtractionRequest, FluxScaleRequest,
+    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
+    GainType, RefAntSelector, calibration_stats, command_schema, continuum_subtract,
     execute_apply_from_path, export_corrected_data, fluxscale, plan_apply_from_path,
     solve_bandpass_from_path, solve_gain_from_path, summarize_tables,
 };
@@ -146,6 +147,11 @@ fn calibration_task_operations() -> Vec<TaskOperationDescriptor> {
             result_kind: Some("export_corrected_data".to_string()),
         },
         TaskOperationDescriptor {
+            name: "continuum_subtract".to_string(),
+            request_kind: "continuum_subtract".to_string(),
+            result_kind: Some("continuum_subtract".to_string()),
+        },
+        TaskOperationDescriptor {
             name: "solve_gain".to_string(),
             request_kind: "solve_gain".to_string(),
             result_kind: Some("solve_gain".to_string()),
@@ -222,6 +228,26 @@ pub struct ExportCorrectedDataTaskRequest {
     pub input_ms: PathBuf,
     /// Output MeasurementSet root path.
     pub output_ms: PathBuf,
+    /// Structured MS selection controls.
+    #[serde(default)]
+    pub selection: MsSelectionSpec,
+}
+
+/// Request for UV continuum subtraction into an imaging-ready MS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ContinuumSubtractionTaskRequest {
+    /// Input MeasurementSet root path.
+    pub input_ms: PathBuf,
+    /// Output MeasurementSet root path.
+    pub output_ms: PathBuf,
+    /// CASA-style line-free channel selector, e.g. `0:0~500;900~1919`.
+    pub fit_spw: String,
+    /// Polynomial order fitted independently to real and imaginary visibilities.
+    #[serde(default)]
+    pub fit_order: usize,
+    /// Input data column to subtract.
+    #[serde(default)]
+    pub data_column: ContinuumSubtractionDataColumn,
     /// Structured MS selection controls.
     #[serde(default)]
     pub selection: MsSelectionSpec,
@@ -319,6 +345,8 @@ pub enum CalibrationTaskRequest {
     ExecuteApply(ExecuteApplyTaskRequest),
     /// Export `CORRECTED_DATA` into `DATA` in a new MS.
     ExportCorrectedData(ExportCorrectedDataTaskRequest),
+    /// Fit and subtract UV continuum into a new MS.
+    ContinuumSubtract(ContinuumSubtractionTaskRequest),
     /// Solve antenna gains.
     SolveGain(SolveGainTaskRequest),
     /// Solve bandpass terms.
@@ -385,6 +413,16 @@ impl CalibrationTaskRequest {
                 .map(CalibrationTaskResult::ExportCorrectedData)
                 .map_err(|error| error.to_string())
             }
+            Self::ContinuumSubtract(request) => continuum_subtract(&ContinuumSubtractionRequest {
+                input_ms: request.input_ms.clone(),
+                output_ms: request.output_ms.clone(),
+                fit_spw: request.fit_spw.clone(),
+                fit_order: request.fit_order,
+                data_column: request.data_column,
+                selection: selection_from_spec(&request.selection)?,
+            })
+            .map(CalibrationTaskResult::ContinuumSubtract)
+            .map_err(|error| error.to_string()),
             Self::SolveGain(request) => solve_gain_from_path(
                 &request.measurement_set,
                 &GainSolveRequest {
@@ -637,7 +675,14 @@ mod tests {
             CALIBRATION_TASK_PROTOCOL_VERSION
         );
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
-        assert_eq!(bundle.semantic.operations.len(), 8);
+        assert_eq!(bundle.semantic.operations.len(), 9);
+        assert!(
+            bundle
+                .semantic
+                .operations
+                .iter()
+                .any(|operation| operation.request_kind == "continuum_subtract")
+        );
         assert!(
             bundle
                 .semantic
