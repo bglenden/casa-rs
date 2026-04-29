@@ -61,7 +61,10 @@ shape `[250, 250, 1, 1]`, units, and default masks.
 The `mom0` integrated sum differs by `0.015000000596`, about `8.2e-6`
 relative, while the mask cardinality, extrema, and median match.
 
-`exportfits` produced a valid FITS image file for `twhya_cont.image`:
+`exportfits` produces a valid FITS image file for `twhya_cont.image` and now
+matches the important CASA FITS metadata for this tutorial image: shape, BUNIT,
+restoring beam (`BMAJ`, `BMIN`, `BPA`), `OBJECT`, direction WCS, spectral WCS,
+Stokes axis, `RESTFRQ`, and `SPECSYS`.
 
 ```sh
 target/debug/exportfits \
@@ -72,6 +75,25 @@ target/debug/exportfits \
 file target/wdad-wave3-120/rust_twhya_cont.fits
 # FITS image data, 32-bit, floating point, single precision
 ```
+
+Known limitation: casa-rs has FITS/WCS header parsing and FITS export, but not a
+full CASA-image-from-FITS reader. The metadata check for this wave compares the
+CASA `exportfits` header against the casa-rs `exportfits` header and exercises
+the existing `casa-coordinates` WCS header round-trip machinery; it is not a
+full FITS image read/write/read interoperability test.
+
+Release-binary timings against CASA 6.7.5-9 on the local TW Hydra tutorial
+inputs are not yet performance-parity. Medians below are from five warm runs;
+CASA was invoked in-process through the local CASA Python environment, and
+casa-rs was invoked as standalone release binaries.
+
+| Operation | CASA median s | casa-rs median s | casa-rs/CASA |
+| --- | ---: | ---: | ---: |
+| `imhead twhya_cont.image` | `0.004481` | `0.008593` | `1.92` |
+| `imstat twhya_cont.image box=100,100,150,150` | `0.005970` | `0.007714` | `1.29` |
+| `exportfits twhya_cont.image` | `0.005068` | `0.008491` | `1.68` |
+| `immoments moment=0 chans=4~12 includepix=0.03,100` | `0.021813` | `0.049813` | `2.28` |
+| `immoments moment=1 chans=4~12 includepix=0.06,100` | `0.020416` | `0.048337` | `2.37` |
 
 ## Commands
 

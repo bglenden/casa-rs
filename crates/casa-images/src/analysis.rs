@@ -1229,14 +1229,14 @@ fn export_fits_typed<T>(
 where
     T: ImagePixel + fitsio::images::WriteImage + Copy,
 {
-    let shape = image.shape().to_vec();
+    let layout = casa_fits_export_layout(image.coordinates(), image.shape());
     let description = ImageDescription {
         data_type: match image_pixel_type::<T>() {
             ImagePixelType::Float32 => FitsImageType::Float,
             ImagePixelType::Float64 => FitsImageType::Double,
             _ => FitsImageType::Float,
         },
-        dimensions: &shape,
+        dimensions: &layout.shape,
     };
     let mut fits = FitsFile::create(fitsimage)
         .with_custom_primary(&description)
@@ -1245,13 +1245,16 @@ where
     let hdu = fits
         .primary_hdu()
         .map_err(|error| ImageError::Io(error.to_string()))?;
-    let data = image.get()?;
+    let mut data = image.get()?;
+    if layout.axis_order != (0..image.shape().len()).collect::<Vec<_>>() {
+        data = data.permuted_axes(layout.axis_order.clone()).to_owned();
+    }
     let flat = data
         .as_slice_memory_order()
         .ok_or_else(|| ImageError::InvalidMetadata("image data is not contiguous".to_string()))?;
     hdu.write_image(&mut fits, flat)
         .map_err(|error| ImageError::Io(error.to_string()))?;
-    let header = to_fits_header(image.coordinates(), image.shape());
+    let header = to_fits_header(&layout.coordinates, &layout.shape);
     for keyword in header.iter() {
         if velocity
             && keyword.name.starts_with("CTYPE")
@@ -1267,12 +1270,79 @@ where
         hdu.write_key(&mut fits, "BUNIT", image.units())
             .map_err(|error| ImageError::Io(error.to_string()))?;
     }
+    let info = image.image_info()?;
+    if !info.object_name.is_empty() {
+        hdu.write_key(&mut fits, "OBJECT", info.object_name.as_str())
+            .map_err(|error| ImageError::Io(error.to_string()))?;
+    }
+    if let Some(beam) = info.beam_set.single_beam() {
+        if !beam.is_null() {
+            hdu.write_key(&mut fits, "BMAJ", beam.major_in("deg")?)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+            hdu.write_key(&mut fits, "BMIN", beam.minor_in("deg")?)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+            hdu.write_key(&mut fits, "BPA", beam.position_angle_in("deg")?)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+        }
+    }
     Ok(FitsExportSummary {
         imagename: imagename.display().to_string(),
         fitsimage: fitsimage.display().to_string(),
-        shape,
+        shape: layout.shape,
         velocity,
     })
+}
+
+struct FitsExportLayout {
+    coordinates: CoordinateSystem,
+    axis_order: Vec<usize>,
+    shape: Vec<usize>,
+}
+
+fn casa_fits_export_layout(
+    coordinates: &CoordinateSystem,
+    image_shape: &[usize],
+) -> FitsExportLayout {
+    let mut blocks = Vec::new();
+    let mut axis_start = 0usize;
+    for coordinate_index in 0..coordinates.n_coordinates() {
+        let coordinate = coordinates.coordinate(coordinate_index);
+        let axis_count = coordinate.n_pixel_axes();
+        let axes = (axis_start..axis_start + axis_count).collect::<Vec<_>>();
+        blocks.push((
+            casa_fits_coordinate_priority(coordinate.coordinate_type()),
+            coordinate_index,
+            axes,
+        ));
+        axis_start += axis_count;
+    }
+    blocks.sort_by_key(|(priority, coordinate_index, _)| (*priority, *coordinate_index));
+
+    let mut reordered = CoordinateSystem::new().with_obs_info(coordinates.obs_info().clone());
+    let mut axis_order = Vec::new();
+    for (_, coordinate_index, axes) in &blocks {
+        reordered.add_coordinate(coordinates.coordinate(*coordinate_index).clone_box());
+        axis_order.extend(axes.iter().copied());
+    }
+    let shape = axis_order
+        .iter()
+        .map(|axis| image_shape[*axis])
+        .collect::<Vec<_>>();
+
+    FitsExportLayout {
+        coordinates: reordered,
+        axis_order,
+        shape,
+    }
+}
+
+fn casa_fits_coordinate_priority(coordinate_type: CoordinateType) -> usize {
+    match coordinate_type {
+        CoordinateType::Direction => 0,
+        CoordinateType::Spectral => 1,
+        CoordinateType::Stokes => 2,
+        CoordinateType::Linear | CoordinateType::Tabular => 3,
+    }
 }
 
 fn write_fits_key(
@@ -1303,6 +1373,12 @@ fn image_pixel_type<T: ImagePixel>() -> ImagePixelType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_coordinates::{
+        DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
+        StokesType,
+    };
+    use casa_types::measures::direction::DirectionRef;
+    use casa_types::measures::frequency::FrequencyRef;
 
     #[test]
     fn parse_box_is_inclusive() {
@@ -1312,5 +1388,41 @@ mod tests {
     #[test]
     fn parse_indices_expands_casa_range() {
         assert_eq!(parse_indices("4~6,8", 10).unwrap(), vec![4, 5, 6, 8]);
+    }
+
+    #[test]
+    fn casa_fits_export_layout_places_spectral_before_stokes() {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.5],
+            [-1.0e-6, 1.0e-6],
+            [4.0, 5.0],
+        )));
+        coordinates.add_coordinate(Box::new(StokesCoordinate::new(vec![StokesType::I])));
+        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            372.0e9,
+            1.0e6,
+            0.0,
+            372.0e9,
+        )));
+
+        let layout = casa_fits_export_layout(&coordinates, &[10, 11, 1, 7]);
+        assert_eq!(layout.axis_order, vec![0, 1, 3, 2]);
+        assert_eq!(layout.shape, vec![10, 11, 7, 1]);
+
+        let header = to_fits_header(&layout.coordinates, &layout.shape);
+        assert_eq!(
+            header.get("CTYPE3"),
+            Some(&FitsValue::String("FREQ".to_string()))
+        );
+        assert_eq!(
+            header.get("CTYPE4"),
+            Some(&FitsValue::String("STOKES".to_string()))
+        );
+        assert_eq!(header.get("NAXIS3"), Some(&FitsValue::Integer(7)));
+        assert_eq!(header.get("NAXIS4"), Some(&FitsValue::Integer(1)));
     }
 }
