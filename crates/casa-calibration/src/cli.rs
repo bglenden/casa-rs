@@ -94,6 +94,7 @@ struct SolveGainOptions {
     model_source: GainSolveModelSource,
     normalize_average_amplitude: bool,
     min_snr: f32,
+    min_baselines_per_antenna: usize,
     format: OutputFormat,
     output: Option<PathBuf>,
     overwrite: bool,
@@ -266,6 +267,7 @@ impl Command {
                 model_source: options.model_source,
                 normalize_average_amplitude: options.normalize_average_amplitude,
                 min_snr: options.min_snr,
+                min_baselines_per_antenna: options.min_baselines_per_antenna,
                 smodel: [1.0, 0.0, 0.0, 0.0],
             }),
             Self::SolveBandpass(options) => {
@@ -1861,6 +1863,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
     let mut model_source = GainSolveModelSource::PointSource;
     let mut normalize_average_amplitude = false;
     let mut min_snr = 3.0_f32;
+    let mut min_baselines_per_antenna = 0_usize;
     let mut format = OutputFormat::Text;
     let mut output = None;
     let mut overwrite = false;
@@ -1951,6 +1954,13 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
                     return Err(format!("{raw} must be a finite non-negative float"));
                 }
             }
+            "--minblperant" | "--min-baselines-per-antenna" => {
+                index += 1;
+                min_baselines_per_antenna =
+                    take_string_value(index, args, raw)?
+                        .parse::<usize>()
+                        .map_err(|error| format!("failed to parse {raw} as integer: {error}"))?;
+            }
             "--refant" => {
                 index += 1;
                 refant = Some(parse_refant_selector(&take_string_value(
@@ -2040,6 +2050,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
             model_source,
             normalize_average_amplitude,
             min_snr,
+            min_baselines_per_antenna,
             format,
             output,
             overwrite,

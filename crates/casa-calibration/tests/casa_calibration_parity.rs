@@ -587,6 +587,7 @@ fn solve_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -676,6 +677,7 @@ fn solve_phase_gain_with_parang_matches_casa_gaincal_downstream_via_casa_applyca
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -765,6 +767,7 @@ fn solve_amplitude_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal(
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -854,6 +857,7 @@ fn solve_phase_gain_with_solint_integration_matches_casa_gaincal_downstream() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -945,6 +949,7 @@ fn solve_phase_gain_with_combine_scan_matches_casa_gaincal_downstream() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -1111,6 +1116,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -1286,6 +1292,7 @@ fn solve_t_phase_gain_with_prior_g_preapply_matches_casa_gaincal_downstream() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )

@@ -9,8 +9,9 @@ use casa_ms::selection::MsSelection;
 use casa_types::{ArrayValue, Complex32};
 
 use super::{
-    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveModelSource, GainSolveRequest,
-    GainType, RefAntSelector, correlation_receptors, get_f64, get_i32, stokes_name,
+    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
+    GainSolveRequest, GainType, RefAntSelector, correlation_receptors, get_f64, get_i32,
+    stokes_name,
 };
 use crate::execute::{EvaluatedApplyRow, evaluate_apply_rows};
 use crate::plan::{ApplyPlanRequest, plan_apply};
@@ -341,12 +342,28 @@ pub(crate) struct SolveAccumulator {
     pub(crate) receptor_graphs: Vec<HashMap<(i32, i32), Complex32>>,
     pub(crate) receptor_weights: Vec<HashMap<(i32, i32), f32>>,
     pub(crate) receptor_stats: Vec<HashMap<(i32, i32), SolveEdgeStats>>,
+    receptor_accumulations: Vec<HashMap<SolveAccumulationKey, SolveEdgeAccumulation>>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct SolveEdgeStats {
     pub(crate) weighted_sample_power: f64,
+    pub(crate) raw_weighted_sample_power: f64,
     pub(crate) sample_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SolveEdgeAccumulation {
+    weighted_sum: Complex32,
+    weight: f32,
+    weighted_sample_power: f64,
+    sample_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SolveAccumulationKey {
+    baseline: (i32, i32),
+    correlation_index: usize,
 }
 
 impl SolveAccumulator {
@@ -364,6 +381,7 @@ impl SolveAccumulator {
             receptor_graphs: Vec::new(),
             receptor_weights: Vec::new(),
             receptor_stats: Vec::new(),
+            receptor_accumulations: Vec::new(),
         }
     }
 
@@ -490,6 +508,8 @@ impl SolveAccumulator {
             self.receptor_graphs.resize_with(graph_count, HashMap::new);
             self.receptor_weights.resize_with(graph_count, HashMap::new);
             self.receptor_stats.resize_with(graph_count, HashMap::new);
+            self.receptor_accumulations
+                .resize_with(graph_count, HashMap::new);
         }
 
         self.min_time = self.min_time.min(row.time_seconds);
@@ -525,10 +545,21 @@ impl SolveAccumulator {
                 if flags[[corr_index, chan_index]] {
                     continue;
                 }
-                let model = model_data
-                    .as_ref()
-                    .map(|model_data| model_data[[corr_index, chan_index]])
-                    .unwrap_or_else(|| Complex32::new(stokes_i, 0.0));
+                let model = match model_data.as_ref() {
+                    Some(model_data) => {
+                        if matches!(gain_type, GainType::T) {
+                            let last_corr = data.shape()[0] - 1;
+                            if flags[[0, chan_index]] || flags[[last_corr, chan_index]] {
+                                continue;
+                            }
+                            (model_data[[0, chan_index]] + model_data[[last_corr, chan_index]])
+                                / Complex32::new(2.0, 0.0)
+                        } else {
+                            model_data[[corr_index, chan_index]]
+                        }
+                    }
+                    None => Complex32::new(stokes_i, 0.0),
+                };
                 let model_norm_sqr = model.norm_sqr();
                 if model_norm_sqr <= f32::EPSILON {
                     continue;
@@ -538,18 +569,157 @@ impl SolveAccumulator {
                     continue;
                 }
                 let effective_weight = weight * model_norm_sqr;
-                accumulate_edge_with_stats(
-                    &mut self.receptor_graphs[graph_index],
-                    &mut self.receptor_weights[graph_index],
-                    &mut self.receptor_stats[graph_index],
-                    (row.antenna1, row.antenna2),
+                accumulate_collapsed_input(
+                    &mut self.receptor_accumulations[graph_index],
+                    SolveAccumulationKey {
+                        baseline: (row.antenna1, row.antenna2),
+                        correlation_index: corr_index,
+                    },
                     effective_weight,
-                    sample * Complex32::new(effective_weight, 0.0),
+                    sample,
                     f64::from(effective_weight) * f64::from(sample.norm_sqr()),
                 );
             }
         }
 
         Ok(())
+    }
+
+    pub(crate) fn finalize_for_solve(&mut self, solve_mode: GainSolveMode) {
+        for receptor in 0..self.receptor_accumulations.len() {
+            self.receptor_graphs[receptor].clear();
+            self.receptor_weights[receptor].clear();
+            self.receptor_stats[receptor].clear();
+
+            for (&key, accumulation) in &self.receptor_accumulations[receptor] {
+                if accumulation.weight <= f32::EPSILON {
+                    continue;
+                }
+                let averaged = accumulation.weighted_sum / Complex32::new(accumulation.weight, 0.0);
+                let (sample, weight) = match solve_mode {
+                    GainSolveMode::Phase => {
+                        let amplitude = averaged.norm();
+                        if amplitude <= f32::EPSILON {
+                            continue;
+                        }
+                        (
+                            averaged / Complex32::new(amplitude, 0.0),
+                            accumulation.weight * amplitude * amplitude,
+                        )
+                    }
+                    GainSolveMode::AmplitudePhase => (averaged, accumulation.weight),
+                };
+                accumulate_edge_with_stats(
+                    &mut self.receptor_graphs[receptor],
+                    &mut self.receptor_weights[receptor],
+                    &mut self.receptor_stats[receptor],
+                    key.baseline,
+                    weight,
+                    sample * Complex32::new(weight, 0.0),
+                    SolveEdgeStats {
+                        weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
+                        raw_weighted_sample_power: accumulation.weighted_sample_power,
+                        sample_count: accumulation.sample_count,
+                    },
+                );
+            }
+        }
+    }
+}
+
+fn accumulate_collapsed_input(
+    accumulations: &mut HashMap<SolveAccumulationKey, SolveEdgeAccumulation>,
+    key: SolveAccumulationKey,
+    weight: f32,
+    sample: Complex32,
+    weighted_sample_power: f64,
+) {
+    let entry = accumulations.entry(key).or_default();
+    entry.weighted_sum += sample * Complex32::new(weight, 0.0);
+    entry.weight += weight;
+    entry.weighted_sample_power += weighted_sample_power;
+    entry.sample_count += 1;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finalize_for_phase_solve_collapses_channels_before_accumulating_edges() {
+        let mut group = SolveAccumulator::new(0, 0, 0);
+        group.receptor_graphs.resize_with(1, HashMap::new);
+        group.receptor_weights.resize_with(1, HashMap::new);
+        group.receptor_stats.resize_with(1, HashMap::new);
+        group.receptor_accumulations.resize_with(1, HashMap::new);
+
+        accumulate_collapsed_input(
+            &mut group.receptor_accumulations[0],
+            SolveAccumulationKey {
+                baseline: (0, 1),
+                correlation_index: 0,
+            },
+            1.0,
+            Complex32::new(2.0, 0.0),
+            4.0,
+        );
+        accumulate_collapsed_input(
+            &mut group.receptor_accumulations[0],
+            SolveAccumulationKey {
+                baseline: (0, 1),
+                correlation_index: 0,
+            },
+            1.0,
+            Complex32::new(0.0, 2.0),
+            4.0,
+        );
+
+        group.finalize_for_solve(GainSolveMode::Phase);
+
+        let weight = group.receptor_weights[0][&(0, 1)];
+        assert!((weight - 4.0).abs() < 1.0e-6);
+        let edge = group.receptor_graphs[0][&(0, 1)];
+        let expected = 4.0_f32 / 2.0_f32.sqrt();
+        assert!((edge.re - expected).abs() < 1.0e-6);
+        assert!((edge.im - expected).abs() < 1.0e-6);
+        assert_eq!(group.receptor_stats[0][&(0, 1)].sample_count, 2);
+    }
+
+    #[test]
+    fn finalize_for_phase_solve_keeps_correlations_separate_for_scalar_t() {
+        let mut group = SolveAccumulator::new(0, 0, 0);
+        group.receptor_graphs.resize_with(1, HashMap::new);
+        group.receptor_weights.resize_with(1, HashMap::new);
+        group.receptor_stats.resize_with(1, HashMap::new);
+        group.receptor_accumulations.resize_with(1, HashMap::new);
+
+        accumulate_collapsed_input(
+            &mut group.receptor_accumulations[0],
+            SolveAccumulationKey {
+                baseline: (0, 1),
+                correlation_index: 0,
+            },
+            1.0,
+            Complex32::new(2.0, 0.0),
+            4.0,
+        );
+        accumulate_collapsed_input(
+            &mut group.receptor_accumulations[0],
+            SolveAccumulationKey {
+                baseline: (0, 1),
+                correlation_index: 3,
+            },
+            1.0,
+            Complex32::new(0.0, 2.0),
+            4.0,
+        );
+
+        group.finalize_for_solve(GainSolveMode::Phase);
+
+        assert!((group.receptor_weights[0][&(0, 1)] - 8.0).abs() < 1.0e-6);
+        let edge = group.receptor_graphs[0][&(0, 1)];
+        assert!((edge.re - 4.0).abs() < 1.0e-6);
+        assert!((edge.im - 4.0).abs() < 1.0e-6);
+        assert_eq!(group.receptor_stats[0][&(0, 1)].sample_count, 2);
     }
 }

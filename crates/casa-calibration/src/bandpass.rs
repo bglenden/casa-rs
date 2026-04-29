@@ -45,7 +45,7 @@ use crate::solve::grouping::{
     SelectedSolveRow, collect_selected_rows, correlation_types_for_ddid, resolve_refant,
     validate_smodel,
 };
-use crate::solve::kernel::solve_graph;
+use crate::solve::kernel::{SolveGraphOptions, solve_graph};
 use crate::solve::{GainSolveMode, RefAntSelector, correlation_receptors, stokes_name};
 
 const COL_ARRAY_ID: &str = "ARRAY_ID";
@@ -649,9 +649,12 @@ fn solve_bandpass_group(
                     &group.receptor_weights[receptor][chan_index],
                     &HashMap::new(),
                     GainSolveMode::AmplitudePhase,
-                    refant_id,
-                    group.field_id,
-                    group.spw_id,
+                    SolveGraphOptions {
+                        refant_id,
+                        field_id: group.field_id,
+                        spw_id: group.spw_id,
+                        min_baselines_per_antenna: 0,
+                    },
                 )
                 .map_err(map_solve_graph_error)?,
             );

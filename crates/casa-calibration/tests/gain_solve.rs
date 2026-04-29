@@ -36,6 +36,7 @@ fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -89,6 +90,7 @@ fn solve_gain_phase_g_uses_model_data_column_downstream() {
             model_source: GainSolveModelSource::ModelColumn,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -131,6 +133,7 @@ fn solve_gain_min_snr_flags_low_snr_solutions_and_writes_diagnostics() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 1.0e9,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -198,6 +201,7 @@ fn solve_gain_phase_t_corrects_synthetic_ms_downstream() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -246,6 +250,7 @@ fn solve_gain_amplitude_phase_g_corrects_synthetic_ms_downstream() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -294,6 +299,7 @@ fn solve_gain_amplitude_phase_t_corrects_synthetic_ms_downstream() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -342,6 +348,7 @@ fn solve_gain_amplitude_phase_t_with_solnorm_normalizes_average_amplitude() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: true,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -446,6 +453,7 @@ fn solve_gain_phase_g_solint_integration_writes_per_integration_solutions() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -538,6 +546,7 @@ fn solve_gain_phase_g_solint_seconds_groups_nearby_integrations() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -609,6 +618,7 @@ fn solve_gain_phase_g_combine_scans_writes_one_solution_group_across_scans() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -684,6 +694,7 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -803,6 +814,7 @@ fn solve_gain_phase_g_with_prior_caltable_corrects_residual_downstream() {
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
             min_snr: 0.0,
+            min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )

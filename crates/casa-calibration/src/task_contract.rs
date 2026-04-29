@@ -289,6 +289,9 @@ pub struct SolveGainTaskRequest {
     /// Minimum solution SNR required to keep a solved parameter unflagged.
     #[serde(default = "default_min_snr")]
     pub min_snr: f32,
+    /// Minimum unflagged baselines per antenna required before solving.
+    #[serde(default = "default_min_baselines_per_antenna")]
+    pub min_baselines_per_antenna: usize,
     /// Point-source Stokes model.
     #[serde(default = "default_smodel")]
     pub smodel: [f32; 4],
@@ -438,6 +441,7 @@ impl CalibrationTaskRequest {
                     model_source: request.model_source,
                     normalize_average_amplitude: request.normalize_average_amplitude,
                     min_snr: request.min_snr,
+                    min_baselines_per_antenna: request.min_baselines_per_antenna,
                     smodel: request.smodel,
                 },
             )
@@ -474,6 +478,10 @@ fn default_smodel() -> [f32; 4] {
 
 fn default_min_snr() -> f32 {
     3.0
+}
+
+fn default_min_baselines_per_antenna() -> usize {
+    0
 }
 
 fn default_polynomial_degree() -> usize {

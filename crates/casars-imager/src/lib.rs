@@ -7,7 +7,6 @@ mod oracle;
 mod schema;
 mod task_contract;
 
-use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::ffi::OsString;
@@ -5492,23 +5491,31 @@ fn write_model_column(
         .map_err(|error| format!("prepare MODEL_DATA predictor: {error}"))?;
     let created_model_data_column = ensure_model_data_column(ms)?;
 
-    let mut rows = BTreeMap::<usize, ArrayD<Complex32>>::new();
+    let mut rows = trace
+        .selected_rows
+        .iter()
+        .map(|row| {
+            zero_model_row_like_data(ms, row.row_index).map(|model_row| (row.row_index, model_row))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
     let mut written_samples = 0usize;
     for sample in &trace.samples {
         if sample.source_contributions.is_empty() {
             continue;
         }
-        if let Entry::Vacant(entry) = rows.entry(sample.row_index) {
-            entry.insert(read_or_zero_model_row(ms, sample.row_index)?);
-        }
         let row_shape = rows
             .get(&sample.row_index)
-            .expect("row model was just inserted")
+            .ok_or_else(|| {
+                format!(
+                    "prepared sample row {} was not present in selected rows",
+                    sample.row_index
+                )
+            })?
             .shape()
             .to_vec();
         let row_model = rows
             .get_mut(&sample.row_index)
-            .expect("row model was just inserted");
+            .expect("row model shape was just read");
         for contribution in &sample.source_contributions {
             let lambda_scale = contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
             let predicted = predictor.predict(
@@ -5590,24 +5597,6 @@ fn ensure_model_data_column(ms: &mut MeasurementSet) -> Result<bool, String> {
             .map_err(|error| format!("initialize MODEL_DATA row {row_index}: {error}"))?;
     }
     Ok(true)
-}
-
-fn read_or_zero_model_row(
-    ms: &MeasurementSet,
-    row_index: usize,
-) -> Result<ArrayD<Complex32>, String> {
-    match ms
-        .main_table()
-        .cell_accessor(row_index, VisibilityDataColumn::ModelData.name())
-        .and_then(|cell| cell.array())
-    {
-        Ok(ArrayValue::Complex32(values)) => Ok(values.clone()),
-        Ok(other) => Err(format!(
-            "MODEL_DATA row {row_index} must be Complex32 array, found {:?}",
-            other.primitive_type()
-        )),
-        Err(_) => zero_model_row_like_data(ms, row_index),
-    }
 }
 
 fn zero_model_row_like_data(

@@ -541,7 +541,7 @@ fn execute_apply_calflag_marks_samples_when_solution_is_missing() {
         panic!("expected bool flags");
     };
     assert!(flags.iter().all(|flag| *flag));
-    assert!(ms.flag_row_column().get(0).expect("flag row"));
+    assert!(!ms.flag_row_column().get(0).expect("flag row"));
 }
 
 #[test]
@@ -590,7 +590,7 @@ fn execute_apply_calflag_marks_samples_when_solution_is_missing_without_seeded_c
         panic!("expected bool flags");
     };
     assert!(flags.iter().all(|flag| *flag));
-    assert!(ms.flag_row_column().get(0).expect("flag row"));
+    assert!(!ms.flag_row_column().get(0).expect("flag row"));
 }
 
 #[test]

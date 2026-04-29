@@ -15,6 +15,7 @@
 
 pub(crate) mod grouping;
 pub(crate) mod kernel;
+mod trace;
 mod writer;
 
 use std::path::{Path, PathBuf};
@@ -129,6 +130,8 @@ pub struct GainSolveRequest {
     pub normalize_average_amplitude: bool,
     /// Minimum solution SNR required to keep a solved parameter unflagged.
     pub min_snr: f32,
+    /// Minimum unflagged baselines per antenna required before solving.
+    pub min_baselines_per_antenna: usize,
     /// Point-source Stokes model used when `model_source` is `PointSource`.
     pub smodel: [f32; 4],
 }
@@ -326,7 +329,9 @@ pub fn solve_gain(
     }
 
     let mut solution_rows = Vec::new();
-    for group in groups.into_values() {
+    for ((base_key, bucket_key), mut group) in groups {
+        group.finalize_for_solve(request.solve_mode);
+        trace::trace_group(&base_key, &bucket_key, &group, request);
         let mut group_rows = solve_group(
             group,
             &available_antennas,
@@ -334,12 +339,14 @@ pub fn solve_gain(
             request.solve_mode,
             refant_id,
             request.min_snr,
+            request.min_baselines_per_antenna,
         )?;
         if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
             && request.normalize_average_amplitude
         {
             normalize_gain_solution_amplitudes(&mut group_rows);
         }
+        trace::trace_solution_rows(&base_key, &bucket_key, &group_rows, request, refant_id);
         solution_rows.extend(group_rows);
     }
     write_gain_caltable(ms, request, refant_id, &solution_rows)

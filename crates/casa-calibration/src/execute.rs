@@ -326,7 +326,7 @@ pub struct ApplyExecutionReport {
     pub wrote_measurement_set: bool,
     /// Number of selected rows written to `CORRECTED_DATA`.
     pub updated_row_count: usize,
-    /// Number of selected rows newly marked `FLAG_ROW=true`.
+    /// Number of selected rows whose individual samples all became flagged.
     pub flagged_row_count: usize,
     /// Number of individual correlation-channel samples flagged by calibration.
     pub flagged_sample_count: usize,
@@ -921,18 +921,6 @@ fn execute_apply_plan(
                         source: MsError::from(source),
                     })?;
                 if row_became_fully_flagged {
-                    if !changed_columns.contains(&"FLAG_ROW") {
-                        changed_columns.push("FLAG_ROW");
-                    }
-                    ms.main_table_mut()
-                        .column_accessor_mut("FLAG_ROW")
-                        .and_then(|mut column| {
-                            column.set_scalar_assuming_valid(row.row_index, ScalarValue::Bool(true))
-                        })
-                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                            path: ms_path.clone(),
-                            source: MsError::from(source),
-                        })?;
                     flagged_row_count += 1;
                 }
                 flagged_sample_count += newly_flagged_samples;
@@ -981,13 +969,6 @@ fn execute_apply_plan(
         if ms
             .main_table()
             .schema()
-            .is_some_and(|schema| schema.contains_column("FLAG_ROW"))
-        {
-            prepared_columns.push("FLAG_ROW");
-        }
-        if ms
-            .main_table()
-            .schema()
             .is_some_and(|schema| schema.contains_column("WEIGHT"))
         {
             prepared_columns.push("WEIGHT");
@@ -1007,7 +988,6 @@ fn execute_apply_plan(
             corrected_data: prepared_main_rows
                 .column_index(VisibilityDataColumn::CorrectedData.name()),
             flag: prepared_main_rows.column_index("FLAG"),
-            flag_row: prepared_main_rows.column_index("FLAG_ROW"),
             weight: prepared_main_rows.column_index("WEIGHT"),
             weight_spectrum: prepared_main_rows.column_index("WEIGHT_SPECTRUM"),
         };
@@ -1065,14 +1045,6 @@ fn execute_apply_plan(
                         })?;
                 }
                 if row_became_fully_flagged {
-                    if let Some(slot_index) = row_field_indices.flag_row {
-                        prepared_main_rows
-                            .set_value_at(slot_index, Value::Scalar(ScalarValue::Bool(true)))
-                            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                                path: ms_path.clone(),
-                                source: MsError::from(source),
-                            })?;
-                    }
                     flagged_row_count += 1;
                 }
                 flagged_sample_count += newly_flagged_samples;
@@ -2103,7 +2075,7 @@ fn interpolate_time_linear(
                     }
                     let mut values = lower.values.clone();
                     for (value, upper_value) in values.iter_mut().zip(upper.values.iter()) {
-                        *value = *value + (*upper_value - *value) * fraction;
+                        *value = interpolate_gain_amplitude_phase(*value, *upper_value, fraction);
                     }
                     let mut flags = lower.flags.clone();
                     for (flag, upper_flag) in flags.iter_mut().zip(upper.flags.iter()) {
@@ -2156,6 +2128,26 @@ fn interpolate_time_linear(
             reason: "no calibration rows available for linear interpolation".to_string(),
         }),
     }
+}
+
+fn interpolate_gain_amplitude_phase(
+    lower: Complex32,
+    upper: Complex32,
+    fraction: f32,
+) -> Complex32 {
+    let lower_amp = lower.norm();
+    let upper_amp = upper.norm();
+    let amp = lower_amp + (upper_amp - lower_amp) * fraction;
+    let lower_phase = lower.arg();
+    let mut upper_phase = upper.arg();
+    while upper_phase > lower_phase + std::f32::consts::PI {
+        upper_phase -= 2.0 * std::f32::consts::PI;
+    }
+    while upper_phase < lower_phase - std::f32::consts::PI {
+        upper_phase += 2.0 * std::f32::consts::PI;
+    }
+    let phase = lower_phase + (upper_phase - lower_phase) * fraction;
+    Complex32::new(amp * phase.cos(), amp * phase.sin())
 }
 
 fn load_calibration_table(
@@ -2621,7 +2613,6 @@ fn ensure_corrected_data_column(ms: &mut MeasurementSet) -> Result<bool, TableEr
 struct ApplyRowFieldIndices {
     corrected_data: Option<usize>,
     flag: Option<usize>,
-    flag_row: Option<usize>,
     weight: Option<usize>,
     weight_spectrum: Option<usize>,
 }
@@ -2835,6 +2826,13 @@ mod tests {
 
     fn scalar_table(fields: Vec<RecordField>) -> Table {
         Table::from_rows_memory(vec![row(fields)])
+    }
+
+    fn assert_complex_close(actual: Complex32, expected: Complex32, tolerance: f32) {
+        assert!(
+            (actual - expected).norm() <= tolerance,
+            "actual={actual:?} expected={expected:?}"
+        );
     }
 
     #[test]
@@ -3083,13 +3081,36 @@ mod tests {
 
         match interpolate_time_linear(path, &complex_pair, 20.0).unwrap() {
             CalibrationGrid::Complex(grid) => {
-                assert_eq!(grid.values[[0, 0]], Complex32::new(3.0, 2.0));
-                assert_eq!(grid.values[[0, 1]], Complex32::new(5.0, 4.0));
+                assert_complex_close(
+                    grid.values[[0, 0]],
+                    interpolate_gain_amplitude_phase(
+                        Complex32::new(1.0, 0.0),
+                        Complex32::new(5.0, 4.0),
+                        0.5,
+                    ),
+                    1.0e-6,
+                );
+                assert_complex_close(
+                    grid.values[[0, 1]],
+                    interpolate_gain_amplitude_phase(
+                        Complex32::new(3.0, 2.0),
+                        Complex32::new(7.0, 6.0),
+                        0.5,
+                    ),
+                    1.0e-6,
+                );
                 assert!(grid.flags[[0, 0]]);
                 assert!(!grid.flags[[0, 1]]);
             }
             CalibrationGrid::Delay(_) => panic!("expected complex interpolation"),
         }
+
+        let wrapped = interpolate_gain_amplitude_phase(
+            Complex32::new((-3.0_f32).cos(), (-3.0_f32).sin()),
+            Complex32::new(3.0_f32.cos(), 3.0_f32.sin()),
+            0.5,
+        );
+        assert!(wrapped.arg().abs() > 3.0);
 
         let delay_pair = [
             CalibrationSolution {
