@@ -6,7 +6,7 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process;
 
-use casa_images::{ImageBrowserSession, imexplore_ui_schema_json};
+use casa_images::{ImageBrowserSession, imexplore_ui_schema_json, imhead, imstat};
 use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserProtocolInfo, ImageBrowserRequestEnvelope,
     ImageBrowserResponseEnvelope, ImageBrowserViewport, PROTOCOL_VERSION, schema_bundle_json,
@@ -52,16 +52,152 @@ fn run() -> Result<(), String> {
         run_session()?;
         return Ok(());
     }
+    if args.peek().is_some_and(|arg| arg == "imhead") {
+        args.next();
+        let image_path = parse_path_allowing_json(args)?;
+        let summary = imhead(&image_path.path).map_err(|error| error.to_string())?;
+        if image_path.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&summary)
+                    .map_err(|error| format!("serialize imhead summary: {error}"))?
+            );
+        } else {
+            println!("Image name       : {}", summary.imagename);
+            println!("Image type       : {}", summary.image_type);
+            println!("Pixel type       : {}", summary.pixel_type);
+            println!("Image units      : {}", summary.units);
+            println!("Shape            : {:?}", summary.shape);
+            if let Some(beam) = summary.restoring_beam {
+                println!(
+                    "Restoring Beam   : {:.6} arcsec, {:.6} arcsec, {:.6} deg",
+                    beam.major_arcsec, beam.minor_arcsec, beam.position_angle_deg
+                );
+            }
+            for axis in summary.axes {
+                println!(
+                    "Axis {} {:<12} {:<18} shape={} refpix={:.3} crval={:.12e} cdelt={:.12e} {}",
+                    axis.axis,
+                    axis.coordinate_type,
+                    axis.name,
+                    axis.shape,
+                    axis.reference_pixel,
+                    axis.reference_value,
+                    axis.increment,
+                    axis.unit
+                );
+            }
+        }
+        return Ok(());
+    }
+    if args.peek().is_some_and(|arg| arg == "imstat") {
+        args.next();
+        let stat_args = parse_imstat_args(args)?;
+        let summary = imstat(
+            &stat_args.path,
+            stat_args.box_pixels.as_deref(),
+            stat_args.chans.as_deref(),
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+        if stat_args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&summary)
+                    .map_err(|error| format!("serialize imstat summary: {error}"))?
+            );
+        } else {
+            println!("npts: {}", summary.npts);
+            println!("min: {}", summary.min);
+            println!("max: {}", summary.max);
+            println!("sum: {}", summary.sum);
+            println!("mean: {}", summary.mean);
+            println!("rms: {}", summary.rms);
+            println!("sigma: {}", summary.sigma);
+            if let Some(flux) = summary.flux {
+                println!("flux: {flux}");
+            }
+        }
+        return Ok(());
+    }
 
     let image_path = parse_path(args)?;
     run_snapshot(&image_path)
+}
+
+struct PathJson {
+    path: PathBuf,
+    json: bool,
+}
+
+fn parse_path_allowing_json(args: impl IntoIterator<Item = String>) -> Result<PathJson, String> {
+    let mut path = None;
+    let mut json = false;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => json = true,
+            _ if path.is_none() => path = Some(PathBuf::from(arg)),
+            _ => return Err("usage: imexplore imhead <image-path> [--json]".to_string()),
+        }
+    }
+    Ok(PathJson {
+        path: path.ok_or_else(|| "usage: imexplore imhead <image-path> [--json]".to_string())?,
+        json,
+    })
+}
+
+struct ImstatArgs {
+    path: PathBuf,
+    box_pixels: Option<String>,
+    chans: Option<String>,
+    json: bool,
+}
+
+fn parse_imstat_args(args: impl IntoIterator<Item = String>) -> Result<ImstatArgs, String> {
+    let args = args.into_iter().collect::<Vec<_>>();
+    let mut path = None;
+    let mut box_pixels = None;
+    let mut chans = None;
+    let mut json = false;
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--json" => json = true,
+            "--box" => {
+                idx += 1;
+                box_pixels = Some(args.get(idx).ok_or_else(imstat_usage)?.clone());
+            }
+            "--chans" => {
+                idx += 1;
+                chans = Some(args.get(idx).ok_or_else(imstat_usage)?.clone());
+            }
+            _ if path.is_none() => path = Some(PathBuf::from(&args[idx])),
+            other => {
+                return Err(format!(
+                    "unknown imstat argument {other:?}\n{}",
+                    imstat_usage()
+                ));
+            }
+        }
+        idx += 1;
+    }
+    Ok(ImstatArgs {
+        path: path.ok_or_else(imstat_usage)?,
+        box_pixels,
+        chans,
+        json,
+    })
+}
+
+fn imstat_usage() -> String {
+    "usage: imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json]".to_string()
 }
 
 fn parse_path(args: impl IntoIterator<Item = String>) -> Result<PathBuf, String> {
     let args = args.into_iter().collect::<Vec<_>>();
     if args.len() != 1 {
         return Err(
-            "usage: imexplore <image-path> | imexplore --session | imexplore --json-schema | imexplore --protocol-info | imexplore --ui-schema".into(),
+            "usage: imexplore <image-path> | imexplore imhead <image-path> [--json] | imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json] | imexplore --session | imexplore --json-schema | imexplore --protocol-info | imexplore --ui-schema".into(),
         );
     }
     Ok(PathBuf::from(&args[0]))

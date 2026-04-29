@@ -34,12 +34,24 @@ IMAGER_PROTOCOL_VERSION = 1
 IMAGER_BINARY_NAME = "casars-imager"
 IMAGER_BINARY_ENVVAR = "CASARS_IMAGER_BIN"
 
+IMAGE_ANALYSIS_PROTOCOL_NAME = "casa_image_analysis_task"
+IMAGE_ANALYSIS_PROTOCOL_VERSION = 1
+IMEXPLORE_BINARY_NAME = "imexplore"
+IMEXPLORE_BINARY_ENVVAR = "CASARS_IMEXPLORE_BIN"
+IMMOMENTS_BINARY_NAME = "immoments"
+IMMOMENTS_BINARY_ENVVAR = "CASARS_IMMOMENTS_BIN"
+EXPORTFITS_BINARY_NAME = "exportfits"
+EXPORTFITS_BINARY_ENVVAR = "CASARS_EXPORTFITS_BIN"
+
 CASARS_SUITE_ROOT_ENVVAR = "CASARS_SUITE_ROOT"
 
 _configured_calibrate_binary: str | None = None
 _configured_importvla_binary: str | None = None
 _configured_msexplore_binary: str | None = None
 _configured_imager_binary: str | None = None
+_configured_imexplore_binary: str | None = None
+_configured_immoments_binary: str | None = None
+_configured_exportfits_binary: str | None = None
 
 
 class CalibrationBinaryNotFoundError(FileNotFoundError):
@@ -90,6 +102,18 @@ class ImagerInvocationError(RuntimeError):
     """Raised when the ``casars-imager`` subprocess returns a non-zero status."""
 
 
+class ImageAnalysisBinaryNotFoundError(FileNotFoundError):
+    """Raised when an image-analysis binary cannot be resolved."""
+
+
+class ImageAnalysisProtocolMismatchError(RuntimeError):
+    """Raised when an image-analysis binary protocol version diverges."""
+
+
+class ImageAnalysisInvocationError(RuntimeError):
+    """Raised when an image-analysis subprocess returns a non-zero status."""
+
+
 @dataclass(frozen=True, slots=True)
 class ProtocolInfo:
     """Compatibility descriptor advertised by a task provider binary."""
@@ -126,6 +150,27 @@ def configure_imager_binary(binary: StrPath | None) -> None:
 
     global _configured_imager_binary
     _configured_imager_binary = None if binary is None else os.fspath(binary)
+
+
+def configure_imexplore_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default imexplore binary override."""
+
+    global _configured_imexplore_binary
+    _configured_imexplore_binary = None if binary is None else os.fspath(binary)
+
+
+def configure_immoments_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default immoments binary override."""
+
+    global _configured_immoments_binary
+    _configured_immoments_binary = None if binary is None else os.fspath(binary)
+
+
+def configure_exportfits_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default exportfits binary override."""
+
+    global _configured_exportfits_binary
+    _configured_exportfits_binary = None if binary is None else os.fspath(binary)
 
 
 def resolve_calibrate_binary(binary: StrPath | None = None) -> str:
@@ -177,6 +222,45 @@ def resolve_imager_binary(binary: StrPath | None = None) -> str:
         binary_name=IMAGER_BINARY_NAME,
         missing_error_cls=ImagerBinaryNotFoundError,
         description="casars-imager",
+    )
+
+
+def resolve_imexplore_binary(binary: StrPath | None = None) -> str:
+    """Resolve the imexplore binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_imexplore_binary,
+        envvar=IMEXPLORE_BINARY_ENVVAR,
+        binary_name=IMEXPLORE_BINARY_NAME,
+        missing_error_cls=ImageAnalysisBinaryNotFoundError,
+        description="imexplore",
+    )
+
+
+def resolve_immoments_binary(binary: StrPath | None = None) -> str:
+    """Resolve the immoments binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_immoments_binary,
+        envvar=IMMOMENTS_BINARY_ENVVAR,
+        binary_name=IMMOMENTS_BINARY_NAME,
+        missing_error_cls=ImageAnalysisBinaryNotFoundError,
+        description="immoments",
+    )
+
+
+def resolve_exportfits_binary(binary: StrPath | None = None) -> str:
+    """Resolve the exportfits binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_exportfits_binary,
+        envvar=EXPORTFITS_BINARY_ENVVAR,
+        binary_name=EXPORTFITS_BINARY_NAME,
+        missing_error_cls=ImageAnalysisBinaryNotFoundError,
+        description="exportfits",
     )
 
 
@@ -232,6 +316,32 @@ def get_imager_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     )
 
 
+def get_immoments_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
+    """Return validated protocol info for the selected immoments binary."""
+
+    resolved = resolve_immoments_binary(binary)
+    return _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+
+
+def get_exportfits_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
+    """Return validated protocol info for the selected exportfits binary."""
+
+    resolved = resolve_exportfits_binary(binary)
+    return _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+
+
 def fetch_calibration_schema(binary: StrPath | None = None) -> dict[str, Any]:
     """Fetch the JSON schema bundle advertised by the calibrate binary."""
 
@@ -261,6 +371,22 @@ def fetch_imager_schema(binary: StrPath | None = None) -> dict[str, Any]:
 
     resolved = resolve_imager_binary(binary)
     stdout = _run_process([resolved, "--json-schema"], error_cls=ImagerInvocationError)
+    return json.loads(stdout)
+
+
+def fetch_immoments_schema(binary: StrPath | None = None) -> dict[str, Any]:
+    """Fetch the JSON schema bundle advertised by the immoments binary."""
+
+    resolved = resolve_immoments_binary(binary)
+    stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
+    return json.loads(stdout)
+
+
+def fetch_exportfits_schema(binary: StrPath | None = None) -> dict[str, Any]:
+    """Fetch the JSON schema bundle advertised by the exportfits binary."""
+
+    resolved = resolve_exportfits_binary(binary)
+    stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
     return json.loads(stdout)
 
 
@@ -360,6 +486,70 @@ def invoke_imager_task(
         [resolved, "--json-run", "-"],
         stdin=payload,
         error_cls=ImagerInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_immoments_task(
+    *,
+    request: dict[str, Any],
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run one immoments task request through ``immoments --json-run -``."""
+
+    resolved = resolve_immoments_binary(binary)
+    _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+    payload = json.dumps({"kind": "immoments", "request": request}, sort_keys=True)
+    stdout = _run_process(
+        [resolved, "--json-run", "-"],
+        stdin=payload,
+        error_cls=ImageAnalysisInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_exportfits_task(
+    *,
+    request: dict[str, Any],
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run one exportfits task request through ``exportfits --json-run -``."""
+
+    resolved = resolve_exportfits_binary(binary)
+    _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+    payload = json.dumps({"kind": "exportfits", "request": request}, sort_keys=True)
+    stdout = _run_process(
+        [resolved, "--json-run", "-"],
+        stdin=payload,
+        error_cls=ImageAnalysisInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_imexplore_json_subcommand(
+    subcommand: str,
+    argv: list[str],
+    *,
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run an imexplore JSON subcommand such as ``imhead`` or ``imstat``."""
+
+    resolved = resolve_imexplore_binary(binary)
+    stdout = _run_process(
+        [resolved, subcommand, *argv, "--json"],
+        error_cls=ImageAnalysisInvocationError,
     )
     return json.loads(stdout)
 

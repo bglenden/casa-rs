@@ -473,13 +473,16 @@ version = "0.16.3"
 dependencies = [
  "casa-coordinates",
  "casa-lattices",
+ "casa-provider-contracts",
  "casa-tables",
  "casa-test-support",
  "casa-types",
  "casars-imagebrowser-protocol",
+ "fitsio",
  "image 0.25.10",
  "ndarray",
  "plotters",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
@@ -1510,6 +1513,25 @@ name = "finl_unicode"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9844ddc3a6e533d62bba727eb6c28b5d360921d5175e9ff0f1e621a5c590a4d5"
+
+[[package]]
+name = "fitsio"
+version = "0.21.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b2a7b7eee7f284a95437774d1152e04706f690d549687004ab7ae73cc776d08"
+dependencies = [
+ "fitsio-sys",
+ "libc",
+]
+
+[[package]]
+name = "fitsio-sys"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14929d0b6fa44a87b374a138ea2256c02c1b5beae1dbc98f62a3e132f862fed1"
+dependencies = [
+ "pkg-config",
+]
 
 [[package]]
 name = "fixedbitset"

@@ -58,6 +58,7 @@
 //! assert_eq!(ImageType::Velocity.to_string(), "Velocity");
 //! ```
 
+pub mod analysis;
 pub mod beam;
 pub mod browser_render;
 pub mod command_schema;
@@ -77,6 +78,13 @@ pub mod temp_image;
 #[cfg(test)]
 mod mask;
 
+pub use analysis::{
+    ExportFitsRequest, FitsExportSummary, ImageAnalysisProtocolInfo, ImageAnalysisTaskRequest,
+    ImageAnalysisTaskResult, ImageAnalysisTaskSchemaBundle, ImageHeaderSummary,
+    ImageStatisticsSummary, ImheadRequest, ImmomentsRequest, ImstatRequest, MomentMapSummary,
+    export_fits, image_analysis_ui_schema_json, imhead, immoments, imstat,
+    read_image_analysis_request_source, run_image_analysis_task,
+};
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use browser_render::{
     BrowserRenderTheme, ImagePlaneColormap, ImagePlaneDrawGeometry, ImagePlaneLayout,

@@ -61,10 +61,10 @@ Status legend:
 | `clearcal` / `delmod` | missing/partial | `casa-ms`, `casa-calibration` | none | model/corrected column lifecycle | CASA MS column state | calibration/imaging timings | #128 |
 | `ft` | missing/partial | `casa-imaging`, `casa-ms` | none | model prediction for source subtraction | CASA MODEL_DATA comparison | source-subtraction timing | #128 |
 | component list tool `cl.addcomponent` | missing | future model/component owner | none | source subtraction and simulation component-list support | CASA component list / predicted MS | source-subtraction/simulation timings | #128, #129 |
-| `imhead` | partial | `casa-images`, `casa-coordinates` | `casars.data` image objects / future task | CASA task-style summaries and edit modes | CASA `imhead` output and image keywords | image-analysis timing | #120, #125 |
-| `imstat` | partial | `casa-images`, `casa-lattices` | future task/Python projection | region/channel/mask parameter coverage | CASA `imstat` numeric output | image-analysis timing | #120, #125 |
-| `immoments` | missing/partial | `casa-images`, `casa-lattices`, `casa-coordinates` | none | moment-map generation and metadata | CASA moment images | image-analysis timing | #120, #123 |
-| `exportfits` | partial | `casa-images`, `casa-coordinates` | future task/Python projection | tutorial FITS export metadata fidelity | CASA FITS headers and WCS | export timing | #120 |
+| `imhead` | partial/available | `casa-images`, `casa-coordinates` | `imexplore imhead`, `casars.tasks.image_analysis.imhead` | edit modes and long-tail metadata formatting | CASA `imhead` output and image keywords | image-analysis timing | #120, #125 |
+| `imstat` | partial/available | `casa-images`, `casa-lattices` | `imexplore imstat`, `casars.tasks.image_analysis.imstat` | full region grammar and long-tail CASA parameters | CASA `imstat` numeric output | image-analysis timing | #120, #125 |
+| `immoments` | partial/available | `casa-images`, `casa-lattices`, `casa-coordinates` | `immoments`, `casars.tasks.image_analysis.immoments` | broader moment set and output-coordinate tails | CASA moment images | image-analysis timing | #120, #123 |
+| `exportfits` | partial/available | `casa-images`, `casa-coordinates` | `exportfits`, `casars.tasks.image_analysis.exportfits` | full FITS-header fidelity and binary-table needs | CASA FITS headers and WCS | export timing | #120 |
 | `importfits` | partial | `casa-images`, `casa-coordinates` | future task/Python projection | simulation model-image ingestion | CASA imported image metadata | simulation setup timing | #124 |
 | `imregrid` | missing/partial | `casa-images`, `casa-coordinates` | none | data-combination and feathering image alignment | CASA regridded image | breadth timing | #127 |
 | `immath` | partial via expression work | `casa-images` | future task/Python projection | expression syntax and image output parity | CASA image products | breadth timing | #120, #127 |

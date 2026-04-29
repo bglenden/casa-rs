@@ -23,6 +23,9 @@ functionality.
 
 - [Issue 95 usepointing performance evidence](wave-3-issue-95-usepointing-performance.md)
 - [Issue 117 MFS foundation evidence](wave-3-issue-117-mfs-foundation.md)
+- [Issue 118 self-calibration parity evidence](wave-3-issue-118-selfcal-parity.md)
+- [Issue 119 line-imaging evidence](wave-3-issue-119-line-imaging.md)
+- [Issue 120 image-analysis evidence](wave-3-issue-120-image-analysis.md)
 
 ## Source Pages
 

@@ -86,7 +86,9 @@ fn launcher_lists_registered_apps_in_expected_order() {
             "importvla",
             "imager",
             "tablebrowser",
-            "imexplore"
+            "imexplore",
+            "immoments",
+            "exportfits"
         ]
     );
 }

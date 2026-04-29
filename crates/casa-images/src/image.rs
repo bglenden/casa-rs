@@ -2440,8 +2440,8 @@ fn make_lcbox_record(shape: &[usize]) -> RecordValue {
     record
 }
 
-fn mask_table_reference(image_path: &Path, mask_name: &str) -> String {
-    image_path.join(mask_name).to_string_lossy().into_owned()
+fn mask_table_reference(_image_path: &Path, mask_name: &str) -> String {
+    mask_name.to_string()
 }
 
 fn resolve_mask_table_path(image_path: &Path, stored_path: &str) -> PathBuf {

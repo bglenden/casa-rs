@@ -421,16 +421,13 @@ impl<'a, T: StatsElement> LatticeStatistics<'a, T> {
         Ok(())
     }
 
-    fn filter_state<'b>(&'b self, mask_strides: Option<&'b [usize]>) -> FilterState<'b> {
+    fn filter_state<'b>(&'b self, _mask_strides: Option<&'b [usize]>) -> FilterState<'b> {
         FilterState {
             include_range: self.include_range,
             exclude_range: self.exclude_range,
             mask: self.mask.as_ref(),
-            mask_slice: self
-                .mask
-                .as_ref()
-                .and_then(|mask| mask.as_slice_memory_order()),
-            mask_strides,
+            mask_slice: None,
+            mask_strides: None,
         }
     }
 
@@ -1493,6 +1490,32 @@ mod tests {
         let (min_pos, max_pos) = stats.get_min_max_pos().unwrap();
         assert_eq!(min_pos, Some(vec![2]));
         assert_eq!(max_pos, Some(vec![5]));
+    }
+
+    #[test]
+    fn global_stats_respect_non_standard_mask_layout() {
+        let data = ArrayD::from_shape_fn(IxDyn(&[2, 3]), |idx| (idx[0] + 10 * idx[1]) as f32);
+        let mut mask_source = ArrayD::from_elem(IxDyn(&[3, 2]), false);
+        mask_source[IxDyn(&[0, 0])] = true;
+        mask_source[IxDyn(&[2, 1])] = true;
+        let mask = mask_source.permuted_axes(IxDyn(&[1, 0]));
+
+        let lat = ArrayLattice::new(data);
+        let mut stats = LatticeStatistics::new(&lat);
+        stats.set_pixel_mask(mask);
+
+        assert_eq!(
+            stats.get_statistic(Statistic::Npts).unwrap()[IxDyn(&[0])],
+            2.0
+        );
+        assert_eq!(
+            stats.get_statistic(Statistic::Sum).unwrap()[IxDyn(&[0])],
+            21.0
+        );
+        assert_eq!(
+            stats.get_statistic(Statistic::Median).unwrap()[IxDyn(&[0])],
+            10.5
+        );
     }
 
     #[test]
