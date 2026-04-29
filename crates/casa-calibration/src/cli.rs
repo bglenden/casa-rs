@@ -1863,7 +1863,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
     let mut model_source = GainSolveModelSource::PointSource;
     let mut normalize_average_amplitude = false;
     let mut min_snr = 3.0_f32;
-    let mut min_baselines_per_antenna = 0_usize;
+    let mut min_baselines_per_antenna = 4_usize;
     let mut format = OutputFormat::Text;
     let mut output = None;
     let mut overwrite = false;
@@ -3994,6 +3994,7 @@ mod tests {
                 assert!(options.combine.fields);
                 assert_eq!(options.model_source, GainSolveModelSource::ModelColumn);
                 assert_eq!(options.min_snr, 2.5);
+                assert_eq!(options.min_baselines_per_antenna, 4);
                 assert_eq!(
                     options.refant,
                     RefAntSelector::AntennaName("VA15".to_string())

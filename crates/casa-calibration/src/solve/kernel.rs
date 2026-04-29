@@ -9,6 +9,7 @@ use num_complex::Complex64;
 
 use super::{GainSolveError, GainSolveMode, GainType};
 use crate::solve::grouping::{SolveAccumulator, SolveEdgeStats};
+use crate::solve::trace;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SolutionRow {
@@ -33,6 +34,10 @@ pub(crate) struct SolvedPhaseGraph {
     pub(crate) hessian: HashMap<i32, f32>,
     pub(crate) param_error: HashMap<i32, f32>,
     pub(crate) snr: HashMap<i32, f32>,
+    error_chi_square: f64,
+    sample_count: usize,
+    good_count: usize,
+    snr_amplitude: HashMap<i32, f32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -49,6 +54,33 @@ struct PhaseSolveResult {
     snr_amplitude: HashMap<i32, f32>,
 }
 
+pub(crate) struct PhaseStepTrace {
+    pub(crate) x0: f64,
+    pub(crate) x1: f64,
+    pub(crate) x2: f64,
+    pub(crate) step: f64,
+    pub(crate) opt_factor: f64,
+    pub(crate) expanded: bool,
+    pub(crate) iterations: usize,
+}
+
+pub(crate) struct PhaseSolverTraceEvent<'a> {
+    pub(crate) iteration: usize,
+    pub(crate) refant_id: i32,
+    pub(crate) chi_square: f64,
+    pub(crate) last_chi_square: f64,
+    pub(crate) delta_chi_square: f64,
+    pub(crate) fractional_delta: f64,
+    pub(crate) convergence_count: i32,
+    pub(crate) step: &'a PhaseStepTrace,
+    pub(crate) antenna_ids: &'a BTreeSet<i32>,
+    pub(crate) last_gains: &'a HashMap<i32, Complex64>,
+    pub(crate) gains: &'a HashMap<i32, Complex64>,
+    pub(crate) gradient: &'a HashMap<i32, Complex64>,
+    pub(crate) hessian: &'a HashMap<i32, f64>,
+    pub(crate) delta: &'a HashMap<i32, Complex64>,
+}
+
 pub(crate) fn solve_group(
     group: SolveAccumulator,
     available_antennas: &BTreeSet<i32>,
@@ -58,29 +90,34 @@ pub(crate) fn solve_group(
     min_snr: f32,
     min_baselines_per_antenna: usize,
 ) -> Result<Vec<SolutionRow>, GainSolveError> {
-    let averaged_time = (group.min_time + group.max_time) / 2.0;
+    let averaged_time = group.aggregate_time_centroid();
     let averaged_interval = group.total_interval / group.sample_rows.max(1) as f64;
     let scan_number = *group.scan_numbers.iter().next().unwrap_or(&0);
-    let solved = group
-        .receptor_graphs
-        .iter()
-        .zip(group.receptor_weights.iter())
-        .zip(group.receptor_stats.iter())
-        .map(|((graph, weights), stats)| {
-            solve_graph(
-                graph,
-                weights,
-                stats,
-                solve_mode,
-                SolveGraphOptions {
-                    refant_id,
-                    field_id: group.field_id,
-                    spw_id: group.spw_id,
-                    min_baselines_per_antenna,
-                },
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let options = SolveGraphOptions {
+        refant_id,
+        field_id: group.field_id,
+        spw_id: group.spw_id,
+        min_baselines_per_antenna,
+    };
+    let mut solved = if matches!((gain_type, solve_mode), (GainType::G, GainSolveMode::Phase)) {
+        solve_phase_graphs_like_casa(
+            &group.receptor_graphs,
+            &group.receptor_weights,
+            &group.receptor_stats,
+            options,
+        )?
+    } else {
+        group
+            .receptor_graphs
+            .iter()
+            .zip(group.receptor_weights.iter())
+            .zip(group.receptor_stats.iter())
+            .map(|((graph, weights), stats)| {
+                solve_graph(graph, weights, stats, solve_mode, options)
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    apply_group_reduced_chi_square(&mut solved);
 
     let mut antenna_ids = available_antennas.clone();
     antenna_ids.extend(group.antenna_ids);
@@ -122,7 +159,7 @@ pub(crate) fn solve_group(
                             .get(&antenna_id)
                             .copied()
                             .unwrap_or_default();
-                        !connected || snr <= min_snr || !param_error.is_finite()
+                        !connected || below_min_snr(snr, min_snr) || !param_error.is_finite()
                     })
                     .collect(),
                 GainType::T => {
@@ -134,7 +171,7 @@ pub(crate) fn solve_group(
                         .get(&antenna_id)
                         .copied()
                         .unwrap_or_default();
-                    vec![!connected || snr <= min_snr || !param_error.is_finite()]
+                    vec![!connected || below_min_snr(snr, min_snr) || !param_error.is_finite()]
                 }
             };
             let param_errors = match gain_type {
@@ -188,6 +225,17 @@ pub(crate) fn solve_group(
                         .unwrap_or_default(),
                 ],
             };
+            let gains = gains
+                .into_iter()
+                .zip(flags.iter())
+                .map(|(gain, flag)| {
+                    if *flag {
+                        Complex32::new(1.0, 0.0)
+                    } else {
+                        gain
+                    }
+                })
+                .collect();
             SolutionRow {
                 time_seconds: averaged_time,
                 interval_seconds: averaged_interval,
@@ -206,6 +254,160 @@ pub(crate) fn solve_group(
         .collect();
 
     Ok(solution_rows)
+}
+
+fn below_min_snr(snr: f32, min_snr: f32) -> bool {
+    snr <= min_snr
+}
+
+struct PreparedPhaseGraph {
+    antenna_ids: BTreeSet<i32>,
+    active_graph: HashMap<(i32, i32), Complex32>,
+    active_weights: HashMap<(i32, i32), f32>,
+    active_stats: HashMap<(i32, i32), SolveEdgeStats>,
+    reachable: BTreeSet<i32>,
+    active_antenna_ids: BTreeSet<i32>,
+}
+
+fn prepare_phase_graph(
+    graph: &HashMap<(i32, i32), Complex32>,
+    weights: &HashMap<(i32, i32), f32>,
+    stats: &HashMap<(i32, i32), SolveEdgeStats>,
+    options: SolveGraphOptions,
+) -> Result<PreparedPhaseGraph, GainSolveError> {
+    let refant_id = options.refant_id;
+    let mut antenna_ids = BTreeSet::new();
+    for (antenna1, antenna2) in graph.keys() {
+        antenna_ids.insert(*antenna1);
+        antenna_ids.insert(*antenna2);
+    }
+    antenna_ids.insert(refant_id);
+    let constrained =
+        baseline_constrained_antennas(graph, weights, options.min_baselines_per_antenna);
+    let active_graph = graph
+        .iter()
+        .filter_map(|(&(antenna1, antenna2), value)| {
+            (constrained.contains(&antenna1) && constrained.contains(&antenna2))
+                .then_some(((antenna1, antenna2), *value))
+        })
+        .collect::<HashMap<_, _>>();
+    let active_weights = weights
+        .iter()
+        .filter_map(|(&(antenna1, antenna2), weight)| {
+            (constrained.contains(&antenna1) && constrained.contains(&antenna2))
+                .then_some(((antenna1, antenna2), *weight))
+        })
+        .collect::<HashMap<_, _>>();
+    let active_stats = stats
+        .iter()
+        .filter_map(|(&(antenna1, antenna2), stat)| {
+            (constrained.contains(&antenna1) && constrained.contains(&antenna2))
+                .then_some(((antenna1, antenna2), *stat))
+        })
+        .collect::<HashMap<_, _>>();
+    let reachable = reachable_antennas(&active_graph, refant_id);
+
+    for antenna_id in &antenna_ids {
+        if *antenna_id != refant_id && !reachable.contains(antenna_id) {
+            return Err(GainSolveError::UnsolvableAntenna {
+                antenna_id: *antenna_id,
+                field_id: options.field_id,
+                spw_id: options.spw_id,
+            });
+        }
+    }
+
+    let active_antenna_ids = antenna_ids
+        .iter()
+        .copied()
+        .filter(|antenna_id| reachable.contains(antenna_id))
+        .collect::<BTreeSet<_>>();
+
+    Ok(PreparedPhaseGraph {
+        antenna_ids,
+        active_graph,
+        active_weights,
+        active_stats,
+        reachable,
+        active_antenna_ids,
+    })
+}
+
+fn solve_phase_graphs_like_casa(
+    graphs: &[HashMap<(i32, i32), Complex32>],
+    weights: &[HashMap<(i32, i32), f32>],
+    stats: &[HashMap<(i32, i32), SolveEdgeStats>],
+    options: SolveGraphOptions,
+) -> Result<Vec<SolvedPhaseGraph>, GainSolveError> {
+    let prepared = graphs
+        .iter()
+        .zip(weights.iter())
+        .zip(stats.iter())
+        .map(|((graph, weights), stats)| prepare_phase_graph(graph, weights, stats, options))
+        .collect::<Result<Vec<_>, _>>()?;
+    let solved = solve_phase_lm_graphs_like_casa(&prepared, options.refant_id);
+    Ok(prepared
+        .iter()
+        .zip(solved)
+        .map(|(prepared, solved_phase)| {
+            finish_phase_graph(prepared, solved_phase, options.refant_id)
+        })
+        .collect())
+}
+
+fn finish_phase_graph(
+    prepared: &PreparedPhaseGraph,
+    solved_phase: PhaseSolveResult,
+    refant_id: i32,
+) -> SolvedPhaseGraph {
+    let mut gains = solved_phase.gains;
+    for gain in gains.values_mut() {
+        let norm = gain.norm();
+        if norm > f32::EPSILON {
+            *gain /= Complex32::new(norm, 0.0);
+        }
+    }
+    rereference_gains(&mut gains, refant_id, GainSolveMode::Phase);
+
+    let hessian = hessian(
+        &prepared.active_graph,
+        &prepared.active_weights,
+        &solved_phase.error_gains,
+        &prepared.reachable,
+    );
+    let error_chi_square = chi_square_for_errors(
+        &prepared.active_graph,
+        &prepared.active_weights,
+        &prepared.active_stats,
+        &solved_phase.error_gains,
+    );
+    let good_count = prepared
+        .antenna_ids
+        .iter()
+        .filter(|antenna_id| prepared.reachable.contains(antenna_id))
+        .count();
+    let sample_count = undirected_collapsed_count(&prepared.active_stats);
+    let degrees_of_freedom = (2 * sample_count.saturating_sub(good_count)).max(1);
+    let reduced_chi_square = error_chi_square / degrees_of_freedom as f64;
+    let param_error = param_errors(&hessian, reduced_chi_square);
+    let snr = snrs(
+        &gains,
+        &prepared.reachable,
+        &param_error,
+        &solved_phase.snr_amplitude,
+    );
+
+    SolvedPhaseGraph {
+        gains,
+        reachable: prepared.reachable.clone(),
+        hessian,
+        param_error,
+        snr,
+        error_chi_square,
+        sample_count,
+        good_count,
+        snr_amplitude: solved_phase.snr_amplitude,
+    }
 }
 
 pub(crate) fn solve_graph(
@@ -371,11 +573,59 @@ pub(crate) fn solve_graph(
         .iter()
         .filter(|antenna_id| reachable.contains(antenna_id))
         .count();
-    let sample_count = undirected_sample_count(&active_stats);
+    let sample_count = undirected_collapsed_count(&active_stats);
     let degrees_of_freedom = (2 * sample_count.saturating_sub(good_count)).max(1);
     let reduced_chi_square = error_chi_square / degrees_of_freedom as f64;
     let param_error = param_errors(&hessian, reduced_chi_square);
-    let snr = gains
+    let snr = snrs(&gains, &reachable, &param_error, &snr_amplitude);
+
+    Ok(SolvedPhaseGraph {
+        gains,
+        reachable,
+        hessian,
+        param_error,
+        snr,
+        error_chi_square,
+        sample_count,
+        good_count,
+        snr_amplitude,
+    })
+}
+
+fn apply_group_reduced_chi_square(solved: &mut [SolvedPhaseGraph]) {
+    let error_chi_square = solved
+        .iter()
+        .map(|per_receptor| per_receptor.error_chi_square)
+        .sum::<f64>();
+    let sample_count = solved
+        .iter()
+        .map(|per_receptor| per_receptor.sample_count)
+        .sum::<usize>();
+    let good_count = solved
+        .iter()
+        .map(|per_receptor| per_receptor.good_count)
+        .sum::<usize>();
+    let degrees_of_freedom = (2 * sample_count.saturating_sub(good_count)).max(1);
+    let reduced_chi_square = error_chi_square / degrees_of_freedom as f64;
+
+    for per_receptor in solved {
+        per_receptor.param_error = param_errors(&per_receptor.hessian, reduced_chi_square);
+        per_receptor.snr = snrs(
+            &per_receptor.gains,
+            &per_receptor.reachable,
+            &per_receptor.param_error,
+            &per_receptor.snr_amplitude,
+        );
+    }
+}
+
+fn snrs(
+    gains: &HashMap<i32, Complex32>,
+    reachable: &BTreeSet<i32>,
+    param_error: &HashMap<i32, f32>,
+    snr_amplitude: &HashMap<i32, f32>,
+) -> HashMap<i32, f32> {
+    gains
         .iter()
         .map(|(antenna_id, gain)| {
             let error = param_error.get(antenna_id).copied().unwrap_or_default();
@@ -392,15 +642,7 @@ pub(crate) fn solve_graph(
             };
             (*antenna_id, value)
         })
-        .collect();
-
-    Ok(SolvedPhaseGraph {
-        gains,
-        reachable,
-        hessian,
-        param_error,
-        snr,
-    })
+        .collect()
 }
 
 fn solve_phase_lm_like_casa(
@@ -415,7 +657,7 @@ fn solve_phase_lm_like_casa(
     let mut last_chi_square = f64::MAX;
     let mut convergence_count = 0_i32;
 
-    for _ in 0..50 {
+    for iteration in 0..50 {
         let mut chi_square = chi_square_complex64(graph, weights, stats, &gains);
         let delta_chi_square = chi_square - last_chi_square;
         let fractional_delta = if chi_square > 0.0 {
@@ -506,7 +748,7 @@ fn solve_phase_lm_like_casa(
             .collect::<HashMap<_, _>>();
 
         last_gains = gains.clone();
-        optimize_phase_step(
+        let step_trace = optimize_phase_step(
             graph,
             weights,
             stats,
@@ -523,6 +765,22 @@ fn solve_phase_lm_like_casa(
                     .unwrap_or_else(|| Complex64::new(0.0, 0.0));
             }
         }
+        trace::trace_phase_solver_iteration(PhaseSolverTraceEvent {
+            iteration,
+            refant_id,
+            chi_square,
+            last_chi_square,
+            delta_chi_square,
+            fractional_delta,
+            convergence_count,
+            step: &step_trace,
+            antenna_ids,
+            last_gains: &last_gains,
+            gains: &gains,
+            gradient: &gradient,
+            hessian: &hessian,
+            delta: &delta,
+        });
     }
 
     rereference_complex64(&mut gains, refant_id, false);
@@ -544,6 +802,117 @@ fn solve_phase_lm_like_casa(
         error_gains,
         snr_amplitude,
     }
+}
+
+fn solve_phase_lm_graphs_like_casa(
+    prepared: &[PreparedPhaseGraph],
+    refant_id: i32,
+) -> Vec<PhaseSolveResult> {
+    let mut gains = prepared
+        .iter()
+        .map(|graph| {
+            initial_casa_t_guess(&graph.active_graph, &graph.active_antenna_ids, refant_id)
+        })
+        .collect::<Vec<_>>();
+    let mut last_gains = gains.clone();
+    let mut last_chi_square = f64::MAX;
+    let mut convergence_count = 0_i32;
+
+    for _iteration in 0..50 {
+        let mut chi_square = chi_square_phase_graphs(prepared, &gains);
+        let delta_chi_square = chi_square - last_chi_square;
+        let fractional_delta = if chi_square > 0.0 {
+            delta_chi_square / chi_square
+        } else {
+            0.0
+        };
+
+        if fractional_delta <= 0.001 {
+            if delta_chi_square.abs() < 0.1 * chi_square {
+                convergence_count += 1;
+            }
+            if convergence_count > 5 {
+                break;
+            }
+        } else if delta_chi_square.abs() > 0.1 * chi_square {
+            convergence_count = 0;
+        } else {
+            convergence_count = (convergence_count - 1).max(0);
+        }
+
+        if delta_chi_square <= 0.0 {
+            last_chi_square = chi_square;
+        } else {
+            gains.clone_from(&last_gains);
+            chi_square = chi_square_phase_graphs(prepared, &gains);
+        }
+
+        let mut deltas = Vec::with_capacity(prepared.len());
+        for (graph, receptor_gains) in prepared.iter().zip(gains.iter()) {
+            let (gradient, hessian) = phase_gradient_hessian(
+                &graph.active_graph,
+                &graph.active_weights,
+                &graph.active_antenna_ids,
+                receptor_gains,
+            );
+            let delta = graph
+                .active_antenna_ids
+                .iter()
+                .copied()
+                .map(|antenna_id| {
+                    let hessian = hessian.get(&antenna_id).copied().unwrap_or_default();
+                    let value = if hessian > f64::EPSILON {
+                        -gradient
+                            .get(&antenna_id)
+                            .copied()
+                            .unwrap_or_else(|| Complex64::new(0.0, 0.0))
+                            / hessian
+                            / 2.0
+                    } else {
+                        Complex64::new(0.0, 0.0)
+                    };
+                    (antenna_id, value)
+                })
+                .collect::<HashMap<_, _>>();
+            deltas.push(delta);
+        }
+
+        last_gains = gains.clone();
+        optimize_phase_step_graphs(prepared, &last_gains, &mut gains, &mut deltas, chi_square);
+        for (receptor_gains, receptor_delta) in gains.iter_mut().zip(deltas.iter()) {
+            for (antenna_id, gain) in receptor_gains {
+                *gain += receptor_delta
+                    .get(antenna_id)
+                    .copied()
+                    .unwrap_or_else(|| Complex64::new(0.0, 0.0));
+            }
+        }
+    }
+
+    gains
+        .into_iter()
+        .map(|mut receptor_gains| {
+            rereference_complex64(&mut receptor_gains, refant_id, false);
+            let error_gains = receptor_gains
+                .iter()
+                .map(|(antenna_id, gain)| (*antenna_id, complex64_to_32(*gain)))
+                .collect::<HashMap<_, _>>();
+            let snr_amplitude = receptor_gains
+                .iter()
+                .map(|(antenna_id, gain)| (*antenna_id, gain.norm() as f32))
+                .collect::<HashMap<_, _>>();
+            rereference_complex64(&mut receptor_gains, refant_id, true);
+            let gains = receptor_gains
+                .into_iter()
+                .map(|(antenna_id, gain)| (antenna_id, complex64_to_32(gain)))
+                .collect();
+            PhaseSolveResult {
+                gains,
+                error_gains,
+                snr_amplitude,
+            }
+        })
+        .collect()
 }
 
 fn baseline_constrained_antennas(
@@ -611,6 +980,12 @@ fn initial_casa_t_guess(
             if norm > f64::EPSILON {
                 *gains.entry(*antenna_id).or_default() += value.conj() / norm;
             }
+        } else if let Some(edge) = graph.get(&(*antenna_id, refant_id)) {
+            let value = complex32_to_64(*edge);
+            let norm = value.norm();
+            if norm > f64::EPSILON {
+                *gains.entry(*antenna_id).or_default() += value / norm;
+            }
         }
     }
     for antenna_id in antenna_ids {
@@ -631,53 +1006,135 @@ fn optimize_phase_step(
     gains: &mut HashMap<i32, Complex64>,
     delta: &mut HashMap<i32, Complex64>,
     current_chi_square: f64,
-) {
+) -> PhaseStepTrace {
     let mut step = 1.0_f64;
+    let mut iterations = 0_usize;
     let x0 = current_chi_square;
     apply_step(gains, last_gains, delta, 1.0);
     let mut x1 = chi_square_complex64(graph, weights, stats, gains);
     let x2;
+    let expanded;
 
     if x1 < x0 {
+        expanded = true;
         apply_step(gains, last_gains, delta, 2.0 * step);
         let mut trial_x2 = chi_square_complex64(graph, weights, stats, gains);
-        let mut loops = 0;
-        while trial_x2 < x1 && loops < 30 {
+        while trial_x2 < x1 {
+            iterations += 1;
             step *= 2.0;
             x1 = trial_x2;
             apply_step(gains, last_gains, delta, 2.0 * step);
             trial_x2 = chi_square_complex64(graph, weights, stats, gains);
-            loops += 1;
         }
         x2 = trial_x2;
     } else {
+        expanded = false;
         step *= 0.5;
         apply_step(gains, last_gains, delta, step);
         let mut trial_x2 = x1;
         x1 = chi_square_complex64(graph, weights, stats, gains);
-        let mut loops = 0;
-        while x1 > x0 && loops < 60 {
+        while x1 > x0 {
+            iterations += 1;
             step *= 0.5;
             trial_x2 = x1;
             apply_step(gains, last_gains, delta, step);
             x1 = chi_square_complex64(graph, weights, stats, gains);
-            loops += 1;
         }
         x2 = trial_x2;
     }
 
     let denominator = x0 - 2.0 * x1 + x2;
-    let opt_factor = if denominator.abs() > f64::EPSILON {
+    let opt_factor = if denominator.abs() > 0.0 {
         step * (1.5 - (x2 - x1) / denominator)
     } else {
         0.0
     };
 
     gains.clone_from(last_gains);
-    if opt_factor > 0.0 && opt_factor.is_finite() {
+    if opt_factor > 0.0 {
         for value in delta.values_mut() {
             *value *= opt_factor;
         }
+    }
+    PhaseStepTrace {
+        x0,
+        x1,
+        x2,
+        step,
+        opt_factor,
+        expanded,
+        iterations,
+    }
+}
+
+fn optimize_phase_step_graphs(
+    prepared: &[PreparedPhaseGraph],
+    last_gains: &[HashMap<i32, Complex64>],
+    gains: &mut [HashMap<i32, Complex64>],
+    deltas: &mut [HashMap<i32, Complex64>],
+    current_chi_square: f64,
+) -> PhaseStepTrace {
+    let mut step = 1.0_f64;
+    let mut iterations = 0_usize;
+    let x0 = current_chi_square;
+    apply_step_graphs(gains, last_gains, deltas, 1.0);
+    let mut x1 = chi_square_phase_graphs(prepared, gains);
+    let x2;
+    let expanded;
+
+    if x1 < x0 {
+        expanded = true;
+        apply_step_graphs(gains, last_gains, deltas, 2.0 * step);
+        let mut trial_x2 = chi_square_phase_graphs(prepared, gains);
+        while trial_x2 < x1 {
+            iterations += 1;
+            step *= 2.0;
+            x1 = trial_x2;
+            apply_step_graphs(gains, last_gains, deltas, 2.0 * step);
+            trial_x2 = chi_square_phase_graphs(prepared, gains);
+        }
+        x2 = trial_x2;
+    } else {
+        expanded = false;
+        step *= 0.5;
+        apply_step_graphs(gains, last_gains, deltas, step);
+        let mut trial_x2 = x1;
+        x1 = chi_square_phase_graphs(prepared, gains);
+        while x1 > x0 {
+            iterations += 1;
+            step *= 0.5;
+            trial_x2 = x1;
+            apply_step_graphs(gains, last_gains, deltas, step);
+            x1 = chi_square_phase_graphs(prepared, gains);
+        }
+        x2 = trial_x2;
+    }
+
+    let denominator = x0 - 2.0 * x1 + x2;
+    let opt_factor = if denominator.abs() > 0.0 {
+        step * (1.5 - (x2 - x1) / denominator)
+    } else {
+        0.0
+    };
+
+    for (gain, last_gain) in gains.iter_mut().zip(last_gains.iter()) {
+        gain.clone_from(last_gain);
+    }
+    if opt_factor > 0.0 {
+        for receptor_delta in deltas {
+            for value in receptor_delta.values_mut() {
+                *value *= opt_factor;
+            }
+        }
+    }
+    PhaseStepTrace {
+        x0,
+        x1,
+        x2,
+        step,
+        opt_factor,
+        expanded,
+        iterations,
     }
 }
 
@@ -698,6 +1155,35 @@ fn apply_step(
                     .copied()
                     .unwrap_or_else(|| Complex64::new(0.0, 0.0));
     }
+}
+
+fn apply_step_graphs(
+    gains: &mut [HashMap<i32, Complex64>],
+    bases: &[HashMap<i32, Complex64>],
+    deltas: &[HashMap<i32, Complex64>],
+    factor: f64,
+) {
+    for ((receptor_gains, base), delta) in gains.iter_mut().zip(bases.iter()).zip(deltas.iter()) {
+        apply_step(receptor_gains, base, delta, factor);
+    }
+}
+
+fn chi_square_phase_graphs(
+    prepared: &[PreparedPhaseGraph],
+    gains: &[HashMap<i32, Complex64>],
+) -> f64 {
+    prepared
+        .iter()
+        .zip(gains.iter())
+        .map(|(graph, gains)| {
+            chi_square_complex64(
+                &graph.active_graph,
+                &graph.active_weights,
+                &graph.active_stats,
+                gains,
+            )
+        })
+        .sum()
 }
 
 fn chi_square_complex64(
@@ -739,6 +1225,57 @@ fn chi_square_complex64(
         total += contribution.max(0.0);
     }
     total
+}
+
+fn phase_gradient_hessian(
+    graph: &HashMap<(i32, i32), Complex32>,
+    weights: &HashMap<(i32, i32), f32>,
+    antenna_ids: &BTreeSet<i32>,
+    gains: &HashMap<i32, Complex64>,
+) -> (HashMap<i32, Complex64>, HashMap<i32, f64>) {
+    let mut gradient = antenna_ids
+        .iter()
+        .copied()
+        .map(|antenna_id| (antenna_id, Complex64::new(0.0, 0.0)))
+        .collect::<HashMap<_, _>>();
+    let mut hessian = antenna_ids
+        .iter()
+        .copied()
+        .map(|antenna_id| (antenna_id, 0.0_f64))
+        .collect::<HashMap<_, _>>();
+
+    for (&(antenna1, antenna2), edge) in graph {
+        if antenna1 > antenna2 {
+            continue;
+        }
+        let weight = f64::from(
+            weights
+                .get(&(antenna1, antenna2))
+                .copied()
+                .unwrap_or_default(),
+        );
+        if weight <= f64::EPSILON {
+            continue;
+        }
+        let gain1 = gains
+            .get(&antenna1)
+            .copied()
+            .unwrap_or_else(|| Complex64::new(1.0, 0.0));
+        let gain2 = gains
+            .get(&antenna2)
+            .copied()
+            .unwrap_or_else(|| Complex64::new(1.0, 0.0));
+        let observed = complex32_to_64(*edge);
+        let residual_sum = weight * gain1 * gain2.conj() - observed;
+        let deriv1 = gain2.conj();
+        let deriv2 = gain1;
+        *gradient.entry(antenna1).or_default() += residual_sum * deriv1.conj();
+        *hessian.entry(antenna1).or_default() += weight * deriv1.norm_sqr();
+        *gradient.entry(antenna2).or_default() += deriv2 * residual_sum.conj();
+        *hessian.entry(antenna2).or_default() += weight * deriv2.norm_sqr();
+    }
+
+    (gradient, hessian)
 }
 
 fn rereference_complex64(gains: &mut HashMap<i32, Complex64>, refant_id: i32, phase_only: bool) {
@@ -830,18 +1367,18 @@ fn chi_square_for_errors(
         );
         let model = gain1 * gain2.conj();
         let cross = (model.conj() * observed).re;
-        let contribution = stat.raw_weighted_sample_power - 2.0 * f64::from(cross)
+        let contribution = stat.weighted_sample_power - 2.0 * f64::from(cross)
             + weight * f64::from(model.norm_sqr());
         total += contribution.max(0.0);
     }
     total
 }
 
-fn undirected_sample_count(stats: &HashMap<(i32, i32), SolveEdgeStats>) -> usize {
+fn undirected_collapsed_count(stats: &HashMap<(i32, i32), SolveEdgeStats>) -> usize {
     stats
         .iter()
         .filter_map(|(&(antenna1, antenna2), stat)| {
-            (antenna1 < antenna2).then_some(stat.sample_count)
+            (antenna1 < antenna2).then_some(stat.collapsed_count)
         })
         .sum()
 }
@@ -991,6 +1528,7 @@ pub(crate) fn accumulate_edge_with_stats(
             value.weighted_sample_power += edge_stats.weighted_sample_power;
             value.raw_weighted_sample_power += edge_stats.raw_weighted_sample_power;
             value.sample_count += edge_stats.sample_count;
+            value.collapsed_count += edge_stats.collapsed_count;
         })
         .or_insert(edge_stats);
     stats
@@ -999,6 +1537,7 @@ pub(crate) fn accumulate_edge_with_stats(
             value.weighted_sample_power += edge_stats.weighted_sample_power;
             value.raw_weighted_sample_power += edge_stats.raw_weighted_sample_power;
             value.sample_count += edge_stats.sample_count;
+            value.collapsed_count += edge_stats.collapsed_count;
         })
         .or_insert(edge_stats);
 }
@@ -1086,6 +1625,7 @@ mod tests {
                 weighted_sample_power: f64::from(weight) * f64::from(value.norm_sqr()),
                 raw_weighted_sample_power: f64::from(weight) * f64::from(value.norm_sqr()),
                 sample_count: 1,
+                collapsed_count: 1,
             },
         );
     }

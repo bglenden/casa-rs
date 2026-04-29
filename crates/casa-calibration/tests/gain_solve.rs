@@ -13,6 +13,7 @@ use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableOptions};
 use casa_types::ArrayValue;
+use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 #[test]
 fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
@@ -35,7 +36,7 @@ fn solve_gain_phase_g_corrects_synthetic_ms_downstream() {
             parang: false,
             model_source: GainSolveModelSource::PointSource,
             normalize_average_amplitude: false,
-            min_snr: 0.0,
+            min_snr: 3.0,
             min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
@@ -89,7 +90,7 @@ fn solve_gain_phase_g_uses_model_data_column_downstream() {
             parang: false,
             model_source: GainSolveModelSource::ModelColumn,
             normalize_average_amplitude: false,
-            min_snr: 0.0,
+            min_snr: 3.0,
             min_baselines_per_antenna: 0,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
@@ -109,6 +110,273 @@ fn solve_gain_phase_g_uses_model_data_column_downstream() {
     .expect("apply model-column solved G table");
 
     common::assert_corrected_rows_match_model_column(&ms_path);
+}
+
+#[test]
+fn solve_gain_channel_average_uses_weight_spectrum_when_present() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_gain_solve_weight_spectrum_fixture_ms(dir.path());
+    let caltable_path = dir.path().join("solved-weight-spectrum.gcal");
+
+    solve_gain_from_path(
+        &ms_path,
+        &GainSolveRequest {
+            selection: MsSelection::new(),
+            output_table: caltable_path.clone(),
+            gain_type: GainType::G,
+            solve_mode: GainSolveMode::Phase,
+            solve_interval: GainSolveInterval::Infinite,
+            combine: GainSolveCombine::default(),
+            refant: RefAntSelector::AntennaId(0),
+            prior_calibration_tables: Vec::new(),
+            parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 0,
+            smodel: [1.0, 0.0, 0.0, 0.0],
+        },
+    )
+    .expect("solve synthetic G gains with weight spectrum");
+
+    execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new(),
+            apply_mode: ApplyMode::CalOnly,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+        },
+    )
+    .expect("apply weight-spectrum solved G table");
+
+    let ms = MeasurementSet::open(&ms_path).expect("reopen solved weight-spectrum MS");
+    let corrected = ms
+        .data_column(casa_ms::schema::main_table::VisibilityDataColumn::CorrectedData)
+        .expect("corrected data column");
+    for row in 0..ms.row_count() {
+        let ArrayValue::Complex32(values) = corrected.get(row).expect("corrected row") else {
+            panic!("expected complex corrected data");
+        };
+        for corr_index in 0..2 {
+            let value = values[[corr_index, 0]];
+            assert!(
+                (value.re - 1.0).abs() <= 1.0e-4 && value.im.abs() <= 1.0e-4,
+                "row {row} corr {corr_index} channel 0 corrected to {value:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn solve_gain_phase_t_uses_per_correlation_model_data_column_downstream() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_gain_solve_model_column_fixture_ms_for_kind(
+        dir.path(),
+        common::SyntheticGainFixtureKind::T,
+        [
+            casa_types::Complex32::new(1.0, 0.0),
+            casa_types::Complex32::new(0.0, 2.0),
+            casa_types::Complex32::new(1.0, 0.0),
+            casa_types::Complex32::new(0.0, 2.0),
+        ],
+    );
+    let caltable_path = dir.path().join("solved-model.tcal");
+
+    let report = solve_gain_from_path(
+        &ms_path,
+        &GainSolveRequest {
+            selection: MsSelection::new(),
+            output_table: caltable_path.clone(),
+            gain_type: GainType::T,
+            solve_mode: GainSolveMode::Phase,
+            solve_interval: GainSolveInterval::Infinite,
+            combine: GainSolveCombine::default(),
+            refant: RefAntSelector::AntennaId(0),
+            prior_calibration_tables: Vec::new(),
+            parang: false,
+            model_source: GainSolveModelSource::ModelColumn,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 0,
+            smodel: [1.0, 0.0, 0.0, 0.0],
+        },
+    )
+    .expect("solve synthetic T gains against per-correlation MODEL_DATA");
+
+    assert_eq!(report.solution_row_count, 3);
+    execute_apply_from_path(
+        &ms_path,
+        &ApplyPlanRequest {
+            selection: MsSelection::new(),
+            apply_mode: ApplyMode::CalOnly,
+            parang: false,
+            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+        },
+    )
+    .expect("apply model-column solved T table");
+
+    common::assert_corrected_rows_match_model_column(&ms_path);
+}
+
+#[test]
+fn solve_gain_g_uses_casa_correlation_independent_flags() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
+    {
+        let mut ms = MeasurementSet::open(&ms_path).expect("open synthetic MS");
+        for row in 0..ms.row_count() {
+            ms.main_table_mut()
+                .column_accessor_mut("FLAG")
+                .and_then(|mut column| {
+                    column.set_array_assuming_valid(
+                        row,
+                        ArrayValue::Bool(
+                            ArrayD::from_shape_vec(
+                                IxDyn(&[2, 2]).f(),
+                                vec![false, true, false, true],
+                            )
+                            .expect("flag array"),
+                        ),
+                    )
+                })
+                .expect("write asymmetric flags");
+        }
+        let rows = (0..ms.row_count()).collect::<Vec<_>>();
+        ms.main_table()
+            .save_selected_rows_in_place_assuming_valid(&["FLAG"], &rows)
+            .expect("save asymmetric flags");
+    }
+    let caltable_path = dir.path().join("solved-corr-independent.gcal");
+
+    solve_gain_from_path(
+        &ms_path,
+        &GainSolveRequest {
+            selection: MsSelection::new(),
+            output_table: caltable_path.clone(),
+            gain_type: GainType::G,
+            solve_mode: GainSolveMode::Phase,
+            solve_interval: GainSolveInterval::Infinite,
+            combine: GainSolveCombine::default(),
+            refant: RefAntSelector::AntennaId(0),
+            prior_calibration_tables: Vec::new(),
+            parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 0,
+            smodel: [1.0, 0.0, 0.0, 0.0],
+        },
+    )
+    .expect("solve asymmetric-flag G gains");
+
+    let table = Table::open(TableOptions::new(&caltable_path)).expect("open gain table");
+    for row in 0..table.row_count() {
+        let antenna_id = match table
+            .cell_accessor(row, "ANTENNA1")
+            .and_then(|cell| cell.scalar())
+            .expect("ANTENNA1 cell")
+        {
+            casa_types::ScalarValue::Int32(value) => *value,
+            other => panic!("unexpected ANTENNA1 value: {other:?}"),
+        };
+        let flags = match table
+            .cell_accessor(row, "FLAG")
+            .and_then(|cell| cell.array())
+            .expect("FLAG cell")
+        {
+            ArrayValue::Bool(values) => values.iter().copied().collect::<Vec<_>>(),
+            other => panic!("unexpected FLAG value: {other:?}"),
+        };
+        if antenna_id != 0 {
+            assert!(
+                flags.iter().all(|flag| *flag),
+                "row {row} flags were {flags:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn solve_gain_t_uses_unflagged_parallel_hand_samples() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path =
+        common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::T);
+    {
+        let mut ms = MeasurementSet::open(&ms_path).expect("open synthetic MS");
+        for row in 0..ms.row_count() {
+            ms.main_table_mut()
+                .column_accessor_mut("FLAG")
+                .and_then(|mut column| {
+                    column.set_array_assuming_valid(
+                        row,
+                        ArrayValue::Bool(
+                            ArrayD::from_shape_vec(
+                                IxDyn(&[2, 2]).f(),
+                                vec![false, true, false, true],
+                            )
+                            .expect("flag array"),
+                        ),
+                    )
+                })
+                .expect("write asymmetric flags");
+        }
+        let rows = (0..ms.row_count()).collect::<Vec<_>>();
+        ms.main_table()
+            .save_selected_rows_in_place_assuming_valid(&["FLAG"], &rows)
+            .expect("save asymmetric flags");
+    }
+    let caltable_path = dir.path().join("solved-t-per-corr-flags.tcal");
+
+    solve_gain_from_path(
+        &ms_path,
+        &GainSolveRequest {
+            selection: MsSelection::new(),
+            output_table: caltable_path.clone(),
+            gain_type: GainType::T,
+            solve_mode: GainSolveMode::Phase,
+            solve_interval: GainSolveInterval::Infinite,
+            combine: GainSolveCombine::default(),
+            refant: RefAntSelector::AntennaId(0),
+            prior_calibration_tables: Vec::new(),
+            parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 0,
+            smodel: [1.0, 0.0, 0.0, 0.0],
+        },
+    )
+    .expect("solve asymmetric-flag T gains");
+
+    let table = Table::open(TableOptions::new(&caltable_path)).expect("open gain table");
+    let mut unflagged_non_ref = 0;
+    for row in 0..table.row_count() {
+        let antenna_id = match table
+            .cell_accessor(row, "ANTENNA1")
+            .and_then(|cell| cell.scalar())
+            .expect("ANTENNA1 cell")
+        {
+            casa_types::ScalarValue::Int32(value) => *value,
+            other => panic!("unexpected ANTENNA1 value: {other:?}"),
+        };
+        let flags = match table
+            .cell_accessor(row, "FLAG")
+            .and_then(|cell| cell.array())
+            .expect("FLAG cell")
+        {
+            ArrayValue::Bool(values) => values.iter().copied().collect::<Vec<_>>(),
+            other => panic!("unexpected FLAG value: {other:?}"),
+        };
+        if antenna_id != 0 && flags.iter().any(|flag| !*flag) {
+            unflagged_non_ref += 1;
+        }
+    }
+    assert!(
+        unflagged_non_ref > 0,
+        "T solve should keep unflagged parallel-hand samples"
+    );
 }
 
 #[test]
@@ -152,6 +420,20 @@ fn solve_gain_min_snr_flags_low_snr_solutions_and_writes_diagnostics() {
             other => panic!("unexpected FLAG value: {other:?}"),
         };
         assert!(flags.iter().all(|flag| *flag));
+
+        let gains = match table
+            .cell_accessor(row, "CPARAM")
+            .and_then(|cell| cell.array())
+            .expect("CPARAM cell")
+        {
+            ArrayValue::Complex32(values) => values.iter().copied().collect::<Vec<_>>(),
+            other => panic!("unexpected CPARAM value: {other:?}"),
+        };
+        assert!(
+            gains
+                .iter()
+                .all(|gain| (gain.re - 1.0).abs() < 1.0e-6 && gain.im.abs() < 1.0e-6)
+        );
 
         let snrs = match table
             .cell_accessor(row, "SNR")

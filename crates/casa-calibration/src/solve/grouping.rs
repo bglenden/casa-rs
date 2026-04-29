@@ -7,6 +7,7 @@ use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_types::{ArrayValue, Complex32};
+use ndarray::ArrayD;
 
 use super::{
     GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
@@ -236,6 +237,7 @@ pub(crate) fn collect_selected_rows(
                 antenna1: get_i32(ms.main_table(), row_index, "ANTENNA1")?,
                 antenna2: get_i32(ms.main_table(), row_index, "ANTENNA2")?,
                 time_seconds: get_f64(ms.main_table(), row_index, "TIME")?,
+                time_centroid_seconds: get_f64(ms.main_table(), row_index, "TIME_CENTROID")?,
                 interval_seconds: get_f64(ms.main_table(), row_index, "INTERVAL")?,
                 scan_number: get_i32(ms.main_table(), row_index, "SCAN_NUMBER")?,
             })
@@ -309,6 +311,7 @@ pub(crate) struct SelectedSolveRow {
     pub(crate) antenna1: i32,
     pub(crate) antenna2: i32,
     pub(crate) time_seconds: f64,
+    pub(crate) time_centroid_seconds: f64,
     pub(crate) interval_seconds: f64,
     pub(crate) scan_number: i32,
 }
@@ -335,10 +338,15 @@ pub(crate) struct SolveAccumulator {
     pub(crate) observation_id: i32,
     pub(crate) min_time: f64,
     pub(crate) max_time: f64,
+    pub(crate) unique_time_sum: f64,
+    pub(crate) unique_time_count: usize,
+    pub(crate) time_centroid_weighted_sum: f64,
+    pub(crate) time_centroid_weight: f64,
     pub(crate) total_interval: f64,
     pub(crate) sample_rows: usize,
     pub(crate) scan_numbers: BTreeSet<i32>,
     pub(crate) antenna_ids: BTreeSet<i32>,
+    unique_time_bits: BTreeSet<u64>,
     pub(crate) receptor_graphs: Vec<HashMap<(i32, i32), Complex32>>,
     pub(crate) receptor_weights: Vec<HashMap<(i32, i32), f32>>,
     pub(crate) receptor_stats: Vec<HashMap<(i32, i32), SolveEdgeStats>>,
@@ -350,6 +358,7 @@ pub(crate) struct SolveEdgeStats {
     pub(crate) weighted_sample_power: f64,
     pub(crate) raw_weighted_sample_power: f64,
     pub(crate) sample_count: usize,
+    pub(crate) collapsed_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -374,10 +383,15 @@ impl SolveAccumulator {
             observation_id,
             min_time: f64::INFINITY,
             max_time: f64::NEG_INFINITY,
+            unique_time_sum: 0.0,
+            unique_time_count: 0,
+            time_centroid_weighted_sum: 0.0,
+            time_centroid_weight: 0.0,
             total_interval: 0.0,
             sample_rows: 0,
             scan_numbers: BTreeSet::new(),
             antenna_ids: BTreeSet::new(),
+            unique_time_bits: BTreeSet::new(),
             receptor_graphs: Vec::new(),
             receptor_weights: Vec::new(),
             receptor_stats: Vec::new(),
@@ -433,6 +447,26 @@ impl SolveAccumulator {
                     .unwrap_or_else(|| "<in-memory>".to_string()),
                 source: MsError::from(source),
             })?;
+        let weight_spectrum = if ms
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"))
+        {
+            Some(
+                ms.main_table()
+                    .cell_accessor(row.row_index, "WEIGHT_SPECTRUM")
+                    .and_then(|cell| cell.array())
+                    .map_err(|source| GainSolveError::OpenMeasurementSet {
+                        path: ms
+                            .path()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "<in-memory>".to_string()),
+                        source: MsError::from(source),
+                    })?,
+            )
+        } else {
+            None
+        };
         let model_data = if matches!(model_source, GainSolveModelSource::ModelColumn) {
             Some(
                 ms.main_table()
@@ -469,6 +503,16 @@ impl SolveAccumulator {
                 shape: weights.shape().to_vec(),
             });
         };
+        let weight_spectrum = match weight_spectrum {
+            Some(ArrayValue::Float32(weight_spectrum)) => Some(weight_spectrum),
+            Some(other) => {
+                return Err(GainSolveError::UnsupportedParameterShape {
+                    path: "<measurement-set WEIGHT_SPECTRUM>".to_string(),
+                    shape: other.shape().to_vec(),
+                });
+            }
+            None => None,
+        };
         let model_data = match model_data {
             Some(ArrayValue::Complex32(model_data)) => Some(model_data),
             Some(other) => {
@@ -499,6 +543,14 @@ impl SolveAccumulator {
                 shape: weights.shape().to_vec(),
             });
         }
+        if let Some(weight_spectrum) = weight_spectrum.as_ref()
+            && (weight_spectrum.ndim() != 2 || weight_spectrum.shape() != data.shape())
+        {
+            return Err(GainSolveError::UnsupportedParameterShape {
+                path: "<measurement-set WEIGHT_SPECTRUM>".to_string(),
+                shape: weight_spectrum.shape().to_vec(),
+            });
+        }
 
         let graph_count = match gain_type {
             GainType::G => 2,
@@ -514,11 +566,29 @@ impl SolveAccumulator {
 
         self.min_time = self.min_time.min(row.time_seconds);
         self.max_time = self.max_time.max(row.time_seconds);
+        if self.unique_time_bits.insert(row.time_seconds.to_bits()) {
+            self.unique_time_sum += row.time_seconds;
+            self.unique_time_count += 1;
+        }
         self.total_interval += row.interval_seconds;
         self.sample_rows += 1;
         self.scan_numbers.insert(row.scan_number);
         self.antenna_ids.insert(row.antenna1);
         self.antenna_ids.insert(row.antenna2);
+
+        let mut time_centroid_weight = 0.0_f64;
+        for corr_index in 0..data.shape()[0] {
+            for chan_index in 0..data.shape()[1] {
+                let weight = channel_weight(weights, weight_spectrum, corr_index, chan_index);
+                if weight > 0.0 && !solve_sample_flagged(flags, gain_type, corr_index, chan_index) {
+                    time_centroid_weight += f64::from(weight);
+                }
+            }
+        }
+        if time_centroid_weight > 0.0 {
+            self.time_centroid_weighted_sum += row.time_centroid_seconds * time_centroid_weight;
+            self.time_centroid_weight += time_centroid_weight;
+        }
 
         for corr_index in 0..data.shape()[0] {
             let Some(receptors) = correlation_receptors(correlation_types[corr_index]) else {
@@ -537,27 +607,16 @@ impl SolveAccumulator {
                 GainType::G => receptors.0,
                 GainType::T => 0,
             };
-            let weight = weights[[corr_index]];
-            if weight <= 0.0 {
-                continue;
-            }
             for chan_index in 0..data.shape()[1] {
-                if flags[[corr_index, chan_index]] {
+                if solve_sample_flagged(flags, gain_type, corr_index, chan_index) {
+                    continue;
+                }
+                let weight = channel_weight(weights, weight_spectrum, corr_index, chan_index);
+                if weight <= 0.0 {
                     continue;
                 }
                 let model = match model_data.as_ref() {
-                    Some(model_data) => {
-                        if matches!(gain_type, GainType::T) {
-                            let last_corr = data.shape()[0] - 1;
-                            if flags[[0, chan_index]] || flags[[last_corr, chan_index]] {
-                                continue;
-                            }
-                            (model_data[[0, chan_index]] + model_data[[last_corr, chan_index]])
-                                / Complex32::new(2.0, 0.0)
-                        } else {
-                            model_data[[corr_index, chan_index]]
-                        }
-                    }
+                    Some(model_data) => model_data[[corr_index, chan_index]],
                     None => Complex32::new(stokes_i, 0.0),
                 };
                 let model_norm_sqr = model.norm_sqr();
@@ -620,11 +679,55 @@ impl SolveAccumulator {
                         weighted_sample_power: f64::from(weight) * f64::from(sample.norm_sqr()),
                         raw_weighted_sample_power: accumulation.weighted_sample_power,
                         sample_count: accumulation.sample_count,
+                        collapsed_count: 1,
                     },
                 );
             }
         }
     }
+
+    pub(crate) fn aggregate_time(&self) -> f64 {
+        if self.unique_time_count > 0 {
+            self.unique_time_sum / self.unique_time_count as f64
+        } else {
+            (self.min_time + self.max_time) / 2.0
+        }
+    }
+
+    pub(crate) fn aggregate_time_centroid(&self) -> f64 {
+        if self.time_centroid_weight > 0.0 {
+            self.time_centroid_weighted_sum / self.time_centroid_weight
+        } else {
+            self.aggregate_time()
+        }
+    }
+}
+
+fn channel_has_any_correlation_flagged(flags: &ArrayD<bool>, chan_index: usize) -> bool {
+    (0..flags.shape()[0]).any(|corr_index| flags[[corr_index, chan_index]])
+}
+
+fn solve_sample_flagged(
+    flags: &ArrayD<bool>,
+    gain_type: GainType,
+    corr_index: usize,
+    chan_index: usize,
+) -> bool {
+    match gain_type {
+        GainType::G => channel_has_any_correlation_flagged(flags, chan_index),
+        GainType::T => flags[[corr_index, chan_index]],
+    }
+}
+
+fn channel_weight(
+    weights: &ArrayD<f32>,
+    weight_spectrum: Option<&ArrayD<f32>>,
+    corr_index: usize,
+    chan_index: usize,
+) -> f32 {
+    weight_spectrum
+        .map(|spectrum| spectrum[[corr_index, chan_index]])
+        .unwrap_or_else(|| weights[[corr_index]])
 }
 
 fn accumulate_collapsed_input(

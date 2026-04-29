@@ -855,6 +855,26 @@ pub fn create_gain_solve_fixture_ms(root: &Path, kind: SyntheticGainFixtureKind)
     )
 }
 
+pub fn create_gain_solve_weight_spectrum_fixture_ms(root: &Path) -> PathBuf {
+    let ms_path = root.join("gain_solve_weight_spectrum_fixture.ms");
+    let builder = MeasurementSetBuilder::new()
+        .with_main_column(OptionalMainColumn::Data)
+        .with_main_column(OptionalMainColumn::WeightSpectrum);
+    let mut ms =
+        MeasurementSet::create(&ms_path, builder).expect("create weight-spectrum gain solve MS");
+
+    populate_gain_solve_subtables(&mut ms);
+    let gains = gains_for_fixture_kind(SyntheticGainFixtureKind::G);
+    for time_seconds in [100.0, 101.0, 102.0] {
+        add_custom_gain_solve_row_with_weight_spectrum(&mut ms, 0, 1, time_seconds, &gains);
+        add_custom_gain_solve_row_with_weight_spectrum(&mut ms, 0, 2, time_seconds, &gains);
+        add_custom_gain_solve_row_with_weight_spectrum(&mut ms, 1, 2, time_seconds, &gains);
+    }
+
+    ms.save().expect("save weight-spectrum gain solve MS");
+    ms_path
+}
+
 pub fn create_gain_solve_fixture_ms_from_clusters(
     root: &Path,
     clusters: &[SyntheticGainTimeCluster],
@@ -902,6 +922,18 @@ pub fn create_gain_solve_model_column_fixture_ms(
     root: &Path,
     model_values: [Complex32; 4],
 ) -> PathBuf {
+    create_gain_solve_model_column_fixture_ms_for_kind(
+        root,
+        SyntheticGainFixtureKind::G,
+        model_values,
+    )
+}
+
+pub fn create_gain_solve_model_column_fixture_ms_for_kind(
+    root: &Path,
+    kind: SyntheticGainFixtureKind,
+    model_values: [Complex32; 4],
+) -> PathBuf {
     let ms_path = root.join("gain_solve_model_fixture.ms");
     let builder = MeasurementSetBuilder::new()
         .with_main_column(OptionalMainColumn::Data)
@@ -909,7 +941,7 @@ pub fn create_gain_solve_model_column_fixture_ms(
     let mut ms = MeasurementSet::create(&ms_path, builder).expect("create model-column MS");
 
     populate_gain_solve_subtables(&mut ms);
-    let gains = gains_for_fixture_kind(SyntheticGainFixtureKind::G);
+    let gains = gains_for_fixture_kind(kind);
     for time_seconds in [100.0, 101.0, 102.0] {
         add_custom_gain_solve_row_with_model(
             &mut ms,
@@ -945,6 +977,106 @@ pub fn create_gain_solve_model_column_fixture_ms(
 
     ms.save().expect("save model-column gain solve MS");
     ms_path
+}
+
+fn add_custom_gain_solve_row_with_weight_spectrum(
+    ms: &mut MeasurementSet,
+    antenna1: i32,
+    antenna2: i32,
+    time: f64,
+    gains: &[[Complex32; 2]; 3],
+) {
+    let g1 = gains[usize::try_from(antenna1).expect("antenna1 index")];
+    let g2 = gains[usize::try_from(antenna2).expect("antenna2 index")];
+    let rr = g1[0] * g2[0].conj();
+    let ll = g1[1] * g2[1].conj();
+    let data_values = [rr, ll, -rr, -ll];
+
+    let row = RecordValue::new(
+        ms.main_table()
+            .schema()
+            .expect("main schema")
+            .columns()
+            .iter()
+            .map(|column| match column.name() {
+                "ANTENNA1" => {
+                    RecordField::new("ANTENNA1", Value::Scalar(ScalarValue::Int32(antenna1)))
+                }
+                "ANTENNA2" => {
+                    RecordField::new("ANTENNA2", Value::Scalar(ScalarValue::Int32(antenna2)))
+                }
+                "ARRAY_ID" => RecordField::new("ARRAY_ID", Value::Scalar(ScalarValue::Int32(0))),
+                "DATA_DESC_ID" => {
+                    RecordField::new("DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(0)))
+                }
+                "EXPOSURE" => {
+                    RecordField::new("EXPOSURE", Value::Scalar(ScalarValue::Float64(10.0)))
+                }
+                "FIELD_ID" => RecordField::new("FIELD_ID", Value::Scalar(ScalarValue::Int32(0))),
+                "FLAG" => RecordField::new(
+                    "FLAG",
+                    Value::Array(ArrayValue::Bool(
+                        ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![false; 4]).unwrap(),
+                    )),
+                ),
+                "FLAG_ROW" => RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+                "INTERVAL" => {
+                    RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(10.0)))
+                }
+                "OBSERVATION_ID" => {
+                    RecordField::new("OBSERVATION_ID", Value::Scalar(ScalarValue::Int32(0)))
+                }
+                "SCAN_NUMBER" => {
+                    RecordField::new("SCAN_NUMBER", Value::Scalar(ScalarValue::Int32(1)))
+                }
+                "SIGMA" => RecordField::new(
+                    "SIGMA",
+                    Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(vec![2], vec![1.0, 1.0]).unwrap(),
+                    )),
+                ),
+                "TIME" => RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
+                "TIME_CENTROID" => {
+                    RecordField::new("TIME_CENTROID", Value::Scalar(ScalarValue::Float64(time)))
+                }
+                "UVW" => RecordField::new(
+                    "UVW",
+                    Value::Array(ArrayValue::Float64(
+                        ArrayD::from_shape_vec(vec![3], vec![0.0, 1.0, 2.0]).unwrap(),
+                    )),
+                ),
+                "WEIGHT" => RecordField::new(
+                    "WEIGHT",
+                    Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(vec![2], vec![1.0, 1.0]).unwrap(),
+                    )),
+                ),
+                "WEIGHT_SPECTRUM" => RecordField::new(
+                    "WEIGHT_SPECTRUM",
+                    Value::Array(ArrayValue::Float32(
+                        ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![1.0, 1.0, 0.0, 0.0])
+                            .unwrap(),
+                    )),
+                ),
+                "DATA" => RecordField::new(
+                    "DATA",
+                    Value::Array(ArrayValue::Complex32(
+                        ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), data_values.to_vec()).unwrap(),
+                    )),
+                ),
+                name => RecordField::new(
+                    name,
+                    default_value_for_column_name(
+                        name,
+                        ms.main_table().schema().expect("main schema").columns(),
+                    ),
+                ),
+            })
+            .collect(),
+    );
+    ms.main_table_mut()
+        .add_row(row)
+        .expect("add weight-spectrum gain solve row");
 }
 
 pub fn append_gain_solve_cluster_for_field(

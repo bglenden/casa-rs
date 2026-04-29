@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use super::grouping::{SolveAccumulator, SolveBaseKey, SolveBucketKey};
-use super::kernel::SolutionRow;
+use super::kernel::{PhaseSolverTraceEvent, SolutionRow};
 use super::{GainSolveMode, GainSolveRequest, GainType};
 
 const TRACE_ENV: &str = "CASA_RS_GAIN_TRACE";
@@ -79,6 +79,7 @@ pub(crate) fn trace_group(
                         "sum_im": value.im,
                         "weight": weights.get(&(antenna1, antenna2)).copied().unwrap_or_default(),
                         "sample_count": stat.sample_count,
+                        "collapsed_count": stat.collapsed_count,
                         "weighted_sample_power": stat.weighted_sample_power,
                         "raw_weighted_sample_power": stat.raw_weighted_sample_power,
                     }))
@@ -109,7 +110,8 @@ pub(crate) fn trace_group(
         "observation_id": group.observation_id,
         "min_time": group.min_time,
         "max_time": group.max_time,
-        "averaged_time": (group.min_time + group.max_time) / 2.0,
+        "averaged_time": group.aggregate_time_centroid(),
+        "fallback_time": group.aggregate_time(),
         "total_interval": group.total_interval,
         "sample_rows": group.sample_rows,
         "scan_numbers": group.scan_numbers,
@@ -171,6 +173,74 @@ pub(crate) fn trace_solution_rows(
         "solve_mode": solve_mode_name(request.solve_mode),
         "refant_id": refant_id,
         "solutions": solutions,
+    }));
+}
+
+pub(crate) fn trace_phase_solver_iteration(event: PhaseSolverTraceEvent<'_>) {
+    if trace_path().is_none() {
+        return;
+    }
+
+    let mut antenna_ids = event.antenna_ids.iter().copied().collect::<Vec<_>>();
+    antenna_ids.sort_unstable();
+    let tracked_antennas = antenna_ids
+        .iter()
+        .copied()
+        .map(|antenna_id| {
+            let gain = event
+                .gains
+                .get(&antenna_id)
+                .copied()
+                .unwrap_or_else(|| num_complex::Complex64::new(0.0, 0.0));
+            let last_gain = event
+                .last_gains
+                .get(&antenna_id)
+                .copied()
+                .unwrap_or_else(|| num_complex::Complex64::new(0.0, 0.0));
+            let gradient = event
+                .gradient
+                .get(&antenna_id)
+                .copied()
+                .unwrap_or_else(|| num_complex::Complex64::new(0.0, 0.0));
+            let delta = event
+                .delta
+                .get(&antenna_id)
+                .copied()
+                .unwrap_or_else(|| num_complex::Complex64::new(0.0, 0.0));
+            json!({
+                "antenna_id": antenna_id,
+                "gain_re": gain.re,
+                "gain_im": gain.im,
+                "last_gain_re": last_gain.re,
+                "last_gain_im": last_gain.im,
+                "gradient_re": gradient.re,
+                "gradient_im": gradient.im,
+                "hessian": event.hessian.get(&antenna_id).copied().unwrap_or_default(),
+                "delta_re": delta.re,
+                "delta_im": delta.im,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    write_event(json!({
+        "event": "rust_phase_solver_iteration",
+        "iteration": event.iteration,
+        "refant_id": event.refant_id,
+        "chi_square": event.chi_square,
+        "last_chi_square": event.last_chi_square,
+        "delta_chi_square": event.delta_chi_square,
+        "fractional_delta": event.fractional_delta,
+        "convergence_count": event.convergence_count,
+        "line_search": {
+            "x0": event.step.x0,
+            "x1": event.step.x1,
+            "x2": event.step.x2,
+            "step": event.step.step,
+            "opt_factor": event.step.opt_factor,
+            "expanded": event.step.expanded,
+            "iterations": event.step.iterations,
+        },
+        "antennas": tracked_antennas,
     }));
 }
 

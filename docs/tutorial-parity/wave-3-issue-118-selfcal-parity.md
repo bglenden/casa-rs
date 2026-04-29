@@ -32,9 +32,11 @@ full calibrated MS.
 The gain solver now stores CASA-style diagnostics in `PARAMERR`, `SNR`, and
 `WEIGHT`. `PARAMERR` is derived from the final Hessian and reduced chi-square,
 `SNR = abs(CPARAM) / PARAMERR`, and `--minsnr` flags solutions whose SNR is not
-greater than the threshold. The CLI/task/Python default is `3.0`, matching the
-CASA tutorial path; lower-level Rust tests use `min_snr=0.0` where they need to
-exercise pure solver behavior without threshold flagging.
+greater than the threshold. The CLI/task/Python defaults are `minsnr=3.0` and
+`minblperant=4`, matching CASA's gaincal defaults; lower-level Rust tests use
+`min_snr=0.0` and `min_baselines_per_antenna=0` where they need to exercise pure
+solver behavior without threshold or baseline-count flagging. No extra SNR
+threshold cushion is applied.
 
 MODEL_DATA solves weight each sample by visibility weight times model strength,
 `weight * |MODEL_DATA|^2`. On the isolated first phase solve using CASA-written
@@ -57,31 +59,34 @@ samples in the all-sample comparison are flagged in both CASA and casa-rs.
 Scalar `T` phase solves now keep parallel-hand correlations as separate
 frequency/time-collapsed residual contributions until graph accumulation.
 CASA uses one scalar parameter for `T Jones`, but it does not average RR and LL
-into one complex pseudo-sample before phase normalization. On CASA's
-`twhya_selfcal_2.ms` input this reduced the isolated `phase_3.cal` p95 phase
-difference from roughly `0.09-0.15 rad` to `0.0459 rad`.
+into one complex pseudo-sample before phase normalization. `T` also keeps
+unflagged parallel-hand samples when the other hand is flagged; the stricter
+correlation-independent channel flagging is used for `G`.
+
+For MODEL_DATA solves, scalar `T` now follows CASA's per-correlation model
+normalization: each parallel hand is divided by its own MODEL_DATA value and
+weighted by that model amplitude squared before the hands contribute to the
+shared scalar solve. It does not form a Stokes-I-style RR/LL model average.
 
 The phase-only iterative solver now follows CASA's `VisCalSolver2` diagonal
 Levenberg-Marquardt path for complex gains: residuals are `predicted -
 observed`, the per-antenna update is `-grad / (2*hess)`, CASA's parabolic
 step-size search is applied, and phase-only normalization is deferred until the
-post-solve conditioning step. Temporary CASA C++ traces showed the prepared
-scalar-`T` solve edges after model collapse, AP enforcement, flags, and weights
-matched to `~1e-5`, and the traced CASA gradient/Hessian for the first solve
-interval is reproduced from the casa-rs edge sums to `~1e-5`. A second trace
-around CASA `SolvableVisJones::applyRefAnt` showed the remaining delta is not
-from reference-antenna application. Against a fresh current CASA rerun of only
-`phase_3.cal`, the isolated `T` comparison is now median `0.0019 rad`, p95
-`0.0149 rad`, p99 `0.0245 rad`, and max `0.1004 rad`; the comparison plot is
-`target/wdad-wave3-118/evidence/issue118_t_phase_lm_comparison.png`.
+post-solve conditioning step. For `G` phase solves, CASA optimizes both receptor
+parameter vectors with one shared line-search chi-square. casa-rs now uses the
+same joint line search; independent per-receptor line searches reproduced the
+same input graph but could cross the SNR threshold differently. On identical
+CASA pre-solve input, `phase_2.cal` now has `292/292` flagged cells, zero flag
+mismatches, common-solution p95 phase difference `2.49e-6 rad`, and max
+`9.86e-6 rad`.
 
 CASA computes `PARAMERR` and `SNR` before global refant and phase-only
-post-solve normalization. The Rust phase-only solver now preserves the
+post-solve normalization. The Rust phase-only solver preserves the
 pre-normalization gains for the Hessian and chi-square error path while writing
-phase-only `CPARAM`, matching CASA's diagnostic ordering. On the phase-2 G
-solve from an identical CASA-model input this reduced flag mismatches from 14
-cells to 1 borderline cell (`CASA SNR=2.998`, Rust SNR=3.138`) without changing
-common-solution phases.
+phase-only `CPARAM`, matching CASA's diagnostic ordering. On identical CASA
+pre-T input, `phase_3.cal` now has `705/705` flagged cells, zero flag
+mismatches, common-solution median phase difference `0.00190 rad`, p95
+`0.01646 rad`, p99 `0.02428 rad`, and max `0.09418 rad`.
 
 ## Full Loop Evidence
 
@@ -115,21 +120,20 @@ Final restored image comparison:
 
 | Metric | CASA | casa-rs |
 |---|---:|---:|
-| peak | `0.388116` | `0.388948` |
-| RMS | `0.013049` | `0.013104` |
-| difference RMS |  | `0.000406` |
-| max absolute difference |  | `0.003478` |
-| correlation |  | `0.999524` |
+| peak | `0.388116` | `0.389000` |
+| difference RMS |  | `0.000363` |
+| max absolute difference |  | `0.002484` |
+| correlation |  | `0.999987` |
 
 Current restored image progression:
 
 | Stage | CASA peak | casa-rs peak | diff RMS | correlation |
 |---|---:|---:|---:|---:|
-| first image | `0.307186` | `0.307009` | `0.000100` | `0.999962` |
-| second image | `0.338573` | `0.338329` | `0.000074` | `0.999979` |
-| third image | `0.366629` | `0.366685` | `0.000206` | `0.999866` |
-| fourth image | `0.385059` | `0.384625` | `0.000359` | `0.999620` |
-| final image | `0.388116` | `0.388948` | `0.000406` | `0.999524` |
+| first image | `0.307186` | `0.307009` | `0.000134` | `0.999994` |
+| second image | `0.338573` | `0.338611` | `0.000134` | `0.999995` |
+| third image | `0.366629` | `0.366581` | `0.000132` | `0.999996` |
+| fourth image | `0.385059` | `0.385210` | `0.000202` | `0.999994` |
+| final image | `0.388116` | `0.389000` | `0.000363` | `0.999987` |
 
 The restored image loop now stays close through the final image. The remaining
 differences are small compared with the prior phase-2/T divergence and are
@@ -141,16 +145,16 @@ broad tails:
 
 | Table | Metric | Median | 95th percentile | 98th percentile | 99th percentile | Max |
 |---|---|---:|---:|---:|---:|---:|
-| `phase.cal` | abs phase diff rad | `0.0054` | `0.0189` |  | `0.0331` | `0.0386` |
-| `phase_2.cal` | abs phase diff rad | `0.0024` | `0.0133` |  | `0.0237` | `0.0265` |
-| `phase_3.cal` | abs phase diff rad, full-chain run | `0.0043` | `0.0231` |  | `0.0632` | `0.3068` |
-| `phase_3.cal` | abs phase diff rad, isolated CASA-like LM solve | `0.0019` | `0.0165` |  | `0.0244` | `0.0942` |
-| `amp.cal` | abs phase diff rad | `0.0061` | `0.0235` |  | `0.0395` | `0.0849` |
-| `amp.cal` | fractional amplitude diff | `0.0085` | `0.0475` |  | `0.0664` | `0.1171` |
+| `phase.cal` | abs phase diff rad | `0.0021` | `0.0094` |  | `0.0115` | `0.0122` |
+| `phase_2.cal` | abs phase diff rad | `0.0022` | `0.0105` |  | `0.0189` | `0.0294` |
+| `phase_3.cal` | abs phase diff rad, full-chain run | `0.0031` | `0.0172` |  | `0.0276` | `0.0980` |
+| `phase_3.cal` | abs phase diff rad, isolated CASA pre-T input | `0.0019` | `0.0165` |  | `0.0243` | `0.0942` |
+| `amp.cal` | fractional amplitude diff | `0.0101` | `0.0409` |  | `0.0643` | `0.0970` |
 
-Flag parity is exact for `phase.cal` and `amp.cal`, differs by 1 cell for
-`phase_2.cal`, and differs by 10 cells for `phase_3.cal`; the `phase_3.cal`
-differences are marginal SNR decisions around the threshold.
+Flag parity is exact for `phase.cal`, `phase_2.cal`, and `amp.cal` in the
+current full-chain run. `phase_3.cal` differs by 2 cells in the full-chain run
+because small upstream imaging/model differences move marginal SNR decisions;
+on identical CASA pre-T input `phase_3.cal` has zero flag mismatches.
 
 ## Timing Evidence
 
@@ -177,29 +181,29 @@ Current matched full-loop totals:
 | Runtime | Total seconds | Imaging seconds | Calibration/apply/export seconds |
 |---|---:|---:|---:|
 | CASA | `175.962` | `166.449` | `9.513` |
-| casa-rs | `179.484` | `142.781` | `36.702` |
+| casa-rs | `176.736` | `139.389` | `37.347` |
 
 Current matched casa-rs full-loop timings:
 
 | Step | Seconds |
 |---|---:|
-| first image | `28.004` |
-| phase inf G solve | `3.101` |
-| apply phase inf | `5.979` |
-| split selfcal | `6.138` |
-| second image | `31.462` |
-| phase 170s G solve | `2.669` |
-| apply phase 170s | `3.051` |
-| split selfcal 2 | `1.661` |
-| third image | `25.487` |
-| phase 30s T solve | `2.632` |
-| apply phase 30s | `2.995` |
-| split selfcal 3 | `1.689` |
-| fourth image | `27.342` |
-| amp inf T solnorm solve | `2.580` |
-| apply amp | `2.577` |
-| split final | `1.631` |
-| final image | `30.486` |
+| first image | `27.751` |
+| phase inf G solve | `3.398` |
+| apply phase inf | `5.797` |
+| split selfcal | `6.178` |
+| second image | `30.386` |
+| phase 170s G solve | `2.980` |
+| apply phase 170s | `3.032` |
+| split selfcal 2 | `1.727` |
+| third image | `25.145` |
+| phase 30s T solve | `2.656` |
+| apply phase 30s | `2.975` |
+| split selfcal 3 | `1.684` |
+| fourth image | `26.362` |
+| amp inf T solnorm solve | `2.606` |
+| apply amp | `2.576` |
+| split final | `1.738` |
+| final image | `29.745` |
 
 The current full loop is within roughly 2% of the recorded CASA runtime. Rust
 imaging is faster on the high-iteration stages, while calibration/apply/export

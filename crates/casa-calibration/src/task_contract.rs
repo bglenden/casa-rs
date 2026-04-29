@@ -481,7 +481,7 @@ fn default_min_snr() -> f32 {
 }
 
 fn default_min_baselines_per_antenna() -> usize {
-    0
+    4
 }
 
 fn default_polynomial_degree() -> usize {
