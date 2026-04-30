@@ -28,7 +28,7 @@ rm -rf \
   "$outdir/casa-priorcal-cold" \
   "$outdir/rust-priorcal"
 scripts/run-vla-irc10216-issue121.sh "$outdir"
-cargo build -q -p casa-calibration --bin calibrate
+cargo build --release -q -p casa-calibration --bin calibrate
 
 base_ms="$outdir/TDRW0001_10s.ms"
 casa_prior="$outdir/casa-priorcal"
@@ -73,12 +73,7 @@ with open(os.environ["CASA_RS_OUT_JSON"], "w") as handle:
     json.dump({"elapsed_seconds": elapsed}, handle, indent=2)
 PY
 
-  start_ns="$(python3 - <<'PY'
-import time
-print(time.perf_counter_ns())
-PY
-)"
-  target/debug/calibrate apply \
+  target/release/calibrate apply \
     --ms "$rust_ms" \
     --field 2 \
     --apply-mode calonly \
@@ -87,19 +82,15 @@ PY
     --format json \
     --output "$outdir/rust-${label}-report.json" \
     --overwrite
-  end_ns="$(python3 - <<'PY'
-import time
-print(time.perf_counter_ns())
-PY
-)"
-  python3 - "$start_ns" "$end_ns" "$outdir/rust-${label}-timing.json" <<'PY'
+  python3 - "$outdir/rust-${label}-report.json" "$outdir/rust-${label}-timing.json" <<'PY'
 import json
 import sys
 
-start_ns = int(sys.argv[1])
-end_ns = int(sys.argv[2])
-with open(sys.argv[3], "w") as handle:
-    json.dump({"elapsed_seconds": (end_ns - start_ns) / 1.0e9}, handle, indent=2)
+# CASA timing starts inside an already-running Python/casatasks process, so use
+# the Rust task timing from the execution report rather than CLI process startup.
+report = json.loads(open(sys.argv[1]).read())
+with open(sys.argv[2], "w") as handle:
+    json.dump({"elapsed_seconds": report["timings"]["total_ns"] / 1.0e9}, handle, indent=2)
 PY
 
   CASA_RS_CASA_MS="$casa_ms" \
