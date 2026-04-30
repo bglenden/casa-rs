@@ -111,19 +111,20 @@ from casatools import table
 label = os.environ["CASA_RS_LABEL"]
 outdir = Path(os.environ["CASA_RS_OUTDIR"])
 
-def read_corrected(path):
+def read_visibility(path):
     tb = table()
     tb.open(path)
     qt = tb.query("FIELD_ID==2 && DATA_DESC_ID==0")
+    data = qt.getcol("DATA")
     corrected = qt.getcol("CORRECTED_DATA")
     times = qt.getcol("TIME")
     scans = qt.getcol("SCAN_NUMBER")
     qt.close()
     tb.close()
-    return corrected, times, scans
+    return data, corrected, times, scans
 
-casa, times, scans = read_corrected(os.environ["CASA_RS_CASA_MS"])
-rust, _, _ = read_corrected(os.environ["CASA_RS_RUST_MS"])
+casa_data, casa, times, scans = read_visibility(os.environ["CASA_RS_CASA_MS"])
+rust_data, rust, _, _ = read_visibility(os.environ["CASA_RS_RUST_MS"])
 diff = rust - casa
 amp_casa = np.abs(casa[0, :, :])
 amp_rust = np.abs(rust[0, :, :])
@@ -162,6 +163,103 @@ axes[1].set_ylabel("casa-rs - CASA")
 axes[1].grid(True, alpha=0.25)
 fig.tight_layout()
 fig.savefig(outdir / f"{label}-corrected-casa-vs-rust.png")
+plt.close(fig)
+
+casa_solution = np.divide(
+    casa_data,
+    casa,
+    out=np.full_like(casa_data, np.nan + 1j * np.nan),
+    where=np.abs(casa) > 0,
+)
+rust_solution = np.divide(
+    rust_data,
+    rust,
+    out=np.full_like(rust_data, np.nan + 1j * np.nan),
+    where=np.abs(rust) > 0,
+)
+solution_diff = rust_solution - casa_solution
+solution_amp_casa = np.abs(casa_solution[0, :, :])
+solution_amp_rust = np.abs(rust_solution[0, :, :])
+solution_phase_casa = np.angle(casa_solution[0, :, :])
+solution_phase_rust = np.angle(rust_solution[0, :, :])
+solution_phase_diff = np.angle(rust_solution[0, :, :] / casa_solution[0, :, :])
+solution_amp_diff = solution_amp_rust - solution_amp_casa
+solution_summary = {
+    "shape": list(casa_solution.shape),
+    "max_solution_abs_diff": float(np.nanmax(np.abs(solution_diff))),
+    "median_solution_abs_diff": float(np.nanmedian(np.abs(solution_diff))),
+    "median_amp_diff": float(np.nanmedian(solution_amp_diff)),
+    "min_amp_diff": float(np.nanmin(solution_amp_diff)),
+    "max_amp_diff": float(np.nanmax(solution_amp_diff)),
+    "median_phase_diff_rad": float(np.nanmedian(solution_phase_diff)),
+    "min_phase_diff_rad": float(np.nanmin(solution_phase_diff)),
+    "max_phase_diff_rad": float(np.nanmax(solution_phase_diff)),
+}
+(outdir / f"{label}-applied-solution-comparison.json").write_text(
+    json.dumps(solution_summary, indent=2)
+)
+
+fig, axes = plt.subplots(4, 1, figsize=(12, 12), dpi=150, sharex=True)
+axes[0].scatter(
+    channel,
+    solution_amp_casa[:, row_mask].reshape(-1, order="F"),
+    s=9,
+    alpha=0.4,
+    label="CASA",
+)
+axes[0].scatter(
+    channel,
+    solution_amp_rust[:, row_mask].reshape(-1, order="F"),
+    s=15,
+    marker="x",
+    alpha=0.6,
+    label="casa-rs",
+)
+axes[0].set_ylabel("RR correction amp")
+axes[0].set_title(
+    f"IRC+10216 #122 {label}: applied correction DATA/CORRECTED, field 2 scan 56"
+)
+axes[0].legend(loc="best")
+axes[1].scatter(
+    channel,
+    solution_amp_diff[:, row_mask].reshape(-1, order="F"),
+    s=9,
+    alpha=0.55,
+    color="black",
+)
+axes[1].axhline(0.0, color="tab:red", linewidth=1)
+axes[1].set_ylabel("amp diff")
+axes[2].scatter(
+    channel,
+    solution_phase_casa[:, row_mask].reshape(-1, order="F"),
+    s=9,
+    alpha=0.4,
+    label="CASA",
+)
+axes[2].scatter(
+    channel,
+    solution_phase_rust[:, row_mask].reshape(-1, order="F"),
+    s=15,
+    marker="x",
+    alpha=0.6,
+    label="casa-rs",
+)
+axes[2].set_ylabel("RR corr phase rad")
+axes[3].scatter(
+    channel,
+    solution_phase_diff[:, row_mask].reshape(-1, order="F"),
+    s=9,
+    alpha=0.55,
+    color="black",
+)
+axes[3].axhline(0.0, color="tab:red", linewidth=1)
+axes[3].set_ylabel("phase diff rad")
+axes[3].set_xlabel("Channel")
+for ax in axes:
+    ax.grid(True, alpha=0.25)
+fig.tight_layout()
+fig.savefig(outdir / f"{label}-applied-solution-casa-vs-rust.png")
+plt.close(fig)
 PY
 }
 
@@ -190,10 +288,12 @@ for label in ["prior-gctau", "prior-full"]:
     casa = json.loads((outdir / f"casa-{label}-timing.json").read_text())
     rust = json.loads((outdir / f"rust-{label}-timing.json").read_text())
     comparison = json.loads((outdir / f"{label}-corrected-comparison.json").read_text())
+    solution = json.loads((outdir / f"{label}-applied-solution-comparison.json").read_text())
     summary[label] = {
         "casa_elapsed_seconds": casa["elapsed_seconds"],
         "rust_elapsed_seconds": rust["elapsed_seconds"],
         "speedup_casa_over_rust": casa["elapsed_seconds"] / rust["elapsed_seconds"],
+        "applied_solution": solution,
         **comparison,
     }
 (outdir / "issue122-summary.json").write_text(json.dumps(summary, indent=2))
