@@ -20,8 +20,9 @@ use crate::{
     ContinuumSubtractionReport, ContinuumSubtractionTaskRequest, ExecuteApplyTaskRequest,
     ExportCorrectedDataReport, ExportCorrectedDataTaskRequest, FluxScaleReport, FluxScaleRequest,
     GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
-    GainSolveReport, GainType, PlanApplyTaskRequest, RefAntSelector, SolveBandpassTaskRequest,
-    SolveGainTaskRequest, StatsTaskRequest, SummaryTaskRequest, load_apply_specs_from_callib,
+    GainSolveReport, GainType, GencalReport, GencalTaskRequest, GencalType, PlanApplyTaskRequest,
+    RefAntSelector, SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest,
+    SummaryTaskRequest, load_apply_specs_from_callib,
 };
 
 const UI_SCHEMA_VERSION: u32 = 1;
@@ -157,6 +158,20 @@ struct FluxScaleOptions {
 }
 
 #[derive(Debug)]
+struct GencalOptions {
+    measurement_set: PathBuf,
+    output_table: PathBuf,
+    caltype: GencalType,
+    antenna: String,
+    spw: String,
+    parameter: Vec<f64>,
+    gaincurve_table: Option<PathBuf>,
+    format: OutputFormat,
+    output: Option<PathBuf>,
+    overwrite: bool,
+}
+
+#[derive(Debug)]
 enum Command {
     Apply(ApplyOptions),
     Summarize(SummaryOptions),
@@ -167,6 +182,7 @@ enum Command {
     SolveGain(SolveGainOptions),
     SolveBandpass(SolveBandpassOptions),
     FluxScale(FluxScaleOptions),
+    Gencal(GencalOptions),
 }
 
 impl Command {
@@ -181,6 +197,7 @@ impl Command {
             Self::SolveGain(options) => options.format,
             Self::SolveBandpass(options) => options.format,
             Self::FluxScale(options) => options.format,
+            Self::Gencal(options) => options.format,
         }
     }
 
@@ -195,6 +212,7 @@ impl Command {
             Self::SolveGain(options) => options.output.as_deref(),
             Self::SolveBandpass(options) => options.output.as_deref(),
             Self::FluxScale(options) => options.output.as_deref(),
+            Self::Gencal(options) => options.output.as_deref(),
         }
     }
 
@@ -209,6 +227,7 @@ impl Command {
             Self::SolveGain(options) => options.overwrite,
             Self::SolveBandpass(options) => options.overwrite,
             Self::FluxScale(options) => options.overwrite,
+            Self::Gencal(options) => options.overwrite,
         }
     }
 
@@ -294,6 +313,15 @@ impl Command {
                 refspwmap: options.refspwmap,
                 gainthreshold: options.gainthreshold,
                 incremental: options.incremental,
+            }),
+            Self::Gencal(options) => CalibrationTaskRequest::Gencal(GencalTaskRequest {
+                measurement_set: options.measurement_set,
+                output_table: options.output_table,
+                caltype: options.caltype,
+                antenna: options.antenna,
+                spw: options.spw,
+                parameter: options.parameter,
+                gaincurve_table: options.gaincurve_table,
             }),
         }
     }
@@ -434,6 +462,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                     "solve_gain",
                     "solve_bandpass",
                     "fluxscale",
+                    "gencal",
                 ],
                 help: "Calibration workflow to run from the launcher form",
                 group: "Workflow",
@@ -720,7 +749,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 value_kind: UiValueKind::Path,
                 default: None,
                 choices: &[],
-                help: "Output calibration-table path for solve and fluxscale workflows",
+                help: "Output calibration-table path for solve, fluxscale, and gencal workflows",
                 group: "Solve",
                 required: false,
                 advanced: false,
@@ -1168,6 +1197,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         Some("solve-gain") => parse_solve_gain_args(&args[1..], managed_output),
         Some("solve-bandpass") => parse_solve_bandpass_args(&args[1..], managed_output),
         Some("fluxscale") => parse_fluxscale_args(&args[1..], managed_output),
+        Some("gencal") => parse_gencal_args(&args[1..], managed_output),
         Some("apply") => parse_apply_args(&args[1..], managed_output),
         _ => {
             let (workflow_mode, remaining_args) = extract_option_value(&args, "--mode")?;
@@ -1186,8 +1216,9 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                     parse_solve_bandpass_args(&remaining_args, managed_output)
                 }
                 Some("fluxscale") => parse_fluxscale_args(&remaining_args, managed_output),
+                Some("gencal") => parse_gencal_args(&remaining_args, managed_output),
                 Some(other) => Err(format!(
-                    "unsupported --mode {other:?}; expected apply, summary, stats, export_corrected_data, continuum_subtract, solve_gain, solve_bandpass, or fluxscale"
+                    "unsupported --mode {other:?}; expected apply, summary, stats, export_corrected_data, continuum_subtract, solve_gain, solve_bandpass, fluxscale, or gencal"
                 )),
                 None => parse_apply_args(&args, managed_output),
             }
@@ -2346,6 +2377,106 @@ fn parse_fluxscale_args(args: &[OsString], managed_output: bool) -> Result<CliAc
     })))
 }
 
+fn parse_gencal_args(args: &[OsString], managed_output: bool) -> Result<CliAction, String> {
+    let mut measurement_set = None;
+    let mut output_table = None;
+    let mut caltype = None;
+    let mut antenna = String::new();
+    let mut spw = String::new();
+    let mut parameter = Vec::new();
+    let mut gaincurve_table = None;
+    let mut format = OutputFormat::Text;
+    let mut output = None;
+    let mut overwrite = false;
+
+    let mut index = 0;
+    while index < args.len() {
+        let raw = args[index]
+            .to_str()
+            .ok_or_else(|| "arguments must be valid UTF-8".to_string())?;
+        match raw {
+            "--ms" | "--vis" => {
+                index += 1;
+                measurement_set = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| format!("missing value for {raw}"))?,
+                ));
+            }
+            "--out" | "--caltable" => {
+                index += 1;
+                output_table = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| format!("missing value for {raw}"))?,
+                ));
+            }
+            "--caltype" => {
+                index += 1;
+                caltype = Some(
+                    take_string_value(index, args, "--caltype")?
+                        .parse::<GencalType>()
+                        .map_err(|error| format!("parse --caltype: {error}"))?,
+                );
+            }
+            "--antenna" => {
+                index += 1;
+                antenna = take_string_value(index, args, "--antenna")?;
+            }
+            "--spw" => {
+                index += 1;
+                spw = take_string_value(index, args, "--spw")?;
+            }
+            "--parameter" => {
+                index += 1;
+                parameter = parse_f64_list(
+                    "--parameter",
+                    &take_string_value(index, args, "--parameter")?,
+                )?;
+            }
+            "--gaincurve-table" => {
+                index += 1;
+                gaincurve_table =
+                    Some(PathBuf::from(args.get(index).ok_or_else(|| {
+                        "missing value for --gaincurve-table".to_string()
+                    })?));
+            }
+            "--format" => {
+                index += 1;
+                format =
+                    parse_output_format("--format", &take_string_value(index, args, "--format")?)?;
+            }
+            "-o" | "--output" => {
+                index += 1;
+                output = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| "missing value for --output".to_string())?,
+                ));
+            }
+            "--overwrite" => overwrite = true,
+            _ if raw.starts_with('-') => return Err(format!("unsupported argument {raw:?}")),
+            _ => return Err(format!("unexpected positional argument {raw:?}")),
+        }
+        index += 1;
+    }
+
+    Ok(CliAction::Run(Box::new(RunRequest {
+        managed_output,
+        command: Command::Gencal(GencalOptions {
+            measurement_set: measurement_set
+                .ok_or_else(|| "gencal requires --ms <measurement-set>".to_string())?,
+            output_table: output_table
+                .ok_or_else(|| "gencal requires --out <caltable>".to_string())?,
+            caltype: caltype.ok_or_else(|| "gencal requires --caltype TYPE".to_string())?,
+            antenna,
+            spw,
+            parameter,
+            gaincurve_table,
+            format,
+            output,
+            overwrite,
+        }),
+    })))
+}
+
 fn parse_output_format(flag: &str, value: &str) -> Result<OutputFormat, String> {
     match value {
         "text" => Ok(OutputFormat::Text),
@@ -2780,6 +2911,18 @@ fn parse_i32_list(flag: &str, value: &str) -> Result<Vec<i32>, String> {
         .collect()
 }
 
+fn parse_f64_list(flag: &str, value: &str) -> Result<Vec<f64>, String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|item| {
+            item.parse::<f64>()
+                .map_err(|error| format!("parse {flag} value {item:?}: {error}"))
+        })
+        .collect()
+}
+
 fn parse_bool_list(flag: &str, value: &str) -> Result<Vec<bool>, String> {
     value
         .split(',')
@@ -2815,8 +2958,9 @@ fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
 
 fn render_help(schema: &UiCommandSchema) -> String {
     format!(
-        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical calibration task JSON schema\n  --protocol-info          Emit the calibration task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON CalibrationTaskRequest from SOURCE or - for stdin\n\nDeveloper subcommands:\n  {} summary [SUMMARY OPTIONS] <caltable>...\n  {} stats [STATS OPTIONS] <caltable>\n  {} plan-apply --ms <measurement-set> [PLAN OPTIONS] <caltable>...\n  {} uvcontsub --ms <measurement-set> --out <measurement-set> --fitspw <spw:channels> [UVCONTSUB OPTIONS]\n  {} solve-gain --ms <measurement-set> --out <caltable> --refant <antenna> [SOLVE OPTIONS]\n  {} solve-bandpass --ms <measurement-set> --out <caltable> --refant <antenna> [BANDPASS OPTIONS]\n  {} fluxscale --in <gain-table> --out <flux-table> --reference FIELD[,FIELD...] [FLUXSCALE OPTIONS]\n",
+        "{}\n\nMachine-readable:\n  --ui-schema              Emit the launcher/TUI schema\n  --json-schema            Emit the canonical calibration task JSON schema\n  --protocol-info          Emit the calibration task protocol descriptor\n  --json-run <SOURCE>      Execute one JSON CalibrationTaskRequest from SOURCE or - for stdin\n\nDeveloper subcommands:\n  {} summary [SUMMARY OPTIONS] <caltable>...\n  {} stats [STATS OPTIONS] <caltable>\n  {} plan-apply --ms <measurement-set> [PLAN OPTIONS] <caltable>...\n  {} uvcontsub --ms <measurement-set> --out <measurement-set> --fitspw <spw:channels> [UVCONTSUB OPTIONS]\n  {} solve-gain --ms <measurement-set> --out <caltable> --refant <antenna> [SOLVE OPTIONS]\n  {} solve-bandpass --ms <measurement-set> --out <caltable> --refant <antenna> [BANDPASS OPTIONS]\n  {} fluxscale --in <gain-table> --out <flux-table> --reference FIELD[,FIELD...] [FLUXSCALE OPTIONS]\n  {} gencal --ms <measurement-set> --out <caltable> --caltype antpos|gceff|opac [GENCAL OPTIONS]\n",
         schema.render_help(),
+        schema.invocation_name,
         schema.invocation_name,
         schema.invocation_name,
         schema.invocation_name,
@@ -3225,6 +3369,23 @@ fn render_fluxscale_report_text(report: &FluxScaleReport) -> String {
     out
 }
 
+fn render_gencal_report_text(report: &GencalReport) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "Gencal Report: {}", report.output_table.display());
+    let _ = writeln!(out, "  caltype={:?}", report.caltype);
+    let _ = writeln!(out, "  table_subtype={}", report.table_subtype);
+    let _ = writeln!(out, "  rows={}", report.row_count);
+    let _ = writeln!(
+        out,
+        "  spectral_window_ids={:?}",
+        report.spectral_window_ids
+    );
+    let _ = writeln!(out, "  antenna_ids={:?}", report.antenna_ids);
+    out
+}
+
 fn render_value_stats_block(out: &mut String, stats: &crate::CalibrationValueStats, indent: usize) {
     use std::fmt::Write;
 
@@ -3300,6 +3461,8 @@ fn render_json_task_result(
                 .map_err(|error| format!("serialize bandpass solve report: {error}")),
             CalibrationTaskResult::FluxScale(report) => serde_json::to_string_pretty(report)
                 .map_err(|error| format!("serialize fluxscale report: {error}")),
+            CalibrationTaskResult::Gencal(report) => serde_json::to_string_pretty(report)
+                .map_err(|error| format!("serialize gencal report: {error}")),
         }
     }
 }
@@ -3319,6 +3482,7 @@ fn render_text_task_result(result: &CalibrationTaskResult) -> String {
         CalibrationTaskResult::SolveGain(report) => render_gain_solve_report_text(report),
         CalibrationTaskResult::SolveBandpass(report) => render_bandpass_solve_report_text(report),
         CalibrationTaskResult::FluxScale(report) => render_fluxscale_report_text(report),
+        CalibrationTaskResult::Gencal(report) => render_gencal_report_text(report),
     }
 }
 
@@ -3425,7 +3589,8 @@ mod tests {
         CalibrationValidationIssue, CalibrationValueStats, ExecuteApplyTaskRequest,
         FluxScaleFieldResult, FluxScaleReport, FluxScaleSpwResult, GainFieldSelector,
         GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveReport, GainType,
-        RefAntSelector, ResolvedGainField, ResolvedNearestGainField, TimeCoverageSummary,
+        GencalType, RefAntSelector, ResolvedGainField, ResolvedNearestGainField,
+        TimeCoverageSummary,
     };
 
     fn sample_keywords() -> CalibrationKeywordSummary {
@@ -4253,6 +4418,40 @@ mod tests {
                 assert_eq!(options.reference_fields, vec!["1331+305".to_string()]);
             }
             _ => panic!("expected fluxscale action"),
+        }
+    }
+
+    #[test]
+    fn parse_args_accepts_gencal_command() {
+        let action = parse_args([
+            "gencal".into(),
+            "--ms".into(),
+            "tutorial.ms".into(),
+            "--out".into(),
+            "cal.tau".into(),
+            "--caltype".into(),
+            "opac".into(),
+            "--spw".into(),
+            "0,1".into(),
+            "--parameter".into(),
+            "0.1,0.2".into(),
+            "--format".into(),
+            "json".into(),
+        ])
+        .expect("parse succeeds");
+        match action {
+            CliAction::Run(request) => {
+                let Command::Gencal(options) = request.command else {
+                    panic!("expected gencal action");
+                };
+                assert_eq!(options.measurement_set, PathBuf::from("tutorial.ms"));
+                assert_eq!(options.output_table, PathBuf::from("cal.tau"));
+                assert_eq!(options.caltype, GencalType::Opac);
+                assert_eq!(options.spw, "0,1");
+                assert_eq!(options.parameter, vec![0.1, 0.2]);
+                assert_eq!(options.format, OutputFormat::Json);
+            }
+            _ => panic!("expected gencal action"),
         }
     }
 

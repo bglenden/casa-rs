@@ -175,4 +175,177 @@ cargo run -q -p casa-ms --bin msexplore -- \
   --overwrite \
   "$ms_path"
 
+cargo build -q -p casa-calibration --bin calibrate
+
+antpos_antennas="ea01,ea02,ea03,ea05,ea12,ea22,ea23,ea24,ea27"
+antpos_parameters="0.0,0.003,0.0,-0.0008,0.0,0.0,-0.0028,0.0,0.0,0.0,0.0028,0.0,-0.0100,0.0045,-0.0017,-0.0257,0.0027,-0.0190,-0.0014,0.0,0.0,-0.0015,0.0,0.0,0.0,0.0019,-0.0016"
+opac_parameters="0.038307558882357123,0.038092235934944034"
+
+CASA_RS_MS_PATH="$ms_path" \
+CASA_RS_OUTDIR="$outdir" \
+CASA_RS_ANTPOS_ANTENNAS="$antpos_antennas" \
+CASA_RS_ANTPOS_PARAMETERS="$antpos_parameters" \
+CASA_RS_OPAC_PARAMETERS="$opac_parameters" \
+"$CASA_RS_CASA_PYTHON" - <<'PY'
+import json
+import os
+import shutil
+import time
+from pathlib import Path
+from casatasks import gencal
+
+ms = os.environ["CASA_RS_MS_PATH"]
+root = Path(os.environ["CASA_RS_OUTDIR"]) / "casa-priorcal"
+root.mkdir(exist_ok=True)
+for name in ["cal.ant", "cal.gc", "cal.tau"]:
+    path = root / name
+    if path.exists():
+        shutil.rmtree(path)
+antennas = os.environ["CASA_RS_ANTPOS_ANTENNAS"]
+antpos_parameters = [float(value) for value in os.environ["CASA_RS_ANTPOS_PARAMETERS"].split(",")]
+opac_parameters = [float(value) for value in os.environ["CASA_RS_OPAC_PARAMETERS"].split(",")]
+start = time.perf_counter()
+gencal(vis=ms, caltable=str(root / "cal.ant"), caltype="antpos", antenna=antennas, parameter=antpos_parameters)
+gencal(vis=ms, caltable=str(root / "cal.gc"), caltype="gceff")
+gencal(vis=ms, caltable=str(root / "cal.tau"), caltype="opac", spw="0,1", parameter=opac_parameters)
+elapsed = time.perf_counter() - start
+(Path(os.environ["CASA_RS_OUTDIR"]) / "priorcal-casa-timing.json").write_text(
+    json.dumps({"elapsed_seconds": elapsed}, indent=2)
+)
+PY
+
+CASA_RS_CASA_PYTHON="$CASA_RS_CASA_PYTHON" \
+CASA_RS_MS_PATH="$ms_path" \
+CASA_RS_OUTDIR="$outdir" \
+CASA_RS_ANTPOS_ANTENNAS="$antpos_antennas" \
+CASA_RS_ANTPOS_PARAMETERS="$antpos_parameters" \
+CASA_RS_OPAC_PARAMETERS="$opac_parameters" \
+python3 - <<'PY'
+import json
+import os
+import subprocess
+import textwrap
+import time
+from pathlib import Path
+
+outdir = Path(os.environ["CASA_RS_OUTDIR"])
+script = outdir / "run-casa-priorcal-cold.py"
+script.write_text(textwrap.dedent("""
+    import os
+    import shutil
+    from pathlib import Path
+    from casatasks import gencal
+
+    ms = os.environ["CASA_RS_MS_PATH"]
+    root = Path(os.environ["CASA_RS_OUTDIR"]) / "casa-priorcal-cold"
+    root.mkdir(exist_ok=True)
+    for name in ["cal.ant", "cal.gc", "cal.tau"]:
+        path = root / name
+        if path.exists():
+            shutil.rmtree(path)
+    antennas = os.environ["CASA_RS_ANTPOS_ANTENNAS"]
+    antpos_parameters = [float(value) for value in os.environ["CASA_RS_ANTPOS_PARAMETERS"].split(",")]
+    opac_parameters = [float(value) for value in os.environ["CASA_RS_OPAC_PARAMETERS"].split(",")]
+    gencal(vis=ms, caltable=str(root / "cal.ant"), caltype="antpos", antenna=antennas, parameter=antpos_parameters)
+    gencal(vis=ms, caltable=str(root / "cal.gc"), caltype="gceff")
+    gencal(vis=ms, caltable=str(root / "cal.tau"), caltype="opac", spw="0,1", parameter=opac_parameters)
+"""))
+start = time.perf_counter()
+subprocess.run([os.environ["CASA_RS_CASA_PYTHON"], str(script)], check=True)
+elapsed = time.perf_counter() - start
+(outdir / "priorcal-casa-cli-timing.json").write_text(json.dumps({"elapsed_seconds": elapsed}, indent=2))
+PY
+
+CASA_RS_MS_PATH="$ms_path" \
+CASA_RS_OUTDIR="$outdir" \
+CASA_RS_ANTPOS_ANTENNAS="$antpos_antennas" \
+CASA_RS_ANTPOS_PARAMETERS="$antpos_parameters" \
+CASA_RS_OPAC_PARAMETERS="$opac_parameters" \
+python3 - <<'PY'
+import json
+import os
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+ms = os.environ["CASA_RS_MS_PATH"]
+root = Path(os.environ["CASA_RS_OUTDIR"]) / "rust-priorcal"
+root.mkdir(exist_ok=True)
+for name in ["cal.ant", "cal.gc", "cal.tau"]:
+    path = root / name
+    if path.exists():
+        shutil.rmtree(path)
+binary = Path("target/debug/calibrate")
+commands = [
+    [
+        str(binary), "gencal", "--ms", ms, "--out", str(root / "cal.ant"),
+        "--caltype", "antpos", "--antenna", os.environ["CASA_RS_ANTPOS_ANTENNAS"],
+        "--parameter", os.environ["CASA_RS_ANTPOS_PARAMETERS"],
+    ],
+    [str(binary), "gencal", "--ms", ms, "--out", str(root / "cal.gc"), "--caltype", "gceff"],
+    [
+        str(binary), "gencal", "--ms", ms, "--out", str(root / "cal.tau"),
+        "--caltype", "opac", "--spw", "0,1", "--parameter", os.environ["CASA_RS_OPAC_PARAMETERS"],
+    ],
+]
+start = time.perf_counter()
+for command in commands:
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+elapsed = time.perf_counter() - start
+(Path(os.environ["CASA_RS_OUTDIR"]) / "priorcal-rust-timing.json").write_text(
+    json.dumps({"elapsed_seconds": elapsed}, indent=2)
+)
+(Path(os.environ["CASA_RS_OUTDIR"]) / "priorcal-rust-cli-timing.json").write_text(
+    json.dumps({"elapsed_seconds": elapsed}, indent=2)
+)
+PY
+
+CASA_RS_OUTDIR="$outdir" "$CASA_RS_CASA_PYTHON" - <<'PY'
+import json
+import os
+from pathlib import Path
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from casatools import table
+
+outdir = Path(os.environ["CASA_RS_OUTDIR"])
+pairs = [
+    ("cal.ant", "KAntPos Jones"),
+    ("cal.gc", "EGainCurve"),
+    ("cal.tau", "TOpac"),
+]
+tb = table()
+summary = {}
+fig, axes = plt.subplots(len(pairs), 1, figsize=(14, 10), dpi=150, sharex=False)
+for ax, (name, title) in zip(axes, pairs):
+    values = {}
+    for source, root in [("CASA", "casa-priorcal"), ("casa-rs", "rust-priorcal")]:
+        path = outdir / root / name
+        tb.open(str(path))
+        rows = []
+        for row in range(tb.nrows()):
+            rows.extend(np.array(tb.getcell("FPARAM", row)).flatten(order="F").tolist())
+        tb.close()
+        values[source] = np.asarray(rows, dtype=float)
+    diff = values["CASA"] - values["casa-rs"]
+    summary[name] = {
+        "max_abs_fparam_diff": float(np.max(np.abs(diff))) if diff.size else 0.0,
+        "casa_value_count": int(values["CASA"].size),
+        "rust_value_count": int(values["casa-rs"].size),
+    }
+    ax.plot(values["CASA"], ".", markersize=3, label="CASA")
+    ax.plot(values["casa-rs"], "x", markersize=3, label="casa-rs")
+    ax.set_title(title)
+    ax.set_ylabel("FPARAM")
+    ax.grid(True, alpha=0.25)
+axes[-1].set_xlabel("Flattened FPARAM value index")
+axes[0].legend(loc="best")
+fig.tight_layout()
+fig.savefig(outdir / "irc10216-priorcal-fparam-casa-vs-rust.png")
+(outdir / "priorcal-comparison.json").write_text(json.dumps(summary, indent=2))
+PY
+
 echo "IRC+10216 #121 artifacts written under $outdir"

@@ -16,7 +16,7 @@
 pub(crate) mod grouping;
 pub(crate) mod kernel;
 mod trace;
-mod writer;
+pub(crate) mod writer;
 
 use std::path::{Path, PathBuf};
 

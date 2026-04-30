@@ -10014,6 +10014,10 @@ impl AppState {
                 self.apply_inspection_defaults_for_path(report.output_table.display().to_string());
                 self.activate_result_tab(ResultTab::Diagnostics);
             }
+            ManagedCalibrationOutput::Gencal(report) => {
+                self.apply_inspection_defaults_for_path(report.output_table.display().to_string());
+                self.activate_result_tab(ResultTab::Diagnostics);
+            }
             ManagedCalibrationOutput::Stats(report) => {
                 self.apply_inspection_defaults_for_path(report.path.display().to_string());
                 self.activate_result_tab(ResultTab::Diagnostics);
@@ -10163,6 +10167,15 @@ impl AppState {
                 vec![
                     format!("output={}", report.output_table.display()),
                     format!("fields={}", report.fields.len()),
+                ],
+            ),
+            ManagedCalibrationOutput::Gencal(report) => (
+                Some(WorkflowStageId::InspectResults),
+                "Generate Prior Cal".to_string(),
+                vec![
+                    format!("output={}", report.output_table.display()),
+                    format!("rows={}", report.row_count),
+                    format!("subtype={}", report.table_subtype),
                 ],
             ),
         };
@@ -12995,6 +13008,7 @@ impl AppState {
             ManagedCalibrationOutput::SolveGain(report) => &report.output_table,
             ManagedCalibrationOutput::SolveBandpass(report) => &report.output_table,
             ManagedCalibrationOutput::FluxScale(report) => &report.output_table,
+            ManagedCalibrationOutput::Gencal(report) => &report.output_table,
             ManagedCalibrationOutput::Apply(_)
             | ManagedCalibrationOutput::ContinuumSubtract(_)
             | ManagedCalibrationOutput::ExportCorrectedData(_)
@@ -13865,6 +13879,19 @@ fn build_calibration_overview_lines(report: &ManagedCalibrationOutput) -> Vec<St
                 "Transfer fields: {}   SPWs: {}",
                 report.fields.len(),
                 report.spw_ids.len()
+            ),
+        ],
+        ManagedCalibrationOutput::Gencal(report) => vec![
+            "Prior Calibration".to_string(),
+            format!("Output: {}", report.output_table.display()),
+            format!(
+                "Type: {:?}   Subtype: {}   Rows: {}",
+                report.caltype, report.table_subtype, report.row_count
+            ),
+            format!(
+                "Antennas: {}   SPWs: {}",
+                report.antenna_ids.len(),
+                report.spectral_window_ids.len()
             ),
         ],
     }
