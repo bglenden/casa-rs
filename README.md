@@ -83,7 +83,7 @@ Status legend:
 | `coordinates` | Available now | `casa-coordinates` implements `CoordinateSystem` and core coordinate types used by images, measures, and FITS/WCS interop. |
 | `lattices` | Available now | `casa-lattices` provides lattice abstractions, paging/storage, traversal, regions, masks, and statistics. |
 | `images` | Available now | `casa-images` provides persistent images, masks, regions, subimages, lazy expressions, image-browser sessions, and `imexplore`. |
-| `fits` | Partial / Available now | Targeted FITS/WCS header and coordinate interoperability exists in `casa-coordinates`, but there is no full casacore `fits` module parity target. The Wave 3 `exportfits` path is expected to use the Rust `fitsio` crate, which depends on the CFITSIO C library; a future backlog item tracks evaluating pure-Rust FITS alternatives so the workspace can return to an all-Rust dependency stack if practical. |
+| `fits` | Partial / Available now | Targeted FITS/WCS header and coordinate interoperability exists in `casa-coordinates`, and Wave 3 image-analysis tooling includes `exportfits`/`importfits` primary-image paths through the Rust `fitsio` crate. `fitsio` depends on the CFITSIO C library; a future backlog item tracks evaluating pure-Rust FITS alternatives so the workspace can return to an all-Rust dependency stack if practical. There is no full casacore `fits` module parity target. |
 | `msfits` | Deferred | Deferred in planning; depends on broader FITS and MS parity. |
 | `scimath`, `scimath_f` | Deferred/Not planned | Prefer Rust community math/fitting/statistics crates when needed rather than mirroring the casacore module surface. |
 | `python`, `python3` | Deferred until needed | No current parity target for casacore Python converters/bindings. |

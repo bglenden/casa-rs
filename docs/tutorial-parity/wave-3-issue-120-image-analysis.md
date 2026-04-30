@@ -1,15 +1,15 @@
 # Wave 3 Issue 120 - TW Hydra Image Analysis
 
 Truth class: current descriptive
-Last reality check: 2026-04-29
+Last reality check: 2026-04-30
 Verification: focused image-analysis commands and tests below
 
 Child issue: #120
 
 This note records the casa-rs mapping for the ALMA First Look / TW Hydra image
 analysis tutorial. `imhead` and `imstat` are exposed through `imexplore`;
-`immoments` and `exportfits` are separate task binaries with matching Python
-task wrappers.
+`immoments`, `exportfits`, and `importfits` are separate task binaries with
+matching Python task wrappers.
 
 ## Tutorial Mapping
 
@@ -19,6 +19,7 @@ task wrappers.
 | `imstat` | `casa-images`, `casa-lattices` | `imexplore imstat <image> [--box ...] [--chans ...] [--json]` returns CASA-style global statistics, mask-aware min/max positions, and Jy/beam flux for tutorial image selections. |
 | `immoments` | `casa-images`, `casa-lattices`, `casa-coordinates` | `immoments <image> --outfile <image> --moments 0|1 --chans ... --includepix ...` writes CASA image moment maps with default masks. |
 | `exportfits` | `casa-images`, `casa-coordinates` | `exportfits <image> <fits> [--velocity] [--overwrite]` writes a FITS primary HDU through `fitsio`/CFITSIO. |
+| `importfits` | `casa-images`, `casa-coordinates` | `importfits <fits> <image> [--overwrite]` reads a FITS primary HDU through `fitsio`/CFITSIO and writes a CASA image. |
 
 ## Evidence
 
@@ -61,10 +62,12 @@ shape `[250, 250, 1, 1]`, units, and default masks.
 The `mom0` integrated sum differs by `0.015000000596`, about `8.2e-6`
 relative, while the mask cardinality, extrema, and median match.
 
-`exportfits` produces a valid FITS image file for `twhya_cont.image` and now
-matches the important CASA FITS metadata for this tutorial image: shape, BUNIT,
-restoring beam (`BMAJ`, `BMIN`, `BPA`), `OBJECT`, direction WCS, spectral WCS,
-Stokes axis, `RESTFRQ`, and `SPECSYS`.
+`exportfits` produces a valid FITS image file for `twhya_cont.image` and
+matches the important CASA FITS metadata for this tutorial image: structural
+shape, BUNIT, restoring beam (`BMAJ`, `BMIN`, `BPA`), `OBJECT`, direction WCS,
+spectral WCS, Stokes axis, `RESTFRQ`, and `SPECSYS`. The structural FITS NAXIS
+cards are emitted in FITS axis order; casa-rs does not write duplicate NAXIS
+cards.
 
 ```sh
 target/debug/exportfits \
@@ -76,24 +79,36 @@ file target/wdad-wave3-120/rust_twhya_cont.fits
 # FITS image data, 32-bit, floating point, single precision
 ```
 
-Known limitation: casa-rs has FITS/WCS header parsing and FITS export, but not a
-full CASA-image-from-FITS reader. The metadata check for this wave compares the
-CASA `exportfits` header against the casa-rs `exportfits` header and exercises
-the existing `casa-coordinates` WCS header round-trip machinery; it is not a
-full FITS image read/write/read interoperability test.
+`importfits` round-trip evidence uses a real FITS read/write/read cycle. The
+focused unit test creates an asymmetric 4D image so axis-order mistakes are
+visible, exports FITS, imports it back to a CASA image, re-exports FITS, and
+checks exact FITS pixel equality plus structural shape, BUNIT, restoring beam,
+OBJECT, direction WCS, spectral WCS, Stokes axis, `RESTFRQ`, and `SPECSYS`.
+The same round-trip was also run on `twhya_cont.image`; all listed keys matched
+and FITS pixel max absolute difference was `0.0`. CASA 6.7.5-9 successfully
+imported the casa-rs FITS output and reported shape `[250, 250, 1, 1]`, axes
+`Right Ascension`, `Declination`, `Frequency`, `Stokes`, and the expected
+restoring beam.
 
 Release-binary timings against CASA 6.7.5-9 on the local TW Hydra tutorial
-inputs are not yet performance-parity. Medians below are from five warm runs;
-CASA was invoked in-process through the local CASA Python environment, and
-casa-rs was invoked as standalone release binaries.
+inputs are mixed. Medians below are from seven warm runs; CASA was invoked
+in-process through the local CASA Python environment, and casa-rs was invoked as
+standalone release binaries. The moment hot path is now faster than CASA after
+switching the collapse loop to ndarray lane traversal. The tiny metadata and
+FITS operations are still slower as standalone processes; a no-op
+`--protocol-info` casa-rs process costs about `0.0032-0.0040 s` on this machine,
+so these rows are dominated by invocation overhead and should not be closed as
+performance-parity unless the accepted target is in-process task time or a
+long-lived runner.
 
 | Operation | CASA median s | casa-rs median s | casa-rs/CASA |
 | --- | ---: | ---: | ---: |
-| `imhead twhya_cont.image` | `0.004481` | `0.008593` | `1.92` |
-| `imstat twhya_cont.image box=100,100,150,150` | `0.005970` | `0.007714` | `1.29` |
-| `exportfits twhya_cont.image` | `0.005068` | `0.008491` | `1.68` |
-| `immoments moment=0 chans=4~12 includepix=0.03,100` | `0.021813` | `0.049813` | `2.28` |
-| `immoments moment=1 chans=4~12 includepix=0.06,100` | `0.020416` | `0.048337` | `2.37` |
+| `imhead twhya_cont.image` | `0.001977` | `0.007941` | `4.02` |
+| `imstat twhya_cont.image box=100,100,150,150` | `0.005176` | `0.008340` | `1.61` |
+| `exportfits twhya_cont.image` | `0.003969` | `0.008905` | `2.24` |
+| `importfits rust_twhya_cont.fits` | `0.006443` | `0.010719` | `1.66` |
+| `immoments moment=0 chans=4~12 includepix=0.03,100` | `0.020663` | `0.014811` | `0.72` |
+| `immoments moment=1 chans=4~12 includepix=0.06,100` | `0.019894` | `0.014617` | `0.73` |
 
 ## Commands
 
@@ -126,6 +141,11 @@ target/debug/immoments \
 target/debug/exportfits \
   /Users/brianglendenning/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/twhya_cont.image \
   target/wdad-wave3-120/rust_twhya_cont.fits \
+  --overwrite
+
+target/debug/importfits \
+  target/wdad-wave3-120/rust_twhya_cont.fits \
+  target/wdad-wave3-120/rust_twhya_cont_imported.image \
   --overwrite
 ```
 

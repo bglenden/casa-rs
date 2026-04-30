@@ -4,8 +4,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_coordinates::{CoordinateSystem, CoordinateType, FitsValue, fits::to_fits_header};
-use casa_lattices::{LatticeStatistics, Statistic, StatsElement};
+use casa_coordinates::{
+    CoordinateSystem, CoordinateType, FitsHeader, FitsValue,
+    fits::{from_fits_header, to_fits_header},
+};
+use casa_lattices::{LatticeStatistics, Statistic, StatsElement, TiledShape};
 use casa_provider_contracts::{
     ProviderCliMachineActions, ProviderCliProjection, ProviderComponentSchemas,
     ProviderProjectionMetadata, ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract,
@@ -14,16 +17,17 @@ use casa_provider_contracts::{
 use casa_types::{ArrayD, ScalarValue, Value};
 use fitsio::{
     FitsFile,
+    hdu::HduInfo,
     images::{ImageDescription, ImageType as FitsImageType},
 };
-use ndarray::{Axis, IxDyn};
+use ndarray::{Axis, IxDyn, ShapeBuilder, Zip};
 use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::{
-    AnyPagedImage, GaussianBeam, ImageError, ImageInterface, ImagePixel, ImagePixelType, ImageType,
-    PagedImage, TempImage,
+    AnyPagedImage, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImagePixel,
+    ImagePixelType, ImageType, PagedImage, TempImage,
 };
 
 /// Stable protocol name advertised by the image-analysis task binaries.
@@ -108,6 +112,11 @@ impl ImageAnalysisTaskSchemaBundle {
                         request_kind: "exportfits".to_string(),
                         result_kind: Some("exportfits".to_string()),
                     },
+                    TaskOperationDescriptor {
+                        name: "importfits".to_string(),
+                        request_kind: "importfits".to_string(),
+                        result_kind: Some("importfits".to_string()),
+                    },
                 ],
             },
             components: merged_components([&request_schema, &result_schema]),
@@ -125,7 +134,7 @@ impl ImageAnalysisTaskSchemaBundle {
                 ui_schema: None,
                 python: Some(serde_json::json!({
                     "module": "casars.tasks.image_analysis",
-                    "functions": ["imhead", "imstat", "immoments", "exportfits"],
+                    "functions": ["imhead", "imstat", "immoments", "exportfits", "importfits"],
                 })),
             },
             request_schema,
@@ -263,6 +272,47 @@ pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError>
                 })
             ]),
         ),
+        "importfits" => (
+            "importfits",
+            "Import FITS",
+            "Import a FITS primary image into a CASA image",
+            "importfits <fitsimage> <imagename> [--overwrite]",
+            serde_json::json!([
+                arg(UiArgument {
+                    id: "fitsimage",
+                    label: "FITS",
+                    order: 0,
+                    parser: positional("fitsimage"),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Input FITS image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "imagename",
+                    label: "Image",
+                    order: 1,
+                    parser: positional("imagename"),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Output CASA image path",
+                    group: "Output",
+                }),
+                arg(UiArgument {
+                    id: "overwrite",
+                    label: "Overwrite",
+                    order: 2,
+                    parser: toggle(["--overwrite"], []),
+                    value_kind: "bool",
+                    required: false,
+                    default: serde_json::json!("false"),
+                    help: "Replace existing output image",
+                    group: "Output",
+                })
+            ]),
+        ),
         _ => (
             "image-analysis",
             "Image Analysis",
@@ -354,6 +404,8 @@ pub enum ImageAnalysisTaskRequest {
     Immoments(ImmomentsRequest),
     /// CASA `exportfits` style FITS image export.
     Exportfits(ExportFitsRequest),
+    /// CASA `importfits` style FITS image import.
+    Importfits(ImportFitsRequest),
 }
 
 /// Top-level image-analysis JSON task result.
@@ -368,6 +420,8 @@ pub enum ImageAnalysisTaskResult {
     Immoments(MomentMapSummary),
     /// Result for [`ImageAnalysisTaskRequest::Exportfits`].
     Exportfits(FitsExportSummary),
+    /// Result for [`ImageAnalysisTaskRequest::Importfits`].
+    Importfits(FitsImportSummary),
 }
 
 /// CASA `imhead` request.
@@ -424,6 +478,18 @@ pub struct ExportFitsRequest {
     #[serde(default)]
     pub velocity: bool,
     /// Replace an existing FITS file.
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+/// CASA `importfits` request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImportFitsRequest {
+    /// Input FITS image path.
+    pub fitsimage: PathBuf,
+    /// Output CASA image path.
+    pub imagename: PathBuf,
+    /// Replace an existing CASA image.
     #[serde(default)]
     pub overwrite: bool,
 }
@@ -554,6 +620,25 @@ pub struct FitsExportSummary {
     pub velocity: bool,
 }
 
+/// CASA `importfits` output summary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FitsImportSummary {
+    /// Input FITS image path.
+    pub fitsimage: String,
+    /// Output CASA image path.
+    pub imagename: String,
+    /// Imported CASA image shape.
+    pub shape: Vec<usize>,
+    /// Imported pixel type.
+    pub pixel_type: String,
+    /// Imported brightness unit.
+    pub units: String,
+    /// Imported object name, if any.
+    pub object_name: String,
+    /// Whether a single restoring beam was imported.
+    pub has_restoring_beam: bool,
+}
+
 /// Run an image-analysis JSON task request.
 pub fn run_image_analysis_task(
     request: ImageAnalysisTaskRequest,
@@ -579,6 +664,9 @@ pub fn run_image_analysis_task(
                 request.overwrite,
             )?))
         }
+        ImageAnalysisTaskRequest::Importfits(request) => Ok(ImageAnalysisTaskResult::Importfits(
+            import_fits(&request.fitsimage, &request.imagename, request.overwrite)?,
+        )),
     }
 }
 
@@ -698,8 +786,226 @@ pub fn export_fits(
     }
 }
 
+/// Import a primary-HDU FITS image as a CASA image.
+pub fn import_fits(
+    fitsimage: impl AsRef<Path>,
+    imagename: impl AsRef<Path>,
+    overwrite: bool,
+) -> Result<FitsImportSummary, ImageError> {
+    let fitsimage = fitsimage.as_ref();
+    let imagename = imagename.as_ref();
+    if imagename.exists() {
+        if overwrite {
+            fs::remove_dir_all(imagename).map_err(|error| ImageError::Io(error.to_string()))?;
+        } else {
+            return Err(ImageError::Io(format!(
+                "CASA image output already exists: {}",
+                imagename.display()
+            )));
+        }
+    }
+
+    let mut fits = FitsFile::open(fitsimage).map_err(|error| ImageError::Io(error.to_string()))?;
+    let hdu = fits
+        .primary_hdu()
+        .map_err(|error| ImageError::Io(error.to_string()))?;
+    let image_type = match &hdu.info {
+        HduInfo::ImageInfo { image_type, .. } => *image_type,
+        HduInfo::TableInfo { .. } | HduInfo::AnyInfo => {
+            return Err(ImageError::InvalidMetadata(
+                "primary HDU is not a FITS image".to_string(),
+            ));
+        }
+    };
+    let shape = read_fits_axis_shape(&mut fits, &hdu)?;
+    let header = read_primary_fits_header(&mut fits, &hdu, &shape)?;
+    let coordinates = from_fits_header(&header, &shape)?;
+    match image_type {
+        FitsImageType::Double => {
+            let data = hdu
+                .read_image::<Vec<f64>>(&mut fits)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+            import_fits_typed::<f64>(fitsimage, imagename, shape, coordinates, header, data)
+        }
+        FitsImageType::Float
+        | FitsImageType::UnsignedByte
+        | FitsImageType::Byte
+        | FitsImageType::Short
+        | FitsImageType::UnsignedShort
+        | FitsImageType::Long
+        | FitsImageType::UnsignedLong
+        | FitsImageType::LongLong => {
+            let data = hdu
+                .read_image::<Vec<f32>>(&mut fits)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+            import_fits_typed::<f32>(fitsimage, imagename, shape, coordinates, header, data)
+        }
+    }
+}
+
+fn import_fits_typed<T>(
+    fitsimage: &Path,
+    imagename: &Path,
+    shape: Vec<usize>,
+    coordinates: CoordinateSystem,
+    header: FitsHeader,
+    data: Vec<T>,
+) -> Result<FitsImportSummary, ImageError>
+where
+    T: ImagePixel,
+{
+    let array = ArrayD::from_shape_vec(IxDyn(&shape).f(), data).map_err(|error| {
+        ImageError::InvalidMetadata(format!("invalid FITS image shape: {error}"))
+    })?;
+    let tile_shape = TiledShape::new(shape.clone()).tile_shape();
+    let mut image =
+        PagedImage::<T>::create_with_tile_shape(shape.clone(), tile_shape, coordinates, imagename)?;
+    image.put_slice(&array, &vec![0; shape.len()])?;
+    if let Some(units) = header.get_string("BUNIT") {
+        image.set_units(units)?;
+    }
+    let image_info = image_info_from_fits_header(&header);
+    image.set_image_info(&image_info)?;
+    image.add_history(format!("Imported from FITS {}", fitsimage.display()))?;
+    image.save()?;
+
+    Ok(FitsImportSummary {
+        fitsimage: fitsimage.display().to_string(),
+        imagename: imagename.display().to_string(),
+        shape,
+        pixel_type: image_pixel_type::<T>().pixel_type_label(),
+        units: header.get_string("BUNIT").unwrap_or("").to_string(),
+        object_name: image_info.object_name,
+        has_restoring_beam: image_info
+            .beam_set
+            .single_beam()
+            .is_some_and(|beam| !beam.is_null()),
+    })
+}
+
+fn image_info_from_fits_header(header: &FitsHeader) -> ImageInfo {
+    let object_name = header.get_string("OBJECT").unwrap_or("").to_string();
+    let beam_set = match (
+        header.get_float("BMAJ"),
+        header.get_float("BMIN"),
+        header.get_float("BPA"),
+    ) {
+        (Some(major_deg), Some(minor_deg), Some(position_angle_deg)) => {
+            ImageBeamSet::new(GaussianBeam::new(
+                major_deg.to_radians(),
+                minor_deg.to_radians(),
+                position_angle_deg.to_radians(),
+            ))
+        }
+        _ => ImageBeamSet::default(),
+    };
+    ImageInfo {
+        beam_set,
+        image_type: header
+            .get_int("IMTYPE")
+            .map(|value| ImageType::from_fits_value(value as i32))
+            .unwrap_or(ImageType::Undefined),
+        object_name,
+    }
+}
+
+fn read_primary_fits_header(
+    fits: &mut FitsFile,
+    hdu: &fitsio::hdu::FitsHdu,
+    shape: &[usize],
+) -> Result<FitsHeader, ImageError> {
+    let mut header = FitsHeader::new();
+    header.set("NAXIS", FitsValue::Integer(shape.len() as i64));
+    for (axis, axis_len) in shape.iter().enumerate() {
+        header.set(
+            format!("NAXIS{}", axis + 1),
+            FitsValue::Integer(*axis_len as i64),
+        );
+    }
+    for key in [
+        "RADESYS", "CUNIT1", "CUNIT2", "CUNIT3", "CUNIT4", "CTYPE1", "CTYPE2", "CTYPE3", "CTYPE4",
+        "SPECSYS", "BUNIT", "OBJECT", "TELESCOP", "OBSERVER",
+    ] {
+        if let Some(value) = read_optional_key::<String>(fits, hdu, key)? {
+            header.set(key, FitsValue::String(value.trim_end().to_string()));
+        }
+    }
+    for key in [
+        "EQUINOX", "CRVAL1", "CRVAL2", "CRVAL3", "CRVAL4", "CRPIX1", "CRPIX2", "CRPIX3", "CRPIX4",
+        "CDELT1", "CDELT2", "CDELT3", "CDELT4", "RESTFRQ", "BMAJ", "BMIN", "BPA", "IMTYPE",
+        "LONPOLE", "LATPOLE", "CROTA2",
+    ] {
+        if let Some(value) = read_optional_key::<f64>(fits, hdu, key)? {
+            header.set(key, FitsValue::Float(value));
+        }
+    }
+    for i in 1..=shape.len() {
+        for j in 1..=shape.len() {
+            let pc_key = format!("PC{i}_{j}");
+            if let Some(value) = read_optional_key::<f64>(fits, hdu, &pc_key)? {
+                header.set(pc_key, FitsValue::Float(value));
+            }
+            let cd_key = format!("CD{i}_{j}");
+            if let Some(value) = read_optional_key::<f64>(fits, hdu, &cd_key)? {
+                header.set(cd_key, FitsValue::Float(value));
+            }
+        }
+    }
+    Ok(header)
+}
+
+fn read_fits_axis_shape(
+    fits: &mut FitsFile,
+    hdu: &fitsio::hdu::FitsHdu,
+) -> Result<Vec<usize>, ImageError> {
+    let naxis = hdu
+        .read_key::<i64>(fits, "NAXIS")
+        .map_err(|error| ImageError::Io(error.to_string()))? as usize;
+    let mut shape = Vec::with_capacity(naxis);
+    for axis in 1..=naxis {
+        let axis_len = hdu
+            .read_key::<i64>(fits, &format!("NAXIS{axis}"))
+            .map_err(|error| ImageError::Io(error.to_string()))?;
+        shape.push(axis_len as usize);
+    }
+    Ok(shape)
+}
+
+fn read_optional_key<T>(
+    fits: &mut FitsFile,
+    hdu: &fitsio::hdu::FitsHdu,
+    key: &str,
+) -> Result<Option<T>, ImageError>
+where
+    T: fitsio::headers::ReadsKey,
+{
+    match hdu.read_key::<T>(fits, key) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) => {
+            let text = error.to_string();
+            if text.contains("keyword not found") || text.contains("not found in header") {
+                Ok(None)
+            } else {
+                Err(ImageError::Io(text))
+            }
+        }
+    }
+}
+
 trait PixelTypeLabel {
     fn pixel_type_label(&self) -> String;
+}
+
+impl PixelTypeLabel for ImagePixelType {
+    fn pixel_type_label(&self) -> String {
+        match self {
+            Self::Float32 => "Float32",
+            Self::Float64 => "Float64",
+            Self::Complex32 => "Complex32",
+            Self::Complex64 => "Complex64",
+        }
+        .to_string()
+    }
 }
 
 impl PixelTypeLabel for PagedImage<f32> {
@@ -1064,6 +1370,144 @@ where
 {
     let mut out_shape = input.shape().to_vec();
     out_shape.remove(axis);
+    let mut out = ArrayD::<f32>::zeros(IxDyn(&out_shape).f());
+    let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&out_shape).f(), false);
+    match mask {
+        Some(mask) => Zip::from(&mut out)
+            .and(&mut out_mask)
+            .and(input.lanes(Axis(axis)))
+            .and(mask.lanes(Axis(axis)))
+            .for_each(|out_value, out_valid, input_lane, mask_lane| {
+                let (result, valid) = collapse_moment_lane(
+                    input_lane.iter().copied(),
+                    Some(mask_lane.iter().copied()),
+                    coords,
+                    integrated_scale,
+                    includepix,
+                    moment,
+                );
+                *out_value = result;
+                *out_valid = valid;
+            }),
+        None => Zip::from(&mut out)
+            .and(&mut out_mask)
+            .and(input.lanes(Axis(axis)))
+            .for_each(|out_value, out_valid, input_lane| {
+                let (result, valid) = collapse_moment_lane(
+                    input_lane.iter().copied(),
+                    None::<std::iter::Empty<bool>>,
+                    coords,
+                    integrated_scale,
+                    includepix,
+                    moment,
+                );
+                *out_value = result;
+                *out_valid = valid;
+            }),
+    }
+    Ok((
+        out.insert_axis(Axis(axis)).to_owned(),
+        out_mask.insert_axis(Axis(axis)).to_owned(),
+    ))
+}
+
+fn collapse_moment_lane<T, I, M>(
+    values: I,
+    mask: Option<M>,
+    coords: &[f64],
+    integrated_scale: f64,
+    includepix: Option<[f64; 2]>,
+    moment: i32,
+) -> (f32, bool)
+where
+    T: Into<f64> + Copy,
+    I: IntoIterator<Item = T>,
+    M: IntoIterator<Item = bool>,
+{
+    let mut s0 = 0.0;
+    let mut s1 = 0.0;
+    let mut npts = 0usize;
+    match mask {
+        Some(mask) => {
+            for ((value, coord), valid) in values.into_iter().zip(coords.iter()).zip(mask) {
+                if !valid {
+                    continue;
+                }
+                let value = value.into();
+                if let Some([min, max]) = includepix {
+                    if value < min || value > max {
+                        continue;
+                    }
+                }
+                s0 += value;
+                s1 += value * *coord;
+                npts += 1;
+            }
+        }
+        None => {
+            for (value, coord) in values.into_iter().zip(coords.iter()) {
+                let value = value.into();
+                if let Some([min, max]) = includepix {
+                    if value < min || value > max {
+                        continue;
+                    }
+                }
+                s0 += value;
+                s1 += value * *coord;
+                npts += 1;
+            }
+        }
+    }
+    let result = if npts == 0 {
+        return (0.0, false);
+    } else if moment == 0 {
+        s0 * integrated_scale
+    } else if s0 != 0.0 {
+        s1 / s0
+    } else {
+        return (0.0, false);
+    };
+    (result as f32, true)
+}
+
+#[cfg(test)]
+fn all_indices(shape: &[usize]) -> Vec<Vec<usize>> {
+    fn push_indices(
+        shape: &[usize],
+        axis: usize,
+        current: &mut Vec<usize>,
+        out: &mut Vec<Vec<usize>>,
+    ) {
+        if axis == shape.len() {
+            out.push(current.clone());
+            return;
+        }
+        for value in 0..shape[axis] {
+            current.push(value);
+            push_indices(shape, axis + 1, current, out);
+            current.pop();
+        }
+    }
+    let mut out = Vec::new();
+    push_indices(shape, 0, &mut Vec::new(), &mut out);
+    out
+}
+
+#[cfg(test)]
+fn collapse_moment_reference<T>(
+    input: &ArrayD<T>,
+    mask: Option<&ArrayD<bool>>,
+    axis: usize,
+    coords: &[f64],
+    integrated_scale: f64,
+    includepix: Option<[f64; 2]>,
+    moment: i32,
+) -> Result<(ArrayD<f32>, ArrayD<bool>), ImageError>
+where
+    T: Into<f64> + Copy,
+{
+    let mut out_shape = input.shape().to_vec();
+    out_shape.remove(axis);
     let mut out = ArrayD::<f32>::zeros(IxDyn(&out_shape));
     let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&out_shape), false);
     for out_index in all_indices(&out_shape) {
@@ -1107,28 +1551,6 @@ where
         out.insert_axis(Axis(axis)).to_owned(),
         out_mask.insert_axis(Axis(axis)).to_owned(),
     ))
-}
-
-fn all_indices(shape: &[usize]) -> Vec<Vec<usize>> {
-    fn push_indices(
-        shape: &[usize],
-        axis: usize,
-        current: &mut Vec<usize>,
-        out: &mut Vec<Vec<usize>>,
-    ) {
-        if axis == shape.len() {
-            out.push(current.clone());
-            return;
-        }
-        for value in 0..shape[axis] {
-            current.push(value);
-            push_indices(shape, axis + 1, current, out);
-            current.pop();
-        }
-    }
-    let mut out = Vec::new();
-    push_indices(shape, 0, &mut Vec::new(), &mut out);
-    out
 }
 
 fn spectral_velocity_values<T: ImagePixel>(
@@ -1230,13 +1652,14 @@ where
     T: ImagePixel + fitsio::images::WriteImage + Copy,
 {
     let layout = casa_fits_export_layout(image.coordinates(), image.shape());
+    let fits_dimensions = layout.shape.iter().rev().copied().collect::<Vec<_>>();
     let description = ImageDescription {
         data_type: match image_pixel_type::<T>() {
             ImagePixelType::Float32 => FitsImageType::Float,
             ImagePixelType::Float64 => FitsImageType::Double,
             _ => FitsImageType::Float,
         },
-        dimensions: &layout.shape,
+        dimensions: &fits_dimensions,
     };
     let mut fits = FitsFile::create(fitsimage)
         .with_custom_primary(&description)
@@ -1256,6 +1679,14 @@ where
         .map_err(|error| ImageError::Io(error.to_string()))?;
     let header = to_fits_header(&layout.coordinates, &layout.shape);
     for keyword in header.iter() {
+        if keyword.name == "NAXIS"
+            || keyword
+                .name
+                .strip_prefix("NAXIS")
+                .is_some_and(|suffix| suffix.chars().all(|ch| ch.is_ascii_digit()))
+        {
+            continue;
+        }
         if velocity
             && keyword.name.starts_with("CTYPE")
             && matches!(keyword.value, FitsValue::String(ref s) if s == "FREQ")
@@ -1424,5 +1855,153 @@ mod tests {
         );
         assert_eq!(header.get("NAXIS3"), Some(&FitsValue::Integer(7)));
         assert_eq!(header.get("NAXIS4"), Some(&FitsValue::Integer(1)));
+    }
+
+    #[test]
+    fn fits_import_export_roundtrip_preserves_pixels_wcs_units_beam_and_object() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source.image");
+        let first_fits = temp.path().join("first.fits");
+        let imported_path = temp.path().join("imported.image");
+        let second_fits = temp.path().join("second.fits");
+
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.2, -0.4],
+            [-2.0e-6, 3.0e-6],
+            [1.0, 0.0],
+        )));
+        coordinates.add_coordinate(Box::new(StokesCoordinate::new(vec![
+            StokesType::I,
+            StokesType::Q,
+        ])));
+        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            372.0e9,
+            2.0e6,
+            2.0,
+            372.0e9,
+        )));
+
+        let shape = vec![3, 2, 2, 5];
+        let mut source =
+            PagedImage::<f32>::create(shape.clone(), coordinates, &source_path).unwrap();
+        let data = ArrayD::from_shape_vec(
+            IxDyn(&shape).f(),
+            (0..shape.iter().product::<usize>())
+                .map(|value| value as f32 + 0.25)
+                .collect(),
+        )
+        .unwrap();
+        source.put_slice(&data, &[0, 0, 0, 0]).unwrap();
+        source.set_units("Jy/beam").unwrap();
+        source
+            .set_image_info(&ImageInfo {
+                beam_set: ImageBeamSet::new(GaussianBeam::new(
+                    1.7e-4_f64.to_radians(),
+                    1.2e-4_f64.to_radians(),
+                    (-34.5_f64).to_radians(),
+                )),
+                image_type: ImageType::Intensity,
+                object_name: "TW Hya".to_string(),
+            })
+            .unwrap();
+        source.save().unwrap();
+
+        export_fits(&source_path, &first_fits, false, false).unwrap();
+        import_fits(&first_fits, &imported_path, false).unwrap();
+        export_fits(&imported_path, &second_fits, false, false).unwrap();
+
+        let imported = PagedImage::<f32>::open(&imported_path).unwrap();
+        assert_eq!(imported.shape(), &[3, 2, 5, 2]);
+        assert_eq!(imported.units(), "Jy/beam");
+        let info = imported.image_info().unwrap();
+        assert_eq!(info.object_name, "TW Hya");
+        let beam = info.beam_set.single_beam().unwrap();
+        assert!((beam.major_in("deg").unwrap() - 1.7e-4).abs() < 1.0e-12);
+        assert!((beam.minor_in("deg").unwrap() - 1.2e-4).abs() < 1.0e-12);
+        assert!((beam.position_angle_in("deg").unwrap() + 34.5).abs() < 1.0e-12);
+
+        assert_eq!(
+            read_fits_pixels(&first_fits),
+            read_fits_pixels(&second_fits)
+        );
+        for key in [
+            "NAXIS", "NAXIS1", "NAXIS2", "NAXIS3", "NAXIS4", "BUNIT", "BMAJ", "BMIN", "BPA",
+            "OBJECT", "RADESYS", "CTYPE1", "CTYPE2", "CTYPE3", "CTYPE4", "CRVAL1", "CRVAL2",
+            "CRVAL3", "CRVAL4", "CRPIX1", "CRPIX2", "CRPIX3", "CRPIX4", "CDELT1", "CDELT2",
+            "CDELT3", "CDELT4", "CUNIT1", "CUNIT2", "CUNIT3", "CUNIT4", "RESTFRQ", "SPECSYS",
+        ] {
+            assert_fits_key_matches(&first_fits, &second_fits, key);
+        }
+    }
+
+    #[test]
+    fn optimized_moment_collapse_matches_reference_for_masked_axis() {
+        let shape = vec![3, 2, 4];
+        let input = ArrayD::from_shape_vec(
+            IxDyn(&shape).f(),
+            (0..shape.iter().product::<usize>())
+                .map(|value| value as f32 / 10.0)
+                .collect(),
+        )
+        .unwrap();
+        let mask = ArrayD::from_shape_vec(
+            IxDyn(&shape).f(),
+            (0..shape.iter().product::<usize>())
+                .map(|value| value % 3 != 0)
+                .collect(),
+        )
+        .unwrap();
+        let coords = vec![-2.0, -1.0, 0.0, 1.0];
+        for moment in [0, 1] {
+            let actual = collapse_moment(
+                &input,
+                Some(&mask),
+                2,
+                &coords,
+                0.25,
+                Some([0.4, 1.8]),
+                moment,
+            )
+            .unwrap();
+            let expected = collapse_moment_reference(
+                &input,
+                Some(&mask),
+                2,
+                &coords,
+                0.25,
+                Some([0.4, 1.8]),
+                moment,
+            )
+            .unwrap();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    fn read_fits_pixels(path: &Path) -> Vec<f32> {
+        let mut fits = FitsFile::open(path).unwrap();
+        let hdu = fits.primary_hdu().unwrap();
+        hdu.read_image::<Vec<f32>>(&mut fits).unwrap()
+    }
+
+    fn assert_fits_key_matches(lhs: &Path, rhs: &Path, key: &str) {
+        let lhs_value = read_fits_key_as_string(lhs, key);
+        let rhs_value = read_fits_key_as_string(rhs, key);
+        assert_eq!(lhs_value, rhs_value, "FITS key {key}");
+    }
+
+    fn read_fits_key_as_string(path: &Path, key: &str) -> String {
+        let mut fits = FitsFile::open(path).unwrap();
+        let hdu = fits.primary_hdu().unwrap();
+        if let Ok(value) = hdu.read_key::<String>(&mut fits, key) {
+            return value.trim_end().to_string();
+        }
+        if let Ok(value) = hdu.read_key::<i64>(&mut fits, key) {
+            return value.to_string();
+        }
+        hdu.read_key::<f64>(&mut fits, key).unwrap().to_string()
     }
 }
