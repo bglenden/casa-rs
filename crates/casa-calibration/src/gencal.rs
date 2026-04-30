@@ -629,12 +629,18 @@ fn spw_center_frequency_hz(
             "failed to read SPECTRAL_WINDOW row {row}: {source}"
         ))
     })?;
+    casa_middle_channel_frequency_hz(&freqs, row)
+}
+
+fn casa_middle_channel_frequency_hz(freqs: &[f64], row: usize) -> Result<f64, GencalError> {
     if freqs.is_empty() {
         return Err(GencalError::InvalidRequest(format!(
             "SPECTRAL_WINDOW row {row} has no channel frequencies"
         )));
     }
-    Ok(freqs.iter().sum::<f64>() / freqs.len() as f64)
+    // CASA EGainCurve uses chanfreqs(chanfreqs.nelements()/2), not the
+    // arithmetic center, for the VLA efficiency lookup.
+    Ok(freqs[freqs.len() / 2])
 }
 
 fn vla_spw_band(
@@ -875,4 +881,21 @@ fn default_vla_gaincurve_table() -> Option<PathBuf> {
         return Some(PathBuf::from(path).join("nrao/VLA/GainCurves"));
     }
     env::var_os("HOME").map(|home| PathBuf::from(home).join(".casa/data/nrao/VLA/GainCurves"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn casa_middle_channel_frequency_uses_upper_middle_for_even_spw() {
+        let freqs = [100.0, 125.0, 150.0, 175.0];
+        assert_eq!(casa_middle_channel_frequency_hz(&freqs, 0).unwrap(), 150.0);
+    }
+
+    #[test]
+    fn casa_middle_channel_frequency_rejects_empty_spw() {
+        let err = casa_middle_channel_frequency_hz(&[], 7).unwrap_err();
+        assert!(err.to_string().contains("SPECTRAL_WINDOW row 7"));
+    }
 }
