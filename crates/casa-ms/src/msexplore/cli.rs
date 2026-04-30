@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Schema-backed CLI support for `msexplore`.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
+use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Deserialize;
 
 use super::task_contract::{
@@ -12,10 +14,10 @@ use super::task_contract::{
 };
 use super::{
     DEFAULT_MAX_PLOT_POINTS, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat,
-    MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis, MsLegendPosition,
-    MsPageExportRange, MsPageHeaderItem, MsPlotPreset, MsPlotSpec, MsPlotStyleSpec,
-    MsSelectionSpec, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
-    export_msexplore_plot, preview_msexplore_flag_edit_for_request,
+    MsFlagAction, MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
+    MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPreset,
+    MsPlotSpec, MsPlotStyleSpec, MsSelectionSpec, apply_msexplore_flag_edit_for_request,
+    build_msexplore_payload, export_msexplore_plot, preview_msexplore_flag_edit_for_request,
 };
 use crate::MeasurementSet;
 pub use crate::ui_schema::{
@@ -91,6 +93,7 @@ struct CliOptions {
     flag_panel: Option<String>,
     flag_extcorr: bool,
     flag_extchannel: bool,
+    flag_selected: bool,
     flag_apply: bool,
     flag_output: Option<PathBuf>,
     plot_output: Option<PathBuf>,
@@ -1216,9 +1219,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 },
             ),
             toggle_argument(
+                "flag_selected",
+                "Flag Selected Rows",
+                64,
+                "Apply the flag action to every FLAG sample in the selected MAIN rows",
+                ToggleArgumentConfig {
+                    true_flags: &["--flag-selected"],
+                    false_flags: &[],
+                    default: false,
+                    group: "Flag Editing",
+                    advanced: true,
+                    hidden_in_tui: false,
+                },
+            ),
+            toggle_argument(
                 "flag_apply",
                 "Apply Flag Edit",
-                64,
+                65,
                 "Apply the staged flag edit to MAIN FLAG / FLAG_ROW; omit for preview-only",
                 ToggleArgumentConfig {
                     true_flags: &["--flag-apply"],
@@ -1232,7 +1249,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_output",
                 "Flag Preview Output",
-                65,
+                66,
                 &["--flag-output"],
                 "PATH",
                 UiValueKind::Path,
@@ -1243,8 +1260,8 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 true,
                 false,
             ),
-            action_argument(66, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
-            action_argument(67, "help", &["-h", "--help"], UiActionKind::Help),
+            action_argument(67, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
+            action_argument(68, "help", &["-h", "--help"], UiActionKind::Help),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "measurementset-summary-v1".to_string(),
@@ -1290,29 +1307,36 @@ fn run(options: CliOptions) -> Result<(), String> {
         None
     };
 
-    if let Some(explore_spec) = &explore_spec {
-        if let Some(flag_edit) = &flag_edit {
+    if let Some(action) = options.flag_action {
+        if options.flag_selected {
+            let preview = if options.flag_apply && options.flag_output.is_none() {
+                apply_selection_flag_edit_direct(&mut ms, &options.selection, action)?
+            } else {
+                let preview = preview_selection_flag_edit(&ms, &options.selection, action)?;
+                if options.flag_apply {
+                    apply_selection_flag_edit_preview(&mut ms, &preview)?;
+                }
+                preview
+            };
+            if options.flag_apply {
+                ms.save_main_table_only_assuming_valid()
+                    .map_err(|error| error.to_string())?;
+            }
+            write_or_log_flag_preview(&options, &preview)?;
+        } else if let Some(explore_spec) = &explore_spec {
+            let flag_edit = flag_edit
+                .as_ref()
+                .ok_or_else(|| "msexplore lost its prepared flag edit".to_string())?;
             let preview = if options.flag_apply {
                 let preview =
                     apply_msexplore_flag_edit_for_request(&mut ms, explore_spec, flag_edit)?;
-                ms.save().map_err(|error| error.to_string())?;
+                ms.save_main_table_only_assuming_valid()
+                    .map_err(|error| error.to_string())?;
                 preview
             } else {
                 preview_msexplore_flag_edit_for_request(&ms, explore_spec, flag_edit)?
             };
-            if let Some(path) = options.flag_output.as_deref() {
-                let json = serde_json::to_string_pretty(&preview)
-                    .map_err(|error| format!("serialize flag preview: {error}"))?;
-                write_output(Some(path), options.overwrite, &json)?;
-            } else {
-                eprintln!(
-                    "Flag edit preview: matched_points={} affected_rows={} affected_samples={} apply={}",
-                    preview.matched_points,
-                    preview.affected_rows,
-                    preview.affected_samples,
-                    options.flag_apply
-                );
-            }
+            write_or_log_flag_preview(&options, &preview)?;
         }
     }
 
@@ -1469,6 +1493,9 @@ fn build_flag_edit_spec(options: &CliOptions) -> Result<Option<MsFlagEditSpec>, 
     let Some(action) = options.flag_action else {
         return Ok(None);
     };
+    if options.flag_selected {
+        return Ok(None);
+    }
     let x_min = options
         .flag_xmin
         .ok_or_else(|| "--flag-action requires --flag-xmin".to_string())?;
@@ -1494,6 +1521,200 @@ fn build_flag_edit_spec(options: &CliOptions) -> Result<Option<MsFlagEditSpec>, 
         extcorr: options.flag_extcorr,
         extchannel: options.flag_extchannel,
     }))
+}
+
+fn write_or_log_flag_preview(
+    options: &CliOptions,
+    preview: &MsFlagEditPreview,
+) -> Result<(), String> {
+    if let Some(path) = options.flag_output.as_deref() {
+        let json = serde_json::to_string_pretty(preview)
+            .map_err(|error| format!("serialize flag preview: {error}"))?;
+        write_output(Some(path), options.overwrite, &json)?;
+    } else {
+        eprintln!(
+            "Flag edit preview: matched_points={} affected_rows={} affected_samples={} apply={}",
+            preview.matched_points,
+            preview.affected_rows,
+            preview.affected_samples,
+            options.flag_apply
+        );
+    }
+    Ok(())
+}
+
+fn preview_selection_flag_edit(
+    ms: &MeasurementSet,
+    selection: &MsSelectionSpec,
+    action: MsFlagAction,
+) -> Result<MsFlagEditPreview, String> {
+    let listobs_options = selection.to_summary_options();
+    let row_numbers = super::resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
+    let mut sample_edits = Vec::new();
+    let mut row_edits = Vec::new();
+
+    for row in row_numbers {
+        let old_flag_row = ms
+            .flag_row_column()
+            .get(row)
+            .map_err(|error| error.to_string())?;
+        let old_matrix = super::clone_flag_matrix(ms, row)?;
+        let mut new_matrix = old_matrix.clone();
+        let (corr_count, chan_count) = old_matrix.dim();
+        let mut changed_samples = 0usize;
+        for corr in 0..corr_count {
+            for chan in 0..chan_count {
+                let old_flag = old_matrix[(corr, chan)];
+                let new_flag = match action {
+                    MsFlagAction::Flag => true,
+                    MsFlagAction::Unflag => false,
+                };
+                if old_flag != new_flag {
+                    new_matrix[(corr, chan)] = new_flag;
+                    sample_edits.push(MsFlagSampleEdit {
+                        row,
+                        corr,
+                        chan,
+                        old_flag,
+                        new_flag,
+                    });
+                    changed_samples += 1;
+                }
+            }
+        }
+        let new_flag_row = new_matrix.iter().all(|value| *value);
+        if changed_samples > 0 || old_flag_row != new_flag_row {
+            row_edits.push(MsFlagRowEdit {
+                row,
+                old_flag_row,
+                new_flag_row,
+                changed_samples,
+            });
+        }
+    }
+
+    Ok(MsFlagEditPreview {
+        plot_title: "selection flag edit".to_string(),
+        plot_index: None,
+        panel_key: None,
+        panel_label: None,
+        x_axis: MsAxis::Time,
+        y_axis: MsAxis::Flag,
+        region: MsFlagRegion {
+            x_min: 0.0,
+            x_max: 0.0,
+            y_min: 0.0,
+            y_max: 0.0,
+        },
+        action,
+        extcorr: true,
+        extchannel: true,
+        matched_points: sample_edits.len(),
+        affected_rows: row_edits.len(),
+        affected_samples: sample_edits.len(),
+        sample_edits,
+        row_edits,
+    })
+}
+
+fn apply_selection_flag_edit_preview(
+    ms: &mut MeasurementSet,
+    preview: &MsFlagEditPreview,
+) -> Result<(), String> {
+    let mut row_updates = BTreeMap::<usize, (ndarray::Array2<bool>, bool)>::new();
+    for row_edit in &preview.row_edits {
+        row_updates.insert(
+            row_edit.row,
+            (
+                super::clone_flag_matrix(ms, row_edit.row)?,
+                row_edit.new_flag_row,
+            ),
+        );
+    }
+    for sample in &preview.sample_edits {
+        let (matrix, _) = row_updates
+            .get_mut(&sample.row)
+            .ok_or_else(|| format!("flag edit lost planned row {}", sample.row))?;
+        matrix[(sample.corr, sample.chan)] = sample.new_flag;
+    }
+    for (row, (matrix, flag_row)) in row_updates {
+        ms.main_table_mut()
+            .cell_accessor_mut(row, "FLAG")
+            .map_err(|error| error.to_string())?
+            .set(Value::Array(ArrayValue::Bool(matrix.into_dyn())))
+            .map_err(|error| error.to_string())?;
+        ms.main_table_mut()
+            .cell_accessor_mut(row, "FLAG_ROW")
+            .map_err(|error| error.to_string())?
+            .set(Value::Scalar(ScalarValue::Bool(flag_row)))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn apply_selection_flag_edit_direct(
+    ms: &mut MeasurementSet,
+    selection: &MsSelectionSpec,
+    action: MsFlagAction,
+) -> Result<MsFlagEditPreview, String> {
+    let listobs_options = selection.to_summary_options();
+    let row_numbers = super::resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
+    let mut affected_rows = 0usize;
+    let mut affected_samples = 0usize;
+
+    for row in row_numbers {
+        let mut matrix = super::clone_flag_matrix(ms, row)?;
+        let mut changed_samples = 0usize;
+        let new_flag = match action {
+            MsFlagAction::Flag => true,
+            MsFlagAction::Unflag => false,
+        };
+        for value in &mut matrix {
+            if *value != new_flag {
+                *value = new_flag;
+                changed_samples += 1;
+            }
+        }
+        if changed_samples == 0 {
+            continue;
+        }
+        let new_flag_row = matrix.iter().all(|value| *value);
+        ms.main_table_mut()
+            .cell_accessor_mut(row, "FLAG")
+            .map_err(|error| error.to_string())?
+            .set(Value::Array(ArrayValue::Bool(matrix.into_dyn())))
+            .map_err(|error| error.to_string())?;
+        ms.main_table_mut()
+            .cell_accessor_mut(row, "FLAG_ROW")
+            .map_err(|error| error.to_string())?
+            .set(Value::Scalar(ScalarValue::Bool(new_flag_row)))
+            .map_err(|error| error.to_string())?;
+        affected_rows += 1;
+        affected_samples += changed_samples;
+    }
+
+    Ok(MsFlagEditPreview {
+        plot_title: "selection flag edit".to_string(),
+        plot_index: None,
+        panel_key: None,
+        panel_label: None,
+        x_axis: MsAxis::Time,
+        y_axis: MsAxis::Flag,
+        region: MsFlagRegion {
+            x_min: 0.0,
+            x_max: 0.0,
+            y_min: 0.0,
+            y_max: 0.0,
+        },
+        action,
+        extcorr: true,
+        extchannel: true,
+        matched_points: affected_samples,
+        affected_rows,
+        affected_samples,
+        sample_edits: Vec::new(),
+        row_edits: Vec::new(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1729,6 +1950,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut flag_panel = None;
     let mut flag_extcorr = false;
     let mut flag_extchannel = false;
+    let mut flag_selected = false;
     let mut flag_apply = false;
     let mut flag_output = None;
     let mut plot_output = None;
@@ -1993,6 +2215,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
             "--flag-panel" => flag_panel = Some(take_value(&mut index, &args, "--flag-panel")?),
             "--flag-extcorr" => flag_extcorr = true,
             "--flag-extchannel" => flag_extchannel = true,
+            "--flag-selected" => flag_selected = true,
             "--flag-apply" => flag_apply = true,
             "--flag-output" => {
                 flag_output = Some(PathBuf::from(take_value(
@@ -2058,6 +2281,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         );
     }
     if flag_action.is_some()
+        && !flag_selected
         && page_spec.is_none()
         && preset.is_none()
         && (x_axis.is_none() || y_axis.is_none())
@@ -2071,6 +2295,21 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
             "msexplore staged flag editing accepts either --flag-plotindex or --flag-panel, not both".to_string(),
         );
     }
+    if flag_selected
+        && (flag_xmin.is_some()
+            || flag_xmax.is_some()
+            || flag_ymin.is_some()
+            || flag_ymax.is_some()
+            || flag_plotindex.is_some()
+            || flag_panel.is_some()
+            || flag_extcorr
+            || flag_extchannel)
+    {
+        return Err(
+            "msexplore --flag-selected cannot be combined with plot-region flag-edit controls"
+                .to_string(),
+        );
+    }
     if flag_action.is_none()
         && (flag_xmin.is_some()
             || flag_xmax.is_some()
@@ -2080,6 +2319,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
             || flag_panel.is_some()
             || flag_extcorr
             || flag_extchannel
+            || flag_selected
             || flag_apply
             || flag_output.is_some())
     {
@@ -2138,6 +2378,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         flag_panel,
         flag_extcorr,
         flag_extchannel,
+        flag_selected,
         flag_apply,
         flag_output,
         plot_output,

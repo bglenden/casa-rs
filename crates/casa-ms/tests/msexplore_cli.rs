@@ -75,6 +75,7 @@ fn msexplore_help_mentions_plot_controls() {
     assert!(stdout.contains("--flag-panel <KEY>"));
     assert!(stdout.contains("--flag-extcorr"));
     assert!(stdout.contains("--flag-extchannel"));
+    assert!(stdout.contains("--flag-selected"));
     assert!(stdout.contains("--flag-apply"));
     assert!(stdout.contains("--flag-output <PATH>"));
     assert!(stdout.contains("--plot-output <PATH>"));
@@ -2020,6 +2021,58 @@ fn cli_flag_preview_is_non_mutating_and_cli_apply_persists_changes() {
 
     let ms_after_apply = MeasurementSet::open(&ms_path).expect("reopen after apply");
     assert!(row_flag_matrix(&ms_after_apply, 0)[(0, 0)]);
+}
+
+#[test]
+fn cli_flag_selected_applies_to_selected_rows_without_plot_region() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let preview_path = temp.path().join("selected-flag-preview.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args([
+            "--format",
+            "json",
+            "--overwrite",
+            "--scan",
+            "2",
+            "--flag-action",
+            "flag",
+            "--flag-selected",
+            "--flag-apply",
+            "--flag-output",
+        ])
+        .arg(&preview_path)
+        .arg(&ms_path)
+        .output()
+        .expect("run selected flag apply");
+    assert!(output.status.success(), "{output:?}");
+
+    let preview_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&preview_path).expect("read preview json"))
+            .expect("parse preview json");
+    assert_eq!(preview_json["affected_rows"], 1);
+    assert_eq!(
+        preview_json["affected_samples"],
+        common::NUM_CORR * common::NUM_CHAN
+    );
+
+    let ms_after_apply = MeasurementSet::open(&ms_path).expect("reopen after apply");
+    assert!(
+        row_flag_matrix(&ms_after_apply, 0)
+            .iter()
+            .all(|value| !*value)
+    );
+    assert!(
+        row_flag_matrix(&ms_after_apply, 1)
+            .iter()
+            .all(|value| *value)
+    );
+    assert!(
+        row_flag_matrix(&ms_after_apply, 3)
+            .iter()
+            .all(|value| !*value)
+    );
 }
 
 #[test]
