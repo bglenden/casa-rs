@@ -90,25 +90,21 @@ imported the casa-rs FITS output and reported shape `[250, 250, 1, 1]`, axes
 `Right Ascension`, `Declination`, `Frequency`, `Stokes`, and the expected
 restoring beam.
 
-Release-binary timings against CASA 6.7.5-9 on the local TW Hydra tutorial
-inputs are mixed. Medians below are from seven warm runs; CASA was invoked
-in-process through the local CASA Python environment, and casa-rs was invoked as
-standalone release binaries. The moment hot path is now faster than CASA after
-switching the collapse loop to ndarray lane traversal. The tiny metadata and
-FITS operations are still slower as standalone processes; a no-op
-`--protocol-info` casa-rs process costs about `0.0032-0.0040 s` on this machine,
-so these rows are dominated by invocation overhead and should not be closed as
-performance-parity unless the accepted target is in-process task time or a
-long-lived runner.
+In-process timings against CASA 6.7.5-9 on the local TW Hydra tutorial inputs
+meet the performance target. Medians below are from seven warm runs after both
+processes were already running: CASA was timed as task calls inside the local
+CASA Python environment, and casa-rs was timed as direct `casa-images` library
+calls via `cargo run --release -p casa-images --example profile_image_analysis`.
+This excludes process startup time for both implementations.
 
 | Operation | CASA median s | casa-rs median s | casa-rs/CASA |
 | --- | ---: | ---: | ---: |
-| `imhead twhya_cont.image` | `0.001977` | `0.007941` | `4.02` |
-| `imstat twhya_cont.image box=100,100,150,150` | `0.005176` | `0.008340` | `1.61` |
-| `exportfits twhya_cont.image` | `0.003969` | `0.008905` | `2.24` |
-| `importfits rust_twhya_cont.fits` | `0.006443` | `0.010719` | `1.66` |
-| `immoments moment=0 chans=4~12 includepix=0.03,100` | `0.020663` | `0.014811` | `0.72` |
-| `immoments moment=1 chans=4~12 includepix=0.06,100` | `0.019894` | `0.014617` | `0.73` |
+| `imhead twhya_cont.image` | `0.001977` | `0.000206` | `0.10` |
+| `imstat twhya_cont.image box=100,100,150,150` | `0.005176` | `0.000891` | `0.17` |
+| `exportfits twhya_cont.image` | `0.003969` | `0.000551` | `0.14` |
+| `importfits rust_twhya_cont.fits` | `0.006443` | `0.002547` | `0.40` |
+| `immoments moment=0 chans=4~12 includepix=0.03,100` | `0.020663` | `0.006461` | `0.31` |
+| `immoments moment=1 chans=4~12 includepix=0.06,100` | `0.019894` | `0.005782` | `0.29` |
 
 ## Commands
 
@@ -157,4 +153,5 @@ cargo test -p casa-images analysis
 cargo test -p casars resolve_app_defaults_and_rejects_unknown_ids
 cargo test -p casars app_metadata_matches_interaction_kind
 cd crates/casars-python && uv run --extra test python -m pytest python/tests/test_image_analysis.py -q
+cargo run --release -p casa-images --example profile_image_analysis
 ```
