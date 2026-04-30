@@ -96,6 +96,15 @@ current proof boundaries.
 
 ## Quick Start
 
+Source builds require `pkg-config` and CFITSIO for the `fitsio`-backed
+image-analysis tools:
+
+```bash
+brew install pkg-config cfitsio
+# or on Ubuntu:
+sudo apt-get install -y pkg-config libcfitsio-dev
+```
+
 From this repository workspace, the raw Cargo path is:
 
 ```bash
