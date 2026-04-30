@@ -6,865 +6,899 @@
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::task_contract::{
-<a href=#9 id=9 data-nosnippet>9</a>    ImagerArtifactKind, ImagerDeconvolver, ImagerRestoringBeamMode, ImagerRunTaskResult,
-<a href=#10 id=10 data-nosnippet>10</a>    ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
+<a href=#9 id=9 data-nosnippet>9</a>    ImagerArtifactKind, ImagerDeconvolver, ImagerHogbomIterationMode, ImagerRestoringBeamMode,
+<a href=#10 id=10 data-nosnippet>10</a>    ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
 <a href=#11 id=11 data-nosnippet>11</a>};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>crate::{
 <a href=#13 id=13 data-nosnippet>13</a>    ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SpectralMode,
-<a href=#14 id=14 data-nosnippet>14</a>    canonical_deconvolver_name, canonical_restoring_beam_mode_name, canonical_spectral_mode_name,
-<a href=#15 id=15 data-nosnippet>15</a>    canonical_w_term_mode_name, canonical_weighting_name,
-<a href=#16 id=16 data-nosnippet>16</a>};
-<a href=#17 id=17 data-nosnippet>17</a>
-<a href=#18 id=18 data-nosnippet>18</a><span class="doccomment">/// Structured imaging run report consumed by the `casars` workflow shell.
-<a href=#19 id=19 data-nosnippet>19</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-<a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub struct </span>ManagedImagingOutput {
-<a href=#21 id=21 data-nosnippet>21</a>    <span class="doccomment">/// High-level request summary used by the shell overview.
-<a href=#22 id=22 data-nosnippet>22</a>    </span><span class="kw">pub </span>request: ManagedImagingRequest,
-<a href=#23 id=23 data-nosnippet>23</a>    <span class="doccomment">/// Structured run metrics and per-channel diagnostics.
-<a href=#24 id=24 data-nosnippet>24</a>    </span><span class="kw">pub </span>run: ManagedImagingRun,
-<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// Expected CASA image products written under the configured prefix.
-<a href=#26 id=26 data-nosnippet>26</a>    </span><span class="kw">pub </span>artifacts: Vec&lt;ManagedImagingArtifact&gt;,
-<a href=#27 id=27 data-nosnippet>27</a>}
-<a href=#28 id=28 data-nosnippet>28</a>
-<a href=#29 id=29 data-nosnippet>29</a><span class="doccomment">/// Launcher-facing view of the requested imaging configuration.
-<a href=#30 id=30 data-nosnippet>30</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-<a href=#31 id=31 data-nosnippet>31</a></span><span class="kw">pub struct </span>ManagedImagingRequest {
-<a href=#32 id=32 data-nosnippet>32</a>    <span class="doccomment">/// MeasurementSet path supplied for the run.
-<a href=#33 id=33 data-nosnippet>33</a>    </span><span class="kw">pub </span>measurement_set: String,
-<a href=#34 id=34 data-nosnippet>34</a>    <span class="doccomment">/// Output CASA image prefix.
-<a href=#35 id=35 data-nosnippet>35</a>    </span><span class="kw">pub </span>imagename: String,
-<a href=#36 id=36 data-nosnippet>36</a>    <span class="doccomment">/// Spectral imaging mode.
-<a href=#37 id=37 data-nosnippet>37</a>    </span><span class="kw">pub </span>spectral_mode: String,
-<a href=#38 id=38 data-nosnippet>38</a>    <span class="doccomment">/// Requested visibility weighting.
-<a href=#39 id=39 data-nosnippet>39</a>    </span><span class="kw">pub </span>weighting: String,
-<a href=#40 id=40 data-nosnippet>40</a>    <span class="doccomment">/// Requested minor-cycle deconvolver.
-<a href=#41 id=41 data-nosnippet>41</a>    </span><span class="kw">pub </span>deconvolver: String,
-<a href=#42 id=42 data-nosnippet>42</a>    <span class="doccomment">/// Requested `w`-term handling mode.
-<a href=#43 id=43 data-nosnippet>43</a>    </span><span class="kw">pub </span>w_term_mode: String,
-<a href=#44 id=44 data-nosnippet>44</a>    <span class="doccomment">/// Optional data-column override.
-<a href=#45 id=45 data-nosnippet>45</a>    </span><span class="kw">pub </span>data_column: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#46 id=46 data-nosnippet>46</a>    <span class="doccomment">/// Image size in pixels.
-<a href=#47 id=47 data-nosnippet>47</a>    </span><span class="kw">pub </span>imsize: usize,
-<a href=#48 id=48 data-nosnippet>48</a>    <span class="doccomment">/// Cell size in arcseconds.
-<a href=#49 id=49 data-nosnippet>49</a>    </span><span class="kw">pub </span>cell_arcsec: f64,
-<a href=#50 id=50 data-nosnippet>50</a>    <span class="doccomment">/// Whether the run skipped CLEAN.
-<a href=#51 id=51 data-nosnippet>51</a>    </span><span class="kw">pub </span>dirty_only: bool,
-<a href=#52 id=52 data-nosnippet>52</a>    <span class="doccomment">/// Whether preview PNG sidecars were requested.
-<a href=#53 id=53 data-nosnippet>53</a>    </span><span class="kw">pub </span>write_preview_pngs: bool,
-<a href=#54 id=54 data-nosnippet>54</a>    <span class="doccomment">/// Whether per-channel density estimation was requested for cube weighting.
-<a href=#55 id=55 data-nosnippet>55</a>    </span><span class="kw">pub </span>per_channel_weight_density: bool,
-<a href=#56 id=56 data-nosnippet>56</a>    <span class="doccomment">/// Requested MTMFS Taylor-term count.
-<a href=#57 id=57 data-nosnippet>57</a>    </span><span class="kw">pub </span>nterms: usize,
-<a href=#58 id=58 data-nosnippet>58</a>    <span class="doccomment">/// Output channel count for cube-like runs.
-<a href=#59 id=59 data-nosnippet>59</a>    </span><span class="kw">pub </span>output_channels: usize,
-<a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// Requested raw-correlation or Stokes plane, when explicitly selected.
-<a href=#61 id=61 data-nosnippet>61</a>    </span><span class="kw">pub </span>correlation: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="doccomment">/// Requested restoring-beam mode for restored products.
-<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="kw">pub </span>restoring_beam_mode: String,
-<a href=#64 id=64 data-nosnippet>64</a>}
-<a href=#65 id=65 data-nosnippet>65</a>
-<a href=#66 id=66 data-nosnippet>66</a><span class="doccomment">/// Structured run metrics emitted after one successful imaging run.
-<a href=#67 id=67 data-nosnippet>67</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-<a href=#68 id=68 data-nosnippet>68</a></span><span class="kw">pub struct </span>ManagedImagingRun {
-<a href=#69 id=69 data-nosnippet>69</a>    <span class="doccomment">/// Warnings emitted by the imaging run.
-<a href=#70 id=70 data-nosnippet>70</a>    </span><span class="kw">pub </span>warnings: Vec&lt;String&gt;,
-<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Number of scalar samples that reached the gridder.
-<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="kw">pub </span>gridded_samples: usize,
-<a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// Total major-cycle count reported by the run.
-<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="kw">pub </span>major_cycles: usize,
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Total minor-cycle component updates reported by the run.
-<a href=#76 id=76 data-nosnippet>76</a>    </span><span class="kw">pub </span>minor_iterations: usize,
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Final CLEAN stop reason when deconvolution ran.
-<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="kw">pub </span>clean_stop_reason: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Timing breakdown reported by the pure imaging core.
-<a href=#80 id=80 data-nosnippet>80</a>    </span><span class="kw">pub </span>stage_timings: ManagedImagingStageTimings,
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Timing breakdown for the MeasurementSet-backed frontend.
-<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="kw">pub </span>frontend_timings: ManagedImagingStageTimings,
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// Channel-level diagnostics for cube-like runs.
-<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="kw">pub </span>channels: Vec&lt;ManagedImagingChannelRun&gt;,
-<a href=#85 id=85 data-nosnippet>85</a>}
-<a href=#86 id=86 data-nosnippet>86</a>
-<a href=#87 id=87 data-nosnippet>87</a><span class="doccomment">/// Simple duration bundle serialized as nanoseconds.
-<a href=#88 id=88 data-nosnippet>88</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-<a href=#89 id=89 data-nosnippet>89</a></span><span class="kw">pub struct </span>ManagedImagingStageTimings {
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// Named stage durations in nanoseconds.
-<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="kw">pub </span>values_ns: Vec&lt;(String, u64)&gt;,
-<a href=#92 id=92 data-nosnippet>92</a>}
-<a href=#93 id=93 data-nosnippet>93</a>
-<a href=#94 id=94 data-nosnippet>94</a><span class="doccomment">/// Channel-level convergence summary emitted for cube-like runs.
-<a href=#95 id=95 data-nosnippet>95</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-<a href=#96 id=96 data-nosnippet>96</a></span><span class="kw">pub struct </span>ManagedImagingChannelRun {
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// Zero-based output channel index.
-<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">pub </span>channel_index: usize,
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="doccomment">/// Major-cycle count for this plane.
-<a href=#100 id=100 data-nosnippet>100</a>    </span><span class="kw">pub </span>major_cycles: usize,
-<a href=#101 id=101 data-nosnippet>101</a>    <span class="doccomment">/// Minor-cycle component updates for this plane.
-<a href=#102 id=102 data-nosnippet>102</a>    </span><span class="kw">pub </span>minor_iterations: usize,
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="doccomment">/// Final CLEAN stop reason for this plane.
-<a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">pub </span>clean_stop_reason: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="doccomment">/// Peak residual before minor cycles.
-<a href=#106 id=106 data-nosnippet>106</a>    </span><span class="kw">pub </span>initial_residual_peak_jy_per_beam: f32,
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="doccomment">/// Peak residual after the final exact refresh.
-<a href=#108 id=108 data-nosnippet>108</a>    </span><span class="kw">pub </span>final_residual_peak_jy_per_beam: f32,
-<a href=#109 id=109 data-nosnippet>109</a>    <span class="doccomment">/// Final CASA-style cycle threshold for this plane.
-<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">pub </span>final_cycle_threshold_jy_per_beam: f32,
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="doccomment">/// Whether the beam-fit debug summary was available for this plane.
-<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="kw">pub </span>beam_fit_available: bool,
-<a href=#113 id=113 data-nosnippet>113</a>}
-<a href=#114 id=114 data-nosnippet>114</a>
-<a href=#115 id=115 data-nosnippet>115</a><span class="doccomment">/// One expected output artifact written by the imaging run.
-<a href=#116 id=116 data-nosnippet>116</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-<a href=#117 id=117 data-nosnippet>117</a></span><span class="kw">pub struct </span>ManagedImagingArtifact {
-<a href=#118 id=118 data-nosnippet>118</a>    <span class="doccomment">/// Stable artifact kind identifier such as `psf`, `image`, or `alpha`.
-<a href=#119 id=119 data-nosnippet>119</a>    </span><span class="kw">pub </span>kind: String,
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Human-readable artifact label.
-<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">pub </span>label: String,
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// On-disk path for the CASA image product.
-<a href=#123 id=123 data-nosnippet>123</a>    </span><span class="kw">pub </span>path: String,
-<a href=#124 id=124 data-nosnippet>124</a>    <span class="doccomment">/// Whether that product exists after the run.
-<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub </span>exists: bool,
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// Optional preview sidecar path.
-<a href=#127 id=127 data-nosnippet>127</a>    </span><span class="kw">pub </span>preview_png_path: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// Whether the preview sidecar exists after the run.
-<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">pub </span>preview_png_exists: bool,
-<a href=#130 id=130 data-nosnippet>130</a>}
-<a href=#131 id=131 data-nosnippet>131</a>
-<a href=#132 id=132 data-nosnippet>132</a><span class="kw">impl </span>ManagedImagingOutput {
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="doccomment">/// Build the structured launcher report from one completed run.
-<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">pub fn </span>from_run(config: <span class="kw-2">&amp;</span>CliConfig, summary: <span class="kw-2">&amp;</span>RunSummary) -&gt; <span class="self">Self </span>{
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="self">Self </span>{
-<a href=#136 id=136 data-nosnippet>136</a>            request: ManagedImagingRequest {
-<a href=#137 id=137 data-nosnippet>137</a>                measurement_set: config.ms.display().to_string(),
-<a href=#138 id=138 data-nosnippet>138</a>                imagename: config.imagename.display().to_string(),
-<a href=#139 id=139 data-nosnippet>139</a>                spectral_mode: canonical_spectral_mode_name(config.spectral_mode).to_string(),
-<a href=#140 id=140 data-nosnippet>140</a>                weighting: canonical_weighting_name(config.weighting),
-<a href=#141 id=141 data-nosnippet>141</a>                deconvolver: canonical_deconvolver_name(config.deconvolver).to_string(),
-<a href=#142 id=142 data-nosnippet>142</a>                w_term_mode: canonical_w_term_mode_name(config.w_term_mode).to_string(),
-<a href=#143 id=143 data-nosnippet>143</a>                data_column: config.datacolumn.clone(),
-<a href=#144 id=144 data-nosnippet>144</a>                imsize: config.imsize,
-<a href=#145 id=145 data-nosnippet>145</a>                cell_arcsec: config.cell_arcsec,
-<a href=#146 id=146 data-nosnippet>146</a>                dirty_only: config.dirty_only,
-<a href=#147 id=147 data-nosnippet>147</a>                write_preview_pngs: config.write_preview_pngs,
-<a href=#148 id=148 data-nosnippet>148</a>                per_channel_weight_density: config.per_channel_weight_density,
-<a href=#149 id=149 data-nosnippet>149</a>                nterms: config.nterms,
-<a href=#150 id=150 data-nosnippet>150</a>                output_channels: summary.channel_summaries.len(),
-<a href=#151 id=151 data-nosnippet>151</a>                correlation: config.correlation.clone(),
-<a href=#152 id=152 data-nosnippet>152</a>                restoring_beam_mode: canonical_restoring_beam_mode_name(config.restoring_beam_mode)
-<a href=#153 id=153 data-nosnippet>153</a>                    .to_string(),
-<a href=#154 id=154 data-nosnippet>154</a>            },
-<a href=#155 id=155 data-nosnippet>155</a>            run: ManagedImagingRun {
-<a href=#156 id=156 data-nosnippet>156</a>                warnings: summary.warnings.clone(),
-<a href=#157 id=157 data-nosnippet>157</a>                gridded_samples: summary.gridded_samples,
-<a href=#158 id=158 data-nosnippet>158</a>                major_cycles: summary.major_cycles,
-<a href=#159 id=159 data-nosnippet>159</a>                minor_iterations: summary.minor_iterations,
-<a href=#160 id=160 data-nosnippet>160</a>                clean_stop_reason: summary
-<a href=#161 id=161 data-nosnippet>161</a>                    .clean_stop_reason
-<a href=#162 id=162 data-nosnippet>162</a>                    .map(|reason| <span class="macro">format!</span>(<span class="string">"{reason:?}"</span>)),
-<a href=#163 id=163 data-nosnippet>163</a>                stage_timings: stage_timings_from_core(summary),
-<a href=#164 id=164 data-nosnippet>164</a>                frontend_timings: stage_timings_from_frontend(summary.frontend_timings),
-<a href=#165 id=165 data-nosnippet>165</a>                channels: summary
-<a href=#166 id=166 data-nosnippet>166</a>                    .channel_summaries
-<a href=#167 id=167 data-nosnippet>167</a>                    .iter()
-<a href=#168 id=168 data-nosnippet>168</a>                    .map(channel_run_from_summary)
-<a href=#169 id=169 data-nosnippet>169</a>                    .collect(),
-<a href=#170 id=170 data-nosnippet>170</a>            },
-<a href=#171 id=171 data-nosnippet>171</a>            artifacts: imaging_artifacts(config),
-<a href=#172 id=172 data-nosnippet>172</a>        }
-<a href=#173 id=173 data-nosnippet>173</a>    }
-<a href=#174 id=174 data-nosnippet>174</a>
-<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Build the launcher report from the canonical task result.
-<a href=#176 id=176 data-nosnippet>176</a>    </span><span class="kw">pub fn </span>from_task_result(result: <span class="kw-2">&amp;</span>ImagerRunTaskResult) -&gt; <span class="self">Self </span>{
-<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">let </span>request = <span class="kw-2">&amp;</span>result.request;
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="self">Self </span>{
-<a href=#179 id=179 data-nosnippet>179</a>            request: ManagedImagingRequest {
-<a href=#180 id=180 data-nosnippet>180</a>                measurement_set: request.measurement_set.display().to_string(),
-<a href=#181 id=181 data-nosnippet>181</a>                imagename: request.image_name.display().to_string(),
-<a href=#182 id=182 data-nosnippet>182</a>                spectral_mode: <span class="kw">match </span>request.spectral_mode {
-<a href=#183 id=183 data-nosnippet>183</a>                    ImagerSpectralMode::Mfs =&gt; <span class="string">"mfs"</span>.to_string(),
-<a href=#184 id=184 data-nosnippet>184</a>                    ImagerSpectralMode::Cube =&gt; <span class="string">"cube"</span>.to_string(),
-<a href=#185 id=185 data-nosnippet>185</a>                    ImagerSpectralMode::Cubedata =&gt; <span class="string">"cubedata"</span>.to_string(),
-<a href=#186 id=186 data-nosnippet>186</a>                },
-<a href=#187 id=187 data-nosnippet>187</a>                weighting: <span class="kw">match </span><span class="kw-2">&amp;</span>request.weighting {
-<a href=#188 id=188 data-nosnippet>188</a>                    ImagerWeighting::Natural =&gt; <span class="string">"natural"</span>.to_string(),
-<a href=#189 id=189 data-nosnippet>189</a>                    ImagerWeighting::Uniform =&gt; <span class="string">"uniform"</span>.to_string(),
-<a href=#190 id=190 data-nosnippet>190</a>                    ImagerWeighting::Briggs { robust } =&gt; <span class="macro">format!</span>(<span class="string">"briggs:{robust}"</span>),
-<a href=#191 id=191 data-nosnippet>191</a>                },
-<a href=#192 id=192 data-nosnippet>192</a>                deconvolver: <span class="kw">match </span>request.deconvolver {
-<a href=#193 id=193 data-nosnippet>193</a>                    ImagerDeconvolver::Hogbom =&gt; <span class="string">"hogbom"</span>.to_string(),
-<a href=#194 id=194 data-nosnippet>194</a>                    ImagerDeconvolver::Mtmfs =&gt; <span class="string">"mtmfs"</span>.to_string(),
-<a href=#195 id=195 data-nosnippet>195</a>                    ImagerDeconvolver::Clark =&gt; <span class="string">"clark"</span>.to_string(),
-<a href=#196 id=196 data-nosnippet>196</a>                    ImagerDeconvolver::Multiscale =&gt; <span class="string">"multiscale"</span>.to_string(),
-<a href=#197 id=197 data-nosnippet>197</a>                },
-<a href=#198 id=198 data-nosnippet>198</a>                w_term_mode: <span class="kw">match </span>request.w_term_mode {
-<a href=#199 id=199 data-nosnippet>199</a>                    ImagerWTermMode::None =&gt; <span class="string">"none"</span>.to_string(),
-<a href=#200 id=200 data-nosnippet>200</a>                    ImagerWTermMode::Direct =&gt; <span class="string">"direct"</span>.to_string(),
-<a href=#201 id=201 data-nosnippet>201</a>                    ImagerWTermMode::Wproject =&gt; <span class="string">"wproject"</span>.to_string(),
-<a href=#202 id=202 data-nosnippet>202</a>                },
-<a href=#203 id=203 data-nosnippet>203</a>                data_column: request.data_column.clone(),
-<a href=#204 id=204 data-nosnippet>204</a>                imsize: request.image_size,
-<a href=#205 id=205 data-nosnippet>205</a>                cell_arcsec: request.cell_arcsec,
-<a href=#206 id=206 data-nosnippet>206</a>                dirty_only: request.dirty_only,
-<a href=#207 id=207 data-nosnippet>207</a>                write_preview_pngs: request.write_preview_pngs,
-<a href=#208 id=208 data-nosnippet>208</a>                per_channel_weight_density: request.per_channel_weight_density,
-<a href=#209 id=209 data-nosnippet>209</a>                nterms: request.nterms,
-<a href=#210 id=210 data-nosnippet>210</a>                output_channels: result.run.channels.len(),
-<a href=#211 id=211 data-nosnippet>211</a>                correlation: request
-<a href=#212 id=212 data-nosnippet>212</a>                    .correlation
-<a href=#213 id=213 data-nosnippet>213</a>                    .map(|value| value.as_cli_text().to_string()),
-<a href=#214 id=214 data-nosnippet>214</a>                restoring_beam_mode: <span class="kw">match </span>request.restoring_beam_mode {
-<a href=#215 id=215 data-nosnippet>215</a>                    ImagerRestoringBeamMode::PerPlane =&gt; <span class="string">"per_plane"</span>.to_string(),
-<a href=#216 id=216 data-nosnippet>216</a>                    ImagerRestoringBeamMode::Common =&gt; <span class="string">"common"</span>.to_string(),
-<a href=#217 id=217 data-nosnippet>217</a>                },
-<a href=#218 id=218 data-nosnippet>218</a>            },
-<a href=#219 id=219 data-nosnippet>219</a>            run: ManagedImagingRun {
-<a href=#220 id=220 data-nosnippet>220</a>                warnings: result.run.warnings.clone(),
-<a href=#221 id=221 data-nosnippet>221</a>                gridded_samples: result.run.gridded_samples,
-<a href=#222 id=222 data-nosnippet>222</a>                major_cycles: result.run.major_cycles,
-<a href=#223 id=223 data-nosnippet>223</a>                minor_iterations: result.run.minor_iterations,
-<a href=#224 id=224 data-nosnippet>224</a>                clean_stop_reason: result
-<a href=#225 id=225 data-nosnippet>225</a>                    .run
-<a href=#226 id=226 data-nosnippet>226</a>                    .clean_stop_reason
-<a href=#227 id=227 data-nosnippet>227</a>                    .map(|reason| <span class="macro">format!</span>(<span class="string">"{reason:?}"</span>)),
-<a href=#228 id=228 data-nosnippet>228</a>                stage_timings: ManagedImagingStageTimings {
-<a href=#229 id=229 data-nosnippet>229</a>                    values_ns: <span class="macro">vec!</span>[
-<a href=#230 id=230 data-nosnippet>230</a>                        (
-<a href=#231 id=231 data-nosnippet>231</a>                            <span class="string">"controller_total"</span>.to_string(),
-<a href=#232 id=232 data-nosnippet>232</a>                            result.run.stage_timings.total_ns,
-<a href=#233 id=233 data-nosnippet>233</a>                        ),
-<a href=#234 id=234 data-nosnippet>234</a>                        (
-<a href=#235 id=235 data-nosnippet>235</a>                            <span class="string">"controller_overhead"</span>.to_string(),
-<a href=#236 id=236 data-nosnippet>236</a>                            result.run.stage_timings.controller_overhead_ns,
-<a href=#237 id=237 data-nosnippet>237</a>                        ),
-<a href=#238 id=238 data-nosnippet>238</a>                        (
-<a href=#239 id=239 data-nosnippet>239</a>                            <span class="string">"weighting"</span>.to_string(),
-<a href=#240 id=240 data-nosnippet>240</a>                            result.run.stage_timings.weighting_ns,
-<a href=#241 id=241 data-nosnippet>241</a>                        ),
-<a href=#242 id=242 data-nosnippet>242</a>                        (
-<a href=#243 id=243 data-nosnippet>243</a>                            <span class="string">"major_cycle_refresh"</span>.to_string(),
-<a href=#244 id=244 data-nosnippet>244</a>                            result.run.stage_timings.major_cycle_refresh_ns,
-<a href=#245 id=245 data-nosnippet>245</a>                        ),
-<a href=#246 id=246 data-nosnippet>246</a>                        (<span class="string">"psf_grid"</span>.to_string(), result.run.stage_timings.psf_grid_ns),
-<a href=#247 id=247 data-nosnippet>247</a>                        (<span class="string">"psf_fft"</span>.to_string(), result.run.stage_timings.psf_fft_ns),
-<a href=#248 id=248 data-nosnippet>248</a>                        (
-<a href=#249 id=249 data-nosnippet>249</a>                            <span class="string">"residual_degrid_grid"</span>.to_string(),
-<a href=#250 id=250 data-nosnippet>250</a>                            result.run.stage_timings.residual_degrid_grid_ns,
-<a href=#251 id=251 data-nosnippet>251</a>                        ),
-<a href=#252 id=252 data-nosnippet>252</a>                        (
-<a href=#253 id=253 data-nosnippet>253</a>                            <span class="string">"residual_fft"</span>.to_string(),
-<a href=#254 id=254 data-nosnippet>254</a>                            result.run.stage_timings.residual_fft_ns,
-<a href=#255 id=255 data-nosnippet>255</a>                        ),
+<a href=#14 id=14 data-nosnippet>14</a>    canonical_deconvolver_name, canonical_hogbom_iteration_mode_name,
+<a href=#15 id=15 data-nosnippet>15</a>    canonical_restoring_beam_mode_name, canonical_spectral_mode_name, canonical_w_term_mode_name,
+<a href=#16 id=16 data-nosnippet>16</a>    canonical_weighting_name,
+<a href=#17 id=17 data-nosnippet>17</a>};
+<a href=#18 id=18 data-nosnippet>18</a>
+<a href=#19 id=19 data-nosnippet>19</a><span class="doccomment">/// Structured imaging run report consumed by the `casars` workflow shell.
+<a href=#20 id=20 data-nosnippet>20</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+<a href=#21 id=21 data-nosnippet>21</a></span><span class="kw">pub struct </span>ManagedImagingOutput {
+<a href=#22 id=22 data-nosnippet>22</a>    <span class="doccomment">/// High-level request summary used by the shell overview.
+<a href=#23 id=23 data-nosnippet>23</a>    </span><span class="kw">pub </span>request: ManagedImagingRequest,
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="doccomment">/// Structured run metrics and per-channel diagnostics.
+<a href=#25 id=25 data-nosnippet>25</a>    </span><span class="kw">pub </span>run: ManagedImagingRun,
+<a href=#26 id=26 data-nosnippet>26</a>    <span class="doccomment">/// Expected CASA image products written under the configured prefix.
+<a href=#27 id=27 data-nosnippet>27</a>    </span><span class="kw">pub </span>artifacts: Vec&lt;ManagedImagingArtifact&gt;,
+<a href=#28 id=28 data-nosnippet>28</a>}
+<a href=#29 id=29 data-nosnippet>29</a>
+<a href=#30 id=30 data-nosnippet>30</a><span class="doccomment">/// Launcher-facing view of the requested imaging configuration.
+<a href=#31 id=31 data-nosnippet>31</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub struct </span>ManagedImagingRequest {
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="doccomment">/// MeasurementSet path supplied for the run.
+<a href=#34 id=34 data-nosnippet>34</a>    </span><span class="kw">pub </span>measurement_set: String,
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// Output CASA image prefix.
+<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">pub </span>imagename: String,
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// Spectral imaging mode.
+<a href=#38 id=38 data-nosnippet>38</a>    </span><span class="kw">pub </span>spectral_mode: String,
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// Requested visibility weighting.
+<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub </span>weighting: String,
+<a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// Requested minor-cycle deconvolver.
+<a href=#42 id=42 data-nosnippet>42</a>    </span><span class="kw">pub </span>deconvolver: String,
+<a href=#43 id=43 data-nosnippet>43</a>    <span class="doccomment">/// Hogbom minor-cycle iteration accounting policy.
+<a href=#44 id=44 data-nosnippet>44</a>    </span><span class="kw">pub </span>hogbom_iteration_mode: String,
+<a href=#45 id=45 data-nosnippet>45</a>    <span class="doccomment">/// Requested `w`-term handling mode.
+<a href=#46 id=46 data-nosnippet>46</a>    </span><span class="kw">pub </span>w_term_mode: String,
+<a href=#47 id=47 data-nosnippet>47</a>    <span class="doccomment">/// Optional data-column override.
+<a href=#48 id=48 data-nosnippet>48</a>    </span><span class="kw">pub </span>data_column: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#49 id=49 data-nosnippet>49</a>    <span class="doccomment">/// Requested model persistence mode.
+<a href=#50 id=50 data-nosnippet>50</a>    </span><span class="kw">pub </span>save_model: String,
+<a href=#51 id=51 data-nosnippet>51</a>    <span class="doccomment">/// Image size in pixels.
+<a href=#52 id=52 data-nosnippet>52</a>    </span><span class="kw">pub </span>imsize: usize,
+<a href=#53 id=53 data-nosnippet>53</a>    <span class="doccomment">/// Cell size in arcseconds.
+<a href=#54 id=54 data-nosnippet>54</a>    </span><span class="kw">pub </span>cell_arcsec: f64,
+<a href=#55 id=55 data-nosnippet>55</a>    <span class="doccomment">/// Whether the run skipped CLEAN.
+<a href=#56 id=56 data-nosnippet>56</a>    </span><span class="kw">pub </span>dirty_only: bool,
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="doccomment">/// Whether preview PNG sidecars were requested.
+<a href=#58 id=58 data-nosnippet>58</a>    </span><span class="kw">pub </span>write_preview_pngs: bool,
+<a href=#59 id=59 data-nosnippet>59</a>    <span class="doccomment">/// Whether per-channel density estimation was requested for cube weighting.
+<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="kw">pub </span>per_channel_weight_density: bool,
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="doccomment">/// Requested MTMFS Taylor-term count.
+<a href=#62 id=62 data-nosnippet>62</a>    </span><span class="kw">pub </span>nterms: usize,
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="doccomment">/// Output channel count for cube-like runs.
+<a href=#64 id=64 data-nosnippet>64</a>    </span><span class="kw">pub </span>output_channels: usize,
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="doccomment">/// Requested raw-correlation or Stokes plane, when explicitly selected.
+<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="kw">pub </span>correlation: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// Requested restoring-beam mode for restored products.
+<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="kw">pub </span>restoring_beam_mode: String,
+<a href=#69 id=69 data-nosnippet>69</a>}
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// Structured run metrics emitted after one successful imaging run.
+<a href=#72 id=72 data-nosnippet>72</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+<a href=#73 id=73 data-nosnippet>73</a></span><span class="kw">pub struct </span>ManagedImagingRun {
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Warnings emitted by the imaging run.
+<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">pub </span>warnings: Vec&lt;String&gt;,
+<a href=#76 id=76 data-nosnippet>76</a>    <span class="doccomment">/// Number of scalar samples that reached the gridder.
+<a href=#77 id=77 data-nosnippet>77</a>    </span><span class="kw">pub </span>gridded_samples: usize,
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="doccomment">/// Total major-cycle count reported by the run.
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="kw">pub </span>major_cycles: usize,
+<a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// Total minor-cycle component updates reported by the run.
+<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="kw">pub </span>minor_iterations: usize,
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="doccomment">/// Final CLEAN stop reason when deconvolution ran.
+<a href=#83 id=83 data-nosnippet>83</a>    </span><span class="kw">pub </span>clean_stop_reason: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#84 id=84 data-nosnippet>84</a>    <span class="doccomment">/// Timing breakdown reported by the pure imaging core.
+<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">pub </span>stage_timings: ManagedImagingStageTimings,
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// Timing breakdown for the MeasurementSet-backed frontend.
+<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="kw">pub </span>frontend_timings: ManagedImagingStageTimings,
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// Channel-level diagnostics for cube-like runs.
+<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub </span>channels: Vec&lt;ManagedImagingChannelRun&gt;,
+<a href=#90 id=90 data-nosnippet>90</a>}
+<a href=#91 id=91 data-nosnippet>91</a>
+<a href=#92 id=92 data-nosnippet>92</a><span class="doccomment">/// Simple duration bundle serialized as nanoseconds.
+<a href=#93 id=93 data-nosnippet>93</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+<a href=#94 id=94 data-nosnippet>94</a></span><span class="kw">pub struct </span>ManagedImagingStageTimings {
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// Named stage durations in nanoseconds.
+<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="kw">pub </span>values_ns: Vec&lt;(String, u64)&gt;,
+<a href=#97 id=97 data-nosnippet>97</a>}
+<a href=#98 id=98 data-nosnippet>98</a>
+<a href=#99 id=99 data-nosnippet>99</a><span class="doccomment">/// Channel-level convergence summary emitted for cube-like runs.
+<a href=#100 id=100 data-nosnippet>100</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+<a href=#101 id=101 data-nosnippet>101</a></span><span class="kw">pub struct </span>ManagedImagingChannelRun {
+<a href=#102 id=102 data-nosnippet>102</a>    <span class="doccomment">/// Zero-based output channel index.
+<a href=#103 id=103 data-nosnippet>103</a>    </span><span class="kw">pub </span>channel_index: usize,
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="doccomment">/// Major-cycle count for this plane.
+<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">pub </span>major_cycles: usize,
+<a href=#106 id=106 data-nosnippet>106</a>    <span class="doccomment">/// Minor-cycle component updates for this plane.
+<a href=#107 id=107 data-nosnippet>107</a>    </span><span class="kw">pub </span>minor_iterations: usize,
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="doccomment">/// Final CLEAN stop reason for this plane.
+<a href=#109 id=109 data-nosnippet>109</a>    </span><span class="kw">pub </span>clean_stop_reason: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// Peak residual before minor cycles.
+<a href=#111 id=111 data-nosnippet>111</a>    </span><span class="kw">pub </span>initial_residual_peak_jy_per_beam: f32,
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// Peak residual after the final exact refresh.
+<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="kw">pub </span>final_residual_peak_jy_per_beam: f32,
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="doccomment">/// Final CASA-style cycle threshold for this plane.
+<a href=#115 id=115 data-nosnippet>115</a>    </span><span class="kw">pub </span>final_cycle_threshold_jy_per_beam: f32,
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="doccomment">/// Whether the beam-fit debug summary was available for this plane.
+<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="kw">pub </span>beam_fit_available: bool,
+<a href=#118 id=118 data-nosnippet>118</a>}
+<a href=#119 id=119 data-nosnippet>119</a>
+<a href=#120 id=120 data-nosnippet>120</a><span class="doccomment">/// One expected output artifact written by the imaging run.
+<a href=#121 id=121 data-nosnippet>121</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+<a href=#122 id=122 data-nosnippet>122</a></span><span class="kw">pub struct </span>ManagedImagingArtifact {
+<a href=#123 id=123 data-nosnippet>123</a>    <span class="doccomment">/// Stable artifact kind identifier such as `psf`, `image`, or `alpha`.
+<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="kw">pub </span>kind: String,
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="doccomment">/// Human-readable artifact label.
+<a href=#126 id=126 data-nosnippet>126</a>    </span><span class="kw">pub </span>label: String,
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="doccomment">/// On-disk path for the CASA image product.
+<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="kw">pub </span>path: String,
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="doccomment">/// Whether that product exists after the run.
+<a href=#130 id=130 data-nosnippet>130</a>    </span><span class="kw">pub </span>exists: bool,
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="doccomment">/// Optional preview sidecar path.
+<a href=#132 id=132 data-nosnippet>132</a>    </span><span class="kw">pub </span>preview_png_path: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="doccomment">/// Whether the preview sidecar exists after the run.
+<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">pub </span>preview_png_exists: bool,
+<a href=#135 id=135 data-nosnippet>135</a>}
+<a href=#136 id=136 data-nosnippet>136</a>
+<a href=#137 id=137 data-nosnippet>137</a><span class="kw">impl </span>ManagedImagingOutput {
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// Build the structured launcher report from one completed run.
+<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="kw">pub fn </span>from_run(config: <span class="kw-2">&amp;</span>CliConfig, summary: <span class="kw-2">&amp;</span>RunSummary) -&gt; <span class="self">Self </span>{
+<a href=#140 id=140 data-nosnippet>140</a>        <span class="self">Self </span>{
+<a href=#141 id=141 data-nosnippet>141</a>            request: ManagedImagingRequest {
+<a href=#142 id=142 data-nosnippet>142</a>                measurement_set: config.ms.display().to_string(),
+<a href=#143 id=143 data-nosnippet>143</a>                imagename: config.imagename.display().to_string(),
+<a href=#144 id=144 data-nosnippet>144</a>                spectral_mode: canonical_spectral_mode_name(config.spectral_mode).to_string(),
+<a href=#145 id=145 data-nosnippet>145</a>                weighting: canonical_weighting_name(config.weighting),
+<a href=#146 id=146 data-nosnippet>146</a>                deconvolver: canonical_deconvolver_name(config.deconvolver).to_string(),
+<a href=#147 id=147 data-nosnippet>147</a>                hogbom_iteration_mode: canonical_hogbom_iteration_mode_name(
+<a href=#148 id=148 data-nosnippet>148</a>                    config.hogbom_iteration_mode,
+<a href=#149 id=149 data-nosnippet>149</a>                )
+<a href=#150 id=150 data-nosnippet>150</a>                .to_string(),
+<a href=#151 id=151 data-nosnippet>151</a>                w_term_mode: canonical_w_term_mode_name(config.w_term_mode).to_string(),
+<a href=#152 id=152 data-nosnippet>152</a>                data_column: config.datacolumn.clone(),
+<a href=#153 id=153 data-nosnippet>153</a>                save_model: <span class="kw">match </span>config.save_model {
+<a href=#154 id=154 data-nosnippet>154</a>                    <span class="kw">crate</span>::SaveModelMode::None =&gt; <span class="string">"none"</span>,
+<a href=#155 id=155 data-nosnippet>155</a>                    <span class="kw">crate</span>::SaveModelMode::ModelColumn =&gt; <span class="string">"modelcolumn"</span>,
+<a href=#156 id=156 data-nosnippet>156</a>                }
+<a href=#157 id=157 data-nosnippet>157</a>                .to_string(),
+<a href=#158 id=158 data-nosnippet>158</a>                imsize: config.imsize,
+<a href=#159 id=159 data-nosnippet>159</a>                cell_arcsec: config.cell_arcsec,
+<a href=#160 id=160 data-nosnippet>160</a>                dirty_only: config.dirty_only,
+<a href=#161 id=161 data-nosnippet>161</a>                write_preview_pngs: config.write_preview_pngs,
+<a href=#162 id=162 data-nosnippet>162</a>                per_channel_weight_density: config.per_channel_weight_density,
+<a href=#163 id=163 data-nosnippet>163</a>                nterms: config.nterms,
+<a href=#164 id=164 data-nosnippet>164</a>                output_channels: summary.channel_summaries.len(),
+<a href=#165 id=165 data-nosnippet>165</a>                correlation: config.correlation.clone(),
+<a href=#166 id=166 data-nosnippet>166</a>                restoring_beam_mode: canonical_restoring_beam_mode_name(config.restoring_beam_mode)
+<a href=#167 id=167 data-nosnippet>167</a>                    .to_string(),
+<a href=#168 id=168 data-nosnippet>168</a>            },
+<a href=#169 id=169 data-nosnippet>169</a>            run: ManagedImagingRun {
+<a href=#170 id=170 data-nosnippet>170</a>                warnings: summary.warnings.clone(),
+<a href=#171 id=171 data-nosnippet>171</a>                gridded_samples: summary.gridded_samples,
+<a href=#172 id=172 data-nosnippet>172</a>                major_cycles: summary.major_cycles,
+<a href=#173 id=173 data-nosnippet>173</a>                minor_iterations: summary.minor_iterations,
+<a href=#174 id=174 data-nosnippet>174</a>                clean_stop_reason: summary
+<a href=#175 id=175 data-nosnippet>175</a>                    .clean_stop_reason
+<a href=#176 id=176 data-nosnippet>176</a>                    .map(|reason| <span class="macro">format!</span>(<span class="string">"{reason:?}"</span>)),
+<a href=#177 id=177 data-nosnippet>177</a>                stage_timings: stage_timings_from_core(summary),
+<a href=#178 id=178 data-nosnippet>178</a>                frontend_timings: stage_timings_from_frontend(summary.frontend_timings),
+<a href=#179 id=179 data-nosnippet>179</a>                channels: summary
+<a href=#180 id=180 data-nosnippet>180</a>                    .channel_summaries
+<a href=#181 id=181 data-nosnippet>181</a>                    .iter()
+<a href=#182 id=182 data-nosnippet>182</a>                    .map(channel_run_from_summary)
+<a href=#183 id=183 data-nosnippet>183</a>                    .collect(),
+<a href=#184 id=184 data-nosnippet>184</a>            },
+<a href=#185 id=185 data-nosnippet>185</a>            artifacts: imaging_artifacts(config),
+<a href=#186 id=186 data-nosnippet>186</a>        }
+<a href=#187 id=187 data-nosnippet>187</a>    }
+<a href=#188 id=188 data-nosnippet>188</a>
+<a href=#189 id=189 data-nosnippet>189</a>    <span class="doccomment">/// Build the launcher report from the canonical task result.
+<a href=#190 id=190 data-nosnippet>190</a>    </span><span class="kw">pub fn </span>from_task_result(result: <span class="kw-2">&amp;</span>ImagerRunTaskResult) -&gt; <span class="self">Self </span>{
+<a href=#191 id=191 data-nosnippet>191</a>        <span class="kw">let </span>request = <span class="kw-2">&amp;</span>result.request;
+<a href=#192 id=192 data-nosnippet>192</a>        <span class="self">Self </span>{
+<a href=#193 id=193 data-nosnippet>193</a>            request: ManagedImagingRequest {
+<a href=#194 id=194 data-nosnippet>194</a>                measurement_set: request.measurement_set.display().to_string(),
+<a href=#195 id=195 data-nosnippet>195</a>                imagename: request.image_name.display().to_string(),
+<a href=#196 id=196 data-nosnippet>196</a>                spectral_mode: <span class="kw">match </span>request.spectral_mode {
+<a href=#197 id=197 data-nosnippet>197</a>                    ImagerSpectralMode::Mfs =&gt; <span class="string">"mfs"</span>.to_string(),
+<a href=#198 id=198 data-nosnippet>198</a>                    ImagerSpectralMode::Cube =&gt; <span class="string">"cube"</span>.to_string(),
+<a href=#199 id=199 data-nosnippet>199</a>                    ImagerSpectralMode::Cubedata =&gt; <span class="string">"cubedata"</span>.to_string(),
+<a href=#200 id=200 data-nosnippet>200</a>                },
+<a href=#201 id=201 data-nosnippet>201</a>                weighting: <span class="kw">match </span><span class="kw-2">&amp;</span>request.weighting {
+<a href=#202 id=202 data-nosnippet>202</a>                    ImagerWeighting::Natural =&gt; <span class="string">"natural"</span>.to_string(),
+<a href=#203 id=203 data-nosnippet>203</a>                    ImagerWeighting::Uniform =&gt; <span class="string">"uniform"</span>.to_string(),
+<a href=#204 id=204 data-nosnippet>204</a>                    ImagerWeighting::Briggs { robust } =&gt; <span class="macro">format!</span>(<span class="string">"briggs:{robust}"</span>),
+<a href=#205 id=205 data-nosnippet>205</a>                    ImagerWeighting::BriggsBwTaper { robust } =&gt; {
+<a href=#206 id=206 data-nosnippet>206</a>                        <span class="macro">format!</span>(<span class="string">"briggsbwtaper:{robust}"</span>)
+<a href=#207 id=207 data-nosnippet>207</a>                    }
+<a href=#208 id=208 data-nosnippet>208</a>                },
+<a href=#209 id=209 data-nosnippet>209</a>                deconvolver: <span class="kw">match </span>request.deconvolver {
+<a href=#210 id=210 data-nosnippet>210</a>                    ImagerDeconvolver::Hogbom =&gt; <span class="string">"hogbom"</span>.to_string(),
+<a href=#211 id=211 data-nosnippet>211</a>                    ImagerDeconvolver::Mtmfs =&gt; <span class="string">"mtmfs"</span>.to_string(),
+<a href=#212 id=212 data-nosnippet>212</a>                    ImagerDeconvolver::Clark =&gt; <span class="string">"clark"</span>.to_string(),
+<a href=#213 id=213 data-nosnippet>213</a>                    ImagerDeconvolver::Multiscale =&gt; <span class="string">"multiscale"</span>.to_string(),
+<a href=#214 id=214 data-nosnippet>214</a>                },
+<a href=#215 id=215 data-nosnippet>215</a>                hogbom_iteration_mode: <span class="kw">match </span>request.hogbom_iteration_mode {
+<a href=#216 id=216 data-nosnippet>216</a>                    ImagerHogbomIterationMode::Strict =&gt; <span class="string">"strict"</span>.to_string(),
+<a href=#217 id=217 data-nosnippet>217</a>                    ImagerHogbomIterationMode::CasaInclusive =&gt; <span class="string">"casa"</span>.to_string(),
+<a href=#218 id=218 data-nosnippet>218</a>                },
+<a href=#219 id=219 data-nosnippet>219</a>                w_term_mode: <span class="kw">match </span>request.w_term_mode {
+<a href=#220 id=220 data-nosnippet>220</a>                    ImagerWTermMode::None =&gt; <span class="string">"none"</span>.to_string(),
+<a href=#221 id=221 data-nosnippet>221</a>                    ImagerWTermMode::Direct =&gt; <span class="string">"direct"</span>.to_string(),
+<a href=#222 id=222 data-nosnippet>222</a>                    ImagerWTermMode::Wproject =&gt; <span class="string">"wproject"</span>.to_string(),
+<a href=#223 id=223 data-nosnippet>223</a>                },
+<a href=#224 id=224 data-nosnippet>224</a>                data_column: request.data_column.clone(),
+<a href=#225 id=225 data-nosnippet>225</a>                save_model: <span class="kw">match </span>request.save_model {
+<a href=#226 id=226 data-nosnippet>226</a>                    ImagerSaveModel::None =&gt; <span class="string">"none"</span>,
+<a href=#227 id=227 data-nosnippet>227</a>                    ImagerSaveModel::ModelColumn =&gt; <span class="string">"modelcolumn"</span>,
+<a href=#228 id=228 data-nosnippet>228</a>                }
+<a href=#229 id=229 data-nosnippet>229</a>                .to_string(),
+<a href=#230 id=230 data-nosnippet>230</a>                imsize: request.image_size,
+<a href=#231 id=231 data-nosnippet>231</a>                cell_arcsec: request.cell_arcsec,
+<a href=#232 id=232 data-nosnippet>232</a>                dirty_only: request.dirty_only,
+<a href=#233 id=233 data-nosnippet>233</a>                write_preview_pngs: request.write_preview_pngs,
+<a href=#234 id=234 data-nosnippet>234</a>                per_channel_weight_density: request.per_channel_weight_density,
+<a href=#235 id=235 data-nosnippet>235</a>                nterms: request.nterms,
+<a href=#236 id=236 data-nosnippet>236</a>                output_channels: result.run.channels.len(),
+<a href=#237 id=237 data-nosnippet>237</a>                correlation: request
+<a href=#238 id=238 data-nosnippet>238</a>                    .correlation
+<a href=#239 id=239 data-nosnippet>239</a>                    .map(|value| value.as_cli_text().to_string()),
+<a href=#240 id=240 data-nosnippet>240</a>                restoring_beam_mode: <span class="kw">match </span>request.restoring_beam_mode {
+<a href=#241 id=241 data-nosnippet>241</a>                    ImagerRestoringBeamMode::PerPlane =&gt; <span class="string">"per_plane"</span>.to_string(),
+<a href=#242 id=242 data-nosnippet>242</a>                    ImagerRestoringBeamMode::Common =&gt; <span class="string">"common"</span>.to_string(),
+<a href=#243 id=243 data-nosnippet>243</a>                },
+<a href=#244 id=244 data-nosnippet>244</a>            },
+<a href=#245 id=245 data-nosnippet>245</a>            run: ManagedImagingRun {
+<a href=#246 id=246 data-nosnippet>246</a>                warnings: result.run.warnings.clone(),
+<a href=#247 id=247 data-nosnippet>247</a>                gridded_samples: result.run.gridded_samples,
+<a href=#248 id=248 data-nosnippet>248</a>                major_cycles: result.run.major_cycles,
+<a href=#249 id=249 data-nosnippet>249</a>                minor_iterations: result.run.minor_iterations,
+<a href=#250 id=250 data-nosnippet>250</a>                clean_stop_reason: result
+<a href=#251 id=251 data-nosnippet>251</a>                    .run
+<a href=#252 id=252 data-nosnippet>252</a>                    .clean_stop_reason
+<a href=#253 id=253 data-nosnippet>253</a>                    .map(|reason| <span class="macro">format!</span>(<span class="string">"{reason:?}"</span>)),
+<a href=#254 id=254 data-nosnippet>254</a>                stage_timings: ManagedImagingStageTimings {
+<a href=#255 id=255 data-nosnippet>255</a>                    values_ns: <span class="macro">vec!</span>[
 <a href=#256 id=256 data-nosnippet>256</a>                        (
-<a href=#257 id=257 data-nosnippet>257</a>                            <span class="string">"residual_normalize"</span>.to_string(),
-<a href=#258 id=258 data-nosnippet>258</a>                            result.run.stage_timings.residual_normalize_ns,
+<a href=#257 id=257 data-nosnippet>257</a>                            <span class="string">"controller_total"</span>.to_string(),
+<a href=#258 id=258 data-nosnippet>258</a>                            result.run.stage_timings.total_ns,
 <a href=#259 id=259 data-nosnippet>259</a>                        ),
 <a href=#260 id=260 data-nosnippet>260</a>                        (
-<a href=#261 id=261 data-nosnippet>261</a>                            <span class="string">"minor_cycle"</span>.to_string(),
-<a href=#262 id=262 data-nosnippet>262</a>                            result.run.stage_timings.minor_cycle_ns,
+<a href=#261 id=261 data-nosnippet>261</a>                            <span class="string">"controller_overhead"</span>.to_string(),
+<a href=#262 id=262 data-nosnippet>262</a>                            result.run.stage_timings.controller_overhead_ns,
 <a href=#263 id=263 data-nosnippet>263</a>                        ),
 <a href=#264 id=264 data-nosnippet>264</a>                        (
-<a href=#265 id=265 data-nosnippet>265</a>                            <span class="string">"minor_cycle_solve"</span>.to_string(),
-<a href=#266 id=266 data-nosnippet>266</a>                            result.run.stage_timings.minor_cycle_solve_ns,
+<a href=#265 id=265 data-nosnippet>265</a>                            <span class="string">"weighting"</span>.to_string(),
+<a href=#266 id=266 data-nosnippet>266</a>                            result.run.stage_timings.weighting_ns,
 <a href=#267 id=267 data-nosnippet>267</a>                        ),
-<a href=#268 id=268 data-nosnippet>268</a>                    ],
-<a href=#269 id=269 data-nosnippet>269</a>                },
-<a href=#270 id=270 data-nosnippet>270</a>                frontend_timings: ManagedImagingStageTimings {
-<a href=#271 id=271 data-nosnippet>271</a>                    values_ns: <span class="macro">vec!</span>[
-<a href=#272 id=272 data-nosnippet>272</a>                        (
-<a href=#273 id=273 data-nosnippet>273</a>                            <span class="string">"open_measurement_set"</span>.to_string(),
-<a href=#274 id=274 data-nosnippet>274</a>                            result.run.frontend_timings.open_measurement_set_ns,
-<a href=#275 id=275 data-nosnippet>275</a>                        ),
-<a href=#276 id=276 data-nosnippet>276</a>                        (
-<a href=#277 id=277 data-nosnippet>277</a>                            <span class="string">"prepare_plane_input"</span>.to_string(),
-<a href=#278 id=278 data-nosnippet>278</a>                            result.run.frontend_timings.prepare_plane_input_ns,
-<a href=#279 id=279 data-nosnippet>279</a>                        ),
-<a href=#280 id=280 data-nosnippet>280</a>                        (
-<a href=#281 id=281 data-nosnippet>281</a>                            <span class="string">"extract_phase_center"</span>.to_string(),
-<a href=#282 id=282 data-nosnippet>282</a>                            result.run.frontend_timings.extract_phase_center_ns,
-<a href=#283 id=283 data-nosnippet>283</a>                        ),
-<a href=#284 id=284 data-nosnippet>284</a>                        (
-<a href=#285 id=285 data-nosnippet>285</a>                            <span class="string">"run_imaging"</span>.to_string(),
-<a href=#286 id=286 data-nosnippet>286</a>                            result.run.frontend_timings.run_imaging_ns,
-<a href=#287 id=287 data-nosnippet>287</a>                        ),
-<a href=#288 id=288 data-nosnippet>288</a>                        (
-<a href=#289 id=289 data-nosnippet>289</a>                            <span class="string">"build_coordinate_system"</span>.to_string(),
-<a href=#290 id=290 data-nosnippet>290</a>                            result.run.frontend_timings.build_coordinate_system_ns,
-<a href=#291 id=291 data-nosnippet>291</a>                        ),
-<a href=#292 id=292 data-nosnippet>292</a>                        (
-<a href=#293 id=293 data-nosnippet>293</a>                            <span class="string">"write_products"</span>.to_string(),
-<a href=#294 id=294 data-nosnippet>294</a>                            result.run.frontend_timings.write_products_ns,
-<a href=#295 id=295 data-nosnippet>295</a>                        ),
-<a href=#296 id=296 data-nosnippet>296</a>                        (<span class="string">"total"</span>.to_string(), result.run.frontend_timings.total_ns),
-<a href=#297 id=297 data-nosnippet>297</a>                    ],
-<a href=#298 id=298 data-nosnippet>298</a>                },
-<a href=#299 id=299 data-nosnippet>299</a>                channels: result
-<a href=#300 id=300 data-nosnippet>300</a>                    .run
-<a href=#301 id=301 data-nosnippet>301</a>                    .channels
-<a href=#302 id=302 data-nosnippet>302</a>                    .iter()
-<a href=#303 id=303 data-nosnippet>303</a>                    .map(|summary| ManagedImagingChannelRun {
-<a href=#304 id=304 data-nosnippet>304</a>                        channel_index: summary.channel_index,
-<a href=#305 id=305 data-nosnippet>305</a>                        major_cycles: summary.major_cycles,
-<a href=#306 id=306 data-nosnippet>306</a>                        minor_iterations: summary.minor_iterations,
-<a href=#307 id=307 data-nosnippet>307</a>                        clean_stop_reason: summary
-<a href=#308 id=308 data-nosnippet>308</a>                            .clean_stop_reason
-<a href=#309 id=309 data-nosnippet>309</a>                            .map(|reason| <span class="macro">format!</span>(<span class="string">"{reason:?}"</span>)),
-<a href=#310 id=310 data-nosnippet>310</a>                        initial_residual_peak_jy_per_beam: summary
-<a href=#311 id=311 data-nosnippet>311</a>                            .initial_residual_peak_jy_per_beam,
-<a href=#312 id=312 data-nosnippet>312</a>                        final_residual_peak_jy_per_beam: summary.final_residual_peak_jy_per_beam,
-<a href=#313 id=313 data-nosnippet>313</a>                        final_cycle_threshold_jy_per_beam: summary
-<a href=#314 id=314 data-nosnippet>314</a>                            .final_cycle_threshold_jy_per_beam,
-<a href=#315 id=315 data-nosnippet>315</a>                        beam_fit_available: summary.beam_fit_available,
-<a href=#316 id=316 data-nosnippet>316</a>                    })
-<a href=#317 id=317 data-nosnippet>317</a>                    .collect(),
-<a href=#318 id=318 data-nosnippet>318</a>            },
-<a href=#319 id=319 data-nosnippet>319</a>            artifacts: result
-<a href=#320 id=320 data-nosnippet>320</a>                .artifacts
-<a href=#321 id=321 data-nosnippet>321</a>                .iter()
-<a href=#322 id=322 data-nosnippet>322</a>                .map(|artifact| ManagedImagingArtifact {
-<a href=#323 id=323 data-nosnippet>323</a>                    kind: <span class="kw">match </span>artifact.kind {
-<a href=#324 id=324 data-nosnippet>324</a>                        ImagerArtifactKind::Psf =&gt; <span class="string">"psf"</span>.to_string(),
-<a href=#325 id=325 data-nosnippet>325</a>                        ImagerArtifactKind::Residual =&gt; <span class="string">"residual"</span>.to_string(),
-<a href=#326 id=326 data-nosnippet>326</a>                        ImagerArtifactKind::Model =&gt; <span class="string">"model"</span>.to_string(),
-<a href=#327 id=327 data-nosnippet>327</a>                        ImagerArtifactKind::Image =&gt; <span class="string">"image"</span>.to_string(),
-<a href=#328 id=328 data-nosnippet>328</a>                        ImagerArtifactKind::Alpha =&gt; <span class="string">"alpha"</span>.to_string(),
-<a href=#329 id=329 data-nosnippet>329</a>                    },
-<a href=#330 id=330 data-nosnippet>330</a>                    label: artifact.label.clone(),
-<a href=#331 id=331 data-nosnippet>331</a>                    path: artifact.path.clone(),
-<a href=#332 id=332 data-nosnippet>332</a>                    exists: artifact.exists,
-<a href=#333 id=333 data-nosnippet>333</a>                    preview_png_path: artifact.preview_png_path.clone(),
-<a href=#334 id=334 data-nosnippet>334</a>                    preview_png_exists: artifact.preview_png_exists,
-<a href=#335 id=335 data-nosnippet>335</a>                })
-<a href=#336 id=336 data-nosnippet>336</a>                .collect(),
-<a href=#337 id=337 data-nosnippet>337</a>        }
-<a href=#338 id=338 data-nosnippet>338</a>    }
-<a href=#339 id=339 data-nosnippet>339</a>}
-<a href=#340 id=340 data-nosnippet>340</a>
-<a href=#341 id=341 data-nosnippet>341</a><span class="kw">fn </span>stage_timings_from_core(summary: <span class="kw-2">&amp;</span>RunSummary) -&gt; ManagedImagingStageTimings {
-<a href=#342 id=342 data-nosnippet>342</a>    ManagedImagingStageTimings {
-<a href=#343 id=343 data-nosnippet>343</a>        values_ns: <span class="macro">vec!</span>[
-<a href=#344 id=344 data-nosnippet>344</a>            (
-<a href=#345 id=345 data-nosnippet>345</a>                <span class="string">"controller_total"</span>.to_string(),
-<a href=#346 id=346 data-nosnippet>346</a>                summary.stage_timings.total.as_nanos() <span class="kw">as </span>u64,
-<a href=#347 id=347 data-nosnippet>347</a>            ),
-<a href=#348 id=348 data-nosnippet>348</a>            (
-<a href=#349 id=349 data-nosnippet>349</a>                <span class="string">"controller_overhead"</span>.to_string(),
-<a href=#350 id=350 data-nosnippet>350</a>                summary.stage_timings.controller_overhead.as_nanos() <span class="kw">as </span>u64,
-<a href=#351 id=351 data-nosnippet>351</a>            ),
-<a href=#352 id=352 data-nosnippet>352</a>            (
-<a href=#353 id=353 data-nosnippet>353</a>                <span class="string">"weighting"</span>.to_string(),
-<a href=#354 id=354 data-nosnippet>354</a>                summary.stage_timings.weighting.as_nanos() <span class="kw">as </span>u64,
-<a href=#355 id=355 data-nosnippet>355</a>            ),
-<a href=#356 id=356 data-nosnippet>356</a>            (
-<a href=#357 id=357 data-nosnippet>357</a>                <span class="string">"major_cycle_refresh"</span>.to_string(),
-<a href=#358 id=358 data-nosnippet>358</a>                summary.stage_timings.major_cycle_refresh.as_nanos() <span class="kw">as </span>u64,
-<a href=#359 id=359 data-nosnippet>359</a>            ),
-<a href=#360 id=360 data-nosnippet>360</a>            (
-<a href=#361 id=361 data-nosnippet>361</a>                <span class="string">"psf_grid"</span>.to_string(),
-<a href=#362 id=362 data-nosnippet>362</a>                summary.stage_timings.psf_grid.as_nanos() <span class="kw">as </span>u64,
-<a href=#363 id=363 data-nosnippet>363</a>            ),
-<a href=#364 id=364 data-nosnippet>364</a>            (
-<a href=#365 id=365 data-nosnippet>365</a>                <span class="string">"psf_fft"</span>.to_string(),
-<a href=#366 id=366 data-nosnippet>366</a>                summary.stage_timings.psf_fft.as_nanos() <span class="kw">as </span>u64,
-<a href=#367 id=367 data-nosnippet>367</a>            ),
-<a href=#368 id=368 data-nosnippet>368</a>            (
-<a href=#369 id=369 data-nosnippet>369</a>                <span class="string">"residual_degrid_grid"</span>.to_string(),
-<a href=#370 id=370 data-nosnippet>370</a>                summary.stage_timings.residual_degrid_grid.as_nanos() <span class="kw">as </span>u64,
-<a href=#371 id=371 data-nosnippet>371</a>            ),
-<a href=#372 id=372 data-nosnippet>372</a>            (
-<a href=#373 id=373 data-nosnippet>373</a>                <span class="string">"residual_fft"</span>.to_string(),
-<a href=#374 id=374 data-nosnippet>374</a>                summary.stage_timings.residual_fft.as_nanos() <span class="kw">as </span>u64,
-<a href=#375 id=375 data-nosnippet>375</a>            ),
-<a href=#376 id=376 data-nosnippet>376</a>            (
-<a href=#377 id=377 data-nosnippet>377</a>                <span class="string">"residual_normalize"</span>.to_string(),
-<a href=#378 id=378 data-nosnippet>378</a>                summary.stage_timings.residual_normalize.as_nanos() <span class="kw">as </span>u64,
-<a href=#379 id=379 data-nosnippet>379</a>            ),
-<a href=#380 id=380 data-nosnippet>380</a>            (
-<a href=#381 id=381 data-nosnippet>381</a>                <span class="string">"minor_cycle"</span>.to_string(),
-<a href=#382 id=382 data-nosnippet>382</a>                summary.stage_timings.minor_cycle.as_nanos() <span class="kw">as </span>u64,
-<a href=#383 id=383 data-nosnippet>383</a>            ),
-<a href=#384 id=384 data-nosnippet>384</a>            (
-<a href=#385 id=385 data-nosnippet>385</a>                <span class="string">"minor_cycle_solve"</span>.to_string(),
-<a href=#386 id=386 data-nosnippet>386</a>                summary.stage_timings.minor_cycle_solve.as_nanos() <span class="kw">as </span>u64,
-<a href=#387 id=387 data-nosnippet>387</a>            ),
-<a href=#388 id=388 data-nosnippet>388</a>        ],
-<a href=#389 id=389 data-nosnippet>389</a>    }
-<a href=#390 id=390 data-nosnippet>390</a>}
-<a href=#391 id=391 data-nosnippet>391</a>
-<a href=#392 id=392 data-nosnippet>392</a><span class="kw">fn </span>stage_timings_from_frontend(timings: FrontendStageTimings) -&gt; ManagedImagingStageTimings {
-<a href=#393 id=393 data-nosnippet>393</a>    ManagedImagingStageTimings {
-<a href=#394 id=394 data-nosnippet>394</a>        values_ns: <span class="macro">vec!</span>[
-<a href=#395 id=395 data-nosnippet>395</a>            (
-<a href=#396 id=396 data-nosnippet>396</a>                <span class="string">"open_measurement_set"</span>.to_string(),
-<a href=#397 id=397 data-nosnippet>397</a>                timings.open_measurement_set.as_nanos() <span class="kw">as </span>u64,
-<a href=#398 id=398 data-nosnippet>398</a>            ),
-<a href=#399 id=399 data-nosnippet>399</a>            (
-<a href=#400 id=400 data-nosnippet>400</a>                <span class="string">"prepare_plane_input"</span>.to_string(),
-<a href=#401 id=401 data-nosnippet>401</a>                timings.prepare_plane_input.as_nanos() <span class="kw">as </span>u64,
-<a href=#402 id=402 data-nosnippet>402</a>            ),
-<a href=#403 id=403 data-nosnippet>403</a>            (
-<a href=#404 id=404 data-nosnippet>404</a>                <span class="string">"extract_phase_center"</span>.to_string(),
-<a href=#405 id=405 data-nosnippet>405</a>                timings.extract_phase_center.as_nanos() <span class="kw">as </span>u64,
-<a href=#406 id=406 data-nosnippet>406</a>            ),
-<a href=#407 id=407 data-nosnippet>407</a>            (
-<a href=#408 id=408 data-nosnippet>408</a>                <span class="string">"run_imaging"</span>.to_string(),
-<a href=#409 id=409 data-nosnippet>409</a>                timings.run_imaging.as_nanos() <span class="kw">as </span>u64,
-<a href=#410 id=410 data-nosnippet>410</a>            ),
-<a href=#411 id=411 data-nosnippet>411</a>            (
-<a href=#412 id=412 data-nosnippet>412</a>                <span class="string">"build_coordinate_system"</span>.to_string(),
-<a href=#413 id=413 data-nosnippet>413</a>                timings.build_coordinate_system.as_nanos() <span class="kw">as </span>u64,
-<a href=#414 id=414 data-nosnippet>414</a>            ),
-<a href=#415 id=415 data-nosnippet>415</a>            (
-<a href=#416 id=416 data-nosnippet>416</a>                <span class="string">"write_products"</span>.to_string(),
-<a href=#417 id=417 data-nosnippet>417</a>                timings.write_products.as_nanos() <span class="kw">as </span>u64,
-<a href=#418 id=418 data-nosnippet>418</a>            ),
-<a href=#419 id=419 data-nosnippet>419</a>            (<span class="string">"total"</span>.to_string(), timings.total.as_nanos() <span class="kw">as </span>u64),
-<a href=#420 id=420 data-nosnippet>420</a>        ],
-<a href=#421 id=421 data-nosnippet>421</a>    }
-<a href=#422 id=422 data-nosnippet>422</a>}
-<a href=#423 id=423 data-nosnippet>423</a>
-<a href=#424 id=424 data-nosnippet>424</a><span class="kw">fn </span>channel_run_from_summary(summary: <span class="kw-2">&amp;</span>ChannelRunSummary) -&gt; ManagedImagingChannelRun {
-<a href=#425 id=425 data-nosnippet>425</a>    ManagedImagingChannelRun {
-<a href=#426 id=426 data-nosnippet>426</a>        channel_index: summary.channel_index,
-<a href=#427 id=427 data-nosnippet>427</a>        major_cycles: summary.major_cycles,
-<a href=#428 id=428 data-nosnippet>428</a>        minor_iterations: summary.minor_iterations,
-<a href=#429 id=429 data-nosnippet>429</a>        clean_stop_reason: summary
-<a href=#430 id=430 data-nosnippet>430</a>            .clean_stop_reason
-<a href=#431 id=431 data-nosnippet>431</a>            .map(|reason| <span class="macro">format!</span>(<span class="string">"{reason:?}"</span>)),
-<a href=#432 id=432 data-nosnippet>432</a>        initial_residual_peak_jy_per_beam: summary.initial_residual_peak_jy_per_beam,
-<a href=#433 id=433 data-nosnippet>433</a>        final_residual_peak_jy_per_beam: summary.final_residual_peak_jy_per_beam,
-<a href=#434 id=434 data-nosnippet>434</a>        final_cycle_threshold_jy_per_beam: summary.final_cycle_threshold_jy_per_beam,
-<a href=#435 id=435 data-nosnippet>435</a>        beam_fit_available: summary.beam_fit_debug.is_some(),
-<a href=#436 id=436 data-nosnippet>436</a>    }
-<a href=#437 id=437 data-nosnippet>437</a>}
-<a href=#438 id=438 data-nosnippet>438</a>
-<a href=#439 id=439 data-nosnippet>439</a><span class="kw">fn </span>imaging_artifacts(config: <span class="kw-2">&amp;</span>CliConfig) -&gt; Vec&lt;ManagedImagingArtifact&gt; {
-<a href=#440 id=440 data-nosnippet>440</a>    <span class="kw">let </span>base = config.imagename.to_string_lossy().to_string();
-<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">let </span><span class="kw-2">mut </span>artifacts = Vec::new();
-<a href=#442 id=442 data-nosnippet>442</a>    <span class="kw">match </span>config.spectral_mode {
-<a href=#443 id=443 data-nosnippet>443</a>        SpectralMode::Mfs
-<a href=#444 id=444 data-nosnippet>444</a>            <span class="kw">if </span>canonical_deconvolver_name(config.deconvolver) == <span class="string">"mtmfs" </span>&amp;&amp; config.nterms &gt; <span class="number">1 </span>=&gt;
-<a href=#445 id=445 data-nosnippet>445</a>        {
-<a href=#446 id=446 data-nosnippet>446</a>            <span class="kw">for </span>term <span class="kw">in </span><span class="number">0</span>..config.nterms {
-<a href=#447 id=447 data-nosnippet>447</a>                <span class="kw">for </span>(kind, label) <span class="kw">in </span>[
-<a href=#448 id=448 data-nosnippet>448</a>                    (<span class="string">"psf"</span>, <span class="string">"PSF"</span>),
-<a href=#449 id=449 data-nosnippet>449</a>                    (<span class="string">"residual"</span>, <span class="string">"Residual"</span>),
-<a href=#450 id=450 data-nosnippet>450</a>                    (<span class="string">"model"</span>, <span class="string">"Model"</span>),
-<a href=#451 id=451 data-nosnippet>451</a>                    (<span class="string">"image"</span>, <span class="string">"Restored Image"</span>),
-<a href=#452 id=452 data-nosnippet>452</a>                ] {
-<a href=#453 id=453 data-nosnippet>453</a>                    <span class="kw">let </span>suffix = <span class="macro">format!</span>(<span class="string">"{kind}.tt{term}"</span>);
-<a href=#454 id=454 data-nosnippet>454</a>                    <span class="kw">let </span>path = PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.{suffix}"</span>));
-<a href=#455 id=455 data-nosnippet>455</a>                    <span class="kw">let </span>preview = (term == <span class="number">0 </span>&amp;&amp; config.write_preview_pngs)
-<a href=#456 id=456 data-nosnippet>456</a>                        .then(|| PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.{suffix}.png"</span>)));
-<a href=#457 id=457 data-nosnippet>457</a>                    artifacts.push(artifact(label_for_term(label, term), kind, path, preview));
-<a href=#458 id=458 data-nosnippet>458</a>                }
-<a href=#459 id=459 data-nosnippet>459</a>            }
-<a href=#460 id=460 data-nosnippet>460</a>            <span class="kw">let </span>alpha = PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.alpha"</span>));
-<a href=#461 id=461 data-nosnippet>461</a>            <span class="kw">let </span>alpha_preview = config
-<a href=#462 id=462 data-nosnippet>462</a>                .write_preview_pngs
-<a href=#463 id=463 data-nosnippet>463</a>                .then(|| PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.alpha.png"</span>)));
-<a href=#464 id=464 data-nosnippet>464</a>            artifacts.push(artifact(
-<a href=#465 id=465 data-nosnippet>465</a>                <span class="string">"Spectral Index"</span>.to_string(),
-<a href=#466 id=466 data-nosnippet>466</a>                <span class="string">"alpha"</span>,
-<a href=#467 id=467 data-nosnippet>467</a>                alpha,
-<a href=#468 id=468 data-nosnippet>468</a>                alpha_preview,
-<a href=#469 id=469 data-nosnippet>469</a>            ));
-<a href=#470 id=470 data-nosnippet>470</a>        }
-<a href=#471 id=471 data-nosnippet>471</a>        <span class="kw">_ </span>=&gt; {
-<a href=#472 id=472 data-nosnippet>472</a>            <span class="kw">for </span>(kind, label) <span class="kw">in </span>[
-<a href=#473 id=473 data-nosnippet>473</a>                (<span class="string">"psf"</span>, <span class="string">"PSF"</span>),
-<a href=#474 id=474 data-nosnippet>474</a>                (<span class="string">"residual"</span>, <span class="string">"Residual"</span>),
-<a href=#475 id=475 data-nosnippet>475</a>                (<span class="string">"model"</span>, <span class="string">"Model"</span>),
-<a href=#476 id=476 data-nosnippet>476</a>                (<span class="string">"image"</span>, <span class="string">"Restored Image"</span>),
-<a href=#477 id=477 data-nosnippet>477</a>            ] {
-<a href=#478 id=478 data-nosnippet>478</a>                <span class="kw">let </span>path = PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.{kind}"</span>));
-<a href=#479 id=479 data-nosnippet>479</a>                <span class="kw">let </span>preview = config
-<a href=#480 id=480 data-nosnippet>480</a>                    .write_preview_pngs
-<a href=#481 id=481 data-nosnippet>481</a>                    .then(|| PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.{kind}.png"</span>)));
-<a href=#482 id=482 data-nosnippet>482</a>                artifacts.push(artifact(label.to_string(), kind, path, preview));
-<a href=#483 id=483 data-nosnippet>483</a>            }
-<a href=#484 id=484 data-nosnippet>484</a>        }
-<a href=#485 id=485 data-nosnippet>485</a>    }
-<a href=#486 id=486 data-nosnippet>486</a>    artifacts
-<a href=#487 id=487 data-nosnippet>487</a>}
-<a href=#488 id=488 data-nosnippet>488</a>
-<a href=#489 id=489 data-nosnippet>489</a><span class="kw">fn </span>label_for_term(base: <span class="kw-2">&amp;</span>str, term: usize) -&gt; String {
-<a href=#490 id=490 data-nosnippet>490</a>    <span class="macro">format!</span>(<span class="string">"{base} TT{term}"</span>)
-<a href=#491 id=491 data-nosnippet>491</a>}
-<a href=#492 id=492 data-nosnippet>492</a>
-<a href=#493 id=493 data-nosnippet>493</a><span class="kw">fn </span>artifact(
-<a href=#494 id=494 data-nosnippet>494</a>    label: String,
-<a href=#495 id=495 data-nosnippet>495</a>    kind: <span class="kw-2">&amp;</span>str,
-<a href=#496 id=496 data-nosnippet>496</a>    path: PathBuf,
-<a href=#497 id=497 data-nosnippet>497</a>    preview: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
-<a href=#498 id=498 data-nosnippet>498</a>) -&gt; ManagedImagingArtifact {
-<a href=#499 id=499 data-nosnippet>499</a>    ManagedImagingArtifact {
-<a href=#500 id=500 data-nosnippet>500</a>        kind: kind.to_string(),
-<a href=#501 id=501 data-nosnippet>501</a>        label,
-<a href=#502 id=502 data-nosnippet>502</a>        exists: path.exists(),
-<a href=#503 id=503 data-nosnippet>503</a>        path: path.display().to_string(),
-<a href=#504 id=504 data-nosnippet>504</a>        preview_png_exists: preview.as_ref().is_some_and(|path| path.exists()),
-<a href=#505 id=505 data-nosnippet>505</a>        preview_png_path: preview.map(|path| path.display().to_string()),
-<a href=#506 id=506 data-nosnippet>506</a>    }
-<a href=#507 id=507 data-nosnippet>507</a>}
-<a href=#508 id=508 data-nosnippet>508</a>
-<a href=#509 id=509 data-nosnippet>509</a><span class="attr">#[cfg(test)]
-<a href=#510 id=510 data-nosnippet>510</a></span><span class="kw">mod </span>tests {
-<a href=#511 id=511 data-nosnippet>511</a>    <span class="kw">use </span>super::{ManagedImagingOutput, artifact, imaging_artifacts, label_for_term};
-<a href=#512 id=512 data-nosnippet>512</a>    <span class="kw">use </span><span class="kw">crate</span>::task_contract::{
-<a href=#513 id=513 data-nosnippet>513</a>        ImagerArtifact, ImagerArtifactKind, ImagerCleanStopReason, ImagerDeconvolver,
-<a href=#514 id=514 data-nosnippet>514</a>        ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
-<a href=#515 id=515 data-nosnippet>515</a>        ImagerRunTaskResult, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
-<a href=#516 id=516 data-nosnippet>516</a>    };
-<a href=#517 id=517 data-nosnippet>517</a>    <span class="kw">use </span>crate::{
-<a href=#518 id=518 data-nosnippet>518</a>        ChannelRunSummary, CliConfig, CubeAxisConfig, FrontendStageTimings, RunSummary,
-<a href=#519 id=519 data-nosnippet>519</a>        SpectralMode,
-<a href=#520 id=520 data-nosnippet>520</a>    };
-<a href=#521 id=521 data-nosnippet>521</a>    <span class="kw">use </span>casa_imaging::{
-<a href=#522 id=522 data-nosnippet>522</a>        CleanStopReason, Deconvolver, ImagingStageTimings, RestoringBeamMode, WTermMode,
-<a href=#523 id=523 data-nosnippet>523</a>        WeightingMode,
-<a href=#524 id=524 data-nosnippet>524</a>    };
-<a href=#525 id=525 data-nosnippet>525</a>    <span class="kw">use </span>std::fs;
-<a href=#526 id=526 data-nosnippet>526</a>    <span class="kw">use </span>std::path::PathBuf;
-<a href=#527 id=527 data-nosnippet>527</a>    <span class="kw">use </span>std::time::Duration;
-<a href=#528 id=528 data-nosnippet>528</a>    <span class="kw">use </span>tempfile::tempdir;
-<a href=#529 id=529 data-nosnippet>529</a>
-<a href=#530 id=530 data-nosnippet>530</a>    <span class="kw">fn </span>sample_cli_config(imagename: PathBuf) -&gt; CliConfig {
-<a href=#531 id=531 data-nosnippet>531</a>        CliConfig {
-<a href=#532 id=532 data-nosnippet>532</a>            ms: PathBuf::from(<span class="string">"/tmp/demo.ms"</span>),
-<a href=#533 id=533 data-nosnippet>533</a>            imagename,
-<a href=#534 id=534 data-nosnippet>534</a>            imsize: <span class="number">256</span>,
-<a href=#535 id=535 data-nosnippet>535</a>            cell_arcsec: <span class="number">1.5</span>,
-<a href=#536 id=536 data-nosnippet>536</a>            field_ids: <span class="prelude-val">None</span>,
-<a href=#537 id=537 data-nosnippet>537</a>            phasecenter_field: <span class="prelude-val">None</span>,
-<a href=#538 id=538 data-nosnippet>538</a>            phasecenter: <span class="prelude-val">None</span>,
-<a href=#539 id=539 data-nosnippet>539</a>            ddid: <span class="prelude-val">None</span>,
-<a href=#540 id=540 data-nosnippet>540</a>            spw: <span class="prelude-val">None</span>,
-<a href=#541 id=541 data-nosnippet>541</a>            spw_selector: <span class="prelude-val">None</span>,
-<a href=#542 id=542 data-nosnippet>542</a>            channel_start: <span class="prelude-val">None</span>,
-<a href=#543 id=543 data-nosnippet>543</a>            channel_count: <span class="prelude-val">None</span>,
-<a href=#544 id=544 data-nosnippet>544</a>            datacolumn: <span class="prelude-val">Some</span>(<span class="string">"CORRECTED_DATA"</span>.to_string()),
-<a href=#545 id=545 data-nosnippet>545</a>            correlation: <span class="prelude-val">Some</span>(<span class="string">"XX"</span>.to_string()),
-<a href=#546 id=546 data-nosnippet>546</a>            spectral_mode: SpectralMode::Mfs,
-<a href=#547 id=547 data-nosnippet>547</a>            cube_axis: CubeAxisConfig::default(),
-<a href=#548 id=548 data-nosnippet>548</a>            weighting: WeightingMode::Natural,
-<a href=#549 id=549 data-nosnippet>549</a>            per_channel_weight_density: <span class="bool-val">true</span>,
-<a href=#550 id=550 data-nosnippet>550</a>            uv_taper: <span class="prelude-val">None</span>,
-<a href=#551 id=551 data-nosnippet>551</a>            restoring_beam_mode: RestoringBeamMode::Common,
-<a href=#552 id=552 data-nosnippet>552</a>            deconvolver: Deconvolver::Mtmfs,
-<a href=#553 id=553 data-nosnippet>553</a>            nterms: <span class="number">2</span>,
-<a href=#554 id=554 data-nosnippet>554</a>            multiscale_scales: Vec::new(),
-<a href=#555 id=555 data-nosnippet>555</a>            small_scale_bias: <span class="number">0.0</span>,
-<a href=#556 id=556 data-nosnippet>556</a>            niter: <span class="number">50</span>,
-<a href=#557 id=557 data-nosnippet>557</a>            gain: <span class="number">0.1</span>,
-<a href=#558 id=558 data-nosnippet>558</a>            threshold_jy: <span class="number">0.0</span>,
-<a href=#559 id=559 data-nosnippet>559</a>            nsigma: <span class="number">0.0</span>,
-<a href=#560 id=560 data-nosnippet>560</a>            psf_cutoff: <span class="number">0.35</span>,
-<a href=#561 id=561 data-nosnippet>561</a>            minor_cycle_length: <span class="number">8</span>,
-<a href=#562 id=562 data-nosnippet>562</a>            cyclefactor: <span class="number">1.0</span>,
-<a href=#563 id=563 data-nosnippet>563</a>            min_psf_fraction: <span class="number">0.1</span>,
-<a href=#564 id=564 data-nosnippet>564</a>            max_psf_fraction: <span class="number">0.8</span>,
-<a href=#565 id=565 data-nosnippet>565</a>            mask_boxes: Vec::new(),
-<a href=#566 id=566 data-nosnippet>566</a>            mask_image: <span class="prelude-val">None</span>,
-<a href=#567 id=567 data-nosnippet>567</a>            w_term_mode: WTermMode::Direct,
-<a href=#568 id=568 data-nosnippet>568</a>            w_project_planes: <span class="prelude-val">None</span>,
-<a href=#569 id=569 data-nosnippet>569</a>            dirty_only: <span class="bool-val">false</span>,
-<a href=#570 id=570 data-nosnippet>570</a>            write_preview_pngs: <span class="bool-val">true</span>,
-<a href=#571 id=571 data-nosnippet>571</a>        }
-<a href=#572 id=572 data-nosnippet>572</a>    }
-<a href=#573 id=573 data-nosnippet>573</a>
-<a href=#574 id=574 data-nosnippet>574</a>    <span class="kw">fn </span>sample_run_summary() -&gt; RunSummary {
-<a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">let </span>stage_timings = ImagingStageTimings {
-<a href=#576 id=576 data-nosnippet>576</a>            controller_overhead: Duration::from_nanos(<span class="number">11</span>),
-<a href=#577 id=577 data-nosnippet>577</a>            weighting: Duration::from_nanos(<span class="number">12</span>),
-<a href=#578 id=578 data-nosnippet>578</a>            psf_grid: Duration::from_nanos(<span class="number">13</span>),
-<a href=#579 id=579 data-nosnippet>579</a>            psf_fft: Duration::from_nanos(<span class="number">14</span>),
-<a href=#580 id=580 data-nosnippet>580</a>            psf_normalize: Duration::ZERO,
-<a href=#581 id=581 data-nosnippet>581</a>            model_fft: Duration::ZERO,
-<a href=#582 id=582 data-nosnippet>582</a>            residual_degrid_grid: Duration::from_nanos(<span class="number">15</span>),
-<a href=#583 id=583 data-nosnippet>583</a>            residual_fft: Duration::from_nanos(<span class="number">16</span>),
-<a href=#584 id=584 data-nosnippet>584</a>            residual_normalize: Duration::from_nanos(<span class="number">17</span>),
-<a href=#585 id=585 data-nosnippet>585</a>            minor_cycle: Duration::from_nanos(<span class="number">18</span>),
-<a href=#586 id=586 data-nosnippet>586</a>            minor_cycle_solve: Duration::from_nanos(<span class="number">19</span>),
-<a href=#587 id=587 data-nosnippet>587</a>            major_cycle_refresh: Duration::from_nanos(<span class="number">20</span>),
-<a href=#588 id=588 data-nosnippet>588</a>            beam_fit: Duration::ZERO,
-<a href=#589 id=589 data-nosnippet>589</a>            restore: Duration::ZERO,
-<a href=#590 id=590 data-nosnippet>590</a>            total: Duration::from_nanos(<span class="number">21</span>),
-<a href=#591 id=591 data-nosnippet>591</a>        };
-<a href=#592 id=592 data-nosnippet>592</a>
-<a href=#593 id=593 data-nosnippet>593</a>        RunSummary {
-<a href=#594 id=594 data-nosnippet>594</a>            warnings: <span class="macro">vec!</span>[<span class="string">"warning-a"</span>.to_string()],
-<a href=#595 id=595 data-nosnippet>595</a>            gridded_samples: <span class="number">42</span>,
-<a href=#596 id=596 data-nosnippet>596</a>            major_cycles: <span class="number">3</span>,
-<a href=#597 id=597 data-nosnippet>597</a>            minor_iterations: <span class="number">9</span>,
-<a href=#598 id=598 data-nosnippet>598</a>            clean_stop_reason: <span class="prelude-val">Some</span>(CleanStopReason::CycleThresholdReached),
-<a href=#599 id=599 data-nosnippet>599</a>            channel_summaries: <span class="macro">vec!</span>[ChannelRunSummary {
-<a href=#600 id=600 data-nosnippet>600</a>                channel_index: <span class="number">7</span>,
-<a href=#601 id=601 data-nosnippet>601</a>                major_cycles: <span class="number">4</span>,
-<a href=#602 id=602 data-nosnippet>602</a>                minor_iterations: <span class="number">10</span>,
-<a href=#603 id=603 data-nosnippet>603</a>                clean_stop_reason: <span class="prelude-val">Some</span>(CleanStopReason::IterationLimitReached),
-<a href=#604 id=604 data-nosnippet>604</a>                initial_residual_peak_jy_per_beam: <span class="number">3.5</span>,
-<a href=#605 id=605 data-nosnippet>605</a>                final_residual_peak_jy_per_beam: <span class="number">1.5</span>,
-<a href=#606 id=606 data-nosnippet>606</a>                final_cycle_threshold_jy_per_beam: <span class="number">0.25</span>,
-<a href=#607 id=607 data-nosnippet>607</a>                minor_cycle_traces: Vec::new(),
-<a href=#608 id=608 data-nosnippet>608</a>                beam_fit_debug: <span class="prelude-val">None</span>,
-<a href=#609 id=609 data-nosnippet>609</a>            }],
-<a href=#610 id=610 data-nosnippet>610</a>            stage_timings,
-<a href=#611 id=611 data-nosnippet>611</a>            frontend_timings: FrontendStageTimings {
-<a href=#612 id=612 data-nosnippet>612</a>                open_measurement_set: Duration::from_nanos(<span class="number">31</span>),
-<a href=#613 id=613 data-nosnippet>613</a>                prepare_plane_input: Duration::from_nanos(<span class="number">32</span>),
-<a href=#614 id=614 data-nosnippet>614</a>                extract_phase_center: Duration::from_nanos(<span class="number">33</span>),
-<a href=#615 id=615 data-nosnippet>615</a>                run_imaging: Duration::from_nanos(<span class="number">34</span>),
-<a href=#616 id=616 data-nosnippet>616</a>                build_coordinate_system: Duration::from_nanos(<span class="number">35</span>),
-<a href=#617 id=617 data-nosnippet>617</a>                write_products: Duration::from_nanos(<span class="number">36</span>),
-<a href=#618 id=618 data-nosnippet>618</a>                total: Duration::from_nanos(<span class="number">37</span>),
-<a href=#619 id=619 data-nosnippet>619</a>            },
-<a href=#620 id=620 data-nosnippet>620</a>        }
-<a href=#621 id=621 data-nosnippet>621</a>    }
+<a href=#268 id=268 data-nosnippet>268</a>                        (
+<a href=#269 id=269 data-nosnippet>269</a>                            <span class="string">"major_cycle_refresh"</span>.to_string(),
+<a href=#270 id=270 data-nosnippet>270</a>                            result.run.stage_timings.major_cycle_refresh_ns,
+<a href=#271 id=271 data-nosnippet>271</a>                        ),
+<a href=#272 id=272 data-nosnippet>272</a>                        (<span class="string">"psf_grid"</span>.to_string(), result.run.stage_timings.psf_grid_ns),
+<a href=#273 id=273 data-nosnippet>273</a>                        (<span class="string">"psf_fft"</span>.to_string(), result.run.stage_timings.psf_fft_ns),
+<a href=#274 id=274 data-nosnippet>274</a>                        (
+<a href=#275 id=275 data-nosnippet>275</a>                            <span class="string">"residual_degrid_grid"</span>.to_string(),
+<a href=#276 id=276 data-nosnippet>276</a>                            result.run.stage_timings.residual_degrid_grid_ns,
+<a href=#277 id=277 data-nosnippet>277</a>                        ),
+<a href=#278 id=278 data-nosnippet>278</a>                        (
+<a href=#279 id=279 data-nosnippet>279</a>                            <span class="string">"residual_fft"</span>.to_string(),
+<a href=#280 id=280 data-nosnippet>280</a>                            result.run.stage_timings.residual_fft_ns,
+<a href=#281 id=281 data-nosnippet>281</a>                        ),
+<a href=#282 id=282 data-nosnippet>282</a>                        (
+<a href=#283 id=283 data-nosnippet>283</a>                            <span class="string">"residual_normalize"</span>.to_string(),
+<a href=#284 id=284 data-nosnippet>284</a>                            result.run.stage_timings.residual_normalize_ns,
+<a href=#285 id=285 data-nosnippet>285</a>                        ),
+<a href=#286 id=286 data-nosnippet>286</a>                        (
+<a href=#287 id=287 data-nosnippet>287</a>                            <span class="string">"minor_cycle"</span>.to_string(),
+<a href=#288 id=288 data-nosnippet>288</a>                            result.run.stage_timings.minor_cycle_ns,
+<a href=#289 id=289 data-nosnippet>289</a>                        ),
+<a href=#290 id=290 data-nosnippet>290</a>                        (
+<a href=#291 id=291 data-nosnippet>291</a>                            <span class="string">"minor_cycle_solve"</span>.to_string(),
+<a href=#292 id=292 data-nosnippet>292</a>                            result.run.stage_timings.minor_cycle_solve_ns,
+<a href=#293 id=293 data-nosnippet>293</a>                        ),
+<a href=#294 id=294 data-nosnippet>294</a>                    ],
+<a href=#295 id=295 data-nosnippet>295</a>                },
+<a href=#296 id=296 data-nosnippet>296</a>                frontend_timings: ManagedImagingStageTimings {
+<a href=#297 id=297 data-nosnippet>297</a>                    values_ns: <span class="macro">vec!</span>[
+<a href=#298 id=298 data-nosnippet>298</a>                        (
+<a href=#299 id=299 data-nosnippet>299</a>                            <span class="string">"open_measurement_set"</span>.to_string(),
+<a href=#300 id=300 data-nosnippet>300</a>                            result.run.frontend_timings.open_measurement_set_ns,
+<a href=#301 id=301 data-nosnippet>301</a>                        ),
+<a href=#302 id=302 data-nosnippet>302</a>                        (
+<a href=#303 id=303 data-nosnippet>303</a>                            <span class="string">"prepare_plane_input"</span>.to_string(),
+<a href=#304 id=304 data-nosnippet>304</a>                            result.run.frontend_timings.prepare_plane_input_ns,
+<a href=#305 id=305 data-nosnippet>305</a>                        ),
+<a href=#306 id=306 data-nosnippet>306</a>                        (
+<a href=#307 id=307 data-nosnippet>307</a>                            <span class="string">"extract_phase_center"</span>.to_string(),
+<a href=#308 id=308 data-nosnippet>308</a>                            result.run.frontend_timings.extract_phase_center_ns,
+<a href=#309 id=309 data-nosnippet>309</a>                        ),
+<a href=#310 id=310 data-nosnippet>310</a>                        (
+<a href=#311 id=311 data-nosnippet>311</a>                            <span class="string">"run_imaging"</span>.to_string(),
+<a href=#312 id=312 data-nosnippet>312</a>                            result.run.frontend_timings.run_imaging_ns,
+<a href=#313 id=313 data-nosnippet>313</a>                        ),
+<a href=#314 id=314 data-nosnippet>314</a>                        (
+<a href=#315 id=315 data-nosnippet>315</a>                            <span class="string">"build_coordinate_system"</span>.to_string(),
+<a href=#316 id=316 data-nosnippet>316</a>                            result.run.frontend_timings.build_coordinate_system_ns,
+<a href=#317 id=317 data-nosnippet>317</a>                        ),
+<a href=#318 id=318 data-nosnippet>318</a>                        (
+<a href=#319 id=319 data-nosnippet>319</a>                            <span class="string">"write_products"</span>.to_string(),
+<a href=#320 id=320 data-nosnippet>320</a>                            result.run.frontend_timings.write_products_ns,
+<a href=#321 id=321 data-nosnippet>321</a>                        ),
+<a href=#322 id=322 data-nosnippet>322</a>                        (<span class="string">"total"</span>.to_string(), result.run.frontend_timings.total_ns),
+<a href=#323 id=323 data-nosnippet>323</a>                    ],
+<a href=#324 id=324 data-nosnippet>324</a>                },
+<a href=#325 id=325 data-nosnippet>325</a>                channels: result
+<a href=#326 id=326 data-nosnippet>326</a>                    .run
+<a href=#327 id=327 data-nosnippet>327</a>                    .channels
+<a href=#328 id=328 data-nosnippet>328</a>                    .iter()
+<a href=#329 id=329 data-nosnippet>329</a>                    .map(|summary| ManagedImagingChannelRun {
+<a href=#330 id=330 data-nosnippet>330</a>                        channel_index: summary.channel_index,
+<a href=#331 id=331 data-nosnippet>331</a>                        major_cycles: summary.major_cycles,
+<a href=#332 id=332 data-nosnippet>332</a>                        minor_iterations: summary.minor_iterations,
+<a href=#333 id=333 data-nosnippet>333</a>                        clean_stop_reason: summary
+<a href=#334 id=334 data-nosnippet>334</a>                            .clean_stop_reason
+<a href=#335 id=335 data-nosnippet>335</a>                            .map(|reason| <span class="macro">format!</span>(<span class="string">"{reason:?}"</span>)),
+<a href=#336 id=336 data-nosnippet>336</a>                        initial_residual_peak_jy_per_beam: summary
+<a href=#337 id=337 data-nosnippet>337</a>                            .initial_residual_peak_jy_per_beam,
+<a href=#338 id=338 data-nosnippet>338</a>                        final_residual_peak_jy_per_beam: summary.final_residual_peak_jy_per_beam,
+<a href=#339 id=339 data-nosnippet>339</a>                        final_cycle_threshold_jy_per_beam: summary
+<a href=#340 id=340 data-nosnippet>340</a>                            .final_cycle_threshold_jy_per_beam,
+<a href=#341 id=341 data-nosnippet>341</a>                        beam_fit_available: summary.beam_fit_available,
+<a href=#342 id=342 data-nosnippet>342</a>                    })
+<a href=#343 id=343 data-nosnippet>343</a>                    .collect(),
+<a href=#344 id=344 data-nosnippet>344</a>            },
+<a href=#345 id=345 data-nosnippet>345</a>            artifacts: result
+<a href=#346 id=346 data-nosnippet>346</a>                .artifacts
+<a href=#347 id=347 data-nosnippet>347</a>                .iter()
+<a href=#348 id=348 data-nosnippet>348</a>                .map(|artifact| ManagedImagingArtifact {
+<a href=#349 id=349 data-nosnippet>349</a>                    kind: <span class="kw">match </span>artifact.kind {
+<a href=#350 id=350 data-nosnippet>350</a>                        ImagerArtifactKind::Psf =&gt; <span class="string">"psf"</span>.to_string(),
+<a href=#351 id=351 data-nosnippet>351</a>                        ImagerArtifactKind::Residual =&gt; <span class="string">"residual"</span>.to_string(),
+<a href=#352 id=352 data-nosnippet>352</a>                        ImagerArtifactKind::Model =&gt; <span class="string">"model"</span>.to_string(),
+<a href=#353 id=353 data-nosnippet>353</a>                        ImagerArtifactKind::Image =&gt; <span class="string">"image"</span>.to_string(),
+<a href=#354 id=354 data-nosnippet>354</a>                        ImagerArtifactKind::Alpha =&gt; <span class="string">"alpha"</span>.to_string(),
+<a href=#355 id=355 data-nosnippet>355</a>                    },
+<a href=#356 id=356 data-nosnippet>356</a>                    label: artifact.label.clone(),
+<a href=#357 id=357 data-nosnippet>357</a>                    path: artifact.path.clone(),
+<a href=#358 id=358 data-nosnippet>358</a>                    exists: artifact.exists,
+<a href=#359 id=359 data-nosnippet>359</a>                    preview_png_path: artifact.preview_png_path.clone(),
+<a href=#360 id=360 data-nosnippet>360</a>                    preview_png_exists: artifact.preview_png_exists,
+<a href=#361 id=361 data-nosnippet>361</a>                })
+<a href=#362 id=362 data-nosnippet>362</a>                .collect(),
+<a href=#363 id=363 data-nosnippet>363</a>        }
+<a href=#364 id=364 data-nosnippet>364</a>    }
+<a href=#365 id=365 data-nosnippet>365</a>}
+<a href=#366 id=366 data-nosnippet>366</a>
+<a href=#367 id=367 data-nosnippet>367</a><span class="kw">fn </span>stage_timings_from_core(summary: <span class="kw-2">&amp;</span>RunSummary) -&gt; ManagedImagingStageTimings {
+<a href=#368 id=368 data-nosnippet>368</a>    ManagedImagingStageTimings {
+<a href=#369 id=369 data-nosnippet>369</a>        values_ns: <span class="macro">vec!</span>[
+<a href=#370 id=370 data-nosnippet>370</a>            (
+<a href=#371 id=371 data-nosnippet>371</a>                <span class="string">"controller_total"</span>.to_string(),
+<a href=#372 id=372 data-nosnippet>372</a>                summary.stage_timings.total.as_nanos() <span class="kw">as </span>u64,
+<a href=#373 id=373 data-nosnippet>373</a>            ),
+<a href=#374 id=374 data-nosnippet>374</a>            (
+<a href=#375 id=375 data-nosnippet>375</a>                <span class="string">"controller_overhead"</span>.to_string(),
+<a href=#376 id=376 data-nosnippet>376</a>                summary.stage_timings.controller_overhead.as_nanos() <span class="kw">as </span>u64,
+<a href=#377 id=377 data-nosnippet>377</a>            ),
+<a href=#378 id=378 data-nosnippet>378</a>            (
+<a href=#379 id=379 data-nosnippet>379</a>                <span class="string">"weighting"</span>.to_string(),
+<a href=#380 id=380 data-nosnippet>380</a>                summary.stage_timings.weighting.as_nanos() <span class="kw">as </span>u64,
+<a href=#381 id=381 data-nosnippet>381</a>            ),
+<a href=#382 id=382 data-nosnippet>382</a>            (
+<a href=#383 id=383 data-nosnippet>383</a>                <span class="string">"major_cycle_refresh"</span>.to_string(),
+<a href=#384 id=384 data-nosnippet>384</a>                summary.stage_timings.major_cycle_refresh.as_nanos() <span class="kw">as </span>u64,
+<a href=#385 id=385 data-nosnippet>385</a>            ),
+<a href=#386 id=386 data-nosnippet>386</a>            (
+<a href=#387 id=387 data-nosnippet>387</a>                <span class="string">"psf_grid"</span>.to_string(),
+<a href=#388 id=388 data-nosnippet>388</a>                summary.stage_timings.psf_grid.as_nanos() <span class="kw">as </span>u64,
+<a href=#389 id=389 data-nosnippet>389</a>            ),
+<a href=#390 id=390 data-nosnippet>390</a>            (
+<a href=#391 id=391 data-nosnippet>391</a>                <span class="string">"psf_fft"</span>.to_string(),
+<a href=#392 id=392 data-nosnippet>392</a>                summary.stage_timings.psf_fft.as_nanos() <span class="kw">as </span>u64,
+<a href=#393 id=393 data-nosnippet>393</a>            ),
+<a href=#394 id=394 data-nosnippet>394</a>            (
+<a href=#395 id=395 data-nosnippet>395</a>                <span class="string">"residual_degrid_grid"</span>.to_string(),
+<a href=#396 id=396 data-nosnippet>396</a>                summary.stage_timings.residual_degrid_grid.as_nanos() <span class="kw">as </span>u64,
+<a href=#397 id=397 data-nosnippet>397</a>            ),
+<a href=#398 id=398 data-nosnippet>398</a>            (
+<a href=#399 id=399 data-nosnippet>399</a>                <span class="string">"residual_fft"</span>.to_string(),
+<a href=#400 id=400 data-nosnippet>400</a>                summary.stage_timings.residual_fft.as_nanos() <span class="kw">as </span>u64,
+<a href=#401 id=401 data-nosnippet>401</a>            ),
+<a href=#402 id=402 data-nosnippet>402</a>            (
+<a href=#403 id=403 data-nosnippet>403</a>                <span class="string">"residual_normalize"</span>.to_string(),
+<a href=#404 id=404 data-nosnippet>404</a>                summary.stage_timings.residual_normalize.as_nanos() <span class="kw">as </span>u64,
+<a href=#405 id=405 data-nosnippet>405</a>            ),
+<a href=#406 id=406 data-nosnippet>406</a>            (
+<a href=#407 id=407 data-nosnippet>407</a>                <span class="string">"minor_cycle"</span>.to_string(),
+<a href=#408 id=408 data-nosnippet>408</a>                summary.stage_timings.minor_cycle.as_nanos() <span class="kw">as </span>u64,
+<a href=#409 id=409 data-nosnippet>409</a>            ),
+<a href=#410 id=410 data-nosnippet>410</a>            (
+<a href=#411 id=411 data-nosnippet>411</a>                <span class="string">"minor_cycle_solve"</span>.to_string(),
+<a href=#412 id=412 data-nosnippet>412</a>                summary.stage_timings.minor_cycle_solve.as_nanos() <span class="kw">as </span>u64,
+<a href=#413 id=413 data-nosnippet>413</a>            ),
+<a href=#414 id=414 data-nosnippet>414</a>        ],
+<a href=#415 id=415 data-nosnippet>415</a>    }
+<a href=#416 id=416 data-nosnippet>416</a>}
+<a href=#417 id=417 data-nosnippet>417</a>
+<a href=#418 id=418 data-nosnippet>418</a><span class="kw">fn </span>stage_timings_from_frontend(timings: FrontendStageTimings) -&gt; ManagedImagingStageTimings {
+<a href=#419 id=419 data-nosnippet>419</a>    ManagedImagingStageTimings {
+<a href=#420 id=420 data-nosnippet>420</a>        values_ns: <span class="macro">vec!</span>[
+<a href=#421 id=421 data-nosnippet>421</a>            (
+<a href=#422 id=422 data-nosnippet>422</a>                <span class="string">"open_measurement_set"</span>.to_string(),
+<a href=#423 id=423 data-nosnippet>423</a>                timings.open_measurement_set.as_nanos() <span class="kw">as </span>u64,
+<a href=#424 id=424 data-nosnippet>424</a>            ),
+<a href=#425 id=425 data-nosnippet>425</a>            (
+<a href=#426 id=426 data-nosnippet>426</a>                <span class="string">"prepare_plane_input"</span>.to_string(),
+<a href=#427 id=427 data-nosnippet>427</a>                timings.prepare_plane_input.as_nanos() <span class="kw">as </span>u64,
+<a href=#428 id=428 data-nosnippet>428</a>            ),
+<a href=#429 id=429 data-nosnippet>429</a>            (
+<a href=#430 id=430 data-nosnippet>430</a>                <span class="string">"extract_phase_center"</span>.to_string(),
+<a href=#431 id=431 data-nosnippet>431</a>                timings.extract_phase_center.as_nanos() <span class="kw">as </span>u64,
+<a href=#432 id=432 data-nosnippet>432</a>            ),
+<a href=#433 id=433 data-nosnippet>433</a>            (
+<a href=#434 id=434 data-nosnippet>434</a>                <span class="string">"run_imaging"</span>.to_string(),
+<a href=#435 id=435 data-nosnippet>435</a>                timings.run_imaging.as_nanos() <span class="kw">as </span>u64,
+<a href=#436 id=436 data-nosnippet>436</a>            ),
+<a href=#437 id=437 data-nosnippet>437</a>            (
+<a href=#438 id=438 data-nosnippet>438</a>                <span class="string">"build_coordinate_system"</span>.to_string(),
+<a href=#439 id=439 data-nosnippet>439</a>                timings.build_coordinate_system.as_nanos() <span class="kw">as </span>u64,
+<a href=#440 id=440 data-nosnippet>440</a>            ),
+<a href=#441 id=441 data-nosnippet>441</a>            (
+<a href=#442 id=442 data-nosnippet>442</a>                <span class="string">"write_products"</span>.to_string(),
+<a href=#443 id=443 data-nosnippet>443</a>                timings.write_products.as_nanos() <span class="kw">as </span>u64,
+<a href=#444 id=444 data-nosnippet>444</a>            ),
+<a href=#445 id=445 data-nosnippet>445</a>            (<span class="string">"total"</span>.to_string(), timings.total.as_nanos() <span class="kw">as </span>u64),
+<a href=#446 id=446 data-nosnippet>446</a>        ],
+<a href=#447 id=447 data-nosnippet>447</a>    }
+<a href=#448 id=448 data-nosnippet>448</a>}
+<a href=#449 id=449 data-nosnippet>449</a>
+<a href=#450 id=450 data-nosnippet>450</a><span class="kw">fn </span>channel_run_from_summary(summary: <span class="kw-2">&amp;</span>ChannelRunSummary) -&gt; ManagedImagingChannelRun {
+<a href=#451 id=451 data-nosnippet>451</a>    ManagedImagingChannelRun {
+<a href=#452 id=452 data-nosnippet>452</a>        channel_index: summary.channel_index,
+<a href=#453 id=453 data-nosnippet>453</a>        major_cycles: summary.major_cycles,
+<a href=#454 id=454 data-nosnippet>454</a>        minor_iterations: summary.minor_iterations,
+<a href=#455 id=455 data-nosnippet>455</a>        clean_stop_reason: summary
+<a href=#456 id=456 data-nosnippet>456</a>            .clean_stop_reason
+<a href=#457 id=457 data-nosnippet>457</a>            .map(|reason| <span class="macro">format!</span>(<span class="string">"{reason:?}"</span>)),
+<a href=#458 id=458 data-nosnippet>458</a>        initial_residual_peak_jy_per_beam: summary.initial_residual_peak_jy_per_beam,
+<a href=#459 id=459 data-nosnippet>459</a>        final_residual_peak_jy_per_beam: summary.final_residual_peak_jy_per_beam,
+<a href=#460 id=460 data-nosnippet>460</a>        final_cycle_threshold_jy_per_beam: summary.final_cycle_threshold_jy_per_beam,
+<a href=#461 id=461 data-nosnippet>461</a>        beam_fit_available: summary.beam_fit_debug.is_some(),
+<a href=#462 id=462 data-nosnippet>462</a>    }
+<a href=#463 id=463 data-nosnippet>463</a>}
+<a href=#464 id=464 data-nosnippet>464</a>
+<a href=#465 id=465 data-nosnippet>465</a><span class="kw">fn </span>imaging_artifacts(config: <span class="kw-2">&amp;</span>CliConfig) -&gt; Vec&lt;ManagedImagingArtifact&gt; {
+<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span>base = config.imagename.to_string_lossy().to_string();
+<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">let </span><span class="kw-2">mut </span>artifacts = Vec::new();
+<a href=#468 id=468 data-nosnippet>468</a>    <span class="kw">match </span>config.spectral_mode {
+<a href=#469 id=469 data-nosnippet>469</a>        SpectralMode::Mfs
+<a href=#470 id=470 data-nosnippet>470</a>            <span class="kw">if </span>canonical_deconvolver_name(config.deconvolver) == <span class="string">"mtmfs" </span>&amp;&amp; config.nterms &gt; <span class="number">1 </span>=&gt;
+<a href=#471 id=471 data-nosnippet>471</a>        {
+<a href=#472 id=472 data-nosnippet>472</a>            <span class="kw">for </span>term <span class="kw">in </span><span class="number">0</span>..config.nterms {
+<a href=#473 id=473 data-nosnippet>473</a>                <span class="kw">for </span>(kind, label) <span class="kw">in </span>[
+<a href=#474 id=474 data-nosnippet>474</a>                    (<span class="string">"psf"</span>, <span class="string">"PSF"</span>),
+<a href=#475 id=475 data-nosnippet>475</a>                    (<span class="string">"residual"</span>, <span class="string">"Residual"</span>),
+<a href=#476 id=476 data-nosnippet>476</a>                    (<span class="string">"model"</span>, <span class="string">"Model"</span>),
+<a href=#477 id=477 data-nosnippet>477</a>                    (<span class="string">"image"</span>, <span class="string">"Restored Image"</span>),
+<a href=#478 id=478 data-nosnippet>478</a>                ] {
+<a href=#479 id=479 data-nosnippet>479</a>                    <span class="kw">let </span>suffix = <span class="macro">format!</span>(<span class="string">"{kind}.tt{term}"</span>);
+<a href=#480 id=480 data-nosnippet>480</a>                    <span class="kw">let </span>path = PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.{suffix}"</span>));
+<a href=#481 id=481 data-nosnippet>481</a>                    <span class="kw">let </span>preview = (term == <span class="number">0 </span>&amp;&amp; config.write_preview_pngs)
+<a href=#482 id=482 data-nosnippet>482</a>                        .then(|| PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.{suffix}.png"</span>)));
+<a href=#483 id=483 data-nosnippet>483</a>                    artifacts.push(artifact(label_for_term(label, term), kind, path, preview));
+<a href=#484 id=484 data-nosnippet>484</a>                }
+<a href=#485 id=485 data-nosnippet>485</a>            }
+<a href=#486 id=486 data-nosnippet>486</a>            <span class="kw">let </span>alpha = PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.alpha"</span>));
+<a href=#487 id=487 data-nosnippet>487</a>            <span class="kw">let </span>alpha_preview = config
+<a href=#488 id=488 data-nosnippet>488</a>                .write_preview_pngs
+<a href=#489 id=489 data-nosnippet>489</a>                .then(|| PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.alpha.png"</span>)));
+<a href=#490 id=490 data-nosnippet>490</a>            artifacts.push(artifact(
+<a href=#491 id=491 data-nosnippet>491</a>                <span class="string">"Spectral Index"</span>.to_string(),
+<a href=#492 id=492 data-nosnippet>492</a>                <span class="string">"alpha"</span>,
+<a href=#493 id=493 data-nosnippet>493</a>                alpha,
+<a href=#494 id=494 data-nosnippet>494</a>                alpha_preview,
+<a href=#495 id=495 data-nosnippet>495</a>            ));
+<a href=#496 id=496 data-nosnippet>496</a>        }
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">_ </span>=&gt; {
+<a href=#498 id=498 data-nosnippet>498</a>            <span class="kw">for </span>(kind, label) <span class="kw">in </span>[
+<a href=#499 id=499 data-nosnippet>499</a>                (<span class="string">"psf"</span>, <span class="string">"PSF"</span>),
+<a href=#500 id=500 data-nosnippet>500</a>                (<span class="string">"residual"</span>, <span class="string">"Residual"</span>),
+<a href=#501 id=501 data-nosnippet>501</a>                (<span class="string">"model"</span>, <span class="string">"Model"</span>),
+<a href=#502 id=502 data-nosnippet>502</a>                (<span class="string">"image"</span>, <span class="string">"Restored Image"</span>),
+<a href=#503 id=503 data-nosnippet>503</a>            ] {
+<a href=#504 id=504 data-nosnippet>504</a>                <span class="kw">let </span>path = PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.{kind}"</span>));
+<a href=#505 id=505 data-nosnippet>505</a>                <span class="kw">let </span>preview = config
+<a href=#506 id=506 data-nosnippet>506</a>                    .write_preview_pngs
+<a href=#507 id=507 data-nosnippet>507</a>                    .then(|| PathBuf::from(<span class="macro">format!</span>(<span class="string">"{base}.{kind}.png"</span>)));
+<a href=#508 id=508 data-nosnippet>508</a>                artifacts.push(artifact(label.to_string(), kind, path, preview));
+<a href=#509 id=509 data-nosnippet>509</a>            }
+<a href=#510 id=510 data-nosnippet>510</a>        }
+<a href=#511 id=511 data-nosnippet>511</a>    }
+<a href=#512 id=512 data-nosnippet>512</a>    artifacts
+<a href=#513 id=513 data-nosnippet>513</a>}
+<a href=#514 id=514 data-nosnippet>514</a>
+<a href=#515 id=515 data-nosnippet>515</a><span class="kw">fn </span>label_for_term(base: <span class="kw-2">&amp;</span>str, term: usize) -&gt; String {
+<a href=#516 id=516 data-nosnippet>516</a>    <span class="macro">format!</span>(<span class="string">"{base} TT{term}"</span>)
+<a href=#517 id=517 data-nosnippet>517</a>}
+<a href=#518 id=518 data-nosnippet>518</a>
+<a href=#519 id=519 data-nosnippet>519</a><span class="kw">fn </span>artifact(
+<a href=#520 id=520 data-nosnippet>520</a>    label: String,
+<a href=#521 id=521 data-nosnippet>521</a>    kind: <span class="kw-2">&amp;</span>str,
+<a href=#522 id=522 data-nosnippet>522</a>    path: PathBuf,
+<a href=#523 id=523 data-nosnippet>523</a>    preview: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
+<a href=#524 id=524 data-nosnippet>524</a>) -&gt; ManagedImagingArtifact {
+<a href=#525 id=525 data-nosnippet>525</a>    ManagedImagingArtifact {
+<a href=#526 id=526 data-nosnippet>526</a>        kind: kind.to_string(),
+<a href=#527 id=527 data-nosnippet>527</a>        label,
+<a href=#528 id=528 data-nosnippet>528</a>        exists: path.exists(),
+<a href=#529 id=529 data-nosnippet>529</a>        path: path.display().to_string(),
+<a href=#530 id=530 data-nosnippet>530</a>        preview_png_exists: preview.as_ref().is_some_and(|path| path.exists()),
+<a href=#531 id=531 data-nosnippet>531</a>        preview_png_path: preview.map(|path| path.display().to_string()),
+<a href=#532 id=532 data-nosnippet>532</a>    }
+<a href=#533 id=533 data-nosnippet>533</a>}
+<a href=#534 id=534 data-nosnippet>534</a>
+<a href=#535 id=535 data-nosnippet>535</a><span class="attr">#[cfg(test)]
+<a href=#536 id=536 data-nosnippet>536</a></span><span class="kw">mod </span>tests {
+<a href=#537 id=537 data-nosnippet>537</a>    <span class="kw">use </span>super::{ManagedImagingOutput, artifact, imaging_artifacts, label_for_term};
+<a href=#538 id=538 data-nosnippet>538</a>    <span class="kw">use </span><span class="kw">crate</span>::task_contract::{
+<a href=#539 id=539 data-nosnippet>539</a>        ImagerArtifact, ImagerArtifactKind, ImagerCleanStopReason, ImagerDeconvolver,
+<a href=#540 id=540 data-nosnippet>540</a>        ImagerHogbomIterationMode, ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunReport,
+<a href=#541 id=541 data-nosnippet>541</a>        ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode,
+<a href=#542 id=542 data-nosnippet>542</a>        ImagerWTermMode, ImagerWeighting,
+<a href=#543 id=543 data-nosnippet>543</a>    };
+<a href=#544 id=544 data-nosnippet>544</a>    <span class="kw">use </span>crate::{
+<a href=#545 id=545 data-nosnippet>545</a>        ChannelRunSummary, CliConfig, CubeAxisConfig, FrontendStageTimings, RunSummary,
+<a href=#546 id=546 data-nosnippet>546</a>        SaveModelMode, SpectralMode,
+<a href=#547 id=547 data-nosnippet>547</a>    };
+<a href=#548 id=548 data-nosnippet>548</a>    <span class="kw">use </span>casa_imaging::{
+<a href=#549 id=549 data-nosnippet>549</a>        CleanStopReason, Deconvolver, HogbomIterationMode, ImagingStageTimings, RestoringBeamMode,
+<a href=#550 id=550 data-nosnippet>550</a>        WTermMode, WeightingMode,
+<a href=#551 id=551 data-nosnippet>551</a>    };
+<a href=#552 id=552 data-nosnippet>552</a>    <span class="kw">use </span>std::fs;
+<a href=#553 id=553 data-nosnippet>553</a>    <span class="kw">use </span>std::path::PathBuf;
+<a href=#554 id=554 data-nosnippet>554</a>    <span class="kw">use </span>std::time::Duration;
+<a href=#555 id=555 data-nosnippet>555</a>    <span class="kw">use </span>tempfile::tempdir;
+<a href=#556 id=556 data-nosnippet>556</a>
+<a href=#557 id=557 data-nosnippet>557</a>    <span class="kw">fn </span>sample_cli_config(imagename: PathBuf) -&gt; CliConfig {
+<a href=#558 id=558 data-nosnippet>558</a>        CliConfig {
+<a href=#559 id=559 data-nosnippet>559</a>            ms: PathBuf::from(<span class="string">"/tmp/demo.ms"</span>),
+<a href=#560 id=560 data-nosnippet>560</a>            imagename,
+<a href=#561 id=561 data-nosnippet>561</a>            imsize: <span class="number">256</span>,
+<a href=#562 id=562 data-nosnippet>562</a>            cell_arcsec: <span class="number">1.5</span>,
+<a href=#563 id=563 data-nosnippet>563</a>            field_ids: <span class="prelude-val">None</span>,
+<a href=#564 id=564 data-nosnippet>564</a>            phasecenter_field: <span class="prelude-val">None</span>,
+<a href=#565 id=565 data-nosnippet>565</a>            phasecenter: <span class="prelude-val">None</span>,
+<a href=#566 id=566 data-nosnippet>566</a>            ddid: <span class="prelude-val">None</span>,
+<a href=#567 id=567 data-nosnippet>567</a>            spw: <span class="prelude-val">None</span>,
+<a href=#568 id=568 data-nosnippet>568</a>            spw_selector: <span class="prelude-val">None</span>,
+<a href=#569 id=569 data-nosnippet>569</a>            channel_start: <span class="prelude-val">None</span>,
+<a href=#570 id=570 data-nosnippet>570</a>            channel_count: <span class="prelude-val">None</span>,
+<a href=#571 id=571 data-nosnippet>571</a>            datacolumn: <span class="prelude-val">Some</span>(<span class="string">"CORRECTED_DATA"</span>.to_string()),
+<a href=#572 id=572 data-nosnippet>572</a>            save_model: SaveModelMode::None,
+<a href=#573 id=573 data-nosnippet>573</a>            correlation: <span class="prelude-val">Some</span>(<span class="string">"XX"</span>.to_string()),
+<a href=#574 id=574 data-nosnippet>574</a>            spectral_mode: SpectralMode::Mfs,
+<a href=#575 id=575 data-nosnippet>575</a>            cube_axis: CubeAxisConfig::default(),
+<a href=#576 id=576 data-nosnippet>576</a>            weighting: WeightingMode::Natural,
+<a href=#577 id=577 data-nosnippet>577</a>            per_channel_weight_density: <span class="bool-val">true</span>,
+<a href=#578 id=578 data-nosnippet>578</a>            use_pointing: <span class="bool-val">false</span>,
+<a href=#579 id=579 data-nosnippet>579</a>            uv_taper: <span class="prelude-val">None</span>,
+<a href=#580 id=580 data-nosnippet>580</a>            restoring_beam_mode: RestoringBeamMode::Common,
+<a href=#581 id=581 data-nosnippet>581</a>            deconvolver: Deconvolver::Mtmfs,
+<a href=#582 id=582 data-nosnippet>582</a>            nterms: <span class="number">2</span>,
+<a href=#583 id=583 data-nosnippet>583</a>            multiscale_scales: Vec::new(),
+<a href=#584 id=584 data-nosnippet>584</a>            small_scale_bias: <span class="number">0.0</span>,
+<a href=#585 id=585 data-nosnippet>585</a>            niter: <span class="number">50</span>,
+<a href=#586 id=586 data-nosnippet>586</a>            gain: <span class="number">0.1</span>,
+<a href=#587 id=587 data-nosnippet>587</a>            threshold_jy: <span class="number">0.0</span>,
+<a href=#588 id=588 data-nosnippet>588</a>            nsigma: <span class="number">0.0</span>,
+<a href=#589 id=589 data-nosnippet>589</a>            psf_cutoff: <span class="number">0.35</span>,
+<a href=#590 id=590 data-nosnippet>590</a>            minor_cycle_length: <span class="number">8</span>,
+<a href=#591 id=591 data-nosnippet>591</a>            cyclefactor: <span class="number">1.0</span>,
+<a href=#592 id=592 data-nosnippet>592</a>            min_psf_fraction: <span class="number">0.1</span>,
+<a href=#593 id=593 data-nosnippet>593</a>            max_psf_fraction: <span class="number">0.8</span>,
+<a href=#594 id=594 data-nosnippet>594</a>            hogbom_iteration_mode: HogbomIterationMode::Strict,
+<a href=#595 id=595 data-nosnippet>595</a>            mask_boxes: Vec::new(),
+<a href=#596 id=596 data-nosnippet>596</a>            mask_image: <span class="prelude-val">None</span>,
+<a href=#597 id=597 data-nosnippet>597</a>            w_term_mode: WTermMode::Direct,
+<a href=#598 id=598 data-nosnippet>598</a>            w_project_planes: <span class="prelude-val">None</span>,
+<a href=#599 id=599 data-nosnippet>599</a>            dirty_only: <span class="bool-val">false</span>,
+<a href=#600 id=600 data-nosnippet>600</a>            write_preview_pngs: <span class="bool-val">true</span>,
+<a href=#601 id=601 data-nosnippet>601</a>        }
+<a href=#602 id=602 data-nosnippet>602</a>    }
+<a href=#603 id=603 data-nosnippet>603</a>
+<a href=#604 id=604 data-nosnippet>604</a>    <span class="kw">fn </span>sample_run_summary() -&gt; RunSummary {
+<a href=#605 id=605 data-nosnippet>605</a>        <span class="kw">let </span>stage_timings = ImagingStageTimings {
+<a href=#606 id=606 data-nosnippet>606</a>            controller_overhead: Duration::from_nanos(<span class="number">11</span>),
+<a href=#607 id=607 data-nosnippet>607</a>            weighting: Duration::from_nanos(<span class="number">12</span>),
+<a href=#608 id=608 data-nosnippet>608</a>            psf_grid: Duration::from_nanos(<span class="number">13</span>),
+<a href=#609 id=609 data-nosnippet>609</a>            psf_fft: Duration::from_nanos(<span class="number">14</span>),
+<a href=#610 id=610 data-nosnippet>610</a>            psf_normalize: Duration::ZERO,
+<a href=#611 id=611 data-nosnippet>611</a>            model_fft: Duration::ZERO,
+<a href=#612 id=612 data-nosnippet>612</a>            residual_degrid_grid: Duration::from_nanos(<span class="number">15</span>),
+<a href=#613 id=613 data-nosnippet>613</a>            residual_fft: Duration::from_nanos(<span class="number">16</span>),
+<a href=#614 id=614 data-nosnippet>614</a>            residual_normalize: Duration::from_nanos(<span class="number">17</span>),
+<a href=#615 id=615 data-nosnippet>615</a>            minor_cycle: Duration::from_nanos(<span class="number">18</span>),
+<a href=#616 id=616 data-nosnippet>616</a>            minor_cycle_solve: Duration::from_nanos(<span class="number">19</span>),
+<a href=#617 id=617 data-nosnippet>617</a>            major_cycle_refresh: Duration::from_nanos(<span class="number">20</span>),
+<a href=#618 id=618 data-nosnippet>618</a>            beam_fit: Duration::ZERO,
+<a href=#619 id=619 data-nosnippet>619</a>            restore: Duration::ZERO,
+<a href=#620 id=620 data-nosnippet>620</a>            total: Duration::from_nanos(<span class="number">21</span>),
+<a href=#621 id=621 data-nosnippet>621</a>        };
 <a href=#622 id=622 data-nosnippet>622</a>
-<a href=#623 id=623 data-nosnippet>623</a>    <span class="attr">#[test]
-<a href=#624 id=624 data-nosnippet>624</a>    </span><span class="kw">fn </span>from_run_reports_mtmfs_artifacts_and_preview_sidecars() {
-<a href=#625 id=625 data-nosnippet>625</a>        <span class="kw">let </span>tempdir = tempdir().unwrap();
-<a href=#626 id=626 data-nosnippet>626</a>        <span class="kw">let </span>imagename = tempdir.path().join(<span class="string">"managed-output"</span>);
-<a href=#627 id=627 data-nosnippet>627</a>        fs::write(imagename.with_extension(<span class="string">"psf.tt0"</span>), <span class="string">b"psf"</span>).unwrap();
-<a href=#628 id=628 data-nosnippet>628</a>        fs::write(imagename.with_extension(<span class="string">"psf.tt0.png"</span>), <span class="string">b"png"</span>).unwrap();
-<a href=#629 id=629 data-nosnippet>629</a>        fs::write(imagename.with_extension(<span class="string">"alpha"</span>), <span class="string">b"alpha"</span>).unwrap();
-<a href=#630 id=630 data-nosnippet>630</a>        fs::write(imagename.with_extension(<span class="string">"alpha.png"</span>), <span class="string">b"png"</span>).unwrap();
-<a href=#631 id=631 data-nosnippet>631</a>
-<a href=#632 id=632 data-nosnippet>632</a>        <span class="kw">let </span>output =
-<a href=#633 id=633 data-nosnippet>633</a>            ManagedImagingOutput::from_run(<span class="kw-2">&amp;</span>sample_cli_config(imagename), <span class="kw-2">&amp;</span>sample_run_summary());
-<a href=#634 id=634 data-nosnippet>634</a>
-<a href=#635 id=635 data-nosnippet>635</a>        <span class="macro">assert_eq!</span>(output.request.spectral_mode, <span class="string">"mfs"</span>);
-<a href=#636 id=636 data-nosnippet>636</a>        <span class="macro">assert_eq!</span>(output.request.weighting, <span class="string">"natural"</span>);
-<a href=#637 id=637 data-nosnippet>637</a>        <span class="macro">assert_eq!</span>(output.request.deconvolver, <span class="string">"mtmfs"</span>);
-<a href=#638 id=638 data-nosnippet>638</a>        <span class="macro">assert_eq!</span>(output.request.w_term_mode, <span class="string">"direct"</span>);
-<a href=#639 id=639 data-nosnippet>639</a>        <span class="macro">assert_eq!</span>(output.request.restoring_beam_mode, <span class="string">"common"</span>);
-<a href=#640 id=640 data-nosnippet>640</a>        <span class="macro">assert_eq!</span>(output.request.output_channels, <span class="number">1</span>);
-<a href=#641 id=641 data-nosnippet>641</a>        <span class="macro">assert_eq!</span>(output.request.correlation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"XX"</span>));
-<a href=#642 id=642 data-nosnippet>642</a>
-<a href=#643 id=643 data-nosnippet>643</a>        <span class="macro">assert_eq!</span>(
-<a href=#644 id=644 data-nosnippet>644</a>            output.run.clean_stop_reason.as_deref(),
-<a href=#645 id=645 data-nosnippet>645</a>            <span class="prelude-val">Some</span>(<span class="string">"CycleThresholdReached"</span>)
-<a href=#646 id=646 data-nosnippet>646</a>        );
-<a href=#647 id=647 data-nosnippet>647</a>        <span class="macro">assert_eq!</span>(
-<a href=#648 id=648 data-nosnippet>648</a>            output.run.stage_timings.values_ns[<span class="number">0</span>],
-<a href=#649 id=649 data-nosnippet>649</a>            (<span class="string">"controller_total"</span>.to_string(), <span class="number">21</span>)
-<a href=#650 id=650 data-nosnippet>650</a>        );
-<a href=#651 id=651 data-nosnippet>651</a>        <span class="macro">assert_eq!</span>(
-<a href=#652 id=652 data-nosnippet>652</a>            output.run.frontend_timings.values_ns[<span class="number">0</span>],
-<a href=#653 id=653 data-nosnippet>653</a>            (<span class="string">"open_measurement_set"</span>.to_string(), <span class="number">31</span>)
-<a href=#654 id=654 data-nosnippet>654</a>        );
-<a href=#655 id=655 data-nosnippet>655</a>        <span class="macro">assert_eq!</span>(output.run.channels.len(), <span class="number">1</span>);
-<a href=#656 id=656 data-nosnippet>656</a>        <span class="macro">assert_eq!</span>(output.run.channels[<span class="number">0</span>].channel_index, <span class="number">7</span>);
-<a href=#657 id=657 data-nosnippet>657</a>        <span class="macro">assert_eq!</span>(
-<a href=#658 id=658 data-nosnippet>658</a>            output.run.channels[<span class="number">0</span>].clean_stop_reason.as_deref(),
-<a href=#659 id=659 data-nosnippet>659</a>            <span class="prelude-val">Some</span>(<span class="string">"IterationLimitReached"</span>)
-<a href=#660 id=660 data-nosnippet>660</a>        );
-<a href=#661 id=661 data-nosnippet>661</a>        <span class="macro">assert!</span>(!output.run.channels[<span class="number">0</span>].beam_fit_available);
-<a href=#662 id=662 data-nosnippet>662</a>
-<a href=#663 id=663 data-nosnippet>663</a>        <span class="macro">assert_eq!</span>(output.artifacts.len(), <span class="number">9</span>);
-<a href=#664 id=664 data-nosnippet>664</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].label, <span class="string">"PSF TT0"</span>);
-<a href=#665 id=665 data-nosnippet>665</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].kind, <span class="string">"psf"</span>);
-<a href=#666 id=666 data-nosnippet>666</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">0</span>].exists);
-<a href=#667 id=667 data-nosnippet>667</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">0</span>].preview_png_exists);
-<a href=#668 id=668 data-nosnippet>668</a>        <span class="macro">assert!</span>(
-<a href=#669 id=669 data-nosnippet>669</a>            output.artifacts[<span class="number">0</span>]
-<a href=#670 id=670 data-nosnippet>670</a>                .preview_png_path
-<a href=#671 id=671 data-nosnippet>671</a>                .as_deref()
-<a href=#672 id=672 data-nosnippet>672</a>                .unwrap()
-<a href=#673 id=673 data-nosnippet>673</a>                .ends_with(<span class="string">".psf.tt0.png"</span>)
-<a href=#674 id=674 data-nosnippet>674</a>        );
-<a href=#675 id=675 data-nosnippet>675</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">4</span>].label, <span class="string">"PSF TT1"</span>);
-<a href=#676 id=676 data-nosnippet>676</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">4</span>].preview_png_path, <span class="prelude-val">None</span>);
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">8</span>].label, <span class="string">"Spectral Index"</span>);
-<a href=#678 id=678 data-nosnippet>678</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">8</span>].kind, <span class="string">"alpha"</span>);
-<a href=#679 id=679 data-nosnippet>679</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">8</span>].exists);
-<a href=#680 id=680 data-nosnippet>680</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">8</span>].preview_png_exists);
-<a href=#681 id=681 data-nosnippet>681</a>    }
-<a href=#682 id=682 data-nosnippet>682</a>
-<a href=#683 id=683 data-nosnippet>683</a>    <span class="attr">#[test]
-<a href=#684 id=684 data-nosnippet>684</a>    </span><span class="kw">fn </span>from_task_result_serializes_contract_values() {
-<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw">let </span>result = ImagerRunTaskResult {
-<a href=#686 id=686 data-nosnippet>686</a>            request: ImagerRunTaskRequest {
-<a href=#687 id=687 data-nosnippet>687</a>                measurement_set: PathBuf::from(<span class="string">"/tmp/from-task.ms"</span>),
-<a href=#688 id=688 data-nosnippet>688</a>                image_name: PathBuf::from(<span class="string">"/tmp/from-task"</span>),
-<a href=#689 id=689 data-nosnippet>689</a>                image_size: <span class="number">512</span>,
-<a href=#690 id=690 data-nosnippet>690</a>                cell_arcsec: <span class="number">2.5</span>,
-<a href=#691 id=691 data-nosnippet>691</a>                field_ids: <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="number">3</span>]),
-<a href=#692 id=692 data-nosnippet>692</a>                phasecenter_field: <span class="prelude-val">None</span>,
-<a href=#693 id=693 data-nosnippet>693</a>                phasecenter: <span class="prelude-val">Some</span>(<span class="string">"J2000 00:00:00.0 +00.00.00.0"</span>.to_string()),
-<a href=#694 id=694 data-nosnippet>694</a>                ddid: <span class="prelude-val">Some</span>(<span class="number">1</span>),
-<a href=#695 id=695 data-nosnippet>695</a>                spw_selector: <span class="prelude-val">Some</span>(<span class="string">"2"</span>.to_string()),
-<a href=#696 id=696 data-nosnippet>696</a>                channel_start: <span class="prelude-val">Some</span>(<span class="number">4</span>),
-<a href=#697 id=697 data-nosnippet>697</a>                channel_count: <span class="prelude-val">Some</span>(<span class="number">8</span>),
-<a href=#698 id=698 data-nosnippet>698</a>                data_column: <span class="prelude-val">Some</span>(<span class="string">"MODEL_DATA"</span>.to_string()),
-<a href=#699 id=699 data-nosnippet>699</a>                correlation: <span class="prelude-val">Some</span>(ImagerPlaneSelection::CorrXX),
-<a href=#700 id=700 data-nosnippet>700</a>                spectral_mode: ImagerSpectralMode::Cube,
-<a href=#701 id=701 data-nosnippet>701</a>                cube_axis: Default::default(),
-<a href=#702 id=702 data-nosnippet>702</a>                weighting: ImagerWeighting::Briggs { robust: -<span class="number">0.25 </span>},
-<a href=#703 id=703 data-nosnippet>703</a>                per_channel_weight_density: <span class="bool-val">true</span>,
-<a href=#704 id=704 data-nosnippet>704</a>                uv_taper: <span class="prelude-val">None</span>,
-<a href=#705 id=705 data-nosnippet>705</a>                restoring_beam_mode: ImagerRestoringBeamMode::PerPlane,
-<a href=#706 id=706 data-nosnippet>706</a>                deconvolver: ImagerDeconvolver::Clark,
-<a href=#707 id=707 data-nosnippet>707</a>                nterms: <span class="number">1</span>,
-<a href=#708 id=708 data-nosnippet>708</a>                multiscale_scales: <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">5.0</span>],
-<a href=#709 id=709 data-nosnippet>709</a>                small_scale_bias: <span class="number">0.3</span>,
-<a href=#710 id=710 data-nosnippet>710</a>                niter: <span class="number">100</span>,
-<a href=#711 id=711 data-nosnippet>711</a>                gain: <span class="number">0.2</span>,
-<a href=#712 id=712 data-nosnippet>712</a>                threshold_jy: <span class="number">0.01</span>,
-<a href=#713 id=713 data-nosnippet>713</a>                nsigma: <span class="number">5.0</span>,
-<a href=#714 id=714 data-nosnippet>714</a>                psf_cutoff: <span class="number">0.4</span>,
-<a href=#715 id=715 data-nosnippet>715</a>                minor_cycle_length: <span class="number">16</span>,
-<a href=#716 id=716 data-nosnippet>716</a>                cyclefactor: <span class="number">1.2</span>,
-<a href=#717 id=717 data-nosnippet>717</a>                min_psf_fraction: <span class="number">0.15</span>,
-<a href=#718 id=718 data-nosnippet>718</a>                max_psf_fraction: <span class="number">0.9</span>,
-<a href=#719 id=719 data-nosnippet>719</a>                mask_boxes: <span class="macro">vec!</span>[[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]],
-<a href=#720 id=720 data-nosnippet>720</a>                mask_image: <span class="prelude-val">None</span>,
-<a href=#721 id=721 data-nosnippet>721</a>                w_term_mode: ImagerWTermMode::Wproject,
-<a href=#722 id=722 data-nosnippet>722</a>                w_project_planes: <span class="prelude-val">Some</span>(<span class="number">32</span>),
-<a href=#723 id=723 data-nosnippet>723</a>                dirty_only: <span class="bool-val">true</span>,
-<a href=#724 id=724 data-nosnippet>724</a>                write_preview_pngs: <span class="bool-val">false</span>,
-<a href=#725 id=725 data-nosnippet>725</a>            },
-<a href=#726 id=726 data-nosnippet>726</a>            run: ImagerRunReport {
-<a href=#727 id=727 data-nosnippet>727</a>                warnings: <span class="macro">vec!</span>[<span class="string">"watch residuals"</span>.to_string()],
-<a href=#728 id=728 data-nosnippet>728</a>                gridded_samples: <span class="number">1024</span>,
-<a href=#729 id=729 data-nosnippet>729</a>                major_cycles: <span class="number">6</span>,
-<a href=#730 id=730 data-nosnippet>730</a>                minor_iterations: <span class="number">24</span>,
-<a href=#731 id=731 data-nosnippet>731</a>                clean_stop_reason: <span class="prelude-val">Some</span>(ImagerCleanStopReason::DivergenceDetected),
-<a href=#732 id=732 data-nosnippet>732</a>                stage_timings: <span class="kw">crate</span>::ImagerCoreStageTimings {
-<a href=#733 id=733 data-nosnippet>733</a>                    controller_overhead_ns: <span class="number">1</span>,
-<a href=#734 id=734 data-nosnippet>734</a>                    weighting_ns: <span class="number">2</span>,
-<a href=#735 id=735 data-nosnippet>735</a>                    psf_grid_ns: <span class="number">3</span>,
-<a href=#736 id=736 data-nosnippet>736</a>                    psf_fft_ns: <span class="number">4</span>,
-<a href=#737 id=737 data-nosnippet>737</a>                    psf_normalize_ns: <span class="number">5</span>,
-<a href=#738 id=738 data-nosnippet>738</a>                    model_fft_ns: <span class="number">6</span>,
-<a href=#739 id=739 data-nosnippet>739</a>                    residual_degrid_grid_ns: <span class="number">7</span>,
-<a href=#740 id=740 data-nosnippet>740</a>                    residual_fft_ns: <span class="number">8</span>,
-<a href=#741 id=741 data-nosnippet>741</a>                    residual_normalize_ns: <span class="number">9</span>,
-<a href=#742 id=742 data-nosnippet>742</a>                    minor_cycle_ns: <span class="number">10</span>,
-<a href=#743 id=743 data-nosnippet>743</a>                    minor_cycle_solve_ns: <span class="number">11</span>,
-<a href=#744 id=744 data-nosnippet>744</a>                    major_cycle_refresh_ns: <span class="number">12</span>,
-<a href=#745 id=745 data-nosnippet>745</a>                    beam_fit_ns: <span class="number">13</span>,
-<a href=#746 id=746 data-nosnippet>746</a>                    restore_ns: <span class="number">14</span>,
-<a href=#747 id=747 data-nosnippet>747</a>                    total_ns: <span class="number">15</span>,
-<a href=#748 id=748 data-nosnippet>748</a>                },
-<a href=#749 id=749 data-nosnippet>749</a>                frontend_timings: <span class="kw">crate</span>::ImagerFrontendTaskStageTimings {
-<a href=#750 id=750 data-nosnippet>750</a>                    open_measurement_set_ns: <span class="number">16</span>,
-<a href=#751 id=751 data-nosnippet>751</a>                    prepare_plane_input_ns: <span class="number">17</span>,
-<a href=#752 id=752 data-nosnippet>752</a>                    extract_phase_center_ns: <span class="number">18</span>,
-<a href=#753 id=753 data-nosnippet>753</a>                    run_imaging_ns: <span class="number">19</span>,
-<a href=#754 id=754 data-nosnippet>754</a>                    build_coordinate_system_ns: <span class="number">20</span>,
-<a href=#755 id=755 data-nosnippet>755</a>                    write_products_ns: <span class="number">21</span>,
-<a href=#756 id=756 data-nosnippet>756</a>                    total_ns: <span class="number">22</span>,
-<a href=#757 id=757 data-nosnippet>757</a>                },
-<a href=#758 id=758 data-nosnippet>758</a>                channels: <span class="macro">vec!</span>[<span class="kw">crate</span>::ImagerChannelRunResult {
-<a href=#759 id=759 data-nosnippet>759</a>                    channel_index: <span class="number">2</span>,
-<a href=#760 id=760 data-nosnippet>760</a>                    major_cycles: <span class="number">5</span>,
-<a href=#761 id=761 data-nosnippet>761</a>                    minor_iterations: <span class="number">9</span>,
-<a href=#762 id=762 data-nosnippet>762</a>                    clean_stop_reason: <span class="prelude-val">Some</span>(ImagerCleanStopReason::NoCleanablePixels),
-<a href=#763 id=763 data-nosnippet>763</a>                    initial_residual_peak_jy_per_beam: <span class="number">4.0</span>,
-<a href=#764 id=764 data-nosnippet>764</a>                    final_residual_peak_jy_per_beam: <span class="number">2.0</span>,
-<a href=#765 id=765 data-nosnippet>765</a>                    final_cycle_threshold_jy_per_beam: <span class="number">0.4</span>,
-<a href=#766 id=766 data-nosnippet>766</a>                    beam_fit_available: <span class="bool-val">true</span>,
-<a href=#767 id=767 data-nosnippet>767</a>                }],
-<a href=#768 id=768 data-nosnippet>768</a>            },
-<a href=#769 id=769 data-nosnippet>769</a>            artifacts: <span class="macro">vec!</span>[ImagerArtifact {
-<a href=#770 id=770 data-nosnippet>770</a>                kind: ImagerArtifactKind::Alpha,
-<a href=#771 id=771 data-nosnippet>771</a>                label: <span class="string">"Spectral Index"</span>.to_string(),
-<a href=#772 id=772 data-nosnippet>772</a>                path: <span class="string">"/tmp/from-task.alpha"</span>.to_string(),
-<a href=#773 id=773 data-nosnippet>773</a>                exists: <span class="bool-val">true</span>,
-<a href=#774 id=774 data-nosnippet>774</a>                preview_png_path: <span class="prelude-val">Some</span>(<span class="string">"/tmp/from-task.alpha.png"</span>.to_string()),
-<a href=#775 id=775 data-nosnippet>775</a>                preview_png_exists: <span class="bool-val">false</span>,
-<a href=#776 id=776 data-nosnippet>776</a>            }],
-<a href=#777 id=777 data-nosnippet>777</a>        };
-<a href=#778 id=778 data-nosnippet>778</a>
-<a href=#779 id=779 data-nosnippet>779</a>        <span class="kw">let </span>output = ManagedImagingOutput::from_task_result(<span class="kw-2">&amp;</span>result);
-<a href=#780 id=780 data-nosnippet>780</a>
-<a href=#781 id=781 data-nosnippet>781</a>        <span class="macro">assert_eq!</span>(output.request.spectral_mode, <span class="string">"cube"</span>);
-<a href=#782 id=782 data-nosnippet>782</a>        <span class="macro">assert_eq!</span>(output.request.weighting, <span class="string">"briggs:-0.25"</span>);
-<a href=#783 id=783 data-nosnippet>783</a>        <span class="macro">assert_eq!</span>(output.request.deconvolver, <span class="string">"clark"</span>);
-<a href=#784 id=784 data-nosnippet>784</a>        <span class="macro">assert_eq!</span>(output.request.w_term_mode, <span class="string">"wproject"</span>);
-<a href=#785 id=785 data-nosnippet>785</a>        <span class="macro">assert_eq!</span>(output.request.restoring_beam_mode, <span class="string">"per_plane"</span>);
-<a href=#786 id=786 data-nosnippet>786</a>        <span class="macro">assert_eq!</span>(output.request.output_channels, <span class="number">1</span>);
-<a href=#787 id=787 data-nosnippet>787</a>        <span class="macro">assert_eq!</span>(output.request.correlation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"XX"</span>));
-<a href=#788 id=788 data-nosnippet>788</a>        <span class="macro">assert!</span>(output.request.dirty_only);
-<a href=#789 id=789 data-nosnippet>789</a>        <span class="macro">assert!</span>(!output.request.write_preview_pngs);
-<a href=#790 id=790 data-nosnippet>790</a>
-<a href=#791 id=791 data-nosnippet>791</a>        <span class="macro">assert_eq!</span>(
-<a href=#792 id=792 data-nosnippet>792</a>            output.run.clean_stop_reason.as_deref(),
-<a href=#793 id=793 data-nosnippet>793</a>            <span class="prelude-val">Some</span>(<span class="string">"DivergenceDetected"</span>)
-<a href=#794 id=794 data-nosnippet>794</a>        );
-<a href=#795 id=795 data-nosnippet>795</a>        <span class="macro">assert_eq!</span>(
-<a href=#796 id=796 data-nosnippet>796</a>            output.run.stage_timings.values_ns[<span class="number">0</span>],
-<a href=#797 id=797 data-nosnippet>797</a>            (<span class="string">"controller_total"</span>.to_string(), <span class="number">15</span>)
-<a href=#798 id=798 data-nosnippet>798</a>        );
-<a href=#799 id=799 data-nosnippet>799</a>        <span class="macro">assert_eq!</span>(
-<a href=#800 id=800 data-nosnippet>800</a>            output.run.frontend_timings.values_ns[<span class="number">6</span>],
-<a href=#801 id=801 data-nosnippet>801</a>            (<span class="string">"total"</span>.to_string(), <span class="number">22</span>)
-<a href=#802 id=802 data-nosnippet>802</a>        );
-<a href=#803 id=803 data-nosnippet>803</a>        <span class="macro">assert!</span>(output.run.channels[<span class="number">0</span>].beam_fit_available);
-<a href=#804 id=804 data-nosnippet>804</a>        <span class="macro">assert_eq!</span>(
-<a href=#805 id=805 data-nosnippet>805</a>            output.run.channels[<span class="number">0</span>].clean_stop_reason.as_deref(),
-<a href=#806 id=806 data-nosnippet>806</a>            <span class="prelude-val">Some</span>(<span class="string">"NoCleanablePixels"</span>)
-<a href=#807 id=807 data-nosnippet>807</a>        );
-<a href=#808 id=808 data-nosnippet>808</a>
-<a href=#809 id=809 data-nosnippet>809</a>        <span class="macro">assert_eq!</span>(output.artifacts.len(), <span class="number">1</span>);
-<a href=#810 id=810 data-nosnippet>810</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].kind, <span class="string">"alpha"</span>);
-<a href=#811 id=811 data-nosnippet>811</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].label, <span class="string">"Spectral Index"</span>);
-<a href=#812 id=812 data-nosnippet>812</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">0</span>].exists);
-<a href=#813 id=813 data-nosnippet>813</a>        <span class="macro">assert_eq!</span>(
-<a href=#814 id=814 data-nosnippet>814</a>            output.artifacts[<span class="number">0</span>].preview_png_path.as_deref(),
-<a href=#815 id=815 data-nosnippet>815</a>            <span class="prelude-val">Some</span>(<span class="string">"/tmp/from-task.alpha.png"</span>)
-<a href=#816 id=816 data-nosnippet>816</a>        );
-<a href=#817 id=817 data-nosnippet>817</a>        <span class="macro">assert!</span>(!output.artifacts[<span class="number">0</span>].preview_png_exists);
-<a href=#818 id=818 data-nosnippet>818</a>    }
-<a href=#819 id=819 data-nosnippet>819</a>
-<a href=#820 id=820 data-nosnippet>820</a>    <span class="attr">#[test]
-<a href=#821 id=821 data-nosnippet>821</a>    </span><span class="kw">fn </span>artifact_helpers_cover_standard_products_and_preview_flags() {
-<a href=#822 id=822 data-nosnippet>822</a>        <span class="kw">let </span>tempdir = tempdir().unwrap();
-<a href=#823 id=823 data-nosnippet>823</a>        <span class="kw">let </span>imagename = tempdir.path().join(<span class="string">"standard-output"</span>);
-<a href=#824 id=824 data-nosnippet>824</a>        fs::write(imagename.with_extension(<span class="string">"image"</span>), <span class="string">b"image"</span>).unwrap();
-<a href=#825 id=825 data-nosnippet>825</a>        fs::write(imagename.with_extension(<span class="string">"image.png"</span>), <span class="string">b"png"</span>).unwrap();
-<a href=#826 id=826 data-nosnippet>826</a>
-<a href=#827 id=827 data-nosnippet>827</a>        <span class="kw">let </span><span class="kw-2">mut </span>config = sample_cli_config(imagename.clone());
-<a href=#828 id=828 data-nosnippet>828</a>        config.deconvolver = Deconvolver::Clark;
-<a href=#829 id=829 data-nosnippet>829</a>        config.nterms = <span class="number">1</span>;
-<a href=#830 id=830 data-nosnippet>830</a>        config.spectral_mode = SpectralMode::Cube;
-<a href=#831 id=831 data-nosnippet>831</a>        config.write_preview_pngs = <span class="bool-val">true</span>;
-<a href=#832 id=832 data-nosnippet>832</a>
-<a href=#833 id=833 data-nosnippet>833</a>        <span class="kw">let </span>artifacts = imaging_artifacts(<span class="kw-2">&amp;</span>config);
-<a href=#834 id=834 data-nosnippet>834</a>        <span class="macro">assert_eq!</span>(artifacts.len(), <span class="number">4</span>);
-<a href=#835 id=835 data-nosnippet>835</a>        <span class="macro">assert_eq!</span>(
-<a href=#836 id=836 data-nosnippet>836</a>            artifacts
-<a href=#837 id=837 data-nosnippet>837</a>                .iter()
-<a href=#838 id=838 data-nosnippet>838</a>                .map(|artifact| artifact.kind.as_str())
-<a href=#839 id=839 data-nosnippet>839</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#840 id=840 data-nosnippet>840</a>            <span class="macro">vec!</span>[<span class="string">"psf"</span>, <span class="string">"residual"</span>, <span class="string">"model"</span>, <span class="string">"image"</span>]
+<a href=#623 id=623 data-nosnippet>623</a>        RunSummary {
+<a href=#624 id=624 data-nosnippet>624</a>            warnings: <span class="macro">vec!</span>[<span class="string">"warning-a"</span>.to_string()],
+<a href=#625 id=625 data-nosnippet>625</a>            gridded_samples: <span class="number">42</span>,
+<a href=#626 id=626 data-nosnippet>626</a>            major_cycles: <span class="number">3</span>,
+<a href=#627 id=627 data-nosnippet>627</a>            minor_iterations: <span class="number">9</span>,
+<a href=#628 id=628 data-nosnippet>628</a>            clean_stop_reason: <span class="prelude-val">Some</span>(CleanStopReason::CycleThresholdReached),
+<a href=#629 id=629 data-nosnippet>629</a>            channel_summaries: <span class="macro">vec!</span>[ChannelRunSummary {
+<a href=#630 id=630 data-nosnippet>630</a>                channel_index: <span class="number">7</span>,
+<a href=#631 id=631 data-nosnippet>631</a>                major_cycles: <span class="number">4</span>,
+<a href=#632 id=632 data-nosnippet>632</a>                minor_iterations: <span class="number">10</span>,
+<a href=#633 id=633 data-nosnippet>633</a>                clean_stop_reason: <span class="prelude-val">Some</span>(CleanStopReason::IterationLimitReached),
+<a href=#634 id=634 data-nosnippet>634</a>                initial_residual_peak_jy_per_beam: <span class="number">3.5</span>,
+<a href=#635 id=635 data-nosnippet>635</a>                final_residual_peak_jy_per_beam: <span class="number">1.5</span>,
+<a href=#636 id=636 data-nosnippet>636</a>                final_cycle_threshold_jy_per_beam: <span class="number">0.25</span>,
+<a href=#637 id=637 data-nosnippet>637</a>                minor_cycle_traces: Vec::new(),
+<a href=#638 id=638 data-nosnippet>638</a>                beam_fit_debug: <span class="prelude-val">None</span>,
+<a href=#639 id=639 data-nosnippet>639</a>            }],
+<a href=#640 id=640 data-nosnippet>640</a>            stage_timings,
+<a href=#641 id=641 data-nosnippet>641</a>            frontend_timings: FrontendStageTimings {
+<a href=#642 id=642 data-nosnippet>642</a>                open_measurement_set: Duration::from_nanos(<span class="number">31</span>),
+<a href=#643 id=643 data-nosnippet>643</a>                prepare_plane_input: Duration::from_nanos(<span class="number">32</span>),
+<a href=#644 id=644 data-nosnippet>644</a>                extract_phase_center: Duration::from_nanos(<span class="number">33</span>),
+<a href=#645 id=645 data-nosnippet>645</a>                run_imaging: Duration::from_nanos(<span class="number">34</span>),
+<a href=#646 id=646 data-nosnippet>646</a>                build_coordinate_system: Duration::from_nanos(<span class="number">35</span>),
+<a href=#647 id=647 data-nosnippet>647</a>                write_products: Duration::from_nanos(<span class="number">36</span>),
+<a href=#648 id=648 data-nosnippet>648</a>                total: Duration::from_nanos(<span class="number">37</span>),
+<a href=#649 id=649 data-nosnippet>649</a>            },
+<a href=#650 id=650 data-nosnippet>650</a>        }
+<a href=#651 id=651 data-nosnippet>651</a>    }
+<a href=#652 id=652 data-nosnippet>652</a>
+<a href=#653 id=653 data-nosnippet>653</a>    <span class="attr">#[test]
+<a href=#654 id=654 data-nosnippet>654</a>    </span><span class="kw">fn </span>from_run_reports_mtmfs_artifacts_and_preview_sidecars() {
+<a href=#655 id=655 data-nosnippet>655</a>        <span class="kw">let </span>tempdir = tempdir().unwrap();
+<a href=#656 id=656 data-nosnippet>656</a>        <span class="kw">let </span>imagename = tempdir.path().join(<span class="string">"managed-output"</span>);
+<a href=#657 id=657 data-nosnippet>657</a>        fs::write(imagename.with_extension(<span class="string">"psf.tt0"</span>), <span class="string">b"psf"</span>).unwrap();
+<a href=#658 id=658 data-nosnippet>658</a>        fs::write(imagename.with_extension(<span class="string">"psf.tt0.png"</span>), <span class="string">b"png"</span>).unwrap();
+<a href=#659 id=659 data-nosnippet>659</a>        fs::write(imagename.with_extension(<span class="string">"alpha"</span>), <span class="string">b"alpha"</span>).unwrap();
+<a href=#660 id=660 data-nosnippet>660</a>        fs::write(imagename.with_extension(<span class="string">"alpha.png"</span>), <span class="string">b"png"</span>).unwrap();
+<a href=#661 id=661 data-nosnippet>661</a>
+<a href=#662 id=662 data-nosnippet>662</a>        <span class="kw">let </span>output =
+<a href=#663 id=663 data-nosnippet>663</a>            ManagedImagingOutput::from_run(<span class="kw-2">&amp;</span>sample_cli_config(imagename), <span class="kw-2">&amp;</span>sample_run_summary());
+<a href=#664 id=664 data-nosnippet>664</a>
+<a href=#665 id=665 data-nosnippet>665</a>        <span class="macro">assert_eq!</span>(output.request.spectral_mode, <span class="string">"mfs"</span>);
+<a href=#666 id=666 data-nosnippet>666</a>        <span class="macro">assert_eq!</span>(output.request.weighting, <span class="string">"natural"</span>);
+<a href=#667 id=667 data-nosnippet>667</a>        <span class="macro">assert_eq!</span>(output.request.deconvolver, <span class="string">"mtmfs"</span>);
+<a href=#668 id=668 data-nosnippet>668</a>        <span class="macro">assert_eq!</span>(output.request.w_term_mode, <span class="string">"direct"</span>);
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="macro">assert_eq!</span>(output.request.restoring_beam_mode, <span class="string">"common"</span>);
+<a href=#670 id=670 data-nosnippet>670</a>        <span class="macro">assert_eq!</span>(output.request.output_channels, <span class="number">1</span>);
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="macro">assert_eq!</span>(output.request.correlation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"XX"</span>));
+<a href=#672 id=672 data-nosnippet>672</a>
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="macro">assert_eq!</span>(
+<a href=#674 id=674 data-nosnippet>674</a>            output.run.clean_stop_reason.as_deref(),
+<a href=#675 id=675 data-nosnippet>675</a>            <span class="prelude-val">Some</span>(<span class="string">"CycleThresholdReached"</span>)
+<a href=#676 id=676 data-nosnippet>676</a>        );
+<a href=#677 id=677 data-nosnippet>677</a>        <span class="macro">assert_eq!</span>(
+<a href=#678 id=678 data-nosnippet>678</a>            output.run.stage_timings.values_ns[<span class="number">0</span>],
+<a href=#679 id=679 data-nosnippet>679</a>            (<span class="string">"controller_total"</span>.to_string(), <span class="number">21</span>)
+<a href=#680 id=680 data-nosnippet>680</a>        );
+<a href=#681 id=681 data-nosnippet>681</a>        <span class="macro">assert_eq!</span>(
+<a href=#682 id=682 data-nosnippet>682</a>            output.run.frontend_timings.values_ns[<span class="number">0</span>],
+<a href=#683 id=683 data-nosnippet>683</a>            (<span class="string">"open_measurement_set"</span>.to_string(), <span class="number">31</span>)
+<a href=#684 id=684 data-nosnippet>684</a>        );
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="macro">assert_eq!</span>(output.run.channels.len(), <span class="number">1</span>);
+<a href=#686 id=686 data-nosnippet>686</a>        <span class="macro">assert_eq!</span>(output.run.channels[<span class="number">0</span>].channel_index, <span class="number">7</span>);
+<a href=#687 id=687 data-nosnippet>687</a>        <span class="macro">assert_eq!</span>(
+<a href=#688 id=688 data-nosnippet>688</a>            output.run.channels[<span class="number">0</span>].clean_stop_reason.as_deref(),
+<a href=#689 id=689 data-nosnippet>689</a>            <span class="prelude-val">Some</span>(<span class="string">"IterationLimitReached"</span>)
+<a href=#690 id=690 data-nosnippet>690</a>        );
+<a href=#691 id=691 data-nosnippet>691</a>        <span class="macro">assert!</span>(!output.run.channels[<span class="number">0</span>].beam_fit_available);
+<a href=#692 id=692 data-nosnippet>692</a>
+<a href=#693 id=693 data-nosnippet>693</a>        <span class="macro">assert_eq!</span>(output.artifacts.len(), <span class="number">9</span>);
+<a href=#694 id=694 data-nosnippet>694</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].label, <span class="string">"PSF TT0"</span>);
+<a href=#695 id=695 data-nosnippet>695</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].kind, <span class="string">"psf"</span>);
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">0</span>].exists);
+<a href=#697 id=697 data-nosnippet>697</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">0</span>].preview_png_exists);
+<a href=#698 id=698 data-nosnippet>698</a>        <span class="macro">assert!</span>(
+<a href=#699 id=699 data-nosnippet>699</a>            output.artifacts[<span class="number">0</span>]
+<a href=#700 id=700 data-nosnippet>700</a>                .preview_png_path
+<a href=#701 id=701 data-nosnippet>701</a>                .as_deref()
+<a href=#702 id=702 data-nosnippet>702</a>                .unwrap()
+<a href=#703 id=703 data-nosnippet>703</a>                .ends_with(<span class="string">".psf.tt0.png"</span>)
+<a href=#704 id=704 data-nosnippet>704</a>        );
+<a href=#705 id=705 data-nosnippet>705</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">4</span>].label, <span class="string">"PSF TT1"</span>);
+<a href=#706 id=706 data-nosnippet>706</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">4</span>].preview_png_path, <span class="prelude-val">None</span>);
+<a href=#707 id=707 data-nosnippet>707</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">8</span>].label, <span class="string">"Spectral Index"</span>);
+<a href=#708 id=708 data-nosnippet>708</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">8</span>].kind, <span class="string">"alpha"</span>);
+<a href=#709 id=709 data-nosnippet>709</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">8</span>].exists);
+<a href=#710 id=710 data-nosnippet>710</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">8</span>].preview_png_exists);
+<a href=#711 id=711 data-nosnippet>711</a>    }
+<a href=#712 id=712 data-nosnippet>712</a>
+<a href=#713 id=713 data-nosnippet>713</a>    <span class="attr">#[test]
+<a href=#714 id=714 data-nosnippet>714</a>    </span><span class="kw">fn </span>from_task_result_serializes_contract_values() {
+<a href=#715 id=715 data-nosnippet>715</a>        <span class="kw">let </span>result = ImagerRunTaskResult {
+<a href=#716 id=716 data-nosnippet>716</a>            request: ImagerRunTaskRequest {
+<a href=#717 id=717 data-nosnippet>717</a>                measurement_set: PathBuf::from(<span class="string">"/tmp/from-task.ms"</span>),
+<a href=#718 id=718 data-nosnippet>718</a>                image_name: PathBuf::from(<span class="string">"/tmp/from-task"</span>),
+<a href=#719 id=719 data-nosnippet>719</a>                image_size: <span class="number">512</span>,
+<a href=#720 id=720 data-nosnippet>720</a>                cell_arcsec: <span class="number">2.5</span>,
+<a href=#721 id=721 data-nosnippet>721</a>                field_ids: <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="number">3</span>]),
+<a href=#722 id=722 data-nosnippet>722</a>                phasecenter_field: <span class="prelude-val">None</span>,
+<a href=#723 id=723 data-nosnippet>723</a>                phasecenter: <span class="prelude-val">Some</span>(<span class="string">"J2000 00:00:00.0 +00.00.00.0"</span>.to_string()),
+<a href=#724 id=724 data-nosnippet>724</a>                ddid: <span class="prelude-val">Some</span>(<span class="number">1</span>),
+<a href=#725 id=725 data-nosnippet>725</a>                spw_selector: <span class="prelude-val">Some</span>(<span class="string">"2"</span>.to_string()),
+<a href=#726 id=726 data-nosnippet>726</a>                channel_start: <span class="prelude-val">Some</span>(<span class="number">4</span>),
+<a href=#727 id=727 data-nosnippet>727</a>                channel_count: <span class="prelude-val">Some</span>(<span class="number">8</span>),
+<a href=#728 id=728 data-nosnippet>728</a>                data_column: <span class="prelude-val">Some</span>(<span class="string">"MODEL_DATA"</span>.to_string()),
+<a href=#729 id=729 data-nosnippet>729</a>                save_model: ImagerSaveModel::ModelColumn,
+<a href=#730 id=730 data-nosnippet>730</a>                correlation: <span class="prelude-val">Some</span>(ImagerPlaneSelection::CorrXX),
+<a href=#731 id=731 data-nosnippet>731</a>                spectral_mode: ImagerSpectralMode::Cube,
+<a href=#732 id=732 data-nosnippet>732</a>                cube_axis: Default::default(),
+<a href=#733 id=733 data-nosnippet>733</a>                weighting: ImagerWeighting::Briggs { robust: -<span class="number">0.25 </span>},
+<a href=#734 id=734 data-nosnippet>734</a>                per_channel_weight_density: <span class="bool-val">true</span>,
+<a href=#735 id=735 data-nosnippet>735</a>                use_pointing: <span class="bool-val">true</span>,
+<a href=#736 id=736 data-nosnippet>736</a>                uv_taper: <span class="prelude-val">None</span>,
+<a href=#737 id=737 data-nosnippet>737</a>                restoring_beam_mode: ImagerRestoringBeamMode::PerPlane,
+<a href=#738 id=738 data-nosnippet>738</a>                deconvolver: ImagerDeconvolver::Clark,
+<a href=#739 id=739 data-nosnippet>739</a>                nterms: <span class="number">1</span>,
+<a href=#740 id=740 data-nosnippet>740</a>                multiscale_scales: <span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">5.0</span>],
+<a href=#741 id=741 data-nosnippet>741</a>                small_scale_bias: <span class="number">0.3</span>,
+<a href=#742 id=742 data-nosnippet>742</a>                niter: <span class="number">100</span>,
+<a href=#743 id=743 data-nosnippet>743</a>                gain: <span class="number">0.2</span>,
+<a href=#744 id=744 data-nosnippet>744</a>                threshold_jy: <span class="number">0.01</span>,
+<a href=#745 id=745 data-nosnippet>745</a>                nsigma: <span class="number">5.0</span>,
+<a href=#746 id=746 data-nosnippet>746</a>                psf_cutoff: <span class="number">0.4</span>,
+<a href=#747 id=747 data-nosnippet>747</a>                minor_cycle_length: <span class="number">16</span>,
+<a href=#748 id=748 data-nosnippet>748</a>                cyclefactor: <span class="number">1.2</span>,
+<a href=#749 id=749 data-nosnippet>749</a>                min_psf_fraction: <span class="number">0.15</span>,
+<a href=#750 id=750 data-nosnippet>750</a>                max_psf_fraction: <span class="number">0.9</span>,
+<a href=#751 id=751 data-nosnippet>751</a>                hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
+<a href=#752 id=752 data-nosnippet>752</a>                mask_boxes: <span class="macro">vec!</span>[[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]],
+<a href=#753 id=753 data-nosnippet>753</a>                mask_image: <span class="prelude-val">None</span>,
+<a href=#754 id=754 data-nosnippet>754</a>                w_term_mode: ImagerWTermMode::Wproject,
+<a href=#755 id=755 data-nosnippet>755</a>                w_project_planes: <span class="prelude-val">Some</span>(<span class="number">32</span>),
+<a href=#756 id=756 data-nosnippet>756</a>                dirty_only: <span class="bool-val">true</span>,
+<a href=#757 id=757 data-nosnippet>757</a>                write_preview_pngs: <span class="bool-val">false</span>,
+<a href=#758 id=758 data-nosnippet>758</a>            },
+<a href=#759 id=759 data-nosnippet>759</a>            run: ImagerRunReport {
+<a href=#760 id=760 data-nosnippet>760</a>                warnings: <span class="macro">vec!</span>[<span class="string">"watch residuals"</span>.to_string()],
+<a href=#761 id=761 data-nosnippet>761</a>                gridded_samples: <span class="number">1024</span>,
+<a href=#762 id=762 data-nosnippet>762</a>                major_cycles: <span class="number">6</span>,
+<a href=#763 id=763 data-nosnippet>763</a>                minor_iterations: <span class="number">24</span>,
+<a href=#764 id=764 data-nosnippet>764</a>                clean_stop_reason: <span class="prelude-val">Some</span>(ImagerCleanStopReason::DivergenceDetected),
+<a href=#765 id=765 data-nosnippet>765</a>                stage_timings: <span class="kw">crate</span>::ImagerCoreStageTimings {
+<a href=#766 id=766 data-nosnippet>766</a>                    controller_overhead_ns: <span class="number">1</span>,
+<a href=#767 id=767 data-nosnippet>767</a>                    weighting_ns: <span class="number">2</span>,
+<a href=#768 id=768 data-nosnippet>768</a>                    psf_grid_ns: <span class="number">3</span>,
+<a href=#769 id=769 data-nosnippet>769</a>                    psf_fft_ns: <span class="number">4</span>,
+<a href=#770 id=770 data-nosnippet>770</a>                    psf_normalize_ns: <span class="number">5</span>,
+<a href=#771 id=771 data-nosnippet>771</a>                    model_fft_ns: <span class="number">6</span>,
+<a href=#772 id=772 data-nosnippet>772</a>                    residual_degrid_grid_ns: <span class="number">7</span>,
+<a href=#773 id=773 data-nosnippet>773</a>                    residual_fft_ns: <span class="number">8</span>,
+<a href=#774 id=774 data-nosnippet>774</a>                    residual_normalize_ns: <span class="number">9</span>,
+<a href=#775 id=775 data-nosnippet>775</a>                    minor_cycle_ns: <span class="number">10</span>,
+<a href=#776 id=776 data-nosnippet>776</a>                    minor_cycle_solve_ns: <span class="number">11</span>,
+<a href=#777 id=777 data-nosnippet>777</a>                    major_cycle_refresh_ns: <span class="number">12</span>,
+<a href=#778 id=778 data-nosnippet>778</a>                    beam_fit_ns: <span class="number">13</span>,
+<a href=#779 id=779 data-nosnippet>779</a>                    restore_ns: <span class="number">14</span>,
+<a href=#780 id=780 data-nosnippet>780</a>                    total_ns: <span class="number">15</span>,
+<a href=#781 id=781 data-nosnippet>781</a>                },
+<a href=#782 id=782 data-nosnippet>782</a>                frontend_timings: <span class="kw">crate</span>::ImagerFrontendTaskStageTimings {
+<a href=#783 id=783 data-nosnippet>783</a>                    open_measurement_set_ns: <span class="number">16</span>,
+<a href=#784 id=784 data-nosnippet>784</a>                    prepare_plane_input_ns: <span class="number">17</span>,
+<a href=#785 id=785 data-nosnippet>785</a>                    extract_phase_center_ns: <span class="number">18</span>,
+<a href=#786 id=786 data-nosnippet>786</a>                    run_imaging_ns: <span class="number">19</span>,
+<a href=#787 id=787 data-nosnippet>787</a>                    build_coordinate_system_ns: <span class="number">20</span>,
+<a href=#788 id=788 data-nosnippet>788</a>                    write_products_ns: <span class="number">21</span>,
+<a href=#789 id=789 data-nosnippet>789</a>                    total_ns: <span class="number">22</span>,
+<a href=#790 id=790 data-nosnippet>790</a>                },
+<a href=#791 id=791 data-nosnippet>791</a>                channels: <span class="macro">vec!</span>[<span class="kw">crate</span>::ImagerChannelRunResult {
+<a href=#792 id=792 data-nosnippet>792</a>                    channel_index: <span class="number">2</span>,
+<a href=#793 id=793 data-nosnippet>793</a>                    major_cycles: <span class="number">5</span>,
+<a href=#794 id=794 data-nosnippet>794</a>                    minor_iterations: <span class="number">9</span>,
+<a href=#795 id=795 data-nosnippet>795</a>                    clean_stop_reason: <span class="prelude-val">Some</span>(ImagerCleanStopReason::NoCleanablePixels),
+<a href=#796 id=796 data-nosnippet>796</a>                    initial_residual_peak_jy_per_beam: <span class="number">4.0</span>,
+<a href=#797 id=797 data-nosnippet>797</a>                    final_residual_peak_jy_per_beam: <span class="number">2.0</span>,
+<a href=#798 id=798 data-nosnippet>798</a>                    final_cycle_threshold_jy_per_beam: <span class="number">0.4</span>,
+<a href=#799 id=799 data-nosnippet>799</a>                    beam_fit_available: <span class="bool-val">true</span>,
+<a href=#800 id=800 data-nosnippet>800</a>                }],
+<a href=#801 id=801 data-nosnippet>801</a>            },
+<a href=#802 id=802 data-nosnippet>802</a>            artifacts: <span class="macro">vec!</span>[ImagerArtifact {
+<a href=#803 id=803 data-nosnippet>803</a>                kind: ImagerArtifactKind::Alpha,
+<a href=#804 id=804 data-nosnippet>804</a>                label: <span class="string">"Spectral Index"</span>.to_string(),
+<a href=#805 id=805 data-nosnippet>805</a>                path: <span class="string">"/tmp/from-task.alpha"</span>.to_string(),
+<a href=#806 id=806 data-nosnippet>806</a>                exists: <span class="bool-val">true</span>,
+<a href=#807 id=807 data-nosnippet>807</a>                preview_png_path: <span class="prelude-val">Some</span>(<span class="string">"/tmp/from-task.alpha.png"</span>.to_string()),
+<a href=#808 id=808 data-nosnippet>808</a>                preview_png_exists: <span class="bool-val">false</span>,
+<a href=#809 id=809 data-nosnippet>809</a>            }],
+<a href=#810 id=810 data-nosnippet>810</a>        };
+<a href=#811 id=811 data-nosnippet>811</a>
+<a href=#812 id=812 data-nosnippet>812</a>        <span class="kw">let </span>output = ManagedImagingOutput::from_task_result(<span class="kw-2">&amp;</span>result);
+<a href=#813 id=813 data-nosnippet>813</a>
+<a href=#814 id=814 data-nosnippet>814</a>        <span class="macro">assert_eq!</span>(output.request.spectral_mode, <span class="string">"cube"</span>);
+<a href=#815 id=815 data-nosnippet>815</a>        <span class="macro">assert_eq!</span>(output.request.weighting, <span class="string">"briggs:-0.25"</span>);
+<a href=#816 id=816 data-nosnippet>816</a>        <span class="macro">assert_eq!</span>(output.request.deconvolver, <span class="string">"clark"</span>);
+<a href=#817 id=817 data-nosnippet>817</a>        <span class="macro">assert_eq!</span>(output.request.w_term_mode, <span class="string">"wproject"</span>);
+<a href=#818 id=818 data-nosnippet>818</a>        <span class="macro">assert_eq!</span>(output.request.save_model, <span class="string">"modelcolumn"</span>);
+<a href=#819 id=819 data-nosnippet>819</a>        <span class="macro">assert_eq!</span>(output.request.restoring_beam_mode, <span class="string">"per_plane"</span>);
+<a href=#820 id=820 data-nosnippet>820</a>        <span class="macro">assert_eq!</span>(output.request.output_channels, <span class="number">1</span>);
+<a href=#821 id=821 data-nosnippet>821</a>        <span class="macro">assert_eq!</span>(output.request.correlation.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"XX"</span>));
+<a href=#822 id=822 data-nosnippet>822</a>        <span class="macro">assert!</span>(output.request.dirty_only);
+<a href=#823 id=823 data-nosnippet>823</a>        <span class="macro">assert!</span>(!output.request.write_preview_pngs);
+<a href=#824 id=824 data-nosnippet>824</a>
+<a href=#825 id=825 data-nosnippet>825</a>        <span class="macro">assert_eq!</span>(
+<a href=#826 id=826 data-nosnippet>826</a>            output.run.clean_stop_reason.as_deref(),
+<a href=#827 id=827 data-nosnippet>827</a>            <span class="prelude-val">Some</span>(<span class="string">"DivergenceDetected"</span>)
+<a href=#828 id=828 data-nosnippet>828</a>        );
+<a href=#829 id=829 data-nosnippet>829</a>        <span class="macro">assert_eq!</span>(
+<a href=#830 id=830 data-nosnippet>830</a>            output.run.stage_timings.values_ns[<span class="number">0</span>],
+<a href=#831 id=831 data-nosnippet>831</a>            (<span class="string">"controller_total"</span>.to_string(), <span class="number">15</span>)
+<a href=#832 id=832 data-nosnippet>832</a>        );
+<a href=#833 id=833 data-nosnippet>833</a>        <span class="macro">assert_eq!</span>(
+<a href=#834 id=834 data-nosnippet>834</a>            output.run.frontend_timings.values_ns[<span class="number">6</span>],
+<a href=#835 id=835 data-nosnippet>835</a>            (<span class="string">"total"</span>.to_string(), <span class="number">22</span>)
+<a href=#836 id=836 data-nosnippet>836</a>        );
+<a href=#837 id=837 data-nosnippet>837</a>        <span class="macro">assert!</span>(output.run.channels[<span class="number">0</span>].beam_fit_available);
+<a href=#838 id=838 data-nosnippet>838</a>        <span class="macro">assert_eq!</span>(
+<a href=#839 id=839 data-nosnippet>839</a>            output.run.channels[<span class="number">0</span>].clean_stop_reason.as_deref(),
+<a href=#840 id=840 data-nosnippet>840</a>            <span class="prelude-val">Some</span>(<span class="string">"NoCleanablePixels"</span>)
 <a href=#841 id=841 data-nosnippet>841</a>        );
-<a href=#842 id=842 data-nosnippet>842</a>        <span class="macro">assert_eq!</span>(artifacts[<span class="number">0</span>].label, <span class="string">"PSF"</span>);
-<a href=#843 id=843 data-nosnippet>843</a>        <span class="macro">assert!</span>(!artifacts[<span class="number">0</span>].exists);
-<a href=#844 id=844 data-nosnippet>844</a>        <span class="macro">assert_eq!</span>(
-<a href=#845 id=845 data-nosnippet>845</a>            artifacts[<span class="number">0</span>].preview_png_path.as_deref(),
-<a href=#846 id=846 data-nosnippet>846</a>            <span class="prelude-val">Some</span>(
-<a href=#847 id=847 data-nosnippet>847</a>                imagename
-<a href=#848 id=848 data-nosnippet>848</a>                    .with_extension(<span class="string">"psf.png"</span>)
-<a href=#849 id=849 data-nosnippet>849</a>                    .to_string_lossy()
-<a href=#850 id=850 data-nosnippet>850</a>                    .as_ref()
-<a href=#851 id=851 data-nosnippet>851</a>            )
-<a href=#852 id=852 data-nosnippet>852</a>        );
-<a href=#853 id=853 data-nosnippet>853</a>        <span class="macro">assert_eq!</span>(artifacts[<span class="number">3</span>].label, <span class="string">"Restored Image"</span>);
-<a href=#854 id=854 data-nosnippet>854</a>        <span class="macro">assert!</span>(artifacts[<span class="number">3</span>].exists);
-<a href=#855 id=855 data-nosnippet>855</a>        <span class="macro">assert!</span>(artifacts[<span class="number">3</span>].preview_png_exists);
-<a href=#856 id=856 data-nosnippet>856</a>
-<a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">let </span>manual = artifact(
-<a href=#858 id=858 data-nosnippet>858</a>            label_for_term(<span class="string">"Residual"</span>, <span class="number">2</span>),
-<a href=#859 id=859 data-nosnippet>859</a>            <span class="string">"residual"</span>,
-<a href=#860 id=860 data-nosnippet>860</a>            imagename.with_extension(<span class="string">"residual"</span>),
-<a href=#861 id=861 data-nosnippet>861</a>            <span class="prelude-val">None</span>,
-<a href=#862 id=862 data-nosnippet>862</a>        );
-<a href=#863 id=863 data-nosnippet>863</a>        <span class="macro">assert_eq!</span>(manual.label, <span class="string">"Residual TT2"</span>);
-<a href=#864 id=864 data-nosnippet>864</a>        <span class="macro">assert_eq!</span>(manual.kind, <span class="string">"residual"</span>);
-<a href=#865 id=865 data-nosnippet>865</a>        <span class="macro">assert!</span>(!manual.exists);
-<a href=#866 id=866 data-nosnippet>866</a>        <span class="macro">assert_eq!</span>(manual.preview_png_path, <span class="prelude-val">None</span>);
-<a href=#867 id=867 data-nosnippet>867</a>        <span class="macro">assert!</span>(!manual.preview_png_exists);
-<a href=#868 id=868 data-nosnippet>868</a>    }
-<a href=#869 id=869 data-nosnippet>869</a>}
+<a href=#842 id=842 data-nosnippet>842</a>
+<a href=#843 id=843 data-nosnippet>843</a>        <span class="macro">assert_eq!</span>(output.artifacts.len(), <span class="number">1</span>);
+<a href=#844 id=844 data-nosnippet>844</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].kind, <span class="string">"alpha"</span>);
+<a href=#845 id=845 data-nosnippet>845</a>        <span class="macro">assert_eq!</span>(output.artifacts[<span class="number">0</span>].label, <span class="string">"Spectral Index"</span>);
+<a href=#846 id=846 data-nosnippet>846</a>        <span class="macro">assert!</span>(output.artifacts[<span class="number">0</span>].exists);
+<a href=#847 id=847 data-nosnippet>847</a>        <span class="macro">assert_eq!</span>(
+<a href=#848 id=848 data-nosnippet>848</a>            output.artifacts[<span class="number">0</span>].preview_png_path.as_deref(),
+<a href=#849 id=849 data-nosnippet>849</a>            <span class="prelude-val">Some</span>(<span class="string">"/tmp/from-task.alpha.png"</span>)
+<a href=#850 id=850 data-nosnippet>850</a>        );
+<a href=#851 id=851 data-nosnippet>851</a>        <span class="macro">assert!</span>(!output.artifacts[<span class="number">0</span>].preview_png_exists);
+<a href=#852 id=852 data-nosnippet>852</a>    }
+<a href=#853 id=853 data-nosnippet>853</a>
+<a href=#854 id=854 data-nosnippet>854</a>    <span class="attr">#[test]
+<a href=#855 id=855 data-nosnippet>855</a>    </span><span class="kw">fn </span>artifact_helpers_cover_standard_products_and_preview_flags() {
+<a href=#856 id=856 data-nosnippet>856</a>        <span class="kw">let </span>tempdir = tempdir().unwrap();
+<a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">let </span>imagename = tempdir.path().join(<span class="string">"standard-output"</span>);
+<a href=#858 id=858 data-nosnippet>858</a>        fs::write(imagename.with_extension(<span class="string">"image"</span>), <span class="string">b"image"</span>).unwrap();
+<a href=#859 id=859 data-nosnippet>859</a>        fs::write(imagename.with_extension(<span class="string">"image.png"</span>), <span class="string">b"png"</span>).unwrap();
+<a href=#860 id=860 data-nosnippet>860</a>
+<a href=#861 id=861 data-nosnippet>861</a>        <span class="kw">let </span><span class="kw-2">mut </span>config = sample_cli_config(imagename.clone());
+<a href=#862 id=862 data-nosnippet>862</a>        config.deconvolver = Deconvolver::Clark;
+<a href=#863 id=863 data-nosnippet>863</a>        config.nterms = <span class="number">1</span>;
+<a href=#864 id=864 data-nosnippet>864</a>        config.spectral_mode = SpectralMode::Cube;
+<a href=#865 id=865 data-nosnippet>865</a>        config.write_preview_pngs = <span class="bool-val">true</span>;
+<a href=#866 id=866 data-nosnippet>866</a>
+<a href=#867 id=867 data-nosnippet>867</a>        <span class="kw">let </span>artifacts = imaging_artifacts(<span class="kw-2">&amp;</span>config);
+<a href=#868 id=868 data-nosnippet>868</a>        <span class="macro">assert_eq!</span>(artifacts.len(), <span class="number">4</span>);
+<a href=#869 id=869 data-nosnippet>869</a>        <span class="macro">assert_eq!</span>(
+<a href=#870 id=870 data-nosnippet>870</a>            artifacts
+<a href=#871 id=871 data-nosnippet>871</a>                .iter()
+<a href=#872 id=872 data-nosnippet>872</a>                .map(|artifact| artifact.kind.as_str())
+<a href=#873 id=873 data-nosnippet>873</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#874 id=874 data-nosnippet>874</a>            <span class="macro">vec!</span>[<span class="string">"psf"</span>, <span class="string">"residual"</span>, <span class="string">"model"</span>, <span class="string">"image"</span>]
+<a href=#875 id=875 data-nosnippet>875</a>        );
+<a href=#876 id=876 data-nosnippet>876</a>        <span class="macro">assert_eq!</span>(artifacts[<span class="number">0</span>].label, <span class="string">"PSF"</span>);
+<a href=#877 id=877 data-nosnippet>877</a>        <span class="macro">assert!</span>(!artifacts[<span class="number">0</span>].exists);
+<a href=#878 id=878 data-nosnippet>878</a>        <span class="macro">assert_eq!</span>(
+<a href=#879 id=879 data-nosnippet>879</a>            artifacts[<span class="number">0</span>].preview_png_path.as_deref(),
+<a href=#880 id=880 data-nosnippet>880</a>            <span class="prelude-val">Some</span>(
+<a href=#881 id=881 data-nosnippet>881</a>                imagename
+<a href=#882 id=882 data-nosnippet>882</a>                    .with_extension(<span class="string">"psf.png"</span>)
+<a href=#883 id=883 data-nosnippet>883</a>                    .to_string_lossy()
+<a href=#884 id=884 data-nosnippet>884</a>                    .as_ref()
+<a href=#885 id=885 data-nosnippet>885</a>            )
+<a href=#886 id=886 data-nosnippet>886</a>        );
+<a href=#887 id=887 data-nosnippet>887</a>        <span class="macro">assert_eq!</span>(artifacts[<span class="number">3</span>].label, <span class="string">"Restored Image"</span>);
+<a href=#888 id=888 data-nosnippet>888</a>        <span class="macro">assert!</span>(artifacts[<span class="number">3</span>].exists);
+<a href=#889 id=889 data-nosnippet>889</a>        <span class="macro">assert!</span>(artifacts[<span class="number">3</span>].preview_png_exists);
+<a href=#890 id=890 data-nosnippet>890</a>
+<a href=#891 id=891 data-nosnippet>891</a>        <span class="kw">let </span>manual = artifact(
+<a href=#892 id=892 data-nosnippet>892</a>            label_for_term(<span class="string">"Residual"</span>, <span class="number">2</span>),
+<a href=#893 id=893 data-nosnippet>893</a>            <span class="string">"residual"</span>,
+<a href=#894 id=894 data-nosnippet>894</a>            imagename.with_extension(<span class="string">"residual"</span>),
+<a href=#895 id=895 data-nosnippet>895</a>            <span class="prelude-val">None</span>,
+<a href=#896 id=896 data-nosnippet>896</a>        );
+<a href=#897 id=897 data-nosnippet>897</a>        <span class="macro">assert_eq!</span>(manual.label, <span class="string">"Residual TT2"</span>);
+<a href=#898 id=898 data-nosnippet>898</a>        <span class="macro">assert_eq!</span>(manual.kind, <span class="string">"residual"</span>);
+<a href=#899 id=899 data-nosnippet>899</a>        <span class="macro">assert!</span>(!manual.exists);
+<a href=#900 id=900 data-nosnippet>900</a>        <span class="macro">assert_eq!</span>(manual.preview_png_path, <span class="prelude-val">None</span>);
+<a href=#901 id=901 data-nosnippet>901</a>        <span class="macro">assert!</span>(!manual.preview_png_exists);
+<a href=#902 id=902 data-nosnippet>902</a>    }
+<a href=#903 id=903 data-nosnippet>903</a>}
 </code></pre></div></section></main></body></html>

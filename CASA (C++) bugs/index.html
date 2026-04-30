@@ -625,17 +625,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#casa-rs-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        casa-rs policy
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#likely-mechanism_1" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -738,8 +727,7 @@ parity work that surfaced this CASA-side issue.</p>
 <h2 id="hogbom-niter-off-by-one-bug">Hogbom <code>niter</code> off-by-one bug<a class="headerlink" href="#hogbom-niter-off-by-one-bug" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-04-05</li>
-<li>Status: known CASA bug / legacy interface mismatch; documented Rust
-  divergence</li>
+<li>Status: likely CASA bug / legacy interface mismatch</li>
 <li>Affected code:</li>
 <li><code>casatools/src/code/synthesis/ImagerObjects/SynthesisDeconvolver.cc</code></li>
 <li><code>casatools/src/code/synthesis/ImagerObjects/SDAlgorithmHogbomClean.cc</code></li>
@@ -749,12 +737,11 @@ parity work that surfaced this CASA-side issue.</p>
 <h3 id="summary_2">Summary<a class="headerlink" href="#summary_2" title="Permanent link">&para;</a></h3>
 <p>In the current CASA <code>tclean(..., deconvolver='hogbom')</code> path, <code>niter=1</code> appears able to commit
 two clean components inside a single minor cycle while still reporting <code>iterdone = 1</code>.</p>
-<h3 id="casa-rs-policy">casa-rs policy<a class="headerlink" href="#casa-rs-policy" title="Permanent link">&para;</a></h3>
-<p>casa-rs does <strong>not</strong> reproduce this behavior. In Rust imaging code, <code>niter</code>
-is treated as a real cap on committed Hogbom component updates. Any remaining
-CASA mismatch that depends on the extra component should be documented as an
-intentional divergence against this upstream bug, not as a parity failure to
-"fix" by reintroducing the bug.</p>
+<p>The effect is not limited to the top-level <code>niter=1</code> case. Any CASA Hogbom
+minor-cycle call that enters <code>hclean</code> with a positive <code>cycleNiter</code> may commit
+one more component than the reported minor-cycle count. In a Cotton-Schwab run,
+that means the model, residual, restored image, and controller stop/refresh
+decisions can shift by up to one extra component per Hogbom minor-cycle block.</p>
 <p>The concrete repro described in the attached note used:</p>
 <ul>
 <li>dataset: <code>.../casatestdata/measurementset/vla/sim_data_VLA_jet.ms</code></li>
@@ -780,6 +767,12 @@ which matches the observed behavior.</p>
 </ol>
 <p>Their sum matched the reported <code>modelFlux</code>, which makes this look like an actual extra component
 update rather than a display or reporting artifact.</p>
+<p>A second trace on the ALMA TW Hydra tutorial data used <code>tclean(..., deconvolver='hogbom',
+niter=1, cycleniter=1, weighting='briggs', robust=0.5, imsize=250, cell='0.1arcsec')</code>.
+CASA reported one minor iteration, but the model flux was <code>0.0569704 Jy</code>; the dirty-image
+peak was <code>0.299844 Jy/beam</code>, so one strict-gain component at <code>gain=0.1</code> would account for
+only about <code>0.0299844 Jy</code>. The reported model flux is therefore consistent with two committed
+Hogbom components in that minor-cycle call.</p>
 
 
 

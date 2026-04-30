@@ -814,8 +814,7 @@ virtual environment.</p>
 Rust and build locally:</p>
 <div class="codehilite"><pre><span></span><code>curl<span class="w"> </span>https://sh.rustup.rs<span class="w"> </span>-sSf<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
 <span class="nb">source</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$HOME</span><span class="s2">/.cargo/env&quot;</span>
-cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>casars<span class="w"> </span>--bin<span class="w"> </span>casars
-cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>casa-calibration<span class="w"> </span>--bin<span class="w"> </span>calibrate
+cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>--workspace<span class="w"> </span>--bins
 </code></pre></div>
 
 <p>To package a local release-style bundle, run:</p>

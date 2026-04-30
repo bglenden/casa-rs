@@ -1,0 +1,1027 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Wave 3 Issue 118 - ALMA First Look TW Hydra Self-Calibration Parity - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#wave-3-issue-118-alma-first-look-tw-hydra-self-calibration-parity" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Wave 3 Issue 118 - ALMA First Look TW Hydra Self-Calibration Parity
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#tutorial-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tutorial Mapping
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#full-loop-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Full Loop Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#timing-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timing Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="wave-3-issue-118-alma-first-look-tw-hydra-self-calibration-parity">Wave 3 Issue 118 - ALMA First Look TW Hydra Self-Calibration Parity<a class="headerlink" href="#wave-3-issue-118-alma-first-look-tw-hydra-self-calibration-parity" title="Permanent link">&para;</a></h1>
+<p>Truth class: current descriptive
+Last reality check: 2026-04-29
+Verification: just verify; full TW Hydra self-cal loop commands and evidence below</p>
+<p>Wave issue: #140
+Child issue: #118</p>
+<p>This note records the CASA-to-casa-rs mapping for the ALMA First Look / TW Hydra
+self-calibration loop. It builds on the #117 MFS foundation and keeps task
+ownership in the existing <code>casars-imager</code> and <code>calibrate</code> executables, with the
+Python wrapper staying a thin JSON-protocol client.</p>
+<h2 id="tutorial-mapping">Tutorial Mapping<a class="headerlink" href="#tutorial-mapping" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>CASA tutorial operation</th>
+<th>casa-rs owner</th>
+<th>Wave 3 #118 mapping</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tclean(..., savemodel="modelcolumn")</code></td>
+<td><code>casars-imager</code></td>
+<td><code>--savemodel modelcolumn</code> predicts the final clean model into MAIN.MODEL_DATA.</td>
+</tr>
+<tr>
+<td><code>gaincal(..., calmode="p", gaintype="G"|"T")</code></td>
+<td><code>calibrate solve-gain</code></td>
+<td><code>--model-column --mode-gain p --gain-type g|t --minsnr 3.0</code> solves from MODEL_DATA and flags low-SNR solutions.</td>
+</tr>
+<tr>
+<td><code>gaincal(..., calmode="ap", gaintype="T", solnorm=True)</code></td>
+<td><code>calibrate solve-gain</code></td>
+<td><code>--mode-gain ap --gain-type t --solnorm --minsnr 3.0</code> solves final amplitude+phase gains.</td>
+</tr>
+<tr>
+<td><code>applycal(..., interp=["linear"], calwt=False)</code></td>
+<td><code>calibrate apply</code></td>
+<td>Applies the current caltable chain without calibration weight mutation.</td>
+</tr>
+<tr>
+<td><code>split(..., datacolumn="corrected")</code></td>
+<td><code>calibrate export-corrected</code></td>
+<td>Copies selected CORRECTED_DATA into DATA in a selected output MS.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="implementation-notes">Implementation Notes<a class="headerlink" href="#implementation-notes" title="Permanent link">&para;</a></h2>
+<p>Corrected-data export now honors the same structured MS selection controls as
+the rest of the calibration surface. For the tutorial this means the Rust split
+step materializes the <code>field=5, spw=0</code> self-cal dataset instead of copying the
+full calibrated MS.</p>
+<p>The gain solver now stores CASA-style diagnostics in <code>PARAMERR</code>, <code>SNR</code>, and
+<code>WEIGHT</code>. <code>PARAMERR</code> is derived from the final Hessian and reduced chi-square,
+<code>SNR = abs(CPARAM) / PARAMERR</code>, and <code>--minsnr</code> flags solutions whose SNR is not
+greater than the threshold. The CLI/task/Python defaults are <code>minsnr=3.0</code> and
+<code>minblperant=4</code>, matching CASA's gaincal defaults; lower-level Rust tests use
+<code>min_snr=0.0</code> and <code>min_baselines_per_antenna=0</code> where they need to exercise pure
+solver behavior without threshold or baseline-count flagging. No extra SNR
+threshold cushion is applied.</p>
+<p>MODEL_DATA solves weight each sample by visibility weight times model strength,
+<code>weight * |MODEL_DATA|^2</code>. On the isolated first phase solve using CASA-written
+MODEL_DATA, this reduced the common-solution phase RMS to
+<code>0.02961474863587555 rad</code>.</p>
+<p><code>savemodel=modelcolumn</code> now uses the same FFT-backed standard-gridder prediction
+path as the major-cycle residual refresh instead of direct component summation,
+and apply/export write back only the changed tiled columns where the MS layout
+permits it.</p>
+<p>Linear time interpolation of complex calibration tables now follows CASA's
+<code>ROCTMainColumns::fparamArray("") -&gt; CTTimeInterp1 -&gt; RIorAPArray</code> path:
+<code>CPARAM</code> is converted to tracked amplitude/phase, interpolated as floats, and
+converted back to complex gains. Applying CASA's own <code>phase_2.cal</code> with
+casa-rs now matches CASA on unflagged <code>CORRECTED_DATA</code> with median relative
+difference <code>8.1e-8</code>, p95 <code>2.7e-7</code>, and max <code>1.4e-6</code>; the remaining high-tail
+samples in the all-sample comparison are flagged in both CASA and casa-rs.</p>
+<p>Scalar <code>T</code> phase solves now keep parallel-hand correlations as separate
+frequency/time-collapsed residual contributions until graph accumulation.
+CASA uses one scalar parameter for <code>T Jones</code>, but it does not average RR and LL
+into one complex pseudo-sample before phase normalization. <code>T</code> also keeps
+unflagged parallel-hand samples when the other hand is flagged; the stricter
+correlation-independent channel flagging is used for <code>G</code>.</p>
+<p>For MODEL_DATA solves, scalar <code>T</code> now follows CASA's per-correlation model
+normalization: each parallel hand is divided by its own MODEL_DATA value and
+weighted by that model amplitude squared before the hands contribute to the
+shared scalar solve. It does not form a Stokes-I-style RR/LL model average.</p>
+<p>The phase-only iterative solver now follows CASA's <code>VisCalSolver2</code> diagonal
+Levenberg-Marquardt path for complex gains: residuals are <code>predicted -
+observed</code>, the per-antenna update is <code>-grad / (2*hess)</code>, CASA's parabolic
+step-size search is applied, and phase-only normalization is deferred until the
+post-solve conditioning step. For <code>G</code> phase solves, CASA optimizes both receptor
+parameter vectors with one shared line-search chi-square. casa-rs now uses the
+same joint line search; independent per-receptor line searches reproduced the
+same input graph but could cross the SNR threshold differently. On identical
+CASA pre-solve input, <code>phase_2.cal</code> now has <code>292/292</code> flagged cells, zero flag
+mismatches, common-solution p95 phase difference <code>2.49e-6 rad</code>, and max
+<code>9.86e-6 rad</code>.</p>
+<p>CASA computes <code>PARAMERR</code> and <code>SNR</code> before global refant and phase-only
+post-solve normalization. The Rust phase-only solver preserves the
+pre-normalization gains for the Hessian and chi-square error path while writing
+phase-only <code>CPARAM</code>, matching CASA's diagnostic ordering. On identical CASA
+pre-T input, <code>phase_3.cal</code> now has <code>705/705</code> flagged cells, zero flag
+mismatches, common-solution median phase difference <code>0.00190 rad</code>, p95
+<code>0.01646 rad</code>, p99 <code>0.02428 rad</code>, and max <code>0.09418 rad</code>.</p>
+<h2 id="full-loop-evidence">Full Loop Evidence<a class="headerlink" href="#full-loop-evidence" title="Permanent link">&para;</a></h2>
+<p>CASA evidence is under:</p>
+<div class="codehilite"><pre><span></span><code>target/wdad-wave3-118/casa_fresh
+</code></pre></div>
+
+<p>The current casa-rs evidence is under:</p>
+<div class="codehilite"><pre><span></span><code>target/wdad-wave3-118/rust_full_selfcal_matched
+target/wdad-wave3-118/evidence/current_final_image_zoom_panel.png
+</code></pre></div>
+
+<p>The Rust loop used release binaries and a fresh copy of the tutorial MS:</p>
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>casars-imager<span class="w"> </span>--bin<span class="w"> </span>casars-imager<span class="w"> </span>-p<span class="w"> </span>casa-calibration<span class="w"> </span>--bin<span class="w"> </span>calibrate
+python<span class="w"> </span>target/wdad-wave3-118/run_rust_selfcal_matched.py
+</code></pre></div>
+
+<p>The final restored-image zoom panel is:</p>
+<div class="codehilite"><pre><span></span><code>target/wdad-wave3-118/evidence/current_final_image_zoom_panel.png
+</code></pre></div>
+
+<p>Final restored image comparison:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th style="text-align: right;">CASA</th>
+<th style="text-align: right;">casa-rs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>peak</td>
+<td style="text-align: right;"><code>0.388116</code></td>
+<td style="text-align: right;"><code>0.389000</code></td>
+</tr>
+<tr>
+<td>difference RMS</td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"><code>0.000363</code></td>
+</tr>
+<tr>
+<td>max absolute difference</td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"><code>0.002484</code></td>
+</tr>
+<tr>
+<td>correlation</td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"><code>0.999987</code></td>
+</tr>
+</tbody>
+</table>
+<p>Current restored image progression:</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th style="text-align: right;">CASA peak</th>
+<th style="text-align: right;">casa-rs peak</th>
+<th style="text-align: right;">diff RMS</th>
+<th style="text-align: right;">correlation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>first image</td>
+<td style="text-align: right;"><code>0.307186</code></td>
+<td style="text-align: right;"><code>0.307009</code></td>
+<td style="text-align: right;"><code>0.000134</code></td>
+<td style="text-align: right;"><code>0.999994</code></td>
+</tr>
+<tr>
+<td>second image</td>
+<td style="text-align: right;"><code>0.338573</code></td>
+<td style="text-align: right;"><code>0.338611</code></td>
+<td style="text-align: right;"><code>0.000134</code></td>
+<td style="text-align: right;"><code>0.999995</code></td>
+</tr>
+<tr>
+<td>third image</td>
+<td style="text-align: right;"><code>0.366629</code></td>
+<td style="text-align: right;"><code>0.366581</code></td>
+<td style="text-align: right;"><code>0.000132</code></td>
+<td style="text-align: right;"><code>0.999996</code></td>
+</tr>
+<tr>
+<td>fourth image</td>
+<td style="text-align: right;"><code>0.385059</code></td>
+<td style="text-align: right;"><code>0.385210</code></td>
+<td style="text-align: right;"><code>0.000202</code></td>
+<td style="text-align: right;"><code>0.999994</code></td>
+</tr>
+<tr>
+<td>final image</td>
+<td style="text-align: right;"><code>0.388116</code></td>
+<td style="text-align: right;"><code>0.389000</code></td>
+<td style="text-align: right;"><code>0.000363</code></td>
+<td style="text-align: right;"><code>0.999987</code></td>
+</tr>
+</tbody>
+</table>
+<p>The restored image loop now stays close through the final image. The remaining
+differences are small compared with the prior phase-2/T divergence and are
+consistent with the remaining marginal SNR/flag decisions plus small clean
+iteration differences.</p>
+<p>A matched solution-rank comparison on the final CASA/casa-rs runs still shows
+broad tails:</p>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Metric</th>
+<th style="text-align: right;">Median</th>
+<th style="text-align: right;">95th percentile</th>
+<th style="text-align: right;">98th percentile</th>
+<th style="text-align: right;">99th percentile</th>
+<th style="text-align: right;">Max</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>phase.cal</code></td>
+<td>abs phase diff rad</td>
+<td style="text-align: right;"><code>0.0021</code></td>
+<td style="text-align: right;"><code>0.0094</code></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"><code>0.0115</code></td>
+<td style="text-align: right;"><code>0.0122</code></td>
+</tr>
+<tr>
+<td><code>phase_2.cal</code></td>
+<td>abs phase diff rad</td>
+<td style="text-align: right;"><code>0.0022</code></td>
+<td style="text-align: right;"><code>0.0105</code></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"><code>0.0189</code></td>
+<td style="text-align: right;"><code>0.0294</code></td>
+</tr>
+<tr>
+<td><code>phase_3.cal</code></td>
+<td>abs phase diff rad, full-chain run</td>
+<td style="text-align: right;"><code>0.0031</code></td>
+<td style="text-align: right;"><code>0.0172</code></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"><code>0.0276</code></td>
+<td style="text-align: right;"><code>0.0980</code></td>
+</tr>
+<tr>
+<td><code>phase_3.cal</code></td>
+<td>abs phase diff rad, isolated CASA pre-T input</td>
+<td style="text-align: right;"><code>0.0019</code></td>
+<td style="text-align: right;"><code>0.0165</code></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"><code>0.0243</code></td>
+<td style="text-align: right;"><code>0.0942</code></td>
+</tr>
+<tr>
+<td><code>amp.cal</code></td>
+<td>fractional amplitude diff</td>
+<td style="text-align: right;"><code>0.0101</code></td>
+<td style="text-align: right;"><code>0.0409</code></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"><code>0.0643</code></td>
+<td style="text-align: right;"><code>0.0970</code></td>
+</tr>
+</tbody>
+</table>
+<p>Flag parity is exact for <code>phase.cal</code>, <code>phase_2.cal</code>, and <code>amp.cal</code> in the
+current full-chain run. <code>phase_3.cal</code> differs by 2 cells in the full-chain run
+because small upstream imaging/model differences move marginal SNR decisions;
+on identical CASA pre-T input <code>phase_3.cal</code> has zero flag mismatches.</p>
+<h2 id="timing-evidence">Timing Evidence<a class="headerlink" href="#timing-evidence" title="Permanent link">&para;</a></h2>
+<p>Fresh full-loop timings were collected on 2026-04-28 with CASA run through:</p>
+<div class="codehilite"><pre><span></span><code>/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python
+</code></pre></div>
+
+<p>CASA evidence is under:</p>
+<div class="codehilite"><pre><span></span><code>target/wdad-wave3-118/casa_fresh
+</code></pre></div>
+
+<p>Matched casa-rs evidence is under:</p>
+<div class="codehilite"><pre><span></span><code>target/wdad-wave3-118/rust_full_selfcal_matched
+</code></pre></div>
+
+<p>Current matched full-loop totals:</p>
+<table>
+<thead>
+<tr>
+<th>Runtime</th>
+<th style="text-align: right;">Total seconds</th>
+<th style="text-align: right;">Imaging seconds</th>
+<th style="text-align: right;">Calibration/apply/export seconds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CASA</td>
+<td style="text-align: right;"><code>175.962</code></td>
+<td style="text-align: right;"><code>166.449</code></td>
+<td style="text-align: right;"><code>9.513</code></td>
+</tr>
+<tr>
+<td>casa-rs</td>
+<td style="text-align: right;"><code>176.736</code></td>
+<td style="text-align: right;"><code>139.389</code></td>
+<td style="text-align: right;"><code>37.347</code></td>
+</tr>
+</tbody>
+</table>
+<p>Current matched casa-rs full-loop timings:</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th style="text-align: right;">Seconds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>first image</td>
+<td style="text-align: right;"><code>27.751</code></td>
+</tr>
+<tr>
+<td>phase inf G solve</td>
+<td style="text-align: right;"><code>3.398</code></td>
+</tr>
+<tr>
+<td>apply phase inf</td>
+<td style="text-align: right;"><code>5.797</code></td>
+</tr>
+<tr>
+<td>split selfcal</td>
+<td style="text-align: right;"><code>6.178</code></td>
+</tr>
+<tr>
+<td>second image</td>
+<td style="text-align: right;"><code>30.386</code></td>
+</tr>
+<tr>
+<td>phase 170s G solve</td>
+<td style="text-align: right;"><code>2.980</code></td>
+</tr>
+<tr>
+<td>apply phase 170s</td>
+<td style="text-align: right;"><code>3.032</code></td>
+</tr>
+<tr>
+<td>split selfcal 2</td>
+<td style="text-align: right;"><code>1.727</code></td>
+</tr>
+<tr>
+<td>third image</td>
+<td style="text-align: right;"><code>25.145</code></td>
+</tr>
+<tr>
+<td>phase 30s T solve</td>
+<td style="text-align: right;"><code>2.656</code></td>
+</tr>
+<tr>
+<td>apply phase 30s</td>
+<td style="text-align: right;"><code>2.975</code></td>
+</tr>
+<tr>
+<td>split selfcal 3</td>
+<td style="text-align: right;"><code>1.684</code></td>
+</tr>
+<tr>
+<td>fourth image</td>
+<td style="text-align: right;"><code>26.362</code></td>
+</tr>
+<tr>
+<td>amp inf T solnorm solve</td>
+<td style="text-align: right;"><code>2.606</code></td>
+</tr>
+<tr>
+<td>apply amp</td>
+<td style="text-align: right;"><code>2.576</code></td>
+</tr>
+<tr>
+<td>split final</td>
+<td style="text-align: right;"><code>1.738</code></td>
+</tr>
+<tr>
+<td>final image</td>
+<td style="text-align: right;"><code>29.745</code></td>
+</tr>
+</tbody>
+</table>
+<p>The current full loop is within roughly 2% of the recorded CASA runtime. Rust
+imaging is faster on the high-iteration stages, while calibration/apply/export
+remains slower than CASA but no longer dominates the end-to-end result.</p>
+<h2 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h2>
+<p>Focused checks:</p>
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casa-calibration<span class="w"> </span>--test<span class="w"> </span>gain_solve<span class="w"> </span>--<span class="w"> </span>--nocapture
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casa-calibration<span class="w"> </span>--lib<span class="w"> </span>task_contract<span class="w"> </span>--<span class="w"> </span>--nocapture
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casa-calibration<span class="w"> </span>--lib<span class="w"> </span>parse_args_accepts_solve_gain_command<span class="w"> </span>--<span class="w"> </span>--nocapture
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casa-calibration<span class="w"> </span>--test<span class="w"> </span>apply_execute<span class="w"> </span>export_corrected_data<span class="w"> </span>--<span class="w"> </span>--nocapture
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casars-imager<span class="w"> </span>--lib<span class="w"> </span>end_to_end_smoke_writes_casa_products<span class="w"> </span>--<span class="w"> </span>--nocapture
+<span class="nb">cd</span><span class="w"> </span>crates/casars-python<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>--extra<span class="w"> </span><span class="nb">test</span><span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>python/tests/test_calibrate.py<span class="w"> </span>-q
+</code></pre></div>
+
+<p>Full branch gate:</p>
+<div class="codehilite"><pre><span></span><code>just<span class="w"> </span>verify
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

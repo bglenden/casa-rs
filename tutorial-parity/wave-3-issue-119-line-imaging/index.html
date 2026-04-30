@@ -1,0 +1,900 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Wave 3 Issue 119 - TW Hydra Line Imaging And Continuum Subtraction - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#wave-3-issue-119-tw-hydra-line-imaging-and-continuum-subtraction" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Wave 3 Issue 119 - TW Hydra Line Imaging And Continuum Subtraction
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casa-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA Mapping
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#weighted-cube-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Weighted-Cube Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="wave-3-issue-119-tw-hydra-line-imaging-and-continuum-subtraction">Wave 3 Issue 119 - TW Hydra Line Imaging And Continuum Subtraction<a class="headerlink" href="#wave-3-issue-119-tw-hydra-line-imaging-and-continuum-subtraction" title="Permanent link">&para;</a></h1>
+<p>Truth class: implementation note
+Last reality check: 2026-04-28
+Verification: focused <code>casa-calibration</code> / <code>casars-imager</code> tests; local CASA 6.7.5-9 comparisons below</p>
+<h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
+<p>This note records the casa-rs mapping for the ALMA First Look / TW Hydra line
+imaging segment. It adds UV continuum subtraction and validates spectral cube
+image products from the self-calibrated tutorial MeasurementSet.</p>
+<p>The tutorial source is:</p>
+<ul>
+<li>key: <code>alma/first-look/twhya/selfcal-ms</code></li>
+<li>source artifact: <code>twhya_selfcal.ms.tgz</code></li>
+<li>staged test path: <code>target/wdad-wave3-119/twhya_selfcal.ms</code></li>
+</ul>
+<h2 id="casa-mapping">CASA Mapping<a class="headerlink" href="#casa-mapping" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>CASA guide step</th>
+<th>casa-rs path</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>uvcontsub(..., field="5", fitspw="0:0~239;281~383", fitorder=0)</code></td>
+<td><code>calibrate uvcontsub --field 5 --fitspw '0:0~239;281~383' --fitorder 0 --datacolumn DATA</code></td>
+<td>Implemented; output MS opens in CASA and matches CASA data values.</td>
+</tr>
+<tr>
+<td><code>tclean(..., specmode="cube", nchan=15, start="0.0km/s", width="0.5km/s", outframe="LSRK", restfreq="372.67249GHz")</code></td>
+<td><code>casars-imager --specmode cube --channel-count 15 --start 0.0km/s --width 0.5km/s --outframe LSRK --restfreq 372.67249GHz</code></td>
+<td>Implemented; natural-weight dirty cube matches CASA at floating-point noise.</td>
+</tr>
+<tr>
+<td><code>restoringbeam="common"</code></td>
+<td><code>--restoringbeam common</code></td>
+<td>Implemented for restored <code>.image</code> beam metadata.</td>
+</tr>
+<tr>
+<td><code>weighting="briggsbwtaper", perchanweightdensity=True</code></td>
+<td>partially implemented</td>
+<td>The option is exposed and follows CASA's <code>BriggsCubeWeightor</code> robust/bandwidth-taper formula, but exact TW Hydra weighted-cube parity is still open in the per-channel density source.</td>
+</tr>
+</tbody>
+</table>
+<p>Current CASA 6.7 <code>uvcontsub(outputvis=...)</code> keeps the selected field id as <code>5</code>;
+the older CASA guide text says the output may be relabeled to <code>0</code>. The parity
+commands below therefore use <code>field=5</code> for both CASA and casa-rs.</p>
+<h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casa-calibration<span class="w"> </span>--bin<span class="w"> </span>calibrate
+rm<span class="w"> </span>-rf<span class="w"> </span>target/wdad-wave3-119/twhya_selfcal.ms.contsub
+/usr/bin/time<span class="w"> </span>-p<span class="w"> </span>target/release/calibrate<span class="w"> </span>uvcontsub<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span>target/wdad-wave3-119/twhya_selfcal.ms<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--out<span class="w"> </span>target/wdad-wave3-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--fitspw<span class="w"> </span><span class="s1">&#39;0:0~239;281~383&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--fitorder<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--datacolumn<span class="w"> </span>DATA<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--format<span class="w"> </span>json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-o<span class="w"> </span>target/wdad-wave3-119/casars-uvcontsub-release.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--overwrite
+</code></pre></div>
+
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casars-imager<span class="w"> </span>--bin<span class="w"> </span>casars-imager
+target/release/casars-imager<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span>target/wdad-wave3-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--imagename<span class="w"> </span>target/wdad-wave3-119/casars-natural-twhya-n2hp<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--specmode<span class="w"> </span>cube<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--channel-count<span class="w"> </span><span class="m">15</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--start<span class="w"> </span><span class="m">0</span>.0km/s<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--width<span class="w"> </span><span class="m">0</span>.5km/s<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--outframe<span class="w"> </span>LSRK<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--restfreq<span class="w"> </span><span class="m">372</span>.67249GHz<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--deconvolver<span class="w"> </span>hogbom<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--weighting<span class="w"> </span>natural<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--perchanweightdensity<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--restoringbeam<span class="w"> </span>common<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--imsize<span class="w"> </span><span class="m">250</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--cell-arcsec<span class="w"> </span><span class="m">0</span>.08<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--phasecenter-field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--niter<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--threshold-jy<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--datacolumn<span class="w"> </span>DATA<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--no-preview-pngs
+</code></pre></div>
+
+<h2 id="evidence">Evidence<a class="headerlink" href="#evidence" title="Permanent link">&para;</a></h2>
+<p><code>uvcontsub</code> timing on the staged TW Hydra dataset:</p>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th>Command</th>
+<th>Wall time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CASA 6.7.5-9</td>
+<td><code>uvcontsub(..., outputvis=..., field="5", fitspec="0:0~239;281~383", fitorder=0)</code></td>
+<td><code>1.926 s</code></td>
+</tr>
+<tr>
+<td>casa-rs release</td>
+<td><code>calibrate uvcontsub ...</code></td>
+<td><code>5.65 s</code> wall, report <code>4.490 s</code> elapsed</td>
+</tr>
+</tbody>
+</table>
+<p>The CASA and casa-rs continuum-subtracted MS outputs both open with CASA tools
+and contain <code>44772</code> rows with field id <code>[5]</code>. For valid unflagged <code>DATA</code> cells,
+CASA vs casa-rs residual visibility differences are:</p>
+<ul>
+<li>RMS absolute difference: <code>2.6704246849068624e-09</code></li>
+<li>max absolute difference: <code>1.9073486328125e-06</code></li>
+<li>relative RMS difference: <code>2.4508231445204896e-10</code></li>
+</ul>
+<p>Natural-weight dirty cube comparison, CASA vs casa-rs end to end:</p>
+<table>
+<thead>
+<tr>
+<th>Product</th>
+<th>shape</th>
+<th style="text-align: right;">RMS diff</th>
+<th style="text-align: right;">max abs diff</th>
+<th style="text-align: right;">relative RMS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.image</code></td>
+<td><code>[250, 250, 1, 15]</code></td>
+<td style="text-align: right;"><code>2.4392191501798007e-08</code></td>
+<td style="text-align: right;"><code>3.650784492492676e-07</code></td>
+<td style="text-align: right;"><code>7.338334194025458e-07</code></td>
+</tr>
+<tr>
+<td><code>.residual</code></td>
+<td><code>[250, 250, 1, 15]</code></td>
+<td style="text-align: right;"><code>2.4392191501798007e-08</code></td>
+<td style="text-align: right;"><code>3.650784492492676e-07</code></td>
+<td style="text-align: right;"><code>7.338334194025458e-07</code></td>
+</tr>
+<tr>
+<td><code>.psf</code></td>
+<td><code>[250, 250, 1, 15]</code></td>
+<td style="text-align: right;"><code>7.911510293371164e-09</code></td>
+<td style="text-align: right;"><code>2.384185791015625e-07</code></td>
+<td style="text-align: right;"><code>1.574092510029854e-07</code></td>
+</tr>
+<tr>
+<td><code>.sumwt</code></td>
+<td><code>[1, 1, 1, 15]</code></td>
+<td style="text-align: right;"><code>0.0</code></td>
+<td style="text-align: right;"><code>0.0</code></td>
+<td style="text-align: right;"><code>0.0</code></td>
+</tr>
+</tbody>
+</table>
+<p>The CASA and casa-rs cubes both report spectral reference <code>LSRK</code> and rest
+frequency <code>372672490000 Hz</code> within floating-point roundoff.</p>
+<h2 id="weighted-cube-status">Weighted-Cube Status<a class="headerlink" href="#weighted-cube-status" title="Permanent link">&para;</a></h2>
+<p>The exact tutorial weighting uses <code>weighting="briggsbwtaper"</code> with
+<code>perchanweightdensity=True</code>. In CASA this routes through
+<code>BriggsCubeWeightor</code>, which builds a source-channel weight-density cube via
+the FTMachine and then applies per-channel <code>f2/d2</code> factors; <code>briggsbwtaper</code>
+also applies a fractional-bandwidth uv-distance factor. casa-rs now exposes
+<code>--weighting briggsbwtaper</code>, computes CASA's
+<code>2*(maxfreq-minfreq)/(maxfreq+minfreq)</code> fractional bandwidth, uses CASA's
+signed cube-weightor density-cell convention, and routes dirty cubes with
+per-plane density through the same cube weighting path as cleaned cubes.</p>
+<p>Fresh CASA 6.7.5-9 reference command:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">tclean</span><span class="p">(</span>
+    <span class="n">vis</span><span class="o">=</span><span class="s2">&quot;target/wdad-wave3-119/twhya_selfcal.ms.contsub&quot;</span><span class="p">,</span>
+    <span class="n">imagename</span><span class="o">=</span><span class="s2">&quot;target/wdad-wave3-119/casa-briggsbwtaper-refresh-twhya-n2hp&quot;</span><span class="p">,</span>
+    <span class="n">field</span><span class="o">=</span><span class="s2">&quot;5&quot;</span><span class="p">,</span>
+    <span class="n">spw</span><span class="o">=</span><span class="s2">&quot;0&quot;</span><span class="p">,</span>
+    <span class="n">specmode</span><span class="o">=</span><span class="s2">&quot;cube&quot;</span><span class="p">,</span>
+    <span class="n">nchan</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
+    <span class="n">start</span><span class="o">=</span><span class="s2">&quot;0.0km/s&quot;</span><span class="p">,</span>
+    <span class="n">width</span><span class="o">=</span><span class="s2">&quot;0.5km/s&quot;</span><span class="p">,</span>
+    <span class="n">outframe</span><span class="o">=</span><span class="s2">&quot;LSRK&quot;</span><span class="p">,</span>
+    <span class="n">restfreq</span><span class="o">=</span><span class="s2">&quot;372.67249GHz&quot;</span><span class="p">,</span>
+    <span class="n">gridder</span><span class="o">=</span><span class="s2">&quot;standard&quot;</span><span class="p">,</span>
+    <span class="n">deconvolver</span><span class="o">=</span><span class="s2">&quot;hogbom&quot;</span><span class="p">,</span>
+    <span class="n">weighting</span><span class="o">=</span><span class="s2">&quot;briggsbwtaper&quot;</span><span class="p">,</span>
+    <span class="n">perchanweightdensity</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">restoringbeam</span><span class="o">=</span><span class="s2">&quot;common&quot;</span><span class="p">,</span>
+    <span class="n">imsize</span><span class="o">=</span><span class="mi">250</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="s2">&quot;0.08arcsec&quot;</span><span class="p">,</span>
+    <span class="n">phasecenter</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+    <span class="n">niter</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">threshold</span><span class="o">=</span><span class="s2">&quot;0Jy&quot;</span><span class="p">,</span>
+    <span class="n">datacolumn</span><span class="o">=</span><span class="s2">&quot;data&quot;</span><span class="p">,</span>
+    <span class="n">interactive</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<p>casa-rs command:</p>
+<div class="codehilite"><pre><span></span><code>target/release/casars-imager<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span>target/wdad-wave3-119/twhya_selfcal.ms.contsub<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--imagename<span class="w"> </span>target/wdad-wave3-119/casars-briggsbwtaper-centered-twhya-n2hp-rerun2<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--specmode<span class="w"> </span>cube<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--channel-count<span class="w"> </span><span class="m">15</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--start<span class="w"> </span><span class="m">0</span>.0km/s<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--width<span class="w"> </span><span class="m">0</span>.5km/s<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--outframe<span class="w"> </span>LSRK<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--restfreq<span class="w"> </span><span class="m">372</span>.67249GHz<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--deconvolver<span class="w"> </span>hogbom<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--weighting<span class="w"> </span>briggsbwtaper<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--perchanweightdensity<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--restoringbeam<span class="w"> </span>common<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--imsize<span class="w"> </span><span class="m">250</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--cell-arcsec<span class="w"> </span><span class="m">0</span>.08<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--phasecenter-field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--niter<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--threshold-jy<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--datacolumn<span class="w"> </span>DATA<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--no-preview-pngs
+</code></pre></div>
+
+<p>Current weighted-cube comparison:</p>
+<table>
+<thead>
+<tr>
+<th>Product</th>
+<th>shape</th>
+<th style="text-align: right;">RMS diff</th>
+<th style="text-align: right;">max abs diff</th>
+<th style="text-align: right;">relative RMS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.image</code></td>
+<td><code>[250, 250, 1, 15]</code></td>
+<td style="text-align: right;"><code>0.00010815705738803386</code></td>
+<td style="text-align: right;"><code>0.0005521811544895172</code></td>
+<td style="text-align: right;"><code>0.003737659372503618</code></td>
+</tr>
+<tr>
+<td><code>.residual</code></td>
+<td><code>[250, 250, 1, 15]</code></td>
+<td style="text-align: right;"><code>0.00010815705738803386</code></td>
+<td style="text-align: right;"><code>0.0005521811544895172</code></td>
+<td style="text-align: right;"><code>0.003737659372503618</code></td>
+</tr>
+<tr>
+<td><code>.psf</code></td>
+<td><code>[250, 250, 1, 15]</code></td>
+<td style="text-align: right;"><code>0.000056537305188819865</code></td>
+<td style="text-align: right;"><code>0.00027957186102867126</code></td>
+<td style="text-align: right;"><code>0.0015209825039802264</code></td>
+</tr>
+<tr>
+<td><code>.sumwt</code></td>
+<td><code>[1, 1, 1, 15]</code></td>
+<td style="text-align: right;"><code>0.00011457723208023715</code></td>
+<td style="text-align: right;"><code>0.0002052783966064453</code></td>
+<td style="text-align: right;"><code>0.00004646506431534153</code></td>
+</tr>
+</tbody>
+</table>
+<p>Fresh local timings on the no-pointing CASA build were <code>2.76s</code> for CASA
+6.7.5-9 and <code>1.69s</code> warm / <code>2.64s</code> cold-output for
+<code>target/release/casars-imager</code> on the same 15-channel weighted cube.</p>
+<p>Direct CASA instrumentation showed that CASA's weighted cube path builds a
+separate <code>GridFT</code> spectral path for weighting: a 15-plane image uses a
+17-channel intermediate Briggs density grid and 19 selected visibility
+channels before mapping back to the output planes. Matching this required
+using the cube path even for <code>niter=0</code>, summing the parallel-hand density
+weights the same way CASA's <code>VisImagingWeight::unPolChanWeight</code> does, and
+using the centered selected source channel for each output-plane density
+estimate while leaving the visibility interpolation path unchanged.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

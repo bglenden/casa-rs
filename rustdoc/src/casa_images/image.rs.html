@@ -2440,8 +2440,8 @@
 <a href=#2440 id=2440 data-nosnippet>2440</a>    record
 <a href=#2441 id=2441 data-nosnippet>2441</a>}
 <a href=#2442 id=2442 data-nosnippet>2442</a>
-<a href=#2443 id=2443 data-nosnippet>2443</a><span class="kw">fn </span>mask_table_reference(image_path: <span class="kw-2">&amp;</span>Path, mask_name: <span class="kw-2">&amp;</span>str) -&gt; String {
-<a href=#2444 id=2444 data-nosnippet>2444</a>    image_path.join(mask_name).to_string_lossy().into_owned()
+<a href=#2443 id=2443 data-nosnippet>2443</a><span class="kw">fn </span>mask_table_reference(_image_path: <span class="kw-2">&amp;</span>Path, mask_name: <span class="kw-2">&amp;</span>str) -&gt; String {
+<a href=#2444 id=2444 data-nosnippet>2444</a>    mask_name.to_string()
 <a href=#2445 id=2445 data-nosnippet>2445</a>}
 <a href=#2446 id=2446 data-nosnippet>2446</a>
 <a href=#2447 id=2447 data-nosnippet>2447</a><span class="kw">fn </span>resolve_mask_table_path(image_path: <span class="kw-2">&amp;</span>Path, stored_path: <span class="kw-2">&amp;</span>str) -&gt; PathBuf {

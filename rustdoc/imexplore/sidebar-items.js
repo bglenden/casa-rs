@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["main","parse_path","run","run_session","run_snapshot","ui_schema_value"]};
+window.SIDEBAR_ITEMS = {"fn":["imstat_usage","main","parse_imstat_args","parse_path","parse_path_allowing_json","run","run_session","run_snapshot","ui_schema_value"],"struct":["ImstatArgs","PathJson"]};

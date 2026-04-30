@@ -1,0 +1,861 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Wave 3 Issue 117 - ALMA First Look TW Hydra MFS Foundation - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#wave-3-issue-117-alma-first-look-tw-hydra-mfs-foundation" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Wave 3 Issue 117 - ALMA First Look TW Hydra MFS Foundation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tutorial-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tutorial Mapping
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#executable-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Executable Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#correctness-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Correctness Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#timing-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Timing Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="wave-3-issue-117-alma-first-look-tw-hydra-mfs-foundation">Wave 3 Issue 117 - ALMA First Look TW Hydra MFS Foundation<a class="headerlink" href="#wave-3-issue-117-alma-first-look-tw-hydra-mfs-foundation" title="Permanent link">&para;</a></h1>
+<p>Truth class: current descriptive
+Last reality check: 2026-04-27
+Verification: <code>scripts/test-python-package.sh</code>; <code>casatestdata-preflight --tier tutorial-parity --require-registry-key alma/first-look/twhya/calibrated-ms</code>; release imager/CASA timing and parity commands below</p>
+<p>Wave issue: #140
+Child issue: #117</p>
+<p>This note records the CASA-to-casa-rs mapping for the first ALMA First Look /
+TW Hydra imaging segment. It does not add a new public imaging API; the
+standalone <code>msexplore</code> and <code>casars-imager</code> executables remain the canonical task
+owners, with Python exposing thin wrappers over their existing JSON protocols.</p>
+<h2 id="dataset">Dataset<a class="headerlink" href="#dataset" title="Permanent link">&para;</a></h2>
+<p>The calibrated TW Hydra input is the tutorial-registry artifact:</p>
+<ul>
+<li>key: <code>alma/first-look/twhya/calibrated-ms</code></li>
+<li>source artifact: <code>twhya_calibrated.ms.tar</code></li>
+<li>expected SHA-256:
+  <code>f0cfeee5b9dec09ac9ed4d3e4e048d5eb28023c11cbc8295c09ddefe6b8a97b2</code></li>
+<li>local policy:
+  <code>${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar</code></li>
+</ul>
+<p>The wave check used:</p>
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>run<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casa-test-support<span class="w"> </span>--bin<span class="w"> </span>casatestdata-preflight<span class="w"> </span>--<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--tier<span class="w"> </span>tutorial-parity<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--require-registry-key<span class="w"> </span>alma/first-look/twhya/calibrated-ms
+</code></pre></div>
+
+<p>Observed roots:</p>
+<div class="codehilite"><pre><span></span><code>casatestdata preflight: tier=tutorial-parity root=/Users/brianglendenning/SoftwareProjects/casatestdata
+casatestdata preflight: tutorial root=/Users/brianglendenning/SoftwareProjects/casa-tutorial-data
+</code></pre></div>
+
+<h2 id="tutorial-mapping">Tutorial Mapping<a class="headerlink" href="#tutorial-mapping" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>CASA tutorial operation</th>
+<th>casa-rs owner</th>
+<th>Wave 3 #117 mapping</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>listobs(vis="twhya_calibrated.ms")</code></td>
+<td><code>casa-ms</code> / <code>msexplore</code></td>
+<td><code>msexplore --format json --field 5 ...</code> emits structured <code>ListObsSummary</code> for the target field.</td>
+</tr>
+<tr>
+<td><code>plotms</code> visibility inspection</td>
+<td><code>casa-ms</code> / <code>msexplore</code></td>
+<td><code>msexplore --preset amplitude_vs_uv_distance --field 5 ...</code> writes a PNG plot artifact.</td>
+</tr>
+<tr>
+<td>MFS continuum <code>tclean</code></td>
+<td><code>casa-imaging</code> / <code>casars-imager</code></td>
+<td><code>casars-imager --specmode mfs --field 5 --spw 0 --imsize 250 --cell-arcsec 0.1 ...</code> writes CASA-compatible <code>.psf</code>, <code>.residual</code>, <code>.model</code>, and <code>.image</code> products plus preview PNGs.</td>
+</tr>
+<tr>
+<td>calibrated-data <code>split</code></td>
+<td>future child issue</td>
+<td>Not implemented in #117; #118 owns corrected-data split handoff for the self-calibration loop.</td>
+</tr>
+</tbody>
+</table>
+<p>The target field resolved from the real tutorial MS is <code>FIELD_ID=5</code>, name
+<code>TW Hya</code>, with <code>44772</code> selected rows, <code>SPW_ID=0</code>, and <code>384</code> channels.</p>
+<h2 id="executable-evidence">Executable Evidence<a class="headerlink" href="#executable-evidence" title="Permanent link">&para;</a></h2>
+<p>The real tutorial MS was staged under <code>target/wdad-wave3-117/twhya_calibrated.ms</code>
+from the registry tarball. The following commands completed successfully:</p>
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>run<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casa-ms<span class="w"> </span>--bin<span class="w"> </span>msexplore<span class="w"> </span>--<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--format<span class="w"> </span>json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span>target/wdad-wave3-117/twhya-field5-listobs.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--overwrite<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>target/wdad-wave3-117/twhya_calibrated.ms
+
+cargo<span class="w"> </span>run<span class="w"> </span>-q<span class="w"> </span>-p<span class="w"> </span>casa-ms<span class="w"> </span>--bin<span class="w"> </span>msexplore<span class="w"> </span>--<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--preset<span class="w"> </span>amplitude_vs_uv_distance<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--plot-output<span class="w"> </span>target/wdad-wave3-117/twhya-field5-amp-uv.png<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--plot-width<span class="w"> </span><span class="m">1000</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--plot-height<span class="w"> </span><span class="m">700</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>target/wdad-wave3-117/twhya_calibrated.ms
+
+target/release/casars-imager<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span>target/wdad-wave3-117/twhya_calibrated.ms<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--imagename<span class="w"> </span>target/wdad-wave3-117/release-twhya-field5-mfs<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--imsize<span class="w"> </span><span class="m">250</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--cell-arcsec<span class="w"> </span><span class="m">0</span>.1<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--specmode<span class="w"> </span>mfs<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--datacolumn<span class="w"> </span>DATA<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--weighting<span class="w"> </span>briggs<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--robust<span class="w"> </span><span class="m">0</span>.5<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--deconvolver<span class="w"> </span>hogbom<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--niter<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--threshold-jy<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--dirty-only<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--managed-output<span class="w"> </span><span class="nb">true</span>
+</code></pre></div>
+
+<p>The release imager smoke wrote existing artifacts for <code>.psf</code>, <code>.residual</code>,
+<code>.model</code>, <code>.image</code>, and all four preview PNGs. It reported <code>17192448</code> gridded
+samples, no warnings, and <code>12.386 s</code> internal frontend total time on this
+machine.</p>
+<h2 id="correctness-evidence">Correctness Evidence<a class="headerlink" href="#correctness-evidence" title="Permanent link">&para;</a></h2>
+<p>The visibility-inspection parity check rendered <code>msexplore</code> and CASA <code>plotms</code>
+from the same TW Hydra selection: <code>field=5</code>, <code>spw=0</code>, <code>scan=12</code>.</p>
+<div class="codehilite"><pre><span></span><code>scripts/render-msexplore-side-by-side.sh<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/wdad-wave3-117/twhya_calibrated.ms&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/wdad-wave3-117/twhya-field5-scan12-amplitude-uvdist-side-by-side-readable.png&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--plot-width<span class="w"> </span><span class="m">2400</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--plot-height<span class="w"> </span><span class="m">1350</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--rust-symbolsize<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--casa-xaxis<span class="w"> </span>uvdist<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--casa-yaxis<span class="w"> </span>amp<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--casa-kw<span class="w"> </span><span class="nv">field</span><span class="o">=</span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--casa-kw<span class="w"> </span><span class="nv">spw</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--casa-kw<span class="w"> </span><span class="nv">scan</span><span class="o">=</span><span class="m">12</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--rust-label<span class="w"> </span><span class="s2">&quot;casa-rs msexplore amplitude vs uvdist&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--casa-label<span class="w"> </span><span class="s2">&quot;CASA plotms amplitude vs uvdist&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--<span class="w"> </span>--preset<span class="w"> </span>amplitude_vs_uv_distance<span class="w"> </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span>--scan<span class="w"> </span><span class="m">12</span>
+
+scripts/render-msexplore-page-side-by-side.sh<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--ms<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/wdad-wave3-117/twhya_calibrated.ms&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/target/wdad-wave3-117/twhya-field5-scan12-amplitude-phase-time-side-by-side-readable.png&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--plot-width<span class="w"> </span><span class="m">2400</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--plot-height<span class="w"> </span><span class="m">1350</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--rust-symbolsize<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--field<span class="w"> </span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--spw<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--scan<span class="w"> </span><span class="m">12</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--rust-label<span class="w"> </span><span class="s2">&quot;casa-rs msexplore amplitude / phase vs time&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--casa-label<span class="w"> </span><span class="s2">&quot;CASA plotms amplitude / phase vs time&quot;</span>
+</code></pre></div>
+
+<p>These side-by-side helpers use <code>msexplore --symbolsize 1</code> and larger CASA
+<code>plotms</code> axis/title fonts to keep dense tutorial plots visually comparable.</p>
+<p>The MFS dirty image parity check rendered the <code>casars-imager</code> <code>.image</code> product
+and a CASA <code>tclean</code> <code>.image</code> product with a shared display scale, plus a
+<code>casa-rs - CASA</code> difference panel:</p>
+<div class="codehilite"><pre><span></span><code>target/wdad-wave3-117/twhya-field5-mfs-image-casa-rs-vs-casa.png
+</code></pre></div>
+
+<p>Numerical image comparison for the 250x250 <code>.image</code> arrays:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th style="text-align: right;">casa-rs</th>
+<th style="text-align: right;">CASA</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>min</td>
+<td style="text-align: right;"><code>-0.0399281606</code></td>
+<td style="text-align: right;"><code>-0.0398871973</code></td>
+</tr>
+<tr>
+<td>max</td>
+<td style="text-align: right;"><code>0.2548154294</code></td>
+<td style="text-align: right;"><code>0.2548294365</code></td>
+</tr>
+<tr>
+<td>mean</td>
+<td style="text-align: right;"><code>0.0003378017</code></td>
+<td style="text-align: right;"><code>0.0003362949</code></td>
+</tr>
+<tr>
+<td>stddev</td>
+<td style="text-align: right;"><code>0.0162907603</code></td>
+<td style="text-align: right;"><code>0.0162881185</code></td>
+</tr>
+</tbody>
+</table>
+<p>The direct difference had <code>rms=4.548259971625769e-05 Jy/beam</code>,
+<code>max_abs=0.00031748320907354355 Jy/beam</code>, and image correlation
+<code>0.9999961193712577</code>.</p>
+<h2 id="timing-evidence">Timing Evidence<a class="headerlink" href="#timing-evidence" title="Permanent link">&para;</a></h2>
+<p>The comparable one-repeat release timing command was:</p>
+<div class="codehilite"><pre><span></span><code><span class="nv">BENCH_REPEATS</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">IMAGER_BENCH_FIELD</span><span class="o">=</span><span class="m">5</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">IMAGER_BENCH_SPW</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">IMAGER_BENCH_CHANNEL_START</span><span class="o">=</span><span class="m">0</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">IMAGER_BENCH_CHANNEL_COUNT</span><span class="o">=</span><span class="m">384</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">IMAGER_BENCH_SPECMODE</span><span class="o">=</span>mfs<span class="w"> </span><span class="se">\</span>
+<span class="nv">IMAGER_BENCH_IMSIZE</span><span class="o">=</span><span class="m">250</span><span class="w"> </span><span class="se">\</span>
+<span class="nv">IMAGER_BENCH_CELL_ARCSEC</span><span class="o">=</span><span class="m">0</span>.1<span class="w"> </span><span class="se">\</span>
+<span class="nv">IMAGER_BENCH_WEIGHTING</span><span class="o">=</span>briggs<span class="w"> </span><span class="se">\</span>
+<span class="nv">IMAGER_BENCH_ROBUST</span><span class="o">=</span><span class="m">0</span>.5<span class="w"> </span><span class="se">\</span>
+<span class="nv">IMAGER_BENCH_MODE</span><span class="o">=</span>dirty<span class="w"> </span><span class="se">\</span>
+scripts/bench-imager-vs-casa.sh<span class="w"> </span>target/wdad-wave3-117/twhya_calibrated.ms
+</code></pre></div>
+
+<p>Observed timing on 2026-04-27:</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th style="text-align: right;">Wall time</th>
+<th style="text-align: right;">Internal total</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Rust before #95 performance work</td>
+<td style="text-align: right;"><code>13.110 s</code></td>
+<td style="text-align: right;"><code>11.660 s</code></td>
+<td><code>prepare_plane_input=6455 ms</code>, <code>run_imaging=5193 ms</code></td>
+</tr>
+<tr>
+<td>Rust after #95 performance work</td>
+<td style="text-align: right;">not rerun as CLI wall</td>
+<td style="text-align: right;"><code>4.777 s</code></td>
+<td><code>prepare_plane_input=1676 ms</code>, <code>run_imaging=3084 ms</code></td>
+</tr>
+<tr>
+<td>CASA <code>tclean</code></td>
+<td style="text-align: right;"><code>5.246 s</code></td>
+<td style="text-align: right;">not measured in final rerun</td>
+<td>CASA 6.7.5-9 local Python; <code>gridder="standard"</code>, <code>usepointing=False</code></td>
+</tr>
+</tbody>
+</table>
+<p>Rust is now about <code>0.91x</code> CASA by internal total for this dirty MFS case. Issue</p>
+<h1 id="95-remains-the-wave-3-performance-evidence-trail-for-the-default-standard-mfs">95 remains the Wave 3 performance evidence trail for the default standard-MFS<a class="headerlink" href="#95-remains-the-wave-3-performance-evidence-trail-for-the-default-standard-mfs" title="Permanent link">&para;</a></h1>
+<p>frontend overhead, explicit <code>usepointing</code> control, and combined dirty
+PSF/residual gridding optimization.</p>
+<h2 id="python-projection">Python Projection<a class="headerlink" href="#python-projection" title="Permanent link">&para;</a></h2>
+<p><code>casars-python</code> now includes task wrappers for:</p>
+<ul>
+<li><code>casars.tasks.msexplore</code>: protocol info, schema retrieval, raw JSON run, and
+  summary helper.</li>
+<li><code>casars.tasks.imager</code>: protocol info, schema retrieval, raw JSON run, and MFS
+  helper.</li>
+</ul>
+<p>Both wrappers delegate to the existing executables through <code>--json-run</code>; they do
+not move task ownership into Python.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

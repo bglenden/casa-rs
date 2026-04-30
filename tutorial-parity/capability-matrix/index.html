@@ -679,12 +679,12 @@ and oracle map; it does not add public APIs.</p>
 </tr>
 <tr>
 <td><code>uvcontsub</code></td>
-<td>missing</td>
-<td><code>casa-ms</code></td>
-<td>none</td>
-<td>line-free channel fitting, output MS semantics</td>
+<td>partial/available</td>
+<td><code>casa-calibration</code>, <code>casa-ms</code></td>
+<td><code>calibrate uvcontsub</code>, Python calibration wrapper</td>
+<td>line-free channel fitting, output MS semantics, field/data-column selection</td>
 <td>CASA <code>uvcontsub</code> output MS and downstream image products</td>
-<td>tutorial uvcontsub timings</td>
+<td>TW Hydra uvcontsub timing and cube parity note</td>
 <td>#119, #123</td>
 </tr>
 <tr>
@@ -839,40 +839,40 @@ and oracle map; it does not add public APIs.</p>
 </tr>
 <tr>
 <td><code>imhead</code></td>
-<td>partial</td>
+<td>partial/available</td>
 <td><code>casa-images</code>, <code>casa-coordinates</code></td>
-<td><code>casars.data</code> image objects / future task</td>
-<td>CASA task-style summaries and edit modes</td>
+<td><code>imexplore imhead</code>, <code>casars.tasks.image_analysis.imhead</code></td>
+<td>edit modes and long-tail metadata formatting</td>
 <td>CASA <code>imhead</code> output and image keywords</td>
 <td>image-analysis timing</td>
 <td>#120, #125</td>
 </tr>
 <tr>
 <td><code>imstat</code></td>
-<td>partial</td>
+<td>partial/available</td>
 <td><code>casa-images</code>, <code>casa-lattices</code></td>
-<td>future task/Python projection</td>
-<td>region/channel/mask parameter coverage</td>
+<td><code>imexplore imstat</code>, <code>casars.tasks.image_analysis.imstat</code></td>
+<td>full region grammar and long-tail CASA parameters</td>
 <td>CASA <code>imstat</code> numeric output</td>
 <td>image-analysis timing</td>
 <td>#120, #125</td>
 </tr>
 <tr>
 <td><code>immoments</code></td>
-<td>missing/partial</td>
+<td>partial/available</td>
 <td><code>casa-images</code>, <code>casa-lattices</code>, <code>casa-coordinates</code></td>
-<td>none</td>
-<td>moment-map generation and metadata</td>
+<td><code>immoments</code>, <code>casars.tasks.image_analysis.immoments</code></td>
+<td>broader moment set and output-coordinate tails</td>
 <td>CASA moment images</td>
 <td>image-analysis timing</td>
 <td>#120, #123</td>
 </tr>
 <tr>
 <td><code>exportfits</code></td>
-<td>partial</td>
+<td>partial/available</td>
 <td><code>casa-images</code>, <code>casa-coordinates</code></td>
-<td>future task/Python projection</td>
-<td>tutorial FITS export metadata fidelity</td>
+<td><code>exportfits</code>, <code>casars.tasks.image_analysis.exportfits</code></td>
+<td>full FITS-header fidelity and binary-table needs</td>
 <td>CASA FITS headers and WCS</td>
 <td>export timing</td>
 <td>#120</td>

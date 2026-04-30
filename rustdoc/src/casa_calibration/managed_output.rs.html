@@ -6,29 +6,34 @@
 <a href=#6 id=6 data-nosnippet>6</a>
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>crate::{
 <a href=#8 id=8 data-nosnippet>8</a>    ApplyExecutionReport, ApplyPlan, BandpassSolveReport, CalibrationStatsReport,
-<a href=#9 id=9 data-nosnippet>9</a>    CalibrationTableSummary, FluxScaleReport, GainSolveReport,
-<a href=#10 id=10 data-nosnippet>10</a>};
-<a href=#11 id=11 data-nosnippet>11</a>
-<a href=#12 id=12 data-nosnippet>12</a><span class="doccomment">/// Canonical structured result for one calibration task execution.
-<a href=#13 id=13 data-nosnippet>13</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-<a href=#14 id=14 data-nosnippet>14</a>#[serde(tag = <span class="string">"kind"</span>, content = <span class="string">"report"</span>, rename_all = <span class="string">"snake_case"</span>)]
-<a href=#15 id=15 data-nosnippet>15</a></span><span class="kw">pub enum </span>CalibrationTaskResult {
-<a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// `calibrate execute_apply`
-<a href=#17 id=17 data-nosnippet>17</a>    </span>Apply(ApplyExecutionReport),
-<a href=#18 id=18 data-nosnippet>18</a>    <span class="doccomment">/// `calibrate summary`
-<a href=#19 id=19 data-nosnippet>19</a>    </span>Summary(Vec&lt;CalibrationTableSummary&gt;),
-<a href=#20 id=20 data-nosnippet>20</a>    <span class="doccomment">/// `calibrate plan-apply`
-<a href=#21 id=21 data-nosnippet>21</a>    </span>PlanApply(ApplyPlan),
-<a href=#22 id=22 data-nosnippet>22</a>    <span class="doccomment">/// `calibrate stats`
-<a href=#23 id=23 data-nosnippet>23</a>    </span>Stats(CalibrationStatsReport),
-<a href=#24 id=24 data-nosnippet>24</a>    <span class="doccomment">/// `calibrate solve-gain`
-<a href=#25 id=25 data-nosnippet>25</a>    </span>SolveGain(GainSolveReport),
-<a href=#26 id=26 data-nosnippet>26</a>    <span class="doccomment">/// `calibrate solve-bandpass`
-<a href=#27 id=27 data-nosnippet>27</a>    </span>SolveBandpass(BandpassSolveReport),
-<a href=#28 id=28 data-nosnippet>28</a>    <span class="doccomment">/// `calibrate fluxscale`
-<a href=#29 id=29 data-nosnippet>29</a>    </span>FluxScale(FluxScaleReport),
-<a href=#30 id=30 data-nosnippet>30</a>}
-<a href=#31 id=31 data-nosnippet>31</a>
-<a href=#32 id=32 data-nosnippet>32</a><span class="doccomment">/// Backward-compatible alias for the launcher-managed calibration output type.
-<a href=#33 id=33 data-nosnippet>33</a></span><span class="kw">pub type </span>ManagedCalibrationOutput = CalibrationTaskResult;
+<a href=#9 id=9 data-nosnippet>9</a>    CalibrationTableSummary, ContinuumSubtractionReport, ExportCorrectedDataReport,
+<a href=#10 id=10 data-nosnippet>10</a>    FluxScaleReport, GainSolveReport,
+<a href=#11 id=11 data-nosnippet>11</a>};
+<a href=#12 id=12 data-nosnippet>12</a>
+<a href=#13 id=13 data-nosnippet>13</a><span class="doccomment">/// Canonical structured result for one calibration task execution.
+<a href=#14 id=14 data-nosnippet>14</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+<a href=#15 id=15 data-nosnippet>15</a>#[serde(tag = <span class="string">"kind"</span>, content = <span class="string">"report"</span>, rename_all = <span class="string">"snake_case"</span>)]
+<a href=#16 id=16 data-nosnippet>16</a></span><span class="kw">pub enum </span>CalibrationTaskResult {
+<a href=#17 id=17 data-nosnippet>17</a>    <span class="doccomment">/// `calibrate execute_apply`
+<a href=#18 id=18 data-nosnippet>18</a>    </span>Apply(ApplyExecutionReport),
+<a href=#19 id=19 data-nosnippet>19</a>    <span class="doccomment">/// `calibrate export-corrected`
+<a href=#20 id=20 data-nosnippet>20</a>    </span>ExportCorrectedData(ExportCorrectedDataReport),
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="doccomment">/// `calibrate uvcontsub`
+<a href=#22 id=22 data-nosnippet>22</a>    </span>ContinuumSubtract(ContinuumSubtractionReport),
+<a href=#23 id=23 data-nosnippet>23</a>    <span class="doccomment">/// `calibrate summary`
+<a href=#24 id=24 data-nosnippet>24</a>    </span>Summary(Vec&lt;CalibrationTableSummary&gt;),
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// `calibrate plan-apply`
+<a href=#26 id=26 data-nosnippet>26</a>    </span>PlanApply(ApplyPlan),
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="doccomment">/// `calibrate stats`
+<a href=#28 id=28 data-nosnippet>28</a>    </span>Stats(CalibrationStatsReport),
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="doccomment">/// `calibrate solve-gain`
+<a href=#30 id=30 data-nosnippet>30</a>    </span>SolveGain(GainSolveReport),
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="doccomment">/// `calibrate solve-bandpass`
+<a href=#32 id=32 data-nosnippet>32</a>    </span>SolveBandpass(BandpassSolveReport),
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="doccomment">/// `calibrate fluxscale`
+<a href=#34 id=34 data-nosnippet>34</a>    </span>FluxScale(FluxScaleReport),
+<a href=#35 id=35 data-nosnippet>35</a>}
+<a href=#36 id=36 data-nosnippet>36</a>
+<a href=#37 id=37 data-nosnippet>37</a><span class="doccomment">/// Backward-compatible alias for the launcher-managed calibration output type.
+<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">pub type </span>ManagedCalibrationOutput = CalibrationTaskResult;
 </code></pre></div></section></main></body></html>
