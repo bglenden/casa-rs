@@ -132,8 +132,7 @@ Rust and build locally:
 ```bash
 curl https://sh.rustup.rs -sSf | sh
 source "$HOME/.cargo/env"
-cargo build --release -p casars --bin casars
-cargo build --release -p casa-calibration --bin calibrate
+cargo build --release --workspace --bins
 ```
 
 To package a local release-style bundle, run:

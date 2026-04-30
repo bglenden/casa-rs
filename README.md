@@ -96,13 +96,13 @@ current proof boundaries.
 
 ## Quick Start
 
-Source builds require `pkg-config` and CFITSIO for the `fitsio`-backed
-image-analysis tools:
+Source builds require CMake for the bundled CFITSIO build used by the
+`fitsio`-backed image-analysis tools:
 
 ```bash
-brew install pkg-config cfitsio
+brew install cmake
 # or on Ubuntu:
-sudo apt-get install -y pkg-config libcfitsio-dev
+sudo apt-get install -y cmake
 ```
 
 From this repository workspace, the raw Cargo path is:
@@ -235,8 +235,7 @@ Rust and then build the binaries yourself:
 ```bash
 curl https://sh.rustup.rs -sSf | sh
 source "$HOME/.cargo/env"
-cargo build --release -p casars --bin casars
-cargo build --release -p casa-calibration --bin calibrate
+cargo build --release --workspace --bins
 ```
 
 From there you can package a release-style bundle locally with:
@@ -461,6 +460,13 @@ The installer-managed suite layout is:
   bin/
     casars
     calibrate
+    casars-importvla
+    msexplore
+    casars-imager
+    imexplore
+    immoments
+    exportfits
+    importfits
   python/
     ...
   wheels/

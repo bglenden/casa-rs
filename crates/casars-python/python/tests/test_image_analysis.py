@@ -16,10 +16,12 @@ def reset_image_analysis_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
         imexplore_binary=None,
         immoments_binary=None,
         exportfits_binary=None,
+        importfits_binary=None,
     )
     monkeypatch.delenv("CASARS_IMEXPLORE_BIN", raising=False)
     monkeypatch.delenv("CASARS_IMMOMENTS_BIN", raising=False)
     monkeypatch.delenv("CASARS_EXPORTFITS_BIN", raising=False)
+    monkeypatch.delenv("CASARS_IMPORTFITS_BIN", raising=False)
     monkeypatch.delenv("CASARS_SUITE_ROOT", raising=False)
 
 
@@ -86,6 +88,23 @@ def test_exportfits_wrapper_encodes_task_request(tmp_path: Path) -> None:
     assert request["imagename"] == "twhya_n2hp.image"
     assert request["fitsimage"] == "twhya_n2hp.fits"
     assert request["velocity"] is True
+    assert request["overwrite"] is True
+
+
+def test_importfits_wrapper_encodes_task_request(tmp_path: Path) -> None:
+    binary = _write_task_stub(tmp_path / "bin" / "importfits", version="ok")
+
+    result = image_analysis.importfits(
+        "twhya_cont.fits",
+        "twhya_cont.image",
+        overwrite=True,
+        binary=binary,
+    )
+
+    assert result["kind"] == "importfits"
+    request = result["result"]["request"]
+    assert request["fitsimage"] == "twhya_cont.fits"
+    assert request["imagename"] == "twhya_cont.image"
     assert request["overwrite"] is True
 
 

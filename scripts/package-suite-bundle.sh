@@ -14,12 +14,26 @@ Creates release bundle archives for one supported platform:
 The suite bundle contains:
   - bin/casars
   - bin/calibrate
+  - bin/casars-importvla
+  - bin/msexplore
+  - bin/casars-imager
+  - bin/imexplore
+  - bin/immoments
+  - bin/exportfits
+  - bin/importfits
   - wheels/*.whl
   - bundle-manifest.json
 
 The binaries bundle contains:
   - bin/casars
   - bin/calibrate
+  - bin/casars-importvla
+  - bin/msexplore
+  - bin/casars-imager
+  - bin/imexplore
+  - bin/immoments
+  - bin/exportfits
+  - bin/importfits
 EOF
 }
 
@@ -73,9 +87,23 @@ done
 [[ -n "$wheel_dir" ]] || { usage; die "--wheel-dir is required"; }
 [[ -n "$out_dir" ]] || { usage; die "--out-dir is required"; }
 
-[[ -x "$bin_dir/casars" ]] || die "missing executable $bin_dir/casars"
-[[ -x "$bin_dir/calibrate" ]] || die "missing executable $bin_dir/calibrate"
 [[ -d "$wheel_dir" ]] || die "wheel directory does not exist: $wheel_dir"
+
+binaries=(
+  casars
+  calibrate
+  casars-importvla
+  msexplore
+  casars-imager
+  imexplore
+  immoments
+  exportfits
+  importfits
+)
+
+for binary in "${binaries[@]}"; do
+  [[ -x "$bin_dir/$binary" ]] || die "missing executable $bin_dir/$binary"
+done
 
 shopt -s nullglob
 wheels=( "$wheel_dir"/*.whl )
@@ -98,10 +126,10 @@ suite_dir="$tmp_root/casa-rs-suite-$version-$platform"
 binaries_dir="$tmp_root/casa-rs-binaries-$version-$platform"
 mkdir -p "$suite_dir/bin" "$suite_dir/wheels" "$binaries_dir/bin"
 
-cp "$bin_dir/casars" "$suite_dir/bin/"
-cp "$bin_dir/calibrate" "$suite_dir/bin/"
-cp "$bin_dir/casars" "$binaries_dir/bin/"
-cp "$bin_dir/calibrate" "$binaries_dir/bin/"
+for binary in "${binaries[@]}"; do
+  cp "$bin_dir/$binary" "$suite_dir/bin/"
+  cp "$bin_dir/$binary" "$binaries_dir/bin/"
+done
 cp "${wheels[@]}" "$suite_dir/wheels/"
 
 manifest_path="$suite_dir/bundle-manifest.json"
@@ -124,7 +152,7 @@ cat >"$manifest_path" <<EOF
   "version": "$version",
   "platform": "$platform",
   "channel": "$channel",
-  "binaries": ["casars", "calibrate"],
+  "binaries": ["casars", "calibrate", "casars-importvla", "msexplore", "casars-imager", "imexplore", "immoments", "exportfits", "importfits"],
   "wheel_files": [${wheel_json}]
 }
 EOF

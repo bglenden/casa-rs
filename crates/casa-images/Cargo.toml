@@ -17,7 +17,7 @@ casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
 casa-lattices = { path = "../casa-lattices" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
-fitsio = "0.21"
+fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 ndarray.workspace = true
 schemars = { version = "0.8", features = ["derive"] }

@@ -55,6 +55,10 @@ jobs:
         run: |
           cargo build -q --release -p casars --bin casars
           cargo build -q --release -p casa-calibration --bin calibrate
+          cargo build -q --release -p casars-importvla --bin casars-importvla
+          cargo build -q --release -p casa-ms --bin msexplore
+          cargo build -q --release -p casars-imager --bin casars-imager
+          cargo build -q --release -p casa-images --bin imexplore --bin immoments --bin exportfits --bin importfits
 
       - name: Smoke-test built wheel
         shell: bash
@@ -70,14 +74,27 @@ jobs:
 
           python -m pip install --upgrade pip
           python -m pip install "${wheels[0]}"
-          CASARS_CALIBRATE_BIN="$GITHUB_WORKSPACE/target/release/calibrate" python - <<'PY'
+          CASARS_CALIBRATE_BIN="$GITHUB_WORKSPACE/target/release/calibrate" \
+          CASARS_IMPORTVLA_BIN="$GITHUB_WORKSPACE/target/release/casars-importvla" \
+          CASARS_MSEXPLORE_BIN="$GITHUB_WORKSPACE/target/release/msexplore" \
+          CASARS_IMAGER_BIN="$GITHUB_WORKSPACE/target/release/casars-imager" \
+          CASARS_IMMOMENTS_BIN="$GITHUB_WORKSPACE/target/release/immoments" \
+          CASARS_EXPORTFITS_BIN="$GITHUB_WORKSPACE/target/release/exportfits" \
+          CASARS_IMPORTFITS_BIN="$GITHUB_WORKSPACE/target/release/importfits" \
+          python - <<'PY'
           import casars
-          from casars.tasks import calibrate
+          from casars.tasks import calibrate, image_analysis, imager, importvla, msexplore
 
           assert casars.__version__
           info = calibrate.protocol_info()
           assert info.protocol_name == "casa_calibration_task"
           assert info.protocol_version == 1
+          assert importvla.protocol_info().protocol_name == "casa_importvla_task"
+          assert msexplore.protocol_info().protocol_name == "casa_msexplore_task"
+          assert imager.protocol_info().protocol_name == "casa_imager_task"
+          assert image_analysis.immoments_protocol_info().protocol_name == "casa_image_analysis_task"
+          assert image_analysis.exportfits_protocol_info().protocol_name == "casa_image_analysis_task"
+          assert image_analysis.importfits_protocol_info().protocol_name == "casa_image_analysis_task"
           schema = calibrate.schema()
           assert "request_schema" in schema
           assert "result_schema" in schema
@@ -122,8 +139,13 @@ jobs:
           rust-toolchain: stable
           args: --manifest-path crates/casars-python/Cargo.toml --out dist
 
-      - name: Build calibrate binary for smoke test
-        run: cargo build -q -p casa-calibration --bin calibrate
+      - name: Build task binaries for smoke test
+        run: |
+          cargo build -q -p casa-calibration --bin calibrate
+          cargo build -q -p casars-importvla --bin casars-importvla
+          cargo build -q -p casa-ms --bin msexplore
+          cargo build -q -p casars-imager --bin casars-imager
+          cargo build -q -p casa-images --bin immoments --bin exportfits --bin importfits
 
       - name: Smoke-test built sdist
         shell: bash
@@ -139,14 +161,27 @@ jobs:
 
           python -m pip install --upgrade pip
           python -m pip install "${sdists[0]}"
-          CASARS_CALIBRATE_BIN="$GITHUB_WORKSPACE/target/debug/calibrate" python - <<'PY'
+          CASARS_CALIBRATE_BIN="$GITHUB_WORKSPACE/target/debug/calibrate" \
+          CASARS_IMPORTVLA_BIN="$GITHUB_WORKSPACE/target/debug/casars-importvla" \
+          CASARS_MSEXPLORE_BIN="$GITHUB_WORKSPACE/target/debug/msexplore" \
+          CASARS_IMAGER_BIN="$GITHUB_WORKSPACE/target/debug/casars-imager" \
+          CASARS_IMMOMENTS_BIN="$GITHUB_WORKSPACE/target/debug/immoments" \
+          CASARS_EXPORTFITS_BIN="$GITHUB_WORKSPACE/target/debug/exportfits" \
+          CASARS_IMPORTFITS_BIN="$GITHUB_WORKSPACE/target/debug/importfits" \
+          python - <<'PY'
           import casars
-          from casars.tasks import calibrate
+          from casars.tasks import calibrate, image_analysis, imager, importvla, msexplore
 
           assert casars.__version__
           info = calibrate.protocol_info()
           assert info.protocol_name == "casa_calibration_task"
           assert info.protocol_version == 1
+          assert importvla.protocol_info().protocol_name == "casa_importvla_task"
+          assert msexplore.protocol_info().protocol_name == "casa_msexplore_task"
+          assert imager.protocol_info().protocol_name == "casa_imager_task"
+          assert image_analysis.immoments_protocol_info().protocol_name == "casa_image_analysis_task"
+          assert image_analysis.exportfits_protocol_info().protocol_name == "casa_image_analysis_task"
+          assert image_analysis.importfits_protocol_info().protocol_name == "casa_image_analysis_task"
           calibrate.validate_signature_parity()
           PY
 

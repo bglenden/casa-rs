@@ -42,6 +42,8 @@ IMMOMENTS_BINARY_NAME = "immoments"
 IMMOMENTS_BINARY_ENVVAR = "CASARS_IMMOMENTS_BIN"
 EXPORTFITS_BINARY_NAME = "exportfits"
 EXPORTFITS_BINARY_ENVVAR = "CASARS_EXPORTFITS_BIN"
+IMPORTFITS_BINARY_NAME = "importfits"
+IMPORTFITS_BINARY_ENVVAR = "CASARS_IMPORTFITS_BIN"
 
 CASARS_SUITE_ROOT_ENVVAR = "CASARS_SUITE_ROOT"
 
@@ -52,6 +54,7 @@ _configured_imager_binary: str | None = None
 _configured_imexplore_binary: str | None = None
 _configured_immoments_binary: str | None = None
 _configured_exportfits_binary: str | None = None
+_configured_importfits_binary: str | None = None
 
 
 class CalibrationBinaryNotFoundError(FileNotFoundError):
@@ -173,6 +176,13 @@ def configure_exportfits_binary(binary: StrPath | None) -> None:
     _configured_exportfits_binary = None if binary is None else os.fspath(binary)
 
 
+def configure_importfits_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default importfits binary override."""
+
+    global _configured_importfits_binary
+    _configured_importfits_binary = None if binary is None else os.fspath(binary)
+
+
 def resolve_calibrate_binary(binary: StrPath | None = None) -> str:
     """Resolve the calibrate binary using the documented precedence order."""
 
@@ -264,6 +274,19 @@ def resolve_exportfits_binary(binary: StrPath | None = None) -> str:
     )
 
 
+def resolve_importfits_binary(binary: StrPath | None = None) -> str:
+    """Resolve the importfits binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_importfits_binary,
+        envvar=IMPORTFITS_BINARY_ENVVAR,
+        binary_name=IMPORTFITS_BINARY_NAME,
+        missing_error_cls=ImageAnalysisBinaryNotFoundError,
+        description="importfits",
+    )
+
+
 def get_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     """Return validated protocol info for the selected calibrate binary."""
 
@@ -342,6 +365,19 @@ def get_exportfits_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     )
 
 
+def get_importfits_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
+    """Return validated protocol info for the selected importfits binary."""
+
+    resolved = resolve_importfits_binary(binary)
+    return _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+
+
 def fetch_calibration_schema(binary: StrPath | None = None) -> dict[str, Any]:
     """Fetch the JSON schema bundle advertised by the calibrate binary."""
 
@@ -386,6 +422,14 @@ def fetch_exportfits_schema(binary: StrPath | None = None) -> dict[str, Any]:
     """Fetch the JSON schema bundle advertised by the exportfits binary."""
 
     resolved = resolve_exportfits_binary(binary)
+    stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
+    return json.loads(stdout)
+
+
+def fetch_importfits_schema(binary: StrPath | None = None) -> dict[str, Any]:
+    """Fetch the JSON schema bundle advertised by the importfits binary."""
+
+    resolved = resolve_importfits_binary(binary)
     stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
     return json.loads(stdout)
 
@@ -530,6 +574,30 @@ def invoke_exportfits_task(
         invocation_error_cls=ImageAnalysisInvocationError,
     )
     payload = json.dumps({"kind": "exportfits", "request": request}, sort_keys=True)
+    stdout = _run_process(
+        [resolved, "--json-run", "-"],
+        stdin=payload,
+        error_cls=ImageAnalysisInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_importfits_task(
+    *,
+    request: dict[str, Any],
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run one importfits task request through ``importfits --json-run -``."""
+
+    resolved = resolve_importfits_binary(binary)
+    _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+    payload = json.dumps({"kind": "importfits", "request": request}, sort_keys=True)
     stdout = _run_process(
         [resolved, "--json-run", "-"],
         stdin=payload,
