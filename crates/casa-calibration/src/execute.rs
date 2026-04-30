@@ -567,6 +567,7 @@ pub(crate) fn evaluate_apply_rows(
             &loaded_tables,
             parang_state.as_ref(),
             Some(&mut geometry_cache),
+            None,
         )?;
         evaluated_rows.insert(
             row.row_index,
@@ -782,6 +783,8 @@ fn execute_apply_plan(
     let mut changed_columns: Vec<&'static str> = vec![VisibilityDataColumn::CorrectedData.name()];
     let row_loop_started_at = Instant::now();
     let mut geometry_cache = RowGeometryCache::default();
+    let mut row_compute_profile =
+        calibration_profile_enabled().then(ApplyRowComputeProfile::default);
     if use_partial_main_save {
         let anticipated_updates = plan.selected_rows.len();
         ms.main_table_mut().reserve_array_cell_updates(
@@ -917,6 +920,7 @@ fn execute_apply_plan(
                 &loaded_tables,
                 parang_state.as_ref(),
                 Some(&mut geometry_cache),
+                row_compute_profile.as_mut(),
             )?;
             row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
 
@@ -1041,6 +1045,7 @@ fn execute_apply_plan(
                 &loaded_tables,
                 parang_state.as_ref(),
                 Some(&mut geometry_cache),
+                row_compute_profile.as_mut(),
             )?;
             row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
 
@@ -1213,6 +1218,13 @@ fn execute_apply_plan(
                 save_ns as f64 / 1_000_000_000.0
             )),
         );
+        if let Some(profile) = row_compute_profile {
+            log_calibration_profile(
+                "apply_row_compute",
+                row_compute_ns as f64 / 1_000_000_000.0,
+                Some(profile.detail_string()),
+            );
+        }
     }
 
     Ok((
@@ -1264,11 +1276,47 @@ struct PrefetchedExecutionRowInputs {
     original_weight: Option<ArrayValue>,
 }
 
+#[derive(Debug, Default)]
+struct ApplyRowComputeProfile {
+    rows: usize,
+    table_applications: usize,
+    setup_ns: u64,
+    table_lookup_ns: u64,
+    row_dependent_grid_ns: u64,
+    fast_gain_apply_ns: u64,
+    generic_sample_apply_ns: u64,
+    parallactic_angle_ns: u64,
+    weight_finalize_ns: u64,
+}
+
+impl ApplyRowComputeProfile {
+    fn add_elapsed(bucket: &mut u64, started_at: Option<Instant>) {
+        if let Some(started_at) = started_at {
+            *bucket += started_at.elapsed().as_nanos() as u64;
+        }
+    }
+
+    fn detail_string(&self) -> String {
+        format!(
+            "rows={} table_apps={} setup={:.3}s lookup={:.3}s row_dependent_grid={:.3}s fast_gain={:.3}s generic_sample={:.3}s parang={:.3}s weight_finalize={:.3}s",
+            self.rows,
+            self.table_applications,
+            self.setup_ns as f64 / 1_000_000_000.0,
+            self.table_lookup_ns as f64 / 1_000_000_000.0,
+            self.row_dependent_grid_ns as f64 / 1_000_000_000.0,
+            self.fast_gain_apply_ns as f64 / 1_000_000_000.0,
+            self.generic_sample_apply_ns as f64 / 1_000_000_000.0,
+            self.parallactic_angle_ns as f64 / 1_000_000_000.0,
+            self.weight_finalize_ns as f64 / 1_000_000_000.0,
+        )
+    }
+}
+
 #[derive(Default)]
 struct RowGeometryCache {
     elevations: HashMap<RowGeometryKey, f64>,
     projected_offsets: HashMap<ProjectedOffsetKey, [f64; 3]>,
-    materialized_grids: HashMap<MaterializedGridKey, CalibrationGrid>,
+    materialized_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1289,7 +1337,7 @@ struct MaterializedGridKey {
     row: RowGeometryKey,
     kind: u8,
     data_spw_id: i32,
-    fingerprint: u64,
+    grid_id: usize,
 }
 
 impl RowGeometryCache {
@@ -1342,11 +1390,11 @@ impl RowGeometryCache {
         Ok(uvw)
     }
 
-    fn materialized_grid(&self, key: MaterializedGridKey) -> Option<CalibrationGrid> {
+    fn materialized_grid(&self, key: MaterializedGridKey) -> Option<Arc<CalibrationGrid>> {
         self.materialized_grids.get(&key).cloned()
     }
 
-    fn insert_materialized_grid(&mut self, key: MaterializedGridKey, grid: CalibrationGrid) {
+    fn insert_materialized_grid(&mut self, key: MaterializedGridKey, grid: Arc<CalibrationGrid>) {
         self.materialized_grids.insert(key, grid);
     }
 }
@@ -1362,43 +1410,23 @@ impl RowGeometryKey {
 }
 
 fn materialized_grid_key(
-    grid: &CalibrationGrid,
+    grid: &Arc<CalibrationGrid>,
     field_id: i32,
     antenna_id: i32,
     time_seconds: f64,
     data_spw_id: i32,
 ) -> Option<MaterializedGridKey> {
-    let (kind, fingerprint) = match grid {
-        CalibrationGrid::Antpos(grid) => {
-            let mut fingerprint = 0xcbf29ce484222325_u64;
-            for value in grid.offsets_m {
-                fingerprint = fingerprint.wrapping_mul(0x100000001b3) ^ u64::from(value.to_bits());
-            }
-            fingerprint = fingerprint.wrapping_mul(0x100000001b3) ^ u64::from(grid.flagged);
-            (1, fingerprint)
-        }
-        CalibrationGrid::GainCurve(grid) => {
-            let mut fingerprint = grid.receptor_count as u64;
-            for value in grid.coefficients.iter() {
-                fingerprint = fingerprint.wrapping_mul(0x100000001b3) ^ u64::from(value.to_bits());
-            }
-            for value in grid.flags.iter() {
-                fingerprint = fingerprint.wrapping_mul(0x100000001b3) ^ u64::from(*value);
-            }
-            (2, fingerprint)
-        }
-        CalibrationGrid::Opacity(grid) => {
-            let fingerprint =
-                u64::from(grid.tau.to_bits()).rotate_left(1) ^ u64::from(grid.flagged);
-            (3, fingerprint)
-        }
+    let kind = match grid.as_ref() {
+        CalibrationGrid::Antpos(_) => 1,
+        CalibrationGrid::GainCurve(_) => 2,
+        CalibrationGrid::Opacity(_) => 3,
         _ => return None,
     };
     Some(MaterializedGridKey {
         row: RowGeometryKey::new(time_seconds, field_id, antenna_id),
         kind,
         data_spw_id,
-        fingerprint,
+        grid_id: Arc::as_ptr(grid) as usize,
     })
 }
 
@@ -1422,7 +1450,10 @@ fn apply_row(
     loaded_tables: &[LoadedCalibrationTable],
     parang_state: Option<&ParallacticAngleState>,
     geometry_cache: Option<&mut RowGeometryCache>,
+    compute_profile: Option<&mut ApplyRowComputeProfile>,
 ) -> Result<ExecutionRowResult, ApplyExecutionError> {
+    let mut compute_profile = compute_profile;
+    let setup_started_at = compute_profile.as_ref().map(|_| Instant::now());
     let ExecutionRowInputs {
         correlation_types,
         data,
@@ -1513,11 +1544,19 @@ fn apply_row(
             weight_spectrum = Some(expand_weight_to_spectrum(weight_values, data.shape()[1]));
         }
     }
+    if let Some(profile) = compute_profile.as_deref_mut() {
+        profile.rows += 1;
+        ApplyRowComputeProfile::add_elapsed(&mut profile.setup_ns, setup_started_at);
+    }
 
     for (table_plan, loaded_table) in plan.calibration_tables.iter().zip(loaded_tables) {
         if !table_plan.spec.apply_to.matches(row) {
             continue;
         }
+        if let Some(profile) = compute_profile.as_deref_mut() {
+            profile.table_applications += 1;
+        }
+        let lookup_started_at = compute_profile.as_ref().map(|_| Instant::now());
         let cal_spw_id = table_plan
             .spw_mapping
             .iter()
@@ -1562,6 +1601,9 @@ fn apply_row(
             row.time_seconds,
             table_plan.interp,
         )?;
+        if let Some(profile) = compute_profile.as_deref_mut() {
+            ApplyRowComputeProfile::add_elapsed(&mut profile.table_lookup_ns, lookup_started_at);
+        }
 
         let (Some(ant1), Some(ant2)) = (ant1, ant2) else {
             if plan.apply_mode == ApplyMode::CalFlag {
@@ -1577,6 +1619,7 @@ fn apply_row(
             continue;
         };
 
+        let materialize_started_at = compute_profile.as_ref().map(|_| Instant::now());
         let ant1 = materialize_row_dependent_grid(
             ant1,
             row.field_id,
@@ -1597,6 +1640,12 @@ fn apply_row(
             &loaded_table.path,
             geometry_cache.as_deref_mut(),
         )?;
+        if let Some(profile) = compute_profile.as_deref_mut() {
+            ApplyRowComputeProfile::add_elapsed(
+                &mut profile.row_dependent_grid_ns,
+                materialize_started_at,
+            );
+        }
 
         let sampling_context = CalibrationSamplingContext {
             data_frequencies_hz: &data_spw.channel_frequencies_hz,
@@ -1609,8 +1658,9 @@ fn apply_row(
 
         if !(table_plan.calwt && loaded_table.supports_calwt)
             && let (CalibrationGrid::Complex(ant1_grid), CalibrationGrid::Complex(ant2_grid)) =
-                (&ant1, &ant2)
+                (ant1.as_ref(), ant2.as_ref())
         {
+            let fast_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
             apply_complex_gain_pair_fast(
                 ant1_grid,
                 ant2_grid,
@@ -1623,9 +1673,16 @@ fn apply_row(
                     newly_flagged_samples: &mut newly_flagged_samples,
                 },
             )?;
+            if let Some(profile) = compute_profile.as_deref_mut() {
+                ApplyRowComputeProfile::add_elapsed(
+                    &mut profile.fast_gain_apply_ns,
+                    fast_apply_started_at,
+                );
+            }
             continue;
         }
 
+        let generic_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
         for corr_index in 0..data.shape()[0] {
             let receptors =
                 correlation_receptors(correlation_types[corr_index]).ok_or_else(|| {
@@ -1681,9 +1738,16 @@ fn apply_row(
                 }
             }
         }
+        if let Some(profile) = compute_profile.as_deref_mut() {
+            ApplyRowComputeProfile::add_elapsed(
+                &mut profile.generic_sample_apply_ns,
+                generic_apply_started_at,
+            );
+        }
     }
 
     if let Some(parang_state) = parang_state {
+        let parang_started_at = compute_profile.as_ref().map(|_| Instant::now());
         let ant1_feed_pa = parang_state.feed_parallactic_angle(
             row.time_seconds,
             row.field_id,
@@ -1711,9 +1775,16 @@ fn apply_row(
                 corrected[[corr_index, chan_index]] /= correction;
             }
         }
+        if let Some(profile) = compute_profile.as_deref_mut() {
+            ApplyRowComputeProfile::add_elapsed(
+                &mut profile.parallactic_angle_ns,
+                parang_started_at,
+            );
+        }
     }
 
     if any_calwt {
+        let weight_finalize_started_at = compute_profile.as_ref().map(|_| Instant::now());
         let weight_values = weight
             .as_mut()
             .expect("validated WEIGHT availability when calwt is enabled");
@@ -1731,6 +1802,12 @@ fn apply_row(
                     .collect::<Vec<_>>();
                 weight_values[[corr_index]] *= median_f32(&samples);
             }
+        }
+        if let Some(profile) = compute_profile {
+            ApplyRowComputeProfile::add_elapsed(
+                &mut profile.weight_finalize_ns,
+                weight_finalize_started_at,
+            );
         }
     }
 
@@ -1850,6 +1927,7 @@ fn apply_row_prefetched(
     loaded_tables: &[LoadedCalibrationTable],
     parang_state: Option<&ParallacticAngleState>,
     geometry_cache: Option<&mut RowGeometryCache>,
+    compute_profile: Option<&mut ApplyRowComputeProfile>,
 ) -> Result<ExecutionRowResult, ApplyExecutionError> {
     apply_row(
         row,
@@ -1864,12 +1942,13 @@ fn apply_row_prefetched(
         loaded_tables,
         parang_state,
         geometry_cache,
+        compute_profile,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn materialize_row_dependent_grid(
-    grid: CalibrationGrid,
+    grid: Arc<CalibrationGrid>,
     field_id: i32,
     antenna_id: i32,
     time_seconds: f64,
@@ -1877,7 +1956,7 @@ fn materialize_row_dependent_grid(
     engine: Option<&MsCalEngine>,
     path: &Path,
     geometry_cache: Option<&mut RowGeometryCache>,
-) -> Result<CalibrationGrid, ApplyExecutionError> {
+) -> Result<Arc<CalibrationGrid>, ApplyExecutionError> {
     let mut geometry_cache = geometry_cache;
     let cache_key =
         materialized_grid_key(&grid, field_id, antenna_id, time_seconds, data_spw.spw_id);
@@ -1886,7 +1965,7 @@ fn materialize_row_dependent_grid(
     {
         return Ok(grid);
     }
-    let result = match grid {
+    let result = match grid.as_ref() {
         CalibrationGrid::Antpos(grid) => {
             let Some(engine) = engine else {
                 return Err(ApplyExecutionError::UnsupportedCalibrationTable {
@@ -1932,13 +2011,13 @@ fn materialize_row_dependent_grid(
                 })
                 .collect::<Vec<_>>();
             let channel_count = values.len();
-            Ok(CalibrationGrid::Complex(GainGrid {
+            Ok(Arc::new(CalibrationGrid::Complex(GainGrid {
                 receptor_count: 1,
                 channel_count,
                 values: ArrayD::from_shape_vec(IxDyn(&[1, channel_count]).f(), values)
                     .expect("antpos materialized grid shape is valid"),
                 flags: ArrayD::from_elem(IxDyn(&[1, channel_count]).f(), grid.flagged),
-            }))
+            })))
         }
         CalibrationGrid::GainCurve(grid) => {
             let Some(engine) = engine else {
@@ -1976,14 +2055,14 @@ fn materialize_row_dependent_grid(
                 values.push(Complex32::new(gain, 0.0));
                 flags.push((0..4).any(|coeff_index| grid.flags[[base + coeff_index, 0]]));
             }
-            Ok(CalibrationGrid::Complex(GainGrid {
+            Ok(Arc::new(CalibrationGrid::Complex(GainGrid {
                 receptor_count: grid.receptor_count,
                 channel_count: 1,
                 values: ArrayD::from_shape_vec(IxDyn(&[grid.receptor_count]).f(), values)
                     .expect("gaincurve materialized grid shape is valid"),
                 flags: ArrayD::from_shape_vec(IxDyn(&[grid.receptor_count]).f(), flags)
                     .expect("gaincurve materialized flag shape is valid"),
-            }))
+            })))
         }
         CalibrationGrid::Opacity(grid) => {
             let Some(engine) = engine else {
@@ -2013,21 +2092,21 @@ fn materialize_row_dependent_grid(
             } else {
                 1.0
             };
-            Ok(CalibrationGrid::Complex(GainGrid {
+            Ok(Arc::new(CalibrationGrid::Complex(GainGrid {
                 receptor_count: 1,
                 channel_count: 1,
                 values: ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![Complex32::new(gain, 0.0)])
                     .expect("opacity materialized grid shape is valid"),
                 flags: ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![grid.flagged])
                     .expect("opacity materialized flag shape is valid"),
-            }))
+            })))
         }
-        other => Ok(other),
+        _ => Ok(Arc::clone(&grid)),
     };
     if let (Some(cache), Some(key), Ok(materialized)) =
         (&mut geometry_cache, cache_key, result.as_ref())
     {
-        cache.insert_materialized_grid(key, materialized.clone());
+        cache.insert_materialized_grid(key, Arc::clone(materialized));
     }
     result
 }
@@ -2195,7 +2274,7 @@ struct LegacyCalDescEntry {
 
 struct CalibrationSolution {
     time_seconds: f64,
-    grid: CalibrationGrid,
+    grid: Arc<CalibrationGrid>,
 }
 
 #[derive(Clone)]
@@ -2772,7 +2851,7 @@ impl LoadedCalibrationTable {
         antenna_id: i32,
         time_seconds: f64,
         interp: ApplyInterpolationMode,
-    ) -> Result<Option<CalibrationGrid>, ApplyExecutionError> {
+    ) -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError> {
         if self.interp != interp {
             return Err(ApplyExecutionError::UnsupportedInterpolation {
                 path: self.path.display().to_string(),
@@ -2842,7 +2921,7 @@ fn interpolate_time_linear(
     path: &Path,
     candidates: &[CalibrationSolution],
     time_seconds: f64,
-) -> Result<CalibrationGrid, ApplyExecutionError> {
+) -> Result<Arc<CalibrationGrid>, ApplyExecutionError> {
     let mut sorted = candidates.iter().collect::<Vec<_>>();
     sorted.sort_by(|a, b| a.time_seconds.total_cmp(&b.time_seconds));
 
@@ -2862,7 +2941,7 @@ fn interpolate_time_linear(
         {
             let fraction = ((time_seconds - lower.time_seconds)
                 / (upper.time_seconds - lower.time_seconds)) as f32;
-            match (&lower.grid, &upper.grid) {
+            match (lower.grid.as_ref(), upper.grid.as_ref()) {
                 (CalibrationGrid::Complex(lower), CalibrationGrid::Complex(upper)) => {
                     if lower.values.shape() != upper.values.shape() {
                         return Err(ApplyExecutionError::UnsupportedInterpolation {
@@ -2880,12 +2959,12 @@ fn interpolate_time_linear(
                     for (flag, upper_flag) in flags.iter_mut().zip(upper.flags.iter()) {
                         *flag = *flag || *upper_flag;
                     }
-                    Ok(CalibrationGrid::Complex(GainGrid {
+                    Ok(Arc::new(CalibrationGrid::Complex(GainGrid {
                         receptor_count: lower.receptor_count,
                         channel_count: lower.channel_count,
                         values,
                         flags,
-                    }))
+                    })))
                 }
                 (CalibrationGrid::Delay(lower), CalibrationGrid::Delay(upper)) => {
                     if lower.values_ns.shape() != upper.values_ns.shape() {
@@ -2904,12 +2983,12 @@ fn interpolate_time_linear(
                     for (flag, upper_flag) in flags.iter_mut().zip(upper.flags.iter()) {
                         *flag = *flag || *upper_flag;
                     }
-                    Ok(CalibrationGrid::Delay(DelayGrid {
+                    Ok(Arc::new(CalibrationGrid::Delay(DelayGrid {
                         receptor_count: lower.receptor_count,
                         channel_count: lower.channel_count,
                         values_ns,
                         flags,
-                    }))
+                    })))
                 }
                 (
                     CalibrationGrid::Antpos(_)
@@ -3108,7 +3187,10 @@ fn load_calibration_table(
         solutions
             .entry((field_id, spw_id, antenna_id))
             .or_default()
-            .push(CalibrationSolution { time_seconds, grid });
+            .push(CalibrationSolution {
+                time_seconds,
+                grid: Arc::new(grid),
+            });
     }
 
     Ok(LoadedCalibrationTable {
@@ -3177,7 +3259,10 @@ fn load_bpoly_calibration_table(
         solutions
             .entry((field_id, cal_desc_entry.spw_id, antenna_id))
             .or_default()
-            .push(CalibrationSolution { time_seconds, grid });
+            .push(CalibrationSolution {
+                time_seconds,
+                grid: Arc::new(grid),
+            });
     }
 
     Ok(LoadedCalibrationTable {
@@ -3933,7 +4018,7 @@ mod tests {
         let complex_pair = [
             CalibrationSolution {
                 time_seconds: 30.0,
-                grid: CalibrationGrid::Complex(GainGrid {
+                grid: Arc::new(CalibrationGrid::Complex(GainGrid {
                     receptor_count: 1,
                     channel_count: 2,
                     values: ArrayD::from_shape_vec(
@@ -3942,11 +4027,11 @@ mod tests {
                     )
                     .unwrap(),
                     flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![true, false]).unwrap(),
-                }),
+                })),
             },
             CalibrationSolution {
                 time_seconds: 10.0,
-                grid: CalibrationGrid::Complex(GainGrid {
+                grid: Arc::new(CalibrationGrid::Complex(GainGrid {
                     receptor_count: 1,
                     channel_count: 2,
                     values: ArrayD::from_shape_vec(
@@ -3955,11 +4040,14 @@ mod tests {
                     )
                     .unwrap(),
                     flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![false, false]).unwrap(),
-                }),
+                })),
             },
         ];
 
-        match interpolate_time_linear(path, &complex_pair, 20.0).unwrap() {
+        match interpolate_time_linear(path, &complex_pair, 20.0)
+            .unwrap()
+            .as_ref()
+        {
             CalibrationGrid::Complex(grid) => {
                 assert_complex_close(
                     grid.values[[0, 0]],
@@ -3995,26 +4083,29 @@ mod tests {
         let delay_pair = [
             CalibrationSolution {
                 time_seconds: 1.0,
-                grid: CalibrationGrid::Delay(DelayGrid {
+                grid: Arc::new(CalibrationGrid::Delay(DelayGrid {
                     receptor_count: 1,
                     channel_count: 2,
                     values_ns: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![1.0_f32, 3.0])
                         .unwrap(),
                     flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![false, true]).unwrap(),
-                }),
+                })),
             },
             CalibrationSolution {
                 time_seconds: 3.0,
-                grid: CalibrationGrid::Delay(DelayGrid {
+                grid: Arc::new(CalibrationGrid::Delay(DelayGrid {
                     receptor_count: 1,
                     channel_count: 2,
                     values_ns: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![5.0_f32, 7.0])
                         .unwrap(),
                     flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![true, false]).unwrap(),
-                }),
+                })),
             },
         ];
-        match interpolate_time_linear(path, &delay_pair, 2.0).unwrap() {
+        match interpolate_time_linear(path, &delay_pair, 2.0)
+            .unwrap()
+            .as_ref()
+        {
             CalibrationGrid::Delay(grid) => {
                 assert_eq!(grid.values_ns[[0, 0]], 3.0);
                 assert_eq!(grid.values_ns[[0, 1]], 5.0);
@@ -4028,7 +4119,7 @@ mod tests {
             path,
             &[CalibrationSolution {
                 time_seconds: 10.0,
-                grid: CalibrationGrid::Complex(GainGrid {
+                grid: Arc::new(CalibrationGrid::Complex(GainGrid {
                     receptor_count: 1,
                     channel_count: 2,
                     values: ArrayD::from_shape_vec(
@@ -4037,11 +4128,12 @@ mod tests {
                     )
                     .unwrap(),
                     flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![false, false]).unwrap(),
-                }),
+                })),
             }],
             0.0,
         )
         .unwrap()
+        .as_ref()
         {
             CalibrationGrid::Complex(grid) => {
                 assert_eq!(grid.values[[0, 0]], Complex32::new(1.0, 0.0))
@@ -4058,7 +4150,7 @@ mod tests {
             &[
                 CalibrationSolution {
                     time_seconds: 10.0,
-                    grid: CalibrationGrid::Complex(GainGrid {
+                    grid: Arc::new(CalibrationGrid::Complex(GainGrid {
                         receptor_count: 1,
                         channel_count: 2,
                         values: ArrayD::from_shape_vec(
@@ -4068,18 +4160,18 @@ mod tests {
                         .unwrap(),
                         flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![false, false])
                             .unwrap(),
-                    }),
+                    })),
                 },
                 CalibrationSolution {
                     time_seconds: 20.0,
-                    grid: CalibrationGrid::Delay(DelayGrid {
+                    grid: Arc::new(CalibrationGrid::Delay(DelayGrid {
                         receptor_count: 1,
                         channel_count: 2,
                         values_ns: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![1.0_f32, 2.0])
                             .unwrap(),
                         flags: ArrayD::from_shape_vec(IxDyn(&[1, 2]).f(), vec![false, false])
                             .unwrap(),
-                    }),
+                    })),
                 },
             ],
             15.0,

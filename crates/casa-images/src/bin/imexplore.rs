@@ -6,7 +6,10 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process;
 
-use casa_images::{ImageBrowserSession, imexplore_ui_schema_json, imhead, imstat};
+use casa_images::{
+    ImageBrowserSession, ImmomentsRequest, ImpvRequest, imexplore_ui_schema_json, imhead,
+    immoments, impv, imstat,
+};
 use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserProtocolInfo, ImageBrowserRequestEnvelope,
     ImageBrowserResponseEnvelope, ImageBrowserViewport, PROTOCOL_VERSION, schema_bundle_json,
@@ -120,6 +123,44 @@ fn run() -> Result<(), String> {
         }
         return Ok(());
     }
+    if args.peek().is_some_and(|arg| arg == "immoments") {
+        args.next();
+        let moment_args = parse_immoments_args(args)?;
+        let summary = immoments(&moment_args.request).map_err(|error| error.to_string())?;
+        if moment_args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&summary)
+                    .map_err(|error| format!("serialize immoments summary: {error}"))?
+            );
+        } else {
+            println!("outfile: {}", summary.outfile);
+            println!("moment: {}", summary.moment);
+            println!("shape: {:?}", summary.shape);
+            println!("valid_profiles: {}", summary.valid_profiles);
+            println!("units: {}", summary.units);
+        }
+        return Ok(());
+    }
+    if args.peek().is_some_and(|arg| arg == "impv") {
+        args.next();
+        let pv_args = parse_impv_args(args)?;
+        let summary = impv(&pv_args.request).map_err(|error| error.to_string())?;
+        if pv_args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&summary)
+                    .map_err(|error| format!("serialize impv summary: {error}"))?
+            );
+        } else {
+            println!("outfile: {}", summary.outfile);
+            println!("shape: {:?}", summary.shape);
+            println!("path_pixels: {}", summary.path_pixels);
+            println!("width: {}", summary.width);
+            println!("units: {}", summary.units);
+        }
+        return Ok(());
+    }
 
     let image_path = parse_path(args)?;
     run_snapshot(&image_path)
@@ -150,6 +191,16 @@ struct ImstatArgs {
     path: PathBuf,
     box_pixels: Option<String>,
     chans: Option<String>,
+    json: bool,
+}
+
+struct ImmomentsArgs {
+    request: ImmomentsRequest,
+    json: bool,
+}
+
+struct ImpvArgs {
+    request: ImpvRequest,
     json: bool,
 }
 
@@ -193,11 +244,157 @@ fn imstat_usage() -> String {
     "usage: imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json]".to_string()
 }
 
+fn parse_immoments_args(args: impl IntoIterator<Item = String>) -> Result<ImmomentsArgs, String> {
+    let args = args.into_iter().collect::<Vec<_>>();
+    let mut path = None;
+    let mut outfile = None;
+    let mut moments = 0;
+    let mut chans = None;
+    let mut includepix = None;
+    let mut overwrite = false;
+    let mut json = false;
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--outfile" => {
+                idx += 1;
+                outfile = Some(PathBuf::from(args.get(idx).ok_or_else(immoments_usage)?));
+            }
+            "--moments" => {
+                idx += 1;
+                moments = args
+                    .get(idx)
+                    .ok_or_else(immoments_usage)?
+                    .parse::<i32>()
+                    .map_err(|error| format!("invalid --moments: {error}"))?;
+            }
+            "--chans" => {
+                idx += 1;
+                chans = Some(args.get(idx).ok_or_else(immoments_usage)?.clone());
+            }
+            "--includepix" => {
+                idx += 1;
+                includepix = Some(parse_range(args.get(idx).ok_or_else(immoments_usage)?)?);
+            }
+            "--overwrite" => overwrite = true,
+            "--json" => json = true,
+            _ if path.is_none() => path = Some(PathBuf::from(&args[idx])),
+            other => {
+                return Err(format!(
+                    "unknown immoments argument {other:?}\n{}",
+                    immoments_usage()
+                ));
+            }
+        }
+        idx += 1;
+    }
+
+    Ok(ImmomentsArgs {
+        request: ImmomentsRequest {
+            imagename: path.ok_or_else(immoments_usage)?,
+            outfile: outfile.ok_or_else(immoments_usage)?,
+            moments,
+            chans,
+            includepix,
+            overwrite,
+        },
+        json,
+    })
+}
+
+fn immoments_usage() -> String {
+    "usage: imexplore immoments <image-path> --outfile <path> [--moments 0|1] [--chans 4~12] [--includepix min,max] [--overwrite] [--json]".to_string()
+}
+
+fn parse_impv_args(args: impl IntoIterator<Item = String>) -> Result<ImpvArgs, String> {
+    let args = args.into_iter().collect::<Vec<_>>();
+    let mut path = None;
+    let mut outfile = None;
+    let mut mode = "coords".to_string();
+    let mut start = None;
+    let mut end = None;
+    let mut width = 1usize;
+    let mut chans = None;
+    let mut overwrite = false;
+    let mut json = false;
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--outfile" => {
+                idx += 1;
+                outfile = Some(PathBuf::from(args.get(idx).ok_or_else(impv_usage)?));
+            }
+            "--mode" => {
+                idx += 1;
+                mode = args.get(idx).ok_or_else(impv_usage)?.clone();
+            }
+            "--start" => {
+                idx += 1;
+                start = Some(args.get(idx).ok_or_else(impv_usage)?.clone());
+            }
+            "--end" => {
+                idx += 1;
+                end = Some(args.get(idx).ok_or_else(impv_usage)?.clone());
+            }
+            "--width" => {
+                idx += 1;
+                width = args
+                    .get(idx)
+                    .ok_or_else(impv_usage)?
+                    .parse::<usize>()
+                    .map_err(|error| format!("invalid --width: {error}"))?;
+            }
+            "--chans" => {
+                idx += 1;
+                chans = Some(args.get(idx).ok_or_else(impv_usage)?.clone());
+            }
+            "--overwrite" => overwrite = true,
+            "--json" => json = true,
+            _ if path.is_none() => path = Some(PathBuf::from(&args[idx])),
+            other => return Err(format!("unknown impv argument {other:?}\n{}", impv_usage())),
+        }
+        idx += 1;
+    }
+
+    Ok(ImpvArgs {
+        request: ImpvRequest {
+            imagename: path.ok_or_else(impv_usage)?,
+            outfile: outfile.ok_or_else(impv_usage)?,
+            mode,
+            start: start.ok_or_else(impv_usage)?,
+            end: end.ok_or_else(impv_usage)?,
+            width,
+            chans,
+            overwrite,
+        },
+        json,
+    })
+}
+
+fn impv_usage() -> String {
+    "usage: imexplore impv <image-path> --outfile <path> --start x,y --end x,y [--mode coords] [--width pixels] [--chans 4~12] [--overwrite] [--json]".to_string()
+}
+
+fn parse_range(text: &str) -> Result<[f64; 2], String> {
+    let values = text
+        .split(',')
+        .map(|part| {
+            part.trim()
+                .parse::<f64>()
+                .map_err(|error| format!("invalid range {text:?}: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if values.len() != 2 {
+        return Err(format!("range must be min,max, got {text:?}"));
+    }
+    Ok([values[0], values[1]])
+}
+
 fn parse_path(args: impl IntoIterator<Item = String>) -> Result<PathBuf, String> {
     let args = args.into_iter().collect::<Vec<_>>();
     if args.len() != 1 {
         return Err(
-            "usage: imexplore <image-path> | imexplore imhead <image-path> [--json] | imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json] | imexplore --session | imexplore --json-schema | imexplore --protocol-info | imexplore --ui-schema".into(),
+            "usage: imexplore <image-path> | imexplore imhead <image-path> [--json] | imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json] | imexplore immoments <image-path> --outfile <path> [--json] | imexplore impv <image-path> --outfile <path> --start x,y --end x,y [--json] | imexplore --session | imexplore --json-schema | imexplore --protocol-info | imexplore --ui-schema".into(),
         );
     }
     Ok(PathBuf::from(&args[0]))

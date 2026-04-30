@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use casa_tables::{ColumnType, Table, TableError, TableOptions};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
@@ -188,12 +188,18 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         });
     }
 
+    let stage_started_at = Instant::now();
     let input = MeasurementSet::open(&request.input_ms).map_err(|source| {
         MsTransformError::OpenMeasurementSet {
             path: request.input_ms.display().to_string(),
             source,
         }
     })?;
+    maybe_log_transform_progress(
+        "open_measurement_set",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
     let source_column = request.data_column.source_name();
     if !input
         .main_table()
@@ -205,6 +211,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             column: source_column.to_string(),
         });
     }
+    let stage_started_at = Instant::now();
     let mut selected_rows =
         request
             .selection
@@ -213,11 +220,17 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
                 path: request.input_ms.display().to_string(),
                 source,
             })?;
+    maybe_log_transform_progress(
+        "select_rows",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
     if selected_rows.is_empty() {
         return Err(MsTransformError::EmptySelection {
             path: request.input_ms.display().to_string(),
         });
     }
+    let stage_started_at = Instant::now();
     let channel_selection = resolve_transform_channels(&input, &request.spw)?;
     let ddid_to_spw = data_description_spw_map(&input)?;
     let selected_ddids = input
@@ -241,11 +254,17 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         }
     }
     selected_rows = filtered_rows;
+    maybe_log_transform_progress(
+        "filter_rows_by_spw",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
     if selected_rows.is_empty() {
         return Err(MsTransformError::EmptySelection {
             path: request.input_ms.display().to_string(),
         });
     }
+    let stage_started_at = Instant::now();
     let selected_times = input
         .main_table()
         .column_accessor("TIME")
@@ -277,6 +296,12 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         .iter()
         .map(|&index| filtered_ddids[index])
         .collect::<Vec<_>>();
+    maybe_log_transform_progress(
+        "sort_selected_rows",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     prepare_output_root(&request.output_ms)?;
     let mut output_main = materialize_selected_main_table(
         &request.input_ms,
@@ -284,9 +309,21 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         &selected_rows,
         &request.output_ms,
     )?;
+    maybe_log_transform_progress(
+        "materialize_selected_main",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     copy_subtables(&request.input_ms, &request.output_ms)?;
+    maybe_log_transform_progress(
+        "copy_subtables",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
 
     let row_indices = (0..selected_rows.len()).collect::<Vec<_>>();
+    let stage_started_at = Instant::now();
     let source_values = input
         .main_table()
         .column_accessor(source_column)
@@ -321,7 +358,13 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     } else {
         None
     };
+    maybe_log_transform_progress(
+        "load_visibility_columns",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
 
+    let stage_started_at = Instant::now();
     let mut touched_spws = BTreeSet::new();
     let mut transformed_data = Vec::with_capacity(row_indices.len());
     let mut transformed_flags = Vec::with_capacity(row_indices.len());
@@ -379,7 +422,13 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         }
         touched_spws.insert(spw_id);
     }
+    maybe_log_transform_progress(
+        "select_channels",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
 
+    let stage_started_at = Instant::now();
     output_main
         .column_accessor_mut(VisibilityDataColumn::Data.name())
         .and_then(|mut column| column.put(transformed_data))
@@ -403,7 +452,13 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
                 source: Box::new(source),
             })?;
     }
+    maybe_log_transform_progress(
+        "put_output_columns",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
 
+    let stage_started_at = Instant::now();
     output_main
         .save_with_bindings_assuming_valid(
             measurement_set_table_options(&request.output_ms),
@@ -413,7 +468,18 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             path: request.output_ms.display().to_string(),
             source: Box::new(source),
         })?;
+    maybe_log_transform_progress(
+        "save_output_main",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     update_spectral_window_metadata(&channel_selection, &request.output_ms)?;
+    maybe_log_transform_progress(
+        "update_spectral_window",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
 
     Ok(MsTransformReport {
         input_ms: request.input_ms.clone(),
@@ -429,6 +495,21 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             .collect(),
         elapsed_ns: started_at.elapsed().as_nanos() as u64,
     })
+}
+
+fn transform_progress_enabled() -> bool {
+    std::env::var_os("CASA_RS_MSTRANSFORM_PROGRESS").is_some()
+}
+
+fn maybe_log_transform_progress(stage: &str, stage_elapsed: Duration, total_elapsed: Duration) {
+    if transform_progress_enabled() {
+        eprintln!(
+            "mstransform stage={} stage_elapsed_s={:.3} total_elapsed_s={:.3}",
+            stage,
+            stage_elapsed.as_secs_f64(),
+            total_elapsed.as_secs_f64(),
+        );
+    }
 }
 
 fn materialize_selected_main_table(
@@ -478,8 +559,16 @@ fn gather_selected_rows_column_wise(
                 "MAIN table is missing schema metadata".to_string(),
             )),
         })?;
-    let mut rows = vec![RecordValue::default(); selected_rows.len()];
+    let copied_column_count = schema
+        .columns()
+        .iter()
+        .filter(|column| !is_deferred_visibility_column(column.name()))
+        .count();
+    let mut rows = (0..selected_rows.len())
+        .map(|_| RecordValue::new(Vec::with_capacity(copied_column_count)))
+        .collect::<Vec<_>>();
     for column in schema.columns() {
+        let column_started_at = Instant::now();
         let name = column.name();
         if is_deferred_visibility_column(name) {
             continue;
@@ -526,6 +615,11 @@ fn gather_selected_rows_column_wise(
                 }
             }
         }
+        maybe_log_transform_progress(
+            &format!("materialize_selected_main/column/{name}"),
+            column_started_at.elapsed(),
+            column_started_at.elapsed(),
+        );
     }
     Ok(rows)
 }

@@ -180,6 +180,17 @@ pub(crate) fn shared_tile_cache_entry_count() -> usize {
         .len()
 }
 
+#[cfg(test)]
+fn shared_tile_cache_entry_count_for_table(table_path: &Path) -> usize {
+    SHARED_TILE_CACHE
+        .lock()
+        .expect("shared tile cache lock poisoned")
+        .entries
+        .keys()
+        .filter(|key| key.table_path == table_path)
+        .count()
+}
+
 pub(crate) fn invalidate_shared_tile_cache_for_table(table_path: &Path) {
     let mut cache = SHARED_TILE_CACHE
         .lock()
@@ -6349,11 +6360,11 @@ mod tests {
             .expect("save tiled-shape table");
 
         let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
-        assert_eq!(shared_tile_cache_entry_count(), 0);
+        assert_eq!(shared_tile_cache_entry_count_for_table(&root), 0);
         reopened
             .get_array_cells_owned("data", &[0, 1, 4, 5])
             .expect("first tiled selected-row read");
-        let cache_entries_after_first_read = shared_tile_cache_entry_count();
+        let cache_entries_after_first_read = shared_tile_cache_entry_count_for_table(&root);
         assert!(
             cache_entries_after_first_read > 0,
             "first tiled selected-row read should populate the shared tile cache"
@@ -6363,7 +6374,7 @@ mod tests {
             .get_array_cells_owned("data", &[0, 1, 4, 5])
             .expect("second tiled selected-row read");
         assert_eq!(
-            shared_tile_cache_entry_count(),
+            shared_tile_cache_entry_count_for_table(&root),
             cache_entries_after_first_read,
             "repeated tiled selected-row reads should reuse the shared tile cache"
         );

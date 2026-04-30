@@ -14,6 +14,26 @@ outdir="$(cd "$outdir" && pwd)"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-$outdir/matplotlib}"
 mkdir -p "$MPLCONFIGDIR"
 
+profile_enabled() {
+  case "${1:-}" in
+    ""|0|false|False|FALSE|off|Off|OFF|no|No|NO)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+profile_rust=false
+if profile_enabled "${CASA_RS_PROFILE_RUST:-}"; then
+  profile_rust=true
+fi
+if profile_enabled "${CASA_RS_PROFILE_CASA:-}"; then
+  export CASA_RS_CASA_PROFILE_DIR="${CASA_RS_CASA_PROFILE_DIR:-$outdir/casa-python-profile}"
+  mkdir -p "$CASA_RS_CASA_PROFILE_DIR"
+fi
+
 if [[ -z "${CASA_RS_CASA_PYTHON:-}" || ! -x "$CASA_RS_CASA_PYTHON" ]]; then
   echo "CASA_RS_CASA_PYTHON must point at a Python with casatasks/casatools" >&2
   exit 2
@@ -77,38 +97,139 @@ with open(outfile, "w") as handle:
 PY
 }
 
+time_json_stderr() {
+  local label="$1"
+  local outfile="$2"
+  local stderr_file="$3"
+  shift 3
+  python3 - "$label" "$outfile" "$stderr_file" "$@" <<'PY'
+import json
+import subprocess
+import sys
+import time
+
+label = sys.argv[1]
+outfile = sys.argv[2]
+stderr_file = sys.argv[3]
+cmd = sys.argv[4:]
+started = time.perf_counter()
+with open(stderr_file, "w") as stderr:
+    completed = subprocess.run(cmd, check=True, stderr=stderr)
+elapsed = time.perf_counter() - started
+with open(outfile, "w") as handle:
+    json.dump({"label": label, "elapsed_seconds": elapsed, "returncode": completed.returncode}, handle, indent=2)
+PY
+}
+
+time_json_stdout() {
+  local label="$1"
+  local outfile="$2"
+  local stdout_file="$3"
+  shift 3
+  python3 - "$label" "$outfile" "$stdout_file" "$@" <<'PY'
+import json
+import subprocess
+import sys
+import time
+
+label = sys.argv[1]
+outfile = sys.argv[2]
+stdout_file = sys.argv[3]
+cmd = sys.argv[4:]
+started = time.perf_counter()
+with open(stdout_file, "w") as stdout:
+    completed = subprocess.run(cmd, check=True, stdout=stdout)
+elapsed = time.perf_counter() - started
+with open(outfile, "w") as handle:
+    json.dump({"label": label, "elapsed_seconds": elapsed, "returncode": completed.returncode}, handle, indent=2)
+PY
+}
+
+time_json_stdout_stderr() {
+  local label="$1"
+  local outfile="$2"
+  local stdout_file="$3"
+  local stderr_file="$4"
+  shift 4
+  python3 - "$label" "$outfile" "$stdout_file" "$stderr_file" "$@" <<'PY'
+import json
+import subprocess
+import sys
+import time
+
+label = sys.argv[1]
+outfile = sys.argv[2]
+stdout_file = sys.argv[3]
+stderr_file = sys.argv[4]
+cmd = sys.argv[5:]
+started = time.perf_counter()
+with open(stdout_file, "w") as stdout, open(stderr_file, "w") as stderr:
+    completed = subprocess.run(cmd, check=True, stdout=stdout, stderr=stderr)
+elapsed = time.perf_counter() - started
+with open(outfile, "w") as handle:
+    json.dump({"label": label, "elapsed_seconds": elapsed, "returncode": completed.returncode}, handle, indent=2)
+PY
+}
+
 CASA_RS_MS_PATH="$outdir/casa-target-prior.ms" \
 CASA_RS_OUT_JSON="$outdir/casa-apply-timing.json" \
 CASA_RS_PRIOR="$issue122_dir/casa-priorcal" \
 "$CASA_RS_CASA_PYTHON" - <<'PY'
+import cProfile
 import json
 import os
+import pstats
+import io
 import time
 from casatasks import applycal
 
+profile_dir = os.environ.get("CASA_RS_CASA_PROFILE_DIR")
+
+def run_profiled(label, func):
+    if not profile_dir:
+        return func()
+    profiler = cProfile.Profile()
+    result = profiler.runcall(func)
+    profiler.dump_stats(os.path.join(profile_dir, f"{label}.cprofile"))
+    stream = io.StringIO()
+    pstats.Stats(profiler, stream=stream).sort_stats("cumulative").print_stats(80)
+    with open(os.path.join(profile_dir, f"{label}-pstats.txt"), "w") as handle:
+        handle.write(stream.getvalue())
+    return result
+
 prior = os.environ["CASA_RS_PRIOR"]
 started = time.perf_counter()
-applycal(
-    vis=os.environ["CASA_RS_MS_PATH"],
-    field="1",
-    gaintable=[f"{prior}/cal.ant", f"{prior}/cal.gc", f"{prior}/cal.tau"],
-    interp=["", "nearest", "nearest"],
-    calwt=False,
-    applymode="calonly",
+run_profiled(
+    "applycal",
+    lambda: applycal(
+        vis=os.environ["CASA_RS_MS_PATH"],
+        field="1",
+        gaintable=[f"{prior}/cal.ant", f"{prior}/cal.gc", f"{prior}/cal.tau"],
+        interp=["", "nearest", "nearest"],
+        calwt=False,
+        applymode="calonly",
+    ),
 )
 with open(os.environ["CASA_RS_OUT_JSON"], "w") as handle:
     json.dump({"elapsed_seconds": time.perf_counter() - started}, handle, indent=2)
 PY
 
-target/release/calibrate apply \
-  --ms "$outdir/rust-target-prior.ms" \
-  --field 1 \
-  --apply-mode calonly \
-  --interp "nearest;nearest;nearest" \
-  --gaintables "$issue122_dir/rust-priorcal/cal.ant,$issue122_dir/rust-priorcal/cal.gc,$issue122_dir/rust-priorcal/cal.tau" \
-  --format json \
-  --output "$outdir/rust-apply-report.json" \
+rust_apply_cmd=(
+  target/release/calibrate apply
+  --ms "$outdir/rust-target-prior.ms"
+  --field 1
+  --apply-mode calonly
+  --interp "nearest;nearest;nearest"
+  --gaintables "$issue122_dir/rust-priorcal/cal.ant,$issue122_dir/rust-priorcal/cal.gc,$issue122_dir/rust-priorcal/cal.tau"
+  --format json
+  --output "$outdir/rust-apply-report.json"
   --overwrite
+)
+if [[ "$profile_rust" == true ]]; then
+  CASA_RS_CALIBRATION_PROFILE=1 "${rust_apply_cmd[@]}" 2> "$outdir/rust-apply-profile.log"
+else
+  "${rust_apply_cmd[@]}"
+fi
 python3 - "$outdir/rust-apply-report.json" "$outdir/rust-apply-timing.json" <<'PY'
 import json
 import sys
@@ -117,67 +238,107 @@ with open(sys.argv[2], "w") as handle:
     json.dump({"elapsed_seconds": report["timings"]["total_ns"] / 1.0e9}, handle, indent=2)
 PY
 
-time_json rust-transform "$outdir/rust-transform-timing.json" \
+rust_transform_cmd=(
   target/release/mstransform \
   --ms "$outdir/rust-target-prior.ms" \
   --out "$outdir/rust-transform.ms" \
   --field 1 \
   --spw "0:7~58" \
   --datacolumn CORRECTED_DATA
+)
+if [[ "$profile_rust" == true ]]; then
+  time_json_stdout_stderr rust-transform "$outdir/rust-transform-wall-timing.json" "$outdir/rust-transform-report.json" "$outdir/rust-transform-profile.log" \
+    env CASA_RS_MSTRANSFORM_PROGRESS=1 "${rust_transform_cmd[@]}"
+else
+  time_json_stdout rust-transform "$outdir/rust-transform-wall-timing.json" "$outdir/rust-transform-report.json" "${rust_transform_cmd[@]}"
+fi
+python3 - "$outdir/rust-transform-report.json" "$outdir/rust-transform-timing.json" <<'PY'
+import json
+import sys
+report = json.loads(open(sys.argv[1]).read())
+with open(sys.argv[2], "w") as handle:
+    json.dump({"elapsed_seconds": report["elapsed_ns"] / 1.0e9}, handle, indent=2)
+PY
 
 CASA_RS_OUTDIR="$outdir" "$CASA_RS_CASA_PYTHON" - <<'PY'
+import cProfile
 import json
 import os
+import pstats
+import io
 import time
 from casatasks import mstransform, uvcontsub, tclean, imstat, immoments, impv
 
 outdir = os.environ["CASA_RS_OUTDIR"]
+profile_dir = os.environ.get("CASA_RS_CASA_PROFILE_DIR")
+
+def run_profiled(label, func):
+    if not profile_dir:
+        return func()
+    profiler = cProfile.Profile()
+    result = profiler.runcall(func)
+    profiler.dump_stats(os.path.join(profile_dir, f"{label}.cprofile"))
+    stream = io.StringIO()
+    pstats.Stats(profiler, stream=stream).sort_stats("cumulative").print_stats(80)
+    with open(os.path.join(profile_dir, f"{label}-pstats.txt"), "w") as handle:
+        handle.write(stream.getvalue())
+    return result
+
 started = time.perf_counter()
-mstransform(
-    vis=f"{outdir}/casa-target-prior.ms",
-    outputvis=f"{outdir}/casa-transform.ms",
-    field="1",
-    spw="0:7~58",
-    datacolumn="corrected",
-    reindex=False,
+run_profiled(
+    "mstransform",
+    lambda: mstransform(
+        vis=f"{outdir}/casa-target-prior.ms",
+        outputvis=f"{outdir}/casa-transform.ms",
+        field="1",
+        spw="0:7~58",
+        datacolumn="corrected",
+        reindex=False,
+    ),
 )
 with open(f"{outdir}/casa-transform-timing.json", "w") as handle:
     json.dump({"elapsed_seconds": time.perf_counter() - started}, handle, indent=2)
 
 started = time.perf_counter()
-uvcontsub(
-    vis=f"{outdir}/casa-transform.ms",
-    outputvis=f"{outdir}/casa-contsub.ms",
-    fitspec="0:0~7;44~51",
-    fitorder=0,
-    datacolumn="data",
-    fitmethod="casacore",
+run_profiled(
+    "uvcontsub",
+    lambda: uvcontsub(
+        vis=f"{outdir}/casa-transform.ms",
+        outputvis=f"{outdir}/casa-contsub.ms",
+        fitspec="0:0~7;44~51",
+        fitorder=0,
+        datacolumn="data",
+        fitmethod="casacore",
+    ),
 )
 with open(f"{outdir}/casa-uvcontsub-timing.json", "w") as handle:
     json.dump({"elapsed_seconds": time.perf_counter() - started}, handle, indent=2)
 
 started = time.perf_counter()
-tclean(
-    vis=f"{outdir}/casa-contsub.ms",
-    imagename=f"{outdir}/casa-HC3N-natural",
-    field="1",
-    spw="0",
-    specmode="cube",
-    nchan=20,
-    start="0",
-    width="1",
-    outframe="LSRK",
-    restfreq="36.39232GHz",
-    gridder="standard",
-    deconvolver="hogbom",
-    weighting="natural",
-    imsize=128,
-    cell="0.4arcsec",
-    phasecenter=1,
-    niter=0,
-    threshold="0Jy",
-    datacolumn="data",
-    interactive=False,
+run_profiled(
+    "tclean",
+    lambda: tclean(
+        vis=f"{outdir}/casa-contsub.ms",
+        imagename=f"{outdir}/casa-HC3N-natural",
+        field="1",
+        spw="0",
+        specmode="cube",
+        nchan=20,
+        start="0",
+        width="1",
+        outframe="LSRK",
+        restfreq="36.39232GHz",
+        gridder="standard",
+        deconvolver="hogbom",
+        weighting="natural",
+        imsize=128,
+        cell="0.4arcsec",
+        phasecenter=1,
+        niter=0,
+        threshold="0Jy",
+        datacolumn="data",
+        interactive=False,
+    ),
 )
 with open(f"{outdir}/casa-tclean-timing.json", "w") as handle:
     json.dump({"elapsed_seconds": time.perf_counter() - started}, handle, indent=2)
@@ -187,12 +348,18 @@ with open(f"{outdir}/casa-imstat.json", "w") as handle:
     json.dump({k: (v.tolist() if hasattr(v, "tolist") else v) for k, v in stats.items()}, handle, indent=2, default=str)
 
 started = time.perf_counter()
-immoments(imagename=f"{outdir}/casa-HC3N-natural.image", outfile=f"{outdir}/casa-HC3N-natural.mom0", moments=[0], chans="5~15")
+run_profiled(
+    "immoments",
+    lambda: immoments(imagename=f"{outdir}/casa-HC3N-natural.image", outfile=f"{outdir}/casa-HC3N-natural.mom0", moments=[0], chans="5~15"),
+)
 with open(f"{outdir}/casa-immoments-timing.json", "w") as handle:
     json.dump({"elapsed_seconds": time.perf_counter() - started}, handle, indent=2)
 
 started = time.perf_counter()
-impv(imagename=f"{outdir}/casa-HC3N-natural.image", outfile=f"{outdir}/casa-HC3N-natural.pv", mode="coords", start=[32,64], end=[96,64], width=3, unit="arcsec", chans="5~15", overwrite=True)
+run_profiled(
+    "impv",
+    lambda: impv(imagename=f"{outdir}/casa-HC3N-natural.image", outfile=f"{outdir}/casa-HC3N-natural.pv", mode="coords", start=[32,64], end=[96,64], width=3, unit="arcsec", chans="5~15", overwrite=True),
+)
 with open(f"{outdir}/casa-impv-timing.json", "w") as handle:
     json.dump({"elapsed_seconds": time.perf_counter() - started}, handle, indent=2)
 PY
@@ -215,7 +382,7 @@ with open(sys.argv[2], "w") as handle:
     json.dump({"elapsed_seconds": report["elapsed_ns"] / 1.0e9}, handle, indent=2)
 PY
 
-time_json rust-tclean "$outdir/rust-tclean-timing.json" \
+rust_tclean_cmd=(
   target/release/casars-imager \
   --ms "$outdir/rust-contsub.ms" \
   --imagename "$outdir/rust-HC3N-natural" \
@@ -235,23 +402,41 @@ time_json rust-tclean "$outdir/rust-tclean-timing.json" \
   --threshold-jy 0 \
   --datacolumn DATA \
   --no-preview-pngs \
-  --dirty-only
+  --dirty-only \
+  --managed-output true
+)
+if [[ "$profile_rust" == true ]]; then
+  time_json_stdout_stderr rust-tclean "$outdir/rust-tclean-wall-timing.json" "$outdir/rust-tclean-report.json" "$outdir/rust-tclean-profile.log" \
+    env CASA_RS_IMAGING_PROGRESS=1 "${rust_tclean_cmd[@]}"
+else
+  time_json_stdout rust-tclean "$outdir/rust-tclean-wall-timing.json" "$outdir/rust-tclean-report.json" "${rust_tclean_cmd[@]}"
+fi
+python3 - "$outdir/rust-tclean-report.json" "$outdir/rust-tclean-timing.json" <<'PY'
+import json
+import sys
+report = json.loads(open(sys.argv[1]).read())
+frontend = dict(report["run"]["frontend_timings"]["values_ns"])
+with open(sys.argv[2], "w") as handle:
+    json.dump({"elapsed_seconds": frontend["total"] / 1.0e9}, handle, indent=2)
+PY
 
 target/release/imexplore imstat "$outdir/rust-HC3N-natural.image" --box 48,48,80,80 --chans 5~15 --json > "$outdir/rust-imstat.json"
 time_json rust-immoments "$outdir/rust-immoments-timing.json" \
-  target/release/immoments "$outdir/rust-HC3N-natural.image" \
+  target/release/imexplore immoments "$outdir/rust-HC3N-natural.image" \
   --outfile "$outdir/rust-HC3N-natural.mom0" \
   --moments 0 \
   --chans 5~15 \
-  --overwrite
+  --overwrite \
+  --json
 time_json rust-impv "$outdir/rust-impv-timing.json" \
-  target/release/impv "$outdir/rust-HC3N-natural.image" \
+  target/release/imexplore impv "$outdir/rust-HC3N-natural.image" \
   --outfile "$outdir/rust-HC3N-natural.pv" \
   --start 32,64 \
   --end 96,64 \
   --width 3 \
   --chans 5~15 \
-  --overwrite
+  --overwrite \
+  --json
 
 CASA_RS_OUTDIR="$outdir" "$CASA_RS_CASA_PYTHON" - <<'PY'
 import json
