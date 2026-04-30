@@ -518,21 +518,9 @@ fn materialize_selected_main_table(
     selected_rows: &[usize],
     output_path: &Path,
 ) -> Result<Table, MsTransformError> {
-    let metadata = Table::open_metadata_only(TableOptions::new(input_path)).map_err(|source| {
+    let mut main = Table::open_metadata_only(TableOptions::new(input_path)).map_err(|source| {
         MsTransformError::MutateMeasurementSet {
             path: input_path.display().to_string(),
-            source: Box::new(source),
-        }
-    })?;
-    metadata
-        .save_assuming_valid(TableOptions::new(output_path))
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
-            path: output_path.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let mut main = Table::open(TableOptions::new(output_path)).map_err(|source| {
-        MsTransformError::MutateMeasurementSet {
-            path: output_path.display().to_string(),
             source: Box::new(source),
         }
     })?;

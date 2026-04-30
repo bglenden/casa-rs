@@ -1317,6 +1317,7 @@ struct RowGeometryCache {
     elevations: HashMap<RowGeometryKey, f64>,
     projected_offsets: HashMap<ProjectedOffsetKey, [f64; 3]>,
     materialized_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
+    calibration_lookups: HashMap<CalibrationLookupKey, Option<Arc<CalibrationGrid>>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1338,6 +1339,16 @@ struct MaterializedGridKey {
     kind: u8,
     data_spw_id: i32,
     grid_id: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct CalibrationLookupKey {
+    table_index: usize,
+    field_id: i32,
+    spw_id: i32,
+    antenna_id: i32,
+    time_bits: u64,
+    interp: u8,
 }
 
 impl RowGeometryCache {
@@ -1397,6 +1408,22 @@ impl RowGeometryCache {
     fn insert_materialized_grid(&mut self, key: MaterializedGridKey, grid: Arc<CalibrationGrid>) {
         self.materialized_grids.insert(key, grid);
     }
+
+    fn calibration_lookup<F>(
+        &mut self,
+        key: CalibrationLookupKey,
+        load: F,
+    ) -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError>
+    where
+        F: FnOnce() -> Result<Option<Arc<CalibrationGrid>>, ApplyExecutionError>,
+    {
+        if let Some(grid) = self.calibration_lookups.get(&key) {
+            return Ok(grid.clone());
+        }
+        let grid = load()?;
+        self.calibration_lookups.insert(key, grid.clone());
+        Ok(grid)
+    }
 }
 
 impl RowGeometryKey {
@@ -1428,6 +1455,28 @@ fn materialized_grid_key(
         data_spw_id,
         grid_id: Arc::as_ptr(grid) as usize,
     })
+}
+
+fn calibration_lookup_key(
+    table_index: usize,
+    field_id: i32,
+    spw_id: i32,
+    antenna_id: i32,
+    time_seconds: f64,
+    interp: ApplyInterpolationMode,
+) -> CalibrationLookupKey {
+    CalibrationLookupKey {
+        table_index,
+        field_id,
+        spw_id,
+        antenna_id,
+        time_bits: time_seconds.to_bits(),
+        interp: match interp {
+            ApplyInterpolationMode::Nearest => 1,
+            ApplyInterpolationMode::Linear => 2,
+            ApplyInterpolationMode::NearestLinear => 3,
+        },
+    }
 }
 
 struct ParallacticAngleState {
@@ -1526,6 +1575,7 @@ fn apply_row(
     let mut implicit_weight_spectrum =
         (any_calwt && !has_weight_spectrum).then(|| ArrayD::from_elem(data.raw_dim(), 1.0_f32));
     let mut geometry_cache = geometry_cache;
+    let mut fast_gain_pairs: Vec<(Arc<CalibrationGrid>, Arc<CalibrationGrid>)> = Vec::new();
 
     if any_calwt {
         let Some(weight_values) = weight.as_ref() else {
@@ -1549,7 +1599,12 @@ fn apply_row(
         ApplyRowComputeProfile::add_elapsed(&mut profile.setup_ns, setup_started_at);
     }
 
-    for (table_plan, loaded_table) in plan.calibration_tables.iter().zip(loaded_tables) {
+    for (table_index, (table_plan, loaded_table)) in plan
+        .calibration_tables
+        .iter()
+        .zip(loaded_tables)
+        .enumerate()
+    {
         if !table_plan.spec.apply_to.matches(row) {
             continue;
         }
@@ -1587,26 +1642,87 @@ fn apply_row(
             })
             .unwrap_or(row.field_id);
 
-        let ant1 = loaded_table.lookup(
+        let ant1_key = calibration_lookup_key(
+            table_index,
             field_id,
             cal_spw_id,
             row.antenna1,
             row.time_seconds,
             table_plan.interp,
-        )?;
-        let ant2 = loaded_table.lookup(
+        );
+        let ant2_key = calibration_lookup_key(
+            table_index,
             field_id,
             cal_spw_id,
             row.antenna2,
             row.time_seconds,
             table_plan.interp,
-        )?;
+        );
+        let ant1 = if let Some(cache) = geometry_cache.as_deref_mut() {
+            cache.calibration_lookup(ant1_key, || {
+                loaded_table.lookup(
+                    field_id,
+                    cal_spw_id,
+                    row.antenna1,
+                    row.time_seconds,
+                    table_plan.interp,
+                )
+            })?
+        } else {
+            loaded_table.lookup(
+                field_id,
+                cal_spw_id,
+                row.antenna1,
+                row.time_seconds,
+                table_plan.interp,
+            )?
+        };
+        let ant2 = if let Some(cache) = geometry_cache.as_deref_mut() {
+            cache.calibration_lookup(ant2_key, || {
+                loaded_table.lookup(
+                    field_id,
+                    cal_spw_id,
+                    row.antenna2,
+                    row.time_seconds,
+                    table_plan.interp,
+                )
+            })?
+        } else {
+            loaded_table.lookup(
+                field_id,
+                cal_spw_id,
+                row.antenna2,
+                row.time_seconds,
+                table_plan.interp,
+            )?
+        };
         if let Some(profile) = compute_profile.as_deref_mut() {
             ApplyRowComputeProfile::add_elapsed(&mut profile.table_lookup_ns, lookup_started_at);
         }
 
         let (Some(ant1), Some(ant2)) = (ant1, ant2) else {
             if plan.apply_mode == ApplyMode::CalFlag {
+                if !fast_gain_pairs.is_empty() {
+                    let fast_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
+                    apply_complex_gain_pairs_fast(
+                        &fast_gain_pairs,
+                        FastGainApply {
+                            data_desc_id: row.data_desc_id,
+                            correlation_types,
+                            corrected: &mut corrected,
+                            flags: &mut flags,
+                            apply_mode: plan.apply_mode,
+                            newly_flagged_samples: &mut newly_flagged_samples,
+                        },
+                    )?;
+                    if let Some(profile) = compute_profile.as_deref_mut() {
+                        ApplyRowComputeProfile::add_elapsed(
+                            &mut profile.fast_gain_apply_ns,
+                            fast_apply_started_at,
+                        );
+                    }
+                    fast_gain_pairs.clear();
+                }
                 for corr_index in 0..data.shape()[0] {
                     for chan_index in 0..data.shape()[1] {
                         if !flags[[corr_index, chan_index]] {
@@ -1657,13 +1773,19 @@ fn apply_row(
         };
 
         if !(table_plan.calwt && loaded_table.supports_calwt)
-            && let (CalibrationGrid::Complex(ant1_grid), CalibrationGrid::Complex(ant2_grid)) =
-                (ant1.as_ref(), ant2.as_ref())
+            && matches!(
+                (ant1.as_ref(), ant2.as_ref()),
+                (CalibrationGrid::Complex(_), CalibrationGrid::Complex(_))
+            )
         {
+            fast_gain_pairs.push((ant1, ant2));
+            continue;
+        }
+
+        if !fast_gain_pairs.is_empty() {
             let fast_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
-            apply_complex_gain_pair_fast(
-                ant1_grid,
-                ant2_grid,
+            apply_complex_gain_pairs_fast(
+                &fast_gain_pairs,
                 FastGainApply {
                     data_desc_id: row.data_desc_id,
                     correlation_types,
@@ -1679,7 +1801,7 @@ fn apply_row(
                     fast_apply_started_at,
                 );
             }
-            continue;
+            fast_gain_pairs.clear();
         }
 
         let generic_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
@@ -1742,6 +1864,27 @@ fn apply_row(
             ApplyRowComputeProfile::add_elapsed(
                 &mut profile.generic_sample_apply_ns,
                 generic_apply_started_at,
+            );
+        }
+    }
+
+    if !fast_gain_pairs.is_empty() {
+        let fast_apply_started_at = compute_profile.as_ref().map(|_| Instant::now());
+        apply_complex_gain_pairs_fast(
+            &fast_gain_pairs,
+            FastGainApply {
+                data_desc_id: row.data_desc_id,
+                correlation_types,
+                corrected: &mut corrected,
+                flags: &mut flags,
+                apply_mode: plan.apply_mode,
+                newly_flagged_samples: &mut newly_flagged_samples,
+            },
+        )?;
+        if let Some(profile) = compute_profile.as_deref_mut() {
+            ApplyRowComputeProfile::add_elapsed(
+                &mut profile.fast_gain_apply_ns,
+                fast_apply_started_at,
             );
         }
     }
@@ -1833,19 +1976,37 @@ struct FastGainApply<'a> {
     newly_flagged_samples: &'a mut usize,
 }
 
-fn apply_complex_gain_pair_fast(
-    ant1: &GainGrid,
-    ant2: &GainGrid,
+fn apply_complex_gain_pairs_fast(
+    pairs: &[(Arc<CalibrationGrid>, Arc<CalibrationGrid>)],
     ctx: FastGainApply<'_>,
 ) -> Result<(), ApplyExecutionError> {
     let shape = ctx.corrected.shape();
     let corr_count = shape[0];
     let channel_count = shape[1];
-    let ant1_scalar = ant1.channel_count <= 1;
-    let ant2_scalar = ant2.channel_count <= 1;
+    let corrected_is_fortran = ctx.corrected.ndim() == 2 && ctx.corrected.strides()[0] == 1;
+    let flags_are_fortran = ctx.apply_mode != ApplyMode::CalFlag
+        || (ctx.flags.ndim() == 2 && ctx.flags.strides()[0] == 1);
+    if corrected_is_fortran
+        && flags_are_fortran
+        && let Some(corrected) = ctx.corrected.as_slice_memory_order_mut()
+    {
+        let flags = (ctx.apply_mode == ApplyMode::CalFlag)
+            .then(|| ctx.flags.as_slice_memory_order_mut())
+            .flatten();
+        return apply_complex_gain_pairs_fast_fortran(
+            pairs,
+            ctx.data_desc_id,
+            ctx.correlation_types,
+            corr_count,
+            channel_count,
+            corrected,
+            flags,
+            ctx.newly_flagged_samples,
+        );
+    }
 
-    for corr_index in 0..corr_count {
-        let receptors =
+    let receptors_by_corr = (0..corr_count)
+        .map(|corr_index| {
             correlation_receptors(ctx.correlation_types[corr_index]).ok_or_else(|| {
                 ApplyExecutionError::UnsupportedCorrelationLayout {
                     data_desc_id: ctx.data_desc_id,
@@ -1855,62 +2016,166 @@ fn apply_complex_gain_pair_fast(
                         .map(|code| stokes_name(*code).to_string())
                         .collect(),
                 }
-            })?;
-        let receptor1 = receptors.0.min(ant1.receptor_count.saturating_sub(1));
-        let receptor2 = receptors.1.min(ant2.receptor_count.saturating_sub(1));
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
-        if ant1_scalar && ant2_scalar {
-            let gain1 = ant1.value_at(receptor1, 0);
-            let gain2 = ant2.value_at(receptor2, 0);
-            let invalid = ant1.flag_at(receptor1, 0)
-                || ant2.flag_at(receptor2, 0)
-                || gain1 == Complex32::new(0.0, 0.0)
-                || gain2 == Complex32::new(0.0, 0.0);
-            if invalid {
-                if ctx.apply_mode == ApplyMode::CalFlag {
-                    for chan_index in 0..channel_count {
-                        if !ctx.flags[[corr_index, chan_index]] {
-                            ctx.flags[[corr_index, chan_index]] = true;
-                            *ctx.newly_flagged_samples += 1;
+    for (corr_index, &receptors) in receptors_by_corr.iter().enumerate().take(corr_count) {
+        let mut scalar_denom = Complex32::new(1.0, 0.0);
+        for chan_index in 0..channel_count {
+            for (ant1, ant2) in pairs {
+                let (CalibrationGrid::Complex(ant1), CalibrationGrid::Complex(ant2)) =
+                    (ant1.as_ref(), ant2.as_ref())
+                else {
+                    continue;
+                };
+                let receptor1 = receptors.0.min(ant1.receptor_count.saturating_sub(1));
+                let receptor2 = receptors.1.min(ant2.receptor_count.saturating_sub(1));
+                if ant1.channel_count <= 1 && ant2.channel_count <= 1 {
+                    if chan_index == 0 {
+                        let gain1 = ant1.value_at(receptor1, 0);
+                        let gain2 = ant2.value_at(receptor2, 0);
+                        let invalid = ant1.flag_at(receptor1, 0)
+                            || ant2.flag_at(receptor2, 0)
+                            || gain1 == Complex32::new(0.0, 0.0)
+                            || gain2 == Complex32::new(0.0, 0.0);
+                        if invalid {
+                            if ctx.apply_mode == ApplyMode::CalFlag {
+                                for flag_chan_index in 0..channel_count {
+                                    if !ctx.flags[[corr_index, flag_chan_index]] {
+                                        ctx.flags[[corr_index, flag_chan_index]] = true;
+                                        *ctx.newly_flagged_samples += 1;
+                                    }
+                                }
+                            }
+                        } else {
+                            scalar_denom *= gain1 * gain2.conj();
                         }
                     }
+                    continue;
                 }
-                continue;
+                let ant1_chan = if ant1.channel_count <= 1 {
+                    0
+                } else {
+                    chan_index.min(ant1.channel_count.saturating_sub(1))
+                };
+                let ant2_chan = if ant2.channel_count <= 1 {
+                    0
+                } else {
+                    chan_index.min(ant2.channel_count.saturating_sub(1))
+                };
+                let gain1 = ant1.value_at(receptor1, ant1_chan);
+                let gain2 = ant2.value_at(receptor2, ant2_chan);
+                if ant1.flag_at(receptor1, ant1_chan)
+                    || ant2.flag_at(receptor2, ant2_chan)
+                    || gain1 == Complex32::new(0.0, 0.0)
+                    || gain2 == Complex32::new(0.0, 0.0)
+                {
+                    if ctx.apply_mode == ApplyMode::CalFlag && !ctx.flags[[corr_index, chan_index]]
+                    {
+                        ctx.flags[[corr_index, chan_index]] = true;
+                        *ctx.newly_flagged_samples += 1;
+                    }
+                    continue;
+                }
+                ctx.corrected[[corr_index, chan_index]] /= gain1 * gain2.conj();
             }
-            let denom = gain1 * gain2.conj();
-            for chan_index in 0..channel_count {
-                ctx.corrected[[corr_index, chan_index]] /= denom;
-            }
-            continue;
+            ctx.corrected[[corr_index, chan_index]] /= scalar_denom;
         }
+    }
 
-        for chan_index in 0..channel_count {
-            let ant1_chan = if ant1_scalar {
-                0
-            } else {
-                chan_index.min(ant1.channel_count.saturating_sub(1))
-            };
-            let ant2_chan = if ant2_scalar {
-                0
-            } else {
-                chan_index.min(ant2.channel_count.saturating_sub(1))
-            };
-            let gain1 = ant1.value_at(receptor1, ant1_chan);
-            let gain2 = ant2.value_at(receptor2, ant2_chan);
-            if ant1.flag_at(receptor1, ant1_chan)
-                || ant2.flag_at(receptor2, ant2_chan)
-                || gain1 == Complex32::new(0.0, 0.0)
-                || gain2 == Complex32::new(0.0, 0.0)
-            {
-                if ctx.apply_mode == ApplyMode::CalFlag && !ctx.flags[[corr_index, chan_index]] {
-                    ctx.flags[[corr_index, chan_index]] = true;
-                    *ctx.newly_flagged_samples += 1;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_complex_gain_pairs_fast_fortran(
+    pairs: &[(Arc<CalibrationGrid>, Arc<CalibrationGrid>)],
+    data_desc_id: i32,
+    correlation_types: &[i32],
+    corr_count: usize,
+    channel_count: usize,
+    corrected: &mut [Complex32],
+    mut flags: Option<&mut [bool]>,
+    newly_flagged_samples: &mut usize,
+) -> Result<(), ApplyExecutionError> {
+    let receptors_by_corr = (0..corr_count)
+        .map(|corr_index| {
+            correlation_receptors(correlation_types[corr_index]).ok_or_else(|| {
+                ApplyExecutionError::UnsupportedCorrelationLayout {
+                    data_desc_id,
+                    correlation_types: correlation_types
+                        .iter()
+                        .map(|code| stokes_name(*code).to_string())
+                        .collect(),
                 }
-                continue;
-            }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
-            let denom = gain1 * gain2.conj();
-            ctx.corrected[[corr_index, chan_index]] /= denom;
+    for (corr_index, &receptors) in receptors_by_corr.iter().enumerate().take(corr_count) {
+        let mut scalar_denom = Complex32::new(1.0, 0.0);
+        for chan_index in 0..channel_count {
+            let offset = corr_index + chan_index * corr_count;
+            for (ant1, ant2) in pairs {
+                let (CalibrationGrid::Complex(ant1), CalibrationGrid::Complex(ant2)) =
+                    (ant1.as_ref(), ant2.as_ref())
+                else {
+                    continue;
+                };
+                let receptor1 = receptors.0.min(ant1.receptor_count.saturating_sub(1));
+                let receptor2 = receptors.1.min(ant2.receptor_count.saturating_sub(1));
+                if ant1.channel_count <= 1 && ant2.channel_count <= 1 {
+                    if chan_index == 0 {
+                        let gain1 = ant1.value_at(receptor1, 0);
+                        let gain2 = ant2.value_at(receptor2, 0);
+                        let invalid = ant1.flag_at(receptor1, 0)
+                            || ant2.flag_at(receptor2, 0)
+                            || gain1 == Complex32::new(0.0, 0.0)
+                            || gain2 == Complex32::new(0.0, 0.0);
+                        if invalid {
+                            if let Some(flags) = flags.as_deref_mut() {
+                                for flag_chan_index in 0..channel_count {
+                                    let flag_offset = corr_index + flag_chan_index * corr_count;
+                                    if !flags[flag_offset] {
+                                        flags[flag_offset] = true;
+                                        *newly_flagged_samples += 1;
+                                    }
+                                }
+                            }
+                        } else {
+                            scalar_denom *= gain1 * gain2.conj();
+                        }
+                    }
+                    continue;
+                }
+                let ant1_chan = if ant1.channel_count <= 1 {
+                    0
+                } else {
+                    chan_index.min(ant1.channel_count.saturating_sub(1))
+                };
+                let ant2_chan = if ant2.channel_count <= 1 {
+                    0
+                } else {
+                    chan_index.min(ant2.channel_count.saturating_sub(1))
+                };
+                let gain1 = ant1.value_at(receptor1, ant1_chan);
+                let gain2 = ant2.value_at(receptor2, ant2_chan);
+                if ant1.flag_at(receptor1, ant1_chan)
+                    || ant2.flag_at(receptor2, ant2_chan)
+                    || gain1 == Complex32::new(0.0, 0.0)
+                    || gain2 == Complex32::new(0.0, 0.0)
+                {
+                    if let Some(flags) = flags.as_deref_mut()
+                        && !flags[offset]
+                    {
+                        flags[offset] = true;
+                        *newly_flagged_samples += 1;
+                    }
+                    continue;
+                }
+                corrected[offset] /= gain1 * gain2.conj();
+            }
+            corrected[offset] /= scalar_denom;
         }
     }
 
