@@ -1808,6 +1808,7 @@ mod tests {
         DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
         StokesType,
     };
+    use casa_types::Complex32;
     use casa_types::measures::direction::DirectionRef;
     use casa_types::measures::frequency::FrequencyRef;
 
@@ -1855,6 +1856,243 @@ mod tests {
         );
         assert_eq!(header.get("NAXIS3"), Some(&FitsValue::Integer(7)));
         assert_eq!(header.get("NAXIS4"), Some(&FitsValue::Integer(1)));
+    }
+
+    #[test]
+    fn image_analysis_schema_and_ui_surfaces_advertise_task_contracts() {
+        let bundle = ImageAnalysisTaskSchemaBundle::current("image-analysis");
+        assert_eq!(
+            bundle.protocol.protocol_name,
+            IMAGE_ANALYSIS_TASK_PROTOCOL_NAME
+        );
+        assert_eq!(bundle.semantic.operations.len(), 5);
+        assert_eq!(
+            bundle
+                .projections
+                .cli
+                .as_ref()
+                .unwrap()
+                .machine_actions
+                .json_run
+                .as_deref(),
+            Some("--json-run <SOURCE>")
+        );
+        assert_eq!(
+            bundle.projections.python.as_ref().unwrap()["module"],
+            "casars.tasks.image_analysis"
+        );
+
+        for (binary, expected_args) in [
+            ("immoments", ["imagename", "outfile", "moments"].as_slice()),
+            (
+                "exportfits",
+                ["imagename", "fitsimage", "velocity"].as_slice(),
+            ),
+            (
+                "importfits",
+                ["fitsimage", "imagename", "overwrite"].as_slice(),
+            ),
+            ("unknown-tool", [].as_slice()),
+        ] {
+            let schema: serde_json::Value =
+                serde_json::from_str(&image_analysis_ui_schema_json(binary).unwrap()).unwrap();
+            assert_eq!(schema["schema_version"], 1);
+            assert_eq!(schema["invocation_name"], binary);
+            assert_eq!(schema["category"], "Images");
+            let argument_ids = schema["arguments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|argument| argument["id"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            for expected in expected_args {
+                assert!(
+                    argument_ids.contains(expected),
+                    "{binary} schema missing {expected}: {argument_ids:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn image_analysis_task_dispatch_roundtrips_real_image_products() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source.image");
+        let moment_path = temp.path().join("moment.image");
+        let fits_path = temp.path().join("source.fits");
+        let imported_path = temp.path().join("imported.image");
+        let request_path = temp.path().join("request.json");
+        create_spectral_test_image(&source_path);
+
+        let imhead_result =
+            run_image_analysis_task(ImageAnalysisTaskRequest::Imhead(ImheadRequest {
+                imagename: source_path.clone(),
+            }))
+            .unwrap();
+        let ImageAnalysisTaskResult::Imhead(header) = imhead_result else {
+            panic!("expected imhead result");
+        };
+        assert_eq!(header.shape, vec![2, 2, 3]);
+        assert_eq!(header.units, "Jy/beam");
+        assert_eq!(header.object_name, "NGC Test");
+        assert_eq!(header.axes.len(), 3);
+        assert!(header.restoring_beam.is_some());
+
+        let imstat_result =
+            run_image_analysis_task(ImageAnalysisTaskRequest::Imstat(ImstatRequest {
+                imagename: source_path.clone(),
+                box_pixels: Some("0,0,1,1".to_string()),
+                chans: Some("1~2".to_string()),
+                includepix: Some([5.0, 12.0]),
+            }))
+            .unwrap();
+        let ImageAnalysisTaskResult::Imstat(stats) = imstat_result else {
+            panic!("expected imstat result");
+        };
+        assert_eq!(stats.blc, vec![0, 0, 1]);
+        assert_eq!(stats.trc, vec![1, 1, 2]);
+        assert_eq!(stats.npts, 8.0);
+        assert_eq!(stats.units, "Jy/beam");
+        assert!(stats.flux.is_some());
+
+        let moment_result =
+            run_image_analysis_task(ImageAnalysisTaskRequest::Immoments(ImmomentsRequest {
+                imagename: source_path.clone(),
+                outfile: moment_path.clone(),
+                moments: 0,
+                chans: Some("0~2".to_string()),
+                includepix: Some([2.0, 12.0]),
+                overwrite: false,
+            }))
+            .unwrap();
+        let ImageAnalysisTaskResult::Immoments(moment) = moment_result else {
+            panic!("expected immoments result");
+        };
+        assert_eq!(moment.shape, vec![2, 2, 1]);
+        assert_eq!(moment.units, "Jy/beam.km/s");
+        assert_eq!(moment.valid_profiles, 4);
+        let moment_image = PagedImage::<f32>::open(&moment_path).unwrap();
+        assert_eq!(moment_image.default_mask_name().as_deref(), Some("mask0"));
+
+        run_image_analysis_task(ImageAnalysisTaskRequest::Exportfits(ExportFitsRequest {
+            imagename: source_path.clone(),
+            fitsimage: fits_path.clone(),
+            velocity: true,
+            overwrite: false,
+        }))
+        .unwrap();
+        assert!(fits_path.exists());
+
+        run_image_analysis_task(ImageAnalysisTaskRequest::Importfits(ImportFitsRequest {
+            fitsimage: fits_path.clone(),
+            imagename: imported_path.clone(),
+            overwrite: false,
+        }))
+        .unwrap();
+        let imported = PagedImage::<f32>::open(&imported_path).unwrap();
+        assert_eq!(imported.shape(), &[2, 2, 3]);
+        assert_eq!(imported.units(), "Jy/beam");
+
+        fs::write(
+            &request_path,
+            serde_json::to_string(&ImageAnalysisTaskRequest::Imhead(ImheadRequest {
+                imagename: imported_path,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            read_image_analysis_request_source(&request_path).unwrap(),
+            ImageAnalysisTaskRequest::Imhead(_)
+        ));
+    }
+
+    #[test]
+    fn image_analysis_rejects_unsupported_pixels_and_invalid_selections() {
+        let temp = tempfile::tempdir().unwrap();
+        let real_path = temp.path().join("real.image");
+        let complex_path = temp.path().join("complex.image");
+        let output_path = temp.path().join("moment.image");
+        create_direction_only_test_image(&real_path);
+        create_complex_test_image(&complex_path);
+
+        let complex_header = imhead(&complex_path).unwrap();
+        assert_eq!(complex_header.pixel_type, "Complex32");
+        assert_eq!(complex_header.units, "Jy");
+        assert_eq!(complex_header.axes.len(), 2);
+
+        assert!(matches!(
+            imstat(&complex_path, None, None, None),
+            Err(ImageError::InvalidMetadata(message))
+                if message.contains("real-valued images")
+        ));
+        assert!(matches!(
+            immoments(&ImmomentsRequest {
+                imagename: complex_path.clone(),
+                outfile: output_path.clone(),
+                moments: 0,
+                chans: None,
+                includepix: None,
+                overwrite: false,
+            }),
+            Err(ImageError::InvalidMetadata(message))
+                if message.contains("real-valued images")
+        ));
+        assert!(matches!(
+            export_fits(&complex_path, temp.path().join("complex.fits"), false, false),
+            Err(ImageError::InvalidMetadata(message))
+                if message.contains("real-valued images")
+        ));
+
+        assert!(matches!(
+            imstat(&real_path, Some("0,0,4,4"), None, None),
+            Err(ImageError::ShapeMismatch { .. })
+        ));
+        assert!(matches!(
+            imstat(&real_path, None, Some("0"), None),
+            Err(ImageError::InvalidMetadata(message))
+                if message.contains("spectral axis")
+        ));
+        assert!(matches!(
+            parse_box("2,0,1,1"),
+            Err(ImageError::InvalidMetadata(message))
+                if message.contains("inclusive upper bounds")
+        ));
+        assert!(matches!(
+            parse_indices("3~1", 4),
+            Err(ImageError::InvalidMetadata(message))
+                if message.contains("end precedes start")
+        ));
+        assert!(matches!(
+            parse_indices("0,9", 4),
+            Err(ImageError::ShapeMismatch { .. })
+        ));
+        assert_eq!(parse_indices("2,1,2", 4).unwrap(), vec![1, 2]);
+
+        assert!(matches!(
+            immoments(&ImmomentsRequest {
+                imagename: real_path.clone(),
+                outfile: output_path.clone(),
+                moments: 2,
+                chans: None,
+                includepix: None,
+                overwrite: false,
+            }),
+            Err(ImageError::InvalidMetadata(message))
+                if message.contains("moments 0 and 1")
+        ));
+        assert!(matches!(
+            immoments(&ImmomentsRequest {
+                imagename: real_path,
+                outfile: output_path,
+                moments: 0,
+                chans: None,
+                includepix: None,
+                overwrite: false,
+            }),
+            Err(ImageError::InvalidMetadata(message))
+                if message.contains("spectral axis")
+        ));
     }
 
     #[test]
@@ -1939,6 +2177,50 @@ mod tests {
     }
 
     #[test]
+    fn fits_import_export_overwrite_policy_preserves_double_images() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source.image");
+        let fits_path = temp.path().join("source.fits");
+        let imported_path = temp.path().join("imported.image");
+        create_double_spectral_test_image(&source_path);
+
+        export_fits(&source_path, &fits_path, false, false).unwrap();
+        assert!(matches!(
+            export_fits(&source_path, &fits_path, false, false),
+            Err(ImageError::Io(message)) if message.contains("already exists")
+        ));
+        let export_summary = export_fits(&source_path, &fits_path, false, true).unwrap();
+        assert_eq!(export_summary.shape, vec![2, 2, 2]);
+
+        import_fits(&fits_path, &imported_path, false).unwrap();
+        assert!(matches!(
+            import_fits(&fits_path, &imported_path, false),
+            Err(ImageError::Io(message)) if message.contains("already exists")
+        ));
+        let import_summary = import_fits(&fits_path, &imported_path, true).unwrap();
+        assert_eq!(import_summary.pixel_type, "Float64");
+        assert_eq!(import_summary.units, "K");
+        assert_eq!(import_summary.object_name, "Double Test");
+
+        let imported = PagedImage::<f64>::open(&imported_path).unwrap();
+        assert_eq!(imported.shape(), &[2, 2, 2]);
+        assert_eq!(imported.units(), "K");
+
+        let header = imhead(&imported_path).unwrap();
+        assert_eq!(header.pixel_type, "Float64");
+        assert_eq!(header.object_name, "Double Test");
+        let stats = imstat(
+            &imported_path,
+            Some("0,0,1,1"),
+            Some("0~1"),
+            Some([1.0, 8.0]),
+        )
+        .unwrap();
+        assert_eq!(stats.npts, 7.0);
+        assert_eq!(stats.units, "K");
+    }
+
+    #[test]
     fn optimized_moment_collapse_matches_reference_for_masked_axis() {
         let shape = vec![3, 2, 4];
         let input = ArrayD::from_shape_vec(
@@ -1979,6 +2261,124 @@ mod tests {
             .unwrap();
             assert_eq!(actual, expected);
         }
+    }
+
+    fn create_spectral_test_image(path: &Path) {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.2, -0.4],
+            [-2.0e-6, 3.0e-6],
+            [0.0, 0.0],
+        )));
+        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            372.0e9,
+            2.0e6,
+            0.0,
+            372.0e9,
+        )));
+        let shape = vec![2, 2, 3];
+        let mut image = PagedImage::<f32>::create(shape.clone(), coordinates, path).unwrap();
+        let data = ArrayD::from_shape_vec(
+            IxDyn(&shape).f(),
+            (1..=shape.iter().product::<usize>())
+                .map(|value| value as f32)
+                .collect(),
+        )
+        .unwrap();
+        image.put_slice(&data, &[0, 0, 0]).unwrap();
+        image.set_units("Jy/beam").unwrap();
+        image
+            .set_image_info(&ImageInfo {
+                beam_set: ImageBeamSet::new(GaussianBeam::new(
+                    1.7e-4_f64.to_radians(),
+                    1.2e-4_f64.to_radians(),
+                    (-34.5_f64).to_radians(),
+                )),
+                image_type: ImageType::Intensity,
+                object_name: "NGC Test".to_string(),
+            })
+            .unwrap();
+        image.save().unwrap();
+    }
+
+    fn create_double_spectral_test_image(path: &Path) {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, 0.0],
+            [-1.0e-6, 1.0e-6],
+            [0.0, 0.0],
+        )));
+        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            115.0e9,
+            1.0e6,
+            0.0,
+            115.0e9,
+        )));
+        let shape = vec![2, 2, 2];
+        let mut image = PagedImage::<f64>::create(shape.clone(), coordinates, path).unwrap();
+        let data = ArrayD::from_shape_vec(
+            IxDyn(&shape).f(),
+            (0..shape.iter().product::<usize>())
+                .map(|value| value as f64 + 0.125)
+                .collect(),
+        )
+        .unwrap();
+        image.put_slice(&data, &[0, 0, 0]).unwrap();
+        image.set_units("K").unwrap();
+        image
+            .set_image_info(&ImageInfo {
+                beam_set: ImageBeamSet::default(),
+                image_type: ImageType::Intensity,
+                object_name: "Double Test".to_string(),
+            })
+            .unwrap();
+        image.save().unwrap();
+    }
+
+    fn create_direction_only_test_image(path: &Path) {
+        let shape = vec![2, 2];
+        let mut image =
+            PagedImage::<f32>::create(shape.clone(), direction_coordinates(), path).unwrap();
+        let data = ArrayD::from_shape_vec(IxDyn(&shape).f(), vec![1.0, 2.0, 3.0, 4.0]).unwrap();
+        image.put_slice(&data, &[0, 0]).unwrap();
+        image.save().unwrap();
+    }
+
+    fn create_complex_test_image(path: &Path) {
+        let shape = vec![2, 2];
+        let mut image =
+            PagedImage::<Complex32>::create(shape.clone(), direction_coordinates(), path).unwrap();
+        let data = ArrayD::from_shape_vec(
+            IxDyn(&shape).f(),
+            vec![
+                Complex32::new(1.0, 0.5),
+                Complex32::new(2.0, -0.5),
+                Complex32::new(3.0, 1.5),
+                Complex32::new(4.0, -1.5),
+            ],
+        )
+        .unwrap();
+        image.put_slice(&data, &[0, 0]).unwrap();
+        image.set_units("Jy").unwrap();
+        image.save().unwrap();
+    }
+
+    fn direction_coordinates() -> CoordinateSystem {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.2, -0.4],
+            [-2.0e-6, 3.0e-6],
+            [0.0, 0.0],
+        )));
+        coordinates
     }
 
     fn read_fits_pixels(path: &Path) -> Vec<f32> {
