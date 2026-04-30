@@ -14,9 +14,9 @@ use tempfile::TempDir;
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
     BandpassSolveRequest, BandpassType, CalibrationParameterFamily, FluxScaleRequest,
-    GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveRequest,
-    GainType, RefAntSelector, execute_apply_from_path, fluxscale, load_apply_specs_from_callib,
-    solve_bandpass_from_path, solve_gain_from_path, summarize_table,
+    GainFieldSelector, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource,
+    GainSolveRequest, GainType, RefAntSelector, execute_apply_from_path, fluxscale,
+    load_apply_specs_from_callib, solve_bandpass_from_path, solve_gain_from_path, summarize_table,
 };
 
 #[test]
@@ -584,6 +584,10 @@ fn solve_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal() {
             refant: RefAntSelector::AntennaName("VA15".to_string()),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -670,6 +674,10 @@ fn solve_phase_gain_with_parang_matches_casa_gaincal_downstream_via_casa_applyca
             refant: RefAntSelector::AntennaName("VA15".to_string()),
             prior_calibration_tables: Vec::new(),
             parang: true,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -756,6 +764,10 @@ fn solve_amplitude_phase_gain_matches_casa_gaincal_downstream_via_casa_applycal(
             refant: RefAntSelector::AntennaName("VA15".to_string()),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -842,6 +854,10 @@ fn solve_phase_gain_with_solint_integration_matches_casa_gaincal_downstream() {
             refant: RefAntSelector::AntennaName("VA15".to_string()),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -930,6 +946,10 @@ fn solve_phase_gain_with_combine_scan_matches_casa_gaincal_downstream() {
             refant: RefAntSelector::AntennaName("VA15".to_string()),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -1093,6 +1113,10 @@ fn solve_gain_phase_g_combine_scan_and_field_writes_one_solution_group_across_fi
             refant: RefAntSelector::AntennaId(0),
             prior_calibration_tables: Vec::new(),
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )
@@ -1265,6 +1289,10 @@ fn solve_t_phase_gain_with_prior_g_preapply_matches_casa_gaincal_downstream() {
             refant: RefAntSelector::AntennaName("VA15".to_string()),
             prior_calibration_tables: vec![ApplyCalibrationTableSpec::new(&prior_g)],
             parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 4,
             smodel: [1.0, 0.0, 0.0, 0.0],
         },
     )

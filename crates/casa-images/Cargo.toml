@@ -12,12 +12,15 @@ workspace = true
 
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
+casa-provider-contracts = { path = "../casa-provider-contracts" }
 casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
 casa-lattices = { path = "../casa-lattices" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
+fitsio = { version = "0.21", features = ["fitsio-src", "src-cmake"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 ndarray.workspace = true
+schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror.workspace = true

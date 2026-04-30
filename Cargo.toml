@@ -35,6 +35,7 @@ description = "Rust implementation of casacore-compatible persistent data I/O"
 repository = "https://github.com/bglenden/casa-rs"
 
 [workspace.dependencies]
+nalgebra = "0.33"
 ndarray = "0.17"
 num-complex = "0.4"
 ratatui-graphics = { path = "crates/ratatui-graphics", default-features = false, features = ["panel", "plotters", "kitty"] }
@@ -61,6 +62,8 @@ opt-level = 2
 [profile.test.package.casa-test-support]
 opt-level = 2
 [profile.test.package.ndarray]
+opt-level = 2
+[profile.test.package.nalgebra]
 opt-level = 2
 [profile.test.package.num-complex]
 opt-level = 2

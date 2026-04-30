@@ -91,9 +91,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 advanced: false,
             }),
             option_argument(OptionArgumentConfig {
+                id: "savemodel",
+                label: "Save Model",
+                order: 5,
+                flags: &["--savemodel"],
+                metavar: "MODE",
+                value_kind: UiValueKind::Choice,
+                default: Some("none"),
+                choices: &["none", "modelcolumn"],
+                help: "Write the predicted final model into the MeasurementSet",
+                group: "Products",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "field",
                 label: "Field IDs",
-                order: 5,
+                order: 6,
                 flags: &["--field"],
                 metavar: "IDS",
                 value_kind: UiValueKind::String,
@@ -107,7 +121,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "phasecenter_field",
                 label: "Phasecenter Field",
-                order: 6,
+                order: 7,
                 flags: &["--phasecenter-field"],
                 metavar: "ID",
                 value_kind: UiValueKind::String,
@@ -121,7 +135,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "phasecenter",
                 label: "Explicit Phasecenter",
-                order: 7,
+                order: 8,
                 flags: &["--phasecenter"],
                 metavar: "DIR",
                 value_kind: UiValueKind::String,
@@ -135,7 +149,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "ddid",
                 label: "DDID",
-                order: 8,
+                order: 9,
                 flags: &["--ddid"],
                 metavar: "ID",
                 value_kind: UiValueKind::String,
@@ -249,7 +263,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 metavar: "MODE",
                 value_kind: UiValueKind::Choice,
                 default: Some("natural"),
-                choices: &["natural", "uniform", "briggs"],
+                choices: &["natural", "uniform", "briggs", "briggsbwtaper"],
                 help: "Visibility weighting policy",
                 group: "Stages",
                 required: true,
@@ -266,10 +280,21 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 group: "Stages",
                 advanced: true,
             }),
+            toggle_argument(ToggleArgumentConfig {
+                id: "usepointing",
+                label: "Use POINTING",
+                order: 18,
+                true_flags: &["--usepointing", "--use-pointing"],
+                false_flags: &[],
+                default: Some("false"),
+                help: "Use POINTING-table directions instead of FIELD phase centers",
+                group: "Stages",
+                advanced: true,
+            }),
             option_argument(OptionArgumentConfig {
                 id: "wterm",
                 label: "W-Term",
-                order: 18,
+                order: 19,
                 flags: &["--wterm"],
                 metavar: "MODE",
                 value_kind: UiValueKind::Choice,
@@ -283,7 +308,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "wprojplanes",
                 label: "W-Project Planes",
-                order: 19,
+                order: 20,
                 flags: &["--wprojplanes"],
                 metavar: "N",
                 value_kind: UiValueKind::String,
@@ -297,7 +322,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "nterms",
                 label: "Taylor Terms",
-                order: 20,
+                order: 21,
                 flags: &["--nterms"],
                 metavar: "N",
                 value_kind: UiValueKind::String,
@@ -311,7 +336,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "start",
                 label: "Cube Start",
-                order: 21,
+                order: 22,
                 flags: &["--start"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::String,
@@ -325,7 +350,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "width",
                 label: "Cube Width",
-                order: 22,
+                order: 23,
                 flags: &["--width"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::String,
@@ -339,7 +364,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "outframe",
                 label: "Output Frame",
-                order: 23,
+                order: 24,
                 flags: &["--outframe"],
                 metavar: "FRAME",
                 value_kind: UiValueKind::Choice,
@@ -355,7 +380,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "veltype",
                 label: "Velocity Type",
-                order: 24,
+                order: 25,
                 flags: &["--veltype"],
                 metavar: "TYPE",
                 value_kind: UiValueKind::Choice,
@@ -369,7 +394,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "interpolation",
                 label: "Cube Interp",
-                order: 25,
+                order: 26,
                 flags: &["--interpolation"],
                 metavar: "MODE",
                 value_kind: UiValueKind::Choice,
@@ -383,7 +408,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "restfreq",
                 label: "Rest Frequency",
-                order: 26,
+                order: 27,
                 flags: &["--restfreq"],
                 metavar: "FREQ",
                 value_kind: UiValueKind::String,
@@ -397,7 +422,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "uvtaper",
                 label: "UV Taper",
-                order: 27,
+                order: 28,
                 flags: &["--uvtaper"],
                 metavar: "SPEC",
                 value_kind: UiValueKind::String,
@@ -411,7 +436,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "restoringbeam",
                 label: "Restoring Beam",
-                order: 28,
+                order: 29,
                 flags: &["--restoringbeam"],
                 metavar: "MODE",
                 value_kind: UiValueKind::Choice,
@@ -425,7 +450,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "scales",
                 label: "Multiscale Sizes",
-                order: 29,
+                order: 30,
                 flags: &["--scales"],
                 metavar: "PIXELS",
                 value_kind: UiValueKind::String,
@@ -439,7 +464,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "smallscalebias",
                 label: "Small-Scale Bias",
-                order: 30,
+                order: 31,
                 flags: &["--smallscalebias"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
@@ -453,13 +478,13 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "robust",
                 label: "Briggs Robust",
-                order: 31,
+                order: 32,
                 flags: &["--robust"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
                 default: Some("0.5"),
                 choices: &[],
-                help: "Briggs robust parameter when weighting=briggs",
+                help: "Briggs robust parameter when weighting=briggs or briggsbwtaper",
                 group: "Stage Parameters",
                 required: false,
                 advanced: true,
@@ -467,7 +492,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "niter",
                 label: "Max Iterations",
-                order: 32,
+                order: 33,
                 flags: &["--niter"],
                 metavar: "N",
                 value_kind: UiValueKind::String,
@@ -481,7 +506,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "gain",
                 label: "Loop Gain",
-                order: 33,
+                order: 34,
                 flags: &["--gain"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
@@ -495,7 +520,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "threshold_jy",
                 label: "Threshold (Jy)",
-                order: 34,
+                order: 35,
                 flags: &["--threshold-jy"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
@@ -509,7 +534,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "nsigma",
                 label: "Nsigma",
-                order: 35,
+                order: 36,
                 flags: &["--nsigma"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
@@ -523,7 +548,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "psfcutoff",
                 label: "PSF Cutoff",
-                order: 36,
+                order: 37,
                 flags: &["--psfcutoff"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
@@ -537,7 +562,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "minor_cycle_length",
                 label: "Minor Cycle Length",
-                order: 37,
+                order: 38,
                 flags: &["--minor-cycle-length"],
                 metavar: "N",
                 value_kind: UiValueKind::String,
@@ -551,7 +576,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "cyclefactor",
                 label: "Cycle Factor",
-                order: 38,
+                order: 39,
                 flags: &["--cyclefactor"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
@@ -565,7 +590,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "minpsffraction",
                 label: "Min PSF Fraction",
-                order: 39,
+                order: 40,
                 flags: &["--minpsffraction"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
@@ -579,7 +604,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "maxpsffraction",
                 label: "Max PSF Fraction",
-                order: 40,
+                order: 41,
                 flags: &["--maxpsffraction"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
@@ -591,9 +616,23 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 advanced: true,
             }),
             option_argument(OptionArgumentConfig {
+                id: "hogbom_iteration_mode",
+                label: "Hogbom Iterations",
+                order: 42,
+                flags: &["--hogbom-iteration-mode"],
+                metavar: "MODE",
+                value_kind: UiValueKind::String,
+                default: Some("strict"),
+                choices: &["strict", "casa"],
+                help: "Hogbom iteration accounting policy",
+                group: "Stage Parameters",
+                required: false,
+                advanced: true,
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "mask_box",
                 label: "Mask Box",
-                order: 41,
+                order: 43,
                 flags: &["--mask-box"],
                 metavar: "X0,Y0,X1,Y1",
                 value_kind: UiValueKind::String,
@@ -607,7 +646,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "mask_image",
                 label: "Mask Image",
-                order: 42,
+                order: 44,
                 flags: &["--mask-image"],
                 metavar: "PATH",
                 value_kind: UiValueKind::Path,
@@ -621,7 +660,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(ToggleArgumentConfig {
                 id: "write_preview_pngs",
                 label: "Preview PNGs",
-                order: 43,
+                order: 45,
                 true_flags: &[],
                 false_flags: &["--no-preview-pngs"],
                 default: Some("true"),
@@ -629,8 +668,8 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 group: "Products",
                 advanced: false,
             }),
-            action_argument(44, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
-            action_argument(45, "help", &["-h", "--help"], UiActionKind::Help),
+            action_argument(46, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
+            action_argument(47, "help", &["-h", "--help"], UiActionKind::Help),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "imager-run-v1".to_string(),
@@ -780,6 +819,29 @@ mod tests {
             .expect("specmode argument");
         assert_eq!(specmode.group, "Stages");
         assert!(matches!(specmode.value_kind, UiValueKind::Choice));
+
+        let usepointing = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "usepointing")
+            .expect("usepointing argument");
+        assert_eq!(usepointing.default.as_deref(), Some("false"));
+        assert!(matches!(usepointing.value_kind, UiValueKind::Bool));
+        let UiArgumentParser::Toggle { true_flags, .. } = &usepointing.parser else {
+            panic!("usepointing should use a toggle parser");
+        };
+        assert!(true_flags.contains(&"--usepointing".to_string()));
+
+        let savemodel = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "savemodel")
+            .expect("savemodel argument");
+        assert_eq!(savemodel.default.as_deref(), Some("none"));
+        let UiArgumentParser::Option { choices, .. } = &savemodel.parser else {
+            panic!("savemodel should use an option parser");
+        };
+        assert!(choices.contains(&"modelcolumn".to_string()));
 
         let polarization = schema
             .arguments

@@ -10,7 +10,9 @@ Usage:
   scripts/render-msexplore-page-side-by-side.sh \
     --ms /path/to.ms \
     --output /path/to/side-by-side.png \
-    [--field 0] [--spw 0] [--scan 1]
+    [--field 0] [--spw 0] [--scan 1] \
+    [--plot-width 2400] [--plot-height 1350] \
+    [--rust-symbolsize 1]
 EOF
 }
 
@@ -21,6 +23,9 @@ spw="0"
 scan="1"
 rust_label="casa-rs amplitude / phase vs time (generic page)"
 casa_label="CASA plotms amplitude / phase vs time (generic page)"
+plot_width="1600"
+plot_height="900"
+rust_symbolsize=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +47,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --scan)
       scan="$2"
+      shift 2
+      ;;
+    --plot-width)
+      plot_width="$2"
+      shift 2
+      ;;
+    --plot-height)
+      plot_height="$2"
+      shift 2
+      ;;
+    --rust-symbolsize)
+      rust_symbolsize="$2"
       shift 2
       ;;
     --rust-label)
@@ -102,14 +119,16 @@ cat >"$page_spec" <<EOF
       "plotindex": 0,
       "rowindex": 0,
       "colindex": 0,
-      "title": "Amplitude vs Time"
+      "title": "Amplitude vs Time",
+      "symbol_size": ${rust_symbolsize:-null}
     },
     {
       "preset": "phase_vs_time",
       "plotindex": 1,
       "rowindex": 0,
       "colindex": 1,
-      "title": "Phase vs Time"
+      "title": "Phase vs Time",
+      "symbol_size": ${rust_symbolsize:-null}
     }
   ]
 }
@@ -123,8 +142,8 @@ cargo run -q -p casa-ms --bin msexplore -- \
   --scan "$scan" \
   --plot-output "$rust_png" \
   --plot-format png \
-  --plot-width 1600 \
-  --plot-height 900 \
+  --plot-width "$plot_width" \
+  --plot-height "$plot_height" \
   "$ms_path"
 
 echo "Rendering CASA generic page plot..."
@@ -134,6 +153,8 @@ CASA_OUT="$casa_png" \
 CASA_FIELD="$field" \
 CASA_SPW="$spw" \
 CASA_SCAN="$scan" \
+CASA_PLOT_WIDTH="$plot_width" \
+CASA_PLOT_HEIGHT="$plot_height" \
 DISPLAY="${DISPLAY:-:0}" \
 "$CASA_RS_CASA_PYTHON" - <<'PY'
 import os
@@ -152,6 +173,10 @@ common = {
     "verbose": True,
     "gridrows": 1,
     "gridcols": 2,
+    "titlefont": int(os.environ.get("CASA_TITLE_FONT", "22")),
+    "xaxisfont": int(os.environ.get("CASA_AXIS_FONT", "20")),
+    "yaxisfont": int(os.environ.get("CASA_AXIS_FONT", "20")),
+    "symbolsize": int(os.environ.get("CASA_SYMBOL_SIZE", "4")),
 }
 
 plotms(
@@ -173,8 +198,8 @@ plotms(
     plotfile=os.environ["CASA_OUT"],
     expformat="png",
     overwrite=True,
-    width=1600,
-    height=900,
+    width=int(os.environ["CASA_PLOT_WIDTH"]),
+    height=int(os.environ["CASA_PLOT_HEIGHT"]),
     **common,
 )
 PY

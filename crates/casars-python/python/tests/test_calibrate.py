@@ -93,6 +93,37 @@ def test_protocol_info_subprocess_failures_raise_calibration_invocation_error(
 def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     binary = _write_stub_binary(tmp_path / "ok" / "calibrate", version="ok")
 
+    export_result = calibrate.export_corrected_data(
+        "calibrated.ms",
+        "selfcal.ms",
+        selection=calibrate.Selection(field="5", spw="0"),
+        binary=binary,
+    )
+    export_request = export_result["report"]["request"]
+    assert export_result["kind"] == "export_corrected_data"
+    assert export_request["input_ms"] == "calibrated.ms"
+    assert export_request["output_ms"] == "selfcal.ms"
+    assert export_request["selection"]["field"] == "5"
+    assert export_request["selection"]["spw"] == "0"
+
+    contsub_result = calibrate.continuum_subtract(
+        "selfcal.ms",
+        "selfcal.contsub.ms",
+        fit_spw="0:0~1;3~4",
+        fit_order=1,
+        data_column="data",
+        selection=calibrate.Selection(field="5", spw="0"),
+        binary=binary,
+    )
+    contsub_request = contsub_result["report"]["request"]
+    assert contsub_result["kind"] == "continuum_subtract"
+    assert contsub_request["input_ms"] == "selfcal.ms"
+    assert contsub_request["output_ms"] == "selfcal.contsub.ms"
+    assert contsub_request["fit_spw"] == "0:0~1;3~4"
+    assert contsub_request["fit_order"] == 1
+    assert contsub_request["data_column"] == "Data"
+    assert contsub_request["selection"]["field"] == "5"
+
     result = calibrate.solve_gain(
         "dataset.ms",
         "gain.gcal",
@@ -106,6 +137,9 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
             calibrate.CalibrationTableSpec("phase.gcal", gainfield="nearest", calwt=True)
         ],
         parang=True,
+        model_source="model_column",
+        min_snr=2.5,
+        min_baselines_per_antenna=4,
         smodel=(1.0, 0.0, 0.0, 0.0),
         binary=binary,
     )
@@ -123,6 +157,9 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["selection"]["spw"] == "0,1"
     assert request["prior_calibration_tables"][0]["gainfield"] == "Nearest"
     assert request["prior_calibration_tables"][0]["calwt"] is True
+    assert request["model_source"] == "ModelColumn"
+    assert request["min_snr"] == 2.5
+    assert request["min_baselines_per_antenna"] == 4
 
 
 def test_signature_parity_against_rust_schema() -> None:

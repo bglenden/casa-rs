@@ -103,6 +103,7 @@ pub fn trace_weighting(request: &ImagingRequest) -> Result<WeightingDiagnostics,
         request.weighting,
         WeightDensityMode::Combined,
         None,
+        weighting::fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz),
         &request.visibility_batches,
         &request.visibility_batches,
         &gridder,
@@ -160,12 +161,27 @@ pub fn trace_cube_weighting(
             WeightDensityMode::Combined => combined_density_batches
                 .as_deref()
                 .expect("combined cube density batches prepared"),
-            WeightDensityMode::PerPlane => &plane_request.visibility_batches,
+            WeightDensityMode::PerPlane if channel.density_batches.is_empty() => {
+                &plane_request.visibility_batches
+            }
+            WeightDensityMode::PerPlane => &channel.density_batches,
         };
         let trace = trace_weighting_with_density_source(
             plane_request.weighting,
             request.weight_density_mode,
             request.uv_taper,
+            weighting::fractional_bandwidth_from_frequency_range([
+                request
+                    .channels
+                    .first()
+                    .map(|channel| channel.channel_frequency_hz)
+                    .unwrap_or(channel.channel_frequency_hz),
+                request
+                    .channels
+                    .last()
+                    .map(|channel| channel.channel_frequency_hz)
+                    .unwrap_or(channel.channel_frequency_hz),
+            ]),
             &plane_request.visibility_batches,
             density_batches,
             &gridder,
@@ -337,10 +353,7 @@ pub fn trace_residual_refresh(
         &gridder,
         model,
         &psf_state,
-        matches!(
-            request.deconvolver,
-            Deconvolver::Clark | Deconvolver::Multiscale
-        ),
+        false,
         &mut stage_timings,
     )?;
     Ok(public_residual_refresh_diagnostics(trace))
@@ -454,7 +467,10 @@ fn trace_cube_channel_residual_refresh_with_mode(
         WeightDensityMode::Combined => combined_density_batches
             .as_deref()
             .expect("combined cube density batches prepared"),
-        WeightDensityMode::PerPlane => &plane_request.visibility_batches,
+        WeightDensityMode::PerPlane if channel.density_batches.is_empty() => {
+            &plane_request.visibility_batches
+        }
+        WeightDensityMode::PerPlane => &channel.density_batches,
     };
     let mut stage_timings = ImagingStageTimings::default();
     let weighting_started = Instant::now();
@@ -462,6 +478,18 @@ fn trace_cube_channel_residual_refresh_with_mode(
         plane_request.weighting,
         request.weight_density_mode,
         request.uv_taper,
+        weighting::fractional_bandwidth_from_frequency_range([
+            request
+                .channels
+                .first()
+                .map(|channel| channel.channel_frequency_hz)
+                .unwrap_or(plane_request.reffreq_hz),
+            request
+                .channels
+                .last()
+                .map(|channel| channel.channel_frequency_hz)
+                .unwrap_or(plane_request.reffreq_hz),
+        ]),
         &plane_request.visibility_batches,
         density_batches,
         &gridder,

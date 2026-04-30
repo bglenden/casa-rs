@@ -24,8 +24,11 @@ mod bandpass;
 mod callib;
 mod cli;
 pub mod constants;
+mod continuum_subtract;
+mod corrected_export;
 mod execute;
 mod fluxscale;
+mod least_squares;
 mod managed_output;
 mod model;
 mod plan;
@@ -41,6 +44,14 @@ pub use bandpass::{
 };
 pub use callib::{CallibError, load_apply_specs_from_callib, save_apply_specs_to_callib};
 pub use cli::{command_schema, run_env};
+pub use continuum_subtract::{
+    ContinuumSubtractionDataColumn, ContinuumSubtractionError, ContinuumSubtractionReport,
+    ContinuumSubtractionRequest, continuum_subtract,
+};
+pub use corrected_export::{
+    ExportCorrectedDataError, ExportCorrectedDataReport, ExportCorrectedDataRequest,
+    export_corrected_data,
+};
 pub use execute::{
     ApplyExecutionError, ApplyExecutionReport, ApplyExecutionTimings, execute_apply,
     execute_apply_from_path,
@@ -66,8 +77,8 @@ pub use plots::{
     build_calibration_plot_payload,
 };
 pub use solve::{
-    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveReport,
-    GainSolveRequest, GainType, RefAntSelector, solve_gain, solve_gain_from_path,
+    GainSolveCombine, GainSolveError, GainSolveInterval, GainSolveMode, GainSolveModelSource,
+    GainSolveReport, GainSolveRequest, GainType, RefAntSelector, solve_gain, solve_gain_from_path,
 };
 pub use stats::{
     CalibrationIndexedStats, CalibrationStatsAxis, CalibrationStatsError, CalibrationStatsReport,
@@ -76,7 +87,7 @@ pub use stats::{
 pub use summary::{CalibrationTableError, summarize_table, summarize_tables};
 pub use task_contract::{
     CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationProtocolInfo,
-    CalibrationTaskRequest, CalibrationTaskSchemaBundle, ExecuteApplyTaskRequest,
-    PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest,
-    SummaryTaskRequest,
+    CalibrationTaskRequest, CalibrationTaskSchemaBundle, ContinuumSubtractionTaskRequest,
+    ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest, PlanApplyTaskRequest,
+    SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest, SummaryTaskRequest,
 };

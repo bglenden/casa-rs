@@ -268,8 +268,10 @@ pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
         "imager" => Ok(imager_app()),
         "tablebrowser" => Ok(tablebrowser_app()),
         "imexplore" => Ok(imexplore_app()),
+        "immoments" => Ok(immoments_app()),
+        "exportfits" => Ok(exportfits_app()),
         other => Err(format!(
-            "unknown casars app {other:?}; expected one of: msexplore, calibrate, importvla, imager, tablebrowser, imexplore"
+            "unknown casars app {other:?}; expected one of: msexplore, calibrate, importvla, imager, tablebrowser, imexplore, immoments, exportfits"
         )),
     }
 }
@@ -282,6 +284,8 @@ pub(crate) fn registered_apps() -> Vec<RegistryApp> {
         imager_app(),
         tablebrowser_app(),
         imexplore_app(),
+        immoments_app(),
+        exportfits_app(),
     ]
 }
 
@@ -356,6 +360,36 @@ pub(crate) fn imexplore_app() -> RegistryApp {
             cargo_package: "casa-images",
             override_env: "CASARS_IMEXPLORE_BIN",
             interaction: AppInteraction::BrowserSession(BrowserAppKind::Image),
+        },
+    }
+}
+
+pub(crate) fn immoments_app() -> RegistryApp {
+    RegistryApp {
+        id: "immoments",
+        category: "Images",
+        display_name: "Image Moments",
+        shell_kind: AppShellKind::Workflow,
+        kind: RegistryAppKind::Subprocess {
+            binary_name: "immoments",
+            cargo_package: "casa-images",
+            override_env: "CASARS_IMMOMENTS_BIN",
+            interaction: AppInteraction::OneShot,
+        },
+    }
+}
+
+pub(crate) fn exportfits_app() -> RegistryApp {
+    RegistryApp {
+        id: "exportfits",
+        category: "Images",
+        display_name: "Export FITS",
+        shell_kind: AppShellKind::Workflow,
+        kind: RegistryAppKind::Subprocess {
+            binary_name: "exportfits",
+            cargo_package: "casa-images",
+            override_env: "CASARS_EXPORTFITS_BIN",
+            interaction: AppInteraction::OneShot,
         },
     }
 }
@@ -437,6 +471,8 @@ mod tests {
             "tablebrowser"
         );
         assert_eq!(resolve_app(Some("imexplore")).unwrap().id, "imexplore");
+        assert_eq!(resolve_app(Some("immoments")).unwrap().id, "immoments");
+        assert_eq!(resolve_app(Some("exportfits")).unwrap().id, "exportfits");
         assert!(
             resolve_app(Some("bogus"))
                 .unwrap_err()
@@ -486,6 +522,14 @@ mod tests {
         assert!(imexplore.is_browser_session());
         assert_eq!(imexplore.browser_kind(), Some(BrowserAppKind::Image));
         assert_eq!(imexplore.browser_path_field_id(), Some("image_path"));
+
+        let immoments = immoments_app();
+        assert!(!immoments.is_browser_session());
+        assert_eq!(immoments.browser_kind(), None);
+        assert_eq!(
+            immoments.ready_status_line(),
+            "Ready. Press r to run the selected workflow stage."
+        );
     }
 
     #[test]
@@ -602,6 +646,8 @@ mod tests {
                 "apply",
                 "summary",
                 "stats",
+                "export_corrected_data",
+                "continuum_subtract",
                 "solve_gain",
                 "solve_bandpass",
                 "fluxscale",

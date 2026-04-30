@@ -23,18 +23,16 @@ use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
 use casa_imaging::{
     BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMode,
     CubeChannelRequest, CubeImagingRequest, CubeModelChannelContribution,
-    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode, ImageGeometry,
-    ImagingRequest, ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest,
-    ParallelHandBatch, PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics,
-    RestoringBeamMode, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch, WProjectDiagnostics,
-    WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, run_cube, run_imaging,
-    run_mtmfs, trace_cube_channel_residual_refresh,
+    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode, HogbomIterationMode,
+    ImageGeometry, ImagingRequest, ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig,
+    MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics,
+    RestoringBeamMode, StandardMfsModelPredictor, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
+    WeightingMode, run_cube, run_imaging, run_mtmfs, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
     trace_w_project_plan,
 };
 use casa_ms::MeasurementSet;
-use casa_ms::columns::flag_columns::FlagRowColumn;
-use casa_ms::columns::main_ids;
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::columns::weight_columns::WeightSpectrumColumn;
 use casa_ms::derived::engine::{MsCalEngine, resolve_field_phase_direction_j2000};
@@ -43,18 +41,19 @@ use casa_ms::spectral_selection::CubeRowSpectralContributions;
 use casa_ms::ui_schema::UiCommandSchema;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
-    CubeSpectralSetup, parse_numeric_id_selector,
+    CubeSpectralSetup, convert_frequency_to_frame, parse_numeric_id_selector,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz, parse_spw_selector,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
 };
+use casa_tables::ColumnSchema;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use image::{ImageBuffer, Rgb};
-use ndarray::{Array2, Array4, IxDyn, s};
-use num_complex::Complex32;
+use ndarray::{Array2, Array4, ArrayD, IxDyn, s};
+use num_complex::{Complex32, Complex64};
 
 pub use managed_output::{
     ManagedImagingArtifact, ManagedImagingChannelRun, ManagedImagingOutput, ManagedImagingRequest,
@@ -76,14 +75,15 @@ pub use task_contract::{
     IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifact, ImagerArtifactKind,
     ImagerChannelRunResult, ImagerCleanStopReason, ImagerCoreStageTimings, ImagerCubeAxisConfig,
     ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
-    ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerPlaneSelection,
-    ImagerProtocolInfo, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
-    ImagerRunTaskResult, ImagerSpectralMode, ImagerTaskRequest, ImagerTaskResult,
-    ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+    ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerHogbomIterationMode,
+    ImagerPlaneSelection, ImagerProtocolInfo, ImagerRestoringBeamMode, ImagerRunReport,
+    ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode,
+    ImagerTaskRequest, ImagerTaskResult, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
+    ImagerWTermMode, ImagerWeighting,
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
-const DEFAULT_BATCH_SIZE: usize = 4096;
+const DEFAULT_BATCH_SIZE: usize = 65_536;
 
 /// Spectral imaging mode for the CLI frontend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +101,15 @@ pub enum SpectralMode {
     /// This keeps the cube spectral axis in the native data frame and skips
     /// runtime frequency conversion.
     Cubedata,
+}
+
+/// CASA-style model persistence after imaging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveModelMode {
+    /// Do not write a visibility model back to the MeasurementSet.
+    None,
+    /// Predict the final MFS model image into MAIN.MODEL_DATA.
+    ModelColumn,
 }
 
 impl SpectralMode {
@@ -134,6 +143,7 @@ fn canonical_weighting_name(weighting: WeightingMode) -> String {
         WeightingMode::Natural => "natural".to_string(),
         WeightingMode::Uniform => "uniform".to_string(),
         WeightingMode::Briggs { robust } => format!("briggs:{robust}"),
+        WeightingMode::BriggsBwTaper { robust } => format!("briggsbwtaper:{robust}"),
     }
 }
 
@@ -150,6 +160,13 @@ fn canonical_deconvolver_name(mode: Deconvolver) -> &'static str {
         Deconvolver::Mtmfs => "mtmfs",
         Deconvolver::Clark => "clark",
         Deconvolver::Multiscale => "multiscale",
+    }
+}
+
+fn canonical_hogbom_iteration_mode_name(mode: HogbomIterationMode) -> &'static str {
+    match mode {
+        HogbomIterationMode::Strict => "strict",
+        HogbomIterationMode::CasaInclusive => "casa",
     }
 }
 
@@ -353,6 +370,10 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
     manifest.insert(
         "deconvolver".to_string(),
         canonical_deconvolver_name(config.deconvolver).to_string(),
+    );
+    manifest.insert(
+        "hogbom_iteration_mode".to_string(),
+        canonical_hogbom_iteration_mode_name(config.hogbom_iteration_mode).to_string(),
     );
     manifest.insert("nterms".to_string(), config.nterms.to_string());
     manifest.insert(
@@ -655,6 +676,7 @@ pub fn build_prepare_geometry_trace_from_config(
         &selection.selected_rows,
         &selection.phase_center,
         derived_engine.as_ref(),
+        config.use_pointing,
     )?;
     Ok(PreparedGeometryTraceBundle {
         schema_version: ORACLE_SCHEMA_VERSION,
@@ -788,6 +810,7 @@ pub fn build_w_project_trace_from_config(
             cyclefactor: config.cyclefactor,
             min_psf_fraction: config.min_psf_fraction,
             max_psf_fraction: config.max_psf_fraction,
+            hogbom_iteration_mode: config.hogbom_iteration_mode,
         },
         clean_mask: build_clean_mask(
             config.imsize,
@@ -850,6 +873,7 @@ pub fn build_cube_channel_w_project_trace_from_config(
             cyclefactor: config.cyclefactor,
             min_psf_fraction: config.min_psf_fraction,
             max_psf_fraction: config.max_psf_fraction,
+            hogbom_iteration_mode: config.hogbom_iteration_mode,
         },
         clean_mask: build_clean_mask(
             config.imsize,
@@ -1047,9 +1071,10 @@ pub fn write_prepare_plane_oracle_bundle_from_config_with_overrides(
 
 /// Execute the imager using an already-parsed configuration.
 pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
+    validate_save_model_request(config)?;
     let total_start = Instant::now();
     let stage_start = Instant::now();
-    let ms = MeasurementSet::open(&config.ms).map_err(|error| format!("open MS: {error}"))?;
+    let mut ms = MeasurementSet::open(&config.ms).map_err(|error| format!("open MS: {error}"))?;
     let open_measurement_set = stage_start.elapsed();
     maybe_log_frontend_progress(
         "open_measurement_set",
@@ -1058,7 +1083,12 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
     );
     let stage_start = Instant::now();
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
-    let prepared = prepare_plane_input(&ms, config, data_column)?;
+    let (prepared, model_trace) = if config.save_model == SaveModelMode::ModelColumn {
+        let (prepared, trace) = prepare_plane_input_with_trace(&ms, config, data_column)?;
+        (prepared, Some(trace))
+    } else {
+        (prepare_plane_input(&ms, config, data_column)?, None)
+    };
     let prepare_plane_time = stage_start.elapsed();
     maybe_log_frontend_progress(
         "prepare_plane_input",
@@ -1100,6 +1130,7 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
                 cyclefactor: config.cyclefactor,
                 min_psf_fraction: config.min_psf_fraction,
                 max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
             };
             let clean_mask = build_clean_mask(
                 config.imsize,
@@ -1173,6 +1204,7 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
                     cyclefactor: config.cyclefactor,
                     min_psf_fraction: config.min_psf_fraction,
                     max_psf_fraction: config.max_psf_fraction,
+                    hogbom_iteration_mode: config.hogbom_iteration_mode,
                 },
                 clean_mask: build_clean_mask(
                     config.imsize,
@@ -1191,15 +1223,16 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
 
     let stage_start = Instant::now();
-    let coords = build_coordinate_system(
-        config.imsize,
-        phase_center.angles_rad,
-        config.cell_arcsec,
-        prepared_freq_ref,
-        phase_center.reference,
-        run_result.plane_stokes(),
-        run_result.channel_frequencies_hz(),
-    );
+    let coords = build_coordinate_system(CoordinateSystemBuild {
+        imsize: config.imsize,
+        phase_center: phase_center.angles_rad,
+        cell_arcsec: config.cell_arcsec,
+        freq_ref: prepared_freq_ref,
+        direction_ref: phase_center.reference,
+        plane_stokes: run_result.plane_stokes(),
+        channel_frequencies_hz: run_result.channel_frequencies_hz(),
+        requested_rest_frequency_hz: config.cube_axis.rest_frequency_hz,
+    });
     let build_coordinate_system = stage_start.elapsed();
     maybe_log_frontend_progress(
         "build_coordinate_system",
@@ -1207,6 +1240,22 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
         total_start.elapsed(),
     );
     let stage_start = Instant::now();
+    if config.save_model == SaveModelMode::ModelColumn {
+        let trace = model_trace.as_ref().ok_or_else(|| {
+            "internal error: savemodel=modelcolumn requires prepared visibility trace".to_string()
+        })?;
+        let written = write_model_column(&mut ms, config, &run_result, trace)?;
+        maybe_log_frontend_progress(
+            "write_model_column",
+            stage_start.elapsed(),
+            total_start.elapsed(),
+        );
+        maybe_log_frontend_progress(
+            &format!("write_model_column/written_samples/{written}"),
+            stage_start.elapsed(),
+            total_start.elapsed(),
+        );
+    }
     write_products(config, &coords, &run_result)?;
     let write_products_time = stage_start.elapsed();
     maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
@@ -1229,6 +1278,19 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
             total: total_start.elapsed(),
         },
     })
+}
+
+fn validate_save_model_request(config: &CliConfig) -> Result<(), String> {
+    if config.save_model != SaveModelMode::ModelColumn {
+        return Ok(());
+    }
+    if config.spectral_mode != SpectralMode::Mfs {
+        return Err("savemodel=modelcolumn currently supports specmode='mfs'".to_string());
+    }
+    if config.deconvolver == Deconvolver::Mtmfs {
+        return Err("savemodel=modelcolumn does not yet support deconvolver='mtmfs'".to_string());
+    }
+    Ok(())
 }
 
 fn frontend_progress_enabled() -> bool {
@@ -1315,6 +1377,7 @@ pub fn trace_cube_channel_residual_refresh_from_config(
             cyclefactor: config.cyclefactor,
             min_psf_fraction: config.min_psf_fraction,
             max_psf_fraction: config.max_psf_fraction,
+            hogbom_iteration_mode: config.hogbom_iteration_mode,
         },
         clean_mask: build_clean_mask(
             config.imsize,
@@ -1374,6 +1437,7 @@ pub fn trace_cube_channel_residual_refresh_from_config_with_model_cube(
             cyclefactor: config.cyclefactor,
             min_psf_fraction: config.min_psf_fraction,
             max_psf_fraction: config.max_psf_fraction,
+            hogbom_iteration_mode: config.hogbom_iteration_mode,
         },
         clean_mask: build_clean_mask(
             config.imsize,
@@ -1436,6 +1500,7 @@ pub fn trace_cube_channel_residual_refresh_from_config_with_model_cube_model_cha
             cyclefactor: config.cyclefactor,
             min_psf_fraction: config.min_psf_fraction,
             max_psf_fraction: config.max_psf_fraction,
+            hogbom_iteration_mode: config.hogbom_iteration_mode,
         },
         clean_mask: build_clean_mask(
             config.imsize,
@@ -1483,6 +1548,8 @@ pub struct CliConfig {
     pub channel_count: Option<usize>,
     /// Optional explicit data-column override.
     pub datacolumn: Option<String>,
+    /// CASA-style model persistence mode.
+    pub save_model: SaveModelMode,
     /// Optional explicit scalar-plane override.
     ///
     /// Raw-correlation overrides use `XX`, `YY`, `RR`, or `LL`. Stokes-plane
@@ -1497,6 +1564,8 @@ pub struct CliConfig {
     pub weighting: WeightingMode,
     /// CASA-style `perchanweightdensity` toggle for spectral cubes.
     pub per_channel_weight_density: bool,
+    /// CASA-style `usepointing` toggle for POINTING-table direction corrections.
+    pub use_pointing: bool,
     /// Optional CASA-style Gaussian UV taper.
     pub uv_taper: Option<GaussianUvTaper>,
     /// Restoring-beam policy for restored products.
@@ -1527,6 +1596,8 @@ pub struct CliConfig {
     pub min_psf_fraction: f32,
     /// Upper clamp for the PSF fraction used to derive cycle thresholds.
     pub max_psf_fraction: f32,
+    /// Hogbom minor-cycle iteration accounting policy.
+    pub hogbom_iteration_mode: HogbomIterationMode,
     /// Optional inclusive pixel-space clean boxes `(x0, y0, x1, y1)`.
     pub mask_boxes: Vec<[usize; 4]>,
     /// Optional CASA image mask whose non-zero pixels are cleanable.
@@ -1557,11 +1628,13 @@ impl CliConfig {
         let mut channel_start = None::<usize>;
         let mut channel_count = None::<usize>;
         let mut datacolumn = None::<String>;
+        let mut save_model = SaveModelMode::None;
         let mut correlation = None::<String>;
         let mut spectral_mode = SpectralMode::Mfs;
         let mut cube_axis = CubeAxisConfig::default();
         let mut weighting_name = String::from("natural");
         let mut per_channel_weight_density = false;
+        let mut use_pointing = false;
         let mut deconvolver_name = String::from("hogbom");
         let mut nterms = 1usize;
         let mut uv_taper = None::<GaussianUvTaper>;
@@ -1578,6 +1651,7 @@ impl CliConfig {
         let mut cyclefactor = 1.0f32;
         let mut min_psf_fraction = 0.1f32;
         let mut max_psf_fraction = 0.8f32;
+        let mut hogbom_iteration_mode = HogbomIterationMode::Strict;
         let mut mask_boxes = Vec::<[usize; 4]>::new();
         let mut mask_image = None::<PathBuf>;
         let mut w_term_mode = WTermMode::None;
@@ -1667,6 +1741,10 @@ impl CliConfig {
                     datacolumn = Some(next_value(&mut args, "--datacolumn")?);
                     continue;
                 }
+                "--savemodel" => {
+                    save_model = parse_save_model_mode(&next_value(&mut args, "--savemodel")?)?;
+                    continue;
+                }
                 "--corr" | "--stokes" => {
                     correlation = Some(next_value(&mut args, "--corr")?);
                     continue;
@@ -1719,6 +1797,10 @@ impl CliConfig {
                 }
                 "--perchanweightdensity" => {
                     per_channel_weight_density = true;
+                    continue;
+                }
+                "--usepointing" | "--use-pointing" => {
+                    use_pointing = true;
                     continue;
                 }
                 "--deconvolver" => {
@@ -1826,6 +1908,17 @@ impl CliConfig {
                         .map_err(|error| format!("parse --maxpsffraction: {error}"))?;
                     continue;
                 }
+                "--hogbom-iteration-mode" => {
+                    hogbom_iteration_mode = parse_hogbom_iteration_mode(&next_value(
+                        &mut args,
+                        "--hogbom-iteration-mode",
+                    )?)?;
+                    continue;
+                }
+                "--casa-hogbom-iterations" => {
+                    hogbom_iteration_mode = HogbomIterationMode::CasaInclusive;
+                    continue;
+                }
                 "--mask-box" => {
                     mask_boxes.push(parse_mask_box(&next_value(&mut args, "--mask-box")?)?);
                     continue;
@@ -1890,11 +1983,13 @@ impl CliConfig {
             channel_start,
             channel_count,
             datacolumn,
+            save_model,
             correlation,
             spectral_mode,
             cube_axis,
             weighting,
             per_channel_weight_density,
+            use_pointing,
             uv_taper,
             restoring_beam_mode,
             deconvolver,
@@ -1910,6 +2005,7 @@ impl CliConfig {
             cyclefactor,
             min_psf_fraction,
             max_psf_fraction,
+            hogbom_iteration_mode,
             mask_boxes,
             mask_image,
             w_term_mode,
@@ -2480,24 +2576,24 @@ fn select_main_rows(
     config: &CliConfig,
     ddid_info: &[Option<(usize, usize)>],
 ) -> Result<SelectedRowsContext, String> {
-    let needs_pointing_times = ms
-        .pointing()
-        .map(|pointing| pointing.row_count() > 0)
-        .unwrap_or(false);
-    let needs_row_times = config.spectral_mode.is_cube_like()
+    let select_started_at = Instant::now();
+    let needs_pointing_times = config.use_pointing
+        && ms
+            .pointing()
+            .map(|pointing| pointing.row_count() > 0)
+            .unwrap_or(false);
+    let needs_row_times = matches!(config.spectral_mode, SpectralMode::Mfs)
+        || config.spectral_mode.is_cube_like()
         || config.w_term_mode != WTermMode::None
         || selection_may_require_phase_reprojection(config)
         || needs_pointing_times;
-    let field_column = ms
-        .main_table()
-        .column_accessor("FIELD_ID")
-        .and_then(|column| column.iter())
-        .map_err(|error| format!("open FIELD_ID column: {error}"))?;
-    let ddid_column = ms
-        .main_table()
-        .column_accessor("DATA_DESC_ID")
-        .and_then(|column| column.iter())
-        .map_err(|error| format!("open DATA_DESC_ID column: {error}"))?;
+    let field_values = load_i32_main_column_owned(ms, "FIELD_ID")?;
+    let ddid_values = load_i32_main_column_owned(ms, "DATA_DESC_ID")?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/select_main_rows/load_scalar_columns",
+        select_started_at.elapsed(),
+        select_started_at.elapsed(),
+    );
     let allowed_ddids = allowed_ddids(config, ddid_info)?;
     let time_column = TimeColumn::new(ms.main_table());
     let allowed_field_ids = config
@@ -2510,28 +2606,7 @@ fn select_main_rows(
     let mut reference_row_time_mjd_sec = None::<f64>;
     let mut time_bounds_mjd_sec = None::<[f64; 2]>;
 
-    for (field_cell, ddid_cell) in field_column.zip(ddid_column) {
-        let row = field_cell.row_index;
-        let field_id = match field_cell.value {
-            Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
-            Some(other) => {
-                return Err(format!(
-                    "FIELD_ID row {row} must be Int32, found {:?}",
-                    other.kind()
-                ));
-            }
-            None => return Err(format!("FIELD_ID row {row} is missing")),
-        };
-        let ddid = match ddid_cell.value {
-            Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
-            Some(other) => {
-                return Err(format!(
-                    "DATA_DESC_ID row {row} must be Int32, found {:?}",
-                    other.kind()
-                ));
-            }
-            None => return Err(format!("DATA_DESC_ID row {row} is missing")),
-        };
+    for (row, (&field_id, &ddid)) in field_values.iter().zip(ddid_values.iter()).enumerate() {
         if ddid < 0 {
             continue;
         }
@@ -2586,6 +2661,11 @@ fn select_main_rows(
             time_mjd_seconds: row_time_mjd_sec,
         });
     }
+    maybe_log_frontend_progress(
+        "prepare_plane_input/select_main_rows/scan_rows",
+        select_started_at.elapsed(),
+        select_started_at.elapsed(),
+    );
 
     if selected_fields.is_empty() {
         return Err("selection resolved to no field".to_string());
@@ -2600,6 +2680,11 @@ fn select_main_rows(
         );
     }
     let phase_center = resolve_phase_center(ms, &selected_fields, config)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/select_main_rows/resolve_phase_center",
+        select_started_at.elapsed(),
+        select_started_at.elapsed(),
+    );
     let selected_ddid = selected_ddid.ok_or_else(|| "selection resolved to no DDID".to_string())?;
     let needs_geometry_engine = config.spectral_mode.is_cube_like()
         || config.w_term_mode != WTermMode::None
@@ -2617,6 +2702,66 @@ fn select_main_rows(
         time_bounds_mjd_sec,
         needs_geometry_engine,
     })
+}
+
+fn load_i32_main_column_owned(
+    ms: &MeasurementSet,
+    column_name: &'static str,
+) -> Result<Vec<i32>, String> {
+    let values = ms
+        .main_table()
+        .column_accessor(column_name)
+        .and_then(|column| column.scalar_cells_owned())
+        .map_err(|error| format!("load {column_name} column: {error}"))?;
+    if values.len() != ms.main_table().row_count() {
+        return Err(format!(
+            "{column_name} length {} does not match MAIN row count {}",
+            values.len(),
+            ms.main_table().row_count()
+        ));
+    }
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| match value {
+            Some(ScalarValue::Int32(value)) => Ok(value),
+            Some(other) => Err(format!(
+                "{column_name} row {row} must be Int32, found {:?}",
+                other.primitive_type()
+            )),
+            None => Err(format!("{column_name} row {row} is missing")),
+        })
+        .collect()
+}
+
+fn load_bool_main_column_owned(
+    ms: &MeasurementSet,
+    column_name: &'static str,
+) -> Result<Vec<bool>, String> {
+    let values = ms
+        .main_table()
+        .column_accessor(column_name)
+        .and_then(|column| column.scalar_cells_owned())
+        .map_err(|error| format!("load {column_name} column: {error}"))?;
+    if values.len() != ms.main_table().row_count() {
+        return Err(format!(
+            "{column_name} length {} does not match MAIN row count {}",
+            values.len(),
+            ms.main_table().row_count()
+        ));
+    }
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| match value {
+            Some(ScalarValue::Bool(value)) => Ok(value),
+            Some(other) => Err(format!(
+                "{column_name} row {row} must be Bool, found {:?}",
+                other.primitive_type()
+            )),
+            None => Err(format!("{column_name} row {row} is missing")),
+        })
+        .collect()
 }
 
 fn load_optional_i32_main_column(
@@ -2696,10 +2841,16 @@ fn build_prepared_geometry_rows(
     selected_rows: &[SelectedMainRow],
     phase_center: &PhaseCenter,
     derived_engine: Option<&MsCalEngine>,
+    use_pointing: bool,
 ) -> Result<Vec<PreparedGeometryRow>, String> {
     let geometry_started_at = Instant::now();
-    let antenna1 = main_ids::antenna1(ms.main_table());
-    let antenna2 = main_ids::antenna2(ms.main_table());
+    let antenna1 = load_i32_main_column_owned(ms, "ANTENNA1")?;
+    let antenna2 = load_i32_main_column_owned(ms, "ANTENNA2")?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_prepared_geometry_rows/load_antenna_ids",
+        geometry_started_at.elapsed(),
+        geometry_started_at.elapsed(),
+    );
     let selected_row_indices = selected_rows
         .iter()
         .map(|selected_row| selected_row.row_index)
@@ -2710,13 +2861,21 @@ fn build_prepared_geometry_rows(
         geometry_started_at.elapsed(),
         geometry_started_at.elapsed(),
     );
-    let pointing_ids = load_optional_i32_main_column(ms, "POINTING_ID")?;
+    let pointing_ids = if use_pointing {
+        load_optional_i32_main_column(ms, "POINTING_ID")?
+    } else {
+        None
+    };
     maybe_log_frontend_progress(
         "prepare_plane_input/build_prepared_geometry_rows/load_pointing_ids",
         geometry_started_at.elapsed(),
         geometry_started_at.elapsed(),
     );
-    let pointing_resolver = PointingDirectionResolver::new(ms)?;
+    let pointing_resolver = if use_pointing {
+        PointingDirectionResolver::new(ms)?
+    } else {
+        None
+    };
     maybe_log_frontend_progress(
         "prepare_plane_input/build_prepared_geometry_rows/build_pointing_resolver",
         geometry_started_at.elapsed(),
@@ -2726,12 +2885,12 @@ fn build_prepared_geometry_rows(
     let mut rows = Vec::with_capacity(selected_rows.len());
     for (row_slot, selected_row) in selected_rows.iter().enumerate() {
         let row = selected_row.row_index;
-        let antenna1_id = antenna1
+        let antenna1_id = *antenna1
             .get(row)
-            .map_err(|error| format!("read ANTENNA1 row {row}: {error}"))?;
-        let antenna2_id = antenna2
+            .ok_or_else(|| format!("read ANTENNA1 row {row}: row is out of bounds"))?;
+        let antenna2_id = *antenna2
             .get(row)
-            .map_err(|error| format!("read ANTENNA2 row {row}: {error}"))?;
+            .ok_or_else(|| format!("read ANTENNA2 row {row}: row is out of bounds"))?;
         let is_cross = antenna1_id != antenna2_id;
         let raw_uvw_m = extract_uvw_from_array(selected_uvw.get(row_slot)?, row)?;
         let transform = row_imaging_transform(
@@ -2832,7 +2991,7 @@ fn prepare_plane_input(
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
 ) -> Result<PreparedInput, String> {
-    prepare_plane_input_with_trace(ms, config, data_column_kind).map(|(prepared, _)| prepared)
+    prepare_plane_input_inner(ms, config, data_column_kind, false).map(|(prepared, _)| prepared)
 }
 
 fn prepare_plane_input_with_trace(
@@ -2840,6 +2999,18 @@ fn prepare_plane_input_with_trace(
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
 ) -> Result<(PreparedInput, PreparedVisibilityTraceBundle), String> {
+    let (prepared, trace) = prepare_plane_input_inner(ms, config, data_column_kind, true)?;
+    trace
+        .map(|trace| (prepared, trace))
+        .ok_or_else(|| "internal error: requested prepare trace was not built".to_string())
+}
+
+fn prepare_plane_input_inner(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    force_trace: bool,
+) -> Result<(PreparedInput, Option<PreparedVisibilityTraceBundle>), String> {
     let prepare_started_at = Instant::now();
     let data_description = ms
         .data_description()
@@ -2857,33 +3028,111 @@ fn prepare_plane_input_with_trace(
         prepare_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
-    let selected_row_indices = selection
+    let stage_started_at = Instant::now();
+    let flag_row = load_bool_main_column_owned(ms, "FLAG_ROW")?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_flag_row_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let rows_skipped_by_flag_row = selection
         .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .unwrap_or(false)
+        })
+        .count();
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .map(|flagged| !flagged)
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected_row_indices = active_selected_rows
         .iter()
         .map(|selected_row| selected_row.row_index)
         .collect::<Vec<_>>();
+    let stage_started_at = Instant::now();
     let data_column = SelectedMainDataSource::load(ms, data_column_kind, &selected_row_indices)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_data_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     let flag_column = SelectedMainArrayColumn::load(ms, "FLAG", &selected_row_indices)?;
-    let flag_row = ms.flag_row_column();
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_flag_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     let weight_column = SelectedMainArrayColumn::load(ms, "WEIGHT", &selected_row_indices)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_weight_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
         .ok()
         .map(|_| SelectedMainArrayColumn::load(ms, "WEIGHT_SPECTRUM", &selected_row_indices))
         .transpose()?;
-    let derived_engine = if selection.needs_geometry_engine {
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_weight_spectrum_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
+    let selected_spw_id = ddid_info
+        .get(selection.selected_ddid)
+        .copied()
+        .flatten()
+        .map(|(spw_id, _)| spw_id)
+        .ok_or_else(|| {
+            format!(
+                "map selected DDID {} to SPW/POLARIZATION",
+                selection.selected_ddid
+            )
+        })?;
+    let selected_freq_ref = FrequencyRef::from_casacore_code(
+        spectral_window
+            .meas_freq_ref(selected_spw_id)
+            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+    )
+    .unwrap_or(FrequencyRef::TOPO);
+    let mfs_needs_frequency_conversion = matches!(config.spectral_mode, SpectralMode::Mfs)
+        && selected_freq_ref != FrequencyRef::LSRK;
+    let derived_engine = if selection.needs_geometry_engine || mfs_needs_frequency_conversion {
         Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
     } else {
         None
     };
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_derived_engine",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
     let geometry_rows = build_prepared_geometry_rows(
         ms,
-        &selection.selected_rows,
+        &active_selected_rows,
         &selection.phase_center,
         derived_engine.as_ref(),
+        config.use_pointing,
     )?;
     maybe_log_frontend_progress(
         "prepare_plane_input/build_prepared_geometry_rows",
-        prepare_started_at.elapsed(),
+        stage_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
     let cube_context = if config.spectral_mode.is_cube_like() {
@@ -2904,6 +3153,8 @@ fn prepare_plane_input_with_trace(
     } else {
         None
     };
+    let fast_standard_mfs =
+        !force_trace && can_prepare_standard_mfs_without_trace(config, &selection);
     let mut prepared = PreparedSelection::new(
         config,
         selection.selected_ddid,
@@ -2912,15 +3163,16 @@ fn prepare_plane_input_with_trace(
         &polarization,
         selection.phase_center.clone(),
         cube_context,
+        !fast_standard_mfs,
     );
     if let Some(init_error) = prepared.initialization_error.take() {
         return Err(init_error);
     }
-    let selected_row_traces = selection
-        .selected_rows
-        .iter()
-        .map(SelectedMainRow::trace)
-        .collect::<Vec<_>>();
+    let stage_started_at = Instant::now();
+    let mut accumulate_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row,
+        ..Default::default()
+    };
     for (row_slot, row) in geometry_rows.iter().enumerate() {
         prepared.accumulate_row(
             row,
@@ -2931,25 +3183,58 @@ fn prepare_plane_input_with_trace(
             weight_spectrum.as_ref(),
             derived_engine.as_ref(),
             row_slot,
+            &mut accumulate_timings,
         )?;
     }
+    accumulate_timings.log(prepare_started_at.elapsed());
     maybe_log_frontend_progress(
         "prepare_plane_input/accumulate_rows",
-        prepare_started_at.elapsed(),
+        stage_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
-    prepared.finish_with_trace(
-        ms,
-        config.ms.display().to_string(),
-        canonical_data_column_name(data_column_kind).to_string(),
-        config.spectral_mode,
-        PhaseCenterTrace {
-            field_id: selection.phase_center.field_id,
-            reference: selection.phase_center.reference.as_str().to_string(),
-            angles_rad: selection.phase_center.angles_rad,
-        },
-        selected_row_traces,
-    )
+    if fast_standard_mfs {
+        let stage_started_at = Instant::now();
+        let prepared_input = prepared.finish_standard_mfs_without_trace()?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/finish_standard_mfs_without_trace",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+        return Ok((prepared_input, None));
+    }
+    let selected_row_traces = selection
+        .selected_rows
+        .iter()
+        .map(SelectedMainRow::trace)
+        .collect::<Vec<_>>();
+    prepared
+        .finish_with_trace(
+            ms,
+            config.ms.display().to_string(),
+            canonical_data_column_name(data_column_kind).to_string(),
+            config.spectral_mode,
+            PhaseCenterTrace {
+                field_id: selection.phase_center.field_id,
+                reference: selection.phase_center.reference.as_str().to_string(),
+                angles_rad: selection.phase_center.angles_rad,
+            },
+            selected_row_traces,
+        )
+        .map(|(prepared, trace)| (prepared, Some(trace)))
+}
+
+fn can_prepare_standard_mfs_without_trace(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+) -> bool {
+    matches!(config.spectral_mode, SpectralMode::Mfs)
+        && !config.use_pointing
+        && config.deconvolver != Deconvolver::Mtmfs
+        && selection.phase_center.field_id.is_some()
+        && selection
+            .selected_rows
+            .iter()
+            .all(|row| Some(row.field_id) == selection.phase_center.field_id)
 }
 
 fn data_description_index(
@@ -3252,6 +3537,16 @@ fn parse_data_column(name: &str) -> Result<VisibilityDataColumn, String> {
     }
 }
 
+fn parse_save_model_mode(name: &str) -> Result<SaveModelMode, String> {
+    match name.to_ascii_lowercase().replace(['_', '-'], "").as_str() {
+        "none" => Ok(SaveModelMode::None),
+        "modelcolumn" => Ok(SaveModelMode::ModelColumn),
+        _ => Err(format!(
+            "unsupported savemodel value {name:?}; expected none or modelcolumn"
+        )),
+    }
+}
+
 fn parse_single_numeric_selector(value: &str, label: &str) -> Result<i32, String> {
     let parsed = parse_numeric_id_selector(value, label).map_err(|error| error.to_string())?;
     match parsed.as_slice() {
@@ -3301,9 +3596,44 @@ struct PreparedSelection {
     freq_ref: FrequencyRef,
     cube_spectral_setup: Option<CubeSpectralSetup>,
     cube_row_spectral_cache: HashMap<(u64, usize), Rc<CubeRowSpectralContributions>>,
+    casa_cube_grid_interpolation: bool,
     phase_center: PhaseCenter,
     state: PreparedState,
     trace_state: PreparedTraceState,
+    trace_enabled: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct AccumulateRowTimings {
+    flag_row: Duration,
+    data_column: Duration,
+    flag_column: Duration,
+    weight_column: Duration,
+    weight_spectrum: Duration,
+    adapt_samples: Duration,
+    rows_seen: usize,
+    rows_flagged: usize,
+    rows_skipped_by_flag_row: usize,
+}
+
+impl AccumulateRowTimings {
+    fn log(self, total_elapsed: Duration) {
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/accumulate_rows/detail rows_seen={} rows_flagged={} rows_skipped_by_flag_row={} flag_row_ms={:.3} data_ms={:.3} flag_ms={:.3} weight_ms={:.3} weight_spectrum_ms={:.3} adapt_samples_ms={:.3} total_elapsed_s={:.3}",
+                self.rows_seen,
+                self.rows_flagged,
+                self.rows_skipped_by_flag_row,
+                self.flag_row.as_secs_f64() * 1_000.0,
+                self.data_column.as_secs_f64() * 1_000.0,
+                self.flag_column.as_secs_f64() * 1_000.0,
+                self.weight_column.as_secs_f64() * 1_000.0,
+                self.weight_spectrum.as_secs_f64() * 1_000.0,
+                self.adapt_samples.as_secs_f64() * 1_000.0,
+                total_elapsed.as_secs_f64(),
+            );
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -3338,6 +3668,7 @@ enum PreparedState {
         plane_stokes: PlaneStokes,
         corr_index: usize,
         channel_batches: Vec<VisibilityBatch>,
+        channel_density_batches: Vec<VisibilityBatch>,
         channel_model_interpolation_samples: Vec<Vec<Vec<CubeModelChannelContribution>>>,
     },
     PairedMfs {
@@ -3346,10 +3677,17 @@ enum PreparedState {
         paired: ParallelHandBatch,
         pair: (usize, usize),
     },
+    CollapsedMfs {
+        plane_stokes: PlaneStokes,
+        transform: PairCollapseTransform,
+        pair: (usize, usize),
+        batch: VisibilityBatch,
+    },
     PairedCube {
         plane_stokes: PlaneStokes,
         transform: PairCollapseTransform,
         channel_batches: Vec<ParallelHandBatch>,
+        channel_density_batches: Vec<VisibilityBatch>,
         channel_model_interpolation_samples: Vec<Vec<Vec<CubeModelChannelContribution>>>,
         pair: (usize, usize),
     },
@@ -3438,7 +3776,35 @@ fn phase_rotate_visibility(
     visibility * phasor
 }
 
+fn mfs_imaging_frequency_scale(
+    freq_ref: FrequencyRef,
+    reference_frequency_hz: f64,
+    selected_row: &SelectedMainRow,
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<f64, String> {
+    if freq_ref == FrequencyRef::LSRK {
+        return Ok(1.0);
+    }
+    let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+        "internal error: missing row time for MFS frequency-frame conversion".to_string()
+    })?;
+    let derived_engine = derived_engine.ok_or_else(|| {
+        "internal error: missing derived engine for MFS frequency-frame conversion".to_string()
+    })?;
+    convert_frequency_to_frame(
+        freq_ref,
+        FrequencyRef::LSRK,
+        reference_frequency_hz,
+        row_time_mjd_sec,
+        selected_row.field_id,
+        derived_engine,
+    )
+    .map(|converted_hz| converted_hz / reference_frequency_hz)
+    .map_err(|error| error.to_string())
+}
+
 impl PreparedSelection {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         config: &CliConfig,
         ddid: usize,
@@ -3447,6 +3813,7 @@ impl PreparedSelection {
         polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
         phase_center: PhaseCenter,
         cube_context: Option<CubeSetupContext<'_>>,
+        trace_enabled: bool,
     ) -> Self {
         let result = (|| -> Result<Self, String> {
             let (spw_id, polarization_id) = ddid_info
@@ -3539,6 +3906,18 @@ impl PreparedSelection {
                 .as_ref()
                 .map(|setup| setup.output_channel_frequencies_hz.clone())
                 .unwrap_or_else(|| source_channel_frequencies_hz.clone());
+            if std::env::var_os("CASA_RS_TRACE_CUBE_GRID_INTERP").is_some() {
+                eprintln!(
+                    "CASA_RS_TRACE_CUBE_GRID_INTERP prepared_selection spw_id={spw_id} source_channels={} output_channels={} casa_grid_interp={}",
+                    source_channel_selection.indices.len(),
+                    output_channel_frequencies_hz.len(),
+                    config.per_channel_weight_density
+                        && matches!(
+                            config.weighting,
+                            WeightingMode::Briggs { .. } | WeightingMode::BriggsBwTaper { .. }
+                        )
+                );
+            }
             let output_freq_ref = cube_spectral_setup
                 .as_ref()
                 .map(|setup| setup.output_freq_ref)
@@ -3588,6 +3967,10 @@ impl PreparedSelection {
                                     .iter()
                                     .map(|_| empty_visibility_batch(16))
                                     .collect(),
+                                channel_density_batches: output_channel_frequencies_hz
+                                    .iter()
+                                    .map(|_| empty_visibility_batch(16))
+                                    .collect(),
                                 channel_model_interpolation_samples: output_channel_frequencies_hz
                                     .iter()
                                     .map(|_| Vec::new())
@@ -3599,11 +3982,17 @@ impl PreparedSelection {
                     let (pair, transform) =
                         derive_stokes_pair_selection(plane_stokes, &corr_types)?;
                     match config.spectral_mode {
-                        SpectralMode::Mfs => PreparedState::PairedMfs {
+                        SpectralMode::Mfs if trace_enabled => PreparedState::PairedMfs {
                             plane_stokes,
                             transform,
                             pair,
                             paired: empty_parallel_hand_batch(max_samples),
+                        },
+                        SpectralMode::Mfs => PreparedState::CollapsedMfs {
+                            plane_stokes,
+                            transform,
+                            pair,
+                            batch: empty_visibility_batch(max_samples),
                         },
                         SpectralMode::Cube | SpectralMode::Cubedata => PreparedState::PairedCube {
                             plane_stokes,
@@ -3612,6 +4001,10 @@ impl PreparedSelection {
                             channel_batches: output_channel_frequencies_hz
                                 .iter()
                                 .map(|_| empty_parallel_hand_batch(16))
+                                .collect(),
+                            channel_density_batches: output_channel_frequencies_hz
+                                .iter()
+                                .map(|_| empty_visibility_batch(16))
                                 .collect(),
                             channel_model_interpolation_samples: output_channel_frequencies_hz
                                 .iter()
@@ -3623,11 +4016,17 @@ impl PreparedSelection {
             } else {
                 let (pair, transform) = derive_stokes_pair_selection(PlaneStokes::I, &corr_types)?;
                 match config.spectral_mode {
-                    SpectralMode::Mfs => PreparedState::PairedMfs {
+                    SpectralMode::Mfs if trace_enabled => PreparedState::PairedMfs {
                         plane_stokes: PlaneStokes::I,
                         transform,
                         pair,
                         paired: empty_parallel_hand_batch(max_samples),
+                    },
+                    SpectralMode::Mfs => PreparedState::CollapsedMfs {
+                        plane_stokes: PlaneStokes::I,
+                        transform,
+                        pair,
+                        batch: empty_visibility_batch(max_samples),
                     },
                     SpectralMode::Cube | SpectralMode::Cubedata => PreparedState::PairedCube {
                         plane_stokes: PlaneStokes::I,
@@ -3636,6 +4035,10 @@ impl PreparedSelection {
                         channel_batches: output_channel_frequencies_hz
                             .iter()
                             .map(|_| empty_parallel_hand_batch(16))
+                            .collect(),
+                        channel_density_batches: output_channel_frequencies_hz
+                            .iter()
+                            .map(|_| empty_visibility_batch(16))
                             .collect(),
                         channel_model_interpolation_samples: output_channel_frequencies_hz
                             .iter()
@@ -3681,9 +4084,15 @@ impl PreparedSelection {
                 freq_ref: output_freq_ref,
                 cube_spectral_setup,
                 cube_row_spectral_cache: HashMap::new(),
+                casa_cube_grid_interpolation: config.per_channel_weight_density
+                    && matches!(
+                        config.weighting,
+                        WeightingMode::Briggs { .. } | WeightingMode::BriggsBwTaper { .. }
+                    ),
                 phase_center,
                 state,
                 trace_state,
+                trace_enabled,
             })
         })();
         match result {
@@ -3698,6 +4107,7 @@ impl PreparedSelection {
                 freq_ref: FrequencyRef::TOPO,
                 cube_spectral_setup: None,
                 cube_row_spectral_cache: HashMap::new(),
+                casa_cube_grid_interpolation: false,
                 phase_center: PhaseCenter {
                     field_id: Some(0),
                     angles_rad: [0.0, 0.0],
@@ -3711,6 +4121,7 @@ impl PreparedSelection {
                 trace_state: PreparedTraceState::ExplicitMfs {
                     samples: Vec::new(),
                 },
+                trace_enabled,
             },
         }
     }
@@ -3721,33 +4132,51 @@ impl PreparedSelection {
         geometry_row: &PreparedGeometryRow,
         data_column: &SelectedMainDataSource,
         flag_column: &SelectedMainArrayColumn,
-        flag_row: &FlagRowColumn<'_>,
+        flag_row: &[bool],
         weight_column: &SelectedMainArrayColumn,
         weight_spectrum: Option<&SelectedMainArrayColumn>,
         derived_engine: Option<&MsCalEngine>,
         row_slot: usize,
+        timings: &mut AccumulateRowTimings,
     ) -> Result<(), String> {
+        timings.rows_seen += 1;
         let selected_row = &geometry_row.selected_row;
         let row = selected_row.row_index;
-        if flag_row
+        let stage_started_at = Instant::now();
+        if *flag_row
             .get(row)
-            .map_err(|error| format!("read FLAG_ROW row {row}: {error}"))?
+            .ok_or_else(|| format!("read FLAG_ROW row {row}: row is out of bounds"))?
         {
+            timings.flag_row += stage_started_at.elapsed();
+            timings.rows_flagged += 1;
             return Ok(());
         }
+        timings.flag_row += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
         let data = data_column
             .get(row_slot)
             .map_err(|error| format!("read data row {row}: {error}"))?;
+        timings.data_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
         let flags = flag_column
             .get(row_slot)
             .map_err(|error| format!("read FLAG row {row}: {error}"))?;
+        timings.flag_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
         let row_weights = weight_column
             .get(row_slot)
             .map_err(|error| format!("read WEIGHT row {row}: {error}"))?;
+        timings.weight_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
         let weight_spectrum_row = weight_spectrum
             .map(|column| column.get(row_slot))
             .transpose()
             .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
+        timings.weight_spectrum += stage_started_at.elapsed();
+        let adapt_started_at = Instant::now();
+        let data_2d = ComplexRow2d::new(data)?;
+        let flags_2d = BoolRow2d::new(flags)?;
+        let weights = WeightRow::new(row_weights, weight_spectrum_row)?;
         let antenna1_id = geometry_row.antenna1_id;
         let antenna2_id = geometry_row.antenna2_id;
         let is_cross = geometry_row.is_cross;
@@ -3791,12 +4220,56 @@ impl PreparedSelection {
                         )
                         .map_err(|error| error.to_string())?,
                 );
+                if std::env::var_os("CASA_RS_TRACE_CUBE_GRID_INTERP").is_some() {
+                    let nonempty_output = computed
+                        .output_channel_contributions
+                        .iter()
+                        .filter(|contributions| !contributions.is_empty())
+                        .count();
+                    let grid_samples = computed.grid_channel_contributions.len();
+                    let mut grid_per_output =
+                        vec![0usize; cube_setup.output_channel_frequencies_hz.len()];
+                    for grid in &computed.grid_channel_contributions {
+                        if let Some(slot) = grid_per_output.get_mut(grid.output_channel) {
+                            *slot += 1;
+                        }
+                    }
+                    eprintln!(
+                        "CASA_RS_TRACE_CUBE_GRID_INTERP row_spectral row={row} field={} nonempty_output={nonempty_output} grid_samples={grid_samples} grid_per_output={grid_per_output:?}",
+                        selected_row.field_id
+                    );
+                }
                 self.cube_row_spectral_cache
                     .insert(cache_key, Rc::clone(&computed));
                 Some(computed)
             }
         } else {
             None
+        };
+        let trace_enabled = self.trace_enabled;
+        let use_casa_cube_grid_interpolation = self.casa_cube_grid_interpolation;
+        let mfs_freq_ref = self.freq_ref;
+        let mfs_frequency_scale = if matches!(
+            &self.state,
+            PreparedState::ExplicitMfs { .. }
+                | PreparedState::PairedMfs { .. }
+                | PreparedState::CollapsedMfs { .. }
+        ) {
+            let reference_frequency_hz = self
+                .source_channel_frequencies_hz
+                .first()
+                .copied()
+                .ok_or_else(|| {
+                    "internal error: MFS preparation has no source frequencies".to_string()
+                })?;
+            mfs_imaging_frequency_scale(
+                mfs_freq_ref,
+                reference_frequency_hz,
+                selected_row,
+                derived_engine,
+            )?
+        } else {
+            1.0
         };
 
         match (&mut self.state, &mut self.trace_state) {
@@ -3827,7 +4300,9 @@ impl PreparedSelection {
                 batch
                     .visibility
                     .reserve(self.source_channel_frequencies_hz.len());
-                samples.reserve(self.source_channel_frequencies_hz.len());
+                if trace_enabled {
+                    samples.reserve(self.source_channel_frequencies_hz.len());
+                }
                 for (channel_slot, (channel_index, frequency_hz)) in self
                     .source_channel_indices
                     .iter()
@@ -3835,24 +4310,20 @@ impl PreparedSelection {
                     .zip(self.source_channel_frequencies_hz.iter().copied())
                     .enumerate()
                 {
-                    if bool_at_2d(flags, *corr_index, channel_index)? {
+                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
+                    if flags_2d.get(*corr_index, channel_index)? {
                         continue;
                     }
                     let visibility = phase_rotate_visibility(
-                        complex32_at_2d(data, *corr_index, channel_index)?,
+                        data_2d.get(*corr_index, channel_index)?,
                         transform.phase_shift_m,
-                        frequency_hz,
+                        imaging_frequency_hz,
                     );
-                    let (weight, weight_source) = resolve_weight_with_source(
-                        row_weights,
-                        weight_spectrum_row,
-                        *corr_index,
-                        channel_index,
-                    )?;
+                    let (weight, weight_source) = weights.get(*corr_index, channel_index)?;
                     if !(weight.is_finite() && weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
                     batch.u_lambda.push(uvw_m[0] * lambda_scale);
                     batch.v_lambda.push(uvw_m[1] * lambda_scale);
                     batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -3860,44 +4331,47 @@ impl PreparedSelection {
                     batch.sumwt_factor.push(1.0);
                     batch.gridable.push(is_cross);
                     batch.visibility.push(visibility);
-                    samples.push(PreparedVisibilitySampleTrace {
-                        row_index: selected_row.row_index,
-                        input_field_id: selected_row.field_id,
-                        phase_center_field_id: self.phase_center.field_id,
-                        ddid: selected_row.ddid,
-                        spw_id: selected_row.spw_id,
-                        polarization_id: selected_row.polarization_id,
-                        antenna1_id,
-                        antenna2_id,
-                        is_cross,
-                        raw_uvw_m,
-                        imaging_uvw_m: uvw_m,
-                        phase_shift_m: transform.phase_shift_m,
-                        correlation_indices: vec![*corr_index],
-                        output_channel_index: None,
-                        output_frequency_hz: frequency_hz,
-                        field_phase_center_direction_rad: geometry_row
-                            .field_phase_center_direction_rad,
-                        pointing_direction_rad: baseline_pointing_direction_rad,
-                        visibility_re: visibility.re,
-                        visibility_im: visibility.im,
-                        weight,
-                        weight_source,
-                        sumwt_factor: 1.0,
-                        gridable: is_cross,
-                        source_contributions: vec![ChannelContributionTrace {
-                            source_channel_slot: channel_slot,
-                            source_channel_index: channel_index,
-                            source_frequency_hz: frequency_hz,
-                            factor: 1.0,
-                        }],
-                    });
+                    if trace_enabled {
+                        samples.push(PreparedVisibilitySampleTrace {
+                            row_index: selected_row.row_index,
+                            input_field_id: selected_row.field_id,
+                            phase_center_field_id: self.phase_center.field_id,
+                            ddid: selected_row.ddid,
+                            spw_id: selected_row.spw_id,
+                            polarization_id: selected_row.polarization_id,
+                            antenna1_id,
+                            antenna2_id,
+                            is_cross,
+                            raw_uvw_m,
+                            imaging_uvw_m: uvw_m,
+                            phase_shift_m: transform.phase_shift_m,
+                            correlation_indices: vec![*corr_index],
+                            output_channel_index: None,
+                            output_frequency_hz: imaging_frequency_hz,
+                            field_phase_center_direction_rad: geometry_row
+                                .field_phase_center_direction_rad,
+                            pointing_direction_rad: baseline_pointing_direction_rad,
+                            visibility_re: visibility.re,
+                            visibility_im: visibility.im,
+                            weight,
+                            weight_source,
+                            sumwt_factor: 1.0,
+                            gridable: is_cross,
+                            source_contributions: vec![ChannelContributionTrace {
+                                source_channel_slot: channel_slot,
+                                source_channel_index: channel_index,
+                                source_frequency_hz: frequency_hz,
+                                factor: 1.0,
+                            }],
+                        });
+                    }
                 }
             }
             (
                 PreparedState::ExplicitCube {
                     corr_index,
                     channel_batches,
+                    channel_density_batches,
                     channel_model_interpolation_samples,
                     ..
                 },
@@ -3909,13 +4383,76 @@ impl PreparedSelection {
                 let source_model_contributions =
                     &row_spectral_contributions.source_channel_model_contributions;
                 let assignments = &row_spectral_contributions.output_channel_contributions;
-                for (output_channel, contributions) in assignments.iter().enumerate() {
+                let density_slot_offset = (self
+                    .source_channel_indices
+                    .len()
+                    .saturating_sub(channel_density_batches.len()))
+                    / 2;
+                for (output_channel, density_batch) in
+                    channel_density_batches.iter_mut().enumerate()
+                {
+                    let source_slot = if use_casa_cube_grid_interpolation {
+                        output_channel + density_slot_offset
+                    } else {
+                        match row_spectral_contributions
+                            .source_channel_output_map
+                            .iter()
+                            .position(|mapped| *mapped == Some(output_channel))
+                        {
+                            Some(source_slot) => source_slot,
+                            None => continue,
+                        }
+                    };
+                    if source_slot >= self.source_channel_indices.len() {
+                        continue;
+                    }
+                    push_explicit_cube_density_sample(
+                        density_batch,
+                        &flags_2d,
+                        &weights,
+                        *corr_index,
+                        self.source_channel_indices[source_slot],
+                        self.source_channel_frequencies_hz[source_slot],
+                        uvw_m,
+                        is_cross,
+                    )?;
+                }
+                let grid_assignments;
+                let assignment_iter: Box<
+                    dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
+                > = if use_casa_cube_grid_interpolation {
+                    Box::new(
+                        row_spectral_contributions
+                            .grid_channel_contributions
+                            .iter()
+                            .map(|grid| {
+                                (
+                                    grid.output_channel,
+                                    grid.grid_frequency_hz,
+                                    grid.contributions.as_slice(),
+                                )
+                            }),
+                    )
+                } else {
+                    grid_assignments = assignments
+                        .iter()
+                        .enumerate()
+                        .map(|(output_channel, contributions)| {
+                            (
+                                output_channel,
+                                cube_output_channel_frequencies_hz
+                                    .as_ref()
+                                    .expect("missing cube spectral setup")[output_channel],
+                                contributions.as_slice(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    Box::new(grid_assignments.into_iter())
+                };
+                for (output_channel, output_frequency_hz, contributions) in assignment_iter {
                     if contributions.is_empty() {
                         continue;
                     }
-                    let output_frequency_hz = cube_output_channel_frequencies_hz
-                        .as_ref()
-                        .expect("missing cube spectral setup")[output_channel];
                     let Some(sample) = interpolate_explicit_cube_output_sample(
                         data,
                         flags,
@@ -3926,6 +4463,7 @@ impl PreparedSelection {
                         &self.source_channel_frequencies_hz,
                         transform.phase_shift_m,
                         contributions,
+                        use_casa_cube_grid_interpolation,
                     )?
                     else {
                         continue;
@@ -3982,6 +4520,90 @@ impl PreparedSelection {
                 }
             }
             (
+                PreparedState::CollapsedMfs {
+                    plane_stokes,
+                    transform: pair_transform,
+                    pair,
+                    batch,
+                },
+                PreparedTraceState::PairedMfs { .. },
+            ) => {
+                batch
+                    .u_lambda
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .v_lambda
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .w_lambda
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .weight
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .sumwt_factor
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .gridable
+                    .reserve(self.source_channel_frequencies_hz.len());
+                batch
+                    .visibility
+                    .reserve(self.source_channel_frequencies_hz.len());
+                let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
+                    let first_visibility = phase_rotate_visibility(
+                        data_2d.get(pair.0, channel_index)?,
+                        transform.phase_shift_m,
+                        imaging_frequency_hz,
+                    );
+                    let second_visibility = phase_rotate_visibility(
+                        data_2d.get(pair.1, channel_index)?,
+                        transform.phase_shift_m,
+                        imaging_frequency_hz,
+                    );
+                    let (first_weight, _) = weights.get(pair.0, channel_index)?;
+                    let (second_weight, _) = weights.get(pair.1, channel_index)?;
+                    let first_flagged = flags_2d.get(pair.0, channel_index)?;
+                    let second_flagged = flags_2d.get(pair.1, channel_index)?;
+                    if first_flagged || second_flagged {
+                        continue;
+                    }
+                    if !(first_weight.is_finite()
+                        && first_weight > 0.0
+                        && second_weight.is_finite()
+                        && second_weight > 0.0)
+                    {
+                        continue;
+                    }
+                    let visibility = collapse_paired_visibility(
+                        first_visibility,
+                        second_visibility,
+                        *pair_transform,
+                    );
+                    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                        continue;
+                    }
+                    let combined_weight = 0.5 * (first_weight + second_weight);
+                    if !(combined_weight.is_finite() && combined_weight > 0.0) {
+                        continue;
+                    }
+                    let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    batch.u_lambda.push(uvw_m[0] * lambda_scale);
+                    batch.v_lambda.push(uvw_m[1] * lambda_scale);
+                    batch.w_lambda.push(uvw_m[2] * lambda_scale);
+                    batch.weight.push(combined_weight);
+                    batch.sumwt_factor.push(sumwt_factor);
+                    batch.gridable.push(is_cross);
+                    batch.visibility.push(visibility);
+                }
+            }
+            (
                 PreparedState::PairedMfs { paired, pair, .. },
                 PreparedTraceState::PairedMfs { samples },
             ) => {
@@ -4015,7 +4637,9 @@ impl PreparedSelection {
                 paired
                     .gridable
                     .reserve(self.source_channel_frequencies_hz.len());
-                samples.reserve(self.source_channel_frequencies_hz.len());
+                if trace_enabled {
+                    samples.reserve(self.source_channel_frequencies_hz.len());
+                }
                 for (channel_slot, (channel_index, frequency_hz)) in self
                     .source_channel_indices
                     .iter()
@@ -4023,31 +4647,23 @@ impl PreparedSelection {
                     .zip(self.source_channel_frequencies_hz.iter().copied())
                     .enumerate()
                 {
-                    let lambda_scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
+                    let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
                     let first_visibility = phase_rotate_visibility(
-                        complex32_at_2d(data, pair.0, channel_index)?,
+                        data_2d.get(pair.0, channel_index)?,
                         transform.phase_shift_m,
-                        frequency_hz,
+                        imaging_frequency_hz,
                     );
                     let second_visibility = phase_rotate_visibility(
-                        complex32_at_2d(data, pair.1, channel_index)?,
+                        data_2d.get(pair.1, channel_index)?,
                         transform.phase_shift_m,
-                        frequency_hz,
+                        imaging_frequency_hz,
                     );
-                    let (first_weight, first_weight_source) = resolve_weight_with_source(
-                        row_weights,
-                        weight_spectrum_row,
-                        pair.0,
-                        channel_index,
-                    )?;
-                    let (second_weight, second_weight_source) = resolve_weight_with_source(
-                        row_weights,
-                        weight_spectrum_row,
-                        pair.1,
-                        channel_index,
-                    )?;
-                    let first_flagged = bool_at_2d(flags, pair.0, channel_index)?;
-                    let second_flagged = bool_at_2d(flags, pair.1, channel_index)?;
+                    let (first_weight, first_weight_source) = weights.get(pair.0, channel_index)?;
+                    let (second_weight, second_weight_source) =
+                        weights.get(pair.1, channel_index)?;
+                    let first_flagged = flags_2d.get(pair.0, channel_index)?;
+                    let second_flagged = flags_2d.get(pair.1, channel_index)?;
                     paired.u_lambda.push(uvw_m[0] * lambda_scale);
                     paired.v_lambda.push(uvw_m[1] * lambda_scale);
                     paired.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -4058,48 +4674,51 @@ impl PreparedSelection {
                     paired.first_flagged.push(first_flagged);
                     paired.second_flagged.push(second_flagged);
                     paired.gridable.push(is_cross);
-                    samples.push(PendingPairedSampleTrace {
-                        common: TraceSampleCommon {
-                            row_index: selected_row.row_index,
-                            input_field_id: selected_row.field_id,
-                            phase_center_field_id: self.phase_center.field_id,
-                            ddid: selected_row.ddid,
-                            spw_id: selected_row.spw_id,
-                            polarization_id: selected_row.polarization_id,
-                            antenna1_id,
-                            antenna2_id,
-                            is_cross,
-                            raw_uvw_m,
-                            imaging_uvw_m: uvw_m,
-                            phase_shift_m: transform.phase_shift_m,
-                            output_channel_index: None,
-                            output_frequency_hz: frequency_hz,
-                            field_phase_center_direction_rad: geometry_row
-                                .field_phase_center_direction_rad,
-                            pointing_direction_rad: baseline_pointing_direction_rad,
-                            source_contributions: vec![ChannelContributionTrace {
-                                source_channel_slot: channel_slot,
-                                source_channel_index: channel_index,
-                                source_frequency_hz: frequency_hz,
-                                factor: 1.0,
-                            }],
-                            gridable: is_cross,
-                        },
-                        correlation_indices: [pair.0, pair.1],
-                        first_visibility,
-                        second_visibility,
-                        first_weight,
-                        second_weight,
-                        first_weight_source,
-                        second_weight_source,
-                        first_flagged,
-                        second_flagged,
-                    });
+                    if trace_enabled {
+                        samples.push(PendingPairedSampleTrace {
+                            common: TraceSampleCommon {
+                                row_index: selected_row.row_index,
+                                input_field_id: selected_row.field_id,
+                                phase_center_field_id: self.phase_center.field_id,
+                                ddid: selected_row.ddid,
+                                spw_id: selected_row.spw_id,
+                                polarization_id: selected_row.polarization_id,
+                                antenna1_id,
+                                antenna2_id,
+                                is_cross,
+                                raw_uvw_m,
+                                imaging_uvw_m: uvw_m,
+                                phase_shift_m: transform.phase_shift_m,
+                                output_channel_index: None,
+                                output_frequency_hz: imaging_frequency_hz,
+                                field_phase_center_direction_rad: geometry_row
+                                    .field_phase_center_direction_rad,
+                                pointing_direction_rad: baseline_pointing_direction_rad,
+                                source_contributions: vec![ChannelContributionTrace {
+                                    source_channel_slot: channel_slot,
+                                    source_channel_index: channel_index,
+                                    source_frequency_hz: frequency_hz,
+                                    factor: 1.0,
+                                }],
+                                gridable: is_cross,
+                            },
+                            correlation_indices: [pair.0, pair.1],
+                            first_visibility,
+                            second_visibility,
+                            first_weight,
+                            second_weight,
+                            first_weight_source,
+                            second_weight_source,
+                            first_flagged,
+                            second_flagged,
+                        });
+                    }
                 }
             }
             (
                 PreparedState::PairedCube {
                     channel_batches,
+                    channel_density_batches,
                     channel_model_interpolation_samples,
                     pair,
                     ..
@@ -4112,13 +4731,76 @@ impl PreparedSelection {
                 let source_model_contributions =
                     &row_spectral_contributions.source_channel_model_contributions;
                 let assignments = &row_spectral_contributions.output_channel_contributions;
-                for (output_channel, contributions) in assignments.iter().enumerate() {
+                let density_slot_offset = (self
+                    .source_channel_indices
+                    .len()
+                    .saturating_sub(channel_density_batches.len()))
+                    / 2;
+                for (output_channel, density_batch) in
+                    channel_density_batches.iter_mut().enumerate()
+                {
+                    let source_slot = if use_casa_cube_grid_interpolation {
+                        output_channel + density_slot_offset
+                    } else {
+                        match row_spectral_contributions
+                            .source_channel_output_map
+                            .iter()
+                            .position(|mapped| *mapped == Some(output_channel))
+                        {
+                            Some(source_slot) => source_slot,
+                            None => continue,
+                        }
+                    };
+                    if source_slot >= self.source_channel_indices.len() {
+                        continue;
+                    }
+                    push_paired_cube_density_sample(
+                        density_batch,
+                        &flags_2d,
+                        &weights,
+                        *pair,
+                        self.source_channel_indices[source_slot],
+                        self.source_channel_frequencies_hz[source_slot],
+                        uvw_m,
+                        is_cross,
+                    )?;
+                }
+                let grid_assignments;
+                let assignment_iter: Box<
+                    dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
+                > = if use_casa_cube_grid_interpolation {
+                    Box::new(
+                        row_spectral_contributions
+                            .grid_channel_contributions
+                            .iter()
+                            .map(|grid| {
+                                (
+                                    grid.output_channel,
+                                    grid.grid_frequency_hz,
+                                    grid.contributions.as_slice(),
+                                )
+                            }),
+                    )
+                } else {
+                    grid_assignments = assignments
+                        .iter()
+                        .enumerate()
+                        .map(|(output_channel, contributions)| {
+                            (
+                                output_channel,
+                                cube_output_channel_frequencies_hz
+                                    .as_ref()
+                                    .expect("missing cube spectral setup")[output_channel],
+                                contributions.as_slice(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    Box::new(grid_assignments.into_iter())
+                };
+                for (output_channel, output_frequency_hz, contributions) in assignment_iter {
                     if contributions.is_empty() {
                         continue;
                     }
-                    let output_frequency_hz = cube_output_channel_frequencies_hz
-                        .as_ref()
-                        .expect("missing cube spectral setup")[output_channel];
                     let Some(sample) = interpolate_paired_cube_output_sample(
                         data,
                         flags,
@@ -4129,6 +4811,7 @@ impl PreparedSelection {
                         &self.source_channel_frequencies_hz,
                         transform.phase_shift_m,
                         contributions,
+                        use_casa_cube_grid_interpolation,
                     )?
                     else {
                         continue;
@@ -4199,7 +4882,77 @@ impl PreparedSelection {
                 );
             }
         }
+        timings.adapt_samples += adapt_started_at.elapsed();
         Ok(())
+    }
+
+    fn finish_standard_mfs_without_trace(self) -> Result<PreparedInput, String> {
+        let PreparedSelection {
+            initialization_error: _,
+            source_channel_indices: _,
+            source_channel_frequencies_hz: _,
+            source_channel_widths_hz: _,
+            selected_frequency_range_hz,
+            reffreq_hz,
+            freq_ref,
+            cube_spectral_setup: _,
+            cube_row_spectral_cache: _,
+            casa_cube_grid_interpolation: _,
+            phase_center,
+            state,
+            trace_state: _,
+            trace_enabled: _,
+        } = self;
+        match state {
+            PreparedState::ExplicitMfs {
+                plane_stokes,
+                batch,
+                ..
+            } => Ok(PreparedInput::Mfs(PlaneInput {
+                phase_center,
+                freq_ref,
+                reffreq_hz,
+                selected_frequency_range_hz,
+                plane_stokes,
+                batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                sample_frequency_batches_hz: Vec::new(),
+                gridder_mode: GridderMode::Standard,
+            })),
+            PreparedState::PairedMfs {
+                plane_stokes,
+                paired,
+                transform,
+                ..
+            } => {
+                let collapsed = collapse_paired_visibility_batch(&paired, transform, plane_stokes)
+                    .map_err(|error| error.to_string())?;
+                Ok(PreparedInput::Mfs(PlaneInput {
+                    phase_center,
+                    freq_ref,
+                    reffreq_hz,
+                    selected_frequency_range_hz,
+                    plane_stokes,
+                    batches: chunk_visibility_batch(collapsed, DEFAULT_BATCH_SIZE),
+                    sample_frequency_batches_hz: Vec::new(),
+                    gridder_mode: GridderMode::Standard,
+                }))
+            }
+            PreparedState::CollapsedMfs {
+                plane_stokes,
+                batch,
+                ..
+            } => Ok(PreparedInput::Mfs(PlaneInput {
+                phase_center,
+                freq_ref,
+                reffreq_hz,
+                selected_frequency_range_hz,
+                plane_stokes,
+                batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                sample_frequency_batches_hz: Vec::new(),
+                gridder_mode: GridderMode::Standard,
+            })),
+            _ => Err("internal error: fast trace-free prepare requires MFS state".to_string()),
+        }
     }
 
     fn finish_with_trace(
@@ -4221,9 +4974,11 @@ impl PreparedSelection {
             freq_ref,
             cube_spectral_setup,
             cube_row_spectral_cache: _,
+            casa_cube_grid_interpolation: _,
             phase_center: prepared_phase_center,
             state,
             trace_state,
+            trace_enabled: _,
         } = self;
         let output_channel_frequencies_hz = cube_spectral_setup
             .as_ref()
@@ -4309,6 +5064,7 @@ impl PreparedSelection {
                 PreparedState::ExplicitCube {
                     plane_stokes,
                     channel_batches,
+                    channel_density_batches,
                     channel_model_interpolation_samples,
                     ..
                 },
@@ -4318,13 +5074,21 @@ impl PreparedSelection {
                     .iter()
                     .copied()
                     .zip(channel_batches)
+                    .zip(channel_density_batches)
                     .zip(channel_model_interpolation_samples)
                     .map(
-                        |((channel_frequency_hz, batch), model_interpolation_samples)| {
+                        |(
+                            ((channel_frequency_hz, batch), density_batch),
+                            model_interpolation_samples,
+                        )| {
                             CubeChannelRequest {
                                 channel_frequency_hz,
                                 visibility_batches: chunk_visibility_batch(
                                     batch,
+                                    DEFAULT_BATCH_SIZE,
+                                ),
+                                density_batches: chunk_visibility_batch(
+                                    density_batch,
                                     DEFAULT_BATCH_SIZE,
                                 ),
                                 model_interpolation_batches: chunk_model_interpolation_batches(
@@ -4350,6 +5114,7 @@ impl PreparedSelection {
                     plane_stokes,
                     transform,
                     channel_batches,
+                    channel_density_batches,
                     channel_model_interpolation_samples,
                     ..
                 },
@@ -4359,11 +5124,12 @@ impl PreparedSelection {
                     .iter()
                     .copied()
                     .zip(channel_batches)
+                    .zip(channel_density_batches)
                     .zip(channel_samples.iter())
                     .zip(channel_model_interpolation_samples)
                     .map(
                         |(
-                            ((channel_frequency_hz, batch), trace_samples),
+                            (((channel_frequency_hz, batch), density_batch), trace_samples),
                             model_interpolation_samples,
                         )| {
                             let collapsed =
@@ -4379,6 +5145,10 @@ impl PreparedSelection {
                                 channel_frequency_hz,
                                 visibility_batches: chunk_visibility_batch(
                                     collapsed,
+                                    DEFAULT_BATCH_SIZE,
+                                ),
+                                density_batches: chunk_visibility_batch(
+                                    density_batch,
                                     DEFAULT_BATCH_SIZE,
                                 ),
                                 model_interpolation_batches: chunk_model_interpolation_batches(
@@ -4600,7 +5370,7 @@ fn write_products(
             None,
             beam_set_from_channel_beams(&result.beams, RestoringBeamMode::PerPlane)?,
             beam_set_from_channel_beams(&result.beams, RestoringBeamMode::PerPlane)?,
-            beam_set_from_channel_beams(&result.restored_beams, RestoringBeamMode::PerPlane)?,
+            beam_set_from_channel_beams(&result.restored_beams, config.restoring_beam_mode)?,
             result.compatibility.psf_units.as_str(),
             result.compatibility.residual_units.as_str(),
             result.compatibility.model_units.as_str(),
@@ -4688,6 +5458,164 @@ fn write_products(
     }
 
     Ok(())
+}
+
+fn write_model_column(
+    ms: &mut MeasurementSet,
+    config: &CliConfig,
+    result: &RunProducts,
+    trace: &PreparedVisibilityTraceBundle,
+) -> Result<usize, String> {
+    if config.spectral_mode != SpectralMode::Mfs {
+        return Err("savemodel=modelcolumn currently supports specmode='mfs'".to_string());
+    }
+    let model_plane = match result {
+        RunProducts::Mfs(result) => result.model.slice(s![.., .., 0, 0]).to_owned(),
+        RunProducts::Mtmfs(_) => {
+            return Err(
+                "savemodel=modelcolumn does not yet support deconvolver='mtmfs'".to_string(),
+            );
+        }
+        RunProducts::Cube(_) => {
+            return Err("savemodel=modelcolumn does not yet support cube imaging".to_string());
+        }
+    };
+    let geometry = ImageGeometry {
+        image_shape: [config.imsize, config.imsize],
+        cell_size_rad: [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let predictor = StandardMfsModelPredictor::new(geometry, &model_plane)
+        .map_err(|error| format!("prepare MODEL_DATA predictor: {error}"))?;
+    let created_model_data_column = ensure_model_data_column(ms)?;
+
+    let mut rows = trace
+        .selected_rows
+        .iter()
+        .map(|row| {
+            zero_model_row_like_data(ms, row.row_index).map(|model_row| (row.row_index, model_row))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let mut written_samples = 0usize;
+    for sample in &trace.samples {
+        if sample.source_contributions.is_empty() {
+            continue;
+        }
+        let row_shape = rows
+            .get(&sample.row_index)
+            .ok_or_else(|| {
+                format!(
+                    "prepared sample row {} was not present in selected rows",
+                    sample.row_index
+                )
+            })?
+            .shape()
+            .to_vec();
+        let row_model = rows
+            .get_mut(&sample.row_index)
+            .expect("row model shape was just read");
+        for contribution in &sample.source_contributions {
+            let lambda_scale = contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+            let predicted = predictor.predict(
+                sample.imaging_uvw_m[0] * lambda_scale,
+                sample.imaging_uvw_m[1] * lambda_scale,
+            );
+            let predicted = phase_rotate_visibility(
+                predicted,
+                -sample.phase_shift_m,
+                contribution.source_frequency_hz,
+            );
+            for &corr_index in &sample.correlation_indices {
+                if corr_index >= row_shape[0] || contribution.source_channel_index >= row_shape[1] {
+                    continue;
+                }
+                row_model[[corr_index, contribution.source_channel_index]] = predicted;
+                written_samples += 1;
+            }
+        }
+    }
+
+    let changed_rows = rows.keys().copied().collect::<Vec<_>>();
+    for (row_index, row_model) in rows {
+        ms.main_table_mut()
+            .column_accessor_mut(VisibilityDataColumn::ModelData.name())
+            .and_then(|mut column| {
+                column.set_array_assuming_valid(row_index, ArrayValue::Complex32(row_model))
+            })
+            .map_err(|error| format!("write MODEL_DATA row {row_index}: {error}"))?;
+    }
+    if created_model_data_column {
+        ms.save_main_table_only_assuming_valid().map_err(|error| {
+            format!(
+                "save MODEL_DATA updates to {}: {error}",
+                config.ms.display()
+            )
+        })?;
+    } else {
+        ms.main_table()
+            .save_selected_rows_in_place_assuming_valid(
+                &[VisibilityDataColumn::ModelData.name()],
+                &changed_rows,
+            )
+            .map_err(|error| {
+                format!(
+                    "save MODEL_DATA updates to {}: {error}",
+                    config.ms.display()
+                )
+            })?;
+    }
+    Ok(written_samples)
+}
+
+fn ensure_model_data_column(ms: &mut MeasurementSet) -> Result<bool, String> {
+    if ms
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column(VisibilityDataColumn::ModelData.name()))
+    {
+        return Ok(false);
+    }
+    let zero_rows = (0..ms.row_count())
+        .map(|row_index| zero_model_row_like_data(ms, row_index).map(|row| (row_index, row)))
+        .collect::<Result<Vec<_>, String>>()?;
+    ms.main_table_mut()
+        .add_column(
+            ColumnSchema::array_variable(
+                VisibilityDataColumn::ModelData.name(),
+                casa_types::PrimitiveType::Complex32,
+                Some(2),
+            ),
+            None,
+        )
+        .map_err(|error| format!("add MODEL_DATA column: {error}"))?;
+    for (row_index, row_model) in zero_rows {
+        ms.main_table_mut()
+            .cell_accessor_mut(row_index, VisibilityDataColumn::ModelData.name())
+            .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Complex32(row_model))))
+            .map_err(|error| format!("initialize MODEL_DATA row {row_index}: {error}"))?;
+    }
+    Ok(true)
+}
+
+fn zero_model_row_like_data(
+    ms: &MeasurementSet,
+    row_index: usize,
+) -> Result<ArrayD<Complex32>, String> {
+    let shape = ms
+        .main_table()
+        .cell_accessor(row_index, VisibilityDataColumn::Data.name())
+        .and_then(|cell| cell.array())
+        .map_err(|error| format!("read DATA row {row_index} shape for MODEL_DATA: {error}"))?
+        .shape()
+        .to_vec();
+    if shape.len() != 2 {
+        return Err(format!(
+            "DATA row {row_index} must be rank-2 to seed MODEL_DATA, found shape {shape:?}"
+        ));
+    }
+    Ok(ArrayD::from_elem(IxDyn(&shape), Complex32::new(0.0, 0.0)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4810,15 +5738,28 @@ fn write_preview_png(path: &Path, data: &Array4<f32>) -> Result<(), String> {
         .map_err(|error| format!("write preview {}: {error}", path.display()))
 }
 
-fn build_coordinate_system(
+struct CoordinateSystemBuild<'a> {
     imsize: usize,
     phase_center: [f64; 2],
     cell_arcsec: f64,
     freq_ref: FrequencyRef,
     direction_ref: DirectionRef,
     plane_stokes: PlaneStokes,
-    channel_frequencies_hz: &[f64],
-) -> CoordinateSystem {
+    channel_frequencies_hz: &'a [f64],
+    requested_rest_frequency_hz: Option<f64>,
+}
+
+fn build_coordinate_system(config: CoordinateSystemBuild<'_>) -> CoordinateSystem {
+    let CoordinateSystemBuild {
+        imsize,
+        phase_center,
+        cell_arcsec,
+        freq_ref,
+        direction_ref,
+        plane_stokes,
+        channel_frequencies_hz,
+        requested_rest_frequency_hz,
+    } = config;
     let cell_rad = cell_arcsec * arcsec_to_rad();
     let mut coords = CoordinateSystem::new();
     coords.add_coordinate(Box::new(DirectionCoordinate::new(
@@ -4834,6 +5775,7 @@ fn build_coordinate_system(
     coords.add_coordinate(Box::new(build_spectral_coordinate(
         freq_ref,
         channel_frequencies_hz,
+        requested_rest_frequency_hz,
     )));
     coords
 }
@@ -4841,15 +5783,19 @@ fn build_coordinate_system(
 fn build_spectral_coordinate(
     freq_ref: FrequencyRef,
     channel_frequencies_hz: &[f64],
+    requested_rest_frequency_hz: Option<f64>,
 ) -> SpectralCoordinate {
-    let rest_frequency = if channel_frequencies_hz.is_empty() {
-        0.0
-    } else {
-        0.5 * (channel_frequencies_hz[0] + channel_frequencies_hz[channel_frequencies_hz.len() - 1])
-    };
+    let rest_frequency = requested_rest_frequency_hz.unwrap_or_else(|| {
+        if channel_frequencies_hz.is_empty() {
+            0.0
+        } else {
+            0.5 * (channel_frequencies_hz[0]
+                + channel_frequencies_hz[channel_frequencies_hz.len() - 1])
+        }
+    });
     match channel_frequencies_hz {
         [] => SpectralCoordinate::new(freq_ref, 0.0, 1.0, 0.0, rest_frequency),
-        [single] => SpectralCoordinate::new(freq_ref, *single, 1.0, 0.0, *single),
+        [single] => SpectralCoordinate::new(freq_ref, *single, 1.0, 0.0, rest_frequency),
         frequencies => {
             let delta = frequencies[1] - frequencies[0];
             let is_linear = frequencies.windows(2).all(|window| {
@@ -5015,8 +5961,9 @@ fn parse_weighting_mode(text: &str, robust: f32) -> Result<WeightingMode, String
         "natural" => Ok(WeightingMode::Natural),
         "uniform" => Ok(WeightingMode::Uniform),
         "briggs" | "robust" => Ok(WeightingMode::Briggs { robust }),
+        "briggsbwtaper" => Ok(WeightingMode::BriggsBwTaper { robust }),
         _ => Err(format!(
-            "unsupported --weighting value {text:?}; expected natural, uniform, or briggs"
+            "unsupported --weighting value {text:?}; expected natural, uniform, briggs, or briggsbwtaper"
         )),
     }
 }
@@ -5029,6 +5976,16 @@ fn parse_deconvolver(text: &str) -> Result<Deconvolver, String> {
         "multiscale" => Ok(Deconvolver::Multiscale),
         _ => Err(format!(
             "unsupported --deconvolver value {text:?}; expected hogbom, mtmfs, clark, or multiscale"
+        )),
+    }
+}
+
+fn parse_hogbom_iteration_mode(text: &str) -> Result<HogbomIterationMode, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "strict" => Ok(HogbomIterationMode::Strict),
+        "casa" | "casa-inclusive" | "inclusive" => Ok(HogbomIterationMode::CasaInclusive),
+        _ => Err(format!(
+            "unsupported --hogbom-iteration-mode value {text:?}; expected strict or casa"
         )),
     }
 }
@@ -5486,6 +6443,248 @@ fn chunk_model_interpolation_batches(
     batches
 }
 
+enum ComplexRow2d<'a> {
+    Complex32Slice {
+        values: &'a [Complex32],
+        channels: usize,
+    },
+    Complex64Slice {
+        values: &'a [Complex64],
+        channels: usize,
+    },
+    Complex32Array(&'a ArrayD<Complex32>),
+    Complex64Array(&'a ArrayD<Complex64>),
+}
+
+impl<'a> ComplexRow2d<'a> {
+    fn new(data: &'a ArrayValue) -> Result<Self, String> {
+        match data {
+            ArrayValue::Complex32(values) => match (values.shape(), values.as_slice()) {
+                ([_, channels], Some(slice)) => Ok(Self::Complex32Slice {
+                    values: slice,
+                    channels: *channels,
+                }),
+                ([_, _], None) => Ok(Self::Complex32Array(values)),
+                (shape, _) => Err(format!(
+                    "visibility data must be 2-D Complex32/Complex64, found shape {shape:?}"
+                )),
+            },
+            ArrayValue::Complex64(values) => match (values.shape(), values.as_slice()) {
+                ([_, channels], Some(slice)) => Ok(Self::Complex64Slice {
+                    values: slice,
+                    channels: *channels,
+                }),
+                ([_, _], None) => Ok(Self::Complex64Array(values)),
+                (shape, _) => Err(format!(
+                    "visibility data must be 2-D Complex32/Complex64, found shape {shape:?}"
+                )),
+            },
+            other => Err(format!(
+                "visibility data must be Complex32/Complex64, found {:?}",
+                other.primitive_type()
+            )),
+        }
+    }
+
+    fn get(&self, corr: usize, chan: usize) -> Result<Complex32, String> {
+        match self {
+            Self::Complex32Slice { values, channels } => {
+                values.get(corr * *channels + chan).copied().ok_or_else(|| {
+                    format!("complex32 visibility index [{corr}, {chan}] out of bounds")
+                })
+            }
+            Self::Complex64Slice { values, channels } => values
+                .get(corr * *channels + chan)
+                .map(|value| Complex32::new(value.re as f32, value.im as f32))
+                .ok_or_else(|| {
+                    format!("complex64 visibility index [{corr}, {chan}] out of bounds")
+                }),
+            Self::Complex32Array(values) => {
+                values.get(IxDyn(&[corr, chan])).copied().ok_or_else(|| {
+                    format!("complex32 visibility index [{corr}, {chan}] out of bounds")
+                })
+            }
+            Self::Complex64Array(values) => values
+                .get(IxDyn(&[corr, chan]))
+                .map(|value| Complex32::new(value.re as f32, value.im as f32))
+                .ok_or_else(|| {
+                    format!("complex64 visibility index [{corr}, {chan}] out of bounds")
+                }),
+        }
+    }
+}
+
+enum BoolRow2d<'a> {
+    Slice { values: &'a [bool], channels: usize },
+    Array(&'a ArrayD<bool>),
+}
+
+impl<'a> BoolRow2d<'a> {
+    fn new(data: &'a ArrayValue) -> Result<Self, String> {
+        match data {
+            ArrayValue::Bool(values) => match (values.shape(), values.as_slice()) {
+                ([_, channels], Some(slice)) => Ok(Self::Slice {
+                    values: slice,
+                    channels: *channels,
+                }),
+                ([_, _], None) => Ok(Self::Array(values)),
+                (shape, _) => Err(format!("FLAG must be 2-D Bool, found shape {shape:?}")),
+            },
+            other => Err(format!(
+                "FLAG must be Bool, found {:?}",
+                other.primitive_type()
+            )),
+        }
+    }
+
+    fn get(&self, corr: usize, chan: usize) -> Result<bool, String> {
+        match self {
+            Self::Slice { values, channels } => values
+                .get(corr * *channels + chan)
+                .copied()
+                .ok_or_else(|| format!("flag index [{corr}, {chan}] out of bounds")),
+            Self::Array(values) => values
+                .get(IxDyn(&[corr, chan]))
+                .copied()
+                .ok_or_else(|| format!("flag index [{corr}, {chan}] out of bounds")),
+        }
+    }
+}
+
+enum FloatRow1d<'a> {
+    Float32Slice(&'a [f32]),
+    Float64Slice(&'a [f64]),
+    Float32Array(&'a ArrayD<f32>),
+    Float64Array(&'a ArrayD<f64>),
+}
+
+impl<'a> FloatRow1d<'a> {
+    fn new(data: &'a ArrayValue, label: &str) -> Result<Self, String> {
+        match data {
+            ArrayValue::Float32(values) => match (values.shape(), values.as_slice()) {
+                ([_], Some(slice)) => Ok(Self::Float32Slice(slice)),
+                ([_], None) => Ok(Self::Float32Array(values)),
+                (shape, _) => Err(format!(
+                    "{label} must be 1-D Float32/Float64, found shape {shape:?}"
+                )),
+            },
+            ArrayValue::Float64(values) => match (values.shape(), values.as_slice()) {
+                ([_], Some(slice)) => Ok(Self::Float64Slice(slice)),
+                ([_], None) => Ok(Self::Float64Array(values)),
+                (shape, _) => Err(format!(
+                    "{label} must be 1-D Float32/Float64, found shape {shape:?}"
+                )),
+            },
+            other => Err(format!(
+                "{label} must be Float32/Float64, found {:?}",
+                other.primitive_type()
+            )),
+        }
+    }
+
+    fn get(&self, corr: usize, label: &str) -> Result<f32, String> {
+        match self {
+            Self::Float32Slice(values) => values
+                .get(corr)
+                .copied()
+                .ok_or_else(|| format!("{label} index [{corr}] out of bounds")),
+            Self::Float64Slice(values) => values
+                .get(corr)
+                .map(|value| *value as f32)
+                .ok_or_else(|| format!("{label} index [{corr}] out of bounds")),
+            Self::Float32Array(values) => values
+                .get(IxDyn(&[corr]))
+                .copied()
+                .ok_or_else(|| format!("{label} index [{corr}] out of bounds")),
+            Self::Float64Array(values) => values
+                .get(IxDyn(&[corr]))
+                .map(|value| *value as f32)
+                .ok_or_else(|| format!("{label} index [{corr}] out of bounds")),
+        }
+    }
+}
+
+enum FloatRow2d<'a> {
+    Float32Slice { values: &'a [f32], channels: usize },
+    Float64Slice { values: &'a [f64], channels: usize },
+    Float32Array(&'a ArrayD<f32>),
+    Float64Array(&'a ArrayD<f64>),
+}
+
+impl<'a> FloatRow2d<'a> {
+    fn new(data: &'a ArrayValue, label: &str) -> Result<Self, String> {
+        match data {
+            ArrayValue::Float32(values) => match (values.shape(), values.as_slice()) {
+                ([_, channels], Some(slice)) => Ok(Self::Float32Slice {
+                    values: slice,
+                    channels: *channels,
+                }),
+                ([_, _], None) => Ok(Self::Float32Array(values)),
+                (shape, _) => Err(format!(
+                    "{label} must be 2-D Float32/Float64, found shape {shape:?}"
+                )),
+            },
+            ArrayValue::Float64(values) => match (values.shape(), values.as_slice()) {
+                ([_, channels], Some(slice)) => Ok(Self::Float64Slice {
+                    values: slice,
+                    channels: *channels,
+                }),
+                ([_, _], None) => Ok(Self::Float64Array(values)),
+                (shape, _) => Err(format!(
+                    "{label} must be 2-D Float32/Float64, found shape {shape:?}"
+                )),
+            },
+            other => Err(format!(
+                "{label} must be Float32/Float64, found {:?}",
+                other.primitive_type()
+            )),
+        }
+    }
+
+    fn get(&self, corr: usize, chan: usize, _label: &str) -> Option<f32> {
+        match self {
+            Self::Float32Slice { values, channels } => values.get(corr * *channels + chan).copied(),
+            Self::Float64Slice { values, channels } => values
+                .get(corr * *channels + chan)
+                .map(|value| *value as f32),
+            Self::Float32Array(values) => values.get(IxDyn(&[corr, chan])).copied(),
+            Self::Float64Array(values) => {
+                values.get(IxDyn(&[corr, chan])).map(|value| *value as f32)
+            }
+        }
+    }
+}
+
+struct WeightRow<'a> {
+    weights: FloatRow1d<'a>,
+    spectrum: Option<FloatRow2d<'a>>,
+}
+
+impl<'a> WeightRow<'a> {
+    fn new(
+        weight_row: &'a ArrayValue,
+        weight_spectrum_row: Option<&'a ArrayValue>,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            weights: FloatRow1d::new(weight_row, "WEIGHT")?,
+            spectrum: weight_spectrum_row
+                .map(|row| FloatRow2d::new(row, "WEIGHT_SPECTRUM"))
+                .transpose()?,
+        })
+    }
+
+    fn get(&self, corr: usize, chan: usize) -> Result<(f32, WeightSourceKind), String> {
+        if let Some(spectrum) = &self.spectrum
+            && let Some(weight) = spectrum.get(corr, chan, "WEIGHT_SPECTRUM")
+        {
+            return Ok((weight, WeightSourceKind::WeightSpectrum));
+        }
+        self.weights
+            .get(corr, "WEIGHT")
+            .map(|weight| (weight, WeightSourceKind::Weight))
+    }
+}
+
 fn complex32_at_2d(data: &ArrayValue, corr: usize, chan: usize) -> Result<Complex32, String> {
     match data {
         ArrayValue::Complex32(values) => values
@@ -5880,11 +7079,13 @@ fn interpolate_explicit_cube_output_sample(
     source_channel_frequencies_hz: &[f64],
     phase_shift_m: f64,
     contributions: &[CubeChannelContribution],
+    nearest_weight: bool,
 ) -> Result<Option<ExplicitCubeOutputSample>, String> {
     let mut visibility = Complex32::new(0.0, 0.0);
     let mut weight = 0.0f32;
     let mut weight_source = None::<WeightSourceKind>;
     let mut sumwt_factor = 0.0f32;
+    let mut nearest_weight_candidate = None::<(f32, f32, WeightSourceKind)>;
 
     for contribution in contributions {
         if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
@@ -5913,12 +7114,35 @@ fn interpolate_explicit_cube_output_sample(
             return Ok(None);
         }
         visibility += source_visibility * contribution.factor;
-        weight += source_weight * contribution.factor;
+        if nearest_weight {
+            match nearest_weight_candidate {
+                None => {
+                    nearest_weight_candidate =
+                        Some((contribution.factor, source_weight, source_weight_source));
+                }
+                Some((best_factor, _, _)) if contribution.factor > best_factor => {
+                    nearest_weight_candidate =
+                        Some((contribution.factor, source_weight, source_weight_source));
+                }
+                _ => {}
+            }
+        } else {
+            weight += source_weight * contribution.factor;
+        }
         weight_source = Some(match weight_source {
             None => source_weight_source,
             Some(existing) => weight_source_union(existing, source_weight_source),
         });
         sumwt_factor += contribution.factor;
+    }
+
+    if nearest_weight {
+        let Some((_, nearest_source_weight, nearest_source_kind)) = nearest_weight_candidate else {
+            return Ok(None);
+        };
+        weight = nearest_source_weight;
+        weight_source = Some(nearest_source_kind);
+        sumwt_factor = 1.0;
     }
 
     if !(visibility.re.is_finite()
@@ -5960,6 +7184,7 @@ fn interpolate_paired_cube_output_sample(
     source_channel_frequencies_hz: &[f64],
     phase_shift_m: f64,
     contributions: &[CubeChannelContribution],
+    nearest_weight: bool,
 ) -> Result<Option<PairedCubeOutputSample>, String> {
     let mut first_visibility = Complex32::new(0.0, 0.0);
     let mut second_visibility = Complex32::new(0.0, 0.0);
@@ -5967,6 +7192,7 @@ fn interpolate_paired_cube_output_sample(
     let mut second_weight = 0.0f32;
     let mut first_weight_source = None::<WeightSourceKind>;
     let mut second_weight_source = None::<WeightSourceKind>;
+    let mut nearest_weight_candidate = None::<(f32, f32, WeightSourceKind, f32, WeightSourceKind)>;
 
     for contribution in contributions {
         if !(contribution.factor.is_finite() && contribution.factor > 0.0) {
@@ -6002,8 +7228,32 @@ fn interpolate_paired_cube_output_sample(
         }
         first_visibility += source_first_visibility * contribution.factor;
         second_visibility += source_second_visibility * contribution.factor;
-        first_weight += source_first_weight * contribution.factor;
-        second_weight += source_second_weight * contribution.factor;
+        if nearest_weight {
+            match nearest_weight_candidate {
+                None => {
+                    nearest_weight_candidate = Some((
+                        contribution.factor,
+                        source_first_weight,
+                        source_first_weight_source,
+                        source_second_weight,
+                        source_second_weight_source,
+                    ));
+                }
+                Some((best_factor, _, _, _, _)) if contribution.factor > best_factor => {
+                    nearest_weight_candidate = Some((
+                        contribution.factor,
+                        source_first_weight,
+                        source_first_weight_source,
+                        source_second_weight,
+                        source_second_weight_source,
+                    ));
+                }
+                _ => {}
+            }
+        } else {
+            first_weight += source_first_weight * contribution.factor;
+            second_weight += source_second_weight * contribution.factor;
+        }
         first_weight_source = Some(match first_weight_source {
             None => source_first_weight_source,
             Some(existing) => weight_source_union(existing, source_first_weight_source),
@@ -6012,6 +7262,23 @@ fn interpolate_paired_cube_output_sample(
             None => source_second_weight_source,
             Some(existing) => weight_source_union(existing, source_second_weight_source),
         });
+    }
+
+    if nearest_weight {
+        let Some((
+            _,
+            nearest_first_weight,
+            nearest_first_source,
+            nearest_second_weight,
+            nearest_second_source,
+        )) = nearest_weight_candidate
+        else {
+            return Ok(None);
+        };
+        first_weight = nearest_first_weight;
+        second_weight = nearest_second_weight;
+        first_weight_source = Some(nearest_first_source);
+        second_weight_source = Some(nearest_second_source);
     }
 
     if !(first_visibility.re.is_finite()
@@ -6034,6 +7301,74 @@ fn interpolate_paired_cube_output_sample(
         first_weight_source: first_weight_source.unwrap_or(WeightSourceKind::Weight),
         second_weight_source: second_weight_source.unwrap_or(WeightSourceKind::Weight),
     }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_explicit_cube_density_sample(
+    batch: &mut VisibilityBatch,
+    flags: &BoolRow2d<'_>,
+    weights: &WeightRow<'_>,
+    corr_index: usize,
+    source_channel_index: usize,
+    source_frequency_hz: f64,
+    uvw_m: [f64; 3],
+    is_cross: bool,
+) -> Result<(), String> {
+    if flags.get(corr_index, source_channel_index)? {
+        return Ok(());
+    }
+    let (weight, _) = weights.get(corr_index, source_channel_index)?;
+    if !(source_frequency_hz.is_finite()
+        && source_frequency_hz > 0.0
+        && weight.is_finite()
+        && weight > 0.0)
+    {
+        return Ok(());
+    }
+    let lambda_scale = source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+    batch.u_lambda.push(uvw_m[0] * lambda_scale);
+    batch.v_lambda.push(uvw_m[1] * lambda_scale);
+    batch.w_lambda.push(uvw_m[2] * lambda_scale);
+    batch.weight.push(weight);
+    batch.sumwt_factor.push(1.0);
+    batch.gridable.push(is_cross);
+    batch.visibility.push(Complex32::new(0.0, 0.0));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_paired_cube_density_sample(
+    batch: &mut VisibilityBatch,
+    flags: &BoolRow2d<'_>,
+    weights: &WeightRow<'_>,
+    pair: (usize, usize),
+    source_channel_index: usize,
+    source_frequency_hz: f64,
+    uvw_m: [f64; 3],
+    is_cross: bool,
+) -> Result<(), String> {
+    if flags.get(pair.0, source_channel_index)? || flags.get(pair.1, source_channel_index)? {
+        return Ok(());
+    }
+    let (first_weight, _) = weights.get(pair.0, source_channel_index)?;
+    let (second_weight, _) = weights.get(pair.1, source_channel_index)?;
+    let weight = first_weight + second_weight;
+    if !(source_frequency_hz.is_finite()
+        && source_frequency_hz > 0.0
+        && weight.is_finite()
+        && weight > 0.0)
+    {
+        return Ok(());
+    }
+    let lambda_scale = source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+    batch.u_lambda.push(uvw_m[0] * lambda_scale);
+    batch.v_lambda.push(uvw_m[1] * lambda_scale);
+    batch.w_lambda.push(uvw_m[2] * lambda_scale);
+    batch.weight.push(weight);
+    batch.sumwt_factor.push(1.0);
+    batch.gridable.push(is_cross);
+    batch.visibility.push(Complex32::new(0.0, 0.0));
+    Ok(())
 }
 
 fn combine_single(
@@ -6146,11 +7481,13 @@ Options:
   --channel-start N         first selected channel
   --channel-count N         number of selected channels
   --datacolumn NAME         DATA, CORRECTED_DATA, or MODEL_DATA
+  --savemodel MODE          none or modelcolumn
   --corr XX|YY|RR|LL        explicit raw-correlation imaging
   --stokes I|Q|U|V          explicit scalar Stokes-plane imaging
   --specmode MODE           mfs, cube, or cubedata
-  --weighting MODE          natural, uniform, or briggs
+  --weighting MODE          natural, uniform, briggs, or briggsbwtaper
   --perchanweightdensity    cube uniform/briggs density per output channel
+  --usepointing             use POINTING-table directions instead of FIELD phase centers
   --uvtaper SPEC            gaussian taper: MAJOR[,MINOR[,PA]] with arcsec/deg/lambda units
   --restoringbeam MODE      common
   --deconvolver MODE        hogbom, mtmfs, clark, or multiscale
@@ -6168,6 +7505,9 @@ Options:
   --cyclefactor VALUE       cycle-threshold scale factor (default 1.0)
   --minpsffraction VALUE    lower PSF-fraction clamp (default 0.1)
   --maxpsffraction VALUE    upper PSF-fraction clamp (default 0.8)
+  --hogbom-iteration-mode MODE
+                            strict or casa; casa mirrors CASA's inclusive hclean loop
+  --casa-hogbom-iterations  alias for --hogbom-iteration-mode casa
   --mask-box X0,Y0,X1,Y1    inclusive clean mask box in pixel coordinates (repeatable)
   --mask-image PATH         CASA image mask whose non-zero pixels are cleanable
   --wterm MODE              none, direct, or wproject
@@ -6213,12 +7553,680 @@ mod tests {
     use super::*;
 
     fn diagnostic_padded_len(image_len: usize, padding_factor: f64) -> usize {
-        let padded = (image_len as f64 * padding_factor).round() as usize;
-        if padded % 2 == image_len % 2 {
-            padded
-        } else {
-            padded + 1
+        let padded = (padding_factor * image_len as f64 - 0.5).floor() as usize;
+        let padded = padded.max(image_len);
+        if padded % 2 == 0 { padded } else { padded + 1 }
+    }
+
+    #[test]
+    fn cube_spectral_coordinate_preserves_requested_rest_frequency() {
+        let coord = build_spectral_coordinate(
+            FrequencyRef::LSRK,
+            &[372_672_490_000.0, 372_671_868_449.0],
+            Some(372_672_490_000.0),
+        );
+
+        assert!((coord.rest_frequency() - 372_672_490_000.0).abs() < 1.0);
+    }
+
+    #[test]
+    #[ignore = "diagnostic for TW Hydra dirty-image Rust-vs-casacore gridder isolation"]
+    fn twhya_second_image_natural_dirty_prepared_samples_match_casacore_gridder() {
+        let ms_path = env::var_os("CASA_RS_WAVE3_118_MS")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("target/wdad-wave3-118/casa/twhya_selfcal.ms"));
+        if !ms_path.exists() {
+            return;
         }
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            ms_path.clone().into_os_string(),
+            OsString::from("--imagename"),
+            OsString::from("target/wdad-wave3-118/rust/twhya_gridder_diagnostic"),
+            OsString::from("--imsize"),
+            OsString::from("250"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("0.1"),
+            OsString::from("--weighting"),
+            OsString::from("natural"),
+            OsString::from("--niter"),
+            OsString::from("0"),
+            OsString::from("--no-preview-pngs"),
+        ])
+        .expect("parse diagnostic config");
+        let ms = MeasurementSet::open(&ms_path).expect("open TW Hydra selfcal MS");
+        let data_column =
+            resolve_data_column(&ms, config.datacolumn.as_deref()).expect("resolve data column");
+        let (prepared, prepare_trace) = prepare_plane_input_with_trace(&ms, &config, data_column)
+            .expect("prepare TW Hydra MFS samples");
+        let PreparedInput::Mfs(plane) = prepared else {
+            panic!("expected MFS prepared input");
+        };
+        for (index, sample) in prepare_trace.samples.iter().take(6).enumerate() {
+            eprintln!(
+                "TW Hydra prepared sample {index}: row={} chan={:?} freq={:.12e} uvw=({:.12e},{:.12e},{:.12e}) weight={:.12e} sumwt_factor={:.1} gridable={}",
+                sample.row_index,
+                sample
+                    .source_contributions
+                    .first()
+                    .map(|contribution| contribution.source_channel_index),
+                sample.output_frequency_hz,
+                sample.imaging_uvw_m[0],
+                sample.imaging_uvw_m[1],
+                sample.imaging_uvw_m[2],
+                sample.weight,
+                sample.sumwt_factor,
+                sample.gridable,
+            );
+        }
+        let geometry = ImageGeometry {
+            image_shape: [config.imsize, config.imsize],
+            cell_size_rad: [
+                config.cell_arcsec * arcsec_to_rad(),
+                config.cell_arcsec * arcsec_to_rad(),
+            ],
+        };
+        let batches = plane.batches.clone();
+        let prepared_weight_sum: f64 = batches
+            .iter()
+            .flat_map(|batch| {
+                batch
+                    .weight
+                    .iter()
+                    .zip(&batch.sumwt_factor)
+                    .zip(&batch.gridable)
+            })
+            .filter_map(|((&weight, &sumwt_factor), &gridable)| {
+                (gridable && weight.is_finite() && weight > 0.0).then_some((
+                    f64::from(weight),
+                    f64::from(weight) * f64::from(sumwt_factor),
+                ))
+            })
+            .map(|(_, reported)| reported)
+            .sum();
+        let prepared_weighted_vis = batches
+            .iter()
+            .flat_map(|batch| {
+                batch
+                    .visibility
+                    .iter()
+                    .zip(&batch.weight)
+                    .zip(&batch.gridable)
+            })
+            .filter_map(|((&visibility, &weight), &gridable)| {
+                (gridable && weight.is_finite() && weight > 0.0).then_some((
+                    f64::from(weight) * f64::from(visibility.re),
+                    f64::from(weight) * f64::from(visibility.im),
+                ))
+            })
+            .fold((0.0f64, 0.0f64), |acc, value| {
+                (acc.0 + value.0, acc.1 + value.1)
+            });
+        eprintln!(
+            "TW Hydra prepared aggregate: batches={} samples={} reported_sumwt={prepared_weight_sum:.9e} weighted_re={:.9e} weighted_im={:.9e}",
+            batches.len(),
+            batches.iter().map(VisibilityBatch::len).sum::<usize>(),
+            prepared_weighted_vis.0,
+            prepared_weighted_vis.1,
+        );
+        let rust = run_imaging(&ImagingRequest {
+            geometry,
+            visibility_batches: plane.batches,
+            gridder_mode: plane.gridder_mode,
+            plane_stokes: plane.plane_stokes,
+            weighting: config.weighting,
+            reffreq_hz: plane.reffreq_hz,
+            selected_frequency_range_hz: plane.selected_frequency_range_hz,
+            deconvolver: config.deconvolver,
+            multiscale_scales: config.multiscale_scales.clone(),
+            small_scale_bias: config.small_scale_bias,
+            clean: CleanConfig {
+                niter: 0,
+                gain: config.gain,
+                threshold_jy_per_beam: config.threshold_jy,
+                nsigma: config.nsigma,
+                psf_cutoff: config.psf_cutoff,
+                minor_cycle_length: config.minor_cycle_length,
+                cyclefactor: config.cyclefactor,
+                min_psf_fraction: config.min_psf_fraction,
+                max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
+            },
+            clean_mask: None,
+            w_term_mode: config.w_term_mode,
+            w_project_planes: config.w_project_planes,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .expect("run Rust natural dirty image");
+        eprintln!(
+            "TW Hydra run aggregate: result_sumwt={:.9e}",
+            rust.sumwt[(0, 0, 0, 0)]
+        );
+
+        let grid_shape = [
+            diagnostic_padded_len(config.imsize, 1.2),
+            diagnostic_padded_len(config.imsize, 1.2),
+        ];
+        let scale = [
+            grid_shape[0] as f64 * geometry.cell_size_rad[0],
+            grid_shape[1] as f64 * geometry.cell_size_rad[1],
+        ];
+        let offset = [grid_shape[0] as f64 / 2.0, grid_shape[1] as f64 / 2.0];
+        let mut u_lambda = Vec::new();
+        let mut v_lambda = Vec::new();
+        let mut visibility_re = Vec::new();
+        let mut visibility_im = Vec::new();
+        let mut weight = Vec::new();
+        let mut gridable = Vec::new();
+        for batch in &batches {
+            u_lambda.extend_from_slice(&batch.u_lambda);
+            v_lambda.extend_from_slice(&batch.v_lambda);
+            visibility_re.extend(batch.visibility.iter().map(|value| value.re));
+            visibility_im.extend(batch.visibility.iter().map(|value| value.im));
+            weight.extend_from_slice(&batch.weight);
+            gridable.extend_from_slice(&batch.gridable);
+        }
+        let cpp = match cpp_convolve_gridder_make_dirty_image_2d(
+            grid_shape,
+            geometry.image_shape,
+            scale,
+            offset,
+            &u_lambda,
+            &v_lambda,
+            &visibility_re,
+            &visibility_im,
+            &weight,
+            &gridable,
+        ) {
+            Ok(result) => result,
+            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(error) => panic!("run casacore dirty-image shim: {error}"),
+        };
+        let rust_residual = rust.residual.slice(s![.., .., 0, 0]);
+        let mut sum_sq = 0.0f64;
+        let mut max_abs = 0.0f32;
+        let mut peak_rust = 0.0f32;
+        let mut peak_cpp = 0.0f32;
+        for (&rust_value, &cpp_value) in rust_residual.iter().zip(&cpp.pixels) {
+            let delta = rust_value - cpp_value;
+            sum_sq += f64::from(delta) * f64::from(delta);
+            max_abs = max_abs.max(delta.abs());
+            peak_rust = peak_rust.max(rust_value.abs());
+            peak_cpp = peak_cpp.max(cpp_value.abs());
+        }
+        let rms = (sum_sq / cpp.pixels.len() as f64).sqrt() as f32;
+        eprintln!(
+            "TW Hydra natural dirty prepared-sample casacore-vs-rust: rms_diff={rms:.9e} max_abs_diff={max_abs:.9e} peak_rust={peak_rust:.9e} peak_cpp={peak_cpp:.9e}"
+        );
+
+        let mut casa_residual_path =
+            PathBuf::from("target/wdad-wave3-118/casa/dirty_natural_second.residual");
+        if !casa_residual_path.exists() {
+            casa_residual_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(casa_residual_path);
+        }
+        if casa_residual_path.exists() {
+            let casa_residual =
+                PagedImage::<f32>::open(&casa_residual_path).expect("open CASA natural residual");
+            let casa_pixels = casa_residual
+                .get_slice(&[0, 0, 0, 0], casa_residual.shape())
+                .expect("read CASA natural residual");
+            let mut rust_casa_sum_sq = 0.0f64;
+            let mut rust_casa_max_abs = 0.0f32;
+            let mut cpp_casa_sum_sq = 0.0f64;
+            let mut cpp_casa_max_abs = 0.0f32;
+            let mut index = 0usize;
+            for x in 0..config.imsize {
+                for y in 0..config.imsize {
+                    let casa_value = casa_pixels[IxDyn(&[x, y, 0, 0])];
+                    let rust_delta = rust_residual[(x, y)] - casa_value;
+                    let cpp_delta = cpp.pixels[index] - casa_value;
+                    rust_casa_sum_sq += f64::from(rust_delta) * f64::from(rust_delta);
+                    cpp_casa_sum_sq += f64::from(cpp_delta) * f64::from(cpp_delta);
+                    rust_casa_max_abs = rust_casa_max_abs.max(rust_delta.abs());
+                    cpp_casa_max_abs = cpp_casa_max_abs.max(cpp_delta.abs());
+                    index += 1;
+                }
+            }
+            let rust_casa_rms = (rust_casa_sum_sq / cpp.pixels.len() as f64).sqrt() as f32;
+            let cpp_casa_rms = (cpp_casa_sum_sq / cpp.pixels.len() as f64).sqrt() as f32;
+            eprintln!(
+                "TW Hydra natural dirty vs CASA: rust_rms={rust_casa_rms:.9e} rust_max_abs={rust_casa_max_abs:.9e} cpp_rms={cpp_casa_rms:.9e} cpp_max_abs={cpp_casa_max_abs:.9e}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic for TW Hydra Briggs weighting parity"]
+    fn twhya_second_image_briggs_weighting_trace() {
+        let ms_path = env::var_os("CASA_RS_WAVE3_118_MS")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("target/wdad-wave3-118/casa/twhya_selfcal.ms"));
+        if !ms_path.exists() {
+            return;
+        }
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            ms_path.clone().into_os_string(),
+            OsString::from("--imagename"),
+            OsString::from("target/wdad-wave3-118/rust/twhya_briggs_weighting_diagnostic"),
+            OsString::from("--spw"),
+            OsString::from("0"),
+            OsString::from("--imsize"),
+            OsString::from("250"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("0.1"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--robust"),
+            OsString::from("0.5"),
+            OsString::from("--niter"),
+            OsString::from("0"),
+            OsString::from("--no-preview-pngs"),
+        ])
+        .expect("parse diagnostic config");
+        let ms = MeasurementSet::open(&ms_path).expect("open TW Hydra selfcal MS");
+        let data_column =
+            resolve_data_column(&ms, config.datacolumn.as_deref()).expect("resolve data column");
+        let (prepared, prepare_trace) = prepare_plane_input_with_trace(&ms, &config, data_column)
+            .expect("prepare TW Hydra MFS samples");
+        let PreparedInput::Mfs(plane) = prepared else {
+            panic!("expected MFS prepared input");
+        };
+        for (index, sample) in prepare_trace.samples.iter().take(6).enumerate() {
+            eprintln!(
+                "TW Hydra prepared Briggs sample {index}: row={} chan={:?} freq={:.12e} raw_uvw=({:.12e},{:.12e},{:.12e}) imaging_uvw=({:.12e},{:.12e},{:.12e}) weight={:.12e} sumwt_factor={:.1} gridable={}",
+                sample.row_index,
+                sample
+                    .source_contributions
+                    .first()
+                    .map(|contribution| contribution.source_channel_index),
+                sample.output_frequency_hz,
+                sample.raw_uvw_m[0],
+                sample.raw_uvw_m[1],
+                sample.raw_uvw_m[2],
+                sample.imaging_uvw_m[0],
+                sample.imaging_uvw_m[1],
+                sample.imaging_uvw_m[2],
+                sample.weight,
+                sample.sumwt_factor,
+                sample.gridable,
+            );
+        }
+        let geometry = ImageGeometry {
+            image_shape: [config.imsize, config.imsize],
+            cell_size_rad: [
+                config.cell_arcsec * arcsec_to_rad(),
+                config.cell_arcsec * arcsec_to_rad(),
+            ],
+        };
+        let diagnostics = casa_imaging::trace_weighting(&ImagingRequest {
+            geometry,
+            visibility_batches: plane.batches,
+            gridder_mode: plane.gridder_mode,
+            plane_stokes: plane.plane_stokes,
+            weighting: config.weighting,
+            reffreq_hz: plane.reffreq_hz,
+            selected_frequency_range_hz: plane.selected_frequency_range_hz,
+            deconvolver: config.deconvolver,
+            multiscale_scales: config.multiscale_scales.clone(),
+            small_scale_bias: config.small_scale_bias,
+            clean: CleanConfig {
+                niter: 0,
+                gain: config.gain,
+                threshold_jy_per_beam: config.threshold_jy,
+                nsigma: config.nsigma,
+                psf_cutoff: config.psf_cutoff,
+                minor_cycle_length: config.minor_cycle_length,
+                cyclefactor: config.cyclefactor,
+                min_psf_fraction: config.min_psf_fraction,
+                max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
+            },
+            clean_mask: None,
+            w_term_mode: config.w_term_mode,
+            w_project_planes: config.w_project_planes,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .expect("trace Briggs weighting");
+        let input_weight_sum: f64 = diagnostics
+            .samples
+            .iter()
+            .filter(|sample| {
+                sample.gridable && sample.input_weight.is_finite() && sample.input_weight > 0.0
+            })
+            .map(|sample| f64::from(sample.input_weight) * f64::from(sample.sumwt_factor))
+            .sum();
+        let output_weight_sum: f64 = diagnostics
+            .samples
+            .iter()
+            .map(|sample| f64::from(sample.reported_contribution))
+            .sum();
+        eprintln!(
+            "TW Hydra Briggs weighting aggregate: samples={} gridded={} skipped={} input_sum={input_weight_sum:.12e} output_sum={output_weight_sum:.12e} reported_sumwt={:.12e}",
+            diagnostics.samples.len(),
+            diagnostics.gridded_samples,
+            diagnostics.skipped_samples,
+            diagnostics.reported_sumwt,
+        );
+        for (index, sample) in diagnostics
+            .samples
+            .iter()
+            .filter(|sample| sample.gridable)
+            .take(6)
+            .enumerate()
+        {
+            let implied_f2 = sample
+                .density_weight
+                .filter(|density| *density > 0.0)
+                .map(|density| (sample.input_weight / sample.output_weight - 1.0) / density);
+            eprintln!(
+                "TW Hydra Briggs weighting sample {index}: u={:.9e} v={:.9e} density={:?} input={:.12e} output={:.12e} sumwt_factor={:.1} implied_f2={:?}",
+                sample.u_lambda,
+                sample.v_lambda,
+                sample.density_weight,
+                sample.input_weight,
+                sample.output_weight,
+                sample.sumwt_factor,
+                implied_f2,
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "diagnostic for TW Hydra Briggs residual-refresh parity"]
+    fn twhya_second_image_briggs_residual_refresh_trace() {
+        let ms_path = env::var_os("CASA_RS_WAVE3_118_MS")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("target/wdad-wave3-118/casa/twhya_selfcal.ms"));
+        if !ms_path.exists() {
+            return;
+        }
+        let model_path = env::var_os("CASA_RS_WAVE3_118_MODEL")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from("target/wdad-wave3-118/casa/second_image_current_n79.model")
+            });
+        let residual_path = env::var_os("CASA_RS_WAVE3_118_RESIDUAL")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from("target/wdad-wave3-118/casa/second_image_current_n79.residual")
+            });
+        if !model_path.exists() || !residual_path.exists() {
+            return;
+        }
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            ms_path.clone().into_os_string(),
+            OsString::from("--imagename"),
+            OsString::from("target/wdad-wave3-118/rust/twhya_briggs_residual_diagnostic"),
+            OsString::from("--spw"),
+            OsString::from("0"),
+            OsString::from("--imsize"),
+            OsString::from("250"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("0.1"),
+            OsString::from("--weighting"),
+            OsString::from("briggs"),
+            OsString::from("--robust"),
+            OsString::from("0.5"),
+            OsString::from("--niter"),
+            OsString::from("79"),
+            OsString::from("--hogbom-iteration-mode"),
+            OsString::from("casa"),
+            OsString::from("--no-preview-pngs"),
+        ])
+        .expect("parse diagnostic config");
+        let ms = MeasurementSet::open(&ms_path).expect("open TW Hydra selfcal MS");
+        let data_column =
+            resolve_data_column(&ms, config.datacolumn.as_deref()).expect("resolve data column");
+        let prepared =
+            prepare_plane_input(&ms, &config, data_column).expect("prepare TW Hydra MFS samples");
+        let PreparedInput::Mfs(plane) = prepared else {
+            panic!("expected MFS prepared input");
+        };
+        let model_image = PagedImage::<f32>::open(&model_path).expect("open CASA model");
+        let model_pixels = model_image
+            .get_slice(&[0, 0, 0, 0], model_image.shape())
+            .expect("read CASA model");
+        let mut model = Array2::<f32>::zeros((config.imsize, config.imsize));
+        for x in 0..config.imsize {
+            for y in 0..config.imsize {
+                model[(x, y)] = model_pixels[IxDyn(&[x, y, 0, 0])];
+            }
+        }
+        let geometry = ImageGeometry {
+            image_shape: [config.imsize, config.imsize],
+            cell_size_rad: [
+                config.cell_arcsec * arcsec_to_rad(),
+                config.cell_arcsec * arcsec_to_rad(),
+            ],
+        };
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: plane.batches,
+            gridder_mode: plane.gridder_mode,
+            plane_stokes: plane.plane_stokes,
+            weighting: config.weighting,
+            reffreq_hz: plane.reffreq_hz,
+            selected_frequency_range_hz: plane.selected_frequency_range_hz,
+            deconvolver: config.deconvolver,
+            multiscale_scales: config.multiscale_scales.clone(),
+            small_scale_bias: config.small_scale_bias,
+            clean: CleanConfig {
+                niter: config.niter,
+                gain: config.gain,
+                threshold_jy_per_beam: config.threshold_jy,
+                nsigma: config.nsigma,
+                psf_cutoff: config.psf_cutoff,
+                minor_cycle_length: config.minor_cycle_length,
+                cyclefactor: config.cyclefactor,
+                min_psf_fraction: config.min_psf_fraction,
+                max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
+            },
+            clean_mask: None,
+            w_term_mode: config.w_term_mode,
+            w_project_planes: config.w_project_planes,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let trace = casa_imaging::trace_residual_refresh(&request, &model)
+            .expect("trace TW Hydra residual refresh");
+        let casa_residual =
+            PagedImage::<f32>::open(&residual_path).expect("open CASA residual image");
+        let casa_pixels = casa_residual
+            .get_slice(&[0, 0, 0, 0], casa_residual.shape())
+            .expect("read CASA residual image");
+        let mut rust_casa_sum_sq = 0.0f64;
+        let mut rust_casa_max_abs = 0.0f32;
+        let mut peak_rust = 0.0f32;
+        let mut peak_casa = 0.0f32;
+        for x in 0..config.imsize {
+            for y in 0..config.imsize {
+                let rust_value = trace.residual_image[(x, y)];
+                let casa_value = casa_pixels[IxDyn(&[x, y, 0, 0])];
+                let delta = rust_value - casa_value;
+                rust_casa_sum_sq += f64::from(delta) * f64::from(delta);
+                rust_casa_max_abs = rust_casa_max_abs.max(delta.abs());
+                peak_rust = peak_rust.max(rust_value.abs());
+                peak_casa = peak_casa.max(casa_value.abs());
+            }
+        }
+        let rust_casa_rms =
+            (rust_casa_sum_sq / (config.imsize * config.imsize) as f64).sqrt() as f32;
+        eprintln!(
+            "TW Hydra Briggs residual refresh vs CASA n79: rms_diff={rust_casa_rms:.9e} max_abs_diff={rust_casa_max_abs:.9e} peak_rust={peak_rust:.9e} peak_casa={peak_casa:.9e} norm_sumwt={:.9e} reported_sumwt={:.9e} psf_peak={:.9e} samples={} gridded={} skipped={}",
+            trace.normalization_sumwt,
+            trace.reported_sumwt,
+            trace.psf_peak,
+            trace.samples.len(),
+            trace.gridded_samples,
+            trace.skipped_samples,
+        );
+        for batch_index in 0..2 {
+            let Some(batch) = request.visibility_batches.get(batch_index) else {
+                continue;
+            };
+            let mut weighted_re_sum = 0.0f64;
+            let mut weighted_im_sum = 0.0f64;
+            let mut used_weight_sum = 0.0f64;
+            let mut used_samples = 0usize;
+            for sample in trace
+                .samples
+                .iter()
+                .filter(|sample| sample.batch_index == batch_index)
+            {
+                let sumwt_factor = batch.sumwt_factor[sample.sample_index];
+                let usable = sample.gridable
+                    && sample.weight.is_finite()
+                    && sample.weight > 0.0
+                    && sumwt_factor.is_finite()
+                    && sumwt_factor > 0.0
+                    && sample.residual_visibility.re.is_finite()
+                    && sample.residual_visibility.im.is_finite();
+                if !usable {
+                    continue;
+                }
+                let residual_weight = f64::from(sample.weight) * f64::from(sumwt_factor);
+                used_weight_sum += residual_weight;
+                weighted_re_sum += f64::from(sample.residual_visibility.re) * residual_weight;
+                weighted_im_sum += f64::from(sample.residual_visibility.im) * residual_weight;
+                used_samples += 1;
+            }
+            eprintln!(
+                "TW Hydra Briggs residual refresh batch {batch_index}: used_samples={used_samples} used_weight_sum={used_weight_sum:.12e} weighted_re_sum={weighted_re_sum:.12e} weighted_im_sum={weighted_im_sum:.12e}"
+            );
+        }
+        for prefix_len in [58_752usize, 117_504usize] {
+            let mut weighted_re_sum = 0.0f64;
+            let mut weighted_im_sum = 0.0f64;
+            let mut used_weight_sum = 0.0f64;
+            let mut used_samples = 0usize;
+            for sample in trace.samples.iter().take(prefix_len) {
+                let batch = &request.visibility_batches[sample.batch_index];
+                let sumwt_factor = batch.sumwt_factor[sample.sample_index];
+                let usable = sample.gridable
+                    && sample.weight.is_finite()
+                    && sample.weight > 0.0
+                    && sumwt_factor.is_finite()
+                    && sumwt_factor > 0.0
+                    && sample.residual_visibility.re.is_finite()
+                    && sample.residual_visibility.im.is_finite();
+                if !usable {
+                    continue;
+                }
+                let residual_weight = f64::from(sample.weight) * f64::from(sumwt_factor);
+                used_weight_sum += residual_weight;
+                weighted_re_sum += f64::from(sample.residual_visibility.re) * residual_weight;
+                weighted_im_sum += f64::from(sample.residual_visibility.im) * residual_weight;
+                used_samples += 1;
+            }
+            eprintln!(
+                "TW Hydra Briggs residual refresh prefix {prefix_len}: used_samples={used_samples} used_weight_sum={used_weight_sum:.12e} weighted_re_sum={weighted_re_sum:.12e} weighted_im_sum={weighted_im_sum:.12e}"
+            );
+        }
+        for sample in trace.samples.iter().take(6) {
+            let batch = &request.visibility_batches[sample.batch_index];
+            eprintln!(
+                "TW Hydra Briggs residual refresh sample batch={} sample={} u={:.12e} v={:.12e} weight={:.12e} sumwt_factor={:.1} observed=({:.12e},{:.12e}) predicted=({:.12e},{:.12e}) residual=({:.12e},{:.12e}) gridable={}",
+                sample.batch_index,
+                sample.sample_index,
+                sample.u_lambda,
+                sample.v_lambda,
+                sample.weight,
+                batch.sumwt_factor[sample.sample_index],
+                sample.observed_visibility.re,
+                sample.observed_visibility.im,
+                sample.predicted_visibility.re,
+                sample.predicted_visibility.im,
+                sample.residual_visibility.re,
+                sample.residual_visibility.im,
+                sample.gridable,
+            );
+        }
+
+        let grid_shape = [
+            diagnostic_padded_len(config.imsize, 1.2),
+            diagnostic_padded_len(config.imsize, 1.2),
+        ];
+        let scale = [
+            grid_shape[0] as f64 * geometry.cell_size_rad[0],
+            grid_shape[1] as f64 * geometry.cell_size_rad[1],
+        ];
+        let offset = [grid_shape[0] as f64 / 2.0, grid_shape[1] as f64 / 2.0];
+        let u_lambda = trace
+            .samples
+            .iter()
+            .map(|sample| sample.u_lambda)
+            .collect::<Vec<_>>();
+        let v_lambda = trace
+            .samples
+            .iter()
+            .map(|sample| sample.v_lambda)
+            .collect::<Vec<_>>();
+        let visibility_re = trace
+            .samples
+            .iter()
+            .map(|sample| sample.observed_visibility.re)
+            .collect::<Vec<_>>();
+        let visibility_im = trace
+            .samples
+            .iter()
+            .map(|sample| sample.observed_visibility.im)
+            .collect::<Vec<_>>();
+        let weight = trace
+            .samples
+            .iter()
+            .map(|sample| sample.weight)
+            .collect::<Vec<_>>();
+        let gridable = trace
+            .samples
+            .iter()
+            .map(|sample| sample.gridable)
+            .collect::<Vec<_>>();
+        let cpp = match cpp_convolve_gridder_make_model_residual_image_2d(
+            grid_shape,
+            geometry.image_shape,
+            scale,
+            offset,
+            &u_lambda,
+            &v_lambda,
+            &visibility_re,
+            &visibility_im,
+            &weight,
+            &gridable,
+            model.as_slice().unwrap(),
+        ) {
+            Ok(result) => result,
+            Err(error) if error == "casacore C++ backend unavailable" => return,
+            Err(error) => panic!("run casacore model-residual shim: {error}"),
+        };
+        let mut rust_cpp_sum_sq = 0.0f64;
+        let mut rust_cpp_max_abs = 0.0f32;
+        let mut cpp_casa_sum_sq = 0.0f64;
+        let mut cpp_casa_max_abs = 0.0f32;
+        let mut cpp_index = 0usize;
+        for x in 0..config.imsize {
+            for y in 0..config.imsize {
+                let rust_value = trace.residual_image[(x, y)];
+                let cpp_value = cpp.pixels[cpp_index];
+                let casa_value = casa_pixels[IxDyn(&[x, y, 0, 0])];
+                let rust_cpp_delta = rust_value - cpp_value;
+                let cpp_casa_delta = cpp_value - casa_value;
+                rust_cpp_sum_sq += f64::from(rust_cpp_delta) * f64::from(rust_cpp_delta);
+                cpp_casa_sum_sq += f64::from(cpp_casa_delta) * f64::from(cpp_casa_delta);
+                rust_cpp_max_abs = rust_cpp_max_abs.max(rust_cpp_delta.abs());
+                cpp_casa_max_abs = cpp_casa_max_abs.max(cpp_casa_delta.abs());
+                cpp_index += 1;
+            }
+        }
+        let pixels = (config.imsize * config.imsize) as f64;
+        eprintln!(
+            "TW Hydra Briggs residual refresh C++ shim: rust_cpp_rms={:.9e} rust_cpp_max_abs={rust_cpp_max_abs:.9e} cpp_casa_rms={:.9e} cpp_casa_max_abs={cpp_casa_max_abs:.9e}",
+            (rust_cpp_sum_sq / pixels).sqrt(),
+            (cpp_casa_sum_sq / pixels).sqrt(),
+        );
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -6382,6 +8390,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -6397,6 +8406,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6412,6 +8422,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -6436,11 +8447,13 @@ mod tests {
             channel_start: None,
             channel_count: Some(20),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6456,6 +8469,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -6488,6 +8502,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -6501,6 +8516,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6516,6 +8532,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -6540,6 +8557,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -6553,6 +8571,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6568,6 +8587,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -6592,6 +8612,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -6608,6 +8629,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6623,6 +8645,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -6647,6 +8670,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(8),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -6660,6 +8684,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6675,6 +8700,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -6699,11 +8725,13 @@ mod tests {
             channel_start: Some(0),
             channel_count: Some(20),
             datacolumn: Some("DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -6719,6 +8747,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -6746,6 +8775,7 @@ mod tests {
         assert_eq!(config.weighting, WeightingMode::Natural);
         assert_eq!(config.deconvolver, Deconvolver::Hogbom);
         assert!(config.multiscale_scales.is_empty());
+        assert!(!config.use_pointing);
         assert_eq!(config.w_term_mode, WTermMode::None);
         assert!(config.write_preview_pngs);
     }
@@ -6780,6 +8810,7 @@ mod tests {
             OsString::from("4,5,6,7"),
             OsString::from("--mask-image"),
             OsString::from("demo.mask"),
+            OsString::from("--usepointing"),
             OsString::from("--wterm"),
             OsString::from("direct"),
         ])
@@ -6787,6 +8818,7 @@ mod tests {
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: -1.0 });
         assert_eq!(config.mask_boxes, vec![[1, 2, 10, 20], [4, 5, 6, 7]]);
         assert_eq!(config.mask_image, Some(PathBuf::from("demo.mask")));
+        assert!(config.use_pointing);
         assert_eq!(config.w_term_mode, WTermMode::Direct);
     }
 
@@ -7028,6 +9060,10 @@ mod tests {
             parse_weighting_mode("briggs", 0.5).unwrap(),
             WeightingMode::Briggs { robust: 0.5 }
         );
+        assert_eq!(
+            parse_weighting_mode("briggsbwtaper", 0.5).unwrap(),
+            WeightingMode::BriggsBwTaper { robust: 0.5 }
+        );
         assert!(parse_weighting_mode("invalid", 0.0).is_err());
 
         assert_eq!(parse_deconvolver("hogbom").unwrap(), Deconvolver::Hogbom);
@@ -7037,6 +9073,15 @@ mod tests {
             Deconvolver::Multiscale
         );
         assert!(parse_deconvolver("other").is_err());
+        assert_eq!(
+            parse_hogbom_iteration_mode("strict").unwrap(),
+            HogbomIterationMode::Strict
+        );
+        assert_eq!(
+            parse_hogbom_iteration_mode("casa").unwrap(),
+            HogbomIterationMode::CasaInclusive
+        );
+        assert!(parse_hogbom_iteration_mode("other").is_err());
 
         assert_eq!(parse_multiscale_scales("").unwrap(), Vec::<f32>::new());
         assert_eq!(
@@ -7102,6 +9147,10 @@ mod tests {
         assert_eq!(
             canonical_weighting_name(WeightingMode::Briggs { robust: -0.5 }),
             "briggs:-0.5"
+        );
+        assert_eq!(
+            canonical_weighting_name(WeightingMode::BriggsBwTaper { robust: -0.5 }),
+            "briggsbwtaper:-0.5"
         );
         assert_eq!(
             canonical_restoring_beam_mode_name(RestoringBeamMode::Common),
@@ -7589,6 +9638,7 @@ mod tests {
             &[1.0, 2.0],
             0.0,
             &contributions,
+            false,
         )
         .unwrap();
         assert!(
@@ -7634,6 +9684,7 @@ mod tests {
             &[1.0, 2.0],
             0.0,
             &contributions,
+            false,
         )
         .unwrap()
         .expect("expected interpolated sample");
@@ -7685,6 +9736,7 @@ mod tests {
             &[1.0, 2.0],
             0.0,
             &contributions,
+            false,
         )
         .unwrap();
         assert!(
@@ -7766,11 +9818,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -7786,6 +9840,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -7855,11 +9910,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -7875,6 +9932,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -7940,11 +9998,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -7960,6 +10020,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -7989,21 +10050,43 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(samples.len(), 2);
 
-        let lambda_scale = 1.4e9 / SPEED_OF_LIGHT_M_PER_S;
+        let engine = MsCalEngine::new(&ms).unwrap();
+        let frequency_hz = convert_frequency_to_frame(
+            FrequencyRef::TOPO,
+            FrequencyRef::LSRK,
+            1.4e9,
+            TEST_TIME_MJD_SEC,
+            0,
+            &engine,
+        )
+        .unwrap();
+        let lambda_scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
         assert!((samples[0].0 - 30.0 * lambda_scale).abs() < 1.0e-9);
         assert!((samples[0].1 - -15.0 * lambda_scale).abs() < 1.0e-9);
         assert!((samples[0].2 - 5.0 * lambda_scale).abs() < 1.0e-9);
         assert!((samples[0].3 - Complex32::new(1.0, 0.5)).norm() < 1.0e-6);
 
-        let engine = MsCalEngine::new(&ms).unwrap();
         let (target_uvw_m, phase_shift_m) = engine
             .reproject_raw_uvw_between_fields([-25.0, 20.0, -7.5], 1, 0)
             .unwrap();
-        let expected_visibility =
-            phase_rotate_visibility(Complex32::new(0.25, 1.25), phase_shift_m, 1.4e9);
-        assert!((samples[1].0 - target_uvw_m[0] * lambda_scale).abs() < 1.0e-9);
-        assert!((samples[1].1 - target_uvw_m[1] * lambda_scale).abs() < 1.0e-9);
-        assert!((samples[1].2 - target_uvw_m[2] * lambda_scale).abs() < 1.0e-9);
+        let second_frequency_hz = convert_frequency_to_frame(
+            FrequencyRef::TOPO,
+            FrequencyRef::LSRK,
+            1.4e9,
+            TEST_TIME_MJD_SEC,
+            1,
+            &engine,
+        )
+        .unwrap();
+        let second_lambda_scale = second_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+        let expected_visibility = phase_rotate_visibility(
+            Complex32::new(0.25, 1.25),
+            phase_shift_m,
+            second_frequency_hz,
+        );
+        assert!((samples[1].0 - target_uvw_m[0] * second_lambda_scale).abs() < 1.0e-9);
+        assert!((samples[1].1 - target_uvw_m[1] * second_lambda_scale).abs() < 1.0e-9);
+        assert!((samples[1].2 - target_uvw_m[2] * second_lambda_scale).abs() < 1.0e-9);
         assert!((samples[1].3 - expected_visibility).norm() < 1.0e-5);
     }
 
@@ -8055,11 +10138,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8075,6 +10160,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -8111,8 +10197,17 @@ mod tests {
         let (target_uvw_m, phase_shift_m) = engine
             .reproject_raw_uvw_between_fields([-25.0, 20.0, -7.5], 1, 0)
             .unwrap();
+        let frequency_hz = convert_frequency_to_frame(
+            FrequencyRef::TOPO,
+            FrequencyRef::LSRK,
+            1.4e9,
+            TEST_TIME_MJD_SEC,
+            1,
+            &engine,
+        )
+        .unwrap();
         let expected_visibility =
-            phase_rotate_visibility(Complex32::new(0.25, 1.25), phase_shift_m, 1.4e9);
+            phase_rotate_visibility(Complex32::new(0.25, 1.25), phase_shift_m, frequency_hz);
         assert_eq!(second.row_index, 1);
         assert_eq!(second.input_field_id, 1);
         assert_eq!(second.phase_center_field_id, Some(0));
@@ -8163,11 +10258,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8183,6 +10280,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::WProject,
@@ -8233,11 +10331,13 @@ mod tests {
             channel_start: Some(0),
             channel_count: Some(1),
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Uniform,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8253,6 +10353,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::WProject,
@@ -8335,11 +10436,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8355,6 +10458,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -8432,11 +10536,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: true,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8452,6 +10558,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -8469,6 +10576,90 @@ mod tests {
         assert!(!trace.rows[0].antenna2_pointing_used_fallback);
         assert_eq!(trace.rows[0].antenna1_pointing_direction_rad, [1.2, 0.4]);
         assert_eq!(trace.rows[0].antenna2_pointing_direction_rad, [1.3, 0.45]);
+    }
+
+    #[test]
+    fn prepare_geometry_trace_ignores_pointing_rows_by_default() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("geometry_pointing_default.ms");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_vla_antenna_pair(&mut ms);
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_field_and_antennas_channels(
+            &mut ms,
+            0,
+            0,
+            1,
+            [30.0, -15.0, 5.0],
+            &[Complex32::new(1.0, 0.5), Complex32::new(0.0, 0.0)],
+        );
+        add_pointing_row(&mut ms, 0, [1.2, 0.4], TEST_TIME_MJD_SEC, 5.0);
+        add_pointing_row(&mut ms, 1, [1.3, 0.45], TEST_TIME_MJD_SEC, 5.0);
+        ms.save().unwrap();
+
+        let config = CliConfig {
+            ms: ms_path,
+            imagename: PathBuf::from("unused"),
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: Some(vec![0]),
+            phasecenter_field: Some(0),
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            save_model: SaveModelMode::None,
+            correlation: Some("XX".to_string()),
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            use_pointing: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: true,
+            write_preview_pngs: false,
+        };
+
+        let trace = build_prepare_geometry_trace_from_config(&config).unwrap();
+
+        assert_eq!(trace.rows.len(), 1);
+        assert_eq!(trace.rows[0].pointing_id, None);
+        assert_eq!(trace.rows[0].antenna1_pointing_row, None);
+        assert_eq!(trace.rows[0].antenna2_pointing_row, None);
+        assert!(trace.rows[0].antenna1_pointing_used_fallback);
+        assert!(trace.rows[0].antenna2_pointing_used_fallback);
+        assert_eq!(trace.rows[0].field_phase_center_direction_rad, [1.0, 0.5]);
+        assert_eq!(trace.rows[0].antenna1_pointing_direction_rad, [1.0, 0.5]);
+        assert_eq!(trace.rows[0].antenna2_pointing_direction_rad, [1.0, 0.5]);
     }
 
     #[test]
@@ -8563,11 +10754,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8583,6 +10776,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -8648,11 +10842,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8668,6 +10864,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -8734,11 +10931,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("Q".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8754,6 +10953,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -8815,11 +11015,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("U".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8835,6 +11037,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -8898,6 +11101,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(1),
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -8917,6 +11121,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -8932,6 +11137,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -9009,6 +11215,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(2),
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cubedata,
             cube_axis: CubeAxisConfig {
@@ -9022,6 +11229,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9037,6 +11245,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -9085,6 +11294,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(1),
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -9104,6 +11314,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9119,6 +11330,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -9324,11 +11536,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9344,6 +11558,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -9419,11 +11634,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9439,6 +11656,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -9531,11 +11749,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::ModelColumn,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9551,6 +11771,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -9574,6 +11795,25 @@ mod tests {
         assert_eq!(residual.units(), "Jy/beam");
         let sumwt = PagedImage::<f32>::open(format!("{}.sumwt", image_prefix.display())).unwrap();
         assert_eq!(sumwt.shape(), &[1, 1, 1, 1]);
+        let reopened = MeasurementSet::open(&ms_path).unwrap();
+        assert!(
+            reopened
+                .main_table()
+                .schema()
+                .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
+        );
+        let model_data = reopened
+            .main_table()
+            .cell_accessor(0, "MODEL_DATA")
+            .and_then(|cell| cell.array())
+            .unwrap();
+        let ArrayValue::Complex32(model_data) = model_data else {
+            panic!("MODEL_DATA should be complex");
+        };
+        assert!(
+            model_data.iter().any(|value| value.norm() > 0.0),
+            "savemodel=modelcolumn should write non-zero predicted visibilities"
+        );
     }
 
     #[test]
@@ -9641,11 +11881,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9661,6 +11903,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -9737,11 +11980,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -9757,6 +12002,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -9833,11 +12079,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Mtmfs,
@@ -9853,6 +12101,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -9963,11 +12212,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Clark,
@@ -9983,6 +12234,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -10071,11 +12323,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Multiscale,
@@ -10091,6 +12345,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -10164,6 +12419,7 @@ mod tests {
             channel_start: None,
             channel_count: Some(1),
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -10183,6 +12439,7 @@ mod tests {
             },
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -10198,6 +12455,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -10263,11 +12521,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -10283,6 +12543,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -10342,11 +12603,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: Some("Q".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -10362,6 +12625,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -10422,11 +12686,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: None,
+            save_model: SaveModelMode::None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::PerPlane,
             deconvolver: Deconvolver::Hogbom,
@@ -10442,6 +12708,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -10530,6 +12797,7 @@ mod tests {
                 time_bounds_mjd_sec: bounds.unwrap(),
                 derived_engine: &engine,
             }),
+            true,
         );
         assert!(
             prepared.initialization_error.is_none(),
@@ -10642,6 +12910,7 @@ mod tests {
                 cyclefactor: config.cyclefactor,
                 min_psf_fraction: config.min_psf_fraction,
                 max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
             psf_cutoff: config.psf_cutoff,
@@ -11076,6 +13345,7 @@ mod tests {
                 cyclefactor: config.cyclefactor,
                 min_psf_fraction: config.min_psf_fraction,
                 max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
             psf_cutoff: config.psf_cutoff,
@@ -11192,6 +13462,7 @@ mod tests {
                 cyclefactor: config.cyclefactor,
                 min_psf_fraction: config.min_psf_fraction,
                 max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
             psf_cutoff: config.psf_cutoff,
@@ -11279,6 +13550,7 @@ mod tests {
                 cyclefactor: config.cyclefactor,
                 min_psf_fraction: config.min_psf_fraction,
                 max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
             psf_cutoff: config.psf_cutoff,
@@ -11418,6 +13690,7 @@ mod tests {
                 cyclefactor: config.cyclefactor,
                 min_psf_fraction: config.min_psf_fraction,
                 max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
             psf_cutoff: config.psf_cutoff,
@@ -11628,6 +13901,7 @@ mod tests {
                 cyclefactor: config.cyclefactor,
                 min_psf_fraction: config.min_psf_fraction,
                 max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
             psf_cutoff: config.psf_cutoff,
@@ -11778,6 +14052,7 @@ mod tests {
                 cyclefactor: config.cyclefactor,
                 min_psf_fraction: config.min_psf_fraction,
                 max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
             psf_cutoff: config.psf_cutoff,
@@ -12030,6 +14305,7 @@ mod tests {
                 time_bounds_mjd_sec: bounds.unwrap(),
                 derived_engine: &engine,
             }),
+            true,
         );
         assert!(
             prepared.initialization_error.is_none(),
@@ -12212,6 +14488,7 @@ mod tests {
                 time_bounds_mjd_sec: bounds.unwrap(),
                 derived_engine: &engine,
             }),
+            true,
         );
         assert!(
             prepared.initialization_error.is_none(),

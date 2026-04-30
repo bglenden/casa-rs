@@ -13,7 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use casa_imaging::{Deconvolver, RestoringBeamMode, WTermMode, WeightingMode};
+use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode};
 use casa_ms::{CubeAxisConfig, CubeInterpolation};
 use casars_imager::{CliConfig, RunSummary, SpectralMode, run_from_config};
 
@@ -31,6 +31,7 @@ struct Options {
     spectral_mode: SpectralMode,
     interpolation: CubeInterpolation,
     weighting: WeightingMode,
+    use_pointing: bool,
     deconvolver: Deconvolver,
     nterms: usize,
     multiscale_scales: Vec<f32>,
@@ -46,6 +47,7 @@ struct Options {
     cyclefactor: f32,
     min_psf_fraction: f32,
     max_psf_fraction: f32,
+    hogbom_iteration_mode: HogbomIterationMode,
     mask_boxes: Vec<[usize; 4]>,
     mask_image: Option<PathBuf>,
     w_term_mode: WTermMode,
@@ -103,7 +105,7 @@ fn run() -> Result<(), String> {
     }
 
     println!(
-        "ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} corr={:?} interpolation={:?} weighting={:?} deconvolver={:?} nterms={} scales={:?} wterm={:?} wprojplanes={:?} imsize={} cell_arcsec={} dirty_only={} niter={} repeats={} warmups={}",
+        "ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} corr={:?} interpolation={:?} weighting={:?} use_pointing={} deconvolver={:?} nterms={} scales={:?} wterm={:?} wprojplanes={:?} imsize={} cell_arcsec={} dirty_only={} niter={} repeats={} warmups={}",
         options.ms.display(),
         options.field_ids,
         options.phasecenter_field,
@@ -114,6 +116,7 @@ fn run() -> Result<(), String> {
         options.correlation,
         options.interpolation,
         options.weighting,
+        options.use_pointing,
         options.deconvolver,
         options.nterms,
         options.multiscale_scales,
@@ -288,6 +291,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         channel_start: options.channel_start,
         channel_count: options.channel_count,
         datacolumn: options.datacolumn.clone(),
+        save_model: casars_imager::SaveModelMode::None,
         correlation: options.correlation.clone(),
         spectral_mode: options.spectral_mode,
         cube_axis: CubeAxisConfig {
@@ -296,6 +300,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         },
         weighting: options.weighting,
         per_channel_weight_density: false,
+        use_pointing: options.use_pointing,
         uv_taper: None,
         restoring_beam_mode: RestoringBeamMode::PerPlane,
         deconvolver: options.deconvolver,
@@ -311,6 +316,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         cyclefactor: options.cyclefactor,
         min_psf_fraction: options.min_psf_fraction,
         max_psf_fraction: options.max_psf_fraction,
+        hogbom_iteration_mode: options.hogbom_iteration_mode,
         mask_boxes: options.mask_boxes.clone(),
         mask_image: options.mask_image.clone(),
         w_term_mode: options.w_term_mode,
@@ -354,6 +360,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut interpolation = CubeInterpolation::Linear;
     let mut weighting_name = String::from("natural");
     let mut robust = 0.5f32;
+    let mut use_pointing = false;
     let mut deconvolver = Deconvolver::Hogbom;
     let mut nterms = 1usize;
     let mut multiscale_scales = Vec::<f32>::new();
@@ -369,6 +376,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut cyclefactor = 1.0f32;
     let mut min_psf_fraction = 0.1f32;
     let mut max_psf_fraction = 0.8f32;
+    let mut hogbom_iteration_mode = HogbomIterationMode::Strict;
     let mut mask_boxes = Vec::<[usize; 4]>::new();
     let mut mask_image = None::<PathBuf>;
     let mut w_term_mode = WTermMode::None;
@@ -405,6 +413,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             }
             "--weighting" => weighting_name = next_value(&mut args, "--weighting")?,
             "--robust" => robust = parse_next(&mut args, "--robust")?,
+            "--usepointing" | "--use-pointing" => use_pointing = true,
             "--deconvolver" => {
                 deconvolver = parse_deconvolver(&next_value(&mut args, "--deconvolver")?)?
             }
@@ -427,6 +436,13 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--cyclefactor" => cyclefactor = parse_next(&mut args, "--cyclefactor")?,
             "--minpsffraction" => min_psf_fraction = parse_next(&mut args, "--minpsffraction")?,
             "--maxpsffraction" => max_psf_fraction = parse_next(&mut args, "--maxpsffraction")?,
+            "--hogbom-iteration-mode" => {
+                hogbom_iteration_mode =
+                    parse_hogbom_iteration_mode(&next_value(&mut args, "--hogbom-iteration-mode")?)?
+            }
+            "--casa-hogbom-iterations" => {
+                hogbom_iteration_mode = HogbomIterationMode::CasaInclusive
+            }
             "--mask-box" => mask_boxes.push(parse_mask_box(&next_value(&mut args, "--mask-box")?)?),
             "--mask-image" => {
                 mask_image = Some(PathBuf::from(next_value(&mut args, "--mask-image")?))
@@ -466,6 +482,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         spectral_mode,
         interpolation,
         weighting,
+        use_pointing,
         deconvolver,
         nterms,
         multiscale_scales,
@@ -481,6 +498,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         cyclefactor,
         min_psf_fraction,
         max_psf_fraction,
+        hogbom_iteration_mode,
         mask_boxes,
         mask_image,
         w_term_mode,
@@ -513,6 +531,7 @@ fn parse_weighting_mode(text: &str, robust: f32) -> Result<WeightingMode, String
         "natural" => Ok(WeightingMode::Natural),
         "uniform" => Ok(WeightingMode::Uniform),
         "briggs" | "robust" => Ok(WeightingMode::Briggs { robust }),
+        "briggsbwtaper" => Ok(WeightingMode::BriggsBwTaper { robust }),
         _ => Err(format!("unsupported --weighting value {text:?}")),
     }
 }
@@ -554,6 +573,16 @@ fn parse_deconvolver(text: &str) -> Result<Deconvolver, String> {
         "multiscale" => Ok(Deconvolver::Multiscale),
         _ => Err(format!(
             "unsupported --deconvolver value {text:?}; expected hogbom, clark, or multiscale"
+        )),
+    }
+}
+
+fn parse_hogbom_iteration_mode(text: &str) -> Result<HogbomIterationMode, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "strict" => Ok(HogbomIterationMode::Strict),
+        "casa" | "casa-inclusive" | "inclusive" => Ok(HogbomIterationMode::CasaInclusive),
+        _ => Err(format!(
+            "unsupported --hogbom-iteration-mode value {text:?}; expected strict or casa"
         )),
     }
 }
@@ -608,8 +637,9 @@ Options:
   --corr XX|YY|RR|LL
   --specmode mfs|cube
   --interpolation nearest|linear
-  --weighting natural|uniform|briggs
+  --weighting natural|uniform|briggs|briggsbwtaper
   --robust VALUE
+  --usepointing
   --deconvolver hogbom|clark|multiscale|mtmfs
   --nterms N
   --scales PIXELS
@@ -626,6 +656,8 @@ Options:
   --cyclefactor VALUE
   --minpsffraction VALUE
   --maxpsffraction VALUE
+  --hogbom-iteration-mode strict|casa
+  --casa-hogbom-iterations
   --mask-box X0,Y0,X1,Y1
   --mask-image PATH
   --wterm none|direct|wproject

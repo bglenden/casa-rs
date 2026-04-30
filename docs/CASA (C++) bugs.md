@@ -71,8 +71,7 @@ parity work that surfaced this CASA-side issue.
 ## Hogbom `niter` off-by-one bug
 
 - Date noted: 2026-04-05
-- Status: known CASA bug / legacy interface mismatch; documented Rust
-  divergence
+- Status: likely CASA bug / legacy interface mismatch
 - Affected code:
   - `casatools/src/code/synthesis/ImagerObjects/SynthesisDeconvolver.cc`
   - `casatools/src/code/synthesis/ImagerObjects/SDAlgorithmHogbomClean.cc`
@@ -84,13 +83,11 @@ parity work that surfaced this CASA-side issue.
 In the current CASA `tclean(..., deconvolver='hogbom')` path, `niter=1` appears able to commit
 two clean components inside a single minor cycle while still reporting `iterdone = 1`.
 
-### casa-rs policy
-
-casa-rs does **not** reproduce this behavior. In Rust imaging code, `niter`
-is treated as a real cap on committed Hogbom component updates. Any remaining
-CASA mismatch that depends on the extra component should be documented as an
-intentional divergence against this upstream bug, not as a parity failure to
-"fix" by reintroducing the bug.
+The effect is not limited to the top-level `niter=1` case. Any CASA Hogbom
+minor-cycle call that enters `hclean` with a positive `cycleNiter` may commit
+one more component than the reported minor-cycle count. In a Cotton-Schwab run,
+that means the model, residual, restored image, and controller stop/refresh
+decisions can shift by up to one extra component per Hogbom minor-cycle block.
 
 The concrete repro described in the attached note used:
 
@@ -120,3 +117,10 @@ The output `.model` image contained two nonzero pixels:
 
 Their sum matched the reported `modelFlux`, which makes this look like an actual extra component
 update rather than a display or reporting artifact.
+
+A second trace on the ALMA TW Hydra tutorial data used `tclean(..., deconvolver='hogbom',
+niter=1, cycleniter=1, weighting='briggs', robust=0.5, imsize=250, cell='0.1arcsec')`.
+CASA reported one minor iteration, but the model flux was `0.0569704 Jy`; the dirty-image
+peak was `0.299844 Jy/beam`, so one strict-gain component at `gain=0.1` would account for
+only about `0.0299844 Jy`. The reported model flux is therefore consistent with two committed
+Hogbom components in that minor-cycle call.

@@ -379,6 +379,7 @@ fn build_calibration_table_plot(
         legend_position: MsLegendPosition::ExteriorRight,
         showmajorgrid: true,
         showminorgrid: false,
+        symbol_size_px: None,
         series,
         header_lines: vec![
             format!("Table: {}", path.display()),

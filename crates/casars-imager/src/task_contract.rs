@@ -6,8 +6,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use casa_imaging::{
-    CleanStopReason, Deconvolver, GaussianUvTaper, RestoringBeamMode, UvTaperSize, WTermMode,
-    WeightingMode,
+    CleanStopReason, Deconvolver, GaussianUvTaper, HogbomIterationMode, RestoringBeamMode,
+    UvTaperSize, WTermMode, WeightingMode,
 };
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation,
@@ -25,8 +25,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::{
-    ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SpectralMode, command_schema,
-    run_from_config,
+    ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SaveModelMode, SpectralMode,
+    command_schema, run_from_config,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
@@ -219,6 +219,35 @@ impl From<ImagerSpectralMode> for SpectralMode {
     }
 }
 
+/// CASA-style model persistence after imaging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImagerSaveModel {
+    /// Do not write a visibility model back to the MeasurementSet.
+    #[default]
+    None,
+    /// Predict the final MFS model image into MAIN.MODEL_DATA.
+    ModelColumn,
+}
+
+impl From<SaveModelMode> for ImagerSaveModel {
+    fn from(value: SaveModelMode) -> Self {
+        match value {
+            SaveModelMode::None => Self::None,
+            SaveModelMode::ModelColumn => Self::ModelColumn,
+        }
+    }
+}
+
+impl From<ImagerSaveModel> for SaveModelMode {
+    fn from(value: ImagerSaveModel) -> Self {
+        match value {
+            ImagerSaveModel::None => Self::None,
+            ImagerSaveModel::ModelColumn => Self::ModelColumn,
+        }
+    }
+}
+
 /// Weighting policy for imaging runs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -233,6 +262,11 @@ pub enum ImagerWeighting {
         /// CASA-style robust parameter in `[-2, 2]`.
         robust: f32,
     },
+    /// CASA Briggs bandwidth taper weighting.
+    BriggsBwTaper {
+        /// CASA-style robust parameter in `[-2, 2]`.
+        robust: f32,
+    },
 }
 
 impl From<WeightingMode> for ImagerWeighting {
@@ -241,6 +275,7 @@ impl From<WeightingMode> for ImagerWeighting {
             WeightingMode::Natural => Self::Natural,
             WeightingMode::Uniform => Self::Uniform,
             WeightingMode::Briggs { robust } => Self::Briggs { robust },
+            WeightingMode::BriggsBwTaper { robust } => Self::BriggsBwTaper { robust },
         }
     }
 }
@@ -251,6 +286,7 @@ impl From<ImagerWeighting> for WeightingMode {
             ImagerWeighting::Natural => Self::Natural,
             ImagerWeighting::Uniform => Self::Uniform,
             ImagerWeighting::Briggs { robust } => Self::Briggs { robust },
+            ImagerWeighting::BriggsBwTaper { robust } => Self::BriggsBwTaper { robust },
         }
     }
 }
@@ -317,6 +353,35 @@ impl From<ImagerDeconvolver> for Deconvolver {
             ImagerDeconvolver::Mtmfs => Self::Mtmfs,
             ImagerDeconvolver::Clark => Self::Clark,
             ImagerDeconvolver::Multiscale => Self::Multiscale,
+        }
+    }
+}
+
+/// Hogbom minor-cycle iteration accounting policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImagerHogbomIterationMode {
+    /// Treat `niter` and `cycleniter` as strict caps on committed components.
+    #[default]
+    Strict,
+    /// Mirror CASA's inclusive `hclean` iteration loop for parity checks.
+    CasaInclusive,
+}
+
+impl From<HogbomIterationMode> for ImagerHogbomIterationMode {
+    fn from(value: HogbomIterationMode) -> Self {
+        match value {
+            HogbomIterationMode::Strict => Self::Strict,
+            HogbomIterationMode::CasaInclusive => Self::CasaInclusive,
+        }
+    }
+}
+
+impl From<ImagerHogbomIterationMode> for HogbomIterationMode {
+    fn from(value: ImagerHogbomIterationMode) -> Self {
+        match value {
+            ImagerHogbomIterationMode::Strict => Self::Strict,
+            ImagerHogbomIterationMode::CasaInclusive => Self::CasaInclusive,
         }
     }
 }
@@ -623,6 +688,9 @@ pub struct ImagerRunTaskRequest {
     /// Optional explicit data-column override.
     #[serde(default)]
     pub data_column: Option<String>,
+    /// Model persistence mode.
+    #[serde(default)]
+    pub save_model: ImagerSaveModel,
     /// Optional explicit scalar plane or raw correlation.
     #[serde(default)]
     pub correlation: Option<ImagerPlaneSelection>,
@@ -638,6 +706,9 @@ pub struct ImagerRunTaskRequest {
     /// CASA-style `perchanweightdensity` toggle for spectral cubes.
     #[serde(default)]
     pub per_channel_weight_density: bool,
+    /// CASA-style `usepointing` toggle for POINTING-table direction corrections.
+    #[serde(default)]
+    pub use_pointing: bool,
     /// Optional CASA-style Gaussian UV taper.
     #[serde(default)]
     pub uv_taper: Option<ImagerUvTaper>,
@@ -683,6 +754,9 @@ pub struct ImagerRunTaskRequest {
     /// Upper clamp for the PSF fraction used to derive cycle thresholds.
     #[serde(default = "default_max_psf_fraction")]
     pub max_psf_fraction: f32,
+    /// Hogbom minor-cycle iteration accounting policy.
+    #[serde(default)]
+    pub hogbom_iteration_mode: ImagerHogbomIterationMode,
     /// Optional inclusive pixel-space clean boxes `(x0, y0, x1, y1)`.
     #[serde(default)]
     pub mask_boxes: Vec<[usize; 4]>,
@@ -719,6 +793,7 @@ impl ImagerRunTaskRequest {
             channel_start: config.channel_start,
             channel_count: config.channel_count,
             data_column: config.datacolumn.clone(),
+            save_model: config.save_model.into(),
             correlation: config
                 .correlation
                 .as_deref()
@@ -729,6 +804,7 @@ impl ImagerRunTaskRequest {
             cube_axis: (&config.cube_axis).into(),
             weighting: config.weighting.into(),
             per_channel_weight_density: config.per_channel_weight_density,
+            use_pointing: config.use_pointing,
             uv_taper: config.uv_taper.map(Into::into),
             restoring_beam_mode: config.restoring_beam_mode.into(),
             deconvolver: config.deconvolver.into(),
@@ -744,6 +820,7 @@ impl ImagerRunTaskRequest {
             cyclefactor: config.cyclefactor,
             min_psf_fraction: config.min_psf_fraction,
             max_psf_fraction: config.max_psf_fraction,
+            hogbom_iteration_mode: config.hogbom_iteration_mode.into(),
             mask_boxes: config.mask_boxes.clone(),
             mask_image: config.mask_image.clone(),
             w_term_mode: config.w_term_mode.into(),
@@ -793,6 +870,7 @@ impl ImagerRunTaskRequest {
             channel_start: self.channel_start,
             channel_count: self.channel_count,
             datacolumn: self.data_column.clone(),
+            save_model: self.save_model.into(),
             correlation: self
                 .correlation
                 .map(|value| value.as_cli_text().to_string()),
@@ -800,6 +878,7 @@ impl ImagerRunTaskRequest {
             cube_axis: self.cube_axis.clone().into_runtime(spectral_mode)?,
             weighting: self.weighting.clone().into(),
             per_channel_weight_density: self.per_channel_weight_density,
+            use_pointing: self.use_pointing,
             uv_taper: self.uv_taper.map(Into::into),
             restoring_beam_mode: self.restoring_beam_mode.into(),
             deconvolver,
@@ -815,6 +894,7 @@ impl ImagerRunTaskRequest {
             cyclefactor: self.cyclefactor,
             min_psf_fraction: self.min_psf_fraction,
             max_psf_fraction: self.max_psf_fraction,
+            hogbom_iteration_mode: self.hogbom_iteration_mode.into(),
             mask_boxes: self.mask_boxes.clone(),
             mask_image: self.mask_image.clone(),
             w_term_mode: self.w_term_mode.into(),
@@ -950,7 +1030,7 @@ pub struct ImagerRunReport {
     pub gridded_samples: usize,
     /// Total major-cycle count reported by the run.
     pub major_cycles: usize,
-    /// Total minor-cycle component updates reported by the run.
+    /// Total minor-cycle component updates executed by the run.
     pub minor_iterations: usize,
     /// Final CLEAN stop reason when deconvolution ran.
     pub clean_stop_reason: Option<ImagerCleanStopReason>,
@@ -1277,11 +1357,12 @@ mod tests {
     use super::{
         IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
         ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
-        ImagerDeconvolver, ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunTaskRequest,
-        ImagerSpectralMode, ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper,
-        ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+        ImagerDeconvolver, ImagerHogbomIterationMode, ImagerPlaneSelection,
+        ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
+        ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
+        ImagerWTermMode, ImagerWeighting,
     };
-    use crate::{CliConfig, SpectralMode};
+    use crate::{CliConfig, SaveModelMode, SpectralMode};
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_definitions() {
@@ -1323,6 +1404,8 @@ mod tests {
             OsString::from("5:10~19"),
             OsString::from("--datacolumn"),
             OsString::from("CORRECTED_DATA"),
+            OsString::from("--savemodel"),
+            OsString::from("modelcolumn"),
             OsString::from("--corr"),
             OsString::from("XX"),
             OsString::from("--specmode"),
@@ -1344,6 +1427,7 @@ mod tests {
             OsString::from("--robust"),
             OsString::from("-1.0"),
             OsString::from("--perchanweightdensity"),
+            OsString::from("--usepointing"),
             OsString::from("--uvtaper"),
             OsString::from("10arcsec,8arcsec,45deg"),
             OsString::from("--restoringbeam"),
@@ -1394,10 +1478,12 @@ mod tests {
         assert_eq!(restored.phasecenter_field, Some(2));
         assert_eq!(restored.spw_selector.as_deref(), Some("5:10~19"));
         assert_eq!(restored.datacolumn.as_deref(), Some("CORRECTED_DATA"));
+        assert_eq!(restored.save_model, SaveModelMode::ModelColumn);
         assert_eq!(restored.correlation.as_deref(), Some("XX"));
         assert_eq!(restored.spectral_mode, SpectralMode::Cube);
         assert_eq!(restored.weighting, WeightingMode::Briggs { robust: -1.0 });
         assert!(restored.per_channel_weight_density);
+        assert!(restored.use_pointing);
         assert_eq!(restored.restoring_beam_mode, RestoringBeamMode::Common);
         assert_eq!(restored.deconvolver, Deconvolver::Multiscale);
         assert_eq!(restored.w_term_mode, WTermMode::WProject);
@@ -1421,11 +1507,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             data_column: None,
+            save_model: ImagerSaveModel::None,
             correlation: None,
             spectral_mode: Default::default(),
             cube_axis: Default::default(),
             weighting: Default::default(),
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -1441,6 +1529,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
@@ -1452,6 +1541,7 @@ mod tests {
         assert_eq!(config.weighting, WeightingMode::Natural);
         assert_eq!(config.deconvolver, Deconvolver::Hogbom);
         assert_eq!(config.spectral_mode, SpectralMode::Mfs);
+        assert!(!config.use_pointing);
     }
 
     #[test]
@@ -1469,11 +1559,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             data_column: None,
+            save_model: ImagerSaveModel::None,
             correlation: None,
             spectral_mode: Default::default(),
             cube_axis: Default::default(),
             weighting: ImagerWeighting::Briggs { robust: 0.5 },
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -1489,6 +1581,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
@@ -1498,6 +1591,18 @@ mod tests {
         };
         let config = request.to_cli_config().unwrap();
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: 0.5 });
+    }
+
+    #[test]
+    fn briggs_bandwidth_taper_weighting_round_trips() {
+        assert_eq!(
+            ImagerWeighting::from(WeightingMode::BriggsBwTaper { robust: 0.25 }),
+            ImagerWeighting::BriggsBwTaper { robust: 0.25 }
+        );
+        assert_eq!(
+            WeightingMode::from(ImagerWeighting::BriggsBwTaper { robust: 0.25 }),
+            WeightingMode::BriggsBwTaper { robust: 0.25 }
+        );
     }
 
     #[test]
@@ -1532,6 +1637,10 @@ mod tests {
         assert_eq!(
             WeightingMode::from(ImagerWeighting::Briggs { robust: 1.0 }),
             WeightingMode::Briggs { robust: 1.0 }
+        );
+        assert_eq!(
+            WeightingMode::from(ImagerWeighting::BriggsBwTaper { robust: 1.0 }),
+            WeightingMode::BriggsBwTaper { robust: 1.0 }
         );
         assert_eq!(
             ImagerRestoringBeamMode::from(RestoringBeamMode::Common),
@@ -1685,11 +1794,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             data_column: None,
+            save_model: ImagerSaveModel::None,
             correlation: None,
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),
             weighting: Default::default(),
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -1705,6 +1816,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
@@ -1834,11 +1946,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             data_column: None,
+            save_model: ImagerSaveModel::None,
             correlation: Some(ImagerPlaneSelection::CorrXX),
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),
             weighting: Default::default(),
             per_channel_weight_density: false,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: Default::default(),
             deconvolver: Default::default(),
@@ -1854,6 +1968,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),

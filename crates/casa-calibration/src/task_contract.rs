@@ -17,10 +17,11 @@ use crate::managed_output::CalibrationTaskResult;
 use crate::{
     ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, BandpassSolveCombine,
     BandpassSolveRequest, BandpassType, CalibrationStatsAxis, CalibrationStatsRequest,
-    FluxScaleRequest, GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveRequest,
-    GainType, RefAntSelector, calibration_stats, command_schema, execute_apply_from_path,
-    fluxscale, plan_apply_from_path, solve_bandpass_from_path, solve_gain_from_path,
-    summarize_tables,
+    ContinuumSubtractionDataColumn, ContinuumSubtractionRequest, FluxScaleRequest,
+    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
+    GainType, RefAntSelector, calibration_stats, command_schema, continuum_subtract,
+    execute_apply_from_path, export_corrected_data, fluxscale, plan_apply_from_path,
+    solve_bandpass_from_path, solve_gain_from_path, summarize_tables,
 };
 
 /// Stable protocol name advertised by `calibrate --protocol-info`.
@@ -141,6 +142,16 @@ fn calibration_task_operations() -> Vec<TaskOperationDescriptor> {
             result_kind: Some("apply".to_string()),
         },
         TaskOperationDescriptor {
+            name: "export_corrected_data".to_string(),
+            request_kind: "export_corrected_data".to_string(),
+            result_kind: Some("export_corrected_data".to_string()),
+        },
+        TaskOperationDescriptor {
+            name: "continuum_subtract".to_string(),
+            request_kind: "continuum_subtract".to_string(),
+            result_kind: Some("continuum_subtract".to_string()),
+        },
+        TaskOperationDescriptor {
             name: "solve_gain".to_string(),
             request_kind: "solve_gain".to_string(),
             result_kind: Some("solve_gain".to_string()),
@@ -210,6 +221,38 @@ pub struct ExecuteApplyTaskRequest {
     pub parang: bool,
 }
 
+/// Request for exporting corrected visibilities into an imaging-ready MS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExportCorrectedDataTaskRequest {
+    /// Input MeasurementSet root path.
+    pub input_ms: PathBuf,
+    /// Output MeasurementSet root path.
+    pub output_ms: PathBuf,
+    /// Structured MS selection controls.
+    #[serde(default)]
+    pub selection: MsSelectionSpec,
+}
+
+/// Request for UV continuum subtraction into an imaging-ready MS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ContinuumSubtractionTaskRequest {
+    /// Input MeasurementSet root path.
+    pub input_ms: PathBuf,
+    /// Output MeasurementSet root path.
+    pub output_ms: PathBuf,
+    /// CASA-style line-free channel selector, e.g. `0:0~500;900~1919`.
+    pub fit_spw: String,
+    /// Polynomial order fitted independently to real and imaginary visibilities.
+    #[serde(default)]
+    pub fit_order: usize,
+    /// Input data column to subtract.
+    #[serde(default)]
+    pub data_column: ContinuumSubtractionDataColumn,
+    /// Structured MS selection controls.
+    #[serde(default)]
+    pub selection: MsSelectionSpec,
+}
+
 /// Request for solving antenna gains.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SolveGainTaskRequest {
@@ -237,6 +280,18 @@ pub struct SolveGainTaskRequest {
     /// Whether to apply parallactic-angle correction.
     #[serde(default)]
     pub parang: bool,
+    /// Visibility model source used while solving.
+    #[serde(default)]
+    pub model_source: GainSolveModelSource,
+    /// Whether to normalize average solution amplitudes to unity.
+    #[serde(default)]
+    pub normalize_average_amplitude: bool,
+    /// Minimum solution SNR required to keep a solved parameter unflagged.
+    #[serde(default = "default_min_snr")]
+    pub min_snr: f32,
+    /// Minimum unflagged baselines per antenna required before solving.
+    #[serde(default = "default_min_baselines_per_antenna")]
+    pub min_baselines_per_antenna: usize,
     /// Point-source Stokes model.
     #[serde(default = "default_smodel")]
     pub smodel: [f32; 4],
@@ -291,6 +346,10 @@ pub enum CalibrationTaskRequest {
     PlanApply(PlanApplyTaskRequest),
     /// Execute an `applycal`-class operation.
     ExecuteApply(ExecuteApplyTaskRequest),
+    /// Export `CORRECTED_DATA` into `DATA` in a new MS.
+    ExportCorrectedData(ExportCorrectedDataTaskRequest),
+    /// Fit and subtract UV continuum into a new MS.
+    ContinuumSubtract(ContinuumSubtractionTaskRequest),
     /// Solve antenna gains.
     SolveGain(SolveGainTaskRequest),
     /// Solve bandpass terms.
@@ -348,6 +407,25 @@ impl CalibrationTaskRequest {
             )
             .map(CalibrationTaskResult::Apply)
             .map_err(|error| error.to_string()),
+            Self::ExportCorrectedData(request) => {
+                export_corrected_data(&crate::ExportCorrectedDataRequest {
+                    input_ms: request.input_ms.clone(),
+                    output_ms: request.output_ms.clone(),
+                    selection: selection_from_spec(&request.selection)?,
+                })
+                .map(CalibrationTaskResult::ExportCorrectedData)
+                .map_err(|error| error.to_string())
+            }
+            Self::ContinuumSubtract(request) => continuum_subtract(&ContinuumSubtractionRequest {
+                input_ms: request.input_ms.clone(),
+                output_ms: request.output_ms.clone(),
+                fit_spw: request.fit_spw.clone(),
+                fit_order: request.fit_order,
+                data_column: request.data_column,
+                selection: selection_from_spec(&request.selection)?,
+            })
+            .map(CalibrationTaskResult::ContinuumSubtract)
+            .map_err(|error| error.to_string()),
             Self::SolveGain(request) => solve_gain_from_path(
                 &request.measurement_set,
                 &GainSolveRequest {
@@ -360,6 +438,10 @@ impl CalibrationTaskRequest {
                     refant: request.refant.clone(),
                     prior_calibration_tables: request.prior_calibration_tables.clone(),
                     parang: request.parang,
+                    model_source: request.model_source,
+                    normalize_average_amplitude: request.normalize_average_amplitude,
+                    min_snr: request.min_snr,
+                    min_baselines_per_antenna: request.min_baselines_per_antenna,
                     smodel: request.smodel,
                 },
             )
@@ -392,6 +474,14 @@ impl CalibrationTaskRequest {
 
 fn default_smodel() -> [f32; 4] {
     [1.0, 0.0, 0.0, 0.0]
+}
+
+fn default_min_snr() -> f32 {
+    3.0
+}
+
+fn default_min_baselines_per_antenna() -> usize {
+    4
 }
 
 fn default_polynomial_degree() -> usize {
@@ -593,7 +683,14 @@ mod tests {
             CALIBRATION_TASK_PROTOCOL_VERSION
         );
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
-        assert_eq!(bundle.semantic.operations.len(), 7);
+        assert_eq!(bundle.semantic.operations.len(), 9);
+        assert!(
+            bundle
+                .semantic
+                .operations
+                .iter()
+                .any(|operation| operation.request_kind == "continuum_subtract")
+        );
         assert!(
             bundle
                 .semantic

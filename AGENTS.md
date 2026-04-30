@@ -29,6 +29,7 @@ persistent data while preserving on-disk interoperability.
 - Performance release evidence: `just release-perf`
 - Slow parity: `scripts/test-slow.sh`
 - Release: `scripts/release.sh <version>`
+- Local CASA/C++ task runs use `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python`, which has the `~/SoftwareProjects/casa` built `casatasks` and `casatools` wheels installed.
 
 ## WDAD Workflow
 
@@ -67,6 +68,12 @@ Use `Closes #N` only for issues that should auto-close on merge.
 
 ## Project Rules
 
+- Before implementing behavior that exists in CASA/casacore C++, inspect the
+  relevant upstream task/tool/library path first and preserve its semantics
+  unless there is an explicit reason to diverge.
+- Use the shared least-squares helper and its well-exercised linear algebra
+  backend for polynomial or linear least-squares solves; do not add ad hoc
+  normal-equation or Gaussian-elimination solvers.
 - Prefer idiomatic Rust over direct C++ API mirroring; this is not a Rust wrapper around casacore C++.
 - Use `casa-*` for reusable libraries and `casars-*` for app/runtime crates.
 - API docs belong in source comments rendered by `cargo doc`.

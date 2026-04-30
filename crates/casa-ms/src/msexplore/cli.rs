@@ -75,6 +75,7 @@ struct CliOptions {
     title: Option<String>,
     xlabel: Option<String>,
     ylabel: Option<String>,
+    symbol_size: Option<u32>,
     showlegend: bool,
     legendposition: MsLegendPosition,
     showmajorgrid: bool,
@@ -161,6 +162,8 @@ struct CliPagePlotSpec {
     xlabel: Option<String>,
     #[serde(default)]
     ylabel: Option<String>,
+    #[serde(default)]
+    symbol_size: Option<u32>,
     #[serde(default)]
     showlegend: bool,
     #[serde(default)]
@@ -923,10 +926,24 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 true,
                 false,
             ),
+            option_argument(
+                "symbol_size",
+                "Symbol Size",
+                44,
+                &["--symbolsize", "--marker-size"],
+                "PIXELS",
+                UiValueKind::Float,
+                None,
+                &[],
+                "Scatter marker radius in rendered pixels",
+                "Style",
+                true,
+                false,
+            ),
             toggle_argument(
                 "showlegend",
                 "Show Legend",
-                44,
+                45,
                 "Show a legend for grouped series",
                 ToggleArgumentConfig {
                     true_flags: &["--showlegend"],
@@ -940,7 +957,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "legendposition",
                 "Legend Position",
-                45,
+                46,
                 &["--legendposition"],
                 "POSITION",
                 UiValueKind::Choice,
@@ -963,7 +980,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "showmajorgrid",
                 "Major Grid",
-                46,
+                47,
                 "Show major grid lines",
                 ToggleArgumentConfig {
                     true_flags: &["--showmajorgrid"],
@@ -977,7 +994,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "showminorgrid",
                 "Minor Grid",
-                47,
+                48,
                 "Show minor grid lines",
                 ToggleArgumentConfig {
                     true_flags: &["--showminorgrid"],
@@ -991,7 +1008,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "headeritems",
                 "Header Items",
-                48,
+                49,
                 &["--headeritems"],
                 "ITEMS",
                 UiValueKind::String,
@@ -1005,7 +1022,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "max_points",
                 "Max Plot Points",
-                49,
+                50,
                 &["--max-points"],
                 "N",
                 UiValueKind::Float,
@@ -1019,7 +1036,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_output",
                 "Plot Output",
-                50,
+                51,
                 &["--plot-output"],
                 "PATH",
                 UiValueKind::Path,
@@ -1033,7 +1050,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_format",
                 "Plot Format",
-                51,
+                52,
                 &["--plot-format"],
                 "FORMAT",
                 UiValueKind::Choice,
@@ -1047,7 +1064,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_width",
                 "Plot Width",
-                52,
+                53,
                 &["--plot-width"],
                 "PIXELS",
                 UiValueKind::Float,
@@ -1061,7 +1078,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "plot_height",
                 "Plot Height",
-                53,
+                54,
                 &["--plot-height"],
                 "PIXELS",
                 UiValueKind::Float,
@@ -1075,7 +1092,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_action",
                 "Flag Action",
-                54,
+                55,
                 &["--flag-action"],
                 "ACTION",
                 UiValueKind::Choice,
@@ -1089,7 +1106,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_xmin",
                 "Flag X Min",
-                55,
+                56,
                 &["--flag-xmin"],
                 "VALUE",
                 UiValueKind::Float,
@@ -1103,7 +1120,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_xmax",
                 "Flag X Max",
-                56,
+                57,
                 &["--flag-xmax"],
                 "VALUE",
                 UiValueKind::Float,
@@ -1117,7 +1134,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_ymin",
                 "Flag Y Min",
-                57,
+                58,
                 &["--flag-ymin"],
                 "VALUE",
                 UiValueKind::Float,
@@ -1131,7 +1148,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_ymax",
                 "Flag Y Max",
-                58,
+                59,
                 &["--flag-ymax"],
                 "VALUE",
                 UiValueKind::Float,
@@ -1145,7 +1162,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_plotindex",
                 "Flag Plot Index",
-                59,
+                60,
                 &["--flag-plotindex"],
                 "INDEX",
                 UiValueKind::String,
@@ -1159,7 +1176,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_panel",
                 "Flag Panel",
-                60,
+                61,
                 &["--flag-panel"],
                 "KEY",
                 UiValueKind::String,
@@ -1173,7 +1190,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "flag_extcorr",
                 "Extend Correlation",
-                61,
+                62,
                 "Extend staged edits across all correlations on matching channels",
                 ToggleArgumentConfig {
                     true_flags: &["--flag-extcorr"],
@@ -1187,7 +1204,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "flag_extchannel",
                 "Extend Channel",
-                62,
+                63,
                 "Extend staged edits across all channels on matching correlations",
                 ToggleArgumentConfig {
                     true_flags: &["--flag-extchannel"],
@@ -1201,7 +1218,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "flag_apply",
                 "Apply Flag Edit",
-                63,
+                64,
                 "Apply the staged flag edit to MAIN FLAG / FLAG_ROW; omit for preview-only",
                 ToggleArgumentConfig {
                     true_flags: &["--flag-apply"],
@@ -1215,7 +1232,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(
                 "flag_output",
                 "Flag Preview Output",
-                64,
+                65,
                 &["--flag-output"],
                 "PATH",
                 UiValueKind::Path,
@@ -1226,8 +1243,8 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 true,
                 false,
             ),
-            action_argument(65, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
-            action_argument(66, "help", &["-h", "--help"], UiActionKind::Help),
+            action_argument(66, "ui_schema", &["--ui-schema"], UiActionKind::UiSchema),
+            action_argument(67, "help", &["-h", "--help"], UiActionKind::Help),
         ],
         managed_output: Some(UiManagedOutputSchema {
             renderer: "measurementset-summary-v1".to_string(),
@@ -1369,6 +1386,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
                     plot.title,
                     plot.xlabel,
                     plot.ylabel,
+                    plot.symbol_size,
                     plot.showlegend,
                     plot.legendposition.unwrap_or(MsLegendPosition::UpperRight),
                     plot.showmajorgrid,
@@ -1437,6 +1455,7 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
         options.title.clone(),
         options.xlabel.clone(),
         options.ylabel.clone(),
+        options.symbol_size,
         options.showlegend,
         options.legendposition,
         options.showmajorgrid,
@@ -1509,6 +1528,7 @@ fn build_plot_spec_from_values(
     title: Option<String>,
     xlabel: Option<String>,
     ylabel: Option<String>,
+    symbol_size: Option<u32>,
     showlegend: bool,
     legendposition: MsLegendPosition,
     showmajorgrid: bool,
@@ -1580,6 +1600,7 @@ fn build_plot_spec_from_values(
         title,
         xlabel,
         ylabel,
+        symbol_size,
         showlegend,
         legendposition,
         showmajorgrid,
@@ -1692,6 +1713,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut title = None;
     let mut xlabel = None;
     let mut ylabel = None;
+    let mut symbol_size = None;
     let mut showlegend = false;
     let mut legendposition = MsLegendPosition::UpperRight;
     let mut showmajorgrid = false;
@@ -1878,6 +1900,14 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
             "--ylabel" => {
                 plot_control_used = true;
                 ylabel = Some(take_value(&mut index, &args, "--ylabel")?)
+            }
+            "--symbolsize" | "--marker-size" => {
+                plot_control_used = true;
+                symbol_size = Some(
+                    take_value(&mut index, &args, raw.as_str())?
+                        .parse::<u32>()
+                        .map_err(|_| format!("invalid integer value for {raw}"))?,
+                )
             }
             "--showlegend" => {
                 plot_control_used = true;
@@ -2092,6 +2122,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         title,
         xlabel,
         ylabel,
+        symbol_size,
         showlegend,
         legendposition,
         showmajorgrid,
@@ -2412,6 +2443,8 @@ mod tests {
             "Time",
             "--ylabel",
             "Amp",
+            "--symbolsize",
+            "2",
             "--showlegend",
             "--legendposition",
             "exteriorRight",
@@ -2491,6 +2524,7 @@ mod tests {
         assert_eq!(options.title.as_deref(), Some("Amplitude"));
         assert_eq!(options.xlabel.as_deref(), Some("Time"));
         assert_eq!(options.ylabel.as_deref(), Some("Amp"));
+        assert_eq!(options.symbol_size, Some(2));
         assert!(options.showlegend);
         assert_eq!(options.legendposition, MsLegendPosition::ExteriorRight);
         assert!(options.showmajorgrid);
@@ -2540,6 +2574,7 @@ mod tests {
         assert_eq!(plot.style.title.as_deref(), Some("Amplitude"));
         assert_eq!(plot.style.xlabel.as_deref(), Some("Time"));
         assert_eq!(plot.style.ylabel.as_deref(), Some("Amp"));
+        assert_eq!(plot.style.symbol_size, Some(2));
         assert!(plot.style.showlegend);
         assert_eq!(plot.style.legendposition, MsLegendPosition::ExteriorRight);
         assert!(plot.style.showmajorgrid);
@@ -2568,7 +2603,8 @@ mod tests {
                   "showlegend": true,
                   "legendposition": "upperLeft",
                   "showmajorgrid": true,
-                  "showminorgrid": true
+                  "showminorgrid": true,
+                  "symbol_size": 1
                 },
                 {
                   "preset": "amplitude_vs_frequency",
@@ -2622,6 +2658,7 @@ mod tests {
         assert_eq!(plot.style.legendposition, MsLegendPosition::UpperLeft);
         assert!(plot.style.showmajorgrid);
         assert!(plot.style.showminorgrid);
+        assert_eq!(plot.style.symbol_size, Some(1));
         let second_plot = &spec.plots[1];
         assert_eq!(second_plot.preset, Some(MsPlotPreset::AmplitudeVsFrequency));
         assert_eq!(second_plot.layout.colindex, 1);
@@ -2695,6 +2732,7 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 None,
                 None,
                 None,

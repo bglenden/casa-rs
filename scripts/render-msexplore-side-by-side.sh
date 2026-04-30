@@ -12,6 +12,9 @@ Usage:
     --output /path/to/side-by-side.png \
     --casa-xaxis velocity \
     --casa-yaxis amp \
+    [--plot-width 2400] \
+    [--plot-height 1350] \
+    [--rust-symbolsize 1] \
     --casa-kw field=0 \
     --casa-expr-kw "yaxis=['amp','phase']" \
     --casa-kw spw=0 \
@@ -29,6 +32,9 @@ casa_xaxis=""
 casa_yaxis=""
 rust_label="casa-rs"
 casa_label="CASA"
+plot_width="1600"
+plot_height="900"
+rust_symbolsize=""
 declare -a casa_kwargs=()
 declare -a casa_expr_kwargs=()
 declare -a rust_args=()
@@ -49,6 +55,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --casa-yaxis)
       casa_yaxis="$2"
+      shift 2
+      ;;
+    --plot-width)
+      plot_width="$2"
+      shift 2
+      ;;
+    --plot-height)
+      plot_height="$2"
+      shift 2
+      ;;
+    --rust-symbolsize)
+      rust_symbolsize="$2"
       shift 2
       ;;
     --casa-kw)
@@ -111,11 +129,16 @@ casa_copy="${output_path%.png}.casa.png"
 log_copy="${output_path%.png}.casa.log"
 
 echo "Rendering casa-rs plot..."
+declare -a rust_style_args=()
+if [[ -n "$rust_symbolsize" ]]; then
+  rust_style_args+=(--symbolsize "$rust_symbolsize")
+fi
 cargo run -q -p casa-ms --bin msexplore -- \
   --plot-output "$rust_png" \
   --plot-format png \
-  --plot-width 1600 \
-  --plot-height 900 \
+  --plot-width "$plot_width" \
+  --plot-height "$plot_height" \
+  "${rust_style_args[@]}" \
   "${rust_args[@]}" \
   "$ms_path"
 
@@ -131,6 +154,8 @@ CASA_EXTRA_EXPR_KWARGS="$(
     printf '%s\n' "${casa_expr_kwargs[@]}"
   fi
 )" \
+CASA_PLOT_WIDTH="$plot_width" \
+CASA_PLOT_HEIGHT="$plot_height" \
 DISPLAY="${DISPLAY:-:0}" \
 "$CASA_RS_CASA_PYTHON" - <<'PY'
 import os
@@ -150,8 +175,12 @@ kwargs = {
     "overwrite": True,
     "showgui": False,
     "verbose": True,
-    "width": 1600,
-    "height": 900,
+    "width": int(os.environ["CASA_PLOT_WIDTH"]),
+    "height": int(os.environ["CASA_PLOT_HEIGHT"]),
+    "titlefont": int(os.environ.get("CASA_TITLE_FONT", "22")),
+    "xaxisfont": int(os.environ.get("CASA_AXIS_FONT", "20")),
+    "yaxisfont": int(os.environ.get("CASA_AXIS_FONT", "20")),
+    "symbolsize": int(os.environ.get("CASA_SYMBOL_SIZE", "4")),
 }
 for item in os.environ.get("CASA_EXTRA_KWARGS", "").splitlines():
     if not item.strip():

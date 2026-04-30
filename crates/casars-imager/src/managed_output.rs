@@ -6,13 +6,14 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::task_contract::{
-    ImagerArtifactKind, ImagerDeconvolver, ImagerRestoringBeamMode, ImagerRunTaskResult,
-    ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
+    ImagerArtifactKind, ImagerDeconvolver, ImagerHogbomIterationMode, ImagerRestoringBeamMode,
+    ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
 };
 use crate::{
     ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SpectralMode,
-    canonical_deconvolver_name, canonical_restoring_beam_mode_name, canonical_spectral_mode_name,
-    canonical_w_term_mode_name, canonical_weighting_name,
+    canonical_deconvolver_name, canonical_hogbom_iteration_mode_name,
+    canonical_restoring_beam_mode_name, canonical_spectral_mode_name, canonical_w_term_mode_name,
+    canonical_weighting_name,
 };
 
 /// Structured imaging run report consumed by the `casars` workflow shell.
@@ -39,10 +40,14 @@ pub struct ManagedImagingRequest {
     pub weighting: String,
     /// Requested minor-cycle deconvolver.
     pub deconvolver: String,
+    /// Hogbom minor-cycle iteration accounting policy.
+    pub hogbom_iteration_mode: String,
     /// Requested `w`-term handling mode.
     pub w_term_mode: String,
     /// Optional data-column override.
     pub data_column: Option<String>,
+    /// Requested model persistence mode.
+    pub save_model: String,
     /// Image size in pixels.
     pub imsize: usize,
     /// Cell size in arcseconds.
@@ -139,8 +144,17 @@ impl ManagedImagingOutput {
                 spectral_mode: canonical_spectral_mode_name(config.spectral_mode).to_string(),
                 weighting: canonical_weighting_name(config.weighting),
                 deconvolver: canonical_deconvolver_name(config.deconvolver).to_string(),
+                hogbom_iteration_mode: canonical_hogbom_iteration_mode_name(
+                    config.hogbom_iteration_mode,
+                )
+                .to_string(),
                 w_term_mode: canonical_w_term_mode_name(config.w_term_mode).to_string(),
                 data_column: config.datacolumn.clone(),
+                save_model: match config.save_model {
+                    crate::SaveModelMode::None => "none",
+                    crate::SaveModelMode::ModelColumn => "modelcolumn",
+                }
+                .to_string(),
                 imsize: config.imsize,
                 cell_arcsec: config.cell_arcsec,
                 dirty_only: config.dirty_only,
@@ -188,6 +202,9 @@ impl ManagedImagingOutput {
                     ImagerWeighting::Natural => "natural".to_string(),
                     ImagerWeighting::Uniform => "uniform".to_string(),
                     ImagerWeighting::Briggs { robust } => format!("briggs:{robust}"),
+                    ImagerWeighting::BriggsBwTaper { robust } => {
+                        format!("briggsbwtaper:{robust}")
+                    }
                 },
                 deconvolver: match request.deconvolver {
                     ImagerDeconvolver::Hogbom => "hogbom".to_string(),
@@ -195,12 +212,21 @@ impl ManagedImagingOutput {
                     ImagerDeconvolver::Clark => "clark".to_string(),
                     ImagerDeconvolver::Multiscale => "multiscale".to_string(),
                 },
+                hogbom_iteration_mode: match request.hogbom_iteration_mode {
+                    ImagerHogbomIterationMode::Strict => "strict".to_string(),
+                    ImagerHogbomIterationMode::CasaInclusive => "casa".to_string(),
+                },
                 w_term_mode: match request.w_term_mode {
                     ImagerWTermMode::None => "none".to_string(),
                     ImagerWTermMode::Direct => "direct".to_string(),
                     ImagerWTermMode::Wproject => "wproject".to_string(),
                 },
                 data_column: request.data_column.clone(),
+                save_model: match request.save_model {
+                    ImagerSaveModel::None => "none",
+                    ImagerSaveModel::ModelColumn => "modelcolumn",
+                }
+                .to_string(),
                 imsize: request.image_size,
                 cell_arcsec: request.cell_arcsec,
                 dirty_only: request.dirty_only,
@@ -511,16 +537,17 @@ mod tests {
     use super::{ManagedImagingOutput, artifact, imaging_artifacts, label_for_term};
     use crate::task_contract::{
         ImagerArtifact, ImagerArtifactKind, ImagerCleanStopReason, ImagerDeconvolver,
-        ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest,
-        ImagerRunTaskResult, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
+        ImagerHogbomIterationMode, ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunReport,
+        ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode,
+        ImagerWTermMode, ImagerWeighting,
     };
     use crate::{
         ChannelRunSummary, CliConfig, CubeAxisConfig, FrontendStageTimings, RunSummary,
-        SpectralMode,
+        SaveModelMode, SpectralMode,
     };
     use casa_imaging::{
-        CleanStopReason, Deconvolver, ImagingStageTimings, RestoringBeamMode, WTermMode,
-        WeightingMode,
+        CleanStopReason, Deconvolver, HogbomIterationMode, ImagingStageTimings, RestoringBeamMode,
+        WTermMode, WeightingMode,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -542,11 +569,13 @@ mod tests {
             channel_start: None,
             channel_count: None,
             datacolumn: Some("CORRECTED_DATA".to_string()),
+            save_model: SaveModelMode::None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
             weighting: WeightingMode::Natural,
             per_channel_weight_density: true,
+            use_pointing: false,
             uv_taper: None,
             restoring_beam_mode: RestoringBeamMode::Common,
             deconvolver: Deconvolver::Mtmfs,
@@ -562,6 +591,7 @@ mod tests {
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::Strict,
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::Direct,
@@ -696,11 +726,13 @@ mod tests {
                 channel_start: Some(4),
                 channel_count: Some(8),
                 data_column: Some("MODEL_DATA".to_string()),
+                save_model: ImagerSaveModel::ModelColumn,
                 correlation: Some(ImagerPlaneSelection::CorrXX),
                 spectral_mode: ImagerSpectralMode::Cube,
                 cube_axis: Default::default(),
                 weighting: ImagerWeighting::Briggs { robust: -0.25 },
                 per_channel_weight_density: true,
+                use_pointing: true,
                 uv_taper: None,
                 restoring_beam_mode: ImagerRestoringBeamMode::PerPlane,
                 deconvolver: ImagerDeconvolver::Clark,
@@ -716,6 +748,7 @@ mod tests {
                 cyclefactor: 1.2,
                 min_psf_fraction: 0.15,
                 max_psf_fraction: 0.9,
+                hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
                 mask_boxes: vec![[1, 2, 3, 4]],
                 mask_image: None,
                 w_term_mode: ImagerWTermMode::Wproject,
@@ -782,6 +815,7 @@ mod tests {
         assert_eq!(output.request.weighting, "briggs:-0.25");
         assert_eq!(output.request.deconvolver, "clark");
         assert_eq!(output.request.w_term_mode, "wproject");
+        assert_eq!(output.request.save_model, "modelcolumn");
         assert_eq!(output.request.restoring_beam_mode, "per_plane");
         assert_eq!(output.request.output_channels, 1);
         assert_eq!(output.request.correlation.as_deref(), Some("XX"));

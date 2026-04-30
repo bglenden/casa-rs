@@ -142,7 +142,7 @@ pub(crate) fn write_gain_caltable(
                     Value::Array(ArrayValue::Float32(
                         ArrayD::from_shape_vec(
                             IxDyn(&[row.gains.len(), 1]).f(),
-                            vec![0.0; row.gains.len()],
+                            row.param_errors.clone(),
                         )
                         .expect("paramerr vector should reshape to receptor x channel"),
                     )),
@@ -157,11 +157,8 @@ pub(crate) fn write_gain_caltable(
                 RecordField::new(
                     COL_SNR,
                     Value::Array(ArrayValue::Float32(
-                        ArrayD::from_shape_vec(
-                            IxDyn(&[row.gains.len(), 1]).f(),
-                            vec![1.0; row.gains.len()],
-                        )
-                        .expect("snr vector should reshape to receptor x channel"),
+                        ArrayD::from_shape_vec(IxDyn(&[row.gains.len(), 1]).f(), row.snrs.clone())
+                            .expect("snr vector should reshape to receptor x channel"),
                     )),
                 ),
                 RecordField::new(
@@ -169,7 +166,7 @@ pub(crate) fn write_gain_caltable(
                     Value::Array(ArrayValue::Float32(
                         ArrayD::from_shape_vec(
                             IxDyn(&[row.gains.len(), 1]).f(),
-                            vec![1.0; row.gains.len()],
+                            row.weights.clone(),
                         )
                         .expect("weight vector should reshape to receptor x channel"),
                     )),

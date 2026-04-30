@@ -7,7 +7,7 @@
 //! - `calmode='p|ap'`
 //! - `solint='inf'|'int'|<seconds>`
 //! - explicit reference antenna
-//! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`)
+//! - point-source Stokes-I sky model (`smodel=[I,0,0,0]`) or `MODEL_DATA`
 //!
 //! The acceptance contract is downstream behavior: the resulting caltable
 //! should be CASA-compatible on disk and should yield corrected visibilities
@@ -15,6 +15,7 @@
 
 pub(crate) mod grouping;
 pub(crate) mod kernel;
+mod trace;
 mod writer;
 
 use std::path::{Path, PathBuf};
@@ -30,8 +31,8 @@ use thiserror::Error;
 
 use crate::{ApplyExecutionError, ApplyPlanError};
 use grouping::{
-    all_antenna_ids, build_solve_groups, collect_selected_rows, load_preapplied_rows,
-    resolve_refant, validate_smodel, validate_solve_interval,
+    SolveGroupOptions, all_antenna_ids, build_solve_groups, collect_selected_rows,
+    load_preapplied_rows, resolve_refant, validate_smodel, validate_solve_interval,
 };
 use kernel::solve_group;
 use writer::write_gain_caltable;
@@ -61,6 +62,16 @@ pub enum GainSolveMode {
     Phase,
     /// Amplitude-and-phase solve.
     AmplitudePhase,
+}
+
+/// Visibility model source used by the gain solver.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum GainSolveModelSource {
+    /// Use the point-source Stokes-I model from `smodel`.
+    #[default]
+    PointSource,
+    /// Use per-sample visibilities from the MS `MODEL_DATA` column.
+    ModelColumn,
 }
 
 /// Supported first-wave gain solution intervals.
@@ -113,7 +124,15 @@ pub struct GainSolveRequest {
     pub prior_calibration_tables: Vec<crate::ApplyCalibrationTableSpec>,
     /// Whether to apply parallactic-angle correction before solving.
     pub parang: bool,
-    /// Point-source Stokes model. Only `[I,0,0,0]` is supported in this wave.
+    /// Visibility model source.
+    pub model_source: GainSolveModelSource,
+    /// Whether to normalize average solution amplitudes to unity.
+    pub normalize_average_amplitude: bool,
+    /// Minimum solution SNR required to keep a solved parameter unflagged.
+    pub min_snr: f32,
+    /// Minimum unflagged baselines per antenna required before solving.
+    pub min_baselines_per_antenna: usize,
+    /// Point-source Stokes model used when `model_source` is `PointSource`.
     pub smodel: [f32; 4],
 }
 
@@ -157,6 +176,10 @@ pub enum GainSolveError {
         /// Model vector passed by the caller.
         smodel: [f32; 4],
     },
+
+    /// The solve requested `MODEL_DATA`, but the MS does not contain it.
+    #[error("gain solve model_source=ModelColumn requires a MODEL_DATA column")]
+    MissingModelColumn,
 
     /// The requested solve interval is unsupported.
     #[error("unsupported solve interval {solve_interval:?}; seconds values must be > 0")]
@@ -274,7 +297,15 @@ pub fn solve_gain(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
 ) -> Result<GainSolveReport, GainSolveError> {
-    validate_smodel(request.smodel)?;
+    if matches!(request.model_source, GainSolveModelSource::PointSource) {
+        validate_smodel(request.smodel)?;
+    } else if !ms
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
+    {
+        return Err(GainSolveError::MissingModelColumn);
+    }
     validate_solve_interval(request.solve_interval)?;
     let refant_id = resolve_refant(ms, &request.refant)?;
     let available_antennas = all_antenna_ids(ms)?;
@@ -284,10 +315,13 @@ pub fn solve_gain(
         ms,
         &rows,
         preapplied_rows.as_ref(),
-        request.gain_type,
-        request.smodel[0],
-        request.solve_interval,
-        request.combine,
+        SolveGroupOptions {
+            gain_type: request.gain_type,
+            model_source: request.model_source,
+            stokes_i: request.smodel[0],
+            solve_interval: request.solve_interval,
+            combine: request.combine,
+        },
     )?;
 
     if groups.is_empty() {
@@ -295,16 +329,65 @@ pub fn solve_gain(
     }
 
     let mut solution_rows = Vec::new();
-    for group in groups.into_values() {
-        solution_rows.extend(solve_group(
+    for ((base_key, bucket_key), mut group) in groups {
+        group.finalize_for_solve(request.solve_mode);
+        trace::trace_group(&base_key, &bucket_key, &group, request);
+        let mut group_rows = solve_group(
             group,
             &available_antennas,
             request.gain_type,
             request.solve_mode,
             refant_id,
-        )?);
+            request.min_snr,
+            request.min_baselines_per_antenna,
+        )?;
+        if matches!(request.solve_mode, GainSolveMode::AmplitudePhase)
+            && request.normalize_average_amplitude
+        {
+            normalize_gain_solution_amplitudes(&mut group_rows);
+        }
+        trace::trace_solution_rows(&base_key, &bucket_key, &group_rows, request, refant_id);
+        solution_rows.extend(group_rows);
     }
     write_gain_caltable(ms, request, refant_id, &solution_rows)
+}
+
+fn normalize_gain_solution_amplitudes(rows: &mut [kernel::SolutionRow]) {
+    let receptor_count = rows
+        .iter()
+        .map(|row| row.gains.len())
+        .max()
+        .unwrap_or_default();
+    for receptor in 0..receptor_count {
+        let mut power_sum = 0.0_f32;
+        let mut good_count = 0usize;
+        for row in rows.iter() {
+            if row.flags.get(receptor).copied().unwrap_or(true) {
+                continue;
+            }
+            let Some(gain) = row.gains.get(receptor) else {
+                continue;
+            };
+            let amplitude = gain.norm();
+            if amplitude <= f32::EPSILON {
+                continue;
+            }
+            power_sum += amplitude * amplitude;
+            good_count += 1;
+        }
+        if good_count <= 1 {
+            continue;
+        }
+        let amplitude_factor = (power_sum / good_count as f32).sqrt();
+        if amplitude_factor <= f32::EPSILON {
+            continue;
+        }
+        for row in rows.iter_mut() {
+            if let Some(gain) = row.gains.get_mut(receptor) {
+                *gain /= casa_types::Complex32::new(amplitude_factor, 0.0);
+            }
+        }
+    }
 }
 
 pub(crate) fn get_i32(table: &Table, row: usize, column: &str) -> Result<i32, GainSolveError> {

@@ -43,6 +43,7 @@ pub(crate) fn apply_weighting(
         request.weighting,
         WeightDensityMode::Combined,
         None,
+        fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz),
         &request.visibility_batches,
         &request.visibility_batches,
         gridder,
@@ -53,6 +54,7 @@ pub(crate) fn apply_weighting_with_density_source(
     weighting: WeightingMode,
     weight_density_mode: WeightDensityMode,
     uv_taper: Option<GaussianUvTaper>,
+    fractional_bandwidth: f64,
     target_batches: &[VisibilityBatch],
     density_batches: &[VisibilityBatch],
     gridder: &StandardGridder,
@@ -61,7 +63,12 @@ pub(crate) fn apply_weighting_with_density_source(
     match weighting {
         WeightingMode::Natural => Ok(apply_optional_uv_taper(target_batches.to_vec(), uv_taper)),
         WeightingMode::Uniform => {
-            let density = build_density_grid(density_batches, gridder, true, density_convention);
+            let density = build_density_grid(
+                density_batches,
+                gridder,
+                density_includes_conjugates(density_convention),
+                density_convention,
+            );
             Ok(apply_optional_uv_taper(
                 target_batches
                     .iter()
@@ -71,16 +78,26 @@ pub(crate) fn apply_weighting_with_density_source(
                             gridder,
                             &density,
                             density_convention,
-                            |weight, density| weight / density,
+                            |weight, density, _, _| weight / density,
                         )
                     })
                     .collect(),
                 uv_taper,
             ))
         }
-        WeightingMode::Briggs { robust } => {
-            let density = build_density_grid(density_batches, gridder, true, density_convention);
-            let total_density_weight = density.iter().map(|value| f64::from(*value)).sum::<f64>();
+        WeightingMode::Briggs { robust } | WeightingMode::BriggsBwTaper { robust } => {
+            let density = build_density_grid(
+                density_batches,
+                gridder,
+                density_includes_conjugates(density_convention),
+                density_convention,
+            );
+            let density_weight_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
+            let total_density_weight = density_weight_sum
+                * match density_convention {
+                    DensityCellConvention::VisImagingWeight => 1.0,
+                    DensityCellConvention::CubeBriggsWeightor => 1.0,
+                };
             let sumlocwt = density
                 .iter()
                 .filter(|value| **value > 0.0)
@@ -91,6 +108,16 @@ pub(crate) fn apply_weighting_with_density_source(
             } else {
                 0.0
             } as f32;
+            if std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING").is_some() {
+                let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
+                let density_max = density
+                    .iter()
+                    .copied()
+                    .fold(0.0f32, |acc, value| acc.max(value));
+                eprintln!(
+                    "CASA_RS_TRACE_RUST_WEIGHTING briggs_density_summary total_density_weight={total_density_weight:.12e} density_sum_sq={sumlocwt:.12e} density_max={density_max:.12e} density_nonzero={density_nonzero} f2={f2:.12e}"
+                );
+            }
             Ok(apply_optional_uv_taper(
                 target_batches
                     .iter()
@@ -100,7 +127,20 @@ pub(crate) fn apply_weighting_with_density_source(
                             gridder,
                             &density,
                             density_convention,
-                            |weight, density| weight / (f2 * density + 1.0),
+                            |weight, density, u_lambda, v_lambda| {
+                                let taper_factor = match weighting {
+                                    WeightingMode::BriggsBwTaper { .. } => {
+                                        briggs_bw_taper_uv_distance_factor(
+                                            fractional_bandwidth,
+                                            gridder,
+                                            u_lambda,
+                                            v_lambda,
+                                        ) as f32
+                                    }
+                                    _ => 1.0,
+                                };
+                                weight / ((f2 * density) / taper_factor + 1.0)
+                            },
                         )
                     })
                     .collect(),
@@ -114,6 +154,7 @@ pub(crate) fn trace_weighting_with_density_source(
     weighting: WeightingMode,
     weight_density_mode: WeightDensityMode,
     uv_taper: Option<GaussianUvTaper>,
+    fractional_bandwidth: f64,
     target_batches: &[VisibilityBatch],
     density_batches: &[VisibilityBatch],
     gridder: &StandardGridder,
@@ -121,10 +162,12 @@ pub(crate) fn trace_weighting_with_density_source(
     let density_convention = density_cell_convention(weighting, weight_density_mode);
     let density = match weighting {
         WeightingMode::Natural => None,
-        WeightingMode::Uniform | WeightingMode::Briggs { .. } => Some(build_density_grid(
+        WeightingMode::Uniform
+        | WeightingMode::Briggs { .. }
+        | WeightingMode::BriggsBwTaper { .. } => Some(build_density_grid(
             density_batches,
             gridder,
-            true,
+            density_includes_conjugates(density_convention),
             density_convention,
         )),
     };
@@ -132,6 +175,7 @@ pub(crate) fn trace_weighting_with_density_source(
         weighting,
         weight_density_mode,
         uv_taper,
+        fractional_bandwidth,
         target_batches,
         density_batches,
         gridder,
@@ -156,16 +200,12 @@ pub(crate) fn trace_weighting_with_density_source(
                 && output_weight > 0.0
                 && sumwt_factor.is_finite()
                 && sumwt_factor > 0.0;
-            let normalization_contribution = if contributes {
-                2.0 * output_weight
-            } else {
-                0.0
-            };
             let reported_contribution = if contributes {
                 output_weight * sumwt_factor
             } else {
                 0.0
             };
+            let normalization_contribution = reported_contribution;
             if contributes {
                 gridded_samples += 1;
                 normalization_sumwt += normalization_contribution;
@@ -212,10 +252,20 @@ fn density_cell_convention(
     weight_density_mode: WeightDensityMode,
 ) -> DensityCellConvention {
     match (weighting, weight_density_mode) {
-        (WeightingMode::Uniform | WeightingMode::Briggs { .. }, WeightDensityMode::PerPlane) => {
-            DensityCellConvention::CubeBriggsWeightor
-        }
+        (
+            WeightingMode::Uniform
+            | WeightingMode::Briggs { .. }
+            | WeightingMode::BriggsBwTaper { .. },
+            WeightDensityMode::PerPlane,
+        ) => DensityCellConvention::CubeBriggsWeightor,
         _ => DensityCellConvention::VisImagingWeight,
+    }
+}
+
+fn density_includes_conjugates(convention: DensityCellConvention) -> bool {
+    match convention {
+        DensityCellConvention::VisImagingWeight => true,
+        DensityCellConvention::CubeBriggsWeightor => true,
     }
 }
 
@@ -299,7 +349,7 @@ fn reweight_batch(
     gridder: &StandardGridder,
     density: &Array2<f32>,
     convention: DensityCellConvention,
-    transform: impl Fn(f32, f32) -> f32,
+    transform: impl Fn(f32, f32, f64, f64) -> f32,
 ) -> VisibilityBatch {
     let mut reweighted = batch.clone();
     for index in 0..batch.len() {
@@ -317,9 +367,38 @@ fn reweight_batch(
             reweighted.weight[index] = 0.0;
             continue;
         }
-        reweighted.weight[index] = transform(weight, cell_density);
+        reweighted.weight[index] = transform(
+            weight,
+            cell_density,
+            batch.u_lambda[index],
+            batch.v_lambda[index],
+        );
     }
     reweighted
+}
+
+pub(crate) fn fractional_bandwidth_from_frequency_range(frequency_range_hz: [f64; 2]) -> f64 {
+    let min_freq = frequency_range_hz[0].abs().min(frequency_range_hz[1].abs());
+    let max_freq = frequency_range_hz[0].abs().max(frequency_range_hz[1].abs());
+    if min_freq > 0.0 && max_freq.is_finite() {
+        2.0 * (max_freq - min_freq) / (max_freq + min_freq)
+    } else {
+        0.0
+    }
+}
+
+fn briggs_bw_taper_uv_distance_factor(
+    fractional_bandwidth: f64,
+    gridder: &StandardGridder,
+    u_lambda: f64,
+    v_lambda: f64,
+) -> f64 {
+    let n_cells_bw = fractional_bandwidth * gridder.cube_briggs_uv_cell_radius(u_lambda, v_lambda);
+    let mut factor = n_cells_bw + 0.5;
+    if factor < 1.5 {
+        factor = (4.0 - n_cells_bw) / (4.0 - 2.0 * n_cells_bw);
+    }
+    factor.max(f64::MIN_POSITIVE)
 }
 
 #[cfg(test)]
@@ -407,6 +486,24 @@ mod tests {
             (briggs_uniformish_ratio - uniform_ratio).abs()
                 < (briggs_naturalish_ratio - uniform_ratio).abs()
         );
+    }
+
+    #[test]
+    fn briggs_bandwidth_taper_relaxes_robust_downweighting_at_large_uv_radius() {
+        let geometry = request_for(WeightingMode::Natural).geometry;
+        let gridder = StandardGridder::new(geometry).unwrap();
+        let mut briggs_request = request_for(WeightingMode::Briggs { robust: 0.0 });
+        briggs_request.selected_frequency_range_hz = [1.0e9, 3.0e9];
+        let mut tapered_request = request_for(WeightingMode::BriggsBwTaper { robust: 0.0 });
+        tapered_request.selected_frequency_range_hz = briggs_request.selected_frequency_range_hz;
+
+        let briggs = apply_weighting(&briggs_request, &gridder).unwrap();
+        let tapered = apply_weighting(&tapered_request, &gridder).unwrap();
+
+        let center_index = 0usize;
+        let outer_index = 4usize;
+        assert!((tapered[0].weight[center_index] - briggs[0].weight[center_index]).abs() < 1e-6);
+        assert!(tapered[0].weight[outer_index] > briggs[0].weight[outer_index]);
     }
 
     #[test]

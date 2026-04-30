@@ -19,6 +19,14 @@ functionality.
 - [Current tutorial and dataset inventory](current-tutorial-inventory.md)
 - [Tutorial capability matrix](capability-matrix.md)
 
+## Wave 3 Artifacts
+
+- [Issue 95 usepointing performance evidence](wave-3-issue-95-usepointing-performance.md)
+- [Issue 117 MFS foundation evidence](wave-3-issue-117-mfs-foundation.md)
+- [Issue 118 self-calibration parity evidence](wave-3-issue-118-selfcal-parity.md)
+- [Issue 119 line-imaging evidence](wave-3-issue-119-line-imaging.md)
+- [Issue 120 image-analysis evidence](wave-3-issue-120-image-analysis.md)
+
 ## Source Pages
 
 - CASA Guides main page:
@@ -29,4 +37,3 @@ functionality.
   <https://casaguides.nrao.edu/index.php?title=Karl_G._Jansky_VLA_Tutorials>
 - Simulation tutorials:
   <https://casaguides.nrao.edu/index.php/Simulating_Observations_in_CASA>
-
