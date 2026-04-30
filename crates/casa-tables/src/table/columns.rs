@@ -857,6 +857,41 @@ impl Table {
             .collect()
     }
 
+    pub(crate) fn get_scalar_cells_owned_for_rows(
+        &self,
+        column: &str,
+        row_indices: &[usize],
+    ) -> Result<Vec<Option<ScalarValue>>, TableError> {
+        self.require_column(column)?;
+        for &row_index in row_indices {
+            if row_index >= self.row_count() {
+                return Err(TableError::RowOutOfBounds {
+                    row_index,
+                    row_count: self.row_count(),
+                });
+            }
+        }
+        if let Some(values) = self
+            .inner
+            .scalar_cells_owned_for_rows(row_indices, column)?
+        {
+            return Ok(values);
+        }
+        row_indices
+            .iter()
+            .map(|&row_index| match self.cell(row_index, column)? {
+                Some(Value::Scalar(scalar)) => Ok(Some(scalar.clone())),
+                Some(value) => Err(TableError::ColumnTypeMismatch {
+                    row_index,
+                    column: column.to_string(),
+                    expected: "scalar",
+                    found: value.kind(),
+                }),
+                None => Ok(None),
+            })
+            .collect()
+    }
+
     /// Returns a reference to the scalar value in a cell without cloning.
     ///
     /// Compatibility note: new cell-oriented code should prefer
@@ -1503,6 +1538,18 @@ impl<'a> TableColumn<'a> {
     /// Returns owned scalar values for the column.
     pub fn scalar_cells_owned(&self) -> Result<Vec<Option<ScalarValue>>, TableError> {
         self.table.get_scalar_cells_owned(&self.column)
+    }
+
+    /// Returns owned scalar values for selected rows in this column.
+    ///
+    /// The output preserves the order of `row_indices`. Missing cells are
+    /// returned as `None`.
+    pub fn scalar_cells_owned_for_rows(
+        &self,
+        row_indices: &[usize],
+    ) -> Result<Vec<Option<ScalarValue>>, TableError> {
+        self.table
+            .get_scalar_cells_owned_for_rows(&self.column, row_indices)
     }
 
     /// Returns owned array values for the selected rows.

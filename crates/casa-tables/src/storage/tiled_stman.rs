@@ -1628,6 +1628,9 @@ fn load_tiled_shape_stman(
             }
 
             let diff = row_map[interval] as usize - row_idx;
+            if diff > pos_map[interval] as usize {
+                continue;
+            }
             let Some(pos_in_cube) = (pos_map[interval] as usize).checked_sub(diff) else {
                 return Err(StorageError::FormatMismatch(format!(
                     "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
@@ -1715,6 +1718,9 @@ fn load_tiled_column_rows_shape_variant(
             continue;
         }
         let diff = mapping.row_map[interval] as usize - row_idx;
+        if diff > mapping.pos_map[interval] as usize {
+            continue;
+        }
         let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
             return Err(StorageError::FormatMismatch(format!(
                 "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
@@ -3291,7 +3297,10 @@ fn save_single_column_tiled_shape_stman(
 
     let mut shape_groups: Vec<(Vec<usize>, Vec<usize>)> = Vec::new();
     for (row_idx, value) in values.iter().enumerate() {
-        let shape = if let Some(Value::Array(av)) = value {
+        let Some(value) = *value else {
+            continue;
+        };
+        let shape = if let Value::Array(av) = value {
             array_shape(av)
         } else {
             vec![]

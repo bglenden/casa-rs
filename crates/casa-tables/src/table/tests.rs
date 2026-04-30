@@ -3490,6 +3490,69 @@ fn add_column_none_default_with_undefined() {
 }
 
 #[test]
+fn add_variable_shape_tiled_column_in_place_persists_defined_rows_only() {
+    let root = unique_test_dir("add_sparse_tiled_shape_col");
+    std::fs::create_dir_all(&root).expect("mkdir");
+    build_mutation_test_table()
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan))
+        .expect("save base table");
+
+    let mut table = Table::open(TableOptions::new(&root)).expect("open base table");
+    let column = ColumnSchema::array_variable("vis", PrimitiveType::Float32, Some(2));
+    table.add_column(column, None).expect("add column");
+    table_set_cell(
+        &mut table,
+        1,
+        "vis",
+        Value::Array(ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]).unwrap(),
+        )),
+    )
+    .expect("set row 1");
+    table_set_cell(
+        &mut table,
+        2,
+        "vis",
+        Value::Array(ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![1, 3], vec![5.0, 6.0, 7.0]).unwrap(),
+        )),
+    )
+    .expect("set row 2");
+    table
+        .save_added_tiled_shape_column_in_place_assuming_valid("vis", &[1, 2], Some(&[2, 2, 8]))
+        .expect("save added tiled column");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    match table_cell(&reopened, 0, "vis") {
+        Ok(None) => {}
+        Ok(Some(Value::Array(ArrayValue::Float32(array)))) => {
+            assert_eq!(array.shape(), &[0, 0]);
+        }
+        other => panic!("unexpected row 0 value: {other:?}"),
+    }
+    assert_eq!(
+        table_array(&reopened, 1, "vis"),
+        Ok(&ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]).unwrap()
+        ))
+    );
+    assert_eq!(
+        table_array(&reopened, 2, "vis"),
+        Ok(&ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![1, 3], vec![5.0, 6.0, 7.0]).unwrap()
+        ))
+    );
+    assert!(
+        reopened
+            .data_manager_info()
+            .iter()
+            .any(|dm| dm.dm_type == "TiledShapeStMan" && dm.columns == ["vis"])
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
 fn from_rows_with_schema_persists_missing_undefined_scalar_cells() {
     use crate::schema::ColumnOptions;
 

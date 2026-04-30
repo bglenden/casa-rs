@@ -24,6 +24,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs::{File, OpenOptions, create_dir_all};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -52,6 +53,7 @@ use crate::plan::{
 
 const PERF_ENV: &str = "CASA_RS_CALIBRATION_PERF";
 const PERF_DIR_ENV: &str = "CASA_RS_CALIBRATION_PERF_DIR";
+const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 
 fn calibration_profile_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -493,10 +495,11 @@ pub(crate) fn evaluate_apply_rows(
             source,
         }
     })?;
+    let geometry_engine = geometry_engine_for_plan(ms, plan)?;
     let loaded_tables = plan
         .calibration_tables
         .iter()
-        .map(load_calibration_table)
+        .map(|table_plan| load_calibration_table(table_plan, geometry_engine.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     let parang_state = if plan.parang {
         Some(load_parallactic_angle_state(ms).map_err(|source| {
@@ -524,6 +527,7 @@ pub(crate) fn evaluate_apply_rows(
     let flag_index = main_rows
         .column_index("FLAG")
         .expect("prepared apply reader includes FLAG");
+    let mut geometry_cache = RowGeometryCache::default();
     for row in &plan.selected_rows {
         let correlation_types = correlation_types_by_ddid
             .get(&row.data_desc_id)
@@ -562,6 +566,7 @@ pub(crate) fn evaluate_apply_rows(
             plan,
             &loaded_tables,
             parang_state.as_ref(),
+            Some(&mut geometry_cache),
         )?;
         evaluated_rows.insert(
             row.row_index,
@@ -716,12 +721,18 @@ fn execute_apply_plan(
     let ms_path = display_ms_path(ms);
     let execute_apply_plan_started_at = Instant::now();
     let ensure_corrected_data_started_at = Instant::now();
-    let created_corrected_data_column = ensure_corrected_data_column(ms).map_err(|source| {
-        ApplyExecutionError::CreateCorrectedData {
-            path: ms_path.clone(),
-            source,
-        }
-    })?;
+    let selected_row_indices = plan
+        .selected_rows
+        .iter()
+        .map(|row| row.row_index)
+        .collect::<BTreeSet<_>>();
+    let created_corrected_data_column =
+        ensure_corrected_data_column(ms, Some(&selected_row_indices)).map_err(|source| {
+            ApplyExecutionError::CreateCorrectedData {
+                path: ms_path.clone(),
+                source,
+            }
+        })?;
     let ensure_corrected_data_ns = ensure_corrected_data_started_at.elapsed().as_nanos() as u64;
 
     let correlation_lookup_started_at = Instant::now();
@@ -733,10 +744,11 @@ fn execute_apply_plan(
     })?;
     let correlation_lookup_ns = correlation_lookup_started_at.elapsed().as_nanos() as u64;
     let calibration_load_started_at = Instant::now();
+    let geometry_engine = geometry_engine_for_plan(ms, &plan)?;
     let loaded_tables = plan
         .calibration_tables
         .iter()
-        .map(load_calibration_table)
+        .map(|table_plan| load_calibration_table(table_plan, geometry_engine.as_ref()))
         .collect::<Result<Vec<_>, _>>()?;
     let parang_state = if plan.parang {
         Some(load_parallactic_angle_state(ms).map_err(|source| {
@@ -766,9 +778,10 @@ fn execute_apply_plan(
         .main_table()
         .schema()
         .is_some_and(|schema| schema.contains_column("WEIGHT_SPECTRUM"));
-    let use_partial_main_save = !created_corrected_data_column;
+    let use_partial_main_save = true;
     let mut changed_columns: Vec<&'static str> = vec![VisibilityDataColumn::CorrectedData.name()];
     let row_loop_started_at = Instant::now();
+    let mut geometry_cache = RowGeometryCache::default();
     if use_partial_main_save {
         let anticipated_updates = plan.selected_rows.len();
         ms.main_table_mut().reserve_array_cell_updates(
@@ -893,6 +906,7 @@ fn execute_apply_plan(
                 &plan,
                 &loaded_tables,
                 parang_state.as_ref(),
+                Some(&mut geometry_cache),
             )?;
             row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
 
@@ -1016,6 +1030,7 @@ fn execute_apply_plan(
                 &plan,
                 &loaded_tables,
                 parang_state.as_ref(),
+                Some(&mut geometry_cache),
             )?;
             row_compute_ns += row_compute_started_at.elapsed().as_nanos() as u64;
 
@@ -1086,12 +1101,41 @@ fn execute_apply_plan(
     if use_partial_main_save {
         let changed_row_indices: Vec<usize> =
             plan.selected_rows.iter().map(|row| row.row_index).collect();
-        ms.main_table()
-            .save_selected_rows_in_place_assuming_valid(&changed_columns, &changed_row_indices)
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
-            })?;
+        if created_corrected_data_column {
+            ms.main_table_mut()
+                .save_added_tiled_shape_column_in_place_assuming_valid(
+                    VisibilityDataColumn::CorrectedData.name(),
+                    &changed_row_indices,
+                    Some(&[4, 64, 32]),
+                )
+                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                    path: ms_path.clone(),
+                    source: MsError::from(source),
+                })?;
+            let existing_changed_columns: Vec<&str> = changed_columns
+                .iter()
+                .copied()
+                .filter(|column| *column != VisibilityDataColumn::CorrectedData.name())
+                .collect();
+            if !existing_changed_columns.is_empty() {
+                ms.main_table()
+                    .save_selected_rows_in_place_assuming_valid(
+                        &existing_changed_columns,
+                        &changed_row_indices,
+                    )
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })?;
+            }
+        } else {
+            ms.main_table()
+                .save_selected_rows_in_place_assuming_valid(&changed_columns, &changed_row_indices)
+                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                    path: ms_path.clone(),
+                    source: MsError::from(source),
+                })?;
+        }
     } else {
         ms.save_main_table_only_assuming_valid().map_err(|source| {
             ApplyExecutionError::MutateMeasurementSet {
@@ -1210,6 +1254,144 @@ struct PrefetchedExecutionRowInputs {
     original_weight: Option<ArrayValue>,
 }
 
+#[derive(Default)]
+struct RowGeometryCache {
+    elevations: HashMap<RowGeometryKey, f64>,
+    projected_offsets: HashMap<ProjectedOffsetKey, [f64; 3]>,
+    materialized_grids: HashMap<MaterializedGridKey, CalibrationGrid>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct RowGeometryKey {
+    time_bits: u64,
+    field_id: i32,
+    antenna_id: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ProjectedOffsetKey {
+    row: RowGeometryKey,
+    offset_bits: [u64; 3],
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct MaterializedGridKey {
+    row: RowGeometryKey,
+    kind: u8,
+    data_spw_id: i32,
+    fingerprint: u64,
+}
+
+impl RowGeometryCache {
+    fn elevation(
+        &mut self,
+        engine: &MsCalEngine,
+        time_seconds: f64,
+        field_id: i32,
+        antenna_id: i32,
+    ) -> MsResult<f64> {
+        let key = RowGeometryKey::new(time_seconds, field_id, antenna_id);
+        if let Some(elevation) = self.elevations.get(&key) {
+            return Ok(*elevation);
+        }
+        let (_az, elevation) = engine.azel(
+            time_seconds,
+            usize::try_from(field_id).unwrap_or(usize::MAX),
+            usize::try_from(antenna_id).unwrap_or(usize::MAX),
+        )?;
+        self.elevations.insert(key, elevation);
+        Ok(elevation)
+    }
+
+    fn project_itrf_offset_to_uvw(
+        &mut self,
+        engine: &MsCalEngine,
+        time_seconds: f64,
+        field_id: i32,
+        antenna_id: i32,
+        offset_m: [f64; 3],
+    ) -> MsResult<[f64; 3]> {
+        let key = ProjectedOffsetKey {
+            row: RowGeometryKey::new(time_seconds, field_id, antenna_id),
+            offset_bits: [
+                offset_m[0].to_bits(),
+                offset_m[1].to_bits(),
+                offset_m[2].to_bits(),
+            ],
+        };
+        if let Some(uvw) = self.projected_offsets.get(&key) {
+            return Ok(*uvw);
+        }
+        let uvw = engine.project_itrf_offset_to_uvw(
+            time_seconds,
+            usize::try_from(field_id).unwrap_or(usize::MAX),
+            usize::try_from(antenna_id).unwrap_or(usize::MAX),
+            offset_m,
+        )?;
+        self.projected_offsets.insert(key, uvw);
+        Ok(uvw)
+    }
+
+    fn materialized_grid(&self, key: MaterializedGridKey) -> Option<CalibrationGrid> {
+        self.materialized_grids.get(&key).cloned()
+    }
+
+    fn insert_materialized_grid(&mut self, key: MaterializedGridKey, grid: CalibrationGrid) {
+        self.materialized_grids.insert(key, grid);
+    }
+}
+
+impl RowGeometryKey {
+    fn new(time_seconds: f64, field_id: i32, antenna_id: i32) -> Self {
+        Self {
+            time_bits: time_seconds.to_bits(),
+            field_id,
+            antenna_id,
+        }
+    }
+}
+
+fn materialized_grid_key(
+    grid: &CalibrationGrid,
+    field_id: i32,
+    antenna_id: i32,
+    time_seconds: f64,
+    data_spw_id: i32,
+) -> Option<MaterializedGridKey> {
+    let (kind, fingerprint) = match grid {
+        CalibrationGrid::Antpos(grid) => {
+            let mut fingerprint = 0xcbf29ce484222325_u64;
+            for value in grid.offsets_m {
+                fingerprint = fingerprint.wrapping_mul(0x100000001b3) ^ u64::from(value.to_bits());
+            }
+            fingerprint = fingerprint.wrapping_mul(0x100000001b3) ^ u64::from(grid.flagged);
+            (1, fingerprint)
+        }
+        CalibrationGrid::GainCurve(grid) => {
+            let mut fingerprint = grid.receptor_count as u64;
+            for value in grid.coefficients.iter() {
+                fingerprint = fingerprint.wrapping_mul(0x100000001b3) ^ u64::from(value.to_bits());
+            }
+            for value in grid.flags.iter() {
+                fingerprint = fingerprint.wrapping_mul(0x100000001b3) ^ u64::from(*value);
+            }
+            (2, fingerprint)
+        }
+        CalibrationGrid::Opacity(grid) => {
+            let fingerprint =
+                u64::from(grid.tau.to_bits()).rotate_left(1) ^ u64::from(grid.flagged);
+            (3, fingerprint)
+        }
+        _ => return None,
+    };
+    Some(MaterializedGridKey {
+        row: RowGeometryKey::new(time_seconds, field_id, antenna_id),
+        kind,
+        data_spw_id,
+        fingerprint,
+    })
+}
+
 struct ParallacticAngleState {
     engine: MsCalEngine,
     feed_rows: HashMap<(i32, i32), Vec<FeedAngleRow>>,
@@ -1229,6 +1411,7 @@ fn apply_row(
     plan: &ApplyPlan,
     loaded_tables: &[LoadedCalibrationTable],
     parang_state: Option<&ParallacticAngleState>,
+    geometry_cache: Option<&mut RowGeometryCache>,
 ) -> Result<ExecutionRowResult, ApplyExecutionError> {
     let ExecutionRowInputs {
         correlation_types,
@@ -1282,6 +1465,7 @@ fn apply_row(
     let mut weight_spectrum = None;
     let mut implicit_weight_spectrum =
         (any_calwt && !has_weight_spectrum).then(|| ArrayD::from_elem(data.raw_dim(), 1.0_f32));
+    let mut geometry_cache = geometry_cache;
 
     if any_calwt {
         let Some(weight_values) = weight.as_ref() else {
@@ -1364,12 +1548,34 @@ fn apply_row(
             continue;
         };
 
+        let ant1 = materialize_row_dependent_grid(
+            ant1,
+            row.field_id,
+            row.antenna1,
+            row.time_seconds,
+            data_spw,
+            loaded_table.engine.as_deref(),
+            &loaded_table.path,
+            geometry_cache.as_deref_mut(),
+        )?;
+        let ant2 = materialize_row_dependent_grid(
+            ant2,
+            row.field_id,
+            row.antenna2,
+            row.time_seconds,
+            data_spw,
+            loaded_table.engine.as_deref(),
+            &loaded_table.path,
+            geometry_cache.as_deref_mut(),
+        )?;
+
         let sampling_context = CalibrationSamplingContext {
             data_frequencies_hz: &data_spw.channel_frequencies_hz,
             cal_frequencies_hz: &cal_spw.channel_frequencies_hz,
             cal_ref_frequency_hz: cal_spw_reference_frequency_hz(cal_spw),
             interp: table_plan.interp,
             path: &loaded_table.path,
+            engine: loaded_table.engine.as_deref(),
         };
 
         for corr_index in 0..data.shape()[0] {
@@ -1385,8 +1591,22 @@ fn apply_row(
                 })?;
 
             for chan_index in 0..data.shape()[1] {
-                let gain1 = ant1.sample(receptors.0, chan_index, &sampling_context)?;
-                let gain2 = ant2.sample(receptors.1, chan_index, &sampling_context)?;
+                let gain1 = ant1.sample(
+                    receptors.0,
+                    chan_index,
+                    row.field_id,
+                    row.antenna1,
+                    row.time_seconds,
+                    &sampling_context,
+                )?;
+                let gain2 = ant2.sample(
+                    receptors.1,
+                    chan_index,
+                    row.field_id,
+                    row.antenna2,
+                    row.time_seconds,
+                    &sampling_context,
+                )?;
 
                 if gain1.flagged
                     || gain2.flagged
@@ -1479,6 +1699,7 @@ fn apply_row(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_row_prefetched(
     row: &ApplyRowPlan,
     correlation_types: &[i32],
@@ -1487,6 +1708,7 @@ fn apply_row_prefetched(
     plan: &ApplyPlan,
     loaded_tables: &[LoadedCalibrationTable],
     parang_state: Option<&ParallacticAngleState>,
+    geometry_cache: Option<&mut RowGeometryCache>,
 ) -> Result<ExecutionRowResult, ApplyExecutionError> {
     apply_row(
         row,
@@ -1500,7 +1722,173 @@ fn apply_row_prefetched(
         plan,
         loaded_tables,
         parang_state,
+        geometry_cache,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_row_dependent_grid(
+    grid: CalibrationGrid,
+    field_id: i32,
+    antenna_id: i32,
+    time_seconds: f64,
+    data_spw: &crate::plan::SpectralWindowPlan,
+    engine: Option<&MsCalEngine>,
+    path: &Path,
+    geometry_cache: Option<&mut RowGeometryCache>,
+) -> Result<CalibrationGrid, ApplyExecutionError> {
+    let mut geometry_cache = geometry_cache;
+    let cache_key =
+        materialized_grid_key(&grid, field_id, antenna_id, time_seconds, data_spw.spw_id);
+    if let (Some(cache), Some(key)) = (&geometry_cache, cache_key)
+        && let Some(grid) = cache.materialized_grid(key)
+    {
+        return Ok(grid);
+    }
+    let result = match grid {
+        CalibrationGrid::Antpos(grid) => {
+            let Some(engine) = engine else {
+                return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                    path: path.display().to_string(),
+                    reason: "KAntPos Jones apply requires MeasurementSet geometry".to_string(),
+                });
+            };
+            let uvw = if let Some(cache) = geometry_cache.as_deref_mut() {
+                cache.project_itrf_offset_to_uvw(
+                    engine,
+                    time_seconds,
+                    field_id,
+                    antenna_id,
+                    [
+                        f64::from(grid.offsets_m[0]),
+                        f64::from(grid.offsets_m[1]),
+                        f64::from(grid.offsets_m[2]),
+                    ],
+                )
+            } else {
+                engine.project_itrf_offset_to_uvw(
+                    time_seconds,
+                    usize::try_from(field_id).unwrap_or(usize::MAX),
+                    usize::try_from(antenna_id).unwrap_or(usize::MAX),
+                    [
+                        f64::from(grid.offsets_m[0]),
+                        f64::from(grid.offsets_m[1]),
+                        f64::from(grid.offsets_m[2]),
+                    ],
+                )
+            }
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: path.display().to_string(),
+                source,
+            })?;
+            let delay_ns = uvw[2] / SPEED_OF_LIGHT_M_PER_S * 1.0e9;
+            let values = data_spw
+                .channel_frequencies_hz
+                .iter()
+                .map(|frequency_hz| {
+                    let phase_rad = 2.0 * std::f64::consts::PI * delay_ns * (*frequency_hz / 1.0e9);
+                    Complex32::new(phase_rad.cos() as f32, phase_rad.sin() as f32)
+                })
+                .collect::<Vec<_>>();
+            let channel_count = values.len();
+            Ok(CalibrationGrid::Complex(GainGrid {
+                receptor_count: 1,
+                channel_count,
+                values: ArrayD::from_shape_vec(IxDyn(&[1, channel_count]).f(), values)
+                    .expect("antpos materialized grid shape is valid"),
+                flags: ArrayD::from_elem(IxDyn(&[1, channel_count]).f(), grid.flagged),
+            }))
+        }
+        CalibrationGrid::GainCurve(grid) => {
+            let Some(engine) = engine else {
+                return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                    path: path.display().to_string(),
+                    reason: "EGainCurve apply requires MeasurementSet geometry".to_string(),
+                });
+            };
+            let elevation = if let Some(cache) = geometry_cache.as_deref_mut() {
+                cache.elevation(engine, time_seconds, field_id, antenna_id)
+            } else {
+                engine
+                    .azel(
+                        time_seconds,
+                        usize::try_from(field_id).unwrap_or(usize::MAX),
+                        usize::try_from(antenna_id).unwrap_or(usize::MAX),
+                    )
+                    .map(|(_az, elevation)| elevation)
+            }
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: path.display().to_string(),
+                source,
+            })?;
+            let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees() as f32;
+            let mut values = Vec::with_capacity(grid.receptor_count);
+            let mut flags = Vec::with_capacity(grid.receptor_count);
+            for receptor in 0..grid.receptor_count {
+                let base = receptor * 4;
+                let mut gain = grid.coefficients[[base, 0]];
+                let mut angle_power = 1.0_f32;
+                for coeff_index in 1..4 {
+                    angle_power *= za_degrees;
+                    gain += grid.coefficients[[base + coeff_index, 0]] * angle_power;
+                }
+                values.push(Complex32::new(gain, 0.0));
+                flags.push((0..4).any(|coeff_index| grid.flags[[base + coeff_index, 0]]));
+            }
+            Ok(CalibrationGrid::Complex(GainGrid {
+                receptor_count: grid.receptor_count,
+                channel_count: 1,
+                values: ArrayD::from_shape_vec(IxDyn(&[grid.receptor_count]).f(), values)
+                    .expect("gaincurve materialized grid shape is valid"),
+                flags: ArrayD::from_shape_vec(IxDyn(&[grid.receptor_count]).f(), flags)
+                    .expect("gaincurve materialized flag shape is valid"),
+            }))
+        }
+        CalibrationGrid::Opacity(grid) => {
+            let Some(engine) = engine else {
+                return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                    path: path.display().to_string(),
+                    reason: "TOpac apply requires MeasurementSet geometry".to_string(),
+                });
+            };
+            let elevation = if let Some(cache) = geometry_cache.as_deref_mut() {
+                cache.elevation(engine, time_seconds, field_id, antenna_id)
+            } else {
+                engine
+                    .azel(
+                        time_seconds,
+                        usize::try_from(field_id).unwrap_or(usize::MAX),
+                        usize::try_from(antenna_id).unwrap_or(usize::MAX),
+                    )
+                    .map(|(_az, elevation)| elevation)
+            }
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: path.display().to_string(),
+                source,
+            })?;
+            let zenith_angle = std::f64::consts::FRAC_PI_2 - elevation;
+            let gain = if zenith_angle < std::f64::consts::FRAC_PI_2 {
+                (-f64::from(grid.tau) / zenith_angle.cos()).exp().sqrt() as f32
+            } else {
+                1.0
+            };
+            Ok(CalibrationGrid::Complex(GainGrid {
+                receptor_count: 1,
+                channel_count: 1,
+                values: ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![Complex32::new(gain, 0.0)])
+                    .expect("opacity materialized grid shape is valid"),
+                flags: ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![grid.flagged])
+                    .expect("opacity materialized flag shape is valid"),
+            }))
+        }
+        other => Ok(other),
+    };
+    if let (Some(cache), Some(key), Ok(materialized)) =
+        (&mut geometry_cache, cache_key, result.as_ref())
+    {
+        cache.insert_materialized_grid(key, materialized.clone());
+    }
+    result
 }
 
 impl ParallacticAngleState {
@@ -1654,6 +2042,7 @@ struct LoadedCalibrationTable {
     path: PathBuf,
     interp: ApplyInterpolationMode,
     supports_calwt: bool,
+    engine: Option<Arc<MsCalEngine>>,
     solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>>,
 }
 
@@ -1672,6 +2061,9 @@ struct CalibrationSolution {
 enum CalibrationGrid {
     Complex(GainGrid),
     Delay(DelayGrid),
+    Antpos(AntposGrid),
+    GainCurve(GainCurveGrid),
+    Opacity(OpacityGrid),
 }
 
 #[derive(Clone)]
@@ -1694,6 +2086,7 @@ struct CalibrationSamplingContext<'a> {
     cal_ref_frequency_hz: f64,
     interp: ApplyInterpolationMode,
     path: &'a Path,
+    engine: Option<&'a MsCalEngine>,
 }
 
 #[derive(Clone)]
@@ -1704,11 +2097,35 @@ struct DelayGrid {
     flags: ArrayD<bool>,
 }
 
+#[derive(Clone)]
+struct AntposGrid {
+    offsets_m: [f32; 3],
+    flagged: bool,
+}
+
+#[derive(Clone)]
+struct GainCurveGrid {
+    receptor_count: usize,
+    coefficients: ArrayD<f32>,
+    flags: ArrayD<bool>,
+}
+
+#[derive(Clone)]
+struct OpacityGrid {
+    tau: f32,
+    flagged: bool,
+}
+
 impl CalibrationGrid {
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn sample(
         &self,
         receptor: usize,
         data_chan_index: usize,
+        field_id: i32,
+        antenna_id: i32,
+        time_seconds: f64,
         context: &CalibrationSamplingContext<'_>,
     ) -> Result<GainSample, ApplyExecutionError> {
         match self {
@@ -1727,6 +2144,19 @@ impl CalibrationGrid {
                 context.cal_ref_frequency_hz,
                 context.path,
             ),
+            Self::Antpos(grid) => grid.sample(
+                data_chan_index,
+                field_id,
+                antenna_id,
+                time_seconds,
+                context.data_frequencies_hz,
+                context.engine,
+                context.path,
+            ),
+            Self::GainCurve(grid) => {
+                grid.sample(receptor, field_id, antenna_id, time_seconds, context)
+            }
+            Self::Opacity(grid) => grid.sample(field_id, antenna_id, time_seconds, context),
         }
     }
 }
@@ -1965,6 +2395,234 @@ impl DelayGrid {
     }
 }
 
+impl AntposGrid {
+    fn from_arrays(
+        path: &Path,
+        offsets: &ArrayValue,
+        flags: &ArrayValue,
+    ) -> Result<Self, ApplyExecutionError> {
+        let values = match offsets {
+            ArrayValue::Float32(values) => values.clone(),
+            ArrayValue::Float64(values) => values.mapv(|value| value as f32),
+            other => {
+                return Err(ApplyExecutionError::UnsupportedParameterShape {
+                    path: path.display().to_string(),
+                    shape: other.shape().to_vec(),
+                });
+            }
+        };
+        let ArrayValue::Bool(flags) = flags else {
+            return Err(ApplyExecutionError::UnsupportedParameterShape {
+                path: path.display().to_string(),
+                shape: flags.shape().to_vec(),
+            });
+        };
+        if values.len() < 3 {
+            return Err(ApplyExecutionError::UnsupportedParameterShape {
+                path: path.display().to_string(),
+                shape: values.shape().to_vec(),
+            });
+        }
+        Ok(Self {
+            offsets_m: [values[[0, 0]], values[[1, 0]], values[[2, 0]]],
+            flagged: flags.iter().any(|flag| *flag),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sample(
+        &self,
+        data_chan_index: usize,
+        field_id: i32,
+        antenna_id: i32,
+        time_seconds: f64,
+        data_frequencies_hz: &[f64],
+        engine: Option<&MsCalEngine>,
+        path: &Path,
+    ) -> Result<GainSample, ApplyExecutionError> {
+        let frequency_hz = *data_frequencies_hz.get(data_chan_index).ok_or_else(|| {
+            ApplyExecutionError::UnsupportedInterpolation {
+                path: path.display().to_string(),
+                interp: ApplyInterpolationMode::Nearest,
+                reason: "data channel index is outside the MeasurementSet SPW grid".to_string(),
+            }
+        })?;
+        let Some(engine) = engine else {
+            return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                path: path.display().to_string(),
+                reason: "KAntPos Jones apply requires MeasurementSet geometry".to_string(),
+            });
+        };
+        let uvw = engine
+            .project_itrf_offset_to_uvw(
+                time_seconds,
+                usize::try_from(field_id).unwrap_or(usize::MAX),
+                usize::try_from(antenna_id).unwrap_or(usize::MAX),
+                [
+                    f64::from(self.offsets_m[0]),
+                    f64::from(self.offsets_m[1]),
+                    f64::from(self.offsets_m[2]),
+                ],
+            )
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: path.display().to_string(),
+                source,
+            })?;
+        let delay_ns = uvw[2] / SPEED_OF_LIGHT_M_PER_S * 1.0e9;
+        let phase_rad = 2.0 * std::f64::consts::PI * delay_ns * (frequency_hz / 1.0e9);
+        Ok(GainSample {
+            value: Complex32::new(phase_rad.cos() as f32, phase_rad.sin() as f32),
+            flagged: self.flagged,
+        })
+    }
+}
+
+impl GainCurveGrid {
+    fn from_arrays(
+        path: &Path,
+        coefficients: &ArrayValue,
+        flags: &ArrayValue,
+    ) -> Result<Self, ApplyExecutionError> {
+        let coefficients = match coefficients {
+            ArrayValue::Float32(values) => values.clone(),
+            ArrayValue::Float64(values) => values.mapv(|value| value as f32),
+            other => {
+                return Err(ApplyExecutionError::UnsupportedParameterShape {
+                    path: path.display().to_string(),
+                    shape: other.shape().to_vec(),
+                });
+            }
+        };
+        let ArrayValue::Bool(flags) = flags else {
+            return Err(ApplyExecutionError::UnsupportedParameterShape {
+                path: path.display().to_string(),
+                shape: flags.shape().to_vec(),
+            });
+        };
+        if coefficients.ndim() != 2 || coefficients.shape()[0] % 4 != 0 {
+            return Err(ApplyExecutionError::UnsupportedParameterShape {
+                path: path.display().to_string(),
+                shape: coefficients.shape().to_vec(),
+            });
+        }
+        Ok(Self {
+            receptor_count: coefficients.shape()[0] / 4,
+            coefficients,
+            flags: flags.clone(),
+        })
+    }
+
+    fn sample(
+        &self,
+        receptor: usize,
+        field_id: i32,
+        antenna_id: i32,
+        time_seconds: f64,
+        context: &CalibrationSamplingContext<'_>,
+    ) -> Result<GainSample, ApplyExecutionError> {
+        let Some(engine) = context.engine else {
+            return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                path: context.path.display().to_string(),
+                reason: "EGainCurve apply requires MeasurementSet geometry".to_string(),
+            });
+        };
+        let (_az, elevation) = engine
+            .azel(
+                time_seconds,
+                usize::try_from(field_id).unwrap_or(usize::MAX),
+                usize::try_from(antenna_id).unwrap_or(usize::MAX),
+            )
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: context.path.display().to_string(),
+                source,
+            })?;
+        let za_degrees = (std::f64::consts::FRAC_PI_2 - elevation).to_degrees() as f32;
+        let receptor = receptor.min(self.receptor_count.saturating_sub(1));
+        let base = receptor * 4;
+        let mut gain = self.coefficients[[base, 0]];
+        let mut angle_power = 1.0_f32;
+        for coeff_index in 1..4 {
+            angle_power *= za_degrees;
+            gain += self.coefficients[[base + coeff_index, 0]] * angle_power;
+        }
+        let flagged = (0..4).any(|coeff_index| self.flags[[base + coeff_index, 0]]);
+        Ok(GainSample {
+            value: Complex32::new(gain, 0.0),
+            flagged,
+        })
+    }
+}
+
+impl OpacityGrid {
+    fn from_arrays(
+        path: &Path,
+        tau: &ArrayValue,
+        flags: &ArrayValue,
+    ) -> Result<Self, ApplyExecutionError> {
+        let values = match tau {
+            ArrayValue::Float32(values) => values.clone(),
+            ArrayValue::Float64(values) => values.mapv(|value| value as f32),
+            other => {
+                return Err(ApplyExecutionError::UnsupportedParameterShape {
+                    path: path.display().to_string(),
+                    shape: other.shape().to_vec(),
+                });
+            }
+        };
+        let ArrayValue::Bool(flags) = flags else {
+            return Err(ApplyExecutionError::UnsupportedParameterShape {
+                path: path.display().to_string(),
+                shape: flags.shape().to_vec(),
+            });
+        };
+        if values.is_empty() {
+            return Err(ApplyExecutionError::UnsupportedParameterShape {
+                path: path.display().to_string(),
+                shape: values.shape().to_vec(),
+            });
+        }
+        Ok(Self {
+            tau: values[[0, 0]],
+            flagged: flags.iter().any(|flag| *flag),
+        })
+    }
+
+    fn sample(
+        &self,
+        field_id: i32,
+        antenna_id: i32,
+        time_seconds: f64,
+        context: &CalibrationSamplingContext<'_>,
+    ) -> Result<GainSample, ApplyExecutionError> {
+        let Some(engine) = context.engine else {
+            return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                path: context.path.display().to_string(),
+                reason: "TOpac apply requires MeasurementSet geometry".to_string(),
+            });
+        };
+        let (_az, elevation) = engine
+            .azel(
+                time_seconds,
+                usize::try_from(field_id).unwrap_or(usize::MAX),
+                usize::try_from(antenna_id).unwrap_or(usize::MAX),
+            )
+            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                path: context.path.display().to_string(),
+                source,
+            })?;
+        let zenith_angle = std::f64::consts::FRAC_PI_2 - elevation;
+        let gain = if zenith_angle < std::f64::consts::FRAC_PI_2 {
+            (-f64::from(self.tau) / zenith_angle.cos()).exp().sqrt() as f32
+        } else {
+            1.0
+        };
+        Ok(GainSample {
+            value: Complex32::new(gain, 0.0),
+            flagged: self.flagged,
+        })
+    }
+}
+
 impl LoadedCalibrationTable {
     fn lookup(
         &self,
@@ -2112,6 +2770,24 @@ fn interpolate_time_linear(
                         flags,
                     }))
                 }
+                (
+                    CalibrationGrid::Antpos(_)
+                    | CalibrationGrid::GainCurve(_)
+                    | CalibrationGrid::Opacity(_),
+                    _,
+                )
+                | (
+                    _,
+                    CalibrationGrid::Antpos(_)
+                    | CalibrationGrid::GainCurve(_)
+                    | CalibrationGrid::Opacity(_),
+                ) => Err(ApplyExecutionError::UnsupportedInterpolation {
+                    path: path.display().to_string(),
+                    interp: ApplyInterpolationMode::Linear,
+                    reason:
+                        "VLA prior tables are row-geometry dependent and use nearest table rows"
+                            .to_string(),
+                }),
                 _ => Err(ApplyExecutionError::UnsupportedInterpolation {
                     path: path.display().to_string(),
                     interp: ApplyInterpolationMode::Linear,
@@ -2150,8 +2826,32 @@ fn interpolate_gain_amplitude_phase(
     Complex32::new(amp * phase.cos(), amp * phase.sin())
 }
 
+fn geometry_engine_for_plan(
+    ms: &MeasurementSet,
+    plan: &ApplyPlan,
+) -> Result<Option<Arc<MsCalEngine>>, ApplyExecutionError> {
+    let needs_geometry = plan.calibration_tables.iter().any(|table| {
+        matches!(
+            table.summary.table_subtype.as_str(),
+            "KAntPos Jones" | "EGainCurve" | "TOpac"
+        )
+    });
+    if !needs_geometry {
+        return Ok(None);
+    }
+    let ms_path = display_ms_path(ms);
+    MsCalEngine::new(ms)
+        .map(Arc::new)
+        .map(Some)
+        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+            path: ms_path,
+            source,
+        })
+}
+
 fn load_calibration_table(
     table_plan: &ApplyCalibrationTablePlan,
+    geometry_engine: Option<&Arc<MsCalEngine>>,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
     if table_plan.summary.table_subtype == "BPOLY" {
         return load_bpoly_calibration_table(table_plan);
@@ -2208,6 +2908,54 @@ fn load_calibration_table(
                     flags,
                 )?)
             }
+            CalibrationParameterFamily::Float
+                if table_plan.summary.table_subtype.as_str() == "KAntPos Jones" =>
+            {
+                let offsets = table
+                    .cell_accessor(row_index, COL_FPARAM)
+                    .and_then(|cell| cell.array())
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: table_plan.spec.path.display().to_string(),
+                        source: MsError::from(source),
+                    })?;
+                CalibrationGrid::Antpos(AntposGrid::from_arrays(
+                    &table_plan.spec.path,
+                    offsets,
+                    flags,
+                )?)
+            }
+            CalibrationParameterFamily::Float
+                if table_plan.summary.table_subtype.as_str() == "EGainCurve" =>
+            {
+                let coefficients = table
+                    .cell_accessor(row_index, COL_FPARAM)
+                    .and_then(|cell| cell.array())
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: table_plan.spec.path.display().to_string(),
+                        source: MsError::from(source),
+                    })?;
+                CalibrationGrid::GainCurve(GainCurveGrid::from_arrays(
+                    &table_plan.spec.path,
+                    coefficients,
+                    flags,
+                )?)
+            }
+            CalibrationParameterFamily::Float
+                if table_plan.summary.table_subtype.as_str() == "TOpac" =>
+            {
+                let tau = table
+                    .cell_accessor(row_index, COL_FPARAM)
+                    .and_then(|cell| cell.array())
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: table_plan.spec.path.display().to_string(),
+                        source: MsError::from(source),
+                    })?;
+                CalibrationGrid::Opacity(OpacityGrid::from_arrays(
+                    &table_plan.spec.path,
+                    tau,
+                    flags,
+                )?)
+            }
             _ => {
                 return Err(ApplyExecutionError::UnsupportedInterpolation {
                     path: table_plan.spec.path.display().to_string(),
@@ -2226,6 +2974,7 @@ fn load_calibration_table(
         path: table_plan.spec.path.clone(),
         interp: table_plan.interp,
         supports_calwt,
+        engine: geometry_engine.cloned(),
         solutions,
     })
 }
@@ -2294,6 +3043,7 @@ fn load_bpoly_calibration_table(
         path: table_plan.spec.path.clone(),
         interp: table_plan.interp,
         supports_calwt: false,
+        engine: None,
         solutions,
     })
 }
@@ -2573,7 +3323,10 @@ fn cal_spw_reference_frequency_hz(cal_spw: &crate::plan::SpectralWindowPlan) -> 
         .unwrap_or(cal_spw.ref_frequency_hz)
 }
 
-fn ensure_corrected_data_column(ms: &mut MeasurementSet) -> Result<bool, TableError> {
+fn ensure_corrected_data_column(
+    ms: &mut MeasurementSet,
+    _rows_overwritten_by_apply: Option<&BTreeSet<usize>>,
+) -> Result<bool, TableError> {
     if ms
         .main_table()
         .schema()
@@ -2590,22 +3343,8 @@ fn ensure_corrected_data_column(ms: &mut MeasurementSet) -> Result<bool, TableEr
         .column(VisibilityDataColumn::CorrectedData.name())
         .expect("corrected data column present")
         .clone();
-    let empty = Value::Array(ArrayValue::Complex32(
-        ArrayD::from_shape_vec(IxDyn(&[0, 0]).f(), Vec::<Complex32>::new()).unwrap(),
-    ));
-    ms.main_table_mut().add_column(column, Some(empty))?;
+    ms.main_table_mut().add_column(column, None)?;
 
-    let row_count = ms.row_count();
-    for row_index in 0..row_count {
-        let data = ms
-            .main_table()
-            .cell_accessor(row_index, VisibilityDataColumn::Data.name())?
-            .array()?
-            .clone();
-        ms.main_table_mut()
-            .cell_accessor_mut(row_index, VisibilityDataColumn::CorrectedData.name())?
-            .set(Value::Array(data))?;
-    }
     Ok(true)
 }
 
@@ -3102,7 +3841,7 @@ mod tests {
                 assert!(grid.flags[[0, 0]]);
                 assert!(!grid.flags[[0, 1]]);
             }
-            CalibrationGrid::Delay(_) => panic!("expected complex interpolation"),
+            _ => panic!("expected complex interpolation"),
         }
 
         let wrapped = interpolate_gain_amplitude_phase(
@@ -3141,7 +3880,7 @@ mod tests {
                 assert!(grid.flags[[0, 0]]);
                 assert!(grid.flags[[0, 1]]);
             }
-            CalibrationGrid::Complex(_) => panic!("expected delay interpolation"),
+            _ => panic!("expected delay interpolation"),
         }
 
         match interpolate_time_linear(
@@ -3166,7 +3905,7 @@ mod tests {
             CalibrationGrid::Complex(grid) => {
                 assert_eq!(grid.values[[0, 0]], Complex32::new(1.0, 0.0))
             }
-            CalibrationGrid::Delay(_) => panic!("expected complex interpolation"),
+            _ => panic!("expected complex interpolation"),
         }
         match interpolate_time_linear(path, &[], 0.0) {
             Ok(_) => panic!("expected empty interpolation to fail"),
@@ -3387,7 +4126,7 @@ mod tests {
                 assert!((grid.values[[0, 1]].norm() - 2.0).abs() < 1.0e-5);
                 assert_ne!(grid.values[[0, 1]], Complex32::new(1.0, 0.0));
             }
-            CalibrationGrid::Delay(_) => panic!("expected complex BPOLY output"),
+            _ => panic!("expected complex BPOLY output"),
         }
 
         let bad_phase_units = scalar_table(vec![
@@ -3463,21 +4202,22 @@ mod tests {
             .add_row(RecordValue::new(fields))
             .unwrap();
 
-        assert!(ensure_corrected_data_column(&mut ms).unwrap());
-        let corrected = ms
-            .main_table()
-            .cell_accessor(0, VisibilityDataColumn::CorrectedData.name())
-            .and_then(|cell| cell.array())
-            .unwrap()
-            .clone();
-        assert_eq!(
-            corrected,
-            *ms.main_table()
-                .cell_accessor(0, VisibilityDataColumn::Data.name())
-                .and_then(|cell| cell.array())
+        assert!(ensure_corrected_data_column(&mut ms, None).unwrap());
+        assert!(
+            ms.main_table()
+                .schema()
                 .unwrap()
+                .contains_column(VisibilityDataColumn::CorrectedData.name())
         );
-        assert!(!ensure_corrected_data_column(&mut ms).unwrap());
+        assert!(
+            ms.main_table()
+                .row_accessor()
+                .row(0)
+                .unwrap()
+                .get(VisibilityDataColumn::CorrectedData.name())
+                .is_none()
+        );
+        assert!(!ensure_corrected_data_column(&mut ms, None).unwrap());
         assert_eq!(display_ms_path(&ms), "<in-memory>");
     }
 }

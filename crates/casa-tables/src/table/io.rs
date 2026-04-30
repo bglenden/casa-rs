@@ -665,6 +665,150 @@ impl Table {
         Ok(())
     }
 
+    /// Persists a newly-added variable-shape array column as a standalone
+    /// `TiledShapeStMan` data manager without rewriting existing managers.
+    ///
+    /// The column must already exist in the in-memory schema and must not
+    /// exist in the on-disk `table.dat` descriptor. Defined cells are written
+    /// to the tiled row map; undefined or absent cells are left undefined.
+    ///
+    /// C++ equivalent: `Table::addColumn(desc, TiledShapeStMan(...))` followed
+    /// by cell writes.
+    pub fn save_added_tiled_shape_column_in_place_assuming_valid(
+        &mut self,
+        column: &str,
+        changed_rows: &[usize],
+        tile_shape: Option<&[usize]>,
+    ) -> Result<(), TableError> {
+        if self.kind != TableKind::Plain {
+            return Err(TableError::Storage(
+                "adding a tiled column in place requires a plain disk-backed table".to_string(),
+            ));
+        }
+        if !self.virtual_columns.is_empty() || !self.virtual_bindings.is_empty() {
+            return Err(TableError::Storage(
+                "adding a tiled column in place does not support virtual columns".to_string(),
+            ));
+        }
+
+        let source_path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| TableError::Storage("table has no source path".to_string()))?
+            .clone();
+        let schema_column = self
+            .inner
+            .schema()
+            .and_then(|schema| schema.column(column))
+            .cloned()
+            .ok_or_else(|| TableError::SchemaColumnUnknown {
+                column: column.to_string(),
+            })?;
+
+        let auto_unlock = self.begin_write_operation("save_added_tiled_shape_column")?;
+        let result = (|| {
+            let control_path = source_path.join(crate::storage::TABLE_CONTROL_FILE);
+            let mut table_dat =
+                match crate::storage::table_control::read_table_dat_dispatch(&control_path)? {
+                    crate::storage::table_control::TableDatResult::Plain(table_dat) => table_dat,
+                    _ => {
+                        return Err(TableError::Storage(
+                            "adding a tiled column in place only supports plain tables".to_string(),
+                        ));
+                    }
+                };
+
+            if table_dat
+                .table_desc
+                .columns
+                .iter()
+                .any(|desc| desc.col_name == column)
+            {
+                return Err(TableError::Storage(format!(
+                    "column \"{column}\" already exists on disk"
+                )));
+            }
+
+            let mut desc = crate::storage::table_control::ColumnDescContents::from_column_schema(
+                &schema_column,
+            );
+            desc.data_manager_type = "TiledShapeStMan".to_string();
+            desc.data_manager_group = column.to_string();
+            if let Some(keywords) = self.inner.column_keywords(column) {
+                desc.keywords = keywords.clone();
+            }
+
+            let seq_nr = table_dat
+                .column_set
+                .data_managers
+                .iter()
+                .map(|dm| dm.seq_nr)
+                .max()
+                .map_or(0, |seq| seq + 1);
+            let mut value_storage = vec![None; self.row_count()];
+            if let Some(pending_values) = self.inner.pending_array_cells(column) {
+                for (row_idx, value) in pending_values {
+                    if *row_idx < value_storage.len() {
+                        value_storage[*row_idx] = Some(Value::Array(value.clone()));
+                    }
+                }
+            }
+            for &row_idx in changed_rows {
+                if row_idx >= value_storage.len() || value_storage[row_idx].is_some() {
+                    continue;
+                }
+                value_storage[row_idx] = current_value_for_column(self, row_idx, &desc)?;
+            }
+            let values: Vec<Option<&Value>> = value_storage.iter().map(Option::as_ref).collect();
+
+            crate::storage::tiled_stman::save_tiled_single_column_values(
+                &source_path,
+                seq_nr,
+                &desc,
+                &values,
+                crate::storage::tiled_stman::SingleColumnTiledSaveOptions {
+                    dm_type_name: "TiledShapeStMan",
+                    big_endian: table_dat.big_endian,
+                    default_tile_shape: tile_shape,
+                    dm_name: column,
+                },
+            )?;
+
+            table_dat.table_desc.columns.push(desc);
+            table_dat
+                .column_set
+                .columns
+                .push(crate::storage::table_control::PlainColumnEntry {
+                    original_name: column.to_string(),
+                    dm_seq_nr: seq_nr,
+                    is_array: true,
+                });
+            table_dat.column_set.data_managers.push(
+                crate::storage::table_control::DataManagerEntry {
+                    type_name: "TiledShapeStMan".to_string(),
+                    seq_nr,
+                    data: Vec::new(),
+                },
+            );
+            table_dat.column_set.seq_count = table_dat
+                .column_set
+                .data_managers
+                .iter()
+                .map(|dm| dm.seq_nr + 1)
+                .max()
+                .unwrap_or(1);
+            crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+            crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
+            self.dm_info.push(crate::storage::DataManagerInfo {
+                dm_type: "TiledShapeStMan".to_string(),
+                seq_nr,
+                columns: vec![column.to_string()],
+            });
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
+    }
+
     /// Returns the filesystem path this table was opened from or saved to,
     /// if any. In-memory tables that have never been persisted return `None`.
     pub fn path(&self) -> Option<&Path> {

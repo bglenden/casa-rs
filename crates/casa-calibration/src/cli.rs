@@ -93,6 +93,7 @@ struct SolveGainOptions {
     prior_calibration_tables: Vec<ApplyCalibrationTableSpec>,
     parang: bool,
     model_source: GainSolveModelSource,
+    smodel: [f32; 4],
     normalize_average_amplitude: bool,
     min_snr: f32,
     min_baselines_per_antenna: usize,
@@ -134,6 +135,7 @@ struct SolveBandpassOptions {
     parang: bool,
     combine: BandpassSolveCombine,
     band_type: BandpassType,
+    smodel: [f32; 4],
     normalize_average_amplitude: bool,
     amplitude_degree: usize,
     phase_degree: usize,
@@ -287,7 +289,7 @@ impl Command {
                 normalize_average_amplitude: options.normalize_average_amplitude,
                 min_snr: options.min_snr,
                 min_baselines_per_antenna: options.min_baselines_per_antenna,
-                smodel: [1.0, 0.0, 0.0, 0.0],
+                smodel: options.smodel,
             }),
             Self::SolveBandpass(options) => {
                 CalibrationTaskRequest::SolveBandpass(SolveBandpassTaskRequest {
@@ -302,7 +304,7 @@ impl Command {
                     normalize_average_amplitude: options.normalize_average_amplitude,
                     amplitude_degree: options.amplitude_degree,
                     phase_degree: options.phase_degree,
-                    smodel: [1.0, 0.0, 0.0, 0.0],
+                    smodel: options.smodel,
                 })
             }
             Self::FluxScale(options) => CalibrationTaskRequest::FluxScale(FluxScaleRequest {
@@ -835,6 +837,20 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 choices: &["point", "model-column"],
                 help: "Visibility model source for solve-gain mode",
                 group: "Solve Gain",
+                required: false,
+                advanced: false,
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "smodel",
+                label: "Point Source Stokes",
+                order: 21,
+                flags: &["--smodel"],
+                metavar: "I,Q,U,V",
+                value_kind: UiValueKind::String,
+                default: Some("1,0,0,0"),
+                choices: &[],
+                help: "Point-source Stokes model for solve-gain and solve-bandpass",
+                group: "Solve",
                 required: false,
                 advanced: false,
             }),
@@ -1892,6 +1908,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
     let mut refant = None;
     let mut parang = false;
     let mut model_source = GainSolveModelSource::PointSource;
+    let mut smodel = [1.0, 0.0, 0.0, 0.0];
     let mut normalize_average_amplitude = false;
     let mut min_snr = 3.0_f32;
     let mut min_baselines_per_antenna = 4_usize;
@@ -1971,6 +1988,10 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
                 index += 1;
                 model_source =
                     parse_gain_solve_model_source(&take_string_value(index, args, raw)?)?;
+            }
+            "--smodel" => {
+                index += 1;
+                smodel = parse_stokes_smodel(&take_string_value(index, args, "--smodel")?)?;
             }
             "--model-column" => model_source = GainSolveModelSource::ModelColumn,
             "--point-model" => model_source = GainSolveModelSource::PointSource,
@@ -2079,6 +2100,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
             prior_calibration_tables,
             parang,
             model_source,
+            smodel,
             normalize_average_amplitude,
             min_snr,
             min_baselines_per_antenna,
@@ -2102,6 +2124,7 @@ fn parse_solve_bandpass_args(args: &[OsString], managed_output: bool) -> Result<
     let mut parang = false;
     let mut combine = BandpassSolveCombine::default();
     let mut band_type = BandpassType::B;
+    let mut smodel = [1.0, 0.0, 0.0, 0.0];
     let mut normalize_average_amplitude = false;
     let mut amplitude_degree = 3_usize;
     let mut phase_degree = 3_usize;
@@ -2173,6 +2196,10 @@ fn parse_solve_bandpass_args(args: &[OsString], managed_output: bool) -> Result<
             "--bandtype" => {
                 index += 1;
                 band_type = parse_bandpass_type(&take_string_value(index, args, "--bandtype")?)?;
+            }
+            "--smodel" => {
+                index += 1;
+                smodel = parse_stokes_smodel(&take_string_value(index, args, "--smodel")?)?;
             }
             "--solnorm" => normalize_average_amplitude = true,
             "--no-solnorm" => normalize_average_amplitude = false,
@@ -2264,6 +2291,7 @@ fn parse_solve_bandpass_args(args: &[OsString], managed_output: bool) -> Result<
             parang,
             combine,
             band_type,
+            smodel,
             normalize_average_amplitude,
             amplitude_degree,
             phase_degree,
@@ -2921,6 +2949,19 @@ fn parse_f64_list(flag: &str, value: &str) -> Result<Vec<f64>, String> {
                 .map_err(|error| format!("parse {flag} value {item:?}: {error}"))
         })
         .collect()
+}
+
+fn parse_stokes_smodel(value: &str) -> Result<[f32; 4], String> {
+    let values = parse_f64_list("--smodel", value)?;
+    let [i, q, u, v]: [f64; 4] = values.try_into().map_err(|values: Vec<f64>| {
+        format!("--smodel requires exactly 4 values, got {}", values.len())
+    })?;
+    let smodel = [i as f32, q as f32, u as f32, v as f32];
+    if smodel.iter().all(|value| value.is_finite()) {
+        Ok(smodel)
+    } else {
+        Err("--smodel values must be finite".to_string())
+    }
 }
 
 fn parse_bool_list(flag: &str, value: &str) -> Result<Vec<bool>, String> {
@@ -4135,6 +4176,8 @@ mod tests {
             "--combine".into(),
             "scan,field".into(),
             "--model-column".into(),
+            "--smodel".into(),
+            "2.5,0.1,0.0,-0.2".into(),
             "--minsnr".into(),
             "2.5".into(),
             "--gaintables".into(),
@@ -4158,6 +4201,7 @@ mod tests {
                 assert!(options.combine.scans);
                 assert!(options.combine.fields);
                 assert_eq!(options.model_source, GainSolveModelSource::ModelColumn);
+                assert_eq!(options.smodel, [2.5, 0.1, 0.0, -0.2]);
                 assert_eq!(options.min_snr, 2.5);
                 assert_eq!(options.min_baselines_per_antenna, 4);
                 assert_eq!(
@@ -4292,6 +4336,8 @@ mod tests {
             "--degphase".into(),
             "4".into(),
             "--solnorm".into(),
+            "--smodel".into(),
+            "3,0,0,0".into(),
             "--gaintables".into(),
             "prior.gcal".into(),
         ])
@@ -4315,6 +4361,7 @@ mod tests {
                 assert!(options.normalize_average_amplitude);
                 assert_eq!(options.amplitude_degree, 5);
                 assert_eq!(options.phase_degree, 4);
+                assert_eq!(options.smodel, [3.0, 0.0, 0.0, 0.0]);
                 assert_eq!(options.prior_calibration_tables.len(), 1);
             }
             _ => panic!("expected solve-bandpass action"),

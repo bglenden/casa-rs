@@ -14018,6 +14018,7 @@ fn calibrate_argument_applies_to_mode(field_id: &str, mode: &str) -> bool {
         "out_table" | "refant" => matches!(mode, "solve_gain" | "solve_bandpass"),
         "gain_type" | "solve_mode" | "solint" | "gain_combine" | "gain_model_source"
         | "min_snr" => mode == "solve_gain",
+        "smodel" => matches!(mode, "solve_gain" | "solve_bandpass"),
         "solnorm" => matches!(mode, "solve_gain" | "solve_bandpass"),
         "bandpass_combine" | "bandtype" => mode == "solve_bandpass",
         "fluxscale_input" | "reference_fields" | "transfer_fields" | "refspwmap"

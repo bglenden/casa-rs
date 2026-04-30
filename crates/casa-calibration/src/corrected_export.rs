@@ -173,14 +173,25 @@ pub fn export_corrected_data(
             source: Box::new(source),
         })?;
     for (&row_index, corrected) in selected_rows.iter().zip(corrected_rows) {
-        let corrected =
-            corrected.ok_or_else(|| ExportCorrectedDataError::MutateMeasurementSet {
-                path: request.input_ms.display().to_string(),
-                source: Box::new(TableError::ColumnNotFound {
-                    row_index,
-                    column: VisibilityDataColumn::CorrectedData.name().to_string(),
-                }),
-            })?;
+        let corrected = match corrected {
+            Some(corrected) if !corrected.is_empty() => corrected,
+            None => ms
+                .main_table()
+                .column_accessor(VisibilityDataColumn::Data.name())
+                .and_then(|column| column.array_cell(row_index).cloned())
+                .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+                    path: request.input_ms.display().to_string(),
+                    source: Box::new(source),
+                })?,
+            Some(_) => ms
+                .main_table()
+                .column_accessor(VisibilityDataColumn::Data.name())
+                .and_then(|column| column.array_cell(row_index).cloned())
+                .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+                    path: request.input_ms.display().to_string(),
+                    source: Box::new(source),
+                })?,
+        };
         ms.main_table_mut()
             .column_accessor_mut(VisibilityDataColumn::Data.name())
             .and_then(|mut column| column.set_array_assuming_valid(row_index, corrected))
@@ -251,14 +262,25 @@ fn export_all_corrected_data_by_copy(
             source: Box::new(source),
         })?;
     for (row_index, corrected) in row_indices.iter().copied().zip(corrected_rows) {
-        let corrected =
-            corrected.ok_or_else(|| ExportCorrectedDataError::MutateMeasurementSet {
-                path: output_ms.display().to_string(),
-                source: Box::new(TableError::ColumnNotFound {
-                    row_index,
-                    column: VisibilityDataColumn::CorrectedData.name().to_string(),
-                }),
-            })?;
+        let corrected = match corrected {
+            Some(corrected) if !corrected.is_empty() => corrected,
+            None => output
+                .main_table()
+                .column_accessor(VisibilityDataColumn::Data.name())
+                .and_then(|column| column.array_cell(row_index).cloned())
+                .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+                    path: output_ms.display().to_string(),
+                    source: Box::new(source),
+                })?,
+            Some(_) => output
+                .main_table()
+                .column_accessor(VisibilityDataColumn::Data.name())
+                .and_then(|column| column.array_cell(row_index).cloned())
+                .map_err(|source| ExportCorrectedDataError::MutateMeasurementSet {
+                    path: output_ms.display().to_string(),
+                    source: Box::new(source),
+                })?,
+        };
         output
             .main_table_mut()
             .column_accessor_mut(VisibilityDataColumn::Data.name())

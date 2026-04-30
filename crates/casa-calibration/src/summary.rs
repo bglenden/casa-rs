@@ -360,11 +360,15 @@ fn validate_shape(
 
     match parameter_family {
         CalibrationParameterFamily::Complex => {}
-        CalibrationParameterFamily::Float if keywords.vis_cal.as_deref() == Some("K Jones") => {}
+        CalibrationParameterFamily::Float
+            if matches!(
+                keywords.vis_cal.as_deref(),
+                Some("K Jones" | "KAntPos Jones" | "EGainCurve" | "TOpac")
+            ) => {}
         CalibrationParameterFamily::Float => issues.push(issue(
             "unsupported-float-family",
             CalibrationIssueSeverity::Error,
-            "float-parameter calibration tables are only supported for K Jones in the current apply surface"
+            "float-parameter calibration tables are only supported for K Jones and VLA prior tables in the current apply surface"
                 .to_string(),
         )),
         CalibrationParameterFamily::Unknown => issues.push(issue(
