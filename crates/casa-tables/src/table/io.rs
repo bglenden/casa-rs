@@ -1211,13 +1211,14 @@ fn collect_sparse_array_group_values_from_current_cells(
         let Some(pending_values) = table.inner.pending_array_cells(&col_desc.col_name) else {
             return Ok(None);
         };
+        let pending_by_row: std::collections::HashMap<usize, &ArrayValue> = pending_values
+            .iter()
+            .map(|(row_index, value)| (*row_index, value))
+            .collect();
         let mut values = Vec::with_capacity(row_indices.len());
         for &row_index in row_indices {
-            if let Some((_, value)) = pending_values
-                .iter()
-                .find(|(pending_row, _)| *pending_row == row_index)
-            {
-                values.push((row_index, Some(value.clone())));
+            if let Some(value) = pending_by_row.get(&row_index) {
+                values.push((row_index, Some((*value).clone())));
             }
         }
         columns.push(Some(values));

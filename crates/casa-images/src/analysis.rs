@@ -1577,12 +1577,18 @@ where
     } else {
         None
     };
+    let input = image.get_slice(&start, &shape)?;
     let mut output_shape = shape.clone();
     output_shape[0] = path.len();
     output_shape[1] = 1;
+    if let Some((axis, indices)) = &channel_indices {
+        output_shape[*axis] = indices.len();
+    }
     let mut output_data = ArrayD::<f32>::zeros(IxDyn(&output_shape).f());
     let other_shape = output_shape[2..].to_vec();
     let offsets = perpendicular_offsets(x0, y0, x1, y1, request.width.max(1));
+    let mut input_index = vec![0; input.ndim()];
+    let mut output_index = vec![0; output_shape.len()];
     for sample_index in all_indices_for_shape(&other_shape) {
         for (path_index, &(x, y)) in path.iter().enumerate() {
             let mut sum = 0.0;
@@ -1597,21 +1603,19 @@ where
                 {
                     continue;
                 }
-                let mut input_index = start.clone();
                 input_index[0] = sx as usize;
                 input_index[1] = sy as usize;
                 for (offset_axis, value) in sample_index.iter().copied().enumerate() {
-                    input_index[offset_axis + 2] += value;
+                    input_index[offset_axis + 2] = value;
                 }
                 if let Some((axis, indices)) = &channel_indices {
                     let local = sample_index[*axis - 2];
-                    input_index[*axis] = indices[local];
+                    input_index[*axis] = indices[local] - start[*axis];
                 }
-                sum += image.get_at(&input_index)?.into();
+                sum += input[IxDyn(&input_index)].into();
                 count += 1;
             }
             if count > 0 {
-                let mut output_index = vec![0; output_shape.len()];
                 output_index[0] = path_index;
                 output_index[1] = 0;
                 for (offset_axis, value) in sample_index.iter().copied().enumerate() {

@@ -234,7 +234,8 @@ time_json rust-tclean "$outdir/rust-tclean-timing.json" \
   --niter 0 \
   --threshold-jy 0 \
   --datacolumn DATA \
-  --no-preview-pngs
+  --no-preview-pngs \
+  --dirty-only
 
 target/release/imexplore imstat "$outdir/rust-HC3N-natural.image" --box 48,48,80,80 --chans 5~15 --json > "$outdir/rust-imstat.json"
 time_json rust-immoments "$outdir/rust-immoments-timing.json" \

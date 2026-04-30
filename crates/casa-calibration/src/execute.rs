@@ -559,7 +559,7 @@ pub(crate) fn evaluate_apply_rows(
             ExecutionRowInputs {
                 correlation_types,
                 data,
-                original_flags,
+                original_flags: Some(original_flags),
                 original_weight: None,
                 has_weight_spectrum: false,
             },
@@ -809,14 +809,19 @@ fn execute_apply_plan(
                 path: ms_path.clone(),
                 source: MsError::from(source),
             })?;
-        let flag_values = ms
-            .main_table()
-            .column_accessor("FLAG")
-            .and_then(|column| column.array_cells_owned(&selected_row_indices))
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
-            })?;
+        let flag_values = if plan.apply_mode == ApplyMode::CalFlag {
+            Some(
+                ms.main_table()
+                    .column_accessor("FLAG")
+                    .and_then(|column| column.array_cells_owned(&selected_row_indices))
+                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                        path: ms_path.clone(),
+                        source: MsError::from(source),
+                    })?,
+            )
+        } else {
+            None
+        };
         let weight_values = if any_calwt {
             Some(
                 ms.main_table()
@@ -834,7 +839,7 @@ fn execute_apply_plan(
         row_read_total_ns += row_read_started_at.elapsed().as_nanos() as u64;
         let mut prefetched_inputs = Vec::with_capacity(plan.selected_rows.len());
         let mut data_values = data_values.into_iter();
-        let mut flag_values = flag_values.into_iter();
+        let mut flag_values = flag_values.map(Vec::into_iter);
         let mut weight_values = weight_values.map(Vec::into_iter);
 
         for row in &plan.selected_rows {
@@ -847,15 +852,20 @@ fn execute_apply_plan(
                     }),
                 }
             })?;
-            let original_flags = flag_values.next().flatten().ok_or_else(|| {
-                ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(TableError::ColumnNotFound {
-                        row_index: row.row_index,
-                        column: "FLAG".to_string(),
-                    }),
-                }
-            })?;
+            let original_flags = flag_values
+                .as_mut()
+                .map(|flags| {
+                    flags.next().flatten().ok_or_else(|| {
+                        ApplyExecutionError::MutateMeasurementSet {
+                            path: ms_path.clone(),
+                            source: MsError::from(TableError::ColumnNotFound {
+                                row_index: row.row_index,
+                                column: "FLAG".to_string(),
+                            }),
+                        }
+                    })
+                })
+                .transpose()?;
             let original_weight = weight_values
                 .as_mut()
                 .map(|weights| {
@@ -1243,14 +1253,14 @@ struct ExecutionRowResult {
 struct ExecutionRowInputs<'a> {
     correlation_types: &'a [i32],
     data: &'a ArrayValue,
-    original_flags: &'a ArrayValue,
+    original_flags: Option<&'a ArrayValue>,
     original_weight: Option<&'a ArrayValue>,
     has_weight_spectrum: bool,
 }
 
 struct PrefetchedExecutionRowInputs {
     data: ArrayValue,
-    original_flags: ArrayValue,
+    original_flags: Option<ArrayValue>,
     original_weight: Option<ArrayValue>,
 }
 
@@ -1426,13 +1436,20 @@ fn apply_row(
             shape: data.shape().to_vec(),
         });
     };
-    let ArrayValue::Bool(flag_array) = original_flags else {
-        return Err(ApplyExecutionError::UnsupportedParameterShape {
-            path: "<measurement-set FLAG>".to_string(),
-            shape: original_flags.shape().to_vec(),
-        });
+    let flag_array = match original_flags {
+        Some(ArrayValue::Bool(flag_array)) => Some(flag_array),
+        Some(other) => {
+            return Err(ApplyExecutionError::UnsupportedParameterShape {
+                path: "<measurement-set FLAG>".to_string(),
+                shape: other.shape().to_vec(),
+            });
+        }
+        None => None,
     };
-    if data.ndim() != 2 || flag_array.ndim() != 2 || data.shape() != flag_array.shape() {
+    if data.ndim() != 2
+        || flag_array
+            .is_some_and(|flag_array| flag_array.ndim() != 2 || data.shape() != flag_array.shape())
+    {
         return Err(ApplyExecutionError::UnsupportedParameterShape {
             path: "<measurement-set row>".to_string(),
             shape: data.shape().to_vec(),
@@ -1449,7 +1466,19 @@ fn apply_row(
     }
 
     let mut corrected = data.clone();
-    let mut flags = flag_array.clone();
+    let mut flags = if plan.apply_mode == ApplyMode::CalFlag {
+        flag_array
+            .ok_or_else(|| ApplyExecutionError::MutateMeasurementSet {
+                path: "<measurement-set FLAG>".to_string(),
+                source: MsError::from(TableError::ColumnNotFound {
+                    row_index: row.row_index,
+                    column: "FLAG".to_string(),
+                }),
+            })?
+            .clone()
+    } else {
+        ArrayD::from_elem(IxDyn(&[0]).f(), false)
+    };
     let mut newly_flagged_samples = 0;
     let any_calwt = plan.calibration_tables.iter().any(|table| table.calwt);
     let mut weight = match original_weight {
@@ -1578,6 +1607,25 @@ fn apply_row(
             engine: loaded_table.engine.as_deref(),
         };
 
+        if !(table_plan.calwt && loaded_table.supports_calwt)
+            && let (CalibrationGrid::Complex(ant1_grid), CalibrationGrid::Complex(ant2_grid)) =
+                (&ant1, &ant2)
+        {
+            apply_complex_gain_pair_fast(
+                ant1_grid,
+                ant2_grid,
+                FastGainApply {
+                    data_desc_id: row.data_desc_id,
+                    correlation_types,
+                    corrected: &mut corrected,
+                    flags: &mut flags,
+                    apply_mode: plan.apply_mode,
+                    newly_flagged_samples: &mut newly_flagged_samples,
+                },
+            )?;
+            continue;
+        }
+
         for corr_index in 0..data.shape()[0] {
             let receptors =
                 correlation_receptors(correlation_types[corr_index]).ok_or_else(|| {
@@ -1699,6 +1747,99 @@ fn apply_row(
     })
 }
 
+struct FastGainApply<'a> {
+    data_desc_id: i32,
+    correlation_types: &'a [i32],
+    corrected: &'a mut ArrayD<Complex32>,
+    flags: &'a mut ArrayD<bool>,
+    apply_mode: ApplyMode,
+    newly_flagged_samples: &'a mut usize,
+}
+
+fn apply_complex_gain_pair_fast(
+    ant1: &GainGrid,
+    ant2: &GainGrid,
+    ctx: FastGainApply<'_>,
+) -> Result<(), ApplyExecutionError> {
+    let shape = ctx.corrected.shape();
+    let corr_count = shape[0];
+    let channel_count = shape[1];
+    let ant1_scalar = ant1.channel_count <= 1;
+    let ant2_scalar = ant2.channel_count <= 1;
+
+    for corr_index in 0..corr_count {
+        let receptors =
+            correlation_receptors(ctx.correlation_types[corr_index]).ok_or_else(|| {
+                ApplyExecutionError::UnsupportedCorrelationLayout {
+                    data_desc_id: ctx.data_desc_id,
+                    correlation_types: ctx
+                        .correlation_types
+                        .iter()
+                        .map(|code| stokes_name(*code).to_string())
+                        .collect(),
+                }
+            })?;
+        let receptor1 = receptors.0.min(ant1.receptor_count.saturating_sub(1));
+        let receptor2 = receptors.1.min(ant2.receptor_count.saturating_sub(1));
+
+        if ant1_scalar && ant2_scalar {
+            let gain1 = ant1.value_at(receptor1, 0);
+            let gain2 = ant2.value_at(receptor2, 0);
+            let invalid = ant1.flag_at(receptor1, 0)
+                || ant2.flag_at(receptor2, 0)
+                || gain1 == Complex32::new(0.0, 0.0)
+                || gain2 == Complex32::new(0.0, 0.0);
+            if invalid {
+                if ctx.apply_mode == ApplyMode::CalFlag {
+                    for chan_index in 0..channel_count {
+                        if !ctx.flags[[corr_index, chan_index]] {
+                            ctx.flags[[corr_index, chan_index]] = true;
+                            *ctx.newly_flagged_samples += 1;
+                        }
+                    }
+                }
+                continue;
+            }
+            let denom = gain1 * gain2.conj();
+            for chan_index in 0..channel_count {
+                ctx.corrected[[corr_index, chan_index]] /= denom;
+            }
+            continue;
+        }
+
+        for chan_index in 0..channel_count {
+            let ant1_chan = if ant1_scalar {
+                0
+            } else {
+                chan_index.min(ant1.channel_count.saturating_sub(1))
+            };
+            let ant2_chan = if ant2_scalar {
+                0
+            } else {
+                chan_index.min(ant2.channel_count.saturating_sub(1))
+            };
+            let gain1 = ant1.value_at(receptor1, ant1_chan);
+            let gain2 = ant2.value_at(receptor2, ant2_chan);
+            if ant1.flag_at(receptor1, ant1_chan)
+                || ant2.flag_at(receptor2, ant2_chan)
+                || gain1 == Complex32::new(0.0, 0.0)
+                || gain2 == Complex32::new(0.0, 0.0)
+            {
+                if ctx.apply_mode == ApplyMode::CalFlag && !ctx.flags[[corr_index, chan_index]] {
+                    ctx.flags[[corr_index, chan_index]] = true;
+                    *ctx.newly_flagged_samples += 1;
+                }
+                continue;
+            }
+
+            let denom = gain1 * gain2.conj();
+            ctx.corrected[[corr_index, chan_index]] /= denom;
+        }
+    }
+
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_row_prefetched(
     row: &ApplyRowPlan,
@@ -1715,7 +1856,7 @@ fn apply_row_prefetched(
         ExecutionRowInputs {
             correlation_types,
             data: &inputs.data,
-            original_flags: &inputs.original_flags,
+            original_flags: inputs.original_flags.as_ref(),
             original_weight: inputs.original_weight.as_ref(),
             has_weight_spectrum,
         },

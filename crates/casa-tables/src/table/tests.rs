@@ -2123,6 +2123,72 @@ fn lazy_disk_open_reads_selected_array_cells_without_loading_full_tiled_column()
 }
 
 #[test]
+fn lazy_disk_open_reads_selected_fixed_array_cells_without_loading_full_column() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "uvw",
+        PrimitiveType::Float64,
+        vec![3],
+    )])
+    .expect("schema");
+
+    for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+        let mut table = Table::with_schema(schema.clone());
+        for row_idx in 0..6 {
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "uvw",
+                    Value::Array(ArrayValue::Float64(
+                        ArrayD::from_shape_vec(
+                            vec![3],
+                            vec![row_idx as f64, row_idx as f64 + 10.0, row_idx as f64 + 20.0],
+                        )
+                        .expect("shape uvw"),
+                    )),
+                )]))
+                .expect("push row");
+        }
+
+        let root = unique_test_dir(&format!("lazy_selected_fixed_array_rows_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save table");
+
+        let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        assert!(!reopened.inner.has_loaded_rows());
+        assert!(!reopened.inner.has_loaded_array_column("uvw"));
+
+        let selected =
+            table_array_cells_owned(&reopened, "uvw", &[5, 2, 4]).expect("read selected uvw rows");
+        assert_eq!(
+            selected,
+            vec![
+                Some(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(vec![3], vec![5.0, 15.0, 25.0]).unwrap()
+                )),
+                Some(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(vec![3], vec![2.0, 12.0, 22.0]).unwrap()
+                )),
+                Some(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(vec![3], vec![4.0, 14.0, 24.0]).unwrap()
+                )),
+            ],
+            "dm={dm:?}"
+        );
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "selected fixed-array reads should not force row materialization for {dm:?}"
+        );
+        assert!(
+            !reopened.inner.has_loaded_array_column("uvw"),
+            "selected fixed-array reads should not populate the full array-column cache for {dm:?}"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+#[test]
 fn lazy_disk_open_reads_array_cells_without_loading_full_tiled_column() {
     let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
         "data",

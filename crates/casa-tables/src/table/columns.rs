@@ -316,6 +316,36 @@ impl Table {
         self.finish_write_operation(auto_unlock, result)
     }
 
+    /// Appends rows without re-validating them against the attached schema.
+    ///
+    /// This is the bulk counterpart to [`add_row_assuming_valid`](Table::add_row_assuming_valid)
+    /// for writers that already have schema-compatible records and need to
+    /// avoid per-row write-operation overhead.
+    pub fn add_rows_assuming_valid<I>(&mut self, rows: I) -> Result<usize, TableError>
+    where
+        I: IntoIterator<Item = RecordValue>,
+    {
+        let auto_unlock = self.begin_write_operation("add_rows_assuming_valid")?;
+        let result = (|| {
+            let schema = self.schema().cloned();
+            let mut count = 0usize;
+            for row in rows {
+                let undefined = schema
+                    .as_ref()
+                    .map(|schema| undefined_columns_for_row(&row, schema));
+                self.inner.add_row(row)?;
+                if let Some(undefined) = undefined
+                    && let Some(set) = self.inner.undefined_for_row_mut(self.row_count() - 1)?
+                {
+                    *set = undefined;
+                }
+                count += 1;
+            }
+            Ok(count)
+        })();
+        self.finish_write_operation(auto_unlock, result)
+    }
+
     /// Returns a shared reference to the row at `row_index`.
     ///
     /// Compatibility note: new row-oriented code should prefer

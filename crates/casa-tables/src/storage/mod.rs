@@ -37,7 +37,8 @@ use self::incremental_stman::{
     write_ism_file_indexed,
 };
 use self::standard_stman::{
-    read_ssm_file, read_ssm_scalar_column_rows, write_ssm_file, write_ssm_file_indexed,
+    read_ssm_array_column_rows, read_ssm_file, read_ssm_scalar_column_rows, write_ssm_file,
+    write_ssm_file_indexed,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -1954,6 +1955,14 @@ impl CompositeStorage {
             .enumerate()
             .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
             .collect();
+        let target_col_idx = bound_cols
+            .iter()
+            .position(|(bound_desc_idx, _)| *bound_desc_idx == desc_idx)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing data-manager column binding"
+                ))
+            })?;
 
         match dm.type_name.as_str() {
             "StManAipsIO" => {
@@ -1963,14 +1972,6 @@ impl CompositeStorage {
                         table_dat.table_desc.columns[*bound_desc_idx].clone()
                     })
                     .collect();
-                let Some(target_col_idx) = bound_cols
-                    .iter()
-                    .position(|(bound_desc_idx, _)| *bound_desc_idx == desc_idx)
-                else {
-                    return Err(StorageError::FormatMismatch(format!(
-                        "array column '{column}' missing StManAipsIO column binding"
-                    )));
-                };
                 if let Some(values) = read_stman_array_column_rows(
                     &data_path,
                     &group_col_descs,
@@ -1993,6 +1994,24 @@ impl CompositeStorage {
                     desc_idx,
                     selected_rows,
                 )
+            }
+            "StandardStMan" => {
+                let group_col_descs: Vec<_> = bound_cols
+                    .iter()
+                    .map(|(bound_desc_idx, _)| &table_dat.table_desc.columns[*bound_desc_idx])
+                    .collect();
+                if let Some(values) = read_ssm_array_column_rows(
+                    &data_path,
+                    &dm.data,
+                    &group_col_descs,
+                    target_col_idx,
+                    selected_rows,
+                )? {
+                    return Ok(values);
+                }
+                let values =
+                    self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
+                Ok(select_array_rows(&values, selected_rows))
             }
             _ => {
                 let values =
