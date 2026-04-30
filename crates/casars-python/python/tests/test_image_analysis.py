@@ -15,11 +15,13 @@ def reset_image_analysis_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     image_analysis.configure(
         imexplore_binary=None,
         immoments_binary=None,
+        impv_binary=None,
         exportfits_binary=None,
         importfits_binary=None,
     )
     monkeypatch.delenv("CASARS_IMEXPLORE_BIN", raising=False)
     monkeypatch.delenv("CASARS_IMMOMENTS_BIN", raising=False)
+    monkeypatch.delenv("CASARS_IMPV_BIN", raising=False)
     monkeypatch.delenv("CASARS_EXPORTFITS_BIN", raising=False)
     monkeypatch.delenv("CASARS_IMPORTFITS_BIN", raising=False)
     monkeypatch.delenv("CASARS_SUITE_ROOT", raising=False)
@@ -88,6 +90,31 @@ def test_exportfits_wrapper_encodes_task_request(tmp_path: Path) -> None:
     assert request["imagename"] == "twhya_n2hp.image"
     assert request["fitsimage"] == "twhya_n2hp.fits"
     assert request["velocity"] is True
+    assert request["overwrite"] is True
+
+
+def test_impv_wrapper_encodes_task_request(tmp_path: Path) -> None:
+    binary = _write_task_stub(tmp_path / "bin" / "impv", version="ok")
+
+    result = image_analysis.impv(
+        "IRC10216_HC3N.cube.image",
+        outfile="IRC10216_HC3N.pv.image",
+        start="120,140",
+        end="180,160",
+        width=3,
+        chans="11~40",
+        overwrite=True,
+        binary=binary,
+    )
+
+    assert result["kind"] == "impv"
+    request = result["result"]["request"]
+    assert request["imagename"] == "IRC10216_HC3N.cube.image"
+    assert request["outfile"] == "IRC10216_HC3N.pv.image"
+    assert request["start"] == "120,140"
+    assert request["end"] == "180,160"
+    assert request["width"] == 3
+    assert request["chans"] == "11~40"
     assert request["overwrite"] is True
 
 
