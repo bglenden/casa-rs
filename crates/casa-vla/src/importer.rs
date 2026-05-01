@@ -3732,6 +3732,172 @@ mod tests {
     }
 
     #[test]
+    fn helper_paths_cover_import_options_arrays_and_frequency_metadata() {
+        let mut options = ImportVlaOptions {
+            archivefiles: vec![PathBuf::from("input.xp1")],
+            ..ImportVlaOptions::default()
+        };
+        assert!(validate_import_options(&options).is_ok());
+        options.bandname = Some(crate::BandName::L);
+        assert!(matches!(
+            validate_import_options(&options),
+            Err(VlaError::InvalidArgument {
+                argument: "bandname",
+                ..
+            })
+        ));
+        options.bandname = None;
+        options.starttime = Some("01-Jan-1985/00:00:00".to_string());
+        assert!(matches!(
+            validate_import_options(&options),
+            Err(VlaError::InvalidArgument {
+                argument: "starttime",
+                ..
+            })
+        ));
+        options.starttime = None;
+        options.stoptime = Some("01-Jan-1985/01:00:00".to_string());
+        assert!(matches!(
+            validate_import_options(&options),
+            Err(VlaError::InvalidArgument {
+                argument: "stoptime",
+                ..
+            })
+        ));
+        options.stoptime = None;
+        options.evlabands = true;
+        assert!(matches!(
+            validate_import_options(&options),
+            Err(VlaError::InvalidArgument {
+                argument: "evlabands",
+                ..
+            })
+        ));
+
+        assert_eq!(
+            [
+                frequency_reference_for_frame(FrequencyFrame::Topocentric),
+                frequency_reference_for_frame(FrequencyFrame::Geocentric),
+                frequency_reference_for_frame(FrequencyFrame::Barycentric),
+                frequency_reference_for_frame(FrequencyFrame::Lsrk),
+            ],
+            [
+                FrequencyRef::TOPO,
+                FrequencyRef::GEO,
+                FrequencyRef::BARY,
+                FrequencyRef::LSRK,
+            ]
+        );
+        assert_eq!(
+            doppler_reference_for_definition(DopplerDefinition::Optical),
+            DopplerRef::Z
+        );
+        assert_eq!(
+            doppler_reference_for_definition(DopplerDefinition::Unknown),
+            DopplerRef::RADIO
+        );
+        assert_eq!(
+            direction_reference_for_epoch(DirectionEpoch::Unknown(17)),
+            DirectionRef::J2000
+        );
+        assert_eq!(format_sigfigs(0.0, 3), "0");
+        assert_eq!(format_sigfigs(12_345.0, 3), "12345");
+        assert_eq!(format_sigfigs(12.340, 4), "12.34");
+        assert_eq!(
+            spectral_window_name(&test_descriptor(327.5e6), 327.5e6, FrequencyRef::TOPO),
+            "1*50 MHz channels @ 328 MHz (TOPO)"
+        );
+
+        assert_eq!(
+            [
+                stokes_code(StokesProduct::Rr),
+                stokes_code(StokesProduct::Rl)
+            ],
+            [5, 6]
+        );
+        assert_eq!(
+            [
+                stokes_code(StokesProduct::Lr),
+                stokes_code(StokesProduct::Ll)
+            ],
+            [7, 8]
+        );
+        assert_eq!(
+            build_model_data(&[5, 6, 7, 8], 2),
+            vec![
+                Complex32::new(1.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(1.0, 0.0),
+                Complex32::new(1.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(0.0, 0.0),
+                Complex32::new(1.0, 0.0),
+            ]
+        );
+        assert_eq!(flag_category_index(1, 2, 3, 4, 5), 69);
+
+        let (weight, sigma) = visibility_weight_sigma(1.0e6, 10.0, 4.0, true, false);
+        assert!((weight - 30.0).abs() < 1.0e-6);
+        assert!((sigma - (1.0_f32 / 120.0_f32.sqrt() * 2.0)).abs() < 1.0e-6);
+        assert_eq!(
+            visibility_weight_sigma(0.0, 10.0, 1.0, true, false),
+            (0.0, 0.0)
+        );
+
+        let all_flagged =
+            ArrayValue::Bool(ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), vec![true, true]).unwrap());
+        let partly_flagged = ArrayValue::Bool(
+            ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), vec![true, false]).unwrap(),
+        );
+        assert!(flag_row_value(&all_flagged).unwrap());
+        assert!(!flag_row_value(&partly_flagged).unwrap());
+        assert!(
+            flag_row_value(&ArrayValue::Float32(
+                ArrayD::from_shape_vec(IxDyn(&[1]).f(), vec![1.0_f32]).unwrap()
+            ))
+            .is_err()
+        );
+
+        let weights = ArrayValue::Float32(
+            ArrayD::from_shape_vec(IxDyn(&[4]).f(), vec![1.0, 2.0, 3.0, 4.0]).unwrap(),
+        );
+        let reordered = reorder_vector_array(&weights, &[5, 6, 7, 8], &[5, 7, 6, 8]).unwrap();
+        let ArrayValue::Float32(reordered) = reordered else {
+            panic!("expected float vector");
+        };
+        assert_eq!(
+            reordered.iter().copied().collect::<Vec<_>>(),
+            vec![1.0, 3.0, 2.0, 4.0]
+        );
+        assert!(reorder_vector_array(&all_flagged, &[5], &[5]).is_err());
+        assert!(reorder_index_map(&[5, 6], &[5, 7], "test").is_err());
+
+        let flags = ArrayValue::Bool(
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![false, true, true, false]).unwrap(),
+        );
+        let reordered_flags = reorder_bool_array_generic(&flags, &[5, 8], &[8, 5], "flag").unwrap();
+        let ArrayValue::Bool(reordered_flags) = reordered_flags else {
+            panic!("expected bool flags");
+        };
+        assert_eq!(
+            reordered_flags.iter().copied().collect::<Vec<_>>(),
+            vec![true, false, false, true]
+        );
+        assert!(reorder_bool_array_generic(&weights, &[5], &[5], "flag").is_err());
+
+        let corr_product = corr_product_array(&[5, 6, 7, 8]).unwrap();
+        let ArrayValue::Int32(corr_product) = corr_product else {
+            panic!("expected int corr product");
+        };
+        assert_eq!(
+            corr_product.iter().copied().collect::<Vec<_>>(),
+            vec![0, 0, 1, 1, 0, 1, 0, 1]
+        );
+        assert!(corr_product_array(&[42]).is_err());
+    }
+
+    #[test]
     fn new_spectral_windows_use_the_most_recently_added_source_row() {
         let tempdir = tempfile::tempdir().unwrap();
         let ms_path = tempdir.path().join("doppler-update.ms");

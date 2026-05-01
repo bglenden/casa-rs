@@ -1080,3 +1080,93 @@ fn prepare_output_root(path: &Path) -> Result<(), MsTransformError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_types::Complex32;
+
+    #[test]
+    fn select_channels_covers_contiguous_noncontiguous_and_full_width_paths() {
+        let complex = ArrayValue::Complex32(
+            ArrayD::from_shape_vec(
+                IxDyn(&[2, 4]).f(),
+                (0..8)
+                    .map(|value| Complex32::new(value as f32, value as f32 + 0.5))
+                    .collect(),
+            )
+            .unwrap(),
+        );
+        let selected = select_channels(complex, &[1, 2]).expect("contiguous selection");
+        let ArrayValue::Complex32(selected) = selected else {
+            panic!("expected Complex32");
+        };
+        assert_eq!(selected.shape(), &[2, 2]);
+        assert_eq!(selected[[0, 0]], Complex32::new(2.0, 2.5));
+        assert_eq!(selected[[1, 1]], Complex32::new(5.0, 5.5));
+
+        let flags = ArrayValue::Bool(
+            ArrayD::from_shape_vec(
+                IxDyn(&[2, 4]).f(),
+                vec![false, true, false, true, true, false, true, false],
+            )
+            .unwrap(),
+        );
+        let selected = select_channels(flags, &[0, 3]).expect("non-contiguous selection");
+        let ArrayValue::Bool(selected) = selected else {
+            panic!("expected Bool");
+        };
+        assert_eq!(selected.shape(), &[2, 2]);
+        assert!(!selected[[0, 0]]);
+        assert!(!selected[[1, 1]]);
+
+        let weights = ArrayValue::Float32(
+            ArrayD::from_shape_vec(IxDyn(&[1, 3]).f(), vec![1.0, 2.0, 3.0]).unwrap(),
+        );
+        let selected = select_channels(weights, &[0, 1, 2]).expect("full-width selection");
+        let ArrayValue::Float32(selected) = selected else {
+            panic!("expected Float32");
+        };
+        assert_eq!(selected.shape(), &[1, 3]);
+        assert_eq!(selected[[0, 2]], 3.0);
+    }
+
+    #[test]
+    fn select_channels_rejects_wrong_rank_and_unsupported_arrays() {
+        let wrong_rank =
+            ArrayValue::Bool(ArrayD::from_shape_vec(IxDyn(&[2, 2, 1]), vec![false; 4]).unwrap());
+        let err = select_channels(wrong_rank, &[0]).unwrap_err();
+        assert!(err.to_string().contains("rank-2"));
+
+        let unsupported =
+            ArrayValue::Float64(ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![0.0; 4]).unwrap());
+        let err = select_channels(unsupported, &[0]).unwrap_err();
+        assert!(err.to_string().contains("unsupported rank-2"));
+    }
+
+    #[test]
+    fn scalar_helpers_accept_expected_numeric_types_and_reject_missing_cells() {
+        assert_eq!(
+            scalar_i32(Some(&ScalarValue::Int32(7)), "DATA_DESC_ID", 3).unwrap(),
+            7
+        );
+        assert_eq!(
+            scalar_f64(Some(&ScalarValue::Float64(1.25)), "TIME", 3).unwrap(),
+            1.25
+        );
+        assert_eq!(
+            scalar_f64(Some(&ScalarValue::Float32(2.5)), "TIME", 3).unwrap(),
+            2.5
+        );
+        assert!(scalar_i32(None, "DATA_DESC_ID", 3).is_err());
+        assert!(scalar_f64(Some(&ScalarValue::Bool(false)), "TIME", 3).is_err());
+    }
+
+    #[test]
+    fn channel_range_helpers_identify_full_and_contiguous_selections() {
+        assert_eq!(contiguous_channel_range(&[2, 3, 4]), Some((2, 5)));
+        assert_eq!(contiguous_channel_range(&[2, 4]), None);
+        assert!(all_channels_selected(&[0, 1, 2], 3));
+        assert!(!all_channels_selected(&[0, 2], 3));
+    }
+}

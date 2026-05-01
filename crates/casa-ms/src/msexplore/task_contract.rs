@@ -330,11 +330,29 @@ fn write_output(path: &Path, overwrite: bool, text: &str) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use casa_provider_contracts::ProviderSurfaceKind;
+    use tempfile::tempdir;
 
     use super::{
         MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreProtocolInfo,
-        MsExploreTaskSchemaBundle,
+        MsExploreRunTaskRequest, MsExploreTaskRequest, MsExploreTaskSchemaBundle, write_output,
     };
+    use crate::{
+        MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPreset,
+        MsPlotSpec, MsSelectionSpec,
+    };
+
+    fn test_spec(ms_path: &str) -> MsExploreSpec {
+        MsExploreSpec {
+            ms_path: ms_path.into(),
+            summary_format: MeasurementSetSummaryOutputFormat::Text,
+            selection: MsSelectionSpec::default(),
+            header_items: Vec::new(),
+            page_title: None,
+            exprange: MsPageExportRange::Current,
+            max_plot_points: 100,
+            plots: vec![MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime)],
+        }
+    }
 
     #[test]
     fn schema_bundle_uses_current_protocol_and_projection() {
@@ -358,5 +376,97 @@ mod tests {
         assert_eq!(info.protocol_name, MSEXPLORE_TASK_PROTOCOL_NAME);
         assert_eq!(info.protocol_version, MSEXPLORE_TASK_PROTOCOL_VERSION);
         assert_eq!(info.surface_kind, ProviderSurfaceKind::Task);
+    }
+
+    #[test]
+    fn request_and_result_envelopes_round_trip_with_stable_kind_tags() {
+        let request = MsExploreTaskRequest::Run(MsExploreRunTaskRequest {
+            spec: test_spec("example.ms"),
+            summary_output_path: None,
+            overwrite_outputs: true,
+            flag_edit: None,
+            plot_export: None,
+        });
+        let request_json = serde_json::to_string_pretty(&request).expect("serialize request");
+        assert!(request_json.contains("\"kind\": \"run\""));
+        assert!(request_json.contains("\"ms_path\": \"example.ms\""));
+        assert_eq!(
+            serde_json::from_str::<MsExploreTaskRequest>(&request_json).expect("parse request"),
+            request
+        );
+    }
+
+    #[test]
+    fn read_from_source_reports_file_and_json_errors_and_parses_valid_files() {
+        let dir = tempdir().expect("tempdir");
+        let missing = dir.path().join("missing.json");
+        let missing_error =
+            MsExploreTaskRequest::read_from_source(missing.to_str().expect("utf8 path"))
+                .expect_err("missing file should fail");
+        assert!(missing_error.contains("failed to read JSON request"));
+        assert!(missing_error.contains("missing.json"));
+
+        let invalid = dir.path().join("invalid.json");
+        std::fs::write(&invalid, "{not json").expect("write invalid json");
+        let parse_error =
+            MsExploreTaskRequest::read_from_source(invalid.to_str().expect("utf8 path"))
+                .expect_err("invalid JSON should fail");
+        assert!(parse_error.contains("failed to parse msexplore task request"));
+
+        let valid = dir.path().join("valid.json");
+        let request = MsExploreTaskRequest::Run(MsExploreRunTaskRequest {
+            spec: test_spec("valid.ms"),
+            summary_output_path: Some("summary.md".into()),
+            overwrite_outputs: false,
+            flag_edit: None,
+            plot_export: None,
+        });
+        std::fs::write(
+            &valid,
+            serde_json::to_string(&request).expect("serialize valid request"),
+        )
+        .expect("write valid json");
+        assert_eq!(
+            MsExploreTaskRequest::read_from_source(valid.to_str().expect("utf8 path"))
+                .expect("read valid request"),
+            request
+        );
+    }
+
+    #[test]
+    fn write_output_refuses_existing_files_unless_overwrite_is_enabled() {
+        let dir = tempdir().expect("tempdir");
+        let output = dir.path().join("summary.txt");
+        write_output(&output, false, "first").expect("first write");
+        let error = write_output(&output, false, "second").expect_err("overwrite guard");
+        assert!(error.contains("refusing to overwrite existing output"));
+        assert_eq!(
+            std::fs::read_to_string(&output).expect("read output"),
+            "first"
+        );
+
+        write_output(&output, true, "second").expect("overwrite");
+        assert_eq!(
+            std::fs::read_to_string(&output).expect("read output"),
+            "second"
+        );
+    }
+
+    #[test]
+    fn ui_schema_projection_reports_missing_or_malformed_projection() {
+        let mut bundle = MsExploreTaskSchemaBundle::current();
+        bundle.projections.ui_schema = None;
+        assert_eq!(
+            bundle
+                .ui_schema_projection()
+                .expect_err("missing projection"),
+            "missing ui_schema projection"
+        );
+
+        bundle.projections.ui_schema = Some(serde_json::json!({"command_id": 5}));
+        let error = bundle
+            .ui_schema_projection()
+            .expect_err("malformed projection");
+        assert!(error.contains("parse msexplore ui schema"));
     }
 }

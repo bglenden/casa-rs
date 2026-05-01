@@ -645,3 +645,322 @@ fn read_u32(data: &[u8], offset: usize, big_endian: bool) -> Result<u32, TableRe
         u32::from_le_bytes(bytes.try_into().expect("u32"))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scalar_desc(name: &str, data_type: CasacoreDataType) -> ColumnDesc {
+        ColumnDesc {
+            col_name: name.to_string(),
+            data_type,
+            is_array: false,
+            option: 0,
+            shape: Vec::new(),
+            dm_seq_nr: 0,
+        }
+    }
+
+    fn array_desc(name: &str, shape: Vec<i32>, direct: bool) -> ColumnDesc {
+        ColumnDesc {
+            col_name: name.to_string(),
+            data_type: CasacoreDataType::TpDouble,
+            is_array: true,
+            option: i32::from(direct),
+            shape,
+            dm_seq_nr: 0,
+        }
+    }
+
+    fn push_u32(bytes: &mut Vec<u8>, value: u32, big_endian: bool) {
+        if big_endian {
+            bytes.extend(value.to_be_bytes());
+        } else {
+            bytes.extend(value.to_le_bytes());
+        }
+    }
+
+    fn push_u64(bytes: &mut Vec<u8>, value: u64, big_endian: bool) {
+        if big_endian {
+            bytes.extend(value.to_be_bytes());
+        } else {
+            bytes.extend(value.to_le_bytes());
+        }
+    }
+
+    fn push_string(bytes: &mut Vec<u8>, value: &str, big_endian: bool) {
+        push_u32(bytes, value.len() as u32, big_endian);
+        bytes.extend(value.as_bytes());
+    }
+
+    fn push_object_start(bytes: &mut Vec<u8>, type_name: &str, version: u32, big_endian: bool) {
+        push_u32(bytes, AIPSIO_MAGIC, big_endian);
+        push_u32(bytes, 0, big_endian);
+        push_string(bytes, type_name, big_endian);
+        push_u32(bytes, version, big_endian);
+    }
+
+    fn aipsio_object(type_name: &str, version: u32, payload: &[u8], big_endian: bool) -> Vec<u8> {
+        let mut content = Vec::new();
+        push_string(&mut content, type_name, big_endian);
+        push_u32(&mut content, version, big_endian);
+        content.extend(payload);
+
+        let mut bytes = Vec::new();
+        push_u32(&mut bytes, AIPSIO_MAGIC, big_endian);
+        push_u32(&mut bytes, (content.len() + 4) as u32, big_endian);
+        bytes.extend(content);
+        bytes
+    }
+
+    #[test]
+    fn column_builder_covers_supported_scalars_arrays_and_errors() {
+        let mut float_builder =
+            ColumnBuilder::new(&scalar_desc("AMP", CasacoreDataType::TpDouble)).unwrap();
+        float_builder
+            .push_value(
+                &1.5_f64.to_be_bytes(),
+                0,
+                true,
+                &scalar_desc("AMP", CasacoreDataType::TpDouble),
+                None,
+            )
+            .unwrap();
+        float_builder.push_default().unwrap();
+        assert_eq!(float_builder.len(), 2);
+        assert!(matches!(
+            float_builder.finish().unwrap(),
+            ColumnData::Float64(values) if values == vec![1.5, 0.0]
+        ));
+
+        let mut string_payload = Vec::new();
+        push_u32(&mut string_payload, 14, true);
+        string_payload.extend(b"calibrator");
+        let mut string_builder =
+            ColumnBuilder::new(&scalar_desc("NAME", CasacoreDataType::TpString)).unwrap();
+        string_builder
+            .push_value(
+                &string_payload,
+                0,
+                true,
+                &scalar_desc("NAME", CasacoreDataType::TpString),
+                None,
+            )
+            .unwrap();
+        string_builder.push_default().unwrap();
+        assert!(matches!(
+            string_builder.finish().unwrap(),
+            ColumnData::String(values) if values == vec!["calibrator".to_string(), String::new()]
+        ));
+
+        let direct_desc = array_desc("SPECTRUM", vec![2], true);
+        let mut array_payload = Vec::new();
+        array_payload.extend(2.0_f64.to_le_bytes());
+        array_payload.extend(3.0_f64.to_le_bytes());
+        let mut array_builder = ColumnBuilder::new(&direct_desc).unwrap();
+        array_builder
+            .push_value(&array_payload, 0, false, &direct_desc, None)
+            .unwrap();
+        array_builder.push_default().unwrap();
+        assert_eq!(array_builder.len(), 2);
+        assert!(matches!(
+            array_builder.finish().unwrap(),
+            ColumnData::ArrayFloat64 { values, shape }
+                if values == vec![2.0, 3.0, 0.0, 0.0] && shape == vec![2]
+        ));
+
+        let mut missing_shape =
+            ColumnBuilder::new(&array_desc("UNKNOWN", Vec::new(), true)).unwrap();
+        assert!(
+            missing_shape
+                .push_value(
+                    &array_payload,
+                    0,
+                    false,
+                    &array_desc("UNKNOWN", Vec::new(), true),
+                    None
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("missing shape metadata")
+        );
+        let unsupported = ColumnBuilder::new(&scalar_desc("FLAG", CasacoreDataType::TpBool));
+        assert!(unsupported.is_err());
+        assert!(
+            unsupported
+                .err()
+                .expect("unsupported type error")
+                .to_string()
+                .contains("unsupported IncrementalStMan column")
+        );
+    }
+
+    #[test]
+    fn ism_primitive_readers_cover_byte_order_strings_and_bounds() {
+        assert!(detect_ism_aipsio_byte_order(&[0, 1, 2]).is_err());
+        let mut be = vec![0, 0, 0, 0];
+        push_u32(&mut be, 8, true);
+        assert_eq!(
+            detect_ism_aipsio_byte_order(&be).unwrap(),
+            ByteOrder::BigEndian
+        );
+
+        let mut le = vec![0, 0, 0, 0];
+        push_u32(&mut le, 8, false);
+        assert_eq!(
+            detect_ism_aipsio_byte_order(&le).unwrap(),
+            ByteOrder::LittleEndian
+        );
+
+        assert_eq!(read_f64_at(&1.25_f64.to_be_bytes(), 0, true).unwrap(), 1.25);
+        assert_eq!(
+            read_i64_at(&(-12_i64).to_le_bytes(), 0, false).unwrap(),
+            -12
+        );
+        assert!(read_f64_at(&[1, 2, 3], 0, true).is_err());
+        assert!(read_i64_at(&[1, 2, 3], 0, true).is_err());
+
+        let mut single = Vec::new();
+        push_u32(&mut single, 7, true);
+        single.extend(b"abc");
+        assert_eq!(read_ism_string(&single, 1, true).unwrap(), vec!["abc"]);
+
+        let mut many = Vec::new();
+        push_u32(&mut many, 0, false);
+        push_u32(&mut many, 2, false);
+        many.extend(b"hi");
+        push_u32(&mut many, 3, false);
+        many.extend(b"bye");
+        assert_eq!(
+            read_ism_string(&many, 2, false).unwrap(),
+            vec!["hi".to_string(), "bye".to_string()]
+        );
+        assert!(read_ism_string(&[0, 0], 1, true).is_err());
+        assert!(read_string_at(&single, 10, 1, true).is_err());
+        assert_eq!(read_string_at(&single, 0, 1, true).unwrap(), "abc");
+        assert_eq!(
+            read_array_f64_at(&array_bytes(&[4.0, 5.0], true), 0, 2, true).unwrap(),
+            vec![4.0, 5.0]
+        );
+        assert!(read_array_f64_at(&[0; 4], 0, 1, true).is_err());
+    }
+
+    fn array_bytes(values: &[f64], big_endian: bool) -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|value| {
+                if big_endian {
+                    value.to_be_bytes()
+                } else {
+                    value.to_le_bytes()
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn ism_aipsio_blocks_and_bucket_index_helpers_cover_success_and_errors() {
+        let mut block = Vec::new();
+        push_object_start(&mut block, "Block", 1, true);
+        push_u32(&mut block, 2, true);
+        push_u32(&mut block, 11, true);
+        push_u32(&mut block, 12, true);
+        let mut io = IsmAipsIoBuf::new(&block, ByteOrder::BigEndian);
+        assert_eq!(io.read_block_u32().unwrap(), vec![11, 12]);
+
+        let mut block64 = Vec::new();
+        push_object_start(&mut block64, "Block", 1, false);
+        push_u32(&mut block64, 2, false);
+        push_u64(&mut block64, 21, false);
+        push_u64(&mut block64, 22, false);
+        let mut io = IsmAipsIoBuf::new(&block64, ByteOrder::LittleEndian);
+        assert_eq!(io.read_block_u64().unwrap(), vec![21, 22]);
+
+        let mut wrong = Vec::new();
+        push_object_start(&mut wrong, "Other", 1, true);
+        let mut io = IsmAipsIoBuf::new(&wrong, ByteOrder::BigEndian);
+        assert!(
+            io.getstart("Block")
+                .unwrap_err()
+                .to_string()
+                .contains("type mismatch")
+        );
+
+        let index = IsmBucketColIndex {
+            row_nrs: vec![0, 3, 8],
+            offsets: vec![10, 20, 30],
+        };
+        assert_eq!(get_interval(&index, 0), 0);
+        assert_eq!(get_interval(&index, 4), 1);
+        assert_eq!(get_interval(&index, 9), 2);
+        assert_eq!(
+            append_path_suffix(Path::new("table.f0"), "i"),
+            PathBuf::from("table.f0i")
+        );
+        assert_eq!(shape_nrelem(&[2, 3]).unwrap(), 6);
+        assert!(
+            shape_nrelem(&[-1])
+                .unwrap_err()
+                .to_string()
+                .contains("negative")
+        );
+        assert!(shape_nrelem(&[usize::MAX as i32, 2]).err().is_some());
+    }
+
+    #[test]
+    fn parse_ism_bucket_decodes_column_intervals_and_rejects_bad_headers() {
+        let mut raw = Vec::new();
+        push_u32(&mut raw, 12, true);
+        raw.extend(1.0_f64.to_be_bytes());
+        push_u32(&mut raw, 2, true);
+        push_u32(&mut raw, 0, true);
+        push_u32(&mut raw, 4, true);
+        push_u32(&mut raw, 0, true);
+        push_u32(&mut raw, 8, true);
+
+        let bucket = parse_ism_bucket(&raw, 1, true).unwrap();
+        assert_eq!(bucket.data, 1.0_f64.to_be_bytes());
+        assert_eq!(bucket.col_indices.len(), 1);
+        assert_eq!(bucket.col_indices[0].row_nrs, vec![0, 4]);
+        assert_eq!(bucket.col_indices[0].offsets, vec![0, 8]);
+
+        assert!(parse_ism_bucket(&[1, 2, 3], 1, true).is_err());
+        let mut unsupported = Vec::new();
+        push_u32(&mut unsupported, 0x80000000, true);
+        assert!(
+            parse_ism_bucket(&unsupported, 1, true)
+                .unwrap_err()
+                .to_string()
+                .contains("64-bit row numbers")
+        );
+    }
+
+    #[test]
+    fn parse_ism_header_and_manager_blob_cover_aipsio_wrappers() {
+        let mut dm_payload = Vec::new();
+        push_string(&mut dm_payload, "ISMDataManager", true);
+        let dm_blob = aipsio_object("ISM", 1, &dm_payload, true);
+        assert_eq!(parse_ism_dm_blob(&dm_blob).unwrap(), "ISMDataManager");
+
+        let mut header_payload = Vec::new();
+        header_payload.push(0);
+        push_u32(&mut header_payload, 128, true);
+        push_u32(&mut header_payload, 3, true);
+        push_u32(&mut header_payload, 7, true);
+        push_u32(&mut header_payload, 99, true);
+        push_u32(&mut header_payload, 1, true);
+        header_payload.extend((-1_i32).to_be_bytes());
+        let mut header = aipsio_object("IncrementalStMan", 5, &header_payload, true);
+        header.resize(ISM_HEADER_SIZE as usize, 0);
+        let mut cursor = std::io::Cursor::new(header);
+        let parsed = parse_ism_header(&mut cursor).unwrap();
+        assert_eq!(parsed.bucket_size, 128);
+        assert_eq!(parsed.nr_buckets, 3);
+        assert!(!parsed.big_endian);
+        assert_eq!(parsed.io_order, ByteOrder::BigEndian);
+
+        let too_short = std::io::Cursor::new(vec![0; 8]);
+        let mut too_short = too_short;
+        assert!(parse_ism_header(&mut too_short).is_err());
+    }
+}

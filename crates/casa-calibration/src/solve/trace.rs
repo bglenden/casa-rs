@@ -3,7 +3,6 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::sync::OnceLock;
 
 use serde::Serialize;
 use serde_json::json;
@@ -14,18 +13,22 @@ use super::{GainSolveMode, GainSolveRequest, GainType};
 
 const TRACE_ENV: &str = "CASA_RS_GAIN_TRACE";
 
-fn trace_path() -> Option<&'static std::path::PathBuf> {
-    static PATH: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
-    PATH.get_or_init(|| {
-        let value = std::env::var_os(TRACE_ENV)?;
-        let path = std::path::PathBuf::from(value);
-        if path.as_os_str().is_empty() {
-            None
-        } else {
-            Some(path)
-        }
-    })
-    .as_ref()
+#[cfg(test)]
+thread_local! {
+    static TEST_TRACE_PATH: std::cell::RefCell<Option<std::path::PathBuf>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+fn trace_path() -> Option<std::path::PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = TEST_TRACE_PATH.with(|path| path.borrow().clone()) {
+        return Some(path);
+    }
+
+    let value = std::env::var_os(TRACE_ENV)?;
+    let path = std::path::PathBuf::from(value);
+    (!path.as_os_str().is_empty()).then_some(path)
 }
 
 fn write_event(event: impl Serialize) {
@@ -35,7 +38,7 @@ fn write_event(event: impl Serialize) {
     let result = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(path)
+        .open(&path)
         .and_then(|mut file| {
             serde_json::to_writer(&mut file, &event).map_err(std::io::Error::other)?;
             file.write_all(b"\n")
@@ -279,5 +282,190 @@ fn solve_mode_name(solve_mode: GainSolveMode) -> &'static str {
     match solve_mode {
         GainSolveMode::Phase => "p",
         GainSolveMode::AmplitudePhase => "ap",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeSet, HashMap};
+
+    use casa_ms::selection::MsSelection;
+    use casa_types::Complex32;
+    use num_complex::Complex64;
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::solve::grouping::SolveEdgeStats;
+    use crate::solve::kernel::PhaseStepTrace;
+    use crate::solve::{GainSolveCombine, GainSolveInterval, GainSolveModelSource, RefAntSelector};
+
+    fn test_request(output_table: impl Into<std::path::PathBuf>) -> GainSolveRequest {
+        GainSolveRequest {
+            selection: MsSelection::new(),
+            output_table: output_table.into(),
+            gain_type: GainType::G,
+            solve_mode: GainSolveMode::Phase,
+            solve_interval: GainSolveInterval::Integration,
+            combine: GainSolveCombine::default(),
+            refant: RefAntSelector::AntennaId(0),
+            prior_calibration_tables: Vec::new(),
+            parang: false,
+            model_source: GainSolveModelSource::PointSource,
+            normalize_average_amplitude: false,
+            min_snr: 0.0,
+            min_baselines_per_antenna: 1,
+            smodel: [1.0, 0.0, 0.0, 0.0],
+        }
+    }
+
+    #[test]
+    fn trace_writers_emit_group_solution_and_phase_iteration_jsonl() {
+        let dir = tempdir().expect("tempdir");
+        let trace_file = dir.path().join("gain-trace.jsonl");
+        TEST_TRACE_PATH.with(|path| *path.borrow_mut() = Some(trace_file.clone()));
+
+        let base_key = SolveBaseKey {
+            field_id: 3,
+            spw_id: 4,
+            observation_id: 5,
+            scan_number: 6,
+        };
+        let bucket_key = SolveBucketKey::Integration {
+            time_bits: 12.5_f64.to_bits(),
+            interval_bits: 2.0_f64.to_bits(),
+        };
+        let mut group = SolveAccumulator::new(3, 4, 5);
+        group.min_time = 10.0;
+        group.max_time = 20.0;
+        group.unique_time_sum = 30.0;
+        group.unique_time_count = 2;
+        group.time_centroid_weighted_sum = 61.0;
+        group.time_centroid_weight = 4.0;
+        group.total_interval = 8.0;
+        group.sample_rows = 2;
+        group.scan_numbers.insert(6);
+        group.antenna_ids.extend([0, 1]);
+        group.receptor_graphs = vec![HashMap::from([
+            ((0, 1), Complex32::new(2.0, -1.0)),
+            ((1, 0), Complex32::new(2.0, 1.0)),
+        ])];
+        group.receptor_weights = vec![HashMap::from([((0, 1), 3.5), ((1, 0), 3.5)])];
+        group.receptor_stats = vec![HashMap::from([(
+            (0, 1),
+            SolveEdgeStats {
+                weighted_sample_power: 7.0,
+                raw_weighted_sample_power: 8.0,
+                sample_count: 9,
+                collapsed_count: 10,
+            },
+        )])];
+        let request = test_request(dir.path().join("phase.cal"));
+
+        trace_group(&base_key, &bucket_key, &group, &request);
+        trace_solution_rows(
+            &base_key,
+            &SolveBucketKey::Seconds(2),
+            &[
+                SolutionRow {
+                    time_seconds: 20.0,
+                    interval_seconds: 4.0,
+                    field_id: 3,
+                    spw_id: 4,
+                    antenna_id: 2,
+                    scan_number: 6,
+                    observation_id: 5,
+                    gains: vec![Complex32::new(0.5, 0.25)],
+                    flags: vec![false],
+                    param_errors: vec![0.1],
+                    snrs: vec![12.0],
+                    weights: vec![99.0],
+                },
+                SolutionRow {
+                    time_seconds: 20.0,
+                    interval_seconds: 4.0,
+                    field_id: 3,
+                    spw_id: 4,
+                    antenna_id: 1,
+                    scan_number: 6,
+                    observation_id: 5,
+                    gains: vec![Complex32::new(1.0, 0.0)],
+                    flags: vec![true],
+                    param_errors: vec![0.0],
+                    snrs: vec![0.0],
+                    weights: vec![0.0],
+                },
+            ],
+            &request,
+            0,
+        );
+
+        let antenna_ids = BTreeSet::from([0, 1]);
+        let step = PhaseStepTrace {
+            x0: 0.0,
+            x1: 0.5,
+            x2: 1.0,
+            step: 0.25,
+            opt_factor: 0.75,
+            expanded: true,
+            iterations: 3,
+        };
+        let gains = HashMap::from([(1, Complex64::new(0.0, 1.0))]);
+        let last_gains = HashMap::from([(1, Complex64::new(1.0, 0.0))]);
+        let gradient = HashMap::from([(1, Complex64::new(0.1, -0.2))]);
+        let hessian = HashMap::from([(1, 2.0)]);
+        let delta = HashMap::from([(1, Complex64::new(-0.01, 0.02))]);
+        trace_phase_solver_iteration(PhaseSolverTraceEvent {
+            iteration: 7,
+            refant_id: 0,
+            chi_square: 1.0,
+            last_chi_square: 2.0,
+            delta_chi_square: -1.0,
+            fractional_delta: -0.5,
+            convergence_count: 2,
+            step: &step,
+            antenna_ids: &antenna_ids,
+            last_gains: &last_gains,
+            gains: &gains,
+            gradient: &gradient,
+            hessian: &hessian,
+            delta: &delta,
+        });
+
+        TEST_TRACE_PATH.with(|path| *path.borrow_mut() = None);
+
+        let lines = std::fs::read_to_string(&trace_file).expect("trace file");
+        assert!(lines.contains("\"event\":\"rust_group\""));
+        assert!(lines.contains("\"kind\":\"integration\""));
+        assert!(lines.contains("\"sample_count\":9"));
+        assert!(lines.contains("\"event\":\"rust_solution\""));
+        assert!(lines.contains("\"kind\":\"seconds\""));
+        assert!(
+            lines.find("\"antenna_id\":1").expect("antenna 1")
+                < lines.find("\"antenna_id\":2").expect("antenna 2")
+        );
+        assert!(lines.contains("\"event\":\"rust_phase_solver_iteration\""));
+        assert!(lines.contains("\"expanded\":true"));
+        assert!(lines.contains("\"gradient_im\":-0.2"));
+    }
+
+    #[test]
+    fn trace_name_helpers_cover_public_request_enums() {
+        assert_eq!(gain_type_name(GainType::G), "G");
+        assert_eq!(gain_type_name(GainType::T), "T");
+        assert_eq!(solve_mode_name(GainSolveMode::Phase), "p");
+        assert_eq!(solve_mode_name(GainSolveMode::AmplitudePhase), "ap");
+        assert_eq!(
+            base_key_json(&SolveBaseKey {
+                field_id: 1,
+                spw_id: 2,
+                observation_id: 3,
+                scan_number: 4,
+            })["scan_number"],
+            4
+        );
+        assert_eq!(
+            bucket_key_json(&SolveBucketKey::Infinite)["kind"],
+            "infinite"
+        );
     }
 }

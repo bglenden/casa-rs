@@ -707,6 +707,114 @@ mod tests {
         assert_eq!(leaked, "hello");
     }
 
+    #[cfg(not(has_casacore_cpp))]
+    #[test]
+    fn cpp_matrix_cells_report_unavailable_backend_cleanly() {
+        let mut fixture = scalar_fixture();
+        fixture.cpp_fixture = Some(CppTableFixture::ScalarPrimitives);
+
+        let cc = run_cc(CppTableFixture::ScalarPrimitives);
+        assert_eq!(cc.label, "CC");
+        assert!(!cc.passed);
+        assert!(
+            cc.error
+                .as_deref()
+                .is_some_and(|err| err.contains("C++ write failed"))
+        );
+
+        let cr = run_cr(
+            &fixture,
+            ManagerKind::StandardStMan,
+            CppTableFixture::ScalarPrimitives,
+        );
+        assert_eq!(cr.label, "CR");
+        assert!(!cr.passed);
+        assert!(
+            cr.error
+                .as_deref()
+                .is_some_and(|err| err.contains("C++ write failed"))
+        );
+
+        let rc = run_rc(
+            &fixture,
+            ManagerKind::StandardStMan,
+            CppTableFixture::ScalarPrimitives,
+        );
+        assert_eq!(rc.label, "RC");
+        assert!(!rc.passed);
+        assert!(
+            rc.error
+                .as_deref()
+                .is_some_and(|err| err.contains("C++ verify failed"))
+        );
+
+        let rc_le = run_rc_with_endian(
+            &fixture,
+            ManagerKind::StandardStMan,
+            CppTableFixture::ScalarPrimitives,
+            EndianFormat::LittleEndian,
+        );
+        assert_eq!(rc_le.label, "RC-LE");
+        assert!(!rc_le.passed);
+        assert!(
+            rc_le
+                .error
+                .as_deref()
+                .is_some_and(|err| err.contains("C++ verify failed"))
+        );
+    }
+
+    #[test]
+    fn manager_mapping_and_save_options_cover_all_fixture_shapes() {
+        assert_eq!(
+            to_dm_kind(ManagerKind::StManAipsIO),
+            casa_tables::DataManagerKind::StManAipsIO
+        );
+        assert_eq!(
+            to_dm_kind(ManagerKind::IncrementalStMan),
+            casa_tables::DataManagerKind::IncrementalStMan
+        );
+        assert_eq!(
+            to_dm_kind(ManagerKind::TiledColumnStMan),
+            casa_tables::DataManagerKind::TiledColumnStMan
+        );
+        assert_eq!(
+            to_dm_kind(ManagerKind::TiledShapeStMan),
+            casa_tables::DataManagerKind::TiledShapeStMan
+        );
+        assert_eq!(
+            to_dm_kind(ManagerKind::TiledCellStMan),
+            casa_tables::DataManagerKind::TiledCellStMan
+        );
+
+        let mut fixture = scalar_fixture();
+        fixture.tile_shape = Some(vec![2, 3, 4]);
+        let dir = tempfile::tempdir().unwrap();
+        let opts = save_opts(&fixture, ManagerKind::TiledColumnStMan, dir.path());
+        assert_eq!(opts.path(), dir.path());
+        assert_eq!(
+            opts.data_manager(),
+            casa_tables::DataManagerKind::TiledColumnStMan
+        );
+        assert_eq!(opts.tile_shape(), Some(&[2, 3, 4][..]));
+
+        let endian_opts = save_opts_endian(
+            &fixture,
+            ManagerKind::TiledCellStMan,
+            dir.path(),
+            EndianFormat::LittleEndian,
+        );
+        assert_eq!(
+            endian_opts.data_manager(),
+            casa_tables::DataManagerKind::TiledCellStMan
+        );
+        assert_eq!(endian_opts.endian_format(), EndianFormat::LittleEndian);
+        assert!(values_equal(
+            &Value::Scalar(ScalarValue::Int32(1)),
+            &Value::Scalar(ScalarValue::Int32(1))
+        ));
+    }
+
     #[test]
     fn read_and_verify_reports_missing_table() {
         let fixture = scalar_fixture();

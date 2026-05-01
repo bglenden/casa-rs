@@ -222,7 +222,10 @@ pub fn format_result(result: &TaqlResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Table;
     use casa_types::RecordField;
+    use casa_types::{ArrayValue, Complex32, Complex64};
+    use ndarray::{ArrayD, IxDyn};
 
     #[test]
     fn format_value_scalars() {
@@ -230,15 +233,110 @@ mod tests {
             format_value(&Value::Scalar(ScalarValue::Bool(true))),
             "true"
         );
+        assert_eq!(format_value(&Value::Scalar(ScalarValue::UInt8(7))), "7");
+        assert_eq!(format_value(&Value::Scalar(ScalarValue::Int16(-7))), "-7");
+        assert_eq!(format_value(&Value::Scalar(ScalarValue::UInt16(17))), "17");
         assert_eq!(format_value(&Value::Scalar(ScalarValue::Int32(42))), "42");
+        assert_eq!(format_value(&Value::Scalar(ScalarValue::UInt32(42))), "42");
+        assert_eq!(format_value(&Value::Scalar(ScalarValue::Int64(-42))), "-42");
+        assert_eq!(
+            format_value(&Value::Scalar(ScalarValue::Float32(1.25))),
+            "1.250000"
+        );
         assert_eq!(
             format_value(&Value::Scalar(ScalarValue::Float64(1.5))),
             "1.500000"
         );
         assert_eq!(
+            format_value(&Value::Scalar(ScalarValue::Complex32(Complex32::new(
+                1.0, -2.0
+            )))),
+            "(1.000000,-2.000000)"
+        );
+        assert_eq!(
+            format_value(&Value::Scalar(ScalarValue::Complex64(Complex64::new(
+                -3.0, 4.0
+            )))),
+            "(-3.000000,4.000000)"
+        );
+        assert_eq!(
             format_value(&Value::Scalar(ScalarValue::String("hello".into()))),
             "hello"
         );
+        assert!(format_value(&Value::Record(RecordValue::default())).contains("RecordValue"));
+        assert_eq!(
+            format_value(&Value::TableRef("subtable.tbl".into())),
+            "table(subtable.tbl)"
+        );
+    }
+
+    #[test]
+    fn format_value_arrays_cover_supported_element_types() {
+        let cases = [
+            (
+                ArrayValue::Bool(ArrayD::from_shape_vec(IxDyn(&[2]), vec![true, false]).unwrap()),
+                "[true, false]",
+            ),
+            (
+                ArrayValue::UInt8(ArrayD::from_shape_vec(IxDyn(&[2]), vec![1u8, 2]).unwrap()),
+                "[1, 2]",
+            ),
+            (
+                ArrayValue::UInt16(ArrayD::from_shape_vec(IxDyn(&[2]), vec![1u16, 2]).unwrap()),
+                "[1, 2]",
+            ),
+            (
+                ArrayValue::UInt32(ArrayD::from_shape_vec(IxDyn(&[2]), vec![1u32, 2]).unwrap()),
+                "[1, 2]",
+            ),
+            (
+                ArrayValue::Int16(ArrayD::from_shape_vec(IxDyn(&[2]), vec![-1i16, 2]).unwrap()),
+                "[-1, 2]",
+            ),
+            (
+                ArrayValue::Int32(ArrayD::from_shape_vec(IxDyn(&[2]), vec![-1i32, 2]).unwrap()),
+                "[-1, 2]",
+            ),
+            (
+                ArrayValue::Int64(ArrayD::from_shape_vec(IxDyn(&[2]), vec![-1i64, 2]).unwrap()),
+                "[-1, 2]",
+            ),
+            (
+                ArrayValue::Float32(
+                    ArrayD::from_shape_vec(IxDyn(&[2]), vec![1.0f32, 2.5]).unwrap(),
+                ),
+                "[1.000000, 2.500000]",
+            ),
+            (
+                ArrayValue::Float64(
+                    ArrayD::from_shape_vec(IxDyn(&[2]), vec![1.0f64, 2.5]).unwrap(),
+                ),
+                "[1.000000, 2.500000]",
+            ),
+            (
+                ArrayValue::Complex32(
+                    ArrayD::from_shape_vec(IxDyn(&[1]), vec![Complex32::new(1.0, -1.0)]).unwrap(),
+                ),
+                "[(1.000000,-1.000000)]",
+            ),
+            (
+                ArrayValue::Complex64(
+                    ArrayD::from_shape_vec(IxDyn(&[1]), vec![Complex64::new(2.0, -2.0)]).unwrap(),
+                ),
+                "[(2.000000,-2.000000)]",
+            ),
+            (
+                ArrayValue::String(
+                    ArrayD::from_shape_vec(IxDyn(&[2]), vec!["a".to_string(), "bc".to_string()])
+                        .unwrap(),
+                ),
+                "[a, bc]",
+            ),
+        ];
+
+        for (array, expected) in cases {
+            assert_eq!(format_value(&Value::Array(array)), expected);
+        }
     }
 
     #[test]
@@ -272,6 +370,19 @@ mod tests {
     }
 
     #[test]
+    fn format_rows_truncates_long_cells_and_leaves_missing_cells_blank() {
+        let columns = vec!["long".to_string(), "missing".to_string()];
+        let rows = vec![RecordValue::new(vec![RecordField::new(
+            "long",
+            Value::Scalar(ScalarValue::String("x".repeat(60))),
+        )])];
+
+        let out = format_rows(&columns, &rows);
+        assert!(out.contains("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"));
+        assert!(out.contains("(1 row)"));
+    }
+
+    #[test]
     fn format_rows_no_columns() {
         let out = format_rows(&[], &[]);
         assert_eq!(out, "(no columns)\n");
@@ -284,6 +395,45 @@ mod tests {
             columns: vec!["a".into()],
         };
         assert_eq!(format_result(&r), "Selected 3 row(s), 1 column(s)");
+
+        let all_columns = TaqlResult::Select {
+            row_indices: vec![0],
+            columns: vec![],
+        };
+        assert_eq!(
+            format_result(&all_columns),
+            "Selected 1 row(s), all column(s)"
+        );
+    }
+
+    #[test]
+    fn format_result_covers_non_select_variants() {
+        assert_eq!(
+            format_result(&TaqlResult::Materialized {
+                table: Box::new(Table::from_rows(Vec::new()))
+            }),
+            "Materialized result: 0 row(s)"
+        );
+        assert_eq!(
+            format_result(&TaqlResult::Insert { rows_inserted: 2 }),
+            "Inserted 2 row(s)"
+        );
+        assert_eq!(
+            format_result(&TaqlResult::Delete { rows_deleted: 3 }),
+            "Deleted 3 row(s)"
+        );
+        assert_eq!(
+            format_result(&TaqlResult::CreateTable {
+                table_name: "created.tbl".into()
+            }),
+            "Created table: created.tbl"
+        );
+        assert_eq!(
+            format_result(&TaqlResult::DropTable {
+                table_name: "dropped.tbl".into()
+            }),
+            "Dropped table: dropped.tbl"
+        );
     }
 
     #[test]

@@ -482,3 +482,147 @@ fn is_array_data_type(dt: CasacoreDataType) -> bool {
             | CasacoreDataType::TpArrayInt64
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aipsio_buf::ByteOrder;
+
+    fn be_u16(value: u16) -> Vec<u8> {
+        value.to_be_bytes().to_vec()
+    }
+
+    fn be_u32(value: u32) -> Vec<u8> {
+        value.to_be_bytes().to_vec()
+    }
+
+    fn be_i16(value: i16) -> Vec<u8> {
+        value.to_be_bytes().to_vec()
+    }
+
+    fn be_i32(value: i32) -> Vec<u8> {
+        value.to_be_bytes().to_vec()
+    }
+
+    fn be_i64(value: i64) -> Vec<u8> {
+        value.to_be_bytes().to_vec()
+    }
+
+    fn string_bytes(value: &str) -> Vec<u8> {
+        let mut bytes = be_u32(value.len() as u32);
+        bytes.extend(value.as_bytes());
+        bytes
+    }
+
+    #[test]
+    fn column_desc_array_helpers_follow_option_bits() {
+        let scalar = ColumnDesc {
+            col_name: "TIME".to_string(),
+            data_type: CasacoreDataType::TpDouble,
+            is_array: false,
+            option: 1,
+            shape: Vec::new(),
+            dm_seq_nr: 0,
+        };
+        assert!(!scalar.is_direct_array());
+        assert!(!scalar.is_indirect_array());
+
+        let direct = ColumnDesc {
+            is_array: true,
+            ..scalar.clone()
+        };
+        assert!(direct.is_direct_array());
+        assert!(!direct.is_indirect_array());
+
+        let indirect = ColumnDesc {
+            option: 0,
+            ..direct
+        };
+        assert!(!indirect.is_direct_array());
+        assert!(indirect.is_indirect_array());
+    }
+
+    #[test]
+    fn default_value_skipper_consumes_supported_scalar_payloads() {
+        let cases = vec![
+            (CasacoreDataType::TpBool, vec![1]),
+            (CasacoreDataType::TpUChar, vec![7]),
+            (CasacoreDataType::TpChar, vec![8]),
+            (CasacoreDataType::TpShort, be_i16(-2)),
+            (CasacoreDataType::TpUShort, be_u16(2)),
+            (CasacoreDataType::TpInt, be_i32(-3)),
+            (CasacoreDataType::TpUInt, be_u32(3)),
+            (
+                CasacoreDataType::TpFloat,
+                1.25_f32.to_bits().to_be_bytes().to_vec(),
+            ),
+            (
+                CasacoreDataType::TpDouble,
+                1.5_f64.to_bits().to_be_bytes().to_vec(),
+            ),
+            (
+                CasacoreDataType::TpComplex,
+                [
+                    1.0_f32.to_bits().to_be_bytes(),
+                    2.0_f32.to_bits().to_be_bytes(),
+                ]
+                .concat(),
+            ),
+            (
+                CasacoreDataType::TpDComplex,
+                [
+                    1.0_f64.to_bits().to_be_bytes(),
+                    2.0_f64.to_bits().to_be_bytes(),
+                ]
+                .concat(),
+            ),
+            (CasacoreDataType::TpString, string_bytes("name")),
+            (CasacoreDataType::TpInt64, be_i64(-4)),
+            (CasacoreDataType::TpRecord, Vec::new()),
+        ];
+
+        for (data_type, payload) in cases {
+            let mut io = AipsIoBuf::new(&payload, ByteOrder::BigEndian);
+            skip_default_value(&mut io, data_type)
+                .unwrap_or_else(|error| panic!("skip default for {data_type:?} failed: {error}"));
+        }
+
+        let mut io = AipsIoBuf::new(&[], ByteOrder::BigEndian);
+        assert!(
+            skip_default_value(&mut io, CasacoreDataType::TpQuantity)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot skip default value")
+        );
+    }
+
+    #[test]
+    fn array_data_type_classifier_covers_supported_and_scalar_values() {
+        for data_type in [
+            CasacoreDataType::TpArrayBool,
+            CasacoreDataType::TpArrayChar,
+            CasacoreDataType::TpArrayUChar,
+            CasacoreDataType::TpArrayShort,
+            CasacoreDataType::TpArrayUShort,
+            CasacoreDataType::TpArrayInt,
+            CasacoreDataType::TpArrayUInt,
+            CasacoreDataType::TpArrayFloat,
+            CasacoreDataType::TpArrayDouble,
+            CasacoreDataType::TpArrayComplex,
+            CasacoreDataType::TpArrayDComplex,
+            CasacoreDataType::TpArrayString,
+            CasacoreDataType::TpArrayInt64,
+        ] {
+            assert!(is_array_data_type(data_type), "{data_type:?}");
+        }
+        for data_type in [
+            CasacoreDataType::TpBool,
+            CasacoreDataType::TpDouble,
+            CasacoreDataType::TpString,
+            CasacoreDataType::TpRecord,
+            CasacoreDataType::TpArrayQuantity,
+        ] {
+            assert!(!is_array_data_type(data_type), "{data_type:?}");
+        }
+    }
+}
