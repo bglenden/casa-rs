@@ -9,6 +9,7 @@ Verification:
 - `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/wave5-simulation-parity.py target/wave5-parity-full/ppdisk.rust.vla.a.3600s.trace.ms target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.ms target/wave5-parity-full/report-3600s-trace-fast-images --model-image target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.skymodel --rust-image target/wave5-parity-full/images-trace-fast/ppdisk-rust-dirty.image --casa-image target/wave5-parity-full/images/ppdisk-casa-dirty.image`
 - `scripts/run-wave5-issue125.sh target/wave5-issue125`
 - `scripts/run-wave5-issue126.sh target/wave5-issue126`
+- `scripts/run-wave5-issue126-panels.sh target/wave5-issue126-panels`
 
 ## Tutorial Command
 
@@ -213,6 +214,12 @@ Artifacts:
 - `target/wave5-issue126/rust-noise-gain-timing.json`
 - `target/wave5-issue126/rust-common-corruptions-timing.json`
 - `target/wave5-issue126/casa-noise-gain-timing.json`
+- `target/wave5-issue126-panels/wave5-issue126-noise-panel.png`
+- `target/wave5-issue126-panels/wave5-issue126-gain-phase-panel.png`
+- `target/wave5-issue126-panels/wave5-issue126-leakage-panel.png`
+- `target/wave5-issue126-panels/wave5-issue126-bandpass-panel.png`
+- `target/wave5-issue126-panels/wave5-issue126-pointing-panel.png`
+- `target/wave5-issue126-panels/wave5-issue126-panel-summary.json`
 
 Measured result:
 
@@ -244,3 +251,22 @@ pointing-offset controls. CASA `setbandpass` is documented as not implemented
 in the simulator tool XML, and CASA pointing corruption requires an external
 pointing-error table, so #126 keeps those to the practical native tutorial
 surface rather than inventing a broad calibration-table workflow.
+
+The per-effect panel harness renders dirty-image panels for each bounded
+corruption type. Noise and gain/phase have direct CASA simulator comparison
+panels. Leakage is rendered as a casa-rs impact panel because CASA's
+`setleakage(mode="constant", amplitude=[0.01, 0.0])` fails on the two-correlation
+tutorial MS with `JonesGenLin matrix apply (J::aR) incompatible with VisVector`.
+Bandpass and pointing are also rendered as casa-rs impact panels because CASA
+documents `setbandpass` as not implemented and `setpointingerror` requires an
+external pointing-error table.
+
+Per-effect summary:
+
+| Effect | CASA direct panel | rust delta component stddev | CASA delta component stddev | rust/CASA RMS data diff |
+|---|---|---:|---:|---:|
+| noise | yes | `0.0010002946946769953 Jy` | `0.0010000548791140318 Jy` | `0.002000108826905489 Jy` |
+| gain/phase | yes | `0.0002072835195576772 Jy` | `0.0007518390193581581 Jy` | `0.0011220132000744343 Jy` |
+| leakage | no, CASA fails on two-correlation MS | `2.8077792535441404e-07 Jy` | n/a | n/a |
+| bandpass | no, CASA `setbandpass` not implemented | `0.00017571824719198048 Jy` | n/a | n/a |
+| pointing | no, CASA requires pointing-error table | `8.060932259468245e-07 Jy` | n/a | n/a |
