@@ -71,17 +71,19 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         predict_model=False,
         corruption={
             "seed": 42,
-            "noise_stddev_jy": 0.001,
-            "gain_phase": {
-                "amplitude_stddev": 0.05,
-                "phase_stddev_rad": 0.02,
-            },
+            "noise": {"mode": "simplenoise", "simplenoise_jy": 0.001},
+            "gain": {"mode": "fbm", "interval_seconds": 10.0, "amplitude": [0.05, 0.02]},
             "bandpass": {
-                "amplitude_stddev": 0.03,
-                "phase_stddev_rad": 0.04,
+                "mode": "calculate",
+                "interval_seconds": 3600.0,
+                "amplitude": [0.03, 0.04],
             },
-            "polarization_leakage": {"amplitude": 0.01},
-            "pointing": {"offset_rad": [1.0e-5, -2.0e-5]},
+            "leakage": {"mode": "constant", "amplitude": [0.01, 0.0], "offset": [0.0, 0.0]},
+            "pointing": {
+                "applypointingoffsets": True,
+                "dopbcorrection": False,
+                "offset_rad": [1.0e-5, -2.0e-5],
+            },
         },
         binary=binary,
     )
@@ -98,10 +100,10 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["spectral_setup"]["channel_count"] == 4
     assert request["predict_model"] is False
     assert request["corruption"]["seed"] == 42
-    assert request["corruption"]["noise_stddev_jy"] == 0.001
-    assert request["corruption"]["gain_phase"]["phase_stddev_rad"] == 0.02
-    assert request["corruption"]["bandpass"]["amplitude_stddev"] == 0.03
-    assert request["corruption"]["polarization_leakage"]["amplitude"] == 0.01
+    assert request["corruption"]["noise"]["simplenoise_jy"] == 0.001
+    assert request["corruption"]["gain"]["amplitude"] == [0.05, 0.02]
+    assert request["corruption"]["bandpass"]["amplitude"] == [0.03, 0.04]
+    assert request["corruption"]["leakage"]["amplitude"] == [0.01, 0.0]
     assert request["corruption"]["pointing"]["offset_rad"] == [1.0e-5, -2.0e-5]
 
 

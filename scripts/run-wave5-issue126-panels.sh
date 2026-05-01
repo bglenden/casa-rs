@@ -35,7 +35,7 @@ common_args=(
   --model "$model"
   --duration "$duration"
   --integration 2
-  --channels 4
+  --channels 16
   --overwrite
 )
 
@@ -49,15 +49,19 @@ run_rust_case() {
 }
 
 run_rust_case noise \
-  --noise-stddev-jy 0.001
+  --noise-simplenoise-jy 0.001
 run_rust_case gain-phase \
-  --gain-amplitude-stddev 0.05 \
-  --gain-phase-stddev-rad 0.02
+  --gain-mode fbm \
+  --gain-interval-seconds 10 \
+  --gain-amplitude 0.05,0.02
 run_rust_case leakage \
-  --polarization-leakage 0.01
+  --leakage-amplitude 0.01,0.0
+run_rust_case leakage-visual \
+  --leakage-amplitude 0.1,0.0
 run_rust_case bandpass \
-  --bandpass-amplitude-stddev 0.03 \
-  --bandpass-phase-stddev-rad 0.04
+  --bandpass-mode calculate \
+  --bandpass-interval-seconds 3600 \
+  --bandpass-amplitude 0.03,0.04
 run_rust_case pointing \
   --pointing-offset-ra-arcsec 2.0 \
   --pointing-offset-dec-arcsec -1.0
@@ -158,7 +162,7 @@ image_ms() {
 }
 
 image_ms clean "$clean_ms"
-for slug in noise gain-phase leakage bandpass pointing pointing-visual; do
+for slug in noise gain-phase leakage leakage-visual bandpass pointing pointing-visual; do
   image_ms "rust-$slug" "$outdir/rust-$slug.ms"
   if [[ -d "$outdir/casa-$slug.ms" ]]; then
     image_ms "casa-$slug" "$outdir/casa-$slug.ms"
@@ -209,9 +213,11 @@ def read_ms_columns(path):
     try:
         data = np.asarray(tb.getcol("DATA"), dtype=np.complex64)
         time = np.asarray(tb.getcol("TIME"), dtype=np.float64)
+        ant1 = np.asarray(tb.getcol("ANTENNA1"), dtype=np.int32)
+        ant2 = np.asarray(tb.getcol("ANTENNA2"), dtype=np.int32)
     finally:
         tb.close()
-    return data, time
+    return data, time, ant1, ant2
 
 def read_fits_image(path):
     raw = path.read_bytes()
@@ -353,14 +359,26 @@ def plot_gain_time_panel(clean_ms, rust_ms, casa_ms, time, outdir):
     plt.close(fig)
     return panel_path
 
-def plot_bandpass_channel_panel(clean_ms, rust_ms, outdir):
+def plot_bandpass_channel_panel(clean_ms, rust_ms, time, outdir):
     channel, amp_ratio, phase = channel_series(clean_ms, rust_ms)
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8), constrained_layout=True, sharex=True)
-    axes[0].plot(channel, amp_ratio, "o-")
-    axes[0].axhline(1.0, color="black", linewidth=0.8)
-    axes[0].set_title("Bandpass amplitude ratio vs channel")
+    first_time = np.min(time)
+    first_time_mask = time == first_time
+    per_row_clean = clean_ms[:, :, first_time_mask]
+    per_row_rust = rust_ms[:, :, first_time_mask]
+    per_row_amp = np.abs(per_row_rust) / np.maximum(np.abs(per_row_clean), 1e-20)
+    per_row_phase = np.degrees(np.angle(per_row_rust * np.conj(per_row_clean)))
+    fig, axes = plt.subplots(2, 1, figsize=(11, 8), constrained_layout=True, sharex=True)
+    for corr in range(per_row_amp.shape[0]):
+        for row in range(per_row_amp.shape[2]):
+            label = f"corr {corr}" if row == 0 else None
+            axes[0].plot(channel, per_row_amp[corr, :, row], color=f"C{corr}", alpha=0.18, linewidth=0.8, label=label)
+            axes[1].plot(channel, per_row_phase[corr, :, row], color=f"C{corr}", alpha=0.18, linewidth=0.8)
+    axes[0].plot(channel, amp_ratio, "ko-", linewidth=2.0, label="all-baseline mean")
+    axes[0].axhline(0.0, color="black", linewidth=0.8)
+    axes[0].set_title("Bandpass amplitude ratio vs channel; faint lines are first-time baselines")
     axes[0].set_ylabel("mean |corrupted| / |clean|")
-    axes[1].plot(channel, phase, "o-")
+    axes[0].legend()
+    axes[1].plot(channel, phase, "ko-", linewidth=2.0, label="all-baseline mean")
     axes[1].axhline(0.0, color="black", linewidth=0.8)
     axes[1].set_title("Bandpass phase offset vs channel")
     axes[1].set_xlabel("channel")
@@ -370,22 +388,33 @@ def plot_bandpass_channel_panel(clean_ms, rust_ms, outdir):
     plt.close(fig)
     return panel_path
 
-def plot_leakage_visibility_panel(clean_ms, rust_ms, time, outdir):
+def plot_leakage_visibility_panel(clean_ms, rust_ms, visual_ms, time, outdir):
     t_min, amp_ratio, phase = time_series(clean_ms, rust_ms, time)
     delta = rust_ms - clean_ms
+    visual_delta = visual_ms - clean_ms
+    clean_corr0 = np.mean(np.abs(clean_ms[0, :, :]), axis=0)
+    clean_corr1 = np.mean(np.abs(clean_ms[1, :, :]), axis=0)
     corr0_delta = np.mean(np.abs(delta[0, :, :]), axis=0)
     corr1_delta = np.mean(np.abs(delta[1, :, :]), axis=0)
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8), constrained_layout=True, sharex=True)
-    axes[0].plot(t_min, amp_ratio, ".")
+    visual_corr0_delta = np.mean(np.abs(visual_delta[0, :, :]), axis=0)
+    visual_corr1_delta = np.mean(np.abs(visual_delta[1, :, :]), axis=0)
+    fig, axes = plt.subplots(3, 1, figsize=(12, 10), constrained_layout=True, sharex=True)
+    axes[0].plot(t_min, 1.0e6 * (amp_ratio - 1.0), ".")
     axes[0].axhline(1.0, color="black", linewidth=0.8)
-    axes[0].set_title("Polarization leakage mean amplitude ratio vs time")
-    axes[0].set_ylabel("mean |corrupted| / |clean|")
-    axes[1].scatter((time - time.min()) / 60.0, corr0_delta, s=4, alpha=0.35, label="corr 0")
-    axes[1].scatter((time - time.min()) / 60.0, corr1_delta, s=4, alpha=0.35, label="corr 1")
-    axes[1].set_title("Leakage visibility delta by correlation")
-    axes[1].set_xlabel("minutes from start")
+    axes[0].set_title("Production leakage fractional amplitude change")
+    axes[0].set_ylabel("ppm")
+    axes[1].scatter(clean_corr0, corr0_delta, s=4, alpha=0.25, label="corr 0")
+    axes[1].scatter(clean_corr1, corr1_delta, s=4, alpha=0.25, label="corr 1")
+    axes[1].set_title("Production leakage |delta| vs clean amplitude; correlations overlap for this unpolarized model")
+    axes[1].set_xlabel("mean channel clean amplitude Jy")
     axes[1].set_ylabel("mean channel |delta| Jy")
     axes[1].legend()
+    axes[2].scatter(clean_corr0, visual_corr0_delta, s=4, alpha=0.25, label="corr 0")
+    axes[2].scatter(clean_corr1, visual_corr1_delta, s=4, alpha=0.25, label="corr 1")
+    axes[2].set_title("10x diagnostic leakage |delta| vs clean amplitude")
+    axes[2].set_xlabel("mean channel clean amplitude Jy")
+    axes[2].set_ylabel("mean channel |delta| Jy")
+    axes[2].legend()
     panel_path = outdir / "wave5-issue126-leakage-visibility-panel.png"
     fig.savefig(panel_path, dpi=150)
     plt.close(fig)
@@ -395,19 +424,22 @@ def plot_pointing_impact_panel(clean_image, pointing_image, visual_image, outdir
     standard_diff = pointing_image - clean_image
     visual_diff = visual_image - clean_image
     diff_abs = float(np.percentile(np.abs(visual_diff), 99.5)) or 1.0
+    bright_mask = np.abs(clean_image) > max(float(np.max(np.abs(clean_image))) * 0.2, 1e-12)
     ratio = np.divide(
         visual_image,
         clean_image,
-        out=np.ones_like(visual_image),
-        where=np.abs(clean_image) > max(float(np.max(np.abs(clean_image))) * 1e-4, 1e-12),
+        out=np.full_like(visual_image, np.nan),
+        where=bright_mask,
     )
     ratio_vmin, ratio_vmax = percentile_limits(ratio[np.isfinite(ratio)])
+    ratio_cmap = plt.get_cmap("magma").copy()
+    ratio_cmap.set_bad(color="lightgray")
     fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
     panels = [
         (axes[0, 0], clean_image, "Clean dirty image", *percentile_limits(clean_image), "viridis"),
         (axes[0, 1], visual_image, "20/-10 arcsec pointing diagnostic", *percentile_limits(visual_image), "viridis"),
-        (axes[1, 0], visual_diff, f"visual offset minus clean; RMS={rms(visual_diff):.3e}", -diff_abs, diff_abs, "coolwarm"),
-        (axes[1, 1], ratio, "visual offset / clean", ratio_vmin, ratio_vmax, "magma"),
+        (axes[1, 0], visual_diff, f"deterministic PB attenuation pattern; RMS={rms(visual_diff):.3e}", -diff_abs, diff_abs, "coolwarm"),
+        (axes[1, 1], np.ma.masked_invalid(ratio), "visual offset / clean on bright pixels", ratio_vmin, ratio_vmax, ratio_cmap),
     ]
     for ax, data, label, vmin, vmax, cmap in panels:
         im = ax.imshow(data.T, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
@@ -422,7 +454,7 @@ def plot_pointing_impact_panel(clean_image, pointing_image, visual_image, outdir
 
 model = read_fits_image(model_path)
 clean_image = read_casa_image(images / "clean.image")
-clean_ms, clean_time = read_ms_columns(outdir / "clean.ms")
+clean_ms, clean_time, clean_ant1, clean_ant2 = read_ms_columns(outdir / "clean.ms")
 with open(outdir / "casa-corruption-status.json", encoding="utf-8") as handle:
     casa_status = json.load(handle)
 
@@ -513,10 +545,16 @@ if casa_status.get("gain-phase", {}).get("available"):
     )
     tutorial_panels["gain_phase_time"] = {"panel_png": str(path)}
 tutorial_panels["bandpass_channel"] = {
-    "panel_png": str(plot_bandpass_channel_panel(clean_ms, read_ms_data(outdir / "rust-bandpass.ms"), outdir))
+    "panel_png": str(plot_bandpass_channel_panel(clean_ms, read_ms_data(outdir / "rust-bandpass.ms"), clean_time, outdir))
 }
 tutorial_panels["leakage_visibility"] = {
-    "panel_png": str(plot_leakage_visibility_panel(clean_ms, read_ms_data(outdir / "rust-leakage.ms"), clean_time, outdir))
+    "panel_png": str(plot_leakage_visibility_panel(
+        clean_ms,
+        read_ms_data(outdir / "rust-leakage.ms"),
+        read_ms_data(outdir / "rust-leakage-visual.ms"),
+        clean_time,
+        outdir,
+    ))
 }
 path, stats = plot_pointing_impact_panel(
     clean_image,

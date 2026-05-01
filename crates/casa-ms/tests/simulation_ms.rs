@@ -2,10 +2,12 @@
 //! Native synthetic-observation MS writer tests.
 
 use casa_ms::{
-    MeasurementSet, SyntheticAntenna, SyntheticBandpassCorruption, SyntheticCorruptionConfig,
-    SyntheticGainPhaseCorruption, SyntheticObservationRequest, SyntheticPointingCorruption,
-    SyntheticPolarizationLeakageCorruption, SyntheticSpectralSetup,
-    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+    MeasurementSet, SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
+    SyntheticCorruptionConfig, SyntheticGainCorruption, SyntheticGainMode,
+    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationRequest,
+    SyntheticPointingCorruption, SyntheticPolarizationLeakageCorruption,
+    SyntheticPolarizationLeakageMode, SyntheticSpectralSetup, generate_synthetic_observation_ms,
+    tutorial_vla_a_antennas,
 };
 use casa_test_support::{discover_casa_python, tutorial_dataset_path};
 use casa_types::{ArrayValue, ScalarValue, Value};
@@ -128,13 +130,17 @@ fn seeded_noise_and_gain_phase_corruptions_are_deterministic() {
     std::fs::create_dir_all(temp.path().join("first")).unwrap();
     first.corruption = Some(SyntheticCorruptionConfig {
         seed: 42,
-        noise_stddev_jy: Some(0.001),
-        gain_phase: Some(SyntheticGainPhaseCorruption {
-            amplitude_stddev: 0.05,
-            phase_stddev_rad: 0.02,
+        noise: Some(SyntheticNoiseCorruption {
+            mode: SyntheticNoiseMode::SimpleNoise,
+            simplenoise_jy: 0.001,
+        }),
+        gain: Some(SyntheticGainCorruption {
+            mode: SyntheticGainMode::Fbm,
+            interval_seconds: 10.0,
+            amplitude: [0.05, 0.02],
         }),
         bandpass: None,
-        polarization_leakage: None,
+        leakage: None,
         pointing: None,
     });
     let mut second = first.clone();
@@ -147,7 +153,7 @@ fn seeded_noise_and_gain_phase_corruptions_are_deterministic() {
     let second_report = generate_synthetic_observation_ms(&second).unwrap();
     assert_eq!(
         first_report.applied_corruptions,
-        vec!["noise".to_string(), "gain_phase".to_string()]
+        vec!["noise".to_string(), "gain".to_string()]
     );
     assert_eq!(
         second_report.applied_corruptions,
@@ -166,6 +172,41 @@ fn seeded_noise_and_gain_phase_corruptions_are_deterministic() {
 }
 
 #[test]
+fn gain_phase_corruption_varies_by_time_sample() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut corrupted = request(&temp.path().join("gain-time"));
+    std::fs::create_dir_all(temp.path().join("gain-time")).unwrap();
+    corrupted.corruption = Some(SyntheticCorruptionConfig {
+        seed: 42,
+        noise: None,
+        gain: Some(SyntheticGainCorruption {
+            mode: SyntheticGainMode::Fbm,
+            interval_seconds: 10.0,
+            amplitude: [0.05, 0.02],
+        }),
+        bandpass: None,
+        leakage: None,
+        pointing: None,
+    });
+    generate_synthetic_observation_ms(&corrupted).unwrap();
+
+    let clean_root = temp.path().join("gain-time-clean");
+    std::fs::create_dir_all(&clean_root).unwrap();
+    let clean = request(&clean_root);
+    generate_synthetic_observation_ms(&clean).unwrap();
+
+    let first_ratio = complex_ratio(
+        row_data(&corrupted.output_ms, 0)[0],
+        row_data(&clean.output_ms, 0)[0],
+    );
+    let second_sample_ratio = complex_ratio(
+        row_data(&corrupted.output_ms, 3)[0],
+        row_data(&clean.output_ms, 3)[0],
+    );
+    assert_ne!(first_ratio, second_sample_ratio);
+}
+
+#[test]
 fn common_bandpass_and_leakage_corruptions_are_reported_and_change_data() {
     let temp = tempfile::tempdir().unwrap();
     let mut corrupted = request(&temp.path().join("corrupted"));
@@ -173,19 +214,24 @@ fn common_bandpass_and_leakage_corruptions_are_reported_and_change_data() {
     corrupted.spectral_setup.channel_count = 4;
     corrupted.corruption = Some(SyntheticCorruptionConfig {
         seed: 99,
-        noise_stddev_jy: None,
-        gain_phase: None,
+        noise: None,
+        gain: None,
         bandpass: Some(SyntheticBandpassCorruption {
-            amplitude_stddev: 0.08,
-            phase_stddev_rad: 0.04,
+            mode: SyntheticBandpassMode::Calculate,
+            interval_seconds: 3600.0,
+            amplitude: [0.08, 0.04],
         }),
-        polarization_leakage: Some(SyntheticPolarizationLeakageCorruption { amplitude: 0.1 }),
+        leakage: Some(SyntheticPolarizationLeakageCorruption {
+            mode: SyntheticPolarizationLeakageMode::Constant,
+            amplitude: [0.1, 0.0],
+            offset: [0.0, 0.0],
+        }),
         pointing: None,
     });
     let report = generate_synthetic_observation_ms(&corrupted).unwrap();
     assert_eq!(
         report.applied_corruptions,
-        vec!["bandpass".to_string(), "polarization_leakage".to_string()]
+        vec!["bandpass".to_string(), "leakage".to_string()]
     );
 
     let uncorrupted_root = temp.path().join("uncorrupted-common");
@@ -218,11 +264,14 @@ fn pointing_corruption_shifts_primary_beam_prediction_when_model_has_direction()
     shifted.output_ms = root.join("shifted.ms");
     shifted.corruption = Some(SyntheticCorruptionConfig {
         seed: 5,
-        noise_stddev_jy: None,
-        gain_phase: None,
+        noise: None,
+        gain: None,
         bandpass: None,
-        polarization_leakage: None,
+        leakage: None,
         pointing: Some(SyntheticPointingCorruption {
+            epjtablename: None,
+            apply_pointing_offsets: true,
+            do_pb_correction: false,
             offset_rad: [10.0_f64.to_radians() / 3600.0, 0.0],
         }),
     });
@@ -240,17 +289,20 @@ fn invalid_corruption_parameters_fail_clearly() {
     let mut request = request(temp.path());
     request.corruption = Some(SyntheticCorruptionConfig {
         seed: 7,
-        noise_stddev_jy: Some(-1.0),
-        gain_phase: None,
+        noise: Some(SyntheticNoiseCorruption {
+            mode: SyntheticNoiseMode::SimpleNoise,
+            simplenoise_jy: -1.0,
+        }),
+        gain: None,
         bandpass: None,
-        polarization_leakage: None,
+        leakage: None,
         pointing: None,
     });
 
     let error = generate_synthetic_observation_ms(&request)
         .unwrap_err()
         .to_string();
-    assert!(error.contains("noise_stddev_jy"));
+    assert!(error.contains("simplenoise_jy"));
     assert!(error.contains("non-negative"));
 }
 
@@ -455,10 +507,14 @@ fn write_test_fits_model_inner(
 }
 
 fn first_row_data(path: &std::path::Path) -> Vec<(f32, f32)> {
+    row_data(path, 0)
+}
+
+fn row_data(path: &std::path::Path, row: usize) -> Vec<(f32, f32)> {
     let ms = MeasurementSet::open(path).unwrap();
     let data = ms
         .main_table()
-        .cell_accessor(0, "DATA")
+        .cell_accessor(row, "DATA")
         .unwrap()
         .value()
         .unwrap();
@@ -469,6 +525,14 @@ fn first_row_data(path: &std::path::Path) -> Vec<(f32, f32)> {
             .collect::<Vec<_>>(),
         other => panic!("expected Complex32 DATA array, got {other:?}"),
     }
+}
+
+fn complex_ratio(numerator: (f32, f32), denominator: (f32, f32)) -> (i32, i32) {
+    let denom = denominator.0 * denominator.0 + denominator.1 * denominator.1;
+    assert!(denom > 0.0);
+    let real = (numerator.0 * denominator.0 + numerator.1 * denominator.1) / denom;
+    let imag = (numerator.1 * denominator.0 - numerator.0 * denominator.1) / denom;
+    ((real * 1.0e6).round() as i32, (imag * 1.0e6).round() as i32)
 }
 
 fn fits_card(key: &str, value: &str) -> String {

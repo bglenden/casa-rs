@@ -191,15 +191,24 @@ environment without `DISPLAY`.
 
 The #126 harness covers the simulator-tool corruption slice needed for tutorial
 examples without trying to clone the open-ended simulator corruption catalog.
+The parameter mapping was checked against CASA C++ `Simulator::setnoise`,
+`Simulator::setgain`, `Simulator::setleakage`, `Simulator::setbandpass`,
+`Simulator::setpointingerror`, `GJones::createCorruptor`,
+`DJones::createCorruptor`, and the `ANoiseCorruptor`/`DJonesCorruptor`/
+`GJonesCorruptor` implementations. `setnoise(mode="simplenoise")`,
+`setgain(mode="fbm", interval, amplitude=[real,imag])`, and
+`setleakage(mode="constant", amplitude=[real,imag], offset=[real,imag])` are
+therefore exposed with CASA-style names in casa-rs.
 It runs the VLA ppdisk model with `120s`, `2s` integrations, and four channels
 so channel-dependent effects are visible:
 
 - casa-rs clean synthetic MS.
-- casa-rs noise+gain synthetic MS with `--noise-stddev-jy 0.001`,
-  `--gain-amplitude-stddev 0.05`, and `--gain-phase-stddev-rad 0.02`.
+- casa-rs noise+gain synthetic MS with CASA-style
+  `--noise-simplenoise-jy 0.001`, `--gain-mode fbm`,
+  `--gain-interval-seconds 10`, and `--gain-amplitude 0.05,0.02`.
 - casa-rs common-corruption synthetic MS with the same noise+gain plus
-  bandpass, parallel-hand polarization leakage, and a global primary-beam
-  pointing offset.
+  CASA-style `--bandpass-mode calculate --bandpass-amplitude 0.03,0.04`,
+  `--leakage-amplitude 0.01,0.0`, and a global primary-beam pointing offset.
 - CASA simulator reference made by copying the same clean MS and running
   `sm.setnoise(mode="simplenoise", simplenoise="0.001Jy")`,
   `sm.setgain(mode="fbm", amplitude=[0.05, 0.02])`, and `sm.corrupt()`.
@@ -236,27 +245,32 @@ Measured result:
 | rust common-corruption rows | `21060` |
 | CASA noise+gain rows | `21060` |
 | data shape | `[2, 4, 21060]` |
-| rust noise+gain component stddev delta | `0.0010213215136900544 Jy` |
+| rust noise+gain component stddev delta | `0.0012376324739307165 Jy` |
 | CASA noise+gain component stddev delta | `0.0012523955665528774 Jy` |
-| rust common-corruption component stddev delta | `0.0010408269008621573 Jy` |
-| rust noise+gain mean amplitude ratio | `1.258807897567749` |
+| rust common-corruption component stddev delta | `0.0012545458739623427 Jy` |
+| rust noise+gain mean amplitude ratio | `1.2476589679718018` |
 | CASA noise+gain mean amplitude ratio | `1.2593351602554321` |
-| rust common-corruption mean amplitude ratio | `1.25957453250885` |
-| rust clean runtime | `1.2037884159944952 s` |
-| rust noise+gain runtime | `0.18237316608428955 s` |
-| rust common-corruption runtime | `0.1811619158834219 s` |
-| CASA noise+gain corruption runtime | `0.12549133296124637 s` |
+| rust common-corruption mean amplitude ratio | `1.2568731307983398` |
+| rust clean runtime | `1.1114777910988778 s` |
+| rust noise+gain runtime | `0.19485995802097023 s` |
+| rust common-corruption runtime | `0.19738600007258356 s` |
+| CASA noise+gain corruption runtime | `0.11394483409821987 s` |
 
 The rust and CASA noise+gain runs are not expected to be cell-identical because
-CASA's simulator uses its own random generator and `setgain(mode="fbm")`
-implementation. The comparison pins the same clean input MS, same seed value,
-same simple-noise sigma, same gain RMS parameters, row/shape preservation, and
-similar corrupted-data statistics. The broader casa-rs common-corruption run
-demonstrates deterministic bandpass, polarization leakage, and primary-beam
-pointing-offset controls. CASA `setbandpass` is documented as not implemented
-in the simulator tool XML, and CASA pointing corruption requires an external
-pointing-error table, so #126 keeps those to the practical native tutorial
-surface rather than inventing a broad calibration-table workflow.
+CASA's simulator uses casacore's random generator and FFT-backed fBM generator.
+The comparison pins the same clean input MS, same seed value, same simple-noise
+sigma, same CASA `setgain(mode="fbm", interval, amplitude=[real,imag])`
+parameterization, row/shape preservation, and similar corrupted-data
+statistics. The casa-rs gain drift now follows the CASA C++ source shape:
+per-antenna and per-correlation fBM amplitude and phase series, with the
+complex amplitude vector reduced to `abs(camp)` and clamped below `0.9`.
+
+The broader casa-rs common-corruption run demonstrates deterministic bandpass,
+polarization leakage, and primary-beam pointing-offset controls with CASA-style
+field names. CASA C++ currently disables `setbandpass` and `setpointingerror`,
+and CASA `setleakage` fails on the two-correlation tutorial MS, so #126 keeps
+those effects to the practical native tutorial surface while preserving the
+CASA parameter names and validation boundaries.
 
 The per-effect panel harness renders dirty-image panels for each bounded
 corruption type. Noise and gain/phase have direct CASA simulator comparison
@@ -271,11 +285,11 @@ Per-effect summary:
 
 | Effect | CASA direct panel | rust delta component stddev | CASA delta component stddev | rust/CASA RMS data diff |
 |---|---|---:|---:|---:|
-| noise | yes | `0.0010002946946769953 Jy` | `0.0010000548791140318 Jy` | `0.002000108826905489 Jy` |
-| gain/phase | yes | `0.0002072835195576772 Jy` | `0.0007518390193581581 Jy` | `0.0011220132000744343 Jy` |
-| leakage | no, CASA fails on two-correlation MS | `2.8077792535441404e-07 Jy` | n/a | n/a |
-| bandpass | no, CASA `setbandpass` not implemented | `0.00017571824719198048 Jy` | n/a | n/a |
-| pointing | no, CASA requires pointing-error table | `8.060932259468245e-07 Jy` | n/a | n/a |
+| noise | yes | `0.0009994963183999062 Jy` | `0.0009998613968491554 Jy` | `0.001999780535697937 Jy` |
+| gain/phase | yes | `0.0007197412196546793 Jy` | `0.0007411281694658101 Jy` | `0.0014894488267600536 Jy` |
+| leakage | no, CASA fails on two-correlation MS | `3.0627296609964105e-07 Jy` | n/a | n/a |
+| bandpass | no, CASA `setbandpass` not implemented | `0.00018049520440399647 Jy` | n/a | n/a |
+| pointing | no, CASA requires pointing-error table | `8.515031026945508e-07 Jy` | n/a | n/a |
 
 Tutorial-style diagnostic panels are also generated because the CASA simulation
 guides emphasize residual/fidelity images, image statistics, `plotms`-style
@@ -284,8 +298,8 @@ comparisons:
 
 | Diagnostic | Artifact | Result |
 |---|---|---:|
-| noise residual image and residual histogram | `target/wave5-issue126-panels/wave5-issue126-noise-residual-panel.png` | rust residual RMS `2.360620283261362e-06 Jy/beam`; CASA residual RMS `2.48095804209798e-06 Jy/beam` |
+| noise residual image and residual histogram | `target/wave5-issue126-panels/wave5-issue126-noise-residual-panel.png` | rust residual RMS `1.3255032512786888e-06 Jy/beam`; CASA residual RMS `1.097286721325306e-06 Jy/beam` |
 | gain/phase amplitude ratio and phase offset vs time | `target/wave5-issue126-panels/wave5-issue126-gain-phase-time-panel.png` | direct CASA and casa-rs visibility-domain comparison |
 | bandpass amplitude ratio and phase offset vs channel | `target/wave5-issue126-panels/wave5-issue126-bandpass-channel-panel.png` | native casa-rs channel-dependent signature |
-| polarization-leakage visibility delta by correlation | `target/wave5-issue126-panels/wave5-issue126-leakage-visibility-panel.png` | native casa-rs visibility-domain signature; CASA direct path unavailable on this two-correlation MS |
-| pointing primary-beam impact | `target/wave5-issue126-panels/wave5-issue126-pointing-impact-panel.png` | production `2/-1 arcsec` offset image RMS `1.5238555183271463e-07 Jy/beam`; visualization `20/-10 arcsec` offset image RMS `0.00017008024922316966 Jy/beam` |
+| leakage visibility delta by correlation | `target/wave5-issue126-panels/wave5-issue126-leakage-visibility-panel.png` | native casa-rs visibility-domain signature; CASA direct path unavailable on this two-correlation MS |
+| pointing primary-beam impact | `target/wave5-issue126-panels/wave5-issue126-pointing-impact-panel.png` | production `2/-1 arcsec` offset image RMS `1.5828152179884402e-07 Jy/beam`; visualization `20/-10 arcsec` offset image RMS `0.00017020275302144576 Jy/beam` |

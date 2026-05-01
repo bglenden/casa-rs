@@ -69,19 +69,22 @@ time_json_stdout rust-clean "$outdir/rust-clean-timing.json" "$outdir/rust-clean
 time_json_stdout rust-noise-gain "$outdir/rust-noise-gain-timing.json" "$outdir/rust-noise-gain-report.json" \
   target/release/simobserve "${common_args[@]}" --out "$rust_noise_gain_ms" \
   --corruption-seed 12345 \
-  --noise-stddev-jy 0.001 \
-  --gain-amplitude-stddev 0.05 \
-  --gain-phase-stddev-rad 0.02
+  --noise-simplenoise-jy 0.001 \
+  --gain-mode fbm \
+  --gain-interval-seconds 10 \
+  --gain-amplitude 0.05,0.02
 
 time_json_stdout rust-common-corruptions "$outdir/rust-common-corruptions-timing.json" "$outdir/rust-common-corruptions-report.json" \
   target/release/simobserve "${common_args[@]}" --out "$rust_common_ms" \
   --corruption-seed 12345 \
-  --noise-stddev-jy 0.001 \
-  --gain-amplitude-stddev 0.05 \
-  --gain-phase-stddev-rad 0.02 \
-  --bandpass-amplitude-stddev 0.03 \
-  --bandpass-phase-stddev-rad 0.04 \
-  --polarization-leakage 0.01 \
+  --noise-simplenoise-jy 0.001 \
+  --gain-mode fbm \
+  --gain-interval-seconds 10 \
+  --gain-amplitude 0.05,0.02 \
+  --bandpass-mode calculate \
+  --bandpass-interval-seconds 3600 \
+  --bandpass-amplitude 0.03,0.04 \
+  --leakage-amplitude 0.01,0.0 \
   --pointing-offset-ra-arcsec 2.0 \
   --pointing-offset-dec-arcsec -1.0
 
@@ -180,10 +183,10 @@ summary = {
     ],
     "acceptance": {
         "casa_noise_gain_reference": "CASA simulator setnoise(mode='simplenoise', simplenoise='0.001Jy') plus setgain(mode='fbm', amplitude=[0.05, 0.02]) on the same clean MS",
-        "rust_noise_gain_reference": "casa-rs deterministic --noise-stddev-jy plus --gain-amplitude-stddev/--gain-phase-stddev-rad on the same model setup",
+        "rust_noise_gain_reference": "casa-rs deterministic --noise-simplenoise-jy plus CASA-like --gain-mode fbm --gain-amplitude real,imag on the same model setup",
         "rust_common_extra_effects": [
             "bandpass",
-            "polarization_leakage",
+            "leakage",
             "pointing",
         ],
     },

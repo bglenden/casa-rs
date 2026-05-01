@@ -115,10 +115,12 @@ pub use selection_syntax::{
     parse_spw_selector,
 };
 pub use simulation::{
-    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticCorruptionConfig,
-    SyntheticGainPhaseCorruption, SyntheticObservationReport, SyntheticObservationRequest,
-    SyntheticPointingCorruption, SyntheticPolarizationLeakageCorruption, SyntheticSpectralSetup,
-    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
+    SyntheticCorruptionConfig, SyntheticGainCorruption, SyntheticGainMode,
+    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationReport,
+    SyntheticObservationRequest, SyntheticPointingCorruption,
+    SyntheticPolarizationLeakageCorruption, SyntheticPolarizationLeakageMode,
+    SyntheticSpectralSetup, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
 pub use simulation_task::{
     SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveProtocolInfo,
