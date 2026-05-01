@@ -1652,7 +1652,7 @@ pub(crate) fn write_ssm_file(
     rows: &[casa_types::RecordValue],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    write_ssm_file_impl(file_path, col_descs, rows, None, big_endian)
+    write_ssm_file_impl(file_path, col_descs, rows, None, None, big_endian)
 }
 
 pub(crate) fn write_ssm_file_indexed(
@@ -1662,23 +1662,53 @@ pub(crate) fn write_ssm_file_indexed(
     field_indices: &[usize],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    write_ssm_file_impl(file_path, col_descs, rows, Some(field_indices), big_endian)
+    write_ssm_file_impl(
+        file_path,
+        col_descs,
+        rows,
+        Some(field_indices),
+        None,
+        big_endian,
+    )
 }
 
-fn row_value_at_index<'a>(
-    row: &'a casa_types::RecordValue,
-    field_index: usize,
-    field_name: &str,
-) -> Option<&'a casa_types::Value> {
-    if let Some(field) = row.fields().get(field_index) {
-        if field.name == field_name {
-            return Some(&field.value);
+pub(crate) fn write_ssm_file_scalar_columns(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &[&[Option<ScalarValue>]],
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    let nrrow = scalar_columns.first().map_or(0, |values| values.len());
+    if scalar_columns.len() != col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM scalar column count mismatch: expected {}, got {}",
+            col_descs.len(),
+            scalar_columns.len()
+        )));
+    }
+    for values in scalar_columns.iter().skip(1) {
+        if values.len() != nrrow {
+            return Err(StorageError::FormatMismatch(
+                "SSM scalar columns have inconsistent row counts".to_string(),
+            ));
         }
     }
-    row.fields()
+    if col_descs
         .iter()
-        .find(|field| field.name == field_name)
-        .map(|field| &field.value)
+        .any(|col_desc| col_desc.is_array || col_desc.is_record())
+    {
+        return Err(StorageError::FormatMismatch(
+            "SSM scalar column writer only supports scalar non-record columns".to_string(),
+        ));
+    }
+    write_ssm_file_impl(
+        file_path,
+        col_descs,
+        &[],
+        None,
+        Some(scalar_columns),
+        big_endian,
+    )
 }
 
 fn write_ssm_file_impl(
@@ -1686,9 +1716,12 @@ fn write_ssm_file_impl(
     col_descs: &[ColumnDescContents],
     rows: &[casa_types::RecordValue],
     field_indices: Option<&[usize]>,
+    scalar_columns: Option<&[&[Option<ScalarValue>]]>,
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    let nrrow = rows.len();
+    let nrrow = scalar_columns
+        .and_then(|columns| columns.first().map(|values| values.len()))
+        .unwrap_or(rows.len());
     let ncol = col_descs.len();
 
     // Check if any array columns are stored indirectly.
@@ -1809,20 +1842,35 @@ fn write_ssm_file_impl(
                 )
             })?;
 
-            for (row, row_record) in rows.iter().enumerate() {
+            for row in 0..nrrow {
                 let bucket_idx = row / rows_per_bucket as usize;
                 let row_in_bucket = row % rows_per_bucket as usize;
                 let bucket = &mut buckets[bucket_idx];
                 let byte_off = col_off + row_in_bucket * 8;
 
-                let value = if let Some(indices) = field_indices {
-                    row_value_at_index(row_record, indices[col_idx], &col_desc.col_name)
+                let scalar_value;
+                let value = if let Some(columns) = scalar_columns {
+                    scalar_value = columns[col_idx][row].as_ref().cloned().map(Value::Scalar);
+                    scalar_value.as_ref()
                 } else {
+                    let row_record = &rows[row];
                     row_record
                         .fields()
-                        .iter()
-                        .find(|f| f.name == col_desc.col_name)
-                        .map(|f| &f.value)
+                        .get(
+                            field_indices
+                                .and_then(|indices| indices.get(col_idx))
+                                .copied()
+                                .unwrap_or(usize::MAX),
+                        )
+                        .filter(|field| field.name == col_desc.col_name)
+                        .map(|field| &field.value)
+                        .or_else(|| {
+                            row_record
+                                .fields()
+                                .iter()
+                                .find(|f| f.name == col_desc.col_name)
+                                .map(|f| &f.value)
+                        })
                 };
 
                 let offset: i64 =
@@ -1859,19 +1907,34 @@ fn write_ssm_file_impl(
                 }
             }
         } else {
-            for (row, row_record) in rows.iter().enumerate() {
+            for row in 0..nrrow {
                 let bucket_idx = row / rows_per_bucket as usize;
                 let row_in_bucket = row % rows_per_bucket as usize;
                 let bucket = &mut buckets[bucket_idx];
 
-                let value = if let Some(indices) = field_indices {
-                    row_value_at_index(row_record, indices[col_idx], &col_desc.col_name)
+                let scalar_value;
+                let value = if let Some(columns) = scalar_columns {
+                    scalar_value = columns[col_idx][row].as_ref().cloned().map(Value::Scalar);
+                    scalar_value.as_ref()
                 } else {
+                    let row_record = &rows[row];
                     row_record
                         .fields()
-                        .iter()
-                        .find(|f| f.name == col_desc.col_name)
-                        .map(|f| &f.value)
+                        .get(
+                            field_indices
+                                .and_then(|indices| indices.get(col_idx))
+                                .copied()
+                                .unwrap_or(usize::MAX),
+                        )
+                        .filter(|field| field.name == col_desc.col_name)
+                        .map(|field| &field.value)
+                        .or_else(|| {
+                            row_record
+                                .fields()
+                                .iter()
+                                .find(|f| f.name == col_desc.col_name)
+                                .map(|f| &f.value)
+                        })
                 };
 
                 write_cell_to_bucket(

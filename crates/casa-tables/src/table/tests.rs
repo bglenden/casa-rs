@@ -3236,6 +3236,71 @@ fn save_with_bindings_keeps_different_tiled_array_dims_in_separate_groups() {
     std::fs::remove_dir_all(&root).expect("cleanup");
 }
 
+#[test]
+fn save_with_bindings_column_overrides_write_single_tiled_array_column() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("ROW_ID", PrimitiveType::Int32),
+        ColumnSchema::array_variable("DATA", PrimitiveType::Int32, Some(2)),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    for row_id in 0..3 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "ROW_ID",
+                Value::Scalar(ScalarValue::Int32(row_id)),
+            )]))
+            .expect("add scalar-only row");
+    }
+
+    let root = unique_test_dir("save_with_bindings_column_overrides");
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let bindings = HashMap::from([(
+        "DATA".to_string(),
+        ColumnBinding {
+            data_manager: DataManagerKind::TiledShapeStMan,
+            tile_shape: None,
+        },
+    )]);
+    let overrides = HashMap::from([(
+        "DATA".to_string(),
+        vec![
+            Some(Value::Array(ArrayValue::Int32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![1, 2, 3, 4]).expect("row 0 shape"),
+            ))),
+            Some(Value::Array(ArrayValue::Int32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![5, 6, 7, 8]).expect("row 1 shape"),
+            ))),
+            Some(Value::Array(ArrayValue::Int32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![9, 10, 11, 12]).expect("row 2 shape"),
+            ))),
+        ],
+    )]);
+
+    table
+        .save_with_bindings_and_column_overrides_assuming_valid(
+            TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+            &overrides,
+        )
+        .expect("save with column overrides");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    assert_eq!(
+        table_scalar(&reopened, 1, "ROW_ID").expect("row id"),
+        &ScalarValue::Int32(1)
+    );
+    assert_eq!(
+        table_array(&reopened, 2, "DATA").expect("data row 2"),
+        &ArrayValue::Int32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![9, 10, 11, 12]).expect("expected shape")
+        )
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
 fn assert_save_with_bindings_preserves_scalar_values_when_row_field_order_varies(
     dm_kind: DataManagerKind,
     label: &str,

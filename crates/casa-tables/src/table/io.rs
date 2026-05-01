@@ -272,6 +272,83 @@ impl Table {
         Ok(())
     }
 
+    /// Save the table with per-column bindings and complete column-value overrides.
+    ///
+    /// This advanced writer is for high-volume materialization paths that
+    /// build some large array columns column-wise while the rest of the table
+    /// is still represented as rows. Each override must contain exactly one
+    /// value slot per table row. Overrides can be written directly for
+    /// single-column tiled data-manager groups, matching MeasurementSet
+    /// visibility columns such as `DATA` and `FLAG`, and for scalar
+    /// IncrementalStMan groups when the whole scalar group is overridden.
+    ///
+    /// The caller is responsible for ensuring that override values satisfy the
+    /// table schema; this method intentionally shares the same "assuming
+    /// valid" contract as [`save_with_bindings_assuming_valid`](Self::save_with_bindings_assuming_valid).
+    pub fn save_with_bindings_and_column_overrides_assuming_valid(
+        &self,
+        options: TableOptions,
+        bindings: &std::collections::HashMap<String, ColumnBinding>,
+        column_overrides: &std::collections::HashMap<String, Vec<Option<Value>>>,
+    ) -> Result<(), TableError> {
+        let row_count = self.inner.row_count();
+        if let Some(schema) = self.inner.schema() {
+            for column in column_overrides.keys() {
+                if !schema.contains_column(column) {
+                    return Err(TableError::SchemaColumnUnknown {
+                        column: column.clone(),
+                    });
+                }
+            }
+        }
+        for (column, values) in column_overrides {
+            if values.len() != row_count {
+                return Err(TableError::Storage(format!(
+                    "column override {column} has {} values for {row_count} rows",
+                    values.len()
+                )));
+            }
+        }
+
+        let mut profiler = StorageProfiler::start(format!(
+            "Table::save_with_bindings_and_column_overrides path={}",
+            options.path.display()
+        ));
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "validate",
+                Some(format!(
+                    "rows={} bindings={} overrides={} skipped=true",
+                    row_count,
+                    bindings.len(),
+                    column_overrides.len()
+                )),
+            );
+        }
+        let storage = CompositeStorage;
+        storage.save_with_bindings_and_column_overrides_borrowed(
+            &options.path,
+            self.inner.rows()?,
+            self.inner.undefined_cells()?,
+            self.inner.keywords(),
+            self.inner.all_column_keywords(),
+            self.inner.schema(),
+            &self.table_info,
+            &self.virtual_columns,
+            &self.virtual_bindings,
+            options.data_manager,
+            options.endian_format.is_big_endian(),
+            options.tile_shape.as_deref(),
+            bindings,
+            column_overrides,
+        )?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark("storage_save");
+        }
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
+        Ok(())
+    }
+
     /// Rewrites only the existing data-manager groups that contain `changed_columns`.
     ///
     /// This is a narrow in-place optimization for schema-stable disk-backed

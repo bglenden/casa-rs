@@ -7,14 +7,14 @@
 //! selection into a new on-disk MeasurementSet while preserving the standard
 //! subtables and updating spectral-window channel metadata.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use casa_tables::{ColumnType, Table, TableError, TableOptions};
-use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
-use ndarray::{Axis, Slice};
+use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
+use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder, Slice};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -265,50 +265,16 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         });
     }
     let stage_started_at = Instant::now();
-    let selected_times = input
-        .main_table()
-        .column_accessor("TIME")
-        .and_then(|column| column.scalar_cells_owned_for_rows(&selected_rows))
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
-            path: request.input_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    let mut order = (0..selected_rows.len()).collect::<Vec<_>>();
-    order.sort_by(|&left, &right| {
-        let left_time = selected_times
-            .get(left)
-            .and_then(Option::as_ref)
-            .and_then(scalar_f64_value)
-            .unwrap_or(f64::NAN);
-        let right_time = selected_times
-            .get(right)
-            .and_then(Option::as_ref)
-            .and_then(scalar_f64_value)
-            .unwrap_or(f64::NAN);
-        left_time.total_cmp(&right_time).then_with(|| {
-            selected_rows[left]
-                .cmp(&selected_rows[right])
-                .then_with(|| left.cmp(&right))
-        })
-    });
-    selected_rows = order.iter().map(|&index| selected_rows[index]).collect();
-    let selected_ddids = order
-        .iter()
-        .map(|&index| filtered_ddids[index])
-        .collect::<Vec<_>>();
+    let selected_ddids = filtered_ddids;
     maybe_log_transform_progress(
-        "sort_selected_rows",
+        "preserve_input_row_order",
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
     prepare_output_root(&request.output_ms)?;
-    let mut output_main = materialize_selected_main_table(
-        &request.input_ms,
-        &input,
-        &selected_rows,
-        &request.output_ms,
-    )?;
+    let output_main =
+        materialize_empty_main_table(&request.input_ms, selected_rows.len(), &request.output_ms)?;
     maybe_log_transform_progress(
         "materialize_selected_main",
         stage_started_at.elapsed(),
@@ -323,6 +289,17 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     );
 
     let row_indices = (0..selected_rows.len()).collect::<Vec<_>>();
+    let stage_started_at = Instant::now();
+    let mut output_column_overrides = gather_selected_main_column_overrides(
+        input.main_table(),
+        &selected_rows,
+        &request.output_ms,
+    )?;
+    maybe_log_transform_progress(
+        "load_main_column_overrides",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
     let stage_started_at = Instant::now();
     let source_values = input
         .main_table()
@@ -393,31 +370,31 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             selector: request.spw.clone(),
             reason: format!("selected row {row_index} maps to spectral window {spw_id}, but --spw does not include that SPW"),
         })?;
-        transformed_data.push(Value::Array(select_channels(data, channels).map_err(
-            |source| MsTransformError::MutateMeasurementSet {
+        transformed_data.push(select_channels(data, channels).map_err(|source| {
+            MsTransformError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
-            },
-        )?));
-        transformed_flags.push(Value::Array(select_channels(flags, channels).map_err(
-            |source| MsTransformError::MutateMeasurementSet {
+            }
+        })?);
+        transformed_flags.push(select_channels(flags, channels).map_err(|source| {
+            MsTransformError::MutateMeasurementSet {
                 path: request.output_ms.display().to_string(),
                 source: Box::new(source),
-            },
-        )?));
+            }
+        })?);
         if let Some(values) = weight_spectrum_values.as_mut() {
             let weight_spectrum = values.next().flatten().ok_or_else(|| {
                 missing_column_error(&request.output_ms, row_index, "WEIGHT_SPECTRUM")
             })?;
             if let Some(transformed) = transformed_weight_spectrum.as_mut() {
-                transformed.push(Value::Array(
+                transformed.push(
                     select_channels(weight_spectrum, channels).map_err(|source| {
                         MsTransformError::MutateMeasurementSet {
                             path: request.output_ms.display().to_string(),
                             source: Box::new(source),
                         }
                     })?,
-                ));
+                );
             }
         }
         touched_spws.insert(spw_id);
@@ -429,40 +406,34 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     );
 
     let stage_started_at = Instant::now();
-    output_main
-        .column_accessor_mut(VisibilityDataColumn::Data.name())
-        .and_then(|mut column| column.put(transformed_data))
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
-            path: request.output_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    output_main
-        .column_accessor_mut("FLAG")
-        .and_then(|mut column| column.put(transformed_flags))
-        .map_err(|source| MsTransformError::MutateMeasurementSet {
-            path: request.output_ms.display().to_string(),
-            source: Box::new(source),
-        })?;
-    if let Some(transformed) = transformed_weight_spectrum {
-        output_main
-            .column_accessor_mut("WEIGHT_SPECTRUM")
-            .and_then(|mut column| column.put(transformed))
-            .map_err(|source| MsTransformError::MutateMeasurementSet {
-                path: request.output_ms.display().to_string(),
-                source: Box::new(source),
-            })?;
-    }
-    maybe_log_transform_progress(
-        "put_output_columns",
-        stage_started_at.elapsed(),
-        started_at.elapsed(),
+    output_column_overrides.insert(
+        VisibilityDataColumn::Data.name().to_string(),
+        transformed_data
+            .into_iter()
+            .map(|value| Some(Value::Array(value)))
+            .collect(),
     );
-
-    let stage_started_at = Instant::now();
+    output_column_overrides.insert(
+        "FLAG".to_string(),
+        transformed_flags
+            .into_iter()
+            .map(|value| Some(Value::Array(value)))
+            .collect(),
+    );
+    if let Some(transformed_weight_spectrum) = transformed_weight_spectrum {
+        output_column_overrides.insert(
+            "WEIGHT_SPECTRUM".to_string(),
+            transformed_weight_spectrum
+                .into_iter()
+                .map(|value| Some(Value::Array(value)))
+                .collect(),
+        );
+    }
     output_main
-        .save_with_bindings_assuming_valid(
+        .save_with_bindings_and_column_overrides_assuming_valid(
             measurement_set_table_options(&request.output_ms),
             &measurement_set_main_table_bindings(&output_main),
+            &output_column_overrides,
         )
         .map_err(|source| MsTransformError::MutateMeasurementSet {
             path: request.output_ms.display().to_string(),
@@ -512,10 +483,9 @@ fn maybe_log_transform_progress(stage: &str, stage_elapsed: Duration, total_elap
     }
 }
 
-fn materialize_selected_main_table(
+fn materialize_empty_main_table(
     input_path: &Path,
-    input: &MeasurementSet,
-    selected_rows: &[usize],
+    row_count: usize,
     output_path: &Path,
 ) -> Result<Table, MsTransformError> {
     let mut main = Table::open_metadata_only(TableOptions::new(input_path)).map_err(|source| {
@@ -524,21 +494,19 @@ fn materialize_selected_main_table(
             source: Box::new(source),
         }
     })?;
-    let rows = gather_selected_rows_column_wise(input.main_table(), selected_rows, output_path)?;
-    main.add_rows_assuming_valid(rows).map_err(|source| {
-        MsTransformError::MutateMeasurementSet {
+    main.add_rows_assuming_valid((0..row_count).map(|_| RecordValue::default()))
+        .map_err(|source| MsTransformError::MutateMeasurementSet {
             path: output_path.display().to_string(),
             source: Box::new(source),
-        }
-    })?;
+        })?;
     Ok(main)
 }
 
-fn gather_selected_rows_column_wise(
+fn gather_selected_main_column_overrides(
     table: &Table,
     selected_rows: &[usize],
     output_path: &Path,
-) -> Result<Vec<RecordValue>, MsTransformError> {
+) -> Result<HashMap<String, Vec<Option<Value>>>, MsTransformError> {
     let schema = table
         .schema()
         .ok_or_else(|| MsTransformError::MutateMeasurementSet {
@@ -547,14 +515,7 @@ fn gather_selected_rows_column_wise(
                 "MAIN table is missing schema metadata".to_string(),
             )),
         })?;
-    let copied_column_count = schema
-        .columns()
-        .iter()
-        .filter(|column| !is_deferred_visibility_column(column.name()))
-        .count();
-    let mut rows = (0..selected_rows.len())
-        .map(|_| RecordValue::new(Vec::with_capacity(copied_column_count)))
-        .collect::<Vec<_>>();
+    let mut columns = HashMap::new();
     for column in schema.columns() {
         let column_started_at = Instant::now();
         let name = column.name();
@@ -570,11 +531,13 @@ fn gather_selected_rows_column_wise(
                         path: output_path.display().to_string(),
                         source: Box::new(source),
                     })?;
-                for (row, value) in rows.iter_mut().zip(values) {
-                    if let Some(value) = value {
-                        row.push(RecordField::new(name, Value::Scalar(value)));
-                    }
-                }
+                columns.insert(
+                    name.to_string(),
+                    values
+                        .into_iter()
+                        .map(|value| value.map(Value::Scalar))
+                        .collect(),
+                );
             }
             ColumnType::Array(_) => {
                 let values = table
@@ -584,32 +547,39 @@ fn gather_selected_rows_column_wise(
                         path: output_path.display().to_string(),
                         source: Box::new(source),
                     })?;
-                for (row, value) in rows.iter_mut().zip(values) {
-                    if let Some(value) = value {
-                        row.push(RecordField::new(name, Value::Array(value)));
-                    }
-                }
+                columns.insert(
+                    name.to_string(),
+                    values
+                        .into_iter()
+                        .map(|value| value.map(Value::Array))
+                        .collect(),
+                );
             }
             ColumnType::Record => {
-                for (row, &input_row) in rows.iter_mut().zip(selected_rows) {
-                    let value = table
-                        .column_accessor(name)
-                        .and_then(|column| column.record_cell(input_row))
-                        .map_err(|source| MsTransformError::MutateMeasurementSet {
-                            path: output_path.display().to_string(),
-                            source: Box::new(source),
-                        })?;
-                    row.push(RecordField::new(name, Value::Record(value)));
-                }
+                let values = selected_rows
+                    .iter()
+                    .copied()
+                    .map(|input_row| {
+                        table
+                            .column_accessor(name)
+                            .and_then(|column| column.record_cell(input_row))
+                            .map(|value| Some(Value::Record(value)))
+                            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                                path: output_path.display().to_string(),
+                                source: Box::new(source),
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                columns.insert(name.to_string(), values);
             }
         }
         maybe_log_transform_progress(
-            &format!("materialize_selected_main/column/{name}"),
+            &format!("load_main_column_overrides/column/{name}"),
             column_started_at.elapsed(),
             column_started_at.elapsed(),
         );
     }
-    Ok(rows)
+    Ok(columns)
 }
 
 fn is_deferred_visibility_column(column: &str) -> bool {
@@ -773,6 +743,9 @@ fn select_channels(value: ArrayValue, channels: &[usize]) -> Result<ArrayValue, 
                 return Ok(ArrayValue::Complex32(values));
             }
             if let Some((start, end)) = contiguous_channel_range(channels) {
+                if let Some(values) = select_fortran_contiguous_axis1(values.view(), start, end)? {
+                    return Ok(ArrayValue::Complex32(values));
+                }
                 return Ok(ArrayValue::Complex32(
                     values
                         .slice_axis(Axis(1), Slice::from(start..end))
@@ -792,6 +765,9 @@ fn select_channels(value: ArrayValue, channels: &[usize]) -> Result<ArrayValue, 
                 return Ok(ArrayValue::Bool(values));
             }
             if let Some((start, end)) = contiguous_channel_range(channels) {
+                if let Some(values) = select_fortran_contiguous_axis1(values.view(), start, end)? {
+                    return Ok(ArrayValue::Bool(values));
+                }
                 return Ok(ArrayValue::Bool(
                     values
                         .slice_axis(Axis(1), Slice::from(start..end))
@@ -811,6 +787,9 @@ fn select_channels(value: ArrayValue, channels: &[usize]) -> Result<ArrayValue, 
                 return Ok(ArrayValue::Float32(values));
             }
             if let Some((start, end)) = contiguous_channel_range(channels) {
+                if let Some(values) = select_fortran_contiguous_axis1(values.view(), start, end)? {
+                    return Ok(ArrayValue::Float32(values));
+                }
                 return Ok(ArrayValue::Float32(
                     values
                         .slice_axis(Axis(1), Slice::from(start..end))
@@ -824,6 +803,32 @@ fn select_channels(value: ArrayValue, channels: &[usize]) -> Result<ArrayValue, 
             other.primitive_type()
         ))),
     }
+}
+
+fn select_fortran_contiguous_axis1<T: Clone>(
+    values: ndarray::ArrayViewD<'_, T>,
+    start: usize,
+    end: usize,
+) -> Result<Option<ArrayD<T>>, TableError> {
+    let shape = values.shape();
+    if shape.len() != 2 || start > end || end > shape[1] {
+        return Err(TableError::Schema(format!(
+            "channel range {start}..{end} is outside array shape {shape:?}"
+        )));
+    }
+    let Some(input) = values.as_slice_memory_order() else {
+        return Ok(None);
+    };
+    let corr_count = shape[0];
+    let output_shape = [corr_count, end - start];
+    let start_offset = start * corr_count;
+    let end_offset = end * corr_count;
+    ArrayD::from_shape_vec(
+        IxDyn(&output_shape).f(),
+        input[start_offset..end_offset].to_vec(),
+    )
+    .map(Some)
+    .map_err(|error| TableError::Schema(format!("channel slice shape mismatch: {error}")))
 }
 
 fn contiguous_channel_range(channels: &[usize]) -> Option<(usize, usize)> {
@@ -999,14 +1004,6 @@ fn scalar_i32(
                 column: column.to_string(),
             }),
         }),
-    }
-}
-
-fn scalar_f64_value(value: &ScalarValue) -> Option<f64> {
-    match value {
-        ScalarValue::Float64(value) => Some(*value),
-        ScalarValue::Float32(value) => Some(f64::from(*value)),
-        _ => None,
     }
 }
 

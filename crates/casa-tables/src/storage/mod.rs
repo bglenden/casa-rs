@@ -33,12 +33,12 @@ use crate::schema::{SchemaError, TableSchema};
 
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
-    IsmColumnResult, read_ism_file, read_ism_scalar_column_rows, write_ism_file,
-    write_ism_file_indexed,
+    IsmColumnResult, read_ism_file, read_ism_scalar_column, read_ism_scalar_column_rows,
+    write_ism_file, write_ism_file_indexed, write_ism_file_scalar_columns,
 };
 use self::standard_stman::{
     read_ssm_array_column_rows, read_ssm_file, read_ssm_scalar_column_rows, write_ssm_file,
-    write_ssm_file_indexed,
+    write_ssm_file_indexed, write_ssm_file_scalar_columns,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -290,21 +290,29 @@ fn project_rows_for_group(
     rows: &[RecordValue],
     group_col_descs: &[table_control::ColumnDescContents],
     group_col_indices: Option<&[usize]>,
+    column_overrides: &HashMap<String, Vec<Option<Value>>>,
 ) -> Vec<RecordValue> {
     rows.iter()
-        .map(|row| {
+        .enumerate()
+        .map(|(row_idx, row)| {
             let fields = group_col_descs
                 .iter()
                 .enumerate()
                 .filter_map(|(col_idx, desc)| {
-                    let value = group_col_indices
-                        .and_then(|indices| {
-                            row.fields()
-                                .get(indices[col_idx])
-                                .filter(|field| field.name == desc.col_name)
-                                .map(|field| field.value.clone())
-                        })
-                        .or_else(|| row.get(&desc.col_name).cloned());
+                    let value = column_overrides
+                        .get(&desc.col_name)
+                        .and_then(|values| values.get(row_idx))
+                        .and_then(|value| value.clone())
+                        .or_else(|| {
+                            group_col_indices
+                                .and_then(|indices| {
+                                    row.fields()
+                                        .get(indices[col_idx])
+                                        .filter(|field| field.name == desc.col_name)
+                                        .map(|field| field.value.clone())
+                                })
+                                .or_else(|| row.get(&desc.col_name).cloned())
+                        });
                     value.map(|value| RecordField::new(desc.col_name.clone(), value))
                 })
                 .collect();
@@ -328,6 +336,37 @@ fn project_column_values_for_group<'a>(
             row.get(col_name)
         })
         .collect()
+}
+
+fn scalar_override_columns_for_group(
+    group_col_descs: &[table_control::ColumnDescContents],
+    column_overrides: &HashMap<String, Vec<Option<Value>>>,
+) -> Result<Option<Vec<Vec<Option<ScalarValue>>>>, StorageError> {
+    let mut columns = Vec::with_capacity(group_col_descs.len());
+    for desc in group_col_descs {
+        if desc.is_array || desc.is_record() {
+            return Ok(None);
+        }
+        let Some(values) = column_overrides.get(&desc.col_name) else {
+            return Ok(None);
+        };
+        let mut scalar_values = Vec::with_capacity(values.len());
+        for value in values {
+            match value {
+                Some(Value::Scalar(value)) => scalar_values.push(Some(value.clone())),
+                Some(other) => {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "column override {} expected scalar values, found {:?}",
+                        desc.col_name,
+                        other.kind()
+                    )));
+                }
+                None => scalar_values.push(None),
+            }
+        }
+        columns.push(scalar_values);
+    }
+    Ok(Some(columns))
 }
 
 /// Composite storage manager that dispatches per data manager type.
@@ -1469,26 +1508,30 @@ impl CompositeStorage {
                 ))
             })?;
         let data_path = table_path.join(format!("{}{}", TABLE_DATA_FILE_PREFIX, dm.seq_nr));
+        let nrrow = table_dat
+            .nrrow
+            .max(table_dat.column_set.nrrow)
+            .max(row_hint.unwrap_or(0)) as usize;
+        let bound_cols: Vec<(usize, &_)> = table_dat
+            .column_set
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+            .collect();
+        let target_col_idx = bound_cols
+            .iter()
+            .position(|(candidate_desc_idx, _)| *candidate_desc_idx == desc_idx)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "scalar column '{column}' missing data-manager binding index"
+                ))
+            })?;
 
         if dm.type_name == "StManAipsIO" {
             if !data_path.is_file() {
                 return Err(StorageError::MissingDataFile(data_path));
             }
-            let bound_cols: Vec<(usize, &_)> = table_dat
-                .column_set
-                .columns
-                .iter()
-                .enumerate()
-                .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
-                .collect();
-            let target_col_idx = bound_cols
-                .iter()
-                .position(|(candidate_desc_idx, _)| *candidate_desc_idx == desc_idx)
-                .ok_or_else(|| {
-                    StorageError::FormatMismatch(format!(
-                        "scalar column '{column}' missing StManAipsIO binding index"
-                    ))
-                })?;
             let dm_columns: Vec<_> = bound_cols
                 .iter()
                 .map(|(candidate_desc_idx, _)| {
@@ -1500,6 +1543,24 @@ impl CompositeStorage {
                 &dm_columns,
                 target_col_idx,
                 ByteOrder::BigEndian,
+            )? {
+                return Ok(values);
+            }
+        }
+        if dm.type_name == "IncrementalStMan" {
+            if !data_path.is_file() {
+                return Err(StorageError::MissingDataFile(data_path));
+            }
+            let group_col_descs: Vec<_> = bound_cols
+                .iter()
+                .map(|(bound_desc_idx, _)| &table_dat.table_desc.columns[*bound_desc_idx])
+                .collect();
+            if let Some(values) = read_ism_scalar_column(
+                &data_path,
+                &dm.data,
+                &group_col_descs,
+                target_col_idx,
+                nrrow,
             )? {
                 return Ok(values);
             }
@@ -2262,6 +2323,43 @@ impl CompositeStorage {
         default_tile_shape: Option<&[usize]>,
         bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
     ) -> Result<(), StorageError> {
+        let column_overrides = HashMap::new();
+        self.save_with_bindings_and_column_overrides_borrowed(
+            table_path,
+            rows,
+            undefined_cells,
+            keywords,
+            column_keywords,
+            schema,
+            table_info,
+            virtual_columns,
+            virtual_bindings,
+            default_dm,
+            big_endian,
+            default_tile_shape,
+            bindings,
+            &column_overrides,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn save_with_bindings_and_column_overrides_borrowed(
+        &self,
+        table_path: &Path,
+        rows: &[RecordValue],
+        undefined_cells: &[HashSet<String>],
+        keywords: &RecordValue,
+        column_keywords: &HashMap<String, RecordValue>,
+        schema: Option<&TableSchema>,
+        table_info: &TableInfo,
+        virtual_columns: &HashSet<String>,
+        virtual_bindings: &[virtual_engine::VirtualColumnBinding],
+        default_dm: crate::table::DataManagerKind,
+        big_endian: bool,
+        default_tile_shape: Option<&[usize]>,
+        bindings: &std::collections::HashMap<String, crate::table::ColumnBinding>,
+        column_overrides: &HashMap<String, Vec<Option<Value>>>,
+    ) -> Result<(), StorageError> {
         use crate::table::DataManagerKind;
 
         let mut profiler = StorageProfiler::start(format!(
@@ -2525,25 +2623,52 @@ impl CompositeStorage {
                     | DataManagerKind::TiledCellStMan
                     | DataManagerKind::TiledDataStMan
             ) && group_col_descs.len() == 1;
+            let override_columns: Vec<_> = group_col_descs
+                .iter()
+                .filter_map(|desc| {
+                    column_overrides
+                        .contains_key(&desc.col_name)
+                        .then_some(desc.col_name.as_str())
+                })
+                .collect();
             let use_direct_indexed_rows = matches!(
                 group.dm_kind,
                 DataManagerKind::StandardStMan | DataManagerKind::IncrementalStMan
-            ) && group_col_indices.is_some();
+            ) && group_col_indices.is_some()
+                && override_columns.is_empty();
             let group_col_index = group_col_indices
                 .as_ref()
                 .and_then(|indices| (indices.len() == 1).then_some(indices[0]));
-            let group_values = use_borrowed_tiled_values.then(|| {
-                project_column_values_for_group(
-                    filtered_rows,
-                    &group_col_descs[0].col_name,
-                    group_col_index,
-                )
-            });
-            let group_rows = if group_values.is_none() && !use_direct_indexed_rows {
+            let group_values = if use_borrowed_tiled_values {
+                if let Some(override_values) = column_overrides.get(&group_col_descs[0].col_name) {
+                    Some(override_values.iter().map(|value| value.as_ref()).collect())
+                } else {
+                    Some(project_column_values_for_group(
+                        filtered_rows,
+                        &group_col_descs[0].col_name,
+                        group_col_index,
+                    ))
+                }
+            } else {
+                None
+            };
+            let scalar_override_columns = if matches!(
+                group.dm_kind,
+                DataManagerKind::StandardStMan | DataManagerKind::IncrementalStMan
+            ) {
+                scalar_override_columns_for_group(&group_col_descs, column_overrides)?
+            } else {
+                None
+            };
+            let group_rows = if group_values.is_none()
+                && !use_direct_indexed_rows
+                && scalar_override_columns.is_none()
+            {
                 Some(project_rows_for_group(
                     filtered_rows,
                     &group_col_descs,
                     group_col_indices.as_deref(),
+                    column_overrides,
                 ))
             } else {
                 None
@@ -2562,6 +2687,8 @@ impl CompositeStorage {
                             "borrowed_values"
                         } else if use_direct_indexed_rows {
                             "direct_rows"
+                        } else if scalar_override_columns.is_some() {
+                            "scalar_override_columns"
                         } else {
                             "projected_rows"
                         }
@@ -2579,24 +2706,34 @@ impl CompositeStorage {
                     )?;
                 }
                 DataManagerKind::StandardStMan => {
-                    let dm_data = if let Some(group_col_indices) = group_col_indices.as_ref() {
-                        write_ssm_file_indexed(
-                            &data_path,
-                            &group_col_descs,
-                            filtered_rows,
-                            group_col_indices,
-                            big_endian,
-                        )?
-                    } else {
-                        write_ssm_file(
-                            &data_path,
-                            &group_col_descs,
-                            group_rows
-                                .as_ref()
-                                .expect("row projection for StandardStMan"),
-                            big_endian,
-                        )?
-                    };
+                    let dm_data =
+                        if let Some(scalar_override_columns) = scalar_override_columns.as_ref() {
+                            let scalar_refs: Vec<_> =
+                                scalar_override_columns.iter().map(Vec::as_slice).collect();
+                            write_ssm_file_scalar_columns(
+                                &data_path,
+                                &group_col_descs,
+                                &scalar_refs,
+                                big_endian,
+                            )?
+                        } else if let Some(group_col_indices) = group_col_indices.as_ref() {
+                            write_ssm_file_indexed(
+                                &data_path,
+                                &group_col_descs,
+                                filtered_rows,
+                                group_col_indices,
+                                big_endian,
+                            )?
+                        } else {
+                            write_ssm_file(
+                                &data_path,
+                                &group_col_descs,
+                                group_rows
+                                    .as_ref()
+                                    .expect("row projection for StandardStMan"),
+                                big_endian,
+                            )?
+                        };
                     // Update the DM blob in the table_dat.
                     if let Some(entry) = table_dat
                         .column_set
@@ -2608,24 +2745,34 @@ impl CompositeStorage {
                     }
                 }
                 DataManagerKind::IncrementalStMan => {
-                    let dm_data = if let Some(group_col_indices) = group_col_indices.as_ref() {
-                        write_ism_file_indexed(
-                            &data_path,
-                            &group_col_descs,
-                            filtered_rows,
-                            group_col_indices,
-                            big_endian,
-                        )?
-                    } else {
-                        write_ism_file(
-                            &data_path,
-                            &group_col_descs,
-                            group_rows
-                                .as_ref()
-                                .expect("row projection for IncrementalStMan"),
-                            big_endian,
-                        )?
-                    };
+                    let dm_data =
+                        if let Some(scalar_override_columns) = scalar_override_columns.as_ref() {
+                            let scalar_refs: Vec<_> =
+                                scalar_override_columns.iter().map(Vec::as_slice).collect();
+                            write_ism_file_scalar_columns(
+                                &data_path,
+                                &group_col_descs,
+                                &scalar_refs,
+                                big_endian,
+                            )?
+                        } else if let Some(group_col_indices) = group_col_indices.as_ref() {
+                            write_ism_file_indexed(
+                                &data_path,
+                                &group_col_descs,
+                                filtered_rows,
+                                group_col_indices,
+                                big_endian,
+                            )?
+                        } else {
+                            write_ism_file(
+                                &data_path,
+                                &group_col_descs,
+                                group_rows
+                                    .as_ref()
+                                    .expect("row projection for IncrementalStMan"),
+                                big_endian,
+                            )?
+                        };
                     if let Some(entry) = table_dat
                         .column_set
                         .data_managers
