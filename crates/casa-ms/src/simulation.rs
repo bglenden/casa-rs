@@ -910,6 +910,8 @@ struct FitsModelImage {
 struct SyntheticChannelPredictor {
     predictor: StandardMfsModelPredictor,
     phase_offset_rad: [f64; 2],
+    phase_center_rad: [f64; 2],
+    model_reference_direction_rad: Option<[f64; 2]>,
 }
 
 // CASA GridFT negates u/v to compensate for an image-inversion convention in
@@ -951,6 +953,8 @@ fn build_channel_predictors(
             Ok(SyntheticChannelPredictor {
                 predictor,
                 phase_offset_rad,
+                phase_center_rad,
+                model_reference_direction_rad: model.reference_direction_rad,
             })
         })
         .collect()
@@ -976,18 +980,48 @@ fn apply_simulator_primary_beam(
         for y in 0..model.pixels.shape()[1] {
             let l = center_ra_offset + (x as f64 - x_ref) * model.cell_size_rad[0];
             let m = center_dec_offset + (y as f64 - y_ref) * model.cell_size_rad[1];
-            let vp = primary_beam_voltage_pattern(
-                PrimaryBeamModel::Airy {
-                    dish_diameter_m: 25.0,
-                    blockage_diameter_m: 2.36,
-                },
-                (l * l + m * m).sqrt(),
-                frequency_hz,
-            );
+            let vp = casa_vla_q_primary_beam_voltage_pattern((l * l + m * m).sqrt(), frequency_hz);
             pixels[(x, y)] *= vp * vp;
         }
     }
     pixels
+}
+
+fn casa_vla_q_primary_beam_voltage_pattern(radius_rad: f64, frequency_hz: f64) -> f32 {
+    const CASA_AIRY_SAMPLES: usize = 10_000;
+    const CASA_VLA_Q_MAX_RADIUS_ARCMIN: f64 = 0.8564 * 60.0;
+    const DISH_DIAMETER_M: f64 = 25.0;
+    const BLOCKAGE_DIAMETER_M: f64 = 2.36;
+
+    if !(radius_rad.is_finite()
+        && radius_rad >= 0.0
+        && frequency_hz.is_finite()
+        && frequency_hz > 0.0)
+    {
+        return 0.0;
+    }
+    let radius_arcmin_ghz = radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9);
+    let table_index = (radius_arcmin_ghz * (CASA_AIRY_SAMPLES - 1) as f64
+        / CASA_VLA_Q_MAX_RADIUS_ARCMIN) as usize;
+    if table_index >= CASA_AIRY_SAMPLES {
+        return 0.0;
+    }
+    if table_index == 0 {
+        return 1.0;
+    }
+
+    let quantized_radius_arcmin_ghz =
+        table_index as f64 * CASA_VLA_Q_MAX_RADIUS_ARCMIN / (CASA_AIRY_SAMPLES - 1) as f64;
+    let quantized_radius_rad =
+        (quantized_radius_arcmin_ghz / (frequency_hz / 1.0e9) / 60.0).to_radians();
+    primary_beam_voltage_pattern(
+        PrimaryBeamModel::Airy {
+            dish_diameter_m: DISH_DIAMETER_M,
+            blockage_diameter_m: BLOCKAGE_DIAMETER_M,
+        },
+        quantized_radius_rad,
+        frequency_hz,
+    )
 }
 
 fn casa_model_phase_offset(model: &FitsModelImage, phase_center_rad: [f64; 2]) -> [f64; 2] {
@@ -1019,8 +1053,19 @@ fn predicted_data_values(
             let frequency_hz = spectral_setup.start_frequency_hz
                 + channel as f64 * spectral_setup.channel_width_hz;
             let wavelength_m = 299_792_458.0 / frequency_hz;
-            let u_lambda = uvw_m[0] / wavelength_m;
-            let v_lambda = uvw_m[1] / wavelength_m;
+            let prediction_uvw_m = if let Some(model_reference_direction_rad) =
+                predictor.model_reference_direction_rad
+            {
+                rotate_uvw_between_directions(
+                    uvw_m,
+                    predictor.phase_center_rad,
+                    model_reference_direction_rad,
+                )
+            } else {
+                uvw_m
+            };
+            let u_lambda = prediction_uvw_m[0] / wavelength_m;
+            let v_lambda = prediction_uvw_m[1] / wavelength_m;
             let phase = std::f64::consts::TAU
                 * (u_lambda * predictor.phase_offset_rad[0]
                     + v_lambda * predictor.phase_offset_rad[1]);
@@ -1033,6 +1078,34 @@ fn predicted_data_values(
         }
     }
     values
+}
+
+fn rotate_uvw_between_directions(
+    uvw_m: [f64; 3],
+    from_direction_rad: [f64; 2],
+    to_direction_rad: [f64; 2],
+) -> [f64; 3] {
+    let baseline_j2000_m = baseline_from_uvw(uvw_m, from_direction_rad);
+    let to_direction = MDirection::from_angles(
+        to_direction_rad[0],
+        to_direction_rad[1],
+        DirectionRef::J2000,
+    );
+    project_j2000_baseline_to_uvw(baseline_j2000_m, &to_direction)
+}
+
+fn baseline_from_uvw(uvw_m: [f64; 3], direction_rad: [f64; 2]) -> [f64; 3] {
+    let (ra, dec) = (direction_rad[0], direction_rad[1]);
+    let (sin_ra, cos_ra) = ra.sin_cos();
+    let (sin_dec, cos_dec) = dec.sin_cos();
+    let u_axis = [-sin_ra, cos_ra, 0.0];
+    let v_axis = [-sin_dec * cos_ra, -sin_dec * sin_ra, cos_dec];
+    let w_axis = [cos_dec * cos_ra, cos_dec * sin_ra, sin_dec];
+    [
+        uvw_m[0] * u_axis[0] + uvw_m[1] * v_axis[0] + uvw_m[2] * w_axis[0],
+        uvw_m[0] * u_axis[1] + uvw_m[1] * v_axis[1] + uvw_m[2] * w_axis[1],
+        uvw_m[0] * u_axis[2] + uvw_m[1] * v_axis[2] + uvw_m[2] * w_axis[2],
+    ]
 }
 
 struct SyntheticCorruptionState {
@@ -1541,18 +1614,34 @@ fn inverse_aberration_shift(phase_center: &MDirection, frame: &MeasFrame) -> MsR
         MsError::SyntheticObservation("UVW aberration ephemeris lookup failed".to_string())
     })?;
     let velocity = scale_vector(earth_bary[1], 1.0 / C_AU_PER_DAY);
-    let speed_squared = dot(velocity, velocity);
-    let beta_inv = (1.0 - speed_squared).sqrt();
-    let natural = phase_center.cosines();
-    let dot_nv = dot(natural, velocity);
-    let apparent = scale_vector(
-        add_vectors(
-            scale_vector(natural, beta_inv),
-            scale_vector(velocity, 1.0 + dot_nv / (1.0 + beta_inv)),
-        ),
-        1.0 / (1.0 + dot_nv),
-    );
-    Ok(subtract_vectors(natural, normalize(apparent)))
+    let beta_inv = (1.0 - dot(velocity, velocity)).sqrt();
+    let source = phase_center.cosines();
+    let mut solution = subtract_vectors(source, velocity);
+
+    loop {
+        let dot_sv = dot(solution, velocity);
+        let mut trial = scale_vector(
+            add_vectors(
+                scale_vector(solution, beta_inv),
+                scale_vector(velocity, 1.0 + dot_sv / (1.0 + beta_inv)),
+            ),
+            1.0 / (1.0 + dot_sv),
+        );
+        trial = normalize(trial);
+        let residual = subtract_vectors(trial, source);
+        if vector_norm(residual) <= 1.0e-10 {
+            break;
+        }
+        for idx in 0..3 {
+            let component = velocity[idx];
+            solution[idx] -= residual[idx]
+                / (((beta_inv + component * component / (1.0 + beta_inv))
+                    - component * trial[idx])
+                    / (1.0 + dot_sv));
+        }
+    }
+
+    Ok(subtract_vectors(solution, source))
 }
 
 fn inverse_solar_deflection_shift(
@@ -1563,19 +1652,53 @@ fn inverse_solar_deflection_shift(
     let (earth_helio, _) = sofars::eph::epv00(tt.0, tt.1).ok_or_else(|| {
         MsError::SyntheticObservation("UVW solar-position ephemeris lookup failed".to_string())
     })?;
-    let sun = normalize([-earth_helio[0][0], -earth_helio[0][1], -earth_helio[0][2]]);
+    let sun_vector = [-earth_helio[0][0], -earth_helio[0][1], -earth_helio[0][2]];
+    let sun_distance = vector_norm(sun_vector);
+    let sun = scale_vector(sun_vector, 1.0 / sun_distance);
     let source = phase_center.cosines();
-    let dot_source_sun = dot(source, sun);
-    let correction = scale_vector(
-        subtract_vectors(sun, scale_vector(source, dot_source_sun)),
-        1.974e-8 / (1.0 - dot_source_sun),
-    );
-    Ok(correction)
+    let mut dot_solution_sun = dot(source, sun);
+    let strength = -1.974e-8 / sun_distance;
+    let mut solution = source;
+
+    loop {
+        let correction = scale_vector(
+            subtract_vectors(sun, scale_vector(solution, dot_solution_sun)),
+            strength / (1.0 - dot_solution_sun),
+        );
+        for idx in 0..3 {
+            let component = sun[idx];
+            solution[idx] -= (correction[idx] + solution[idx] - source[idx])
+                / (1.0
+                    + (component * correction[idx]
+                        - strength * (dot_solution_sun + component * solution[idx]))
+                        / (1.0 - dot_solution_sun));
+        }
+        dot_solution_sun = dot(solution, sun);
+        let residual = add_vectors(correction, subtract_vectors(solution, source));
+        if vector_norm(residual) <= 1.0e-10 {
+            break;
+        }
+    }
+
+    Ok(subtract_vectors(solution, source))
 }
 
 fn local_apparent_sidereal_time(frame: &MeasFrame) -> MsResult<f64> {
     let (ut1_a, ut1_b) = epoch_jd_pair(frame, EpochRef::UT1)?;
-    let gast = sofars::erst::gst94(ut1_a, ut1_b);
+    let ut1_mjd = epoch_mjd(frame, EpochRef::UT1)?;
+    let centuries = (ut1_mjd - 51_544.5) / 36_525.0;
+    let gmst0_seconds =
+        24_110.548_41 + 8_640_184.812_866 * centuries + 0.093_104 * centuries * centuries
+            - 6.2e-6 * centuries * centuries * centuries;
+    let gmst0_turns = (ut1_mjd + gmst0_seconds / 86_400.0 + 6_713.0).fract();
+    let equation_of_equinoxes =
+        sofars::vm::anpm(sofars::erst::gst94(ut1_a, ut1_b) - sofars::erst::gmst82(ut1_a, ut1_b));
+    // Matches casacore's legacy `Nutation::STANDARD` equation of equinoxes
+    // used by `MCEpoch::UT1_GAST`; SOFA `gst94` differs by about 0.1 ms.
+    const CASACORE_STANDARD_NUTATION_GAST_OFFSET_RAD: f64 = 7.719e-9;
+    let gast = gmst0_turns * std::f64::consts::TAU
+        + equation_of_equinoxes
+        + CASACORE_STANDARD_NUTATION_GAST_OFFSET_RAD;
     let position = frame.position().ok_or_else(|| {
         MsError::SyntheticObservation("UVW conversion missing observatory position".to_string())
     })?;
@@ -1611,27 +1734,40 @@ fn polar_motion_rad(frame: &MeasFrame, epoch_mjd: f64) -> (f64, f64) {
 }
 
 fn polar_motion_euler(xp: f64, yp: f64, last: f64) -> [[f64; 3]; 3] {
-    let (sx, cx) = xp.sin_cos();
-    let (sy, cy) = yp.sin_cos();
-    let (sl, cl) = last.sin_cos();
-    let rxz = [
-        [cl, -sl, 0.0],
-        [cy * sl, cy * cl, -sy],
-        [sy * sl, sy * cl, cy],
-    ];
-    [
-        [
-            cx * rxz[0][0] + sx * rxz[2][0],
-            cx * rxz[0][1] + sx * rxz[2][1],
-            cx * rxz[0][2] + sx * rxz[2][2],
-        ],
-        rxz[1],
-        [
-            -sx * rxz[0][0] + cx * rxz[2][0],
-            -sx * rxz[0][1] + cx * rxz[2][1],
-            -sx * rxz[0][2] + cx * rxz[2][2],
-        ],
-    ]
+    let mut matrix = [[0.0; 3]; 3];
+    for (idx, row) in matrix.iter_mut().enumerate() {
+        row[idx] = 1.0;
+    }
+    casacore_apply_single_euler(&mut matrix, xp, 2);
+    casacore_apply_single_euler(&mut matrix, yp, 1);
+    casacore_apply_single_euler(&mut matrix, last, 3);
+    matrix
+}
+
+fn casacore_apply_single_euler(matrix: &mut [[f64; 3]; 3], angle: f64, axis: usize) {
+    if angle == 0.0 || axis == 0 {
+        return;
+    }
+    let mut single = [[0.0; 3]; 3];
+    for (idx, row) in single.iter_mut().enumerate() {
+        row[idx] = 1.0;
+    }
+    let i = axis % 3;
+    let j = (i + 1) % 3;
+    let (sin_angle, cos_angle) = angle.sin_cos();
+    single[i][i] = cos_angle;
+    single[j][j] = cos_angle;
+    single[i][j] = -sin_angle;
+    single[j][i] = sin_angle;
+
+    let original = *matrix;
+    for row in 0..3 {
+        for col in 0..3 {
+            matrix[row][col] = original[row][0] * single[0][col]
+                + original[row][1] * single[1][col]
+                + original[row][2] * single[2][col];
+        }
+    }
 }
 
 fn diurnal_aberration_factor(radius_m: f64) -> f64 {
@@ -1641,19 +1777,34 @@ fn diurnal_aberration_factor(radius_m: f64) -> f64 {
 }
 
 fn rotate_shift(vector: [f64; 3], shift: [f64; 3], reference_direction: [f64; 3]) -> [f64; 3] {
-    let from = normalize(reference_direction);
-    let to = normalize(add_vectors(from, shift));
-    let axis = cross(from, to);
-    let sin_angle = vector_norm(axis);
-    if sin_angle < 1.0e-18 {
-        return vector;
+    let reference = normalize(reference_direction);
+    let reference_long = reference[1].atan2(reference[0]);
+    let reference_lat = reference[2].asin();
+
+    let mut rot = [[0.0; 3]; 3];
+    for (idx, row) in rot.iter_mut().enumerate() {
+        row[idx] = 1.0;
     }
-    let axis = scale_vector(axis, 1.0 / sin_angle);
-    let cos_angle = dot(from, to).clamp(-1.0, 1.0);
-    let parallel = scale_vector(vector, cos_angle);
-    let perpendicular = scale_vector(cross(axis, vector), sin_angle);
-    let axial = scale_vector(axis, dot(axis, vector) * (1.0 - cos_angle));
-    add_vectors(add_vectors(parallel, perpendicular), axial)
+    casacore_apply_single_euler(&mut rot, -std::f64::consts::FRAC_PI_2 + reference_lat, 2);
+    casacore_apply_single_euler(&mut rot, -reference_long, 3);
+
+    let shifted_once = rotate(&rot, &shift);
+    let shifted_long = shifted_once[1].atan2(shifted_once[0]);
+    let mut long_rot = [[0.0; 3]; 3];
+    for (idx, row) in long_rot.iter_mut().enumerate() {
+        row[idx] = 1.0;
+    }
+    casacore_apply_single_euler(&mut long_rot, -shifted_long, 3);
+    rot = multiply_matrices(&long_rot, &rot);
+
+    let shifted_twice = rotate(&rot, &shift);
+    let mut correction_rot = [[0.0; 3]; 3];
+    for (idx, row) in correction_rot.iter_mut().enumerate() {
+        row[idx] = 1.0;
+    }
+    casacore_apply_single_euler(&mut correction_rot, shifted_twice[0], 2);
+    let corrected = multiply_matrices(&correction_rot, &rot);
+    rotate_t(&rot, &rotate(&corrected, &vector))
 }
 
 fn rotate(matrix: &[[f64; 3]; 3], vector: &[f64; 3]) -> [f64; 3] {
@@ -1670,6 +1821,18 @@ fn rotate_t(matrix: &[[f64; 3]; 3], vector: &[f64; 3]) -> [f64; 3] {
         matrix[0][1] * vector[0] + matrix[1][1] * vector[1] + matrix[2][1] * vector[2],
         matrix[0][2] * vector[0] + matrix[1][2] * vector[1] + matrix[2][2] * vector[2],
     ]
+}
+
+fn multiply_matrices(left: &[[f64; 3]; 3], right: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let mut result = [[0.0; 3]; 3];
+    for row in 0..3 {
+        for col in 0..3 {
+            result[row][col] = left[row][0] * right[0][col]
+                + left[row][1] * right[1][col]
+                + left[row][2] * right[2][col];
+        }
+    }
+    result
 }
 
 fn spherical_to_cartesian(lon: f64, lat: f64) -> [f64; 3] {
@@ -1693,14 +1856,6 @@ fn normalize(vector: [f64; 3]) -> [f64; 3] {
 
 fn dot(left: [f64; 3], right: [f64; 3]) -> f64 {
     left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
-}
-
-fn cross(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
-    [
-        left[1] * right[2] - left[2] * right[1],
-        left[2] * right[0] - left[0] * right[2],
-        left[0] * right[1] - left[1] * right[0],
-    ]
 }
 
 fn add_vectors(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {

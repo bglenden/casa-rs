@@ -395,6 +395,48 @@ unsafe extern "C" {
         xp_arcsec_out: *mut f64,
         yp_arcsec_out: *mut f64,
     ) -> i32;
+
+    fn measures_shim_simulator_baseline_uvw(
+        obs_x: f64,
+        obs_y: f64,
+        obs_z: f64,
+        ant_x: f64,
+        ant_y: f64,
+        ant_z: f64,
+        phase_ra: f64,
+        phase_dec: f64,
+        epoch_mjd: f64,
+        j2000_x_out: *mut f64,
+        j2000_y_out: *mut f64,
+        j2000_z_out: *mut f64,
+        uvw_u_out: *mut f64,
+        uvw_v_out: *mut f64,
+        uvw_w_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_baseline_convert(
+        obs_x: f64,
+        obs_y: f64,
+        obs_z: f64,
+        ant_x: f64,
+        ant_y: f64,
+        ant_z: f64,
+        phase_ra: f64,
+        phase_dec: f64,
+        epoch_mjd: f64,
+        ref_out: *const std::ffi::c_char,
+        x_out: *mut f64,
+        y_out: *mut f64,
+        z_out: *mut f64,
+    ) -> i32;
+
+    fn measures_shim_last_rad_for_itrf(
+        obs_x: f64,
+        obs_y: f64,
+        obs_z: f64,
+        epoch_mjd: f64,
+        last_rad_out: *mut f64,
+    ) -> i32;
 }
 
 /// Convert an epoch from one reference frame to another using C++ casacore.
@@ -1552,5 +1594,102 @@ pub fn cpp_eop_query(mjd: f64) -> Result<(f64, f64, f64), String> {
         Ok((dut1, xp, yp))
     } else {
         Err(format!("C++ eop_query failed: rc={rc}"))
+    }
+}
+
+/// Compute the same baseline-to-UVW path used by casacore `NewMSSimulator`.
+#[cfg(has_casacore_cpp)]
+#[allow(clippy::too_many_arguments)]
+pub fn cpp_simulator_baseline_uvw(
+    obs_itrf_m: [f64; 3],
+    ant_itrf_m: [f64; 3],
+    phase_center_rad: [f64; 2],
+    epoch_mjd_ut1: f64,
+) -> Result<([f64; 3], [f64; 3]), String> {
+    let mut j2000 = [0.0_f64; 3];
+    let mut uvw = [0.0_f64; 3];
+
+    let rc = unsafe {
+        measures_shim_simulator_baseline_uvw(
+            obs_itrf_m[0],
+            obs_itrf_m[1],
+            obs_itrf_m[2],
+            ant_itrf_m[0],
+            ant_itrf_m[1],
+            ant_itrf_m[2],
+            phase_center_rad[0],
+            phase_center_rad[1],
+            epoch_mjd_ut1,
+            &mut j2000[0],
+            &mut j2000[1],
+            &mut j2000[2],
+            &mut uvw[0],
+            &mut uvw[1],
+            &mut uvw[2],
+        )
+    };
+
+    if rc == 0 {
+        Ok((j2000, uvw))
+    } else {
+        Err(format!("C++ simulator_baseline_uvw failed: rc={rc}"))
+    }
+}
+
+/// Convert one simulator antenna baseline through C++ casacore `MBaseline`.
+#[cfg(has_casacore_cpp)]
+#[allow(clippy::too_many_arguments)]
+pub fn cpp_baseline_convert(
+    obs_itrf_m: [f64; 3],
+    ant_itrf_m: [f64; 3],
+    phase_center_rad: [f64; 2],
+    epoch_mjd_ut1: f64,
+    ref_out: &str,
+) -> Result<[f64; 3], String> {
+    let c_ref = CString::new(ref_out).unwrap();
+    let mut out = [0.0_f64; 3];
+    let rc = unsafe {
+        measures_shim_baseline_convert(
+            obs_itrf_m[0],
+            obs_itrf_m[1],
+            obs_itrf_m[2],
+            ant_itrf_m[0],
+            ant_itrf_m[1],
+            ant_itrf_m[2],
+            phase_center_rad[0],
+            phase_center_rad[1],
+            epoch_mjd_ut1,
+            c_ref.as_ptr(),
+            &mut out[0],
+            &mut out[1],
+            &mut out[2],
+        )
+    };
+
+    if rc == 0 {
+        Ok(out)
+    } else {
+        Err(format!("C++ baseline_convert failed: rc={rc}"))
+    }
+}
+
+/// Return C++ casacore `MeasFrame::getLASTr()` for an ITRF observatory.
+#[cfg(has_casacore_cpp)]
+pub fn cpp_last_rad_for_itrf(obs_itrf_m: [f64; 3], epoch_mjd_ut1: f64) -> Result<f64, String> {
+    let mut last = 0.0_f64;
+    let rc = unsafe {
+        measures_shim_last_rad_for_itrf(
+            obs_itrf_m[0],
+            obs_itrf_m[1],
+            obs_itrf_m[2],
+            epoch_mjd_ut1,
+            &mut last,
+        )
+    };
+
+    if rc == 0 {
+        Ok(last)
+    } else {
+        Err(format!("C++ last_rad_for_itrf failed: rc={rc}"))
     }
 }

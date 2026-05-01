@@ -259,6 +259,47 @@ impl StandardGridder {
         value
     }
 
+    pub(crate) fn degrid_sample_product_planned_sectdgrid(
+        &self,
+        grid: &Array2<Complex32>,
+        u_lambda: f64,
+        v_lambda: f64,
+    ) -> Option<Complex32> {
+        let x_taps =
+            self.sample_taps_unnormalized(self.grid_coordinate_x(u_lambda), self.grid_shape[0])?;
+        let y_taps =
+            self.sample_taps_unnormalized(self.grid_coordinate_y(v_lambda), self.grid_shape[1])?;
+        let mut value = Complex32::new(0.0, 0.0);
+        let mut norm = 0.0f32;
+        if let Some(storage) = grid.as_slice_memory_order() {
+            let grid_stride = self.grid_shape[1];
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = x_taps.indices[x_tap];
+                let x_weight = x_taps.weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    let weight = x_weight * y_taps.weights[y_tap];
+                    value += storage[x_index * grid_stride + y_taps.indices[y_tap]] * weight;
+                    norm += weight;
+                }
+            }
+        } else {
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = x_taps.indices[x_tap];
+                let x_weight = x_taps.weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    let weight = x_weight * y_taps.weights[y_tap];
+                    value += grid[(x_index, y_taps.indices[y_tap])] * weight;
+                    norm += weight;
+                }
+            }
+        }
+        if norm > 0.0 && norm.is_finite() {
+            Some(value / norm)
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn degrid_sample_product_planned_normalized(
         &self,
         grid: &Array2<Complex32>,
@@ -511,6 +552,34 @@ impl StandardGridder {
         }
         for weight in &mut weights {
             *weight /= norm;
+        }
+        Some(TapSet { indices, weights })
+    }
+
+    fn sample_taps_unnormalized(&self, coordinate: f64, size: usize) -> Option<TapSet> {
+        if !coordinate.is_finite() {
+            return None;
+        }
+        let anchor = coordinate.round() as isize;
+        let offset = ((anchor as f64 - coordinate) * self.oversampling as f64).round() as isize;
+        let mut indices = [0usize; GRIDDER_TAP_COUNT];
+        let mut weights = [0.0f32; GRIDDER_TAP_COUNT];
+        let mut norm = 0.0f32;
+        for (tap, index) in
+            ((anchor - GRIDDER_SUPPORT as isize)..=(anchor + GRIDDER_SUPPORT as isize)).enumerate()
+        {
+            if index < 0 || index >= size as isize {
+                return None;
+            }
+            let delta = index - anchor;
+            let lookup = (delta * self.oversampling as isize + offset).unsigned_abs();
+            let weight = self.kernel_table.get(lookup).copied().unwrap_or(0.0);
+            indices[tap] = index as usize;
+            weights[tap] = weight;
+            norm += weight;
+        }
+        if norm <= 0.0 {
+            return None;
         }
         Some(TapSet { indices, weights })
     }

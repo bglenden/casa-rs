@@ -18,11 +18,17 @@
 #include <casacore/measures/Measures/MFrequency.h>
 #include <casacore/measures/Measures/MDoppler.h>
 #include <casacore/measures/Measures/MRadialVelocity.h>
+#include <casacore/measures/Measures/MBaseline.h>
+#include <casacore/measures/Measures/Muvw.h>
+#include <casacore/measures/Measures/MCBaseline.h>
+#include <casacore/measures/Measures/MCuvw.h>
 #include <casacore/measures/Measures/MCDirection.h>
 #include <casacore/measures/Measures/MCFrequency.h>
 #include <casacore/measures/Measures/MCDoppler.h>
 #include <casacore/measures/Measures/MCRadialVelocity.h>
 #include <casacore/casa/Quanta/MVDirection.h>
+#include <casacore/casa/Quanta/MVBaseline.h>
+#include <casacore/casa/Quanta/MVuvw.h>
 #include <casacore/casa/Quanta/MVAngle.h>
 #include <casacore/casa/Quanta/MVFrequency.h>
 #include <casacore/casa/Quanta/MVDoppler.h>
@@ -58,6 +64,14 @@ static MDirection::Types parse_direction_ref(const char* ref_str) {
     MDirection::Types tp;
     if (!MDirection::getType(tp, String(ref_str))) {
         throw std::runtime_error(String("Unknown direction ref: ") + ref_str);
+    }
+    return tp;
+}
+
+static MBaseline::Types parse_baseline_ref(const char* ref_str) {
+    MBaseline::Types tp;
+    if (!MBaseline::getType(tp, String(ref_str))) {
+        throw std::runtime_error(String("Unknown baseline ref: ") + ref_str);
     }
     return tp;
 }
@@ -1721,6 +1735,98 @@ int table_meas_bench_direction_read(
         return 0;
     } catch (std::exception& e) {
         fprintf(stderr, "table_meas_bench_direction_read: %s\n", e.what());
+        return -1;
+    }
+}
+
+int measures_shim_simulator_baseline_uvw(
+    double obs_x, double obs_y, double obs_z,
+    double ant_x, double ant_y, double ant_z,
+    double phase_ra, double phase_dec,
+    double epoch_mjd,
+    double* j2000_x_out, double* j2000_y_out, double* j2000_z_out,
+    double* uvw_u_out, double* uvw_v_out, double* uvw_w_out)
+{
+    try {
+        MPosition obsPos(MVPosition(obs_x, obs_y, obs_z), MPosition::ITRF);
+        MEpoch epoch(MVEpoch(epoch_mjd), MEpoch::UT1);
+        MDirection refdir(MVDirection(phase_ra, phase_dec), MDirection::J2000);
+        MeasFrame measFrame(obsPos);
+        measFrame.set(epoch);
+        measFrame.set(refdir);
+
+        MBaseline::Ref basref(MBaseline::ITRF, measFrame);
+        MBaseline basMeas(MVBaseline(obsPos.getValue(), MVPosition(ant_x, ant_y, ant_z)), basref);
+        basMeas.getRefPtr()->set(measFrame);
+        MBaseline::Convert elconv(basMeas, MBaseline::Ref(MBaseline::J2000));
+        MBaseline bas2000 = elconv(basMeas);
+        const Vector<Double>& j2000 = bas2000.getValue().getValue();
+
+        MVuvw uvw2000(bas2000.getValue(), refdir.getValue());
+        const Vector<Double>& uvw = uvw2000.getValue();
+
+        *j2000_x_out = j2000(0);
+        *j2000_y_out = j2000(1);
+        *j2000_z_out = j2000(2);
+        *uvw_u_out = uvw(0);
+        *uvw_v_out = uvw(1);
+        *uvw_w_out = uvw(2);
+        return 0;
+    } catch (std::exception& e) {
+        fprintf(stderr, "measures_shim_simulator_baseline_uvw: %s\n", e.what());
+        return -1;
+    }
+}
+
+int measures_shim_baseline_convert(
+    double obs_x, double obs_y, double obs_z,
+    double ant_x, double ant_y, double ant_z,
+    double phase_ra, double phase_dec,
+    double epoch_mjd,
+    const char* ref_out,
+    double* x_out, double* y_out, double* z_out)
+{
+    try {
+        MPosition obsPos(MVPosition(obs_x, obs_y, obs_z), MPosition::ITRF);
+        MEpoch epoch(MVEpoch(epoch_mjd), MEpoch::UT1);
+        MDirection refdir(MVDirection(phase_ra, phase_dec), MDirection::J2000);
+        MeasFrame measFrame(obsPos);
+        measFrame.set(epoch);
+        measFrame.set(refdir);
+
+        MBaseline::Ref basref(MBaseline::ITRF, measFrame);
+        MBaseline basMeas(MVBaseline(obsPos.getValue(), MVPosition(ant_x, ant_y, ant_z)), basref);
+        basMeas.getRefPtr()->set(measFrame);
+
+        MBaseline::Convert converter(basMeas, MBaseline::Ref(parse_baseline_ref(ref_out)));
+        MBaseline converted = converter(basMeas);
+        const Vector<Double>& xyz = converted.getValue().getValue();
+        *x_out = xyz(0);
+        *y_out = xyz(1);
+        *z_out = xyz(2);
+        return 0;
+    } catch (std::exception& e) {
+        fprintf(stderr, "measures_shim_baseline_convert: %s\n", e.what());
+        return -1;
+    }
+}
+
+int measures_shim_last_rad_for_itrf(
+    double obs_x, double obs_y, double obs_z,
+    double epoch_mjd,
+    double* last_rad_out)
+{
+    try {
+        MPosition obsPos(MVPosition(obs_x, obs_y, obs_z), MPosition::ITRF);
+        MEpoch epoch(MVEpoch(epoch_mjd), MEpoch::UT1);
+        MeasFrame measFrame(obsPos);
+        measFrame.set(epoch);
+        if (!measFrame.getLASTr(*last_rad_out)) {
+            return -1;
+        }
+        return 0;
+    } catch (std::exception& e) {
+        fprintf(stderr, "measures_shim_last_rad_for_itrf: %s\n", e.what());
         return -1;
     }
 }

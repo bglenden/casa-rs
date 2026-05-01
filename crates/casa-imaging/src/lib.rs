@@ -118,7 +118,11 @@ impl StandardMfsModelPredictor {
             return Complex32::new(0.0, 0.0);
         };
         self.gridder
-            .degrid_sample_product_planned(model_grid, &plan.positive)
+            .degrid_sample_product_planned_sectdgrid(model_grid, u_lambda, v_lambda)
+            .unwrap_or_else(|| {
+                self.gridder
+                    .degrid_sample_product_planned(model_grid, &plan.positive)
+            })
     }
 }
 
