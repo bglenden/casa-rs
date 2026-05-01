@@ -356,6 +356,15 @@ pub struct SyntheticCorruptionConfig {
     /// Per-antenna complex gain corruption.
     #[serde(default)]
     pub gain_phase: Option<SyntheticGainPhaseCorruption>,
+    /// Per-antenna, per-channel complex bandpass corruption.
+    #[serde(default)]
+    pub bandpass: Option<SyntheticBandpassCorruption>,
+    /// Approximate parallel-hand polarization leakage corruption.
+    #[serde(default)]
+    pub polarization_leakage: Option<SyntheticPolarizationLeakageCorruption>,
+    /// Global primary-beam pointing offset applied during model prediction.
+    #[serde(default)]
+    pub pointing: Option<SyntheticPointingCorruption>,
 }
 
 /// Per-antenna gain and phase corruption controls.
@@ -365,6 +374,29 @@ pub struct SyntheticGainPhaseCorruption {
     pub amplitude_stddev: f32,
     /// Gaussian phase standard deviation in radians.
     pub phase_stddev_rad: f32,
+}
+
+/// Per-antenna, per-channel bandpass corruption controls.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticBandpassCorruption {
+    /// Gaussian fractional amplitude standard deviation.
+    pub amplitude_stddev: f32,
+    /// Gaussian phase standard deviation in radians.
+    pub phase_stddev_rad: f32,
+}
+
+/// Polarization leakage corruption controls for parallel-hand synthetic data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticPolarizationLeakageCorruption {
+    /// Leakage amplitude as a fraction of the opposite-hand visibility.
+    pub amplitude: f32,
+}
+
+/// Primary-beam pointing corruption controls.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticPointingCorruption {
+    /// Global pointing offset `[right_ascension, declination]` in radians.
+    pub offset_rad: [f64; 2],
 }
 
 /// Summary of a generated synthetic MeasurementSet.
@@ -568,6 +600,32 @@ fn validate_corruption(corruption: &SyntheticCorruptionConfig) -> MsResult<()> {
             ));
         }
     }
+    if let Some(bandpass) = &corruption.bandpass {
+        if !(bandpass.amplitude_stddev.is_finite() && bandpass.amplitude_stddev >= 0.0) {
+            return Err(MsError::SyntheticObservation(
+                "bandpass amplitude_stddev must be finite and non-negative".to_string(),
+            ));
+        }
+        if !(bandpass.phase_stddev_rad.is_finite() && bandpass.phase_stddev_rad >= 0.0) {
+            return Err(MsError::SyntheticObservation(
+                "bandpass phase_stddev_rad must be finite and non-negative".to_string(),
+            ));
+        }
+    }
+    if let Some(leakage) = &corruption.polarization_leakage {
+        if !(leakage.amplitude.is_finite() && leakage.amplitude >= 0.0) {
+            return Err(MsError::SyntheticObservation(
+                "polarization_leakage amplitude must be finite and non-negative".to_string(),
+            ));
+        }
+    }
+    if let Some(pointing) = &corruption.pointing {
+        if pointing.offset_rad.iter().any(|value| !value.is_finite()) {
+            return Err(MsError::SyntheticObservation(
+                "pointing offset_rad values must be finite".to_string(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -582,6 +640,21 @@ fn applied_corruption_names(corruption: Option<&SyntheticCorruptionConfig>) -> V
     if let Some(gain_phase) = &corruption.gain_phase {
         if gain_phase.amplitude_stddev > 0.0 || gain_phase.phase_stddev_rad > 0.0 {
             names.push("gain_phase".to_string());
+        }
+    }
+    if let Some(bandpass) = &corruption.bandpass {
+        if bandpass.amplitude_stddev > 0.0 || bandpass.phase_stddev_rad > 0.0 {
+            names.push("bandpass".to_string());
+        }
+    }
+    if let Some(leakage) = &corruption.polarization_leakage {
+        if leakage.amplitude > 0.0 {
+            names.push("polarization_leakage".to_string());
+        }
+    }
+    if let Some(pointing) = &corruption.pointing {
+        if pointing.offset_rad.iter().any(|value| *value != 0.0) {
+            names.push("pointing".to_string());
         }
     }
     names
@@ -831,13 +904,26 @@ fn populate_main_rows(
     let main_defs = ms_main_defs(ms);
     let predictors = model
         .map(|model| {
-            build_channel_predictors(model, &request.spectral_setup, request.phase_center_rad)
+            build_channel_predictors(
+                model,
+                &request.spectral_setup,
+                request.phase_center_rad,
+                request
+                    .corruption
+                    .as_ref()
+                    .and_then(|corruption| corruption.pointing.as_ref())
+                    .map(|pointing| pointing.offset_rad)
+                    .unwrap_or([0.0, 0.0]),
+            )
         })
         .transpose()?;
-    let mut corruption = request
-        .corruption
-        .as_ref()
-        .map(|config| SyntheticCorruptionState::new(config, request.antennas.len()));
+    let mut corruption = request.corruption.as_ref().map(|config| {
+        SyntheticCorruptionState::new(
+            config,
+            request.antennas.len(),
+            request.spectral_setup.channel_count,
+        )
+    });
     let mut nonzero_visibility_count = 0usize;
 
     for sample in 0..samples {
@@ -859,7 +945,7 @@ fn populate_main_rows(
                     num_corr,
                 );
                 if let Some(corruption) = corruption.as_mut() {
-                    corruption.apply(&mut data_values, antenna1, antenna2);
+                    corruption.apply(&mut data_values, antenna1, antenna2, num_chan);
                 }
                 nonzero_visibility_count += data_values
                     .iter()
@@ -924,6 +1010,7 @@ fn build_channel_predictors(
     model: &FitsModelImage,
     spectral_setup: &SyntheticSpectralSetup,
     phase_center_rad: [f64; 2],
+    pointing_offset_rad: [f64; 2],
 ) -> MsResult<Vec<SyntheticChannelPredictor>> {
     let geometry = ImageGeometry {
         image_shape: [model.pixels.shape()[0], model.pixels.shape()[1]],
@@ -934,8 +1021,12 @@ fn build_channel_predictors(
         .map(|channel| {
             let frequency_hz = spectral_setup.start_frequency_hz
                 + channel as f64 * spectral_setup.channel_width_hz;
-            let beam_corrected_pixels =
-                apply_simulator_primary_beam(model, phase_center_rad, frequency_hz);
+            let beam_corrected_pixels = apply_simulator_primary_beam(
+                model,
+                phase_center_rad,
+                frequency_hz,
+                pointing_offset_rad,
+            );
             let mut casa_oriented_pixels = Array2::<f32>::zeros(model.pixels.raw_dim());
             for x in 0..model.pixels.shape()[0] {
                 for y in 0..model.pixels.shape()[1] {
@@ -964,6 +1055,7 @@ fn apply_simulator_primary_beam(
     model: &FitsModelImage,
     phase_center_rad: [f64; 2],
     frequency_hz: f64,
+    pointing_offset_rad: [f64; 2],
 ) -> Array2<f32> {
     let mut pixels = model.pixels.clone();
     let Some(reference_direction_rad) = model.reference_direction_rad else {
@@ -971,8 +1063,10 @@ fn apply_simulator_primary_beam(
     };
     let center_ra_offset =
         circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0])
-            * phase_center_rad[1].cos();
-    let center_dec_offset = reference_direction_rad[1] - phase_center_rad[1];
+            * phase_center_rad[1].cos()
+            - pointing_offset_rad[0];
+    let center_dec_offset =
+        reference_direction_rad[1] - phase_center_rad[1] - pointing_offset_rad[1];
     let x_ref = model.pixels.shape()[0] as f64 / 2.0;
     let y_ref = model.pixels.shape()[1] as f64 / 2.0;
 
@@ -1111,11 +1205,13 @@ fn baseline_from_uvw(uvw_m: [f64; 3], direction_rad: [f64; 2]) -> [f64; 3] {
 struct SyntheticCorruptionState {
     noise_stddev_jy: f32,
     gains: Vec<Complex32>,
+    bandpass_gains: Vec<Vec<Complex32>>,
+    leakage_terms: Vec<Complex32>,
     rng: DeterministicRng,
 }
 
 impl SyntheticCorruptionState {
-    fn new(config: &SyntheticCorruptionConfig, antenna_count: usize) -> Self {
+    fn new(config: &SyntheticCorruptionConfig, antenna_count: usize, channel_count: usize) -> Self {
         let mut rng = DeterministicRng::new(config.seed);
         let gains = (0..antenna_count)
             .map(|_| {
@@ -1128,20 +1224,73 @@ impl SyntheticCorruptionState {
                 }
             })
             .collect();
+        let bandpass_gains = (0..antenna_count)
+            .map(|_| {
+                (0..channel_count)
+                    .map(|_| {
+                        if let Some(bandpass) = &config.bandpass {
+                            let amplitude = 1.0 + rng.gaussian_f32() * bandpass.amplitude_stddev;
+                            let phase = rng.gaussian_f32() * bandpass.phase_stddev_rad;
+                            Complex32::new(amplitude * phase.cos(), amplitude * phase.sin())
+                        } else {
+                            Complex32::new(1.0, 0.0)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let leakage_terms = (0..antenna_count)
+            .map(|_| {
+                if let Some(leakage) = &config.polarization_leakage {
+                    let phase = std::f32::consts::TAU * rng.next_unit_f64() as f32;
+                    Complex32::new(
+                        leakage.amplitude * phase.cos(),
+                        leakage.amplitude * phase.sin(),
+                    )
+                } else {
+                    Complex32::new(0.0, 0.0)
+                }
+            })
+            .collect();
         Self {
             noise_stddev_jy: config.noise_stddev_jy.unwrap_or(0.0),
             gains,
+            bandpass_gains,
+            leakage_terms,
             rng,
         }
     }
 
-    fn apply(&mut self, values: &mut [Complex32], antenna1: usize, antenna2: usize) {
-        let baseline_gain = self.gains[antenna1] * self.gains[antenna2].conj();
-        for value in values {
+    fn apply(
+        &mut self,
+        values: &mut [Complex32],
+        antenna1: usize,
+        antenna2: usize,
+        channel_count: usize,
+    ) {
+        for (index, value) in values.iter_mut().enumerate() {
+            let channel = index % channel_count;
+            let baseline_gain = self.gains[antenna1]
+                * self.gains[antenna2].conj()
+                * self.bandpass_gains[antenna1][channel]
+                * self.bandpass_gains[antenna2][channel].conj();
             *value *= baseline_gain;
             if self.noise_stddev_jy > 0.0 {
                 value.re += self.rng.gaussian_f32() * self.noise_stddev_jy;
                 value.im += self.rng.gaussian_f32() * self.noise_stddev_jy;
+            }
+        }
+        if channel_count > 0 && values.len() == 2 * channel_count {
+            let leakage = self.leakage_terms[antenna1] * self.leakage_terms[antenna2].conj();
+            if leakage != Complex32::new(0.0, 0.0) {
+                for channel in 0..channel_count {
+                    let rr_index = channel;
+                    let ll_index = channel_count + channel;
+                    let rr = values[rr_index];
+                    let ll = values[ll_index];
+                    values[rr_index] = rr + leakage * ll;
+                    values[ll_index] = ll + leakage.conj() * rr;
+                }
             }
         }
     }

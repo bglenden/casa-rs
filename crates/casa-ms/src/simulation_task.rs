@@ -16,9 +16,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::simulation::{
-    SyntheticAntenna, SyntheticCorruptionConfig, SyntheticObservationReport,
-    SyntheticObservationRequest, SyntheticSpectralSetup, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
+    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticCorruptionConfig,
+    SyntheticGainPhaseCorruption, SyntheticObservationReport, SyntheticObservationRequest,
+    SyntheticPointingCorruption, SyntheticPolarizationLeakageCorruption, SyntheticSpectralSetup,
+    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
 use crate::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
@@ -367,10 +368,109 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 Some("true"),
                 "Predict visibilities from the model image",
             ),
+            option_argument(OptionArgumentConfig {
+                id: "corruption_seed",
+                label: "Corruption Seed",
+                order: 10,
+                flags: &["--corruption-seed"],
+                metavar: "N",
+                value_kind: UiValueKind::String,
+                default: Some("1"),
+                required: false,
+                help: "Seed for deterministic corruption draws",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "noise_stddev_jy",
+                label: "Noise Stddev (Jy)",
+                order: 11,
+                flags: &["--noise-stddev-jy"],
+                metavar: "JY",
+                value_kind: UiValueKind::Float,
+                default: None,
+                required: false,
+                help: "Add Gaussian noise to each complex visibility component",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "gain_amplitude_stddev",
+                label: "Gain Amp Stddev",
+                order: 12,
+                flags: &["--gain-amplitude-stddev"],
+                metavar: "FRACTION",
+                value_kind: UiValueKind::Float,
+                default: None,
+                required: false,
+                help: "Per-antenna Gaussian fractional gain-amplitude corruption",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "gain_phase_stddev_rad",
+                label: "Gain Phase Stddev",
+                order: 13,
+                flags: &["--gain-phase-stddev-rad"],
+                metavar: "RAD",
+                value_kind: UiValueKind::Float,
+                default: None,
+                required: false,
+                help: "Per-antenna Gaussian gain-phase corruption in radians",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "bandpass_amplitude_stddev",
+                label: "Bandpass Amp Stddev",
+                order: 14,
+                flags: &["--bandpass-amplitude-stddev"],
+                metavar: "FRACTION",
+                value_kind: UiValueKind::Float,
+                default: None,
+                required: false,
+                help: "Per-antenna per-channel Gaussian bandpass-amplitude corruption",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "bandpass_phase_stddev_rad",
+                label: "Bandpass Phase Stddev",
+                order: 15,
+                flags: &["--bandpass-phase-stddev-rad"],
+                metavar: "RAD",
+                value_kind: UiValueKind::Float,
+                default: None,
+                required: false,
+                help: "Per-antenna per-channel Gaussian bandpass-phase corruption in radians",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "polarization_leakage",
+                label: "Polarization Leakage",
+                order: 16,
+                flags: &["--polarization-leakage"],
+                metavar: "FRACTION",
+                value_kind: UiValueKind::Float,
+                default: None,
+                required: false,
+                help: "Approximate parallel-hand polarization leakage fraction",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "pointing_offset_ra_arcsec",
+                label: "Pointing RA Offset",
+                order: 17,
+                flags: &["--pointing-offset-ra-arcsec"],
+                metavar: "ARCSEC",
+                value_kind: UiValueKind::Float,
+                default: None,
+                required: false,
+                help: "Global primary-beam pointing offset in right ascension arcseconds",
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "pointing_offset_dec_arcsec",
+                label: "Pointing Dec Offset",
+                order: 18,
+                flags: &["--pointing-offset-dec-arcsec"],
+                metavar: "ARCSEC",
+                value_kind: UiValueKind::Float,
+                default: None,
+                required: false,
+                help: "Global primary-beam pointing offset in declination arcseconds",
+            }),
             action_argument(
                 "help",
                 "Help",
-                10,
+                19,
                 &["-h", "--help"],
                 UiActionKind::Help,
                 "Render help text",
@@ -378,7 +478,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             action_argument(
                 "ui_schema",
                 "UI Schema",
-                11,
+                20,
                 &["--ui-schema"],
                 UiActionKind::UiSchema,
                 "Emit the launcher/TUI schema",
@@ -460,6 +560,7 @@ fn request_from_cli_args(args: &[std::ffi::OsString]) -> Result<SimobserveRunTas
     let start_frequency_hz = optional_f64(args, "--start-frequency-hz")?.unwrap_or(44.0e9);
     let channel_width_hz = optional_f64(args, "--channel-width-hz")?.unwrap_or(128.0e6);
     let channel_count = optional_usize(args, "--channels")?.unwrap_or(1);
+    let corruption = corruption_from_cli_args(args)?;
     Ok(SimobserveRunTaskRequest {
         model_image,
         model_peak_jy_per_pixel,
@@ -477,8 +578,69 @@ fn request_from_cli_args(args: &[std::ffi::OsString]) -> Result<SimobserveRunTas
             channel_count,
         }),
         predict_model: !has_flag(args, "--no-predict-model"),
-        corruption: None,
+        corruption,
     })
+}
+
+fn corruption_from_cli_args(
+    args: &[std::ffi::OsString],
+) -> Result<Option<SyntheticCorruptionConfig>, String> {
+    let seed = optional_u64(args, "--corruption-seed")?.unwrap_or(1);
+    let noise_stddev_jy = optional_f32(args, "--noise-stddev-jy")?;
+    let gain_amplitude_stddev = optional_f32(args, "--gain-amplitude-stddev")?;
+    let gain_phase_stddev_rad = optional_f32(args, "--gain-phase-stddev-rad")?;
+    let bandpass_amplitude_stddev = optional_f32(args, "--bandpass-amplitude-stddev")?;
+    let bandpass_phase_stddev_rad = optional_f32(args, "--bandpass-phase-stddev-rad")?;
+    let polarization_leakage = optional_f32(args, "--polarization-leakage")?;
+    let pointing_offset_ra_arcsec = optional_f64(args, "--pointing-offset-ra-arcsec")?;
+    let pointing_offset_dec_arcsec = optional_f64(args, "--pointing-offset-dec-arcsec")?;
+
+    let gain_phase = if gain_amplitude_stddev.is_some() || gain_phase_stddev_rad.is_some() {
+        Some(SyntheticGainPhaseCorruption {
+            amplitude_stddev: gain_amplitude_stddev.unwrap_or(0.0),
+            phase_stddev_rad: gain_phase_stddev_rad.unwrap_or(0.0),
+        })
+    } else {
+        None
+    };
+    let bandpass = if bandpass_amplitude_stddev.is_some() || bandpass_phase_stddev_rad.is_some() {
+        Some(SyntheticBandpassCorruption {
+            amplitude_stddev: bandpass_amplitude_stddev.unwrap_or(0.0),
+            phase_stddev_rad: bandpass_phase_stddev_rad.unwrap_or(0.0),
+        })
+    } else {
+        None
+    };
+    let polarization_leakage =
+        polarization_leakage.map(|amplitude| SyntheticPolarizationLeakageCorruption { amplitude });
+    let pointing = if pointing_offset_ra_arcsec.is_some() || pointing_offset_dec_arcsec.is_some() {
+        let arcsec_to_rad = std::f64::consts::PI / 180.0 / 3600.0;
+        Some(SyntheticPointingCorruption {
+            offset_rad: [
+                pointing_offset_ra_arcsec.unwrap_or(0.0) * arcsec_to_rad,
+                pointing_offset_dec_arcsec.unwrap_or(0.0) * arcsec_to_rad,
+            ],
+        })
+    } else {
+        None
+    };
+
+    if noise_stddev_jy.is_none()
+        && gain_phase.is_none()
+        && bandpass.is_none()
+        && polarization_leakage.is_none()
+        && pointing.is_none()
+    {
+        return Ok(None);
+    }
+    Ok(Some(SyntheticCorruptionConfig {
+        seed,
+        noise_stddev_jy,
+        gain_phase,
+        bandpass,
+        polarization_leakage,
+        pointing,
+    }))
 }
 
 fn default_predict_model() -> bool {
@@ -637,6 +799,16 @@ fn optional_usize(args: &[std::ffi::OsString], flag: &str) -> Result<Option<usiz
         .transpose()
 }
 
+fn optional_u64(args: &[std::ffi::OsString], flag: &str) -> Result<Option<u64>, String> {
+    option_value(args, flag)
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|error| format!("parse {flag}: {error}"))
+        })
+        .transpose()
+}
+
 fn option_value(args: &[std::ffi::OsString], flag: &str) -> Option<String> {
     args.windows(2).find_map(|pair| {
         if pair[0].to_str() == Some(flag) {
@@ -657,7 +829,7 @@ mod tests {
 
     use super::{
         SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveProtocolInfo,
-        SimobserveTaskSchemaBundle, command_schema,
+        SimobserveTaskSchemaBundle, command_schema, request_from_cli_args,
     };
 
     #[test]
@@ -681,5 +853,69 @@ mod tests {
         assert_eq!(info.protocol_name, SIMOBSERVE_TASK_PROTOCOL_NAME);
         assert_eq!(info.protocol_version, SIMOBSERVE_TASK_PROTOCOL_VERSION);
         assert_eq!(info.surface_kind, ProviderSurfaceKind::Task);
+    }
+
+    #[test]
+    fn cli_parses_common_corruption_controls() {
+        let request = request_from_cli_args(
+            &[
+                "--model",
+                "model.fits",
+                "--out",
+                "out.ms",
+                "--corruption-seed",
+                "123",
+                "--noise-stddev-jy",
+                "0.001",
+                "--gain-amplitude-stddev",
+                "0.05",
+                "--gain-phase-stddev-rad",
+                "0.02",
+                "--bandpass-amplitude-stddev",
+                "0.03",
+                "--bandpass-phase-stddev-rad",
+                "0.04",
+                "--polarization-leakage",
+                "0.01",
+                "--pointing-offset-ra-arcsec",
+                "2.5",
+                "--pointing-offset-dec-arcsec",
+                "-1.5",
+            ]
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>(),
+        )
+        .expect("parse simobserve cli request");
+        let corruption = request.corruption.expect("corruption config");
+        assert_eq!(corruption.seed, 123);
+        assert_eq!(corruption.noise_stddev_jy, Some(0.001));
+        assert_eq!(
+            corruption
+                .gain_phase
+                .as_ref()
+                .expect("gain phase")
+                .phase_stddev_rad,
+            0.02
+        );
+        assert_eq!(
+            corruption
+                .bandpass
+                .as_ref()
+                .expect("bandpass")
+                .amplitude_stddev,
+            0.03
+        );
+        assert_eq!(
+            corruption
+                .polarization_leakage
+                .as_ref()
+                .expect("leakage")
+                .amplitude,
+            0.01
+        );
+        let pointing = corruption.pointing.expect("pointing");
+        assert!(pointing.offset_rad[0] > 0.0);
+        assert!(pointing.offset_rad[1] < 0.0);
     }
 }

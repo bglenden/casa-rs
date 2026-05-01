@@ -2,9 +2,10 @@
 //! Native synthetic-observation MS writer tests.
 
 use casa_ms::{
-    MeasurementSet, SyntheticAntenna, SyntheticCorruptionConfig, SyntheticGainPhaseCorruption,
-    SyntheticObservationRequest, SyntheticSpectralSetup, generate_synthetic_observation_ms,
-    tutorial_vla_a_antennas,
+    MeasurementSet, SyntheticAntenna, SyntheticBandpassCorruption, SyntheticCorruptionConfig,
+    SyntheticGainPhaseCorruption, SyntheticObservationRequest, SyntheticPointingCorruption,
+    SyntheticPolarizationLeakageCorruption, SyntheticSpectralSetup,
+    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
 use casa_test_support::{discover_casa_python, tutorial_dataset_path};
 use casa_types::{ArrayValue, ScalarValue, Value};
@@ -132,6 +133,9 @@ fn seeded_noise_and_gain_phase_corruptions_are_deterministic() {
             amplitude_stddev: 0.05,
             phase_stddev_rad: 0.02,
         }),
+        bandpass: None,
+        polarization_leakage: None,
+        pointing: None,
     });
     let mut second = first.clone();
     second.output_ms = temp.path().join("second").join("ppdisk.synthetic.ms");
@@ -162,6 +166,75 @@ fn seeded_noise_and_gain_phase_corruptions_are_deterministic() {
 }
 
 #[test]
+fn common_bandpass_and_leakage_corruptions_are_reported_and_change_data() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut corrupted = request(&temp.path().join("corrupted"));
+    std::fs::create_dir_all(temp.path().join("corrupted")).unwrap();
+    corrupted.spectral_setup.channel_count = 4;
+    corrupted.corruption = Some(SyntheticCorruptionConfig {
+        seed: 99,
+        noise_stddev_jy: None,
+        gain_phase: None,
+        bandpass: Some(SyntheticBandpassCorruption {
+            amplitude_stddev: 0.08,
+            phase_stddev_rad: 0.04,
+        }),
+        polarization_leakage: Some(SyntheticPolarizationLeakageCorruption { amplitude: 0.1 }),
+        pointing: None,
+    });
+    let report = generate_synthetic_observation_ms(&corrupted).unwrap();
+    assert_eq!(
+        report.applied_corruptions,
+        vec!["bandpass".to_string(), "polarization_leakage".to_string()]
+    );
+
+    let uncorrupted_root = temp.path().join("uncorrupted-common");
+    std::fs::create_dir_all(&uncorrupted_root).unwrap();
+    let mut uncorrupted = request(&uncorrupted_root);
+    uncorrupted.spectral_setup.channel_count = 4;
+    generate_synthetic_observation_ms(&uncorrupted).unwrap();
+
+    let corrupted_data = first_row_data(&corrupted.output_ms);
+    let uncorrupted_data = first_row_data(&uncorrupted.output_ms);
+    assert_ne!(corrupted_data, uncorrupted_data);
+    assert_ne!(corrupted_data[0], corrupted_data[1]);
+}
+
+#[test]
+fn pointing_corruption_shifts_primary_beam_prediction_when_model_has_direction() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("pointing");
+    std::fs::create_dir_all(&root).unwrap();
+    let model = root.join("pointing.fits");
+    let mut base =
+        SyntheticObservationRequest::vla_ppdisk(&model, root.join("base.ms"), antennas());
+    base.phase_center_rad = [1.23, -0.45];
+    base.duration_seconds = 10.0;
+    base.integration_seconds = 10.0;
+    write_test_fits_model_with_center(&model, 16, 16, base.phase_center_rad);
+    generate_synthetic_observation_ms(&base).unwrap();
+
+    let mut shifted = base.clone();
+    shifted.output_ms = root.join("shifted.ms");
+    shifted.corruption = Some(SyntheticCorruptionConfig {
+        seed: 5,
+        noise_stddev_jy: None,
+        gain_phase: None,
+        bandpass: None,
+        polarization_leakage: None,
+        pointing: Some(SyntheticPointingCorruption {
+            offset_rad: [10.0_f64.to_radians() / 3600.0, 0.0],
+        }),
+    });
+    let report = generate_synthetic_observation_ms(&shifted).unwrap();
+    assert_eq!(report.applied_corruptions, vec!["pointing".to_string()]);
+    assert_ne!(
+        first_row_data(&base.output_ms),
+        first_row_data(&shifted.output_ms)
+    );
+}
+
+#[test]
 fn invalid_corruption_parameters_fail_clearly() {
     let temp = tempfile::tempdir().unwrap();
     let mut request = request(temp.path());
@@ -169,6 +242,9 @@ fn invalid_corruption_parameters_fail_clearly() {
         seed: 7,
         noise_stddev_jy: Some(-1.0),
         gain_phase: None,
+        bandpass: None,
+        polarization_leakage: None,
+        pointing: None,
     });
 
     let error = generate_synthetic_observation_ms(&request)
@@ -310,6 +386,24 @@ print(json.dumps(result, sort_keys=True))
 }
 
 fn write_test_fits_model(path: &std::path::Path, nx: usize, ny: usize) {
+    write_test_fits_model_inner(path, nx, ny, None);
+}
+
+fn write_test_fits_model_with_center(
+    path: &std::path::Path,
+    nx: usize,
+    ny: usize,
+    center_rad: [f64; 2],
+) {
+    write_test_fits_model_inner(path, nx, ny, Some(center_rad));
+}
+
+fn write_test_fits_model_inner(
+    path: &std::path::Path,
+    nx: usize,
+    ny: usize,
+    center_rad: Option<[f64; 2]>,
+) {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }
@@ -327,8 +421,14 @@ fn write_test_fits_model(path: &std::path::Path, nx: usize, ny: usize) {
         fits_card("CTYPE2", "'DEC--SIN'"),
         fits_card("CDELT2", "1.0E-6"),
         fits_card("CUNIT2", "'rad'"),
-        "END".to_string(),
     ];
+    if let Some(center_rad) = center_rad {
+        cards.push(fits_card("CRVAL1", &format!("{:.16E}", center_rad[0])));
+        cards.push(fits_card("CRVAL2", &format!("{:.16E}", center_rad[1])));
+        cards.push(fits_card("CRPIX1", &(0.5 * nx as f64 + 1.0).to_string()));
+        cards.push(fits_card("CRPIX2", &(0.5 * ny as f64 + 1.0).to_string()));
+    }
+    cards.push("END".to_string());
     let mut bytes = Vec::new();
     for card in cards.drain(..) {
         let mut padded = format!("{card:<80}").into_bytes();

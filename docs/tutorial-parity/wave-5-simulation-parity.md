@@ -8,6 +8,7 @@ Verification:
 - `/usr/bin/time -p target/release/casars-imager --ms target/wave5-parity-full/ppdisk.rust.vla.a.3600s.trace.ms --imagename target/wave5-parity-full/images-trace-fast/ppdisk-rust-dirty --imsize 257 --cell-arcsec 0.00311 --dirty-only --weighting natural --no-preview-pngs`
 - `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/wave5-simulation-parity.py target/wave5-parity-full/ppdisk.rust.vla.a.3600s.trace.ms target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.ms target/wave5-parity-full/report-3600s-trace-fast-images --model-image target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.skymodel --rust-image target/wave5-parity-full/images-trace-fast/ppdisk-rust-dirty.image --casa-image target/wave5-parity-full/images/ppdisk-casa-dirty.image`
 - `scripts/run-wave5-issue125.sh target/wave5-issue125`
+- `scripts/run-wave5-issue126.sh target/wave5-issue126`
 
 ## Tutorial Command
 
@@ -184,3 +185,62 @@ row time and field reduced the same command to `2.897235166048631 s` without
 changing the image or statistics residuals. The plot timing remains labeled as
 a headless artifact comparison because CASA `plotms` cannot run in this local
 environment without `DISPLAY`.
+
+## Issue #126 Corruption Evidence
+
+The #126 harness covers the simulator-tool corruption slice needed for tutorial
+examples without trying to clone the open-ended simulator corruption catalog.
+It runs the VLA ppdisk model with `120s`, `2s` integrations, and four channels
+so channel-dependent effects are visible:
+
+- casa-rs clean synthetic MS.
+- casa-rs noise+gain synthetic MS with `--noise-stddev-jy 0.001`,
+  `--gain-amplitude-stddev 0.05`, and `--gain-phase-stddev-rad 0.02`.
+- casa-rs common-corruption synthetic MS with the same noise+gain plus
+  bandpass, parallel-hand polarization leakage, and a global primary-beam
+  pointing offset.
+- CASA simulator reference made by copying the same clean MS and running
+  `sm.setnoise(mode="simplenoise", simplenoise="0.001Jy")`,
+  `sm.setgain(mode="fbm", amplitude=[0.05, 0.02])`, and `sm.corrupt()`.
+
+Artifacts:
+
+- `target/wave5-issue126/wave5-issue126-corruption-summary.json`
+- `target/wave5-issue126/rust-clean-report.json`
+- `target/wave5-issue126/rust-noise-gain-report.json`
+- `target/wave5-issue126/rust-common-corruptions-report.json`
+- `target/wave5-issue126/rust-clean-timing.json`
+- `target/wave5-issue126/rust-noise-gain-timing.json`
+- `target/wave5-issue126/rust-common-corruptions-timing.json`
+- `target/wave5-issue126/casa-noise-gain-timing.json`
+
+Measured result:
+
+| Check | Result |
+|---|---:|
+| clean rows | `21060` |
+| rust noise+gain rows | `21060` |
+| rust common-corruption rows | `21060` |
+| CASA noise+gain rows | `21060` |
+| data shape | `[2, 4, 21060]` |
+| rust noise+gain component stddev delta | `0.0010213215136900544 Jy` |
+| CASA noise+gain component stddev delta | `0.0012523955665528774 Jy` |
+| rust common-corruption component stddev delta | `0.0010408269008621573 Jy` |
+| rust noise+gain mean amplitude ratio | `1.258807897567749` |
+| CASA noise+gain mean amplitude ratio | `1.2593351602554321` |
+| rust common-corruption mean amplitude ratio | `1.25957453250885` |
+| rust clean runtime | `1.2037884159944952 s` |
+| rust noise+gain runtime | `0.18237316608428955 s` |
+| rust common-corruption runtime | `0.1811619158834219 s` |
+| CASA noise+gain corruption runtime | `0.12549133296124637 s` |
+
+The rust and CASA noise+gain runs are not expected to be cell-identical because
+CASA's simulator uses its own random generator and `setgain(mode="fbm")`
+implementation. The comparison pins the same clean input MS, same seed value,
+same simple-noise sigma, same gain RMS parameters, row/shape preservation, and
+similar corrupted-data statistics. The broader casa-rs common-corruption run
+demonstrates deterministic bandpass, polarization leakage, and primary-beam
+pointing-offset controls. CASA `setbandpass` is documented as not implemented
+in the simulator tool XML, and CASA pointing corruption requires an external
+pointing-error table, so #126 keeps those to the practical native tutorial
+surface rather than inventing a broad calibration-table workflow.

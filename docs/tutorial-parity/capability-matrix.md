@@ -77,7 +77,7 @@ Status legend:
 | `simanalyze` | missing as workflow | composition of simulation, imaging, image analysis | future simulation task/Python surface | workflow orchestration without cloning CASA pipeline semantics | CASA `simanalyze` products | simulation analysis timing | #125 |
 | `simalma` | missing | simulation owner | future task | ALMA/ACA array combinations | CASA `simalma` products | breadth timing | #129 |
 | simulator tool `sm.open` / `sm.predict` | missing | simulation owner, `casa-ms` | future task/object projection | synthetic MS lifecycle and prediction | CASA simulator-tool output MS | simulation timing | #124, #129 |
-| simulator tool `sm.setnoise` / `sm.setgain` / `sm.corrupt` | missing | simulation owner, calibration/noise models | future simulation controls | deterministic noise/gain/bandpass/pointing/polarization corruptions | seeded CASA simulator outputs | corrupted vs uncorrupted timing | #126 |
+| simulator tool `sm.setnoise` / `sm.setgain` / `sm.corrupt` | partial | simulation owner, calibration/noise models | `simobserve` task/Python corruption controls | deterministic simple noise, gain/phase, bandpass, polarization leakage, and primary-beam pointing offset; not full calibration-table corruption | CASA simulator noise+gain reference plus native common-corruption output | corrupted vs uncorrupted timing | #126 |
 | `rmtables` | available through filesystem/task orchestration | app/test support | none as public task | cleanup convenience only | file existence behavior | none | no feature issue |
 
 ## Unsupported Parameter Families To Track Explicitly
