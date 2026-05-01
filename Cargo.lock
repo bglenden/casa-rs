@@ -574,6 +574,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sofars",
  "tar",
  "tempfile",
  "thiserror 2.0.18",

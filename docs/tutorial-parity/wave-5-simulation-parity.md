@@ -1,7 +1,7 @@
 # Wave 5 Simulation Parity Evidence
 
 Truth class: current evidence
-Last reality check: 2026-04-30
+Last reality check: 2026-05-01
 Verification:
 - `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/wave5-simulation-parity.py target/wave5-parity-full/ppdisk.rust.vla.a.3600s.ms target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.ms target/wave5-parity-full/report-3600s`
 - `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/wave5-simulation-parity.py target/wave5-parity-full/ppdisk.rust.vla.a.3600s.release.ms target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.ms target/wave5-parity-full/report-3600s-release`
@@ -38,32 +38,44 @@ generated products are structurally comparable but not numerically identical.
 | `ANTENNA1` / `ANTENNA2` max abs diff | `0` |
 | `WEIGHT` / `SIGMA` max abs diff | `0.0` |
 | `FLAG` mismatches | `0` |
-| `UVW` max abs diff | `54.63720216499269 m` |
-| `UVW` p95 abs diff | `25.084938265168862 m` |
-| uv-distance max abs diff | `2.490580885023519 m` |
-| uv-distance p95 abs diff | `1.3048159326861395 m` |
-| `DATA` max abs diff | `0.0007076460214079025 Jy` |
-| `DATA` p95 abs diff | `0.0004260575572766784 Jy` |
+| `UVW` max abs diff | `0.00046243144424806815 m` |
+| `UVW` p95 abs diff | `0.00022301637018244934 m` |
+| uv-distance max abs diff | `0.0002631813404150307 m` |
+| uv-distance p95 abs diff | `0.00016473680607305118 m` |
+| `DATA` max abs diff | `0.0003738360058512399 Jy` |
+| `DATA` p95 abs diff | `0.00029916768964221625 Jy` |
+| amplitude max abs diff | `0.0001329004085087078 Jy` |
+| amplitude p95 abs diff | `0.00003746049056766897 Jy` |
 | CASA `simobserve` runtime | `5.15946508385241 s` |
 | casa-rs debug task runtime | `24.447 s` |
-| casa-rs release task runtime | `3.129 s` |
+| casa-rs release task runtime | `5.000 s` |
 
 Inspectable artifacts:
 
 - `target/wave5-parity-full/report-3600s/wave5-simulation-parity.json`
 - `target/wave5-parity-full/report-3600s/wave5-simulation-parity.png`
+- `target/wave5-parity-full/report-3600s-release/wave5-simulation-parity.json`
+- `target/wave5-parity-full/report-3600s-release/wave5-simulation-parity.png`
 
 ## Interpretation
 
 The row schedule, antenna pairing, scalar weights, sigma, and flags now match
-the CASA reference for the full first tutorial run. The UV-distance agreement is
-close after applying J2000-to-date precession for UVW projection, but component
-UVW and predicted visibility values are still outside a closeout tolerance.
-Release-mode performance is currently faster than CASA for this full noiseless
-`simobserve` workload, while debug-mode runtime is not meaningful as a CASA C++
-comparison.
+the CASA reference for the full first tutorial run. CASA source inspection and
+casatools instrumentation showed that simulator UVW is not a sky-direction
+conversion: `NewMSSimulator::calcAntUVW` converts `MBaseline` antenna vectors
+through `ITRF -> HADEC -> TOPO -> APP -> JNAT -> J2000`, constructs
+`MVuvw(baseline, phase_center)`, and subtracts per-antenna UVW coordinates for
+each row. Matching that shape reduced component UVW from metre-level residuals
+to sub-mm residuals.
 
-Wave 5 should stay in progress until the UVW/DATA deltas are reduced to an
-accepted tolerance, the analysis/imaging products are compared end-to-end, and
-the performance result is either improved or explicitly accepted with a shaped
-follow-up.
+Release-mode performance is again comparable with CASA because casa-rs now
+computes per-antenna UVW once per integration instead of doing a measures
+conversion per baseline row.
+
+The remaining correctness gap is in the image model prediction. The CASA
+`.skymodel` pixels match the scaled FITS model, and applying the CASA simulator
+RA handedness convention reduced the complex `DATA` gap by about half, but
+complex visibility parity is still outside a closeout tolerance. Wave 5 should
+stay in progress until the `sm.predict`/FTMachine convention is traced to the
+same standard as the UVW path, or a narrower accepted tolerance is explicitly
+defined for this tutorial slice.

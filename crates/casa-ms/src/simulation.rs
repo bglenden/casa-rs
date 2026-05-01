@@ -12,6 +12,10 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use casa_imaging::{ImageGeometry, StandardMfsModelPredictor};
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::epoch::{EpochRef, MEpoch};
+use casa_types::measures::frame::MeasFrame;
+use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, ArrayD};
 use num_complex::Complex32;
@@ -834,14 +838,15 @@ fn populate_main_rows(
     for sample in 0..samples {
         let time =
             request.start_time_mjd_seconds + (sample as f64 + 0.5) * request.integration_seconds;
+        let antenna_uvws =
+            antenna_uvw_positions(&request.antennas, request.phase_center_rad, time)?;
         for antenna1 in 0..request.antennas.len() {
             for antenna2 in (antenna1 + 1)..request.antennas.len() {
-                let uvw = projected_uvw(
-                    request.antennas[antenna1].position_m,
-                    request.antennas[antenna2].position_m,
-                    request.phase_center_rad,
-                    time,
-                );
+                let uvw = [
+                    antenna_uvws[antenna2][0] - antenna_uvws[antenna1][0],
+                    antenna_uvws[antenna2][1] - antenna_uvws[antenna1][1],
+                    antenna_uvws[antenna2][2] - antenna_uvws[antenna1][2],
+                ];
                 let mut data_values = predicted_data_values(
                     predictors.as_ref(),
                     &request.spectral_setup,
@@ -906,7 +911,17 @@ fn build_channel_predictors(
     };
     (0..spectral_setup.channel_count)
         .map(|_| {
-            StandardMfsModelPredictor::new(geometry, &model.pixels).map_err(|error| {
+            let mut casa_oriented_pixels = Array2::<f32>::zeros(model.pixels.raw_dim());
+            for x in 0..model.pixels.shape()[0] {
+                for y in 0..model.pixels.shape()[1] {
+                    // CASA's simulator image prediction treats positive RA
+                    // offsets with the opposite image-x handedness from this
+                    // crate's pure imaging gridder.
+                    casa_oriented_pixels[(model.pixels.shape()[0] - 1 - x, y)] =
+                        model.pixels[(x, y)];
+                }
+            }
+            StandardMfsModelPredictor::new(geometry, &casa_oriented_pixels).map_err(|error| {
                 MsError::SyntheticObservation(format!("model prediction setup failed: {error}"))
             })
         })
@@ -1220,58 +1235,327 @@ fn time_sample_count(duration_seconds: f64, integration_seconds: f64) -> usize {
     (duration_seconds / integration_seconds).ceil().max(1.0) as usize
 }
 
-fn projected_uvw(
-    antenna1_position_m: [f64; 3],
-    antenna2_position_m: [f64; 3],
+fn antenna_uvw_positions(
+    antennas: &[SyntheticAntenna],
     phase_center_rad: [f64; 2],
     time_mjd_seconds: f64,
+) -> MsResult<Vec<[f64; 3]>> {
+    let phase_center = MDirection::from_angles(
+        phase_center_rad[0],
+        phase_center_rad[1],
+        DirectionRef::J2000,
+    );
+    let observatory = MPosition::from_observatory_name("VLA")
+        .unwrap_or_else(|| MPosition::new_itrf(-1_601_192.0, -5_041_984.0, 3_554_876.0));
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd(time_mjd_seconds / 86_400.0, EpochRef::UT1))
+        .with_position(observatory.clone())
+        .with_direction(phase_center.clone())
+        .with_bundled_eop();
+
+    antennas
+        .iter()
+        .map(|antenna| {
+            let obs_itrf = observatory.as_itrf();
+            let ant_itrf = antenna.position_m;
+            let baseline = [
+                obs_itrf[0] - ant_itrf[0],
+                obs_itrf[1] - ant_itrf[1],
+                obs_itrf[2] - ant_itrf[2],
+            ];
+            let baseline_j2000 = baseline_itrf_to_j2000(baseline, &phase_center, &frame)?;
+            Ok(project_j2000_baseline_to_uvw(baseline_j2000, &phase_center))
+        })
+        .collect()
+}
+
+fn project_j2000_baseline_to_uvw(
+    baseline_j2000_m: [f64; 3],
+    phase_center: &MDirection,
 ) -> [f64; 3] {
-    let baseline = [
-        antenna1_position_m[0] - antenna2_position_m[0],
-        antenna1_position_m[1] - antenna2_position_m[1],
-        antenna1_position_m[2] - antenna2_position_m[2],
-    ];
-    let [ra_of_date, dec_of_date] = precess_j2000_to_date(phase_center_rad, time_mjd_seconds);
-    let hour_angle_rad = gmst_rad(time_mjd_seconds) - ra_of_date;
-    let sin_h = hour_angle_rad.sin();
-    let cos_h = hour_angle_rad.cos();
-    let sin_dec = dec_of_date.sin();
-    let cos_dec = dec_of_date.cos();
-    let [x, y, z] = baseline;
+    let (ra, dec) = phase_center.as_angles();
+    let (sin_ra, cos_ra) = ra.sin_cos();
+    let (sin_dec, cos_dec) = dec.sin_cos();
+    let [x, y, z] = baseline_j2000_m;
+
     [
-        sin_h * x + cos_h * y,
-        -sin_dec * cos_h * x + sin_dec * sin_h * y + cos_dec * z,
-        cos_dec * cos_h * x - cos_dec * sin_h * y + sin_dec * z,
+        -(sin_ra * x - cos_ra * y),
+        -sin_dec * cos_ra * x - sin_dec * sin_ra * y + cos_dec * z,
+        cos_dec * cos_ra * x + cos_dec * sin_ra * y + sin_dec * z,
     ]
 }
 
-fn precess_j2000_to_date(phase_center_rad: [f64; 2], time_mjd_seconds: f64) -> [f64; 2] {
-    let jd = time_mjd_seconds / 86_400.0 + 2_400_000.5;
-    let centuries_since_j2000 = (jd - 2_451_545.0) / 36_525.0;
-    let t = centuries_since_j2000;
-    let arcsec_to_rad = std::f64::consts::PI / (180.0 * 3_600.0);
-    let zeta = (2_306.218_1 * t + 0.301_88 * t * t + 0.017_998 * t * t * t) * arcsec_to_rad;
-    let z = (2_306.218_1 * t + 1.094_68 * t * t + 0.018_203 * t * t * t) * arcsec_to_rad;
-    let theta = (2_004.310_9 * t - 0.426_65 * t * t - 0.041_833 * t * t * t) * arcsec_to_rad;
+fn baseline_itrf_to_j2000(
+    baseline_itrf_m: [f64; 3],
+    phase_center: &MDirection,
+    frame: &MeasFrame,
+) -> MsResult<[f64; 3]> {
+    let baseline_len = vector_norm(baseline_itrf_m);
+    if baseline_len == 0.0 {
+        return Ok([0.0, 0.0, 0.0]);
+    }
 
-    let ra = phase_center_rad[0];
-    let dec = phase_center_rad[1];
-    let a = dec.cos() * (ra + zeta).sin();
-    let b = theta.cos() * dec.cos() * (ra + zeta).cos() - theta.sin() * dec.sin();
-    let c = theta.sin() * dec.cos() * (ra + zeta).cos() + theta.cos() * dec.sin();
-    [(a.atan2(b) + z).rem_euclid(std::f64::consts::TAU), c.asin()]
+    let mut unit = scale_vector(baseline_itrf_m, 1.0 / baseline_len);
+    unit = itrf_to_hadec(unit, frame)?;
+    unit = hadec_to_topo(unit, phase_center, frame)?;
+    unit = app_to_jnat(unit, phase_center, frame)?;
+    unit = jnat_to_j2000(unit, phase_center, frame)?;
+    Ok(scale_vector(unit, baseline_len))
 }
 
-fn gmst_rad(time_mjd_seconds: f64) -> f64 {
-    let mjd = time_mjd_seconds / 86_400.0;
-    let jd = mjd + 2_400_000.5;
-    let days_since_j2000 = jd - 2_451_545.0;
-    let centuries_since_j2000 = days_since_j2000 / 36_525.0;
-    let gmst_deg = 280.460_618_37
-        + 360.985_647_366_29 * days_since_j2000
-        + 0.000_387_933 * centuries_since_j2000 * centuries_since_j2000
-        - centuries_since_j2000 * centuries_since_j2000 * centuries_since_j2000 / 38_710_000.0;
-    gmst_deg.rem_euclid(360.0).to_radians()
+fn itrf_to_hadec(vector: [f64; 3], frame: &MeasFrame) -> MsResult<[f64; 3]> {
+    let position = frame.position().ok_or_else(|| {
+        MsError::SyntheticObservation("UVW conversion missing observatory position".to_string())
+    })?;
+    let lon = position.longitude_rad();
+    let (s, c) = lon.sin_cos();
+    let negated_y = -vector[1];
+    Ok([
+        c * vector[0] - s * negated_y,
+        s * vector[0] + c * negated_y,
+        vector[2],
+    ])
+}
+
+fn hadec_to_topo(
+    vector: [f64; 3],
+    phase_center: &MDirection,
+    frame: &MeasFrame,
+) -> MsResult<[f64; 3]> {
+    let last = local_apparent_sidereal_time(frame)?;
+    let tdb_mjd = epoch_mjd(frame, EpochRef::TDB)?;
+    let (xp, yp) = polar_motion_rad(frame, tdb_mjd);
+    let mut vector = rotate(
+        &polar_motion_euler(-xp, -yp, last),
+        &[vector[0], -vector[1], vector[2]],
+    );
+
+    let position = frame.position().ok_or_else(|| {
+        MsError::SyntheticObservation("UVW conversion missing observatory position".to_string())
+    })?;
+    let radius = vector_norm(position.as_itrf());
+    let v_c = diurnal_aberration_factor(radius);
+    let aberration_direction = spherical_to_cartesian(last, position.geocentric_latitude_rad());
+    let shift = scale_vector(aberration_direction, -v_c);
+    let app_phase_center = phase_center
+        .convert_to(DirectionRef::APP, frame)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "UVW phase-center APP conversion failed: {error}"
+            ))
+        })?;
+    vector = rotate_shift(vector, shift, app_phase_center.cosines());
+    Ok(vector)
+}
+
+fn app_to_jnat(
+    vector: [f64; 3],
+    phase_center: &MDirection,
+    frame: &MeasFrame,
+) -> MsResult<[f64; 3]> {
+    let mut vector = deapply_precession_nutation(vector, frame)?;
+    let shift = inverse_aberration_shift(phase_center, frame)?;
+    vector = rotate_shift(vector, shift, phase_center.cosines());
+    Ok(vector)
+}
+
+fn jnat_to_j2000(
+    vector: [f64; 3],
+    phase_center: &MDirection,
+    frame: &MeasFrame,
+) -> MsResult<[f64; 3]> {
+    let shift = inverse_solar_deflection_shift(phase_center, frame)?;
+    Ok(rotate_shift(vector, shift, phase_center.cosines()))
+}
+
+fn deapply_precession_nutation(vector: [f64; 3], frame: &MeasFrame) -> MsResult<[f64; 3]> {
+    let tt = epoch_jd_pair(frame, EpochRef::TT)?;
+    let nutation = sofars::pnp::nutm80(tt.0, tt.1);
+    let precession = sofars::pnp::pmat76(tt.0, tt.1);
+    let vector = rotate_t(&nutation, &vector);
+    Ok(rotate_t(&precession, &vector))
+}
+
+fn inverse_aberration_shift(phase_center: &MDirection, frame: &MeasFrame) -> MsResult<[f64; 3]> {
+    const C_AU_PER_DAY: f64 = 173.144_632_674_240_34;
+
+    let tt = epoch_jd_pair(frame, EpochRef::TT)?;
+    let (_, earth_bary) = sofars::eph::epv00(tt.0, tt.1).ok_or_else(|| {
+        MsError::SyntheticObservation("UVW aberration ephemeris lookup failed".to_string())
+    })?;
+    let velocity = scale_vector(earth_bary[1], 1.0 / C_AU_PER_DAY);
+    let speed_squared = dot(velocity, velocity);
+    let beta_inv = (1.0 - speed_squared).sqrt();
+    let natural = phase_center.cosines();
+    let dot_nv = dot(natural, velocity);
+    let apparent = scale_vector(
+        add_vectors(
+            scale_vector(natural, beta_inv),
+            scale_vector(velocity, 1.0 + dot_nv / (1.0 + beta_inv)),
+        ),
+        1.0 / (1.0 + dot_nv),
+    );
+    Ok(subtract_vectors(natural, normalize(apparent)))
+}
+
+fn inverse_solar_deflection_shift(
+    phase_center: &MDirection,
+    frame: &MeasFrame,
+) -> MsResult<[f64; 3]> {
+    let tt = epoch_jd_pair(frame, EpochRef::TT)?;
+    let (earth_helio, _) = sofars::eph::epv00(tt.0, tt.1).ok_or_else(|| {
+        MsError::SyntheticObservation("UVW solar-position ephemeris lookup failed".to_string())
+    })?;
+    let sun = normalize([-earth_helio[0][0], -earth_helio[0][1], -earth_helio[0][2]]);
+    let source = phase_center.cosines();
+    let dot_source_sun = dot(source, sun);
+    let correction = scale_vector(
+        subtract_vectors(sun, scale_vector(source, dot_source_sun)),
+        1.974e-8 / (1.0 - dot_source_sun),
+    );
+    Ok(correction)
+}
+
+fn local_apparent_sidereal_time(frame: &MeasFrame) -> MsResult<f64> {
+    let (ut1_a, ut1_b) = epoch_jd_pair(frame, EpochRef::UT1)?;
+    let gast = sofars::erst::gst94(ut1_a, ut1_b);
+    let position = frame.position().ok_or_else(|| {
+        MsError::SyntheticObservation("UVW conversion missing observatory position".to_string())
+    })?;
+    Ok(gast + position.longitude_rad())
+}
+
+fn epoch_jd_pair(frame: &MeasFrame, refer: EpochRef) -> MsResult<(f64, f64)> {
+    let epoch = frame
+        .epoch()
+        .ok_or_else(|| MsError::SyntheticObservation("UVW conversion missing epoch".to_string()))?;
+    let converted = epoch.convert_to(refer, frame).map_err(|error| {
+        MsError::SyntheticObservation(format!("UVW epoch conversion failed: {error}"))
+    })?;
+    Ok(converted.value().as_jd_pair())
+}
+
+fn epoch_mjd(frame: &MeasFrame, refer: EpochRef) -> MsResult<f64> {
+    let epoch = frame
+        .epoch()
+        .ok_or_else(|| MsError::SyntheticObservation("UVW conversion missing epoch".to_string()))?;
+    let converted = epoch.convert_to(refer, frame).map_err(|error| {
+        MsError::SyntheticObservation(format!("UVW epoch conversion failed: {error}"))
+    })?;
+    Ok(converted.value().as_mjd())
+}
+
+fn polar_motion_rad(frame: &MeasFrame, epoch_mjd: f64) -> (f64, f64) {
+    const ARCSEC_TO_RAD: f64 = std::f64::consts::PI / (180.0 * 3600.0);
+    match frame.polar_motion_for_mjd(epoch_mjd) {
+        Some((xp_arcsec, yp_arcsec)) => (xp_arcsec * ARCSEC_TO_RAD, yp_arcsec * ARCSEC_TO_RAD),
+        None => (0.0, 0.0),
+    }
+}
+
+fn polar_motion_euler(xp: f64, yp: f64, last: f64) -> [[f64; 3]; 3] {
+    let (sx, cx) = xp.sin_cos();
+    let (sy, cy) = yp.sin_cos();
+    let (sl, cl) = last.sin_cos();
+    let rxz = [
+        [cl, -sl, 0.0],
+        [cy * sl, cy * cl, -sy],
+        [sy * sl, sy * cl, cy],
+    ];
+    [
+        [
+            cx * rxz[0][0] + sx * rxz[2][0],
+            cx * rxz[0][1] + sx * rxz[2][1],
+            cx * rxz[0][2] + sx * rxz[2][2],
+        ],
+        rxz[1],
+        [
+            -sx * rxz[0][0] + cx * rxz[2][0],
+            -sx * rxz[0][1] + cx * rxz[2][1],
+            -sx * rxz[0][2] + cx * rxz[2][2],
+        ],
+    ]
+}
+
+fn diurnal_aberration_factor(radius_m: f64) -> f64 {
+    const C: f64 = 299_792_458.0;
+    const SIDEREAL_RATIO: f64 = 1.002_737_909_35;
+    (2.0 * std::f64::consts::PI * radius_m) / 86_400.0 * SIDEREAL_RATIO / C
+}
+
+fn rotate_shift(vector: [f64; 3], shift: [f64; 3], reference_direction: [f64; 3]) -> [f64; 3] {
+    let from = normalize(reference_direction);
+    let to = normalize(add_vectors(from, shift));
+    let axis = cross(from, to);
+    let sin_angle = vector_norm(axis);
+    if sin_angle < 1.0e-18 {
+        return vector;
+    }
+    let axis = scale_vector(axis, 1.0 / sin_angle);
+    let cos_angle = dot(from, to).clamp(-1.0, 1.0);
+    let parallel = scale_vector(vector, cos_angle);
+    let perpendicular = scale_vector(cross(axis, vector), sin_angle);
+    let axial = scale_vector(axis, dot(axis, vector) * (1.0 - cos_angle));
+    add_vectors(add_vectors(parallel, perpendicular), axial)
+}
+
+fn rotate(matrix: &[[f64; 3]; 3], vector: &[f64; 3]) -> [f64; 3] {
+    [
+        matrix[0][0] * vector[0] + matrix[0][1] * vector[1] + matrix[0][2] * vector[2],
+        matrix[1][0] * vector[0] + matrix[1][1] * vector[1] + matrix[1][2] * vector[2],
+        matrix[2][0] * vector[0] + matrix[2][1] * vector[1] + matrix[2][2] * vector[2],
+    ]
+}
+
+fn rotate_t(matrix: &[[f64; 3]; 3], vector: &[f64; 3]) -> [f64; 3] {
+    [
+        matrix[0][0] * vector[0] + matrix[1][0] * vector[1] + matrix[2][0] * vector[2],
+        matrix[0][1] * vector[0] + matrix[1][1] * vector[1] + matrix[2][1] * vector[2],
+        matrix[0][2] * vector[0] + matrix[1][2] * vector[1] + matrix[2][2] * vector[2],
+    ]
+}
+
+fn spherical_to_cartesian(lon: f64, lat: f64) -> [f64; 3] {
+    let (sin_lon, cos_lon) = lon.sin_cos();
+    let (sin_lat, cos_lat) = lat.sin_cos();
+    [cos_lat * cos_lon, cos_lat * sin_lon, sin_lat]
+}
+
+fn vector_norm(vector: [f64; 3]) -> f64 {
+    dot(vector, vector).sqrt()
+}
+
+fn normalize(vector: [f64; 3]) -> [f64; 3] {
+    let norm = vector_norm(vector);
+    if norm == 0.0 {
+        vector
+    } else {
+        scale_vector(vector, 1.0 / norm)
+    }
+}
+
+fn dot(left: [f64; 3], right: [f64; 3]) -> f64 {
+    left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+}
+
+fn cross(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
+    [
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    ]
+}
+
+fn add_vectors(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
+    [left[0] + right[0], left[1] + right[1], left[2] + right[2]]
+}
+
+fn subtract_vectors(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
+    [left[0] - right[0], left[1] - right[1], left[2] - right[2]]
+}
+
+fn scale_vector(vector: [f64; 3], scale: f64) -> [f64; 3] {
+    [vector[0] * scale, vector[1] * scale, vector[2] * scale]
 }
 
 fn ms_main_defs(ms: &MeasurementSet) -> Vec<ColumnDef> {
