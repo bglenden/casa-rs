@@ -13,10 +13,11 @@ use casa_ms::msexplore::cli::{UiArgumentParser, UiValueKind};
 use casa_ms::subtables::SubTable;
 use casa_ms::{
     DEFAULT_MAX_PLOT_POINTS, MSEXPLORE_TASK_PROTOCOL_NAME, MeasurementSet, MeasurementSetPlotTheme,
-    MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec,
-    MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis, MsLayoutSpec, MsLegendPosition,
-    MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec,
-    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
+    MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn, MsExploreFlagEditRequest,
+    MsExploreRunTaskRequest, MsExploreSpec, MsFlagAction, MsFlagEditSpec, MsFlagRegion,
+    MsIterationAxis, MsLayoutSpec, MsLegendPosition, MsPageExportRange, MsPageHeaderItem,
+    MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec, apply_msexplore_flag_edit,
+    apply_msexplore_flag_edit_for_request, build_msexplore_payload,
     build_msexplore_payload_from_spec, build_msexplore_plot_payload, export_msexplore_plot,
     preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
     render_msexplore_plot_image,
@@ -86,6 +87,69 @@ fn msexplore_help_mentions_plot_controls() {
     assert!(stdout.contains("--json-schema"));
     assert!(stdout.contains("--protocol-info"));
     assert!(stdout.contains("--json-run <SOURCE>"));
+}
+
+#[test]
+fn msexplore_run_task_writes_summary_and_flag_preview_artifacts() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let summary_output = temp.path().join("summary.txt");
+    let flag_output = temp.path().join("flag-preview.json");
+    let request = MsExploreRunTaskRequest {
+        spec: MsExploreSpec {
+            ms_path,
+            summary_format: MeasurementSetSummaryOutputFormat::Text,
+            selection: MsSelectionSpec::default(),
+            header_items: Vec::new(),
+            page_title: None,
+            exprange: MsPageExportRange::Current,
+            max_plot_points: DEFAULT_MAX_PLOT_POINTS,
+            plots: vec![MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime)],
+        },
+        summary_output_path: Some(summary_output.clone()),
+        overwrite_outputs: false,
+        flag_edit: Some(MsExploreFlagEditRequest {
+            edit: MsFlagEditSpec {
+                action: MsFlagAction::Flag,
+                region: MsFlagRegion {
+                    x_min: TIME_BASE_SECONDS - 1.0,
+                    x_max: TIME_BASE_SECONDS + 100.0,
+                    y_min: -10.0,
+                    y_max: 10.0,
+                },
+                plot_index: None,
+                panel_key: None,
+                extcorr: true,
+                extchannel: true,
+            },
+            apply: false,
+            output_path: Some(flag_output.clone()),
+        }),
+        plot_export: None,
+    };
+
+    let result = request.execute().expect("run msexplore task request");
+    assert_eq!(result.summary_output_path, Some(summary_output.clone()));
+    assert_eq!(result.flag_edit_output_path, Some(flag_output.clone()));
+    assert!(result.summary.measurement_set.row_count > 0);
+    assert!(
+        result
+            .flag_edit_preview
+            .as_ref()
+            .expect("flag preview")
+            .affected_samples
+            > 0
+    );
+    assert!(
+        std::fs::read_to_string(summary_output)
+            .expect("summary output")
+            .contains("MeasurementSet")
+    );
+    assert!(
+        std::fs::read_to_string(flag_output)
+            .expect("flag preview output")
+            .contains("affected_samples")
+    );
 }
 
 #[test]

@@ -91,6 +91,10 @@ name = "source_subtable_regression"
 path = "tests/source_subtable_regression.rs"
 
 [[test]]
+name = "transform"
+path = "tests/transform.rs"
+
+[[test]]
 name = "spectral_frame_parity"
 path = "tests/spectral_frame_parity.rs"
 required-features = ["cpp-interop-tests"]

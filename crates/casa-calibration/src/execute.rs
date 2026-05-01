@@ -4690,6 +4690,11 @@ mod tests {
     use ndarray::{ArrayD, IxDyn, ShapeBuilder};
     use tempfile::TempDir;
 
+    use crate::model::{
+        CalibrationColumnSummary, CalibrationKeywordSummary, CalibrationSubtableSummary,
+        CalibrationTableSummary,
+    };
+
     fn perf_env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
@@ -4708,6 +4713,37 @@ mod tests {
             (actual - expected).norm() <= tolerance,
             "actual={actual:?} expected={expected:?}"
         );
+    }
+
+    fn empty_cal_summary(path: PathBuf) -> CalibrationTableSummary {
+        CalibrationTableSummary {
+            path,
+            table_type: "Calibration".to_string(),
+            table_subtype: "G Jones".to_string(),
+            row_count: 0,
+            columns: Vec::new(),
+            keywords: CalibrationKeywordSummary {
+                par_type: None,
+                vis_cal: None,
+                ms_name: None,
+                pol_basis: None,
+                casa_version: None,
+            },
+            subtables: Vec::<CalibrationSubtableSummary>::new(),
+            parameter_family: CalibrationParameterFamily::Complex,
+            parameter_column: CalibrationColumnSummary {
+                parameter_column: None,
+                parameter_primitive_type: None,
+                first_cell_shape: None,
+            },
+            field_ids: Vec::new(),
+            spectral_window_ids: Vec::new(),
+            antenna1_ids: Vec::new(),
+            antenna2_ids: Vec::new(),
+            observation_ids: Vec::new(),
+            time_coverage: None,
+            issues: Vec::new(),
+        }
     }
 
     #[test]
@@ -4787,6 +4823,143 @@ mod tests {
         let log = fs::read_to_string(log_paths[0].clone()).expect("summary log");
         assert!(log.contains("kind=ApplyCompleted"));
         assert!(log.contains("row_read_overhead_ms=0.00"));
+    }
+
+    #[test]
+    fn calibration_perf_tracer_emits_plan_and_completion_metadata() {
+        let _guard = perf_env_lock().lock().expect("perf env lock");
+        let tempdir = TempDir::new().expect("tempdir");
+        unsafe {
+            std::env::set_var(PERF_ENV, "1");
+            std::env::set_var(PERF_DIR_ENV, tempdir.path());
+        }
+
+        let cal_path = tempdir.path().join("gain.cal");
+        let spw_plan = crate::plan::SpectralWindowPlan {
+            spw_id: 2,
+            num_chan: 3,
+            ref_frequency_hz: 1.4e9,
+            channel_frequencies_hz: vec![1.399e9, 1.4e9, 1.401e9],
+        };
+        let plan = ApplyPlan {
+            measurement_set_path: Some(tempdir.path().join("input.ms")),
+            apply_mode: ApplyMode::CalFlag,
+            requires_corrected_data_column: true,
+            selected_rows: vec![ApplyRowPlan {
+                row_index: 4,
+                field_id: 5,
+                observation_id: 6,
+                data_desc_id: 7,
+                data_spw_id: 2,
+                polarization_id: 8,
+                antenna1: 9,
+                antenna2: 10,
+                feed1: 0,
+                feed2: 0,
+                time_seconds: 123.0,
+                interval_seconds: 2.0,
+            }],
+            selected_row_count: 1,
+            parang: true,
+            selected_field_ids: vec![5],
+            selected_data_desc_ids: vec![7],
+            selected_data_spw_ids: vec![2],
+            measurement_set_spectral_windows: vec![spw_plan.clone()],
+            calibration_tables: vec![ApplyCalibrationTablePlan {
+                spec: crate::plan::ApplyCalibrationTableSpec {
+                    path: cal_path.clone(),
+                    apply_to: Default::default(),
+                    gainfield: None,
+                    spwmap: vec![2],
+                    interp: ApplyInterpolationMode::Linear,
+                    calwt: true,
+                },
+                applicable_selected_row_count: 1,
+                summary: empty_cal_summary(cal_path.clone()),
+                resolved_gainfield: None,
+                resolved_nearest_gainfields: Vec::new(),
+                spw_mapping: vec![crate::plan::ApplySpwMapping {
+                    data_spw_id: 2,
+                    calibration_spw_id: 2,
+                }],
+                calibration_spectral_windows: vec![spw_plan],
+                interp: ApplyInterpolationMode::Linear,
+                calwt: true,
+            }],
+        };
+        let summary = ExecuteApplyPlanTraceSummary {
+            selected_row_count: 1,
+            calibration_table_count: 1,
+            parang: true,
+            created_corrected_data_column: true,
+            updated_row_count: 1,
+            flagged_row_count: 0,
+            flagged_sample_count: 2,
+            row_field_index_lookup_ns: 11,
+            ensure_corrected_data_ns: 12,
+            correlation_lookup_ns: 13,
+            calibration_load_ns: 14,
+            row_loop_ns: 15,
+            row_read_total_ns: 16,
+            row_fetch_ns: 17,
+            row_compute_ns: 18,
+            row_read_overhead_ns: 19,
+            row_writeback_ns: 20,
+            save_ns: 21,
+            execute_apply_plan_ns: 22,
+            execute_apply_plan_unattributed_ns: 23,
+        };
+        let report = ApplyExecutionReport {
+            plan,
+            created_corrected_data_column: true,
+            wrote_measurement_set: true,
+            updated_row_count: 1,
+            flagged_row_count: 0,
+            flagged_sample_count: 2,
+            timings: ApplyExecutionTimings {
+                planning_ns: 31,
+                planning_selection_ns: 32,
+                planning_selected_rows_ns: 33,
+                planning_measurement_set_spectral_windows_ns: 34,
+                planning_calibration_table_plans_ns: 35,
+                open_measurement_set_ns: 36,
+                row_field_index_lookup_ns: 37,
+                ensure_corrected_data_ns: 38,
+                correlation_lookup_ns: 39,
+                calibration_load_ns: 40,
+                row_compute_ns: 41,
+                row_writeback_ns: 42,
+                save_ns: 43,
+                total_ns: 44,
+            },
+        };
+
+        let mut tracer = CalibrationPerfTracer::from_env();
+        tracer.emit_apply_plan_summary("/tmp/input.ms", &report.plan, summary);
+        tracer.emit_apply_completed("/tmp/input.ms", &report, 55, summary);
+        drop(tracer);
+
+        unsafe {
+            std::env::remove_var(PERF_ENV);
+            std::env::remove_var(PERF_DIR_ENV);
+        }
+
+        let json_path = fs::read_dir(tempdir.path())
+            .expect("read perf dir")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "jsonl")
+            })
+            .expect("json trace");
+        let json = fs::read_to_string(json_path).expect("json trace");
+        assert!(json.contains("\"kind\":\"apply_plan_summary\""));
+        assert!(json.contains("\"kind\":\"apply_completed\""));
+        assert!(json.contains("\"apply_mode\":\"CalFlag\""));
+        assert!(json.contains("\"parang\":true"));
+        assert!(json.contains("\"planning_calibration_table_plans_ns\":35"));
+        assert!(json.contains("\"drop_ns\":55"));
+        assert!(json.contains("\"execute_apply_plan_unattributed_ns\":23"));
     }
 
     fn default_main_value(column: &ColumnSchema) -> Value {
@@ -4920,6 +5093,126 @@ mod tests {
             .unwrap();
 
         assert!((feed - (base + 0.25)).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn row_geometry_cache_reuses_row_dependent_grids_and_fast_terms() {
+        let mut cache = RowGeometryCache::default();
+        let offset_a = [1_u64, 2, 3];
+        let offset_b = [4_u64, 5, 6];
+        cache.ensure_fast_term_context(12.5, 3);
+
+        assert_eq!(cache.cached_fast_antpos_delay(0, 2, offset_a), None);
+        cache.remember_fast_antpos_delay(0, 2, offset_a, 4.25);
+        assert_eq!(cache.cached_fast_antpos_delay(0, 2, offset_a), Some(4.25));
+        assert_eq!(cache.cached_fast_antpos_delay(0, 2, offset_b), None);
+
+        let gains = FastReceptorGains {
+            receptor_count: 2,
+            values: [1.5, 2.5, 0.0, 0.0],
+            flags: [false, true, false, false],
+        };
+        cache.remember_fast_gain_curve(1, 3, gains);
+        let cached_gains = cache.cached_fast_gain_curve(1, 3).expect("gain cache");
+        assert_eq!(cached_gains.sample(0), (1.5, false));
+        assert_eq!(cached_gains.sample(8), (2.5, true));
+
+        cache.remember_fast_opacity(2, 4, 0.875);
+        assert_eq!(cache.cached_fast_opacity(2, 4), Some(0.875));
+
+        cache.ensure_fast_term_context(12.5, 4);
+        assert_eq!(cache.cached_fast_antpos_delay(0, 2, offset_a), None);
+        assert_eq!(
+            cache
+                .cached_fast_gain_curve(1, 3)
+                .map(|value| value.sample(0)),
+            None
+        );
+        assert_eq!(cache.cached_fast_opacity(2, 4), None);
+
+        let antpos = Arc::new(CalibrationGrid::Antpos(AntposGrid {
+            offsets_m: [1.0, 2.0, 3.0],
+            flagged: false,
+        }));
+        let gain_curve = Arc::new(CalibrationGrid::GainCurve(GainCurveGrid {
+            receptor_count: 1,
+            coefficients: ArrayD::from_shape_vec(IxDyn(&[4, 1]).f(), vec![1.0_f32, 0.0, 0.0, 0.0])
+                .unwrap(),
+            flags: ArrayD::from_shape_vec(IxDyn(&[4, 1]).f(), vec![false; 4]).unwrap(),
+        }));
+        let opacity = Arc::new(CalibrationGrid::Opacity(OpacityGrid {
+            tau: 0.1,
+            flagged: true,
+        }));
+        let complex = Arc::new(CalibrationGrid::Complex(GainGrid {
+            receptor_count: 1,
+            channel_count: 1,
+            values: ArrayD::from_shape_vec(IxDyn(&[1, 1]).f(), vec![Complex32::new(1.0, 0.0)])
+                .unwrap(),
+            flags: ArrayD::from_shape_vec(IxDyn(&[1, 1]).f(), vec![false]).unwrap(),
+        }));
+
+        let antpos_key = materialized_grid_key(&antpos, 3, 2, 12.5, 7).expect("antpos key");
+        let gain_curve_key =
+            materialized_grid_key(&gain_curve, 3, 2, 12.5, 7).expect("gain curve key");
+        let opacity_key = materialized_grid_key(&opacity, 3, 2, 12.5, 7).expect("opacity key");
+        assert_eq!(antpos_key.kind, 1);
+        assert_eq!(gain_curve_key.kind, 2);
+        assert_eq!(opacity_key.kind, 3);
+        assert!(materialized_grid_key(&complex, 3, 2, 12.5, 7).is_none());
+
+        assert!(cache.materialized_grid(antpos_key).is_none());
+        cache.insert_materialized_grid(antpos_key, antpos.clone());
+        assert!(Arc::ptr_eq(
+            &cache
+                .materialized_grid(antpos_key)
+                .expect("materialized grid"),
+            &antpos
+        ));
+
+        let lookup_key =
+            calibration_lookup_key(5, 3, 7, 2, 12.5, ApplyInterpolationMode::NearestLinear);
+        assert_eq!(lookup_key.interp, 3);
+        assert_eq!(
+            calibration_lookup_key(5, 3, 7, 2, 12.5, ApplyInterpolationMode::Nearest).interp,
+            1
+        );
+        assert_eq!(
+            calibration_lookup_key(5, 3, 7, 2, 12.5, ApplyInterpolationMode::Linear).interp,
+            2
+        );
+
+        let mut load_count = 0;
+        let first = cache
+            .calibration_lookup(lookup_key, || {
+                load_count += 1;
+                Ok(Some(gain_curve.clone()))
+            })
+            .expect("first lookup")
+            .expect("grid");
+        let second = cache
+            .calibration_lookup(lookup_key, || {
+                load_count += 1;
+                Ok(Some(opacity.clone()))
+            })
+            .expect("cached lookup")
+            .expect("grid");
+        assert_eq!(load_count, 1);
+        assert!(Arc::ptr_eq(&first, &second));
+
+        let missing_key = calibration_lookup_key(6, 3, 7, 2, 12.5, ApplyInterpolationMode::Nearest);
+        assert!(
+            cache
+                .calibration_lookup(missing_key, || Ok(None))
+                .expect("missing lookup")
+                .is_none()
+        );
+        assert!(
+            cache
+                .calibration_lookup(missing_key, || panic!("cached None should not reload"))
+                .expect("cached missing lookup")
+                .is_none()
+        );
     }
 
     #[test]
@@ -5090,6 +5383,160 @@ mod tests {
             Err(ApplyExecutionError::UnsupportedInterpolation { .. }) => {}
             Err(other) => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn fast_gain_pair_application_covers_layouts_flags_and_frequency_errors() {
+        let scalar_ant1 = Arc::new(CalibrationGrid::Complex(GainGrid {
+            receptor_count: 2,
+            channel_count: 1,
+            values: ArrayD::from_shape_vec(
+                IxDyn(&[2, 1]).f(),
+                vec![Complex32::new(2.0, 0.0), Complex32::new(3.0, 0.0)],
+            )
+            .unwrap(),
+            flags: ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), vec![false, false]).unwrap(),
+        }));
+        let scalar_ant2 = Arc::new(CalibrationGrid::Complex(GainGrid {
+            receptor_count: 2,
+            channel_count: 1,
+            values: ArrayD::from_shape_vec(
+                IxDyn(&[2, 1]).f(),
+                vec![Complex32::new(4.0, 0.0), Complex32::new(5.0, 0.0)],
+            )
+            .unwrap(),
+            flags: ArrayD::from_shape_vec(IxDyn(&[2, 1]).f(), vec![false, false]).unwrap(),
+        }));
+        let channel_ant1 = Arc::new(CalibrationGrid::Complex(GainGrid {
+            receptor_count: 2,
+            channel_count: 2,
+            values: ArrayD::from_shape_vec(
+                IxDyn(&[2, 2]).f(),
+                vec![
+                    Complex32::new(1.0, 0.0),
+                    Complex32::new(2.0, 0.0),
+                    Complex32::new(3.0, 0.0),
+                    Complex32::new(4.0, 0.0),
+                ],
+            )
+            .unwrap(),
+            flags: ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![false, false, false, true])
+                .unwrap(),
+        }));
+        let channel_ant2 = Arc::new(CalibrationGrid::Complex(GainGrid {
+            receptor_count: 2,
+            channel_count: 2,
+            values: ArrayD::from_shape_vec(
+                IxDyn(&[2, 2]).f(),
+                vec![
+                    Complex32::new(1.0, 0.0),
+                    Complex32::new(1.0, 0.0),
+                    Complex32::new(1.0, 0.0),
+                    Complex32::new(1.0, 0.0),
+                ],
+            )
+            .unwrap(),
+            flags: ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![false; 4]).unwrap(),
+        }));
+
+        let mut corrected =
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![Complex32::new(80.0, 0.0); 4]).unwrap();
+        let mut flags =
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![false, false, false, false]).unwrap();
+        let mut newly_flagged_samples = 0;
+        apply_complex_gain_pairs_fast(
+            &[
+                FastGainPair::Complex(scalar_ant1.clone(), scalar_ant2.clone()),
+                FastGainPair::Complex(channel_ant1.clone(), channel_ant2.clone()),
+            ],
+            FastGainApply {
+                data_desc_id: 0,
+                correlation_types: &[5, 8],
+                data_frequencies_hz: &[1.0e9, 1.1e9],
+                corrected: &mut corrected,
+                flags: &mut flags,
+                apply_mode: ApplyMode::CalFlag,
+                newly_flagged_samples: &mut newly_flagged_samples,
+            },
+        )
+        .unwrap();
+        assert_complex_close(corrected[[0, 0]], Complex32::new(10.0, 0.0), 1.0e-6);
+        assert_complex_close(corrected[[1, 0]], Complex32::new(80.0 / 30.0, 0.0), 1.0e-6);
+        assert_complex_close(corrected[[0, 1]], Complex32::new(80.0 / 24.0, 0.0), 1.0e-6);
+        assert!(flags[[1, 1]]);
+        assert_eq!(newly_flagged_samples, 1);
+
+        let mut fortran_corrected =
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![Complex32::new(90.0, 0.0); 4]).unwrap();
+        let mut fortran_flags =
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]).f(), vec![false, false, true, false]).unwrap();
+        let mut fortran_new_flags = 0;
+        apply_complex_gain_pairs_fast(
+            &[
+                FastGainPair::GainCurve {
+                    ant1: FastReceptorGains {
+                        receptor_count: 2,
+                        values: [2.0, 3.0, 0.0, 0.0],
+                        flags: [false, false, false, false],
+                    },
+                    ant2: FastReceptorGains {
+                        receptor_count: 2,
+                        values: [5.0, 7.0, 0.0, 0.0],
+                        flags: [false, false, false, false],
+                    },
+                },
+                FastGainPair::Opacity {
+                    denom: Complex32::new(0.5, 0.0),
+                    flagged: false,
+                },
+            ],
+            FastGainApply {
+                data_desc_id: 0,
+                correlation_types: &[5, 8],
+                data_frequencies_hz: &[1.0e9, 1.1e9],
+                corrected: &mut fortran_corrected,
+                flags: &mut fortran_flags,
+                apply_mode: ApplyMode::CalFlag,
+                newly_flagged_samples: &mut fortran_new_flags,
+            },
+        )
+        .unwrap();
+        assert_complex_close(fortran_corrected[[0, 0]], Complex32::new(18.0, 0.0), 1.0e-6);
+        assert_complex_close(
+            fortran_corrected[[1, 0]],
+            Complex32::new(90.0 / 21.0 / 0.5, 0.0),
+            1.0e-6,
+        );
+        assert_eq!(fortran_new_flags, 0);
+
+        let mut antpos_corrected =
+            ArrayD::from_shape_vec(IxDyn(&[1, 2]), vec![Complex32::new(1.0, 0.0); 2]).unwrap();
+        let mut antpos_flags = ArrayD::from_shape_vec(IxDyn(&[1, 2]), vec![false; 2]).unwrap();
+        let mut antpos_new_flags = 0;
+        assert!(matches!(
+            apply_complex_gain_pairs_fast(
+                &[FastGainPair::Antpos {
+                    delay_delta_ns: 1.0,
+                    flagged: false,
+                }],
+                FastGainApply {
+                    data_desc_id: 0,
+                    correlation_types: &[5],
+                    data_frequencies_hz: &[1.0e9],
+                    corrected: &mut antpos_corrected,
+                    flags: &mut antpos_flags,
+                    apply_mode: ApplyMode::Trial,
+                    newly_flagged_samples: &mut antpos_new_flags,
+                },
+            )
+            .unwrap_err(),
+            ApplyExecutionError::UnsupportedInterpolation { .. }
+        ));
+
+        assert!(matches!(
+            fast_pair_receptors(9, &[42], 1).unwrap_err(),
+            ApplyExecutionError::UnsupportedCorrelationLayout { .. }
+        ));
     }
 
     #[test]

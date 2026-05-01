@@ -2557,7 +2557,17 @@ fn cpp_decode_value(
 mod tests {
     use super::*;
     use casa_types::{PrimitiveType, RecordValue};
+    use std::sync::Mutex;
     use tempfile::tempdir;
+
+    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    unsafe fn restore_env_var(key: &str, value: Option<std::ffi::OsString>) {
+        match value {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
 
     #[test]
     fn primitive_case_set_is_non_empty() {
@@ -2704,6 +2714,44 @@ mod tests {
     }
 
     #[test]
+    fn tutorial_data_root_uses_home_workspace_fallback_and_reports_missing() {
+        let dir = tempdir().unwrap();
+        let tutorial_root = dir
+            .path()
+            .join("SoftwareProjects")
+            .join("casa-tutorial-data");
+        std::fs::create_dir_all(&tutorial_root).unwrap();
+
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let old_tutorial_root = std::env::var_os("CASA_RS_TUTORIAL_DATA_ROOT");
+        let old_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::remove_var("CASA_RS_TUTORIAL_DATA_ROOT");
+            std::env::set_var("HOME", dir.path());
+        }
+
+        assert_eq!(
+            casa_tutorial_data_root(),
+            Some(normalize_existing_path(&tutorial_root))
+        );
+        assert_eq!(
+            tutorial_dataset_path("simulation/vla-ppdisk/model-fits"),
+            Some(
+                normalize_existing_path(&tutorial_root)
+                    .join("tutorial-parity/simulation/vla-ppdisk/ppdisk672_GHz_50pc.fits")
+            )
+        );
+
+        std::fs::remove_dir(&tutorial_root).unwrap();
+        assert_eq!(casa_tutorial_data_root(), None);
+
+        unsafe {
+            restore_env_var("CASA_RS_TUTORIAL_DATA_ROOT", old_tutorial_root);
+            restore_env_var("HOME", old_home);
+        }
+    }
+
+    #[test]
     fn tutorial_dataset_registry_contains_first_wave_candidates() {
         let twhya = tutorial_dataset("alma/first-look/twhya/calibrated-ms").unwrap();
         assert_eq!(twhya.expected_filename, "twhya_calibrated.ms.tar");
@@ -2728,6 +2776,228 @@ mod tests {
 
         let ppdisk = tutorial_dataset("simulation/vla-ppdisk/model-fits").unwrap();
         assert_eq!(ppdisk.casa_guide_version, Some("6.7.2"));
+
+        assert_eq!(CasaTestDataTier::DefaultFixture.as_str(), "default-fixture");
+        assert_eq!(CasaTestDataTier::TutorialParity.as_str(), "tutorial-parity");
+        assert_eq!(CasaTestDataTier::SlowParity.as_str(), "slow-parity");
+        assert!(tutorial_dataset("missing/key").is_none());
+    }
+
+    #[test]
+    fn source_root_discovery_prefers_existing_env_over_fallbacks() {
+        let dir = tempdir().unwrap();
+        let casa_root = dir.path().join("casa-src");
+        let casacore_root = dir.path().join("casacore-src");
+        std::fs::create_dir(&casa_root).unwrap();
+        std::fs::create_dir(&casacore_root).unwrap();
+
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("CASA_RS_CASA_ROOT", &casa_root);
+            std::env::set_var("CASA_RS_CASACORE_ROOT", &casacore_root);
+            std::env::set_var("CASA_ROOT", dir.path().join("ignored-casa"));
+            std::env::set_var("CASACORE_ROOT", dir.path().join("ignored-casacore"));
+        }
+
+        assert_eq!(
+            casa_source_root(),
+            Some(normalize_existing_path(&casa_root))
+        );
+        assert_eq!(
+            casacore_source_root(),
+            Some(normalize_existing_path(&casacore_root))
+        );
+
+        unsafe {
+            std::env::remove_var("CASA_RS_CASA_ROOT");
+            std::env::remove_var("CASA_RS_CASACORE_ROOT");
+            std::env::remove_var("CASA_ROOT");
+            std::env::remove_var("CASACORE_ROOT");
+        }
+    }
+
+    #[test]
+    fn source_root_discovery_uses_legacy_env_home_fallback_and_deduplicates_candidates() {
+        let dir = tempdir().unwrap();
+        let casa_root = dir.path().join("legacy-casa");
+        let casacore_root = dir.path().join("legacy-casacore");
+        let home_casa = dir.path().join("SoftwareProjects").join("casa");
+        let home_casacore = dir.path().join("SoftwareProjects").join("casacore");
+        std::fs::create_dir_all(&home_casa).unwrap();
+        std::fs::create_dir_all(&home_casacore).unwrap();
+        std::fs::create_dir(&casa_root).unwrap();
+        std::fs::create_dir(&casacore_root).unwrap();
+
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let old_casa_rs_root = std::env::var_os("CASA_RS_CASA_ROOT");
+        let old_casa_root = std::env::var_os("CASA_ROOT");
+        let old_casacore_rs_root = std::env::var_os("CASA_RS_CASACORE_ROOT");
+        let old_casacore_root = std::env::var_os("CASACORE_ROOT");
+        let old_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::remove_var("CASA_RS_CASA_ROOT");
+            std::env::remove_var("CASA_RS_CASACORE_ROOT");
+            std::env::set_var("CASA_ROOT", &casa_root);
+            std::env::set_var("CASACORE_ROOT", &casacore_root);
+            std::env::set_var("HOME", dir.path());
+        }
+
+        assert_eq!(
+            casa_source_root(),
+            Some(normalize_existing_path(&casa_root))
+        );
+        assert_eq!(
+            casacore_source_root(),
+            Some(normalize_existing_path(&casacore_root))
+        );
+
+        unsafe {
+            std::env::remove_var("CASA_ROOT");
+            std::env::remove_var("CASACORE_ROOT");
+        }
+        assert_eq!(
+            casa_source_root(),
+            Some(normalize_existing_path(&home_casa))
+        );
+        assert_eq!(
+            casacore_source_root(),
+            Some(normalize_existing_path(&home_casacore))
+        );
+
+        let duplicated = vec![
+            PathBuf::from("python3"),
+            PathBuf::from("python"),
+            PathBuf::from("python3"),
+        ];
+        assert_eq!(
+            dedup_paths(duplicated),
+            vec![PathBuf::from("python3"), PathBuf::from("python")]
+        );
+        assert_eq!(
+            existing_path_from_candidates([None, Some(home_casa.clone())]),
+            Some(normalize_existing_path(&home_casa))
+        );
+
+        unsafe {
+            restore_env_var("CASA_RS_CASA_ROOT", old_casa_rs_root);
+            restore_env_var("CASA_ROOT", old_casa_root);
+            restore_env_var("CASA_RS_CASACORE_ROOT", old_casacore_rs_root);
+            restore_env_var("CASACORE_ROOT", old_casacore_root);
+            restore_env_var("HOME", old_home);
+        }
+    }
+
+    #[test]
+    fn casa_python_discovery_uses_env_candidates_and_callable_probes() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dir = tempdir().unwrap();
+            let fake_python = dir.path().join("python");
+            std::fs::write(
+                &fake_python,
+                "#!/bin/sh\nscript=\"$2\"\ncase \"$script\" in\n  *\"import casatasks\"*\"plotms\"*) echo 1; exit 0 ;;\n  *\"import casatasks\"*\"tclean\"*) echo 1; exit 0 ;;\n  *\"import casatasks\"*) exit 0 ;;\nesac\nexit 1\n",
+            )
+            .unwrap();
+            let mut perms = std::fs::metadata(&fake_python).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&fake_python, perms).unwrap();
+
+            let _guard = TEST_ENV_LOCK.lock().unwrap();
+            let old_casa_rs_python = std::env::var_os("CASA_RS_CASA_PYTHON");
+            let old_casa_python = std::env::var_os("CASA_PYTHON");
+            let old_home = std::env::var_os("HOME");
+            unsafe {
+                std::env::set_var("CASA_RS_CASA_PYTHON", &fake_python);
+                std::env::set_var("CASA_PYTHON", &fake_python);
+                std::env::set_var("HOME", dir.path());
+            }
+
+            let candidates = casa_python_candidates();
+            assert_eq!(candidates.first(), Some(&fake_python));
+            assert_eq!(
+                candidates
+                    .iter()
+                    .filter(|path| *path == &fake_python)
+                    .count(),
+                1
+            );
+            assert!(python_can_import(&fake_python, "casatasks"));
+            assert!(!python_can_import(&fake_python, "not_casa"));
+            assert!(python_has_callable(&fake_python, "plotms"));
+            assert!(python_has_callable(&fake_python, "tclean"));
+
+            let discovered = discover_casa_python().unwrap();
+            assert_eq!(discovered.program, fake_python);
+            assert!(discovered.plotms_available);
+            assert!(discovered.tclean_available);
+
+            unsafe {
+                restore_env_var("CASA_RS_CASA_PYTHON", old_casa_rs_python);
+                restore_env_var("CASA_PYTHON", old_casa_python);
+                restore_env_var("HOME", old_home);
+            }
+        }
+    }
+
+    #[test]
+    fn git_head_commit_reports_only_successful_nonempty_revisions() {
+        let dir = tempdir().unwrap();
+        assert_eq!(git_head_commit(dir.path()), None);
+
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .arg("init")
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["config", "user.email", "codex@example.invalid"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["config", "user.name", "Codex"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::write(repo.join("README.md"), "fixture\n").unwrap();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["add", "README.md"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["commit", "-m", "fixture"])
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let head = git_head_commit(&repo).unwrap();
+        assert_eq!(head.len(), 40);
+        assert!(head.chars().all(|ch| ch.is_ascii_hexdigit()));
     }
 
     #[test]
