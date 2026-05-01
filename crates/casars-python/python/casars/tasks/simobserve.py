@@ -48,20 +48,23 @@ def vla_ppdisk(
     *,
     overwrite: bool = False,
     antennas: list[dict[str, Any]] | None = None,
+    model_peak_jy_per_pixel: float | None = 3.0e-5,
     phase_center_rad: tuple[float, float] | None = None,
     start_time_mjd_seconds: float | None = None,
-    duration_seconds: float | None = None,
-    integration_seconds: float | None = None,
-    start_frequency_hz: float = 672.0e9,
-    channel_width_hz: float = 1.0e6,
+    duration_seconds: float | None = 3600.0,
+    integration_seconds: float | None = 2.0,
+    start_frequency_hz: float = 44.0e9,
+    channel_width_hz: float = 128.0e6,
     channel_count: int = 1,
     predict_model: bool = True,
+    corruption: dict[str, Any] | None = None,
     binary: StrPath | None = None,
 ) -> TaskResult:
     """Generate a VLA protoplanetary-disk synthetic MeasurementSet."""
 
     request = {
         "model_image": os.fspath(model_image),
+        "model_peak_jy_per_pixel": model_peak_jy_per_pixel,
         "output_ms": os.fspath(output_ms),
         "overwrite": overwrite,
         "antennas": antennas or [],
@@ -78,5 +81,6 @@ def vla_ppdisk(
             "channel_count": channel_count,
         },
         "predict_model": predict_model,
+        "corruption": corruption,
     }
     return run(request, binary=binary)

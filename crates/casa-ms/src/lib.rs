@@ -115,8 +115,9 @@ pub use selection_syntax::{
     parse_spw_selector,
 };
 pub use simulation::{
-    SyntheticAntenna, SyntheticObservationReport, SyntheticObservationRequest,
-    SyntheticSpectralSetup, generate_synthetic_observation_ms,
+    SyntheticAntenna, SyntheticCorruptionConfig, SyntheticGainPhaseCorruption,
+    SyntheticObservationReport, SyntheticObservationRequest, SyntheticSpectralSetup,
+    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
 pub use simulation_task::{
     SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveProtocolInfo,

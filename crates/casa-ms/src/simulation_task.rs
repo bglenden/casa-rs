@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::simulation::{
-    SyntheticAntenna, SyntheticObservationReport, SyntheticObservationRequest,
-    SyntheticSpectralSetup, generate_synthetic_observation_ms,
+    SyntheticAntenna, SyntheticCorruptionConfig, SyntheticObservationReport,
+    SyntheticObservationRequest, SyntheticSpectralSetup, generate_synthetic_observation_ms,
+    tutorial_vla_a_antennas,
 };
 use crate::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
@@ -58,12 +59,15 @@ impl SimobserveProtocolInfo {
 pub struct SimobserveRunTaskRequest {
     /// Existing FITS model image path.
     pub model_image: PathBuf,
+    /// Optional peak brightness scaling in Jy/pixel.
+    #[serde(default)]
+    pub model_peak_jy_per_pixel: Option<f32>,
     /// Output MeasurementSet path.
     pub output_ms: PathBuf,
     /// Replace an existing output MeasurementSet directory.
     #[serde(default)]
     pub overwrite: bool,
-    /// Antenna configuration. Defaults to a compact three-antenna VLA layout.
+    /// Antenna configuration. Defaults to the CASA Guide VLA A configuration.
     #[serde(default)]
     pub antennas: Vec<SyntheticAntenna>,
     /// J2000 phase center `[right_ascension, declination]` in radians.
@@ -84,6 +88,9 @@ pub struct SimobserveRunTaskRequest {
     /// Predict visibility samples from the model image into `MAIN.DATA`.
     #[serde(default = "default_predict_model")]
     pub predict_model: bool,
+    /// Optional deterministic corruptions applied to generated visibility data.
+    #[serde(default)]
+    pub corruption: Option<SyntheticCorruptionConfig>,
 }
 
 impl SimobserveRunTaskRequest {
@@ -96,6 +103,7 @@ impl SimobserveRunTaskRequest {
         };
         let mut request =
             SyntheticObservationRequest::vla_ppdisk(&self.model_image, &self.output_ms, antennas);
+        request.model_peak_jy_per_pixel = self.model_peak_jy_per_pixel;
         request.overwrite = self.overwrite;
         if let Some(phase_center_rad) = self.phase_center_rad {
             request.phase_center_rad = phase_center_rad;
@@ -113,6 +121,7 @@ impl SimobserveRunTaskRequest {
             request.spectral_setup = spectral_setup.clone();
         }
         request.predict_model = self.predict_model;
+        request.corruption = self.corruption.clone();
         request
     }
 
@@ -275,53 +284,64 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 help: "Output MeasurementSet path",
             }),
             option_argument(OptionArgumentConfig {
+                id: "inbright",
+                label: "Peak Jy/pixel",
+                order: 2,
+                flags: &["--inbright-jy-per-pixel"],
+                metavar: "JY",
+                value_kind: UiValueKind::Float,
+                default: Some("3e-5"),
+                required: false,
+                help: "Scale the model image peak brightness in Jy/pixel",
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "duration",
                 label: "Duration (s)",
-                order: 2,
+                order: 3,
                 flags: &["--duration"],
                 metavar: "SECONDS",
                 value_kind: UiValueKind::Float,
-                default: Some("60"),
+                default: Some("3600"),
                 required: false,
                 help: "On-source duration in seconds",
             }),
             option_argument(OptionArgumentConfig {
                 id: "integration",
                 label: "Integration (s)",
-                order: 3,
+                order: 4,
                 flags: &["--integration"],
                 metavar: "SECONDS",
                 value_kind: UiValueKind::Float,
-                default: Some("10"),
+                default: Some("2"),
                 required: false,
                 help: "Integration time in seconds",
             }),
             option_argument(OptionArgumentConfig {
                 id: "start_frequency_hz",
                 label: "Start Frequency (Hz)",
-                order: 4,
+                order: 5,
                 flags: &["--start-frequency-hz"],
                 metavar: "HZ",
                 value_kind: UiValueKind::Float,
-                default: Some("672000000000"),
+                default: Some("44000000000"),
                 required: false,
                 help: "First channel center frequency",
             }),
             option_argument(OptionArgumentConfig {
                 id: "channel_width_hz",
                 label: "Channel Width (Hz)",
-                order: 5,
+                order: 6,
                 flags: &["--channel-width-hz"],
                 metavar: "HZ",
                 value_kind: UiValueKind::Float,
-                default: Some("1000000"),
+                default: Some("128000000"),
                 required: false,
                 help: "Channel width",
             }),
             option_argument(OptionArgumentConfig {
                 id: "channel_count",
                 label: "Channels",
-                order: 6,
+                order: 7,
                 flags: &["--channels"],
                 metavar: "N",
                 value_kind: UiValueKind::String,
@@ -332,7 +352,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "overwrite",
                 "Overwrite",
-                7,
+                8,
                 &["--overwrite"],
                 &["--no-overwrite"],
                 Some("false"),
@@ -341,7 +361,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(
                 "predict_model",
                 "Predict Model",
-                8,
+                9,
                 &["--predict-model"],
                 &["--no-predict-model"],
                 Some("true"),
@@ -350,7 +370,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             action_argument(
                 "help",
                 "Help",
-                9,
+                10,
                 &["-h", "--help"],
                 UiActionKind::Help,
                 "Render help text",
@@ -358,7 +378,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             action_argument(
                 "ui_schema",
                 "UI Schema",
-                10,
+                11,
                 &["--ui-schema"],
                 UiActionKind::UiSchema,
                 "Emit the launcher/TUI schema",
@@ -434,13 +454,15 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> 
 fn request_from_cli_args(args: &[std::ffi::OsString]) -> Result<SimobserveRunTaskRequest, String> {
     let model_image = required_option(args, "--model")?;
     let output_ms = required_option(args, "--out")?;
+    let model_peak_jy_per_pixel = optional_f32(args, "--inbright-jy-per-pixel")?.or(Some(3.0e-5));
     let duration_seconds = optional_f64(args, "--duration")?;
     let integration_seconds = optional_f64(args, "--integration")?;
-    let start_frequency_hz = optional_f64(args, "--start-frequency-hz")?.unwrap_or(672.0e9);
-    let channel_width_hz = optional_f64(args, "--channel-width-hz")?.unwrap_or(1.0e6);
+    let start_frequency_hz = optional_f64(args, "--start-frequency-hz")?.unwrap_or(44.0e9);
+    let channel_width_hz = optional_f64(args, "--channel-width-hz")?.unwrap_or(128.0e6);
     let channel_count = optional_usize(args, "--channels")?.unwrap_or(1);
     Ok(SimobserveRunTaskRequest {
         model_image,
+        model_peak_jy_per_pixel,
         output_ms,
         overwrite: has_flag(args, "--overwrite"),
         antennas: Vec::new(),
@@ -455,6 +477,7 @@ fn request_from_cli_args(args: &[std::ffi::OsString]) -> Result<SimobserveRunTas
             channel_count,
         }),
         predict_model: !has_flag(args, "--no-predict-model"),
+        corruption: None,
     })
 }
 
@@ -463,11 +486,7 @@ fn default_predict_model() -> bool {
 }
 
 fn default_vla_antennas() -> Vec<SyntheticAntenna> {
-    vec![
-        SyntheticAntenna::vla("VLA01", "N01", [-1_601_185.4, -5_041_977.5, 3_554_875.9]),
-        SyntheticAntenna::vla("VLA02", "N02", [-1_601_085.4, -5_041_977.5, 3_554_875.9]),
-        SyntheticAntenna::vla("VLA03", "N03", [-1_601_185.4, -5_041_877.5, 3_554_875.9]),
-    ]
+    tutorial_vla_a_antennas()
 }
 
 struct OptionArgumentConfig<'a> {
@@ -593,6 +612,16 @@ fn optional_f64(args: &[std::ffi::OsString], flag: &str) -> Result<Option<f64>, 
         .map(|value| {
             value
                 .parse::<f64>()
+                .map_err(|error| format!("parse {flag}: {error}"))
+        })
+        .transpose()
+}
+
+fn optional_f32(args: &[std::ffi::OsString], flag: &str) -> Result<Option<f32>, String> {
+    option_value(args, flag)
+        .map(|value| {
+            value
+                .parse::<f32>()
                 .map_err(|error| format!("parse {flag}: {error}"))
         })
         .transpose()

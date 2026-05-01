@@ -63,17 +63,27 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         "ppdisk.fits",
         "ppdisk.ms",
         overwrite=True,
+        model_peak_jy_per_pixel=3.0e-5,
         phase_center_rad=(1.0, -0.5),
         duration_seconds=30.0,
         integration_seconds=10.0,
         channel_count=4,
         predict_model=False,
+        corruption={
+            "seed": 42,
+            "noise_stddev_jy": 0.001,
+            "gain_phase": {
+                "amplitude_stddev": 0.05,
+                "phase_stddev_rad": 0.02,
+            },
+        },
         binary=binary,
     )
 
     assert result["kind"] == "run"
     request = result["result"]["request"]
     assert request["model_image"] == "ppdisk.fits"
+    assert request["model_peak_jy_per_pixel"] == 3.0e-5
     assert request["output_ms"] == "ppdisk.ms"
     assert request["overwrite"] is True
     assert request["phase_center_rad"] == [1.0, -0.5]
@@ -81,6 +91,9 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["integration_seconds"] == 10.0
     assert request["spectral_setup"]["channel_count"] == 4
     assert request["predict_model"] is False
+    assert request["corruption"]["seed"] == 42
+    assert request["corruption"]["noise_stddev_jy"] == 0.001
+    assert request["corruption"]["gain_phase"]["phase_stddev_rad"] == 0.02
 
 
 def _write_stub_binary(
