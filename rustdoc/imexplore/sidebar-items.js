@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["imstat_usage","main","parse_imstat_args","parse_path","parse_path_allowing_json","run","run_session","run_snapshot","ui_schema_value"],"struct":["ImstatArgs","PathJson"]};
+window.SIDEBAR_ITEMS = {"fn":["immoments_usage","impv_usage","imstat_usage","main","parse_immoments_args","parse_impv_args","parse_imstat_args","parse_path","parse_path_allowing_json","parse_range","run","run_session","run_snapshot","ui_schema_value"],"struct":["ImmomentsArgs","ImpvArgs","ImstatArgs","PathJson"]};

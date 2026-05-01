@@ -801,7 +801,7 @@
 <a href=#801 id=801 data-nosnippet>801</a>    }
 <a href=#802 id=802 data-nosnippet>802</a>}
 <a href=#803 id=803 data-nosnippet>803</a>
-<a href=#804 id=804 data-nosnippet>804</a><span class="kw">fn </span>measurement_set_table_options(path: <span class="kw-2">&amp;</span>Path) -&gt; TableOptions {
+<a href=#804 id=804 data-nosnippet>804</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>measurement_set_table_options(path: <span class="kw-2">&amp;</span>Path) -&gt; TableOptions {
 <a href=#805 id=805 data-nosnippet>805</a>    TableOptions::new(path).with_data_manager(DataManagerKind::StandardStMan)
 <a href=#806 id=806 data-nosnippet>806</a>}
 <a href=#807 id=807 data-nosnippet>807</a>
@@ -843,7 +843,7 @@
 <a href=#843 id=843 data-nosnippet>843</a>    <span class="prelude-val">Ok</span>(())
 <a href=#844 id=844 data-nosnippet>844</a>}
 <a href=#845 id=845 data-nosnippet>845</a>
-<a href=#846 id=846 data-nosnippet>846</a><span class="kw">fn </span>measurement_set_main_table_bindings(main: <span class="kw-2">&amp;</span>Table) -&gt; HashMap&lt;String, ColumnBinding&gt; {
+<a href=#846 id=846 data-nosnippet>846</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>measurement_set_main_table_bindings(main: <span class="kw-2">&amp;</span>Table) -&gt; HashMap&lt;String, ColumnBinding&gt; {
 <a href=#847 id=847 data-nosnippet>847</a>    <span class="kw">let </span>column_names: HashSet&lt;<span class="kw">_</span>&gt; = main
 <a href=#848 id=848 data-nosnippet>848</a>        .schema()
 <a href=#849 id=849 data-nosnippet>849</a>        .map(|schema| {

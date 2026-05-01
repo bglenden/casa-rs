@@ -651,206 +651,207 @@
 <a href=#651 id=651 data-nosnippet>651</a>                <span class="string">"solve_gain"</span>,
 <a href=#652 id=652 data-nosnippet>652</a>                <span class="string">"solve_bandpass"</span>,
 <a href=#653 id=653 data-nosnippet>653</a>                <span class="string">"fluxscale"</span>,
-<a href=#654 id=654 data-nosnippet>654</a>            ]
-<a href=#655 id=655 data-nosnippet>655</a>        );
-<a href=#656 id=656 data-nosnippet>656</a>        <span class="kw">let </span>gaintables = schema
-<a href=#657 id=657 data-nosnippet>657</a>            .arguments
-<a href=#658 id=658 data-nosnippet>658</a>            .iter()
-<a href=#659 id=659 data-nosnippet>659</a>            .find(|argument| argument.id == <span class="string">"gaintables"</span>)
-<a href=#660 id=660 data-nosnippet>660</a>            .expect(<span class="string">"gaintables argument"</span>);
-<a href=#661 id=661 data-nosnippet>661</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>gaintables.parser <span class="kw">else </span>{
-<a href=#662 id=662 data-nosnippet>662</a>            <span class="macro">panic!</span>(<span class="string">"gaintables should be an option parser"</span>);
-<a href=#663 id=663 data-nosnippet>663</a>        };
-<a href=#664 id=664 data-nosnippet>664</a>        <span class="macro">assert!</span>(choices.is_empty());
-<a href=#665 id=665 data-nosnippet>665</a>        <span class="kw">let </span>mode = schema
-<a href=#666 id=666 data-nosnippet>666</a>            .arguments
-<a href=#667 id=667 data-nosnippet>667</a>            .iter()
-<a href=#668 id=668 data-nosnippet>668</a>            .find(|argument| argument.id == <span class="string">"apply_mode"</span>)
-<a href=#669 id=669 data-nosnippet>669</a>            .expect(<span class="string">"apply mode argument"</span>);
-<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>mode.parser <span class="kw">else </span>{
-<a href=#671 id=671 data-nosnippet>671</a>            <span class="macro">panic!</span>(<span class="string">"apply_mode should be an option parser"</span>);
-<a href=#672 id=672 data-nosnippet>672</a>        };
-<a href=#673 id=673 data-nosnippet>673</a>        <span class="macro">assert_eq!</span>(choices, <span class="kw-2">&amp;</span>[<span class="string">"calflag"</span>, <span class="string">"calonly"</span>, <span class="string">"trial"</span>]);
-<a href=#674 id=674 data-nosnippet>674</a>    }
-<a href=#675 id=675 data-nosnippet>675</a>
-<a href=#676 id=676 data-nosnippet>676</a>    <span class="attr">#[test]
-<a href=#677 id=677 data-nosnippet>677</a>    </span><span class="kw">fn </span>importvla_load_schema_describes_public_workflow_surface() {
-<a href=#678 id=678 data-nosnippet>678</a>        <span class="kw">let </span>schema = importvla_app()
-<a href=#679 id=679 data-nosnippet>679</a>            .load_schema()
-<a href=#680 id=680 data-nosnippet>680</a>            .expect(<span class="string">"load importvla schema"</span>);
-<a href=#681 id=681 data-nosnippet>681</a>        <span class="macro">assert_eq!</span>(schema.command_id, <span class="string">"importvla"</span>);
-<a href=#682 id=682 data-nosnippet>682</a>        <span class="macro">assert_eq!</span>(schema.display_name, <span class="string">"ImportVLA"</span>);
-<a href=#683 id=683 data-nosnippet>683</a>        <span class="macro">assert_eq!</span>(schema.category, <span class="string">"Import"</span>);
-<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>archivefiles = schema
-<a href=#685 id=685 data-nosnippet>685</a>            .arguments
-<a href=#686 id=686 data-nosnippet>686</a>            .iter()
-<a href=#687 id=687 data-nosnippet>687</a>            .find(|argument| argument.id == <span class="string">"archivefiles"</span>)
-<a href=#688 id=688 data-nosnippet>688</a>            .expect(<span class="string">"archivefiles argument"</span>);
-<a href=#689 id=689 data-nosnippet>689</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>archivefiles.parser <span class="kw">else </span>{
-<a href=#690 id=690 data-nosnippet>690</a>            <span class="macro">panic!</span>(<span class="string">"archivefiles should be an option parser"</span>);
-<a href=#691 id=691 data-nosnippet>691</a>        };
-<a href=#692 id=692 data-nosnippet>692</a>        <span class="macro">assert!</span>(choices.is_empty());
-<a href=#693 id=693 data-nosnippet>693</a>        <span class="kw">let </span>antnamescheme = schema
-<a href=#694 id=694 data-nosnippet>694</a>            .arguments
-<a href=#695 id=695 data-nosnippet>695</a>            .iter()
-<a href=#696 id=696 data-nosnippet>696</a>            .find(|argument| argument.id == <span class="string">"antnamescheme"</span>)
-<a href=#697 id=697 data-nosnippet>697</a>            .expect(<span class="string">"antnamescheme argument"</span>);
-<a href=#698 id=698 data-nosnippet>698</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>antnamescheme.parser <span class="kw">else </span>{
-<a href=#699 id=699 data-nosnippet>699</a>            <span class="macro">panic!</span>(<span class="string">"antnamescheme should be an option parser"</span>);
-<a href=#700 id=700 data-nosnippet>700</a>        };
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="macro">assert_eq!</span>(choices, <span class="kw-2">&amp;</span>[<span class="string">"new"</span>, <span class="string">"old"</span>]);
-<a href=#702 id=702 data-nosnippet>702</a>    }
-<a href=#703 id=703 data-nosnippet>703</a>
-<a href=#704 id=704 data-nosnippet>704</a>    <span class="attr">#[test]
-<a href=#705 id=705 data-nosnippet>705</a>    </span><span class="kw">fn </span>imager_load_schema_describes_public_workflow_surface() {
-<a href=#706 id=706 data-nosnippet>706</a>        <span class="kw">let </span>schema = imager_app().load_schema().expect(<span class="string">"load imager schema"</span>);
-<a href=#707 id=707 data-nosnippet>707</a>        <span class="macro">assert_eq!</span>(schema.command_id, <span class="string">"imager"</span>);
-<a href=#708 id=708 data-nosnippet>708</a>        <span class="macro">assert_eq!</span>(schema.display_name, <span class="string">"Imager"</span>);
-<a href=#709 id=709 data-nosnippet>709</a>        <span class="macro">assert_eq!</span>(schema.category, <span class="string">"Imaging"</span>);
-<a href=#710 id=710 data-nosnippet>710</a>        <span class="kw">let </span>specmode = schema
-<a href=#711 id=711 data-nosnippet>711</a>            .arguments
-<a href=#712 id=712 data-nosnippet>712</a>            .iter()
-<a href=#713 id=713 data-nosnippet>713</a>            .find(|argument| argument.id == <span class="string">"specmode"</span>)
-<a href=#714 id=714 data-nosnippet>714</a>            .expect(<span class="string">"specmode argument"</span>);
-<a href=#715 id=715 data-nosnippet>715</a>        <span class="macro">assert_eq!</span>(specmode.group, <span class="string">"Stages"</span>);
-<a href=#716 id=716 data-nosnippet>716</a>        <span class="kw">let </span>managed_output = schema.managed_output.expect(<span class="string">"managed output"</span>);
-<a href=#717 id=717 data-nosnippet>717</a>        <span class="macro">assert_eq!</span>(managed_output.renderer, <span class="string">"imager-run-v1"</span>);
-<a href=#718 id=718 data-nosnippet>718</a>    }
-<a href=#719 id=719 data-nosnippet>719</a>
-<a href=#720 id=720 data-nosnippet>720</a>    <span class="attr">#[test]
-<a href=#721 id=721 data-nosnippet>721</a>    </span><span class="kw">fn </span>imexplore_load_schema_describes_browser_surface_without_subprocess() {
-<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
-<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">unsafe </span>{
-<a href=#724 id=724 data-nosnippet>724</a>            env::remove_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>);
-<a href=#725 id=725 data-nosnippet>725</a>            env::remove_var(<span class="string">"CARGO_BIN_EXE_imexplore"</span>);
-<a href=#726 id=726 data-nosnippet>726</a>        }
-<a href=#727 id=727 data-nosnippet>727</a>
-<a href=#728 id=728 data-nosnippet>728</a>        <span class="kw">let </span>schema = imexplore_app()
-<a href=#729 id=729 data-nosnippet>729</a>            .load_schema()
-<a href=#730 id=730 data-nosnippet>730</a>            .expect(<span class="string">"load imexplore schema"</span>);
-<a href=#731 id=731 data-nosnippet>731</a>        <span class="macro">assert_eq!</span>(schema.command_id, <span class="string">"imexplore"</span>);
-<a href=#732 id=732 data-nosnippet>732</a>        <span class="macro">assert_eq!</span>(schema.display_name, <span class="string">"ImExplore"</span>);
-<a href=#733 id=733 data-nosnippet>733</a>        <span class="macro">assert_eq!</span>(schema.category, <span class="string">"Images"</span>);
-<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">let </span>image_path = schema
-<a href=#735 id=735 data-nosnippet>735</a>            .arguments
-<a href=#736 id=736 data-nosnippet>736</a>            .iter()
-<a href=#737 id=737 data-nosnippet>737</a>            .find(|argument| argument.id == <span class="string">"image_path"</span>)
-<a href=#738 id=738 data-nosnippet>738</a>            .expect(<span class="string">"image path argument"</span>);
-<a href=#739 id=739 data-nosnippet>739</a>        <span class="macro">assert_eq!</span>(image_path.group, <span class="string">"Input"</span>);
-<a href=#740 id=740 data-nosnippet>740</a>        <span class="kw">let </span>stretch = schema
-<a href=#741 id=741 data-nosnippet>741</a>            .arguments
-<a href=#742 id=742 data-nosnippet>742</a>            .iter()
-<a href=#743 id=743 data-nosnippet>743</a>            .find(|argument| argument.id == <span class="string">"stretch"</span>)
-<a href=#744 id=744 data-nosnippet>744</a>            .expect(<span class="string">"stretch argument"</span>);
-<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>stretch.parser <span class="kw">else </span>{
-<a href=#746 id=746 data-nosnippet>746</a>            <span class="macro">panic!</span>(<span class="string">"stretch should be an option parser"</span>);
-<a href=#747 id=747 data-nosnippet>747</a>        };
-<a href=#748 id=748 data-nosnippet>748</a>        <span class="macro">assert_eq!</span>(
-<a href=#749 id=749 data-nosnippet>749</a>            choices,
-<a href=#750 id=750 data-nosnippet>750</a>            <span class="kw-2">&amp;</span>[<span class="string">"percentile99"</span>, <span class="string">"percentile95"</span>, <span class="string">"minmax"</span>, <span class="string">"zscale"</span>, <span class="string">"manual"</span>]
-<a href=#751 id=751 data-nosnippet>751</a>        );
-<a href=#752 id=752 data-nosnippet>752</a>    }
-<a href=#753 id=753 data-nosnippet>753</a>
-<a href=#754 id=754 data-nosnippet>754</a>    <span class="attr">#[test]
-<a href=#755 id=755 data-nosnippet>755</a>    </span><span class="kw">fn </span>load_schema_surfaces_subprocess_failures_for_overridden_binaries() {
-<a href=#756 id=756 data-nosnippet>756</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
-<a href=#757 id=757 data-nosnippet>757</a>        <span class="kw">unsafe </span>{
-<a href=#758 id=758 data-nosnippet>758</a>            env::set_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>, <span class="string">"/definitely/missing/imexplore"</span>);
-<a href=#759 id=759 data-nosnippet>759</a>        }
-<a href=#760 id=760 data-nosnippet>760</a>
-<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>error = imexplore_app()
-<a href=#762 id=762 data-nosnippet>762</a>            .load_schema()
-<a href=#763 id=763 data-nosnippet>763</a>            .expect_err(<span class="string">"missing override binary should fail"</span>);
-<a href=#764 id=764 data-nosnippet>764</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"spawn imexplore --json-schema"</span>));
-<a href=#765 id=765 data-nosnippet>765</a>
-<a href=#766 id=766 data-nosnippet>766</a>        <span class="kw">unsafe </span>{
-<a href=#767 id=767 data-nosnippet>767</a>            env::remove_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>);
-<a href=#768 id=768 data-nosnippet>768</a>        }
-<a href=#769 id=769 data-nosnippet>769</a>    }
-<a href=#770 id=770 data-nosnippet>770</a>
-<a href=#771 id=771 data-nosnippet>771</a>    <span class="attr">#[test]
-<a href=#772 id=772 data-nosnippet>772</a>    </span><span class="kw">fn </span>load_schema_reports_nonzero_exit_status_and_parse_errors_from_overrides() {
-<a href=#773 id=773 data-nosnippet>773</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
-<a href=#774 id=774 data-nosnippet>774</a>
-<a href=#775 id=775 data-nosnippet>775</a>        <span class="kw">unsafe </span>{
-<a href=#776 id=776 data-nosnippet>776</a>            env::set_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>, <span class="string">"/bin/sh"</span>);
-<a href=#777 id=777 data-nosnippet>777</a>        }
-<a href=#778 id=778 data-nosnippet>778</a>        <span class="kw">let </span>error = imexplore_app()
-<a href=#779 id=779 data-nosnippet>779</a>            .load_schema()
-<a href=#780 id=780 data-nosnippet>780</a>            .expect_err(<span class="string">"shell should reject --ui-schema"</span>);
-<a href=#781 id=781 data-nosnippet>781</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"imexplore --ui-schema exited with"</span>));
-<a href=#782 id=782 data-nosnippet>782</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"--ui-schema"</span>));
-<a href=#783 id=783 data-nosnippet>783</a>
-<a href=#784 id=784 data-nosnippet>784</a>        <span class="kw">unsafe </span>{
-<a href=#785 id=785 data-nosnippet>785</a>            env::set_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>, <span class="string">"/bin/echo"</span>);
-<a href=#786 id=786 data-nosnippet>786</a>        }
-<a href=#787 id=787 data-nosnippet>787</a>        <span class="kw">let </span>error = imexplore_app()
-<a href=#788 id=788 data-nosnippet>788</a>            .load_schema()
-<a href=#789 id=789 data-nosnippet>789</a>            .expect_err(<span class="string">"echo output should not parse as JSON"</span>);
-<a href=#790 id=790 data-nosnippet>790</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"parse imexplore --json-schema output"</span>));
-<a href=#791 id=791 data-nosnippet>791</a>
-<a href=#792 id=792 data-nosnippet>792</a>        <span class="kw">unsafe </span>{
-<a href=#793 id=793 data-nosnippet>793</a>            env::remove_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>);
-<a href=#794 id=794 data-nosnippet>794</a>        }
-<a href=#795 id=795 data-nosnippet>795</a>    }
-<a href=#796 id=796 data-nosnippet>796</a>
-<a href=#797 id=797 data-nosnippet>797</a>    <span class="attr">#[test]
-<a href=#798 id=798 data-nosnippet>798</a>    </span><span class="kw">fn </span>stale_binary_detection_requires_binary_older_than_reference() {
-<a href=#799 id=799 data-nosnippet>799</a>        <span class="kw">let </span>older = SystemTime::UNIX_EPOCH + Duration::from_secs(<span class="number">1</span>);
-<a href=#800 id=800 data-nosnippet>800</a>        <span class="kw">let </span>newer = SystemTime::UNIX_EPOCH + Duration::from_secs(<span class="number">2</span>);
-<a href=#801 id=801 data-nosnippet>801</a>        <span class="macro">assert!</span>(is_binary_stale(<span class="prelude-val">Some</span>(older), <span class="prelude-val">Some</span>(newer)));
-<a href=#802 id=802 data-nosnippet>802</a>        <span class="macro">assert!</span>(!is_binary_stale(<span class="prelude-val">Some</span>(newer), <span class="prelude-val">Some</span>(older)));
-<a href=#803 id=803 data-nosnippet>803</a>        <span class="macro">assert!</span>(!is_binary_stale(<span class="prelude-val">Some</span>(newer), <span class="prelude-val">Some</span>(newer)));
-<a href=#804 id=804 data-nosnippet>804</a>        <span class="macro">assert!</span>(!is_binary_stale(<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(newer)));
-<a href=#805 id=805 data-nosnippet>805</a>        <span class="macro">assert!</span>(!is_binary_stale(<span class="prelude-val">Some</span>(older), <span class="prelude-val">None</span>));
-<a href=#806 id=806 data-nosnippet>806</a>    }
-<a href=#807 id=807 data-nosnippet>807</a>
-<a href=#808 id=808 data-nosnippet>808</a>    <span class="attr">#[test]
-<a href=#809 id=809 data-nosnippet>809</a>    </span><span class="kw">fn </span>workspace_ms_apps_prefer_cargo_fallback_for_stale_siblings() {
-<a href=#810 id=810 data-nosnippet>810</a>        <span class="macro">assert!</span>(msexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
-<a href=#811 id=811 data-nosnippet>811</a>        <span class="macro">assert!</span>(calibrate_app().prefers_cargo_workspace_fallback_for_stale_sibling());
-<a href=#812 id=812 data-nosnippet>812</a>        <span class="macro">assert!</span>(!imager_app().prefers_cargo_workspace_fallback_for_stale_sibling());
-<a href=#813 id=813 data-nosnippet>813</a>        <span class="macro">assert!</span>(!tablebrowser_app().prefers_cargo_workspace_fallback_for_stale_sibling());
-<a href=#814 id=814 data-nosnippet>814</a>        <span class="macro">assert!</span>(!imexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
-<a href=#815 id=815 data-nosnippet>815</a>    }
-<a href=#816 id=816 data-nosnippet>816</a>
-<a href=#817 id=817 data-nosnippet>817</a>    <span class="attr">#[test]
-<a href=#818 id=818 data-nosnippet>818</a>    </span><span class="kw">fn </span>resolve_command_uses_existing_sibling_binary_for_non_workspace_apps() {
-<a href=#819 id=819 data-nosnippet>819</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
-<a href=#820 id=820 data-nosnippet>820</a>        <span class="kw">let </span>app = tablebrowser_app();
-<a href=#821 id=821 data-nosnippet>821</a>        <span class="kw">let </span><span class="kw-2">mut </span>sibling_path = env::current_exe().expect(<span class="string">"current exe"</span>);
-<a href=#822 id=822 data-nosnippet>822</a>        sibling_path.pop();
-<a href=#823 id=823 data-nosnippet>823</a>        sibling_path.push(<span class="string">"tablebrowser"</span>);
-<a href=#824 id=824 data-nosnippet>824</a>        sibling_path.set_extension(env::consts::EXE_EXTENSION);
-<a href=#825 id=825 data-nosnippet>825</a>        <span class="kw">let _ </span>= fs::remove_file(<span class="kw-2">&amp;</span>sibling_path);
-<a href=#826 id=826 data-nosnippet>826</a>        fs::write(<span class="kw-2">&amp;</span>sibling_path, <span class="string">b"#!/bin/sh\n"</span>).expect(<span class="string">"create sibling binary placeholder"</span>);
-<a href=#827 id=827 data-nosnippet>827</a>        <span class="kw">unsafe </span>{
-<a href=#828 id=828 data-nosnippet>828</a>            env::remove_var(<span class="string">"CASARS_TABLEBROWSER_BIN"</span>);
-<a href=#829 id=829 data-nosnippet>829</a>            env::remove_var(<span class="string">"CARGO_BIN_EXE_tablebrowser"</span>);
-<a href=#830 id=830 data-nosnippet>830</a>            env::remove_var(<span class="string">"CARGO"</span>);
-<a href=#831 id=831 data-nosnippet>831</a>        }
-<a href=#832 id=832 data-nosnippet>832</a>
-<a href=#833 id=833 data-nosnippet>833</a>        <span class="kw">let </span>resolved = app.resolve_command().expect(<span class="string">"resolve sibling binary"</span>);
-<a href=#834 id=834 data-nosnippet>834</a>        <span class="kw">let </span>command = resolved.command();
-<a href=#835 id=835 data-nosnippet>835</a>        <span class="macro">assert_eq!</span>(command.get_program(), sibling_path.as_os_str());
-<a href=#836 id=836 data-nosnippet>836</a>        <span class="macro">assert_eq!</span>(command.get_args().count(), <span class="number">0</span>);
-<a href=#837 id=837 data-nosnippet>837</a>        <span class="macro">assert!</span>(!sibling_binary_is_stale_for_current_process(
-<a href=#838 id=838 data-nosnippet>838</a>            std::path::Path::new(<span class="string">"/definitely/missing"</span>)
-<a href=#839 id=839 data-nosnippet>839</a>        ));
-<a href=#840 id=840 data-nosnippet>840</a>
-<a href=#841 id=841 data-nosnippet>841</a>        fs::remove_file(<span class="kw-2">&amp;</span>sibling_path).expect(<span class="string">"remove sibling binary placeholder"</span>);
-<a href=#842 id=842 data-nosnippet>842</a>    }
-<a href=#843 id=843 data-nosnippet>843</a>
-<a href=#844 id=844 data-nosnippet>844</a>    <span class="attr">#[test]
-<a href=#845 id=845 data-nosnippet>845</a>    </span><span class="kw">fn </span>resolved_command_direct_and_manifest_helpers_cover_simple_paths() {
-<a href=#846 id=846 data-nosnippet>846</a>        <span class="kw">let </span>direct = ResolvedCommand::direct(<span class="string">"demo-tool"</span>);
-<a href=#847 id=847 data-nosnippet>847</a>        <span class="kw">let </span>command = direct.command();
-<a href=#848 id=848 data-nosnippet>848</a>        <span class="macro">assert_eq!</span>(command.get_program(), <span class="string">"demo-tool"</span>);
-<a href=#849 id=849 data-nosnippet>849</a>        <span class="macro">assert_eq!</span>(command.get_args().count(), <span class="number">0</span>);
-<a href=#850 id=850 data-nosnippet>850</a>
-<a href=#851 id=851 data-nosnippet>851</a>        <span class="kw">let </span>manifest_path = workspace_manifest_path();
-<a href=#852 id=852 data-nosnippet>852</a>        <span class="macro">assert!</span>(manifest_path.ends_with(<span class="string">"Cargo.toml"</span>));
-<a href=#853 id=853 data-nosnippet>853</a>        <span class="macro">assert!</span>(file_modified_time(std::path::Path::new(<span class="string">"/definitely/missing"</span>)).is_none());
-<a href=#854 id=854 data-nosnippet>854</a>    }
-<a href=#855 id=855 data-nosnippet>855</a>}
+<a href=#654 id=654 data-nosnippet>654</a>                <span class="string">"gencal"</span>,
+<a href=#655 id=655 data-nosnippet>655</a>            ]
+<a href=#656 id=656 data-nosnippet>656</a>        );
+<a href=#657 id=657 data-nosnippet>657</a>        <span class="kw">let </span>gaintables = schema
+<a href=#658 id=658 data-nosnippet>658</a>            .arguments
+<a href=#659 id=659 data-nosnippet>659</a>            .iter()
+<a href=#660 id=660 data-nosnippet>660</a>            .find(|argument| argument.id == <span class="string">"gaintables"</span>)
+<a href=#661 id=661 data-nosnippet>661</a>            .expect(<span class="string">"gaintables argument"</span>);
+<a href=#662 id=662 data-nosnippet>662</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>gaintables.parser <span class="kw">else </span>{
+<a href=#663 id=663 data-nosnippet>663</a>            <span class="macro">panic!</span>(<span class="string">"gaintables should be an option parser"</span>);
+<a href=#664 id=664 data-nosnippet>664</a>        };
+<a href=#665 id=665 data-nosnippet>665</a>        <span class="macro">assert!</span>(choices.is_empty());
+<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span>mode = schema
+<a href=#667 id=667 data-nosnippet>667</a>            .arguments
+<a href=#668 id=668 data-nosnippet>668</a>            .iter()
+<a href=#669 id=669 data-nosnippet>669</a>            .find(|argument| argument.id == <span class="string">"apply_mode"</span>)
+<a href=#670 id=670 data-nosnippet>670</a>            .expect(<span class="string">"apply mode argument"</span>);
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>mode.parser <span class="kw">else </span>{
+<a href=#672 id=672 data-nosnippet>672</a>            <span class="macro">panic!</span>(<span class="string">"apply_mode should be an option parser"</span>);
+<a href=#673 id=673 data-nosnippet>673</a>        };
+<a href=#674 id=674 data-nosnippet>674</a>        <span class="macro">assert_eq!</span>(choices, <span class="kw-2">&amp;</span>[<span class="string">"calflag"</span>, <span class="string">"calonly"</span>, <span class="string">"trial"</span>]);
+<a href=#675 id=675 data-nosnippet>675</a>    }
+<a href=#676 id=676 data-nosnippet>676</a>
+<a href=#677 id=677 data-nosnippet>677</a>    <span class="attr">#[test]
+<a href=#678 id=678 data-nosnippet>678</a>    </span><span class="kw">fn </span>importvla_load_schema_describes_public_workflow_surface() {
+<a href=#679 id=679 data-nosnippet>679</a>        <span class="kw">let </span>schema = importvla_app()
+<a href=#680 id=680 data-nosnippet>680</a>            .load_schema()
+<a href=#681 id=681 data-nosnippet>681</a>            .expect(<span class="string">"load importvla schema"</span>);
+<a href=#682 id=682 data-nosnippet>682</a>        <span class="macro">assert_eq!</span>(schema.command_id, <span class="string">"importvla"</span>);
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="macro">assert_eq!</span>(schema.display_name, <span class="string">"ImportVLA"</span>);
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="macro">assert_eq!</span>(schema.category, <span class="string">"Import"</span>);
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw">let </span>archivefiles = schema
+<a href=#686 id=686 data-nosnippet>686</a>            .arguments
+<a href=#687 id=687 data-nosnippet>687</a>            .iter()
+<a href=#688 id=688 data-nosnippet>688</a>            .find(|argument| argument.id == <span class="string">"archivefiles"</span>)
+<a href=#689 id=689 data-nosnippet>689</a>            .expect(<span class="string">"archivefiles argument"</span>);
+<a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>archivefiles.parser <span class="kw">else </span>{
+<a href=#691 id=691 data-nosnippet>691</a>            <span class="macro">panic!</span>(<span class="string">"archivefiles should be an option parser"</span>);
+<a href=#692 id=692 data-nosnippet>692</a>        };
+<a href=#693 id=693 data-nosnippet>693</a>        <span class="macro">assert!</span>(choices.is_empty());
+<a href=#694 id=694 data-nosnippet>694</a>        <span class="kw">let </span>antnamescheme = schema
+<a href=#695 id=695 data-nosnippet>695</a>            .arguments
+<a href=#696 id=696 data-nosnippet>696</a>            .iter()
+<a href=#697 id=697 data-nosnippet>697</a>            .find(|argument| argument.id == <span class="string">"antnamescheme"</span>)
+<a href=#698 id=698 data-nosnippet>698</a>            .expect(<span class="string">"antnamescheme argument"</span>);
+<a href=#699 id=699 data-nosnippet>699</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>antnamescheme.parser <span class="kw">else </span>{
+<a href=#700 id=700 data-nosnippet>700</a>            <span class="macro">panic!</span>(<span class="string">"antnamescheme should be an option parser"</span>);
+<a href=#701 id=701 data-nosnippet>701</a>        };
+<a href=#702 id=702 data-nosnippet>702</a>        <span class="macro">assert_eq!</span>(choices, <span class="kw-2">&amp;</span>[<span class="string">"new"</span>, <span class="string">"old"</span>]);
+<a href=#703 id=703 data-nosnippet>703</a>    }
+<a href=#704 id=704 data-nosnippet>704</a>
+<a href=#705 id=705 data-nosnippet>705</a>    <span class="attr">#[test]
+<a href=#706 id=706 data-nosnippet>706</a>    </span><span class="kw">fn </span>imager_load_schema_describes_public_workflow_surface() {
+<a href=#707 id=707 data-nosnippet>707</a>        <span class="kw">let </span>schema = imager_app().load_schema().expect(<span class="string">"load imager schema"</span>);
+<a href=#708 id=708 data-nosnippet>708</a>        <span class="macro">assert_eq!</span>(schema.command_id, <span class="string">"imager"</span>);
+<a href=#709 id=709 data-nosnippet>709</a>        <span class="macro">assert_eq!</span>(schema.display_name, <span class="string">"Imager"</span>);
+<a href=#710 id=710 data-nosnippet>710</a>        <span class="macro">assert_eq!</span>(schema.category, <span class="string">"Imaging"</span>);
+<a href=#711 id=711 data-nosnippet>711</a>        <span class="kw">let </span>specmode = schema
+<a href=#712 id=712 data-nosnippet>712</a>            .arguments
+<a href=#713 id=713 data-nosnippet>713</a>            .iter()
+<a href=#714 id=714 data-nosnippet>714</a>            .find(|argument| argument.id == <span class="string">"specmode"</span>)
+<a href=#715 id=715 data-nosnippet>715</a>            .expect(<span class="string">"specmode argument"</span>);
+<a href=#716 id=716 data-nosnippet>716</a>        <span class="macro">assert_eq!</span>(specmode.group, <span class="string">"Stages"</span>);
+<a href=#717 id=717 data-nosnippet>717</a>        <span class="kw">let </span>managed_output = schema.managed_output.expect(<span class="string">"managed output"</span>);
+<a href=#718 id=718 data-nosnippet>718</a>        <span class="macro">assert_eq!</span>(managed_output.renderer, <span class="string">"imager-run-v1"</span>);
+<a href=#719 id=719 data-nosnippet>719</a>    }
+<a href=#720 id=720 data-nosnippet>720</a>
+<a href=#721 id=721 data-nosnippet>721</a>    <span class="attr">#[test]
+<a href=#722 id=722 data-nosnippet>722</a>    </span><span class="kw">fn </span>imexplore_load_schema_describes_browser_surface_without_subprocess() {
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">unsafe </span>{
+<a href=#725 id=725 data-nosnippet>725</a>            env::remove_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>);
+<a href=#726 id=726 data-nosnippet>726</a>            env::remove_var(<span class="string">"CARGO_BIN_EXE_imexplore"</span>);
+<a href=#727 id=727 data-nosnippet>727</a>        }
+<a href=#728 id=728 data-nosnippet>728</a>
+<a href=#729 id=729 data-nosnippet>729</a>        <span class="kw">let </span>schema = imexplore_app()
+<a href=#730 id=730 data-nosnippet>730</a>            .load_schema()
+<a href=#731 id=731 data-nosnippet>731</a>            .expect(<span class="string">"load imexplore schema"</span>);
+<a href=#732 id=732 data-nosnippet>732</a>        <span class="macro">assert_eq!</span>(schema.command_id, <span class="string">"imexplore"</span>);
+<a href=#733 id=733 data-nosnippet>733</a>        <span class="macro">assert_eq!</span>(schema.display_name, <span class="string">"ImExplore"</span>);
+<a href=#734 id=734 data-nosnippet>734</a>        <span class="macro">assert_eq!</span>(schema.category, <span class="string">"Images"</span>);
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">let </span>image_path = schema
+<a href=#736 id=736 data-nosnippet>736</a>            .arguments
+<a href=#737 id=737 data-nosnippet>737</a>            .iter()
+<a href=#738 id=738 data-nosnippet>738</a>            .find(|argument| argument.id == <span class="string">"image_path"</span>)
+<a href=#739 id=739 data-nosnippet>739</a>            .expect(<span class="string">"image path argument"</span>);
+<a href=#740 id=740 data-nosnippet>740</a>        <span class="macro">assert_eq!</span>(image_path.group, <span class="string">"Input"</span>);
+<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw">let </span>stretch = schema
+<a href=#742 id=742 data-nosnippet>742</a>            .arguments
+<a href=#743 id=743 data-nosnippet>743</a>            .iter()
+<a href=#744 id=744 data-nosnippet>744</a>            .find(|argument| argument.id == <span class="string">"stretch"</span>)
+<a href=#745 id=745 data-nosnippet>745</a>            .expect(<span class="string">"stretch argument"</span>);
+<a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">let </span>UiArgumentParser::Option { choices, .. } = <span class="kw-2">&amp;</span>stretch.parser <span class="kw">else </span>{
+<a href=#747 id=747 data-nosnippet>747</a>            <span class="macro">panic!</span>(<span class="string">"stretch should be an option parser"</span>);
+<a href=#748 id=748 data-nosnippet>748</a>        };
+<a href=#749 id=749 data-nosnippet>749</a>        <span class="macro">assert_eq!</span>(
+<a href=#750 id=750 data-nosnippet>750</a>            choices,
+<a href=#751 id=751 data-nosnippet>751</a>            <span class="kw-2">&amp;</span>[<span class="string">"percentile99"</span>, <span class="string">"percentile95"</span>, <span class="string">"minmax"</span>, <span class="string">"zscale"</span>, <span class="string">"manual"</span>]
+<a href=#752 id=752 data-nosnippet>752</a>        );
+<a href=#753 id=753 data-nosnippet>753</a>    }
+<a href=#754 id=754 data-nosnippet>754</a>
+<a href=#755 id=755 data-nosnippet>755</a>    <span class="attr">#[test]
+<a href=#756 id=756 data-nosnippet>756</a>    </span><span class="kw">fn </span>load_schema_surfaces_subprocess_failures_for_overridden_binaries() {
+<a href=#757 id=757 data-nosnippet>757</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
+<a href=#758 id=758 data-nosnippet>758</a>        <span class="kw">unsafe </span>{
+<a href=#759 id=759 data-nosnippet>759</a>            env::set_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>, <span class="string">"/definitely/missing/imexplore"</span>);
+<a href=#760 id=760 data-nosnippet>760</a>        }
+<a href=#761 id=761 data-nosnippet>761</a>
+<a href=#762 id=762 data-nosnippet>762</a>        <span class="kw">let </span>error = imexplore_app()
+<a href=#763 id=763 data-nosnippet>763</a>            .load_schema()
+<a href=#764 id=764 data-nosnippet>764</a>            .expect_err(<span class="string">"missing override binary should fail"</span>);
+<a href=#765 id=765 data-nosnippet>765</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"spawn imexplore --json-schema"</span>));
+<a href=#766 id=766 data-nosnippet>766</a>
+<a href=#767 id=767 data-nosnippet>767</a>        <span class="kw">unsafe </span>{
+<a href=#768 id=768 data-nosnippet>768</a>            env::remove_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>);
+<a href=#769 id=769 data-nosnippet>769</a>        }
+<a href=#770 id=770 data-nosnippet>770</a>    }
+<a href=#771 id=771 data-nosnippet>771</a>
+<a href=#772 id=772 data-nosnippet>772</a>    <span class="attr">#[test]
+<a href=#773 id=773 data-nosnippet>773</a>    </span><span class="kw">fn </span>load_schema_reports_nonzero_exit_status_and_parse_errors_from_overrides() {
+<a href=#774 id=774 data-nosnippet>774</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
+<a href=#775 id=775 data-nosnippet>775</a>
+<a href=#776 id=776 data-nosnippet>776</a>        <span class="kw">unsafe </span>{
+<a href=#777 id=777 data-nosnippet>777</a>            env::set_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>, <span class="string">"/bin/sh"</span>);
+<a href=#778 id=778 data-nosnippet>778</a>        }
+<a href=#779 id=779 data-nosnippet>779</a>        <span class="kw">let </span>error = imexplore_app()
+<a href=#780 id=780 data-nosnippet>780</a>            .load_schema()
+<a href=#781 id=781 data-nosnippet>781</a>            .expect_err(<span class="string">"shell should reject --ui-schema"</span>);
+<a href=#782 id=782 data-nosnippet>782</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"imexplore --ui-schema exited with"</span>));
+<a href=#783 id=783 data-nosnippet>783</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"--ui-schema"</span>));
+<a href=#784 id=784 data-nosnippet>784</a>
+<a href=#785 id=785 data-nosnippet>785</a>        <span class="kw">unsafe </span>{
+<a href=#786 id=786 data-nosnippet>786</a>            env::set_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>, <span class="string">"/bin/echo"</span>);
+<a href=#787 id=787 data-nosnippet>787</a>        }
+<a href=#788 id=788 data-nosnippet>788</a>        <span class="kw">let </span>error = imexplore_app()
+<a href=#789 id=789 data-nosnippet>789</a>            .load_schema()
+<a href=#790 id=790 data-nosnippet>790</a>            .expect_err(<span class="string">"echo output should not parse as JSON"</span>);
+<a href=#791 id=791 data-nosnippet>791</a>        <span class="macro">assert!</span>(error.contains(<span class="string">"parse imexplore --json-schema output"</span>));
+<a href=#792 id=792 data-nosnippet>792</a>
+<a href=#793 id=793 data-nosnippet>793</a>        <span class="kw">unsafe </span>{
+<a href=#794 id=794 data-nosnippet>794</a>            env::remove_var(<span class="string">"CASARS_IMEXPLORE_BIN"</span>);
+<a href=#795 id=795 data-nosnippet>795</a>        }
+<a href=#796 id=796 data-nosnippet>796</a>    }
+<a href=#797 id=797 data-nosnippet>797</a>
+<a href=#798 id=798 data-nosnippet>798</a>    <span class="attr">#[test]
+<a href=#799 id=799 data-nosnippet>799</a>    </span><span class="kw">fn </span>stale_binary_detection_requires_binary_older_than_reference() {
+<a href=#800 id=800 data-nosnippet>800</a>        <span class="kw">let </span>older = SystemTime::UNIX_EPOCH + Duration::from_secs(<span class="number">1</span>);
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw">let </span>newer = SystemTime::UNIX_EPOCH + Duration::from_secs(<span class="number">2</span>);
+<a href=#802 id=802 data-nosnippet>802</a>        <span class="macro">assert!</span>(is_binary_stale(<span class="prelude-val">Some</span>(older), <span class="prelude-val">Some</span>(newer)));
+<a href=#803 id=803 data-nosnippet>803</a>        <span class="macro">assert!</span>(!is_binary_stale(<span class="prelude-val">Some</span>(newer), <span class="prelude-val">Some</span>(older)));
+<a href=#804 id=804 data-nosnippet>804</a>        <span class="macro">assert!</span>(!is_binary_stale(<span class="prelude-val">Some</span>(newer), <span class="prelude-val">Some</span>(newer)));
+<a href=#805 id=805 data-nosnippet>805</a>        <span class="macro">assert!</span>(!is_binary_stale(<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(newer)));
+<a href=#806 id=806 data-nosnippet>806</a>        <span class="macro">assert!</span>(!is_binary_stale(<span class="prelude-val">Some</span>(older), <span class="prelude-val">None</span>));
+<a href=#807 id=807 data-nosnippet>807</a>    }
+<a href=#808 id=808 data-nosnippet>808</a>
+<a href=#809 id=809 data-nosnippet>809</a>    <span class="attr">#[test]
+<a href=#810 id=810 data-nosnippet>810</a>    </span><span class="kw">fn </span>workspace_ms_apps_prefer_cargo_fallback_for_stale_siblings() {
+<a href=#811 id=811 data-nosnippet>811</a>        <span class="macro">assert!</span>(msexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+<a href=#812 id=812 data-nosnippet>812</a>        <span class="macro">assert!</span>(calibrate_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+<a href=#813 id=813 data-nosnippet>813</a>        <span class="macro">assert!</span>(!imager_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+<a href=#814 id=814 data-nosnippet>814</a>        <span class="macro">assert!</span>(!tablebrowser_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+<a href=#815 id=815 data-nosnippet>815</a>        <span class="macro">assert!</span>(!imexplore_app().prefers_cargo_workspace_fallback_for_stale_sibling());
+<a href=#816 id=816 data-nosnippet>816</a>    }
+<a href=#817 id=817 data-nosnippet>817</a>
+<a href=#818 id=818 data-nosnippet>818</a>    <span class="attr">#[test]
+<a href=#819 id=819 data-nosnippet>819</a>    </span><span class="kw">fn </span>resolve_command_uses_existing_sibling_binary_for_non_workspace_apps() {
+<a href=#820 id=820 data-nosnippet>820</a>        <span class="kw">let </span>_guard = <span class="kw">crate</span>::test_env_lock();
+<a href=#821 id=821 data-nosnippet>821</a>        <span class="kw">let </span>app = tablebrowser_app();
+<a href=#822 id=822 data-nosnippet>822</a>        <span class="kw">let </span><span class="kw-2">mut </span>sibling_path = env::current_exe().expect(<span class="string">"current exe"</span>);
+<a href=#823 id=823 data-nosnippet>823</a>        sibling_path.pop();
+<a href=#824 id=824 data-nosnippet>824</a>        sibling_path.push(<span class="string">"tablebrowser"</span>);
+<a href=#825 id=825 data-nosnippet>825</a>        sibling_path.set_extension(env::consts::EXE_EXTENSION);
+<a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">let _ </span>= fs::remove_file(<span class="kw-2">&amp;</span>sibling_path);
+<a href=#827 id=827 data-nosnippet>827</a>        fs::write(<span class="kw-2">&amp;</span>sibling_path, <span class="string">b"#!/bin/sh\n"</span>).expect(<span class="string">"create sibling binary placeholder"</span>);
+<a href=#828 id=828 data-nosnippet>828</a>        <span class="kw">unsafe </span>{
+<a href=#829 id=829 data-nosnippet>829</a>            env::remove_var(<span class="string">"CASARS_TABLEBROWSER_BIN"</span>);
+<a href=#830 id=830 data-nosnippet>830</a>            env::remove_var(<span class="string">"CARGO_BIN_EXE_tablebrowser"</span>);
+<a href=#831 id=831 data-nosnippet>831</a>            env::remove_var(<span class="string">"CARGO"</span>);
+<a href=#832 id=832 data-nosnippet>832</a>        }
+<a href=#833 id=833 data-nosnippet>833</a>
+<a href=#834 id=834 data-nosnippet>834</a>        <span class="kw">let </span>resolved = app.resolve_command().expect(<span class="string">"resolve sibling binary"</span>);
+<a href=#835 id=835 data-nosnippet>835</a>        <span class="kw">let </span>command = resolved.command();
+<a href=#836 id=836 data-nosnippet>836</a>        <span class="macro">assert_eq!</span>(command.get_program(), sibling_path.as_os_str());
+<a href=#837 id=837 data-nosnippet>837</a>        <span class="macro">assert_eq!</span>(command.get_args().count(), <span class="number">0</span>);
+<a href=#838 id=838 data-nosnippet>838</a>        <span class="macro">assert!</span>(!sibling_binary_is_stale_for_current_process(
+<a href=#839 id=839 data-nosnippet>839</a>            std::path::Path::new(<span class="string">"/definitely/missing"</span>)
+<a href=#840 id=840 data-nosnippet>840</a>        ));
+<a href=#841 id=841 data-nosnippet>841</a>
+<a href=#842 id=842 data-nosnippet>842</a>        fs::remove_file(<span class="kw-2">&amp;</span>sibling_path).expect(<span class="string">"remove sibling binary placeholder"</span>);
+<a href=#843 id=843 data-nosnippet>843</a>    }
+<a href=#844 id=844 data-nosnippet>844</a>
+<a href=#845 id=845 data-nosnippet>845</a>    <span class="attr">#[test]
+<a href=#846 id=846 data-nosnippet>846</a>    </span><span class="kw">fn </span>resolved_command_direct_and_manifest_helpers_cover_simple_paths() {
+<a href=#847 id=847 data-nosnippet>847</a>        <span class="kw">let </span>direct = ResolvedCommand::direct(<span class="string">"demo-tool"</span>);
+<a href=#848 id=848 data-nosnippet>848</a>        <span class="kw">let </span>command = direct.command();
+<a href=#849 id=849 data-nosnippet>849</a>        <span class="macro">assert_eq!</span>(command.get_program(), <span class="string">"demo-tool"</span>);
+<a href=#850 id=850 data-nosnippet>850</a>        <span class="macro">assert_eq!</span>(command.get_args().count(), <span class="number">0</span>);
+<a href=#851 id=851 data-nosnippet>851</a>
+<a href=#852 id=852 data-nosnippet>852</a>        <span class="kw">let </span>manifest_path = workspace_manifest_path();
+<a href=#853 id=853 data-nosnippet>853</a>        <span class="macro">assert!</span>(manifest_path.ends_with(<span class="string">"Cargo.toml"</span>));
+<a href=#854 id=854 data-nosnippet>854</a>        <span class="macro">assert!</span>(file_modified_time(std::path::Path::new(<span class="string">"/definitely/missing"</span>)).is_none());
+<a href=#855 id=855 data-nosnippet>855</a>    }
+<a href=#856 id=856 data-nosnippet>856</a>}
 </code></pre></div></section></main></body></html>

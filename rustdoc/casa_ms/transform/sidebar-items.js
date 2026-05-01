@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MsTransformError","TransformDataColumn"],"fn":["mstransform"],"struct":["MsTransformReport","MsTransformRequest"]};

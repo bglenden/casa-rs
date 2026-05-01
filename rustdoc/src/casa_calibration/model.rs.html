@@ -141,21 +141,25 @@
 <a href=#141 id=141 data-nosnippet>141</a>    /// apply surface:
 <a href=#142 id=142 data-nosnippet>142</a>    ///
 <a href=#143 id=143 data-nosnippet>143</a>    /// - complex `CPARAM` antenna-based tables, or
-<a href=#144 id=144 data-nosnippet>144</a>    /// - narrow float `FPARAM` support for `K Jones`
-<a href=#145 id=145 data-nosnippet>145</a>    /// - legacy `BPOLY` bandpass tables
-<a href=#146 id=146 data-nosnippet>146</a>    ///
-<a href=#147 id=147 data-nosnippet>147</a>    /// and carries no error-level validation issues.
-<a href=#148 id=148 data-nosnippet>148</a>    </span><span class="kw">pub fn </span>supported_for_v1_apply(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#149 id=149 data-nosnippet>149</a>        <span class="self">self</span>.table_type == <span class="kw">crate</span>::constants::TABLE_INFO_TYPE
-<a href=#150 id=150 data-nosnippet>150</a>            &amp;&amp; (<span class="macro">matches!</span>(
-<a href=#151 id=151 data-nosnippet>151</a>                (<span class="kw-2">&amp;</span><span class="self">self</span>.parameter_family, <span class="self">self</span>.table_subtype.as_str()),
-<a href=#152 id=152 data-nosnippet>152</a>                (CalibrationParameterFamily::Complex, <span class="kw">_</span>)
-<a href=#153 id=153 data-nosnippet>153</a>                    | (CalibrationParameterFamily::Float, <span class="string">"K Jones"</span>)
-<a href=#154 id=154 data-nosnippet>154</a>            ) || <span class="self">self</span>.table_subtype == <span class="string">"BPOLY"</span>)
-<a href=#155 id=155 data-nosnippet>155</a>            &amp;&amp; <span class="self">self
-<a href=#156 id=156 data-nosnippet>156</a>                </span>.issues
-<a href=#157 id=157 data-nosnippet>157</a>                .iter()
-<a href=#158 id=158 data-nosnippet>158</a>                .all(|issue| issue.severity != CalibrationIssueSeverity::Error)
-<a href=#159 id=159 data-nosnippet>159</a>    }
-<a href=#160 id=160 data-nosnippet>160</a>}
+<a href=#144 id=144 data-nosnippet>144</a>    /// - float `FPARAM` support for `K Jones` and the VLA prior families
+<a href=#145 id=145 data-nosnippet>145</a>    ///   `KAntPos Jones`, `EGainCurve`, and `TOpac`
+<a href=#146 id=146 data-nosnippet>146</a>    /// - legacy `BPOLY` bandpass tables
+<a href=#147 id=147 data-nosnippet>147</a>    ///
+<a href=#148 id=148 data-nosnippet>148</a>    /// and carries no error-level validation issues.
+<a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">pub fn </span>supported_for_v1_apply(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="self">self</span>.table_type == <span class="kw">crate</span>::constants::TABLE_INFO_TYPE
+<a href=#151 id=151 data-nosnippet>151</a>            &amp;&amp; (<span class="macro">matches!</span>(
+<a href=#152 id=152 data-nosnippet>152</a>                (<span class="kw-2">&amp;</span><span class="self">self</span>.parameter_family, <span class="self">self</span>.table_subtype.as_str()),
+<a href=#153 id=153 data-nosnippet>153</a>                (CalibrationParameterFamily::Complex, <span class="kw">_</span>)
+<a href=#154 id=154 data-nosnippet>154</a>                    | (CalibrationParameterFamily::Float, <span class="string">"K Jones"</span>)
+<a href=#155 id=155 data-nosnippet>155</a>                    | (CalibrationParameterFamily::Float, <span class="string">"KAntPos Jones"</span>)
+<a href=#156 id=156 data-nosnippet>156</a>                    | (CalibrationParameterFamily::Float, <span class="string">"EGainCurve"</span>)
+<a href=#157 id=157 data-nosnippet>157</a>                    | (CalibrationParameterFamily::Float, <span class="string">"TOpac"</span>)
+<a href=#158 id=158 data-nosnippet>158</a>            ) || <span class="self">self</span>.table_subtype == <span class="string">"BPOLY"</span>)
+<a href=#159 id=159 data-nosnippet>159</a>            &amp;&amp; <span class="self">self
+<a href=#160 id=160 data-nosnippet>160</a>                </span>.issues
+<a href=#161 id=161 data-nosnippet>161</a>                .iter()
+<a href=#162 id=162 data-nosnippet>162</a>                .all(|issue| issue.severity != CalibrationIssueSeverity::Error)
+<a href=#163 id=163 data-nosnippet>163</a>    }
+<a href=#164 id=164 data-nosnippet>164</a>}
 </code></pre></div></section></main></body></html>
