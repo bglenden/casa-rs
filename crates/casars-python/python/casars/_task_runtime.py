@@ -24,6 +24,11 @@ IMPORTVLA_PROTOCOL_VERSION = 1
 IMPORTVLA_BINARY_NAME = "casars-importvla"
 IMPORTVLA_BINARY_ENVVAR = "CASARS_IMPORTVLA_BIN"
 
+SIMOBSERVE_PROTOCOL_NAME = "casa_simobserve_task"
+SIMOBSERVE_PROTOCOL_VERSION = 1
+SIMOBSERVE_BINARY_NAME = "simobserve"
+SIMOBSERVE_BINARY_ENVVAR = "CASARS_SIMOBSERVE_BIN"
+
 MSEXPLORE_PROTOCOL_NAME = "casa_msexplore_task"
 MSEXPLORE_PROTOCOL_VERSION = 1
 MSEXPLORE_BINARY_NAME = "msexplore"
@@ -51,6 +56,7 @@ CASARS_SUITE_ROOT_ENVVAR = "CASARS_SUITE_ROOT"
 
 _configured_calibrate_binary: str | None = None
 _configured_importvla_binary: str | None = None
+_configured_simobserve_binary: str | None = None
 _configured_msexplore_binary: str | None = None
 _configured_imager_binary: str | None = None
 _configured_imexplore_binary: str | None = None
@@ -82,6 +88,18 @@ class ImportVlaProtocolMismatchError(RuntimeError):
 
 class ImportVlaInvocationError(RuntimeError):
     """Raised when the ``casars-importvla`` subprocess returns a non-zero status."""
+
+
+class SimobserveBinaryNotFoundError(FileNotFoundError):
+    """Raised when the ``simobserve`` binary cannot be resolved."""
+
+
+class SimobserveProtocolMismatchError(RuntimeError):
+    """Raised when the Python wrapper and ``simobserve`` protocol versions diverge."""
+
+
+class SimobserveInvocationError(RuntimeError):
+    """Raised when the ``simobserve`` subprocess returns a non-zero status."""
 
 
 class MsExploreBinaryNotFoundError(FileNotFoundError):
@@ -142,6 +160,13 @@ def configure_importvla_binary(binary: StrPath | None) -> None:
 
     global _configured_importvla_binary
     _configured_importvla_binary = None if binary is None else os.fspath(binary)
+
+
+def configure_simobserve_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default simobserve binary override."""
+
+    global _configured_simobserve_binary
+    _configured_simobserve_binary = None if binary is None else os.fspath(binary)
 
 
 def configure_msexplore_binary(binary: StrPath | None) -> None:
@@ -216,6 +241,19 @@ def resolve_importvla_binary(binary: StrPath | None = None) -> str:
         binary_name=IMPORTVLA_BINARY_NAME,
         missing_error_cls=ImportVlaBinaryNotFoundError,
         description="casars-importvla",
+    )
+
+
+def resolve_simobserve_binary(binary: StrPath | None = None) -> str:
+    """Resolve the simobserve binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_simobserve_binary,
+        envvar=SIMOBSERVE_BINARY_ENVVAR,
+        binary_name=SIMOBSERVE_BINARY_NAME,
+        missing_error_cls=SimobserveBinaryNotFoundError,
+        description="simobserve",
     )
 
 
@@ -336,6 +374,19 @@ def get_importvla_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     )
 
 
+def get_simobserve_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
+    """Return validated protocol info for the selected simobserve binary."""
+
+    resolved = resolve_simobserve_binary(binary)
+    return _validated_protocol_info(
+        resolved,
+        protocol_name=SIMOBSERVE_PROTOCOL_NAME,
+        protocol_version=SIMOBSERVE_PROTOCOL_VERSION,
+        mismatch_error_cls=SimobserveProtocolMismatchError,
+        invocation_error_cls=SimobserveInvocationError,
+    )
+
+
 def get_msexplore_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     """Return validated protocol info for the selected msexplore binary."""
 
@@ -427,6 +478,14 @@ def fetch_importvla_schema(binary: StrPath | None = None) -> dict[str, Any]:
 
     resolved = resolve_importvla_binary(binary)
     stdout = _run_process([resolved, "--json-schema"], error_cls=ImportVlaInvocationError)
+    return json.loads(stdout)
+
+
+def fetch_simobserve_schema(binary: StrPath | None = None) -> dict[str, Any]:
+    """Fetch the JSON schema bundle advertised by the simobserve binary."""
+
+    resolved = resolve_simobserve_binary(binary)
+    stdout = _run_process([resolved, "--json-schema"], error_cls=SimobserveInvocationError)
     return json.loads(stdout)
 
 
@@ -524,6 +583,31 @@ def invoke_importvla_task(
         [resolved, "--json-run", "-"],
         stdin=payload,
         error_cls=ImportVlaInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_simobserve_task(
+    *,
+    kind: str,
+    request: dict[str, Any],
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run one simobserve task request through ``simobserve --json-run -``."""
+
+    resolved = resolve_simobserve_binary(binary)
+    _validated_protocol_info(
+        resolved,
+        protocol_name=SIMOBSERVE_PROTOCOL_NAME,
+        protocol_version=SIMOBSERVE_PROTOCOL_VERSION,
+        mismatch_error_cls=SimobserveProtocolMismatchError,
+        invocation_error_cls=SimobserveInvocationError,
+    )
+    payload = json.dumps({"kind": kind, "request": request}, sort_keys=True)
+    stdout = _run_process(
+        [resolved, "--json-run", "-"],
+        stdin=payload,
+        error_cls=SimobserveInvocationError,
     )
     return json.loads(stdout)
 

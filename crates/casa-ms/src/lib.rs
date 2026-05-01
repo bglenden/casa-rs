@@ -58,6 +58,7 @@ pub mod selection;
 pub mod selection_helpers;
 pub mod selection_syntax;
 pub mod simulation;
+pub mod simulation_task;
 pub mod spectral_selection;
 pub mod subtables;
 pub mod transform;
@@ -116,6 +117,11 @@ pub use selection_syntax::{
 pub use simulation::{
     SyntheticAntenna, SyntheticObservationReport, SyntheticObservationRequest,
     SyntheticSpectralSetup, generate_synthetic_observation_ms,
+};
+pub use simulation_task::{
+    SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveProtocolInfo,
+    SimobserveRunTaskRequest, SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
+    SimobserveTaskSchemaBundle,
 };
 pub use spectral_selection::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,

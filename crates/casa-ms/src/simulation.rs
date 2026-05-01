@@ -8,11 +8,15 @@
 //! write CASA-compatible MS subtables plus uncorrupted visibility rows.
 
 use std::fs;
-use std::path::PathBuf;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
+use casa_imaging::{ImageGeometry, StandardMfsModelPredictor};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
-use ndarray::ArrayD;
+use ndarray::{Array2, ArrayD};
 use num_complex::Complex32;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::column_def::{ColumnDef, ColumnKind};
 use crate::error::{MsError, MsResult};
@@ -20,7 +24,7 @@ use crate::schema::{self, SubtableId};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
 
 /// Antenna configuration row for a synthetic observation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SyntheticAntenna {
     /// Antenna name, for example `VLA01`.
     pub name: String,
@@ -45,7 +49,7 @@ impl SyntheticAntenna {
 }
 
 /// Single spectral-window setup for a synthetic observation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SyntheticSpectralSetup {
     /// Spectral-window name.
     pub name: String,
@@ -71,7 +75,7 @@ impl SyntheticSpectralSetup {
 }
 
 /// Request for generating an uncorrupted synthetic MeasurementSet.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SyntheticObservationRequest {
     /// Existing model image path that defines the tutorial model provenance.
     pub model_image: PathBuf,
@@ -99,6 +103,8 @@ pub struct SyntheticObservationRequest {
     pub antennas: Vec<SyntheticAntenna>,
     /// Spectral-window setup.
     pub spectral_setup: SyntheticSpectralSetup,
+    /// Predict visibility samples from the model image into `MAIN.DATA`.
+    pub predict_model: bool,
 }
 
 impl SyntheticObservationRequest {
@@ -127,12 +133,13 @@ impl SyntheticObservationRequest {
                 channel_width_hz: 1.0e6,
                 channel_count: 1,
             },
+            predict_model: true,
         }
     }
 }
 
 /// Summary of a generated synthetic MeasurementSet.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SyntheticObservationReport {
     /// Output MeasurementSet path.
     pub output_ms: PathBuf,
@@ -148,14 +155,14 @@ pub struct SyntheticObservationReport {
     pub main_row_count: usize,
     /// Number of channels written in the spectral window.
     pub channel_count: usize,
+    /// Number of complex visibility cells with non-zero predicted model values.
+    pub nonzero_visibility_count: usize,
 }
 
 /// Generate an uncorrupted CASA-compatible synthetic MeasurementSet.
 ///
-/// The current implementation writes structurally complete MS metadata and
-/// zero-valued visibility samples for the requested array/time/frequency grid.
-/// Full image-to-visibility model prediction is intentionally a later slice of
-/// the Wave 5 `#124` work.
+/// The current implementation writes structurally complete MS metadata and can
+/// predict uncorrupted visibility samples from a single-plane FITS model image.
 pub fn generate_synthetic_observation_ms(
     request: &SyntheticObservationRequest,
 ) -> MsResult<SyntheticObservationReport> {
@@ -196,7 +203,13 @@ pub fn generate_synthetic_observation_ms(
     let time_sample_count =
         time_sample_count(request.duration_seconds, request.integration_seconds);
     let baseline_count = request.antennas.len() * (request.antennas.len() - 1) / 2;
-    populate_main_rows(&mut ms, request, time_sample_count)?;
+    let model = if request.predict_model {
+        Some(read_fits_model_image(&request.model_image)?)
+    } else {
+        None
+    };
+    let nonzero_visibility_count =
+        populate_main_rows(&mut ms, request, time_sample_count, model.as_ref())?;
 
     ms.save()?;
 
@@ -208,6 +221,7 @@ pub fn generate_synthetic_observation_ms(
         time_sample_count,
         main_row_count: baseline_count * time_sample_count,
         channel_count: request.spectral_setup.channel_count,
+        nonzero_visibility_count,
     })
 }
 
@@ -519,13 +533,10 @@ fn populate_main_rows(
     ms: &mut MeasurementSet,
     request: &SyntheticObservationRequest,
     samples: usize,
-) -> MsResult<()> {
+    model: Option<&FitsModelImage>,
+) -> MsResult<usize> {
     let num_corr = 2usize;
     let num_chan = request.spectral_setup.channel_count;
-    let data = complex_array(
-        &vec![Complex32::new(0.0, 0.0); num_corr * num_chan],
-        vec![num_corr, num_chan],
-    );
     let flag = bool_array(&vec![false; num_corr * num_chan], vec![num_corr, num_chan]);
     let flag_category = bool_array(
         &vec![false; num_corr * num_chan],
@@ -534,6 +545,10 @@ fn populate_main_rows(
     let weight = f32_array(&vec![1.0; num_corr], vec![num_corr]);
     let sigma = f32_array(&vec![1.0; num_corr], vec![num_corr]);
     let main_defs = ms_main_defs(ms);
+    let predictors = model
+        .map(|model| build_channel_predictors(model, &request.spectral_setup))
+        .transpose()?;
+    let mut nonzero_visibility_count = 0usize;
 
     for sample in 0..samples {
         let time =
@@ -543,6 +558,13 @@ fn populate_main_rows(
                 let uvw = baseline_uvw(
                     request.antennas[antenna1].position_m,
                     request.antennas[antenna2].position_m,
+                );
+                let data = predicted_data_array(
+                    predictors.as_ref(),
+                    &request.spectral_setup,
+                    uvw,
+                    num_corr,
+                    &mut nonzero_visibility_count,
                 );
                 let row = row_from_defs(
                     &main_defs,
@@ -575,7 +597,235 @@ fn populate_main_rows(
             }
         }
     }
-    Ok(())
+    Ok(nonzero_visibility_count)
+}
+
+#[derive(Debug, Clone)]
+struct FitsModelImage {
+    pixels: Array2<f32>,
+    cell_size_rad: [f64; 2],
+}
+
+fn build_channel_predictors(
+    model: &FitsModelImage,
+    spectral_setup: &SyntheticSpectralSetup,
+) -> MsResult<Vec<StandardMfsModelPredictor>> {
+    let geometry = ImageGeometry {
+        image_shape: [model.pixels.shape()[0], model.pixels.shape()[1]],
+        cell_size_rad: model.cell_size_rad,
+    };
+    (0..spectral_setup.channel_count)
+        .map(|_| {
+            StandardMfsModelPredictor::new(geometry, &model.pixels).map_err(|error| {
+                MsError::SyntheticObservation(format!("model prediction setup failed: {error}"))
+            })
+        })
+        .collect()
+}
+
+fn predicted_data_array(
+    predictors: Option<&Vec<StandardMfsModelPredictor>>,
+    spectral_setup: &SyntheticSpectralSetup,
+    uvw_m: [f64; 3],
+    num_corr: usize,
+    nonzero_visibility_count: &mut usize,
+) -> Value {
+    let mut values = vec![Complex32::new(0.0, 0.0); num_corr * spectral_setup.channel_count];
+    if let Some(predictors) = predictors {
+        for (channel, predictor) in predictors.iter().enumerate() {
+            let frequency_hz = spectral_setup.start_frequency_hz
+                + channel as f64 * spectral_setup.channel_width_hz;
+            let wavelength_m = 299_792_458.0 / frequency_hz;
+            let visibility = predictor.predict(uvw_m[0] / wavelength_m, uvw_m[1] / wavelength_m);
+            for corr in 0..num_corr {
+                let index = corr * spectral_setup.channel_count + channel;
+                values[index] = visibility;
+                if visibility.re != 0.0 || visibility.im != 0.0 {
+                    *nonzero_visibility_count += 1;
+                }
+            }
+        }
+    }
+    complex_array(&values, vec![num_corr, spectral_setup.channel_count])
+}
+
+fn read_fits_model_image(path: &PathBuf) -> MsResult<FitsModelImage> {
+    let mut file = fs::File::open(path).map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to open model image {}: {error}",
+            path.display()
+        ))
+    })?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to read model image {}: {error}",
+            path.display()
+        ))
+    })?;
+    let (cards, data_offset) = parse_fits_header(&bytes, path)?;
+    let bitpix = fits_i64(&cards, "BITPIX", path)?;
+    let naxis = fits_i64(&cards, "NAXIS", path)? as usize;
+    if naxis < 2 {
+        return Err(MsError::SyntheticObservation(format!(
+            "model image {} must have at least two FITS axes",
+            path.display()
+        )));
+    }
+    let nx = fits_i64(&cards, "NAXIS1", path)? as usize;
+    let ny = fits_i64(&cards, "NAXIS2", path)? as usize;
+    if nx < 8 || ny < 8 {
+        return Err(MsError::SyntheticObservation(format!(
+            "model image {} must be at least 8x8 pixels",
+            path.display()
+        )));
+    }
+    let trailing_planes = (3..=naxis)
+        .map(|axis| fits_i64(&cards, &format!("NAXIS{axis}"), path).unwrap_or(1))
+        .product::<i64>();
+    if trailing_planes != 1 {
+        return Err(MsError::SyntheticObservation(format!(
+            "model image {} must have one Stokes/frequency plane for this Wave 5 slice",
+            path.display()
+        )));
+    }
+    let cell_size_rad = [
+        fits_axis_cell_rad(&cards, 1, path)?.abs(),
+        fits_axis_cell_rad(&cards, 2, path)?.abs(),
+    ];
+    let pixel_count = nx
+        .checked_mul(ny)
+        .ok_or_else(|| MsError::SyntheticObservation("model image shape overflows".to_string()))?;
+    let bytes_per_pixel = match bitpix {
+        -32 => 4usize,
+        -64 => 8usize,
+        other => {
+            return Err(MsError::SyntheticObservation(format!(
+                "model image {} uses unsupported BITPIX={other}; expected -32 or -64",
+                path.display()
+            )));
+        }
+    };
+    let data_len = pixel_count * bytes_per_pixel;
+    if bytes.len() < data_offset + data_len {
+        return Err(MsError::SyntheticObservation(format!(
+            "model image {} is truncated before primary image data",
+            path.display()
+        )));
+    }
+
+    let bscale = fits_optional_f64(&cards, "BSCALE").unwrap_or(1.0);
+    let bzero = fits_optional_f64(&cards, "BZERO").unwrap_or(0.0);
+    let mut pixels = Array2::<f32>::zeros((nx, ny));
+    let data = &bytes[data_offset..data_offset + data_len];
+    for y in 0..ny {
+        for x in 0..nx {
+            let index = y * nx + x;
+            let raw = match bitpix {
+                -32 => {
+                    let start = index * 4;
+                    f32::from_bits(u32::from_be_bytes([
+                        data[start],
+                        data[start + 1],
+                        data[start + 2],
+                        data[start + 3],
+                    ])) as f64
+                }
+                -64 => {
+                    let start = index * 8;
+                    f64::from_bits(u64::from_be_bytes([
+                        data[start],
+                        data[start + 1],
+                        data[start + 2],
+                        data[start + 3],
+                        data[start + 4],
+                        data[start + 5],
+                        data[start + 6],
+                        data[start + 7],
+                    ]))
+                }
+                _ => unreachable!(),
+            };
+            pixels[(x, y)] = (raw * bscale + bzero) as f32;
+        }
+    }
+
+    Ok(FitsModelImage {
+        pixels,
+        cell_size_rad,
+    })
+}
+
+fn parse_fits_header(bytes: &[u8], path: &Path) -> MsResult<(Vec<String>, usize)> {
+    let mut cards = Vec::new();
+    for (card_index, chunk) in bytes.chunks(80).enumerate() {
+        if chunk.len() < 80 {
+            break;
+        }
+        let card = std::str::from_utf8(chunk).map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "model image {} contains non-ASCII FITS header card: {error}",
+                path.display()
+            ))
+        })?;
+        cards.push(card.to_string());
+        if card.starts_with("END") {
+            let header_bytes = (card_index + 1) * 80;
+            let data_offset = header_bytes.div_ceil(2880) * 2880;
+            return Ok((cards, data_offset));
+        }
+    }
+    Err(MsError::SyntheticObservation(format!(
+        "model image {} has no FITS END header card",
+        path.display()
+    )))
+}
+
+fn fits_i64(cards: &[String], key: &str, path: &Path) -> MsResult<i64> {
+    fits_value(cards, key)
+        .and_then(|value| value.parse::<i64>().ok())
+        .ok_or_else(|| {
+            MsError::SyntheticObservation(format!(
+                "model image {} missing integer FITS key {key}",
+                path.display()
+            ))
+        })
+}
+
+fn fits_axis_cell_rad(cards: &[String], axis: usize, path: &Path) -> MsResult<f64> {
+    let value = fits_optional_f64(cards, &format!("CDELT{axis}")).ok_or_else(|| {
+        MsError::SyntheticObservation(format!(
+            "model image {} missing FITS CDELT{axis}",
+            path.display()
+        ))
+    })?;
+    let unit = fits_string(cards, &format!("CUNIT{axis}")).unwrap_or_else(|| "deg".to_string());
+    match unit.trim().to_ascii_lowercase().as_str() {
+        "deg" | "degree" | "degrees" => Ok(value.to_radians()),
+        "rad" | "radian" | "radians" => Ok(value),
+        other => Err(MsError::SyntheticObservation(format!(
+            "model image {} uses unsupported CUNIT{axis}={other:?}; expected deg or rad",
+            path.display()
+        ))),
+    }
+}
+
+fn fits_optional_f64(cards: &[String], key: &str) -> Option<f64> {
+    fits_value(cards, key).and_then(|value| value.parse::<f64>().ok())
+}
+
+fn fits_string(cards: &[String], key: &str) -> Option<String> {
+    fits_value(cards, key).map(|value| value.trim().trim_matches('\'').trim().to_string())
+}
+
+fn fits_value<'a>(cards: &'a [String], key: &str) -> Option<&'a str> {
+    cards.iter().find_map(|card| {
+        if card.get(..8)?.trim() != key {
+            return None;
+        }
+        let value = card.get(10..)?;
+        Some(value.split('/').next().unwrap_or(value).trim())
+    })
 }
 
 fn subtable_mut(ms: &mut MeasurementSet, id: SubtableId) -> MsResult<&mut casa_tables::Table> {

@@ -15,6 +15,7 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 performance-tests = ["casa-test-support/performance-tests"]
 
 [dependencies]
+casa-imaging = { path = "../casa-imaging" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
@@ -40,6 +41,10 @@ path = "src/bin/msexplore.rs"
 [[bin]]
 name = "mstransform"
 path = "src/bin/mstransform.rs"
+
+[[bin]]
+name = "simobserve"
+path = "src/bin/simobserve.rs"
 
 [lints]
 workspace = true
