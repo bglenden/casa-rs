@@ -57,6 +57,7 @@ pub mod schema;
 pub mod selection;
 pub mod selection_helpers;
 pub mod selection_syntax;
+pub mod simulation;
 pub mod spectral_selection;
 pub mod subtables;
 pub mod transform;
@@ -111,6 +112,10 @@ pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selection_syntax::{
     ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
     parse_spw_selector,
+};
+pub use simulation::{
+    SyntheticAntenna, SyntheticObservationReport, SyntheticObservationRequest,
+    SyntheticSpectralSetup, generate_synthetic_observation_ms,
 };
 pub use spectral_selection::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
