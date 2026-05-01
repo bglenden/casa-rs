@@ -11,6 +11,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use casa_coordinates::{Coordinate, DirectionCoordinate, Projection, ProjectionType};
 use casa_imaging::{ImageGeometry, StandardMfsModelPredictor};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
@@ -827,7 +828,9 @@ fn populate_main_rows(
     let sigma = f32_array(&vec![1.0; num_corr], vec![num_corr]);
     let main_defs = ms_main_defs(ms);
     let predictors = model
-        .map(|model| build_channel_predictors(model, &request.spectral_setup))
+        .map(|model| {
+            build_channel_predictors(model, &request.spectral_setup, request.phase_center_rad)
+        })
         .transpose()?;
     let mut corruption = request
         .corruption
@@ -899,16 +902,24 @@ fn populate_main_rows(
 struct FitsModelImage {
     pixels: Array2<f32>,
     cell_size_rad: [f64; 2],
+    reference_direction_rad: Option<[f64; 2]>,
+}
+
+struct SyntheticChannelPredictor {
+    predictor: StandardMfsModelPredictor,
+    phase_offset_rad: [f64; 2],
 }
 
 fn build_channel_predictors(
     model: &FitsModelImage,
     spectral_setup: &SyntheticSpectralSetup,
-) -> MsResult<Vec<StandardMfsModelPredictor>> {
+    phase_center_rad: [f64; 2],
+) -> MsResult<Vec<SyntheticChannelPredictor>> {
     let geometry = ImageGeometry {
         image_shape: [model.pixels.shape()[0], model.pixels.shape()[1]],
         cell_size_rad: model.cell_size_rad,
     };
+    let phase_offset_rad = casa_model_phase_offset(model, phase_center_rad);
     (0..spectral_setup.channel_count)
         .map(|_| {
             let mut casa_oriented_pixels = Array2::<f32>::zeros(model.pixels.raw_dim());
@@ -921,15 +932,37 @@ fn build_channel_predictors(
                         model.pixels[(x, y)];
                 }
             }
-            StandardMfsModelPredictor::new(geometry, &casa_oriented_pixels).map_err(|error| {
-                MsError::SyntheticObservation(format!("model prediction setup failed: {error}"))
+            let predictor = StandardMfsModelPredictor::new(geometry, &casa_oriented_pixels)
+                .map_err(|error| {
+                    MsError::SyntheticObservation(format!("model prediction setup failed: {error}"))
+                })?;
+            Ok(SyntheticChannelPredictor {
+                predictor,
+                phase_offset_rad,
             })
         })
         .collect()
 }
 
+fn casa_model_phase_offset(model: &FitsModelImage, phase_center_rad: [f64; 2]) -> [f64; 2] {
+    let Some(reference_direction_rad) = model.reference_direction_rad else {
+        return [0.0, 0.0];
+    };
+    let ra_offset = circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0])
+        * phase_center_rad[1].cos();
+    let dec_offset = reference_direction_rad[1] - phase_center_rad[1];
+    [
+        ra_offset - 0.5 * model.cell_size_rad[0],
+        dec_offset - 0.5 * model.cell_size_rad[1],
+    ]
+}
+
+fn circular_angle_delta_rad(delta: f64) -> f64 {
+    (delta + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
+}
+
 fn predicted_data_values(
-    predictors: Option<&Vec<StandardMfsModelPredictor>>,
+    predictors: Option<&Vec<SyntheticChannelPredictor>>,
     spectral_setup: &SyntheticSpectralSetup,
     uvw_m: [f64; 3],
     num_corr: usize,
@@ -940,7 +973,13 @@ fn predicted_data_values(
             let frequency_hz = spectral_setup.start_frequency_hz
                 + channel as f64 * spectral_setup.channel_width_hz;
             let wavelength_m = 299_792_458.0 / frequency_hz;
-            let visibility = predictor.predict(uvw_m[0] / wavelength_m, uvw_m[1] / wavelength_m);
+            let u_lambda = uvw_m[0] / wavelength_m;
+            let v_lambda = uvw_m[1] / wavelength_m;
+            let phase = std::f64::consts::TAU
+                * (u_lambda * predictor.phase_offset_rad[0]
+                    + v_lambda * predictor.phase_offset_rad[1]);
+            let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+            let visibility = predictor.predictor.predict(u_lambda, v_lambda) * phase_shift;
             for corr in 0..num_corr {
                 let index = corr * spectral_setup.channel_count + channel;
                 values[index] = visibility;
@@ -1077,6 +1116,7 @@ fn read_fits_model_image(
         fits_axis_cell_rad(&cards, 1, path)?.abs(),
         fits_axis_cell_rad(&cards, 2, path)?.abs(),
     ];
+    let reference_direction_rad = fits_center_direction_rad(&cards, nx, ny, path)?;
     let pixel_count = nx
         .checked_mul(ny)
         .ok_or_else(|| MsError::SyntheticObservation("model image shape overflows".to_string()))?;
@@ -1151,7 +1191,58 @@ fn read_fits_model_image(
     Ok(FitsModelImage {
         pixels,
         cell_size_rad,
+        reference_direction_rad,
     })
+}
+
+fn fits_center_direction_rad(
+    cards: &[String],
+    nx: usize,
+    ny: usize,
+    path: &Path,
+) -> MsResult<Option<[f64; 2]>> {
+    if !(fits_value(cards, "CRVAL1").is_some()
+        && fits_value(cards, "CRVAL2").is_some()
+        && fits_value(cards, "CTYPE1").is_some()
+        && fits_value(cards, "CTYPE2").is_some())
+    {
+        return Ok(None);
+    }
+    let projection = fits_string(cards, "CTYPE1")
+        .and_then(|ctype| {
+            ctype
+                .rsplit_once('-')
+                .map(|(_, projection)| projection.to_string())
+        })
+        .and_then(|projection| ProjectionType::from_name(&projection))
+        .unwrap_or(ProjectionType::SIN);
+    let crval = [
+        fits_axis_angle_rad(cards, "CRVAL1", path)?,
+        fits_axis_angle_rad(cards, "CRVAL2", path)?,
+    ];
+    let cdelt = [
+        fits_axis_cell_rad(cards, 1, path)?,
+        fits_axis_cell_rad(cards, 2, path)?,
+    ];
+    let crpix = [
+        fits_optional_f64(cards, "CRPIX1").unwrap_or(1.0) - 1.0,
+        fits_optional_f64(cards, "CRPIX2").unwrap_or(1.0) - 1.0,
+    ];
+    let coordinate = DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(projection),
+        crval,
+        cdelt,
+        crpix,
+    );
+    let center_pixel = [0.5 * nx as f64, 0.5 * ny as f64];
+    let world = coordinate.to_world(&center_pixel).map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to resolve model-image center direction for {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(Some([world[0], world[1]]))
 }
 
 fn parse_fits_header(bytes: &[u8], path: &Path) -> MsResult<(Vec<String>, usize)> {
@@ -1197,6 +1288,26 @@ fn fits_axis_cell_rad(cards: &[String], axis: usize, path: &Path) -> MsResult<f6
             path.display()
         ))
     })?;
+    let unit = fits_string(cards, &format!("CUNIT{axis}")).unwrap_or_else(|| "deg".to_string());
+    match unit.trim().to_ascii_lowercase().as_str() {
+        "deg" | "degree" | "degrees" => Ok(value.to_radians()),
+        "rad" | "radian" | "radians" => Ok(value),
+        other => Err(MsError::SyntheticObservation(format!(
+            "model image {} uses unsupported CUNIT{axis}={other:?}; expected deg or rad",
+            path.display()
+        ))),
+    }
+}
+
+fn fits_axis_angle_rad(cards: &[String], key: &str, path: &Path) -> MsResult<f64> {
+    let value = fits_optional_f64(cards, key).ok_or_else(|| {
+        MsError::SyntheticObservation(format!("model image {} missing FITS {key}", path.display()))
+    })?;
+    let axis = key
+        .chars()
+        .last()
+        .and_then(|ch| ch.to_digit(10))
+        .unwrap_or(1) as usize;
     let unit = fits_string(cards, &format!("CUNIT{axis}")).unwrap_or_else(|| "deg".to_string());
     match unit.trim().to_ascii_lowercase().as_str() {
         "deg" | "degree" | "degrees" => Ok(value.to_radians()),

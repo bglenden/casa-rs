@@ -560,6 +560,7 @@ dependencies = [
 name = "casa-ms"
 version = "0.16.3"
 dependencies = [
+ "casa-coordinates",
  "casa-imaging",
  "casa-provider-contracts",
  "casa-tables",

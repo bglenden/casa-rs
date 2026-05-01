@@ -55,11 +55,24 @@ pub(crate) struct StandardGridder {
 
 impl StandardGridder {
     pub(crate) fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
+        Self::new_with_padding(geometry, padded_len)
+    }
+
+    pub(crate) fn new_with_casa_composite_padding(
+        geometry: ImageGeometry,
+    ) -> Result<Self, ImagingError> {
+        Self::new_with_padding(geometry, casa_composite_padded_len)
+    }
+
+    fn new_with_padding(
+        geometry: ImageGeometry,
+        padded_len_for_axis: fn(usize, f64) -> usize,
+    ) -> Result<Self, ImagingError> {
         geometry.validate()?;
 
         let grid_shape = [
-            padded_len(geometry.nx(), 1.2),
-            padded_len(geometry.ny(), 1.2),
+            padded_len_for_axis(geometry.nx(), 1.2),
+            padded_len_for_axis(geometry.ny(), 1.2),
         ];
         let image_blc = [
             (grid_shape[0] - geometry.nx() + (grid_shape[0] % 2 == 0) as usize) / 2,
@@ -219,7 +232,6 @@ impl StandardGridder {
         value
     }
 
-    #[cfg(test)]
     pub(crate) fn degrid_sample_product_planned(
         &self,
         grid: &Array2<Complex32>,
@@ -1173,6 +1185,23 @@ fn padded_len(image_len: usize, padding_factor: f64) -> usize {
     let padded = (padding_factor * image_len as f64 - 0.5).floor() as usize;
     let padded = padded.max(image_len);
     if padded % 2 == 0 { padded } else { padded + 1 }
+}
+
+fn casa_composite_padded_len(image_len: usize, padding_factor: f64) -> usize {
+    let mut padded = padded_len(image_len, padding_factor);
+    while !is_casa_composite_len(padded) {
+        padded += 2;
+    }
+    padded
+}
+
+fn is_casa_composite_len(mut value: usize) -> bool {
+    for factor in [2, 3, 5] {
+        while value > 1 && value % factor == 0 {
+            value /= factor;
+        }
+    }
+    value == 1
 }
 
 fn build_correction_axis(size: usize) -> Vec<f32> {

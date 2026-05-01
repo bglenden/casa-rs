@@ -42,13 +42,13 @@ generated products are structurally comparable but not numerically identical.
 | `UVW` p95 abs diff | `0.00022301637018244934 m` |
 | uv-distance max abs diff | `0.0002631813404150307 m` |
 | uv-distance p95 abs diff | `0.00016473680607305118 m` |
-| `DATA` max abs diff | `0.0003738360058512399 Jy` |
-| `DATA` p95 abs diff | `0.00029916768964221625 Jy` |
-| amplitude max abs diff | `0.0001329004085087078 Jy` |
-| amplitude p95 abs diff | `0.00003746049056766897 Jy` |
+| `DATA` max abs diff | `0.00012725180545661448 Jy` |
+| `DATA` p95 abs diff | `0.00003876001790270493 Jy` |
+| amplitude max abs diff | `0.0001270262737504222 Jy` |
+| amplitude p95 abs diff | `0.00003824164161010807 Jy` |
 | CASA `simobserve` runtime | `5.15946508385241 s` |
 | casa-rs debug task runtime | `24.447 s` |
-| casa-rs release task runtime | `5.000 s` |
+| casa-rs release task runtime | `4.654 s` |
 
 Inspectable artifacts:
 
@@ -73,9 +73,12 @@ computes per-antenna UVW once per integration instead of doing a measures
 conversion per baseline row.
 
 The remaining correctness gap is in the image model prediction. The CASA
-`.skymodel` pixels match the scaled FITS model, and applying the CASA simulator
-RA handedness convention reduced the complex `DATA` gap by about half, but
-complex visibility parity is still outside a closeout tolerance. Wave 5 should
-stay in progress until the `sm.predict`/FTMachine convention is traced to the
-same standard as the UVW path, or a narrower accepted tolerance is explicitly
-defined for this tutorial slice.
+`.skymodel` pixels match the scaled FITS model. Applying the CASA simulator RA
+handedness convention, CASA `modifymodel` image-center phase offset, and CASA's
+composite padded FFT grid reduced the complex `DATA` p95 residual by an order of
+magnitude from the first full-tutorial comparison. Complex visibility parity is
+still outside a closeout tolerance, with the remaining residual now dominated by
+amplitude rather than phase. Wave 5 should stay in progress until the remaining
+`sm.predict`/`ConvolveGridder` amplitude convention is traced to the same
+standard as the UVW path, or a narrower accepted tolerance is explicitly defined
+for this tutorial slice.

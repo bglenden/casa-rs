@@ -100,7 +100,7 @@ pub struct StandardMfsModelPredictor {
 impl StandardMfsModelPredictor {
     /// Build a predictor for one image geometry and final model plane.
     pub fn new(geometry: ImageGeometry, model: &Array2<f32>) -> Result<Self, ImagingError> {
-        let gridder = StandardGridder::new(geometry)?;
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry)?;
         let model_has_components = model.iter().any(|value| value.abs() > 0.0);
         let model_grid = model_has_components.then(|| centered_fft2(&gridder.apodize_model(model)));
         Ok(Self {
@@ -118,7 +118,7 @@ impl StandardMfsModelPredictor {
             return Complex32::new(0.0, 0.0);
         };
         self.gridder
-            .degrid_sample_product_planned_normalized(model_grid, &plan.positive)
+            .degrid_sample_product_planned(model_grid, &plan.positive)
     }
 }
 
