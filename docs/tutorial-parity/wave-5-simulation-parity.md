@@ -4,7 +4,7 @@ Truth class: current evidence
 Last reality check: 2026-05-01
 Verification:
 - `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/wave5-simulation-parity.py target/wave5-parity-full/ppdisk.rust.vla.a.3600s.ms target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.ms target/wave5-parity-full/report-3600s`
-- `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/wave5-simulation-parity.py target/wave5-parity-full/ppdisk.rust.vla.a.3600s.release.ms target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.ms target/wave5-parity-full/report-3600s-release`
+- `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/wave5-simulation-parity.py target/wave5-parity-full/ppdisk.rust.vla.a.3600s.release.ms target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.ms target/wave5-parity-full/report-3600s-release --model-image target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.skymodel --rust-image target/wave5-parity-full/images/ppdisk-rust-dirty.image --casa-image target/wave5-parity-full/images/ppdisk-casa-dirty.image`
 
 ## Tutorial Command
 
@@ -48,6 +48,9 @@ generated products are structurally comparable but not numerically identical.
 | `DATA` cells above `1e-6 Jy` | `14 / 1263600` |
 | amplitude max abs diff | `0.00002001160520101919 Jy` |
 | amplitude p95 abs diff | `0.000000001565668994213572 Jy` |
+| dirty image max abs diff | `0.0000024915498215705156 Jy/beam` |
+| dirty image p95 abs diff | `0.0000006156413292046636 Jy/beam` |
+| dirty image p99.9 abs diff | `0.0000018603442003950695 Jy/beam` |
 | CASA `simobserve` runtime | `5.15946508385241 s` |
 | casa-rs debug task runtime | `24.447 s` |
 | casa-rs release task runtime | `4.024 s` |
@@ -58,6 +61,13 @@ Inspectable artifacts:
 - `target/wave5-parity-full/report-3600s/wave5-simulation-parity.png`
 - `target/wave5-parity-full/report-3600s-release/wave5-simulation-parity.json`
 - `target/wave5-parity-full/report-3600s-release/wave5-simulation-parity.png`
+- `target/wave5-parity-full/report-3600s-release/wave5-simulation-image-panel.png`
+
+The image-panel artifact shows the imported model, casa-rs dirty image, CASA
+C++ dirty image, and `casa-rs - CASA C++` dirty-image residual on matched
+257-pixel, `0.00311arcsec` natural-weight MFS products. It is generated from
+the `casars-imager --dirty-only` product and a CASA `tclean(niter=0,
+gridder="standard", usepointing=False)` product for the same reference run.
 
 ## Interpretation
 

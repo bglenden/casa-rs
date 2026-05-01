@@ -8,6 +8,7 @@ Run this with the CASA Python environment so `casatools` is available:
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import sys
@@ -19,19 +20,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from casatools import table
+from casatools import image, table
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
-        print(
-            "usage: wave5-simulation-parity.py RUST_MS CASA_MS OUTDIR",
-            file=sys.stderr,
-        )
-        return 2
-    rust_ms = Path(sys.argv[1])
-    casa_ms = Path(sys.argv[2])
-    outdir = Path(sys.argv[3])
+    args = parse_args()
+    rust_ms = Path(args.rust_ms)
+    casa_ms = Path(args.casa_ms)
+    outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
     rust = read_main(rust_ms)
@@ -40,6 +36,13 @@ def main() -> int:
     report["rust_ms"] = str(rust_ms)
     report["casa_ms"] = str(casa_ms)
 
+    image_paths = image_product_paths(args)
+    if image_paths is not None:
+        model_image, rust_image, casa_image = image_paths
+        report["image_products"] = build_image_report(
+            model_image, rust_image, casa_image, outdir
+        )
+
     (outdir / "wave5-simulation-parity.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -47,6 +50,30 @@ def main() -> int:
     write_plots(rust, casa, outdir)
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Compare Wave 5 simulation MeasurementSets against a CASA reference."
+    )
+    parser.add_argument("rust_ms", help="casa-rs MeasurementSet")
+    parser.add_argument("casa_ms", help="CASA C++ reference MeasurementSet")
+    parser.add_argument("outdir", help="Output report directory")
+    parser.add_argument("--model-image", help="CASA image table for the input model")
+    parser.add_argument("--rust-image", help="casa-rs dirty/restored image product")
+    parser.add_argument("--casa-image", help="CASA C++ dirty/restored image product")
+    return parser.parse_args()
+
+
+def image_product_paths(args: argparse.Namespace) -> tuple[Path, Path, Path] | None:
+    provided = [args.model_image, args.rust_image, args.casa_image]
+    if not any(provided):
+        return None
+    if not all(provided):
+        raise SystemExit(
+            "--model-image, --rust-image, and --casa-image must be supplied together"
+        )
+    return (Path(args.model_image), Path(args.rust_image), Path(args.casa_image))
 
 
 def read_main(path: Path) -> dict[str, Any]:
@@ -114,6 +141,64 @@ def compare_array(rust: np.ndarray, casa: np.ndarray) -> dict[str, Any]:
     return result
 
 
+def build_image_report(
+    model_image_path: Path,
+    rust_image_path: Path,
+    casa_image_path: Path,
+    outdir: Path,
+) -> dict[str, Any]:
+    model_image = read_image_plane(model_image_path)
+    rust_image = read_image_plane(rust_image_path)
+    casa_image = read_image_plane(casa_image_path)
+    if rust_image.shape != casa_image.shape:
+        raise ValueError(
+            "casa-rs and CASA image shapes differ: "
+            f"{rust_image.shape} vs {casa_image.shape}"
+        )
+
+    write_image_panel(model_image, rust_image, casa_image, outdir)
+    return {
+        "model_image": {
+            "path": str(model_image_path),
+            **summarize_image(model_image),
+        },
+        "rust_image": {
+            "path": str(rust_image_path),
+            **summarize_image(rust_image),
+        },
+        "casa_image": {
+            "path": str(casa_image_path),
+            **summarize_image(casa_image),
+        },
+        "rust_minus_casa": compare_array(rust_image, casa_image),
+        "panel_png": str(outdir / "wave5-simulation-image-panel.png"),
+    }
+
+
+def read_image_plane(path: Path) -> np.ndarray:
+    ia = image()
+    ia.open(str(path))
+    try:
+        data = np.asarray(ia.getchunk(), dtype=np.float64)
+    finally:
+        ia.close()
+    while data.ndim > 2:
+        data = data[..., 0]
+    if data.ndim != 2:
+        raise ValueError(f"expected 2-D image plane for {path}, got shape {data.shape}")
+    return data
+
+
+def summarize_image(data: np.ndarray) -> dict[str, Any]:
+    return {
+        "shape": list(data.shape),
+        "min": finite_float(np.min(data)),
+        "max": finite_float(np.max(data)),
+        "mean": finite_float(np.mean(data)),
+        "rms": finite_float(np.sqrt(np.mean(data * data))),
+    }
+
+
 def finite_float(value: Any) -> float | str:
     value = float(value)
     if math.isfinite(value):
@@ -155,6 +240,60 @@ def write_plots(rust: dict[str, Any], casa: dict[str, Any], outdir: Path) -> Non
 
     fig.savefig(outdir / "wave5-simulation-parity.png", dpi=150)
     plt.close(fig)
+
+
+def write_image_panel(
+    model_image: np.ndarray,
+    rust_image: np.ndarray,
+    casa_image: np.ndarray,
+    outdir: Path,
+) -> None:
+    diff = rust_image - casa_image
+    image_vmin, image_vmax = percentile_limits(np.concatenate([rust_image, casa_image]))
+    diff_abs = float(np.percentile(np.abs(diff), 99.9)) if diff.size else 0.0
+    if diff_abs == 0.0:
+        diff_abs = float(np.max(np.abs(diff))) if diff.size else 1.0
+    if diff_abs == 0.0:
+        diff_abs = 1.0
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
+    panels = [
+        (
+            axes[0, 0],
+            model_image,
+            "Input model image",
+            *percentile_limits(model_image),
+            "viridis",
+        ),
+        (axes[0, 1], rust_image, "casa-rs dirty image", image_vmin, image_vmax, "viridis"),
+        (axes[1, 0], casa_image, "CASA C++ dirty image", image_vmin, image_vmax, "viridis"),
+        (
+            axes[1, 1],
+            diff,
+            "casa-rs minus CASA C++",
+            -diff_abs,
+            diff_abs,
+            "coolwarm",
+        ),
+    ]
+    for ax, data, title, vmin, vmax, cmap in panels:
+        im = ax.imshow(data.T, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
+        ax.set_title(title)
+        ax.set_xlabel("x pixel")
+        ax.set_ylabel("y pixel")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    fig.savefig(outdir / "wave5-simulation-image-panel.png", dpi=150)
+    plt.close(fig)
+
+
+def percentile_limits(data: np.ndarray) -> tuple[float, float]:
+    vmin = float(np.percentile(data, 0.5))
+    vmax = float(np.percentile(data, 99.5))
+    if vmin == vmax:
+        padding = abs(vmin) * 0.01 or 1.0
+        return vmin - padding, vmax + padding
+    return vmin, vmax
 
 
 if __name__ == "__main__":
