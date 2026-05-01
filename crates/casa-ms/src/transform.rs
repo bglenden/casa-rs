@@ -265,9 +265,37 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         });
     }
     let stage_started_at = Instant::now();
-    let selected_ddids = filtered_ddids;
+    let selected_times = input
+        .main_table()
+        .column_accessor("TIME")
+        .and_then(|column| column.scalar_cells_owned_for_rows(&selected_rows))
+        .map_err(|source| MsTransformError::MutateMeasurementSet {
+            path: request.input_ms.display().to_string(),
+            source: Box::new(source),
+        })?;
+    let mut row_order = selected_rows
+        .into_iter()
+        .zip(filtered_ddids)
+        .zip(selected_times)
+        .enumerate()
+        .map(|(original_index, ((row_index, ddid), time))| {
+            scalar_f64(time.as_ref(), "TIME", row_index)
+                .map(|time| (time, original_index, row_index, ddid))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    row_order.sort_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then_with(|| left.1.cmp(&right.1))
+    });
+    let mut selected_rows = Vec::with_capacity(row_order.len());
+    let mut selected_ddids = Vec::with_capacity(row_order.len());
+    for (_time, _original_index, row_index, ddid) in row_order {
+        selected_rows.push(row_index);
+        selected_ddids.push(ddid);
+    }
     maybe_log_transform_progress(
-        "preserve_input_row_order",
+        "sort_rows_by_time",
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
@@ -997,6 +1025,24 @@ fn scalar_i32(
 ) -> Result<i32, MsTransformError> {
     match value {
         Some(ScalarValue::Int32(value)) => Ok(*value),
+        _ => Err(MsTransformError::MutateMeasurementSet {
+            path: "<measurement-set>".to_string(),
+            source: Box::new(TableError::ColumnNotFound {
+                row_index,
+                column: column.to_string(),
+            }),
+        }),
+    }
+}
+
+fn scalar_f64(
+    value: Option<&ScalarValue>,
+    column: &str,
+    row_index: usize,
+) -> Result<f64, MsTransformError> {
+    match value {
+        Some(ScalarValue::Float64(value)) => Ok(*value),
+        Some(ScalarValue::Float32(value)) => Ok(f64::from(*value)),
         _ => Err(MsTransformError::MutateMeasurementSet {
             path: "<measurement-set>".to_string(),
             source: Box::new(TableError::ColumnNotFound {
