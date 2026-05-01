@@ -5,8 +5,8 @@ Last reality check: 2026-05-01
 Verification:
 - `/usr/bin/time -p target/release/simobserve --model /Users/brianglendenning/SoftwareProjects/casa-tutorial-data/tutorial-parity/simulation/vla-ppdisk/ppdisk672_GHz_50pc.fits --out target/wave5-parity-full/ppdisk.rust.vla.a.3600s.trace.ms --duration 3600 --integration 2 --overwrite`
 - `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/wave5-simulation-parity.py target/wave5-parity-full/ppdisk.rust.vla.a.3600s.trace.ms target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.ms target/wave5-parity-full/report-3600s-trace`
-- `/usr/bin/time -p target/release/casars-imager --ms target/wave5-parity-full/ppdisk.rust.vla.a.3600s.trace.ms --imagename target/wave5-parity-full/images-trace/ppdisk-rust-dirty --imsize 257 --cell-arcsec 0.00311 --dirty-only --weighting natural --no-preview-pngs`
-- `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/wave5-simulation-parity.py target/wave5-parity-full/ppdisk.rust.vla.a.3600s.trace.ms target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.ms target/wave5-parity-full/report-3600s-trace-images --model-image target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.skymodel --rust-image target/wave5-parity-full/images-trace/ppdisk-rust-dirty.image --casa-image target/wave5-parity-full/images/ppdisk-casa-dirty.image`
+- `/usr/bin/time -p target/release/casars-imager --ms target/wave5-parity-full/ppdisk.rust.vla.a.3600s.trace.ms --imagename target/wave5-parity-full/images-trace-fast/ppdisk-rust-dirty --imsize 257 --cell-arcsec 0.00311 --dirty-only --weighting natural --no-preview-pngs`
+- `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/wave5-simulation-parity.py target/wave5-parity-full/ppdisk.rust.vla.a.3600s.trace.ms target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.ms target/wave5-parity-full/report-3600s-trace-fast-images --model-image target/wave5-parity-full/psimvla1_casa/psimvla1_casa.vla.a.skymodel --rust-image target/wave5-parity-full/images-trace-fast/ppdisk-rust-dirty.image --casa-image target/wave5-parity-full/images/ppdisk-casa-dirty.image`
 - `scripts/run-wave5-issue125.sh target/wave5-issue125`
 
 ## Tutorial Command
@@ -56,15 +56,15 @@ generated products are structurally comparable but not numerically identical.
 | dirty image p99.9 abs diff | `0.0000018601072952151507 Jy/beam` |
 | CASA `simobserve` ptgfile repro runtime | `6.45 s` |
 | casa-rs release task runtime | `4.417 s internal / 5.54 s wall` |
-| casa-rs dirty-image runtime | `22.83 s wall` |
+| casa-rs dirty-image runtime | `2.05 s wall` |
 
 Inspectable artifacts:
 
 - `target/wave5-parity-full/report-3600s-trace/wave5-simulation-parity.json`
 - `target/wave5-parity-full/report-3600s-trace/wave5-simulation-parity.png`
-- `target/wave5-parity-full/report-3600s-trace-images/wave5-simulation-parity.json`
-- `target/wave5-parity-full/report-3600s-trace-images/wave5-simulation-parity.png`
-- `target/wave5-parity-full/report-3600s-trace-images/wave5-simulation-image-panel.png`
+- `target/wave5-parity-full/report-3600s-trace-fast-images/wave5-simulation-parity.json`
+- `target/wave5-parity-full/report-3600s-trace-fast-images/wave5-simulation-parity.png`
+- `target/wave5-parity-full/report-3600s-trace-fast-images/wave5-simulation-image-panel.png`
 
 The image-panel artifact shows the imported model, casa-rs dirty image, CASA
 C++ dirty image, and `casa-rs - CASA C++` dirty-image residual on matched
@@ -169,13 +169,18 @@ Measured result:
 | `imstat` RMS abs diff | `6.553763823671267e-8 Jy/beam` |
 | `imstat` npts diff | `0` |
 | invalid MS check | failed before image products, as expected |
-| CASA `tclean` runtime | `2.1315181250683963 s` |
-| casa-rs `casars-imager` runtime | `23.14154116716236 s` |
-| CASA plot export runtime | `0.21042108279652894 s` with recorded `plotms` display fallback |
-| casa-rs `msexplore` plot runtime | `5.899880249984562 s` |
+| CASA `tclean` runtime | `2.146216791123152 s` |
+| casa-rs `casars-imager` runtime | `2.897235166048631 s` |
+| CASA plot export fallback runtime | `0.20892916596494615 s`; real `plotms` unavailable because `DISPLAY` is unset |
+| casa-rs `msexplore` plot runtime | `6.284246832830831 s` |
 
 The #125 image and statistics products match at the same residual scale as the
 accepted #124 synthetic-MS residual. The visible panels show the same dirty
-image morphology and the same amplitude-vs-uv-distance structure. Performance
-is not yet competitive for imaging or plotting; that is recorded here as
-evidence for Wave 7/#130 rather than hidden by the #125 closeout.
+image morphology and the same amplitude-vs-uv-distance structure. The original
+#125 run exposed a casa-rs imaging runtime of `23.14154116716236 s`; profiling
+showed almost all of that time was repeated MFS frequency-frame conversion
+during `prepare_plane_input/accumulate_rows`. Caching the MFS frequency scale by
+row time and field reduced the same command to `2.897235166048631 s` without
+changing the image or statistics residuals. The plot timing remains labeled as
+a headless artifact comparison because CASA `plotms` cannot run in this local
+environment without `DISPLAY`.

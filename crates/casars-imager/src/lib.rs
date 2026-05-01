@@ -3655,6 +3655,7 @@ struct PreparedSelection {
     freq_ref: FrequencyRef,
     cube_spectral_setup: Option<CubeSpectralSetup>,
     cube_row_spectral_cache: HashMap<(u64, usize), Rc<CubeRowSpectralContributions>>,
+    mfs_frequency_scale_cache: HashMap<(u64, usize), f64>,
     casa_cube_grid_interpolation: bool,
     use_density_batches: bool,
     use_model_interpolation_batches: bool,
@@ -4195,6 +4196,7 @@ impl PreparedSelection {
                 freq_ref: output_freq_ref,
                 cube_spectral_setup,
                 cube_row_spectral_cache: HashMap::new(),
+                mfs_frequency_scale_cache: HashMap::new(),
                 casa_cube_grid_interpolation: config.per_channel_weight_density
                     && matches!(
                         config.weighting,
@@ -4220,6 +4222,7 @@ impl PreparedSelection {
                 freq_ref: FrequencyRef::TOPO,
                 cube_spectral_setup: None,
                 cube_row_spectral_cache: HashMap::new(),
+                mfs_frequency_scale_cache: HashMap::new(),
                 casa_cube_grid_interpolation: false,
                 use_density_batches: false,
                 use_model_interpolation_batches: false,
@@ -4367,26 +4370,13 @@ impl PreparedSelection {
         let use_casa_cube_grid_interpolation = self.casa_cube_grid_interpolation;
         let use_density_batches = self.use_density_batches;
         let use_model_interpolation_batches = self.use_model_interpolation_batches;
-        let mfs_freq_ref = self.freq_ref;
         let mfs_frequency_scale = if matches!(
             &self.state,
             PreparedState::ExplicitMfs { .. }
                 | PreparedState::PairedMfs { .. }
                 | PreparedState::CollapsedMfs { .. }
         ) {
-            let reference_frequency_hz = self
-                .source_channel_frequencies_hz
-                .first()
-                .copied()
-                .ok_or_else(|| {
-                    "internal error: MFS preparation has no source frequencies".to_string()
-                })?;
-            mfs_imaging_frequency_scale(
-                mfs_freq_ref,
-                reference_frequency_hz,
-                selected_row,
-                derived_engine,
-            )?
+            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?
         } else {
             1.0
         };
@@ -5154,6 +5144,38 @@ impl PreparedSelection {
         Ok(())
     }
 
+    fn mfs_imaging_frequency_scale_for_row(
+        &mut self,
+        selected_row: &SelectedMainRow,
+        derived_engine: Option<&MsCalEngine>,
+    ) -> Result<f64, String> {
+        if self.freq_ref == FrequencyRef::LSRK {
+            return Ok(1.0);
+        }
+        let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+            "internal error: missing row time for MFS frequency-frame conversion".to_string()
+        })?;
+        let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
+        if let Some(scale) = self.mfs_frequency_scale_cache.get(&cache_key) {
+            return Ok(*scale);
+        }
+        let reference_frequency_hz = self
+            .source_channel_frequencies_hz
+            .first()
+            .copied()
+            .ok_or_else(|| {
+                "internal error: MFS preparation has no source frequencies".to_string()
+            })?;
+        let scale = mfs_imaging_frequency_scale(
+            self.freq_ref,
+            reference_frequency_hz,
+            selected_row,
+            derived_engine,
+        )?;
+        self.mfs_frequency_scale_cache.insert(cache_key, scale);
+        Ok(scale)
+    }
+
     fn finish_standard_mfs_without_trace(self) -> Result<PreparedInput, String> {
         let PreparedSelection {
             initialization_error: _,
@@ -5165,6 +5187,7 @@ impl PreparedSelection {
             freq_ref,
             cube_spectral_setup: _,
             cube_row_spectral_cache: _,
+            mfs_frequency_scale_cache: _,
             casa_cube_grid_interpolation: _,
             use_density_batches: _,
             use_model_interpolation_batches: _,
@@ -5236,6 +5259,7 @@ impl PreparedSelection {
             freq_ref,
             cube_spectral_setup,
             cube_row_spectral_cache: _,
+            mfs_frequency_scale_cache: _,
             casa_cube_grid_interpolation: _,
             use_density_batches,
             use_model_interpolation_batches,
@@ -5409,6 +5433,7 @@ impl PreparedSelection {
             freq_ref,
             cube_spectral_setup,
             cube_row_spectral_cache: _,
+            mfs_frequency_scale_cache: _,
             casa_cube_grid_interpolation: _,
             use_density_batches,
             use_model_interpolation_batches,
