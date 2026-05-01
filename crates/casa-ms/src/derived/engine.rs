@@ -382,6 +382,27 @@ impl MsCalEngine {
         Ok([u, v, w])
     }
 
+    /// Project an ITRF antenna-position offset into source-frame UVW meters.
+    ///
+    /// This mirrors CASA `KAntPosJones`: build the frame at antenna 0, convert
+    /// the earth-frame antenna offset to the field direction's sky frame, then
+    /// use its W projection as the per-antenna delay.
+    pub fn project_itrf_offset_to_uvw(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        _antenna_id: usize,
+        offset_m: [f64; 3],
+    ) -> MsResult<[f64; 3]> {
+        let frame = self.make_frame(time_mjd_sec, 0)?;
+        let dir = self.field_dir(field_id)?;
+        let source_itrf = dir.convert_to(DirectionRef::ITRF, &frame)?.cosines();
+        let w = offset_m[0] * source_itrf[0]
+            + offset_m[1] * source_itrf[1]
+            + offset_m[2] * source_itrf[2];
+        Ok([0.0, 0.0, w])
+    }
+
     /// Reproject raw MS UVW coordinates from one field phase center to another.
     ///
     /// The input UVW is assumed to be stored in native MeasurementSet

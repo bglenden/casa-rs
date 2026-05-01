@@ -82,8 +82,9 @@ pub use analysis::{
     ExportFitsRequest, FitsExportSummary, FitsImportSummary, ImageAnalysisProtocolInfo,
     ImageAnalysisTaskRequest, ImageAnalysisTaskResult, ImageAnalysisTaskSchemaBundle,
     ImageHeaderSummary, ImageStatisticsSummary, ImheadRequest, ImmomentsRequest, ImportFitsRequest,
-    ImstatRequest, MomentMapSummary, export_fits, image_analysis_ui_schema_json, imhead, immoments,
-    import_fits, imstat, read_image_analysis_request_source, run_image_analysis_task,
+    ImpvRequest, ImstatRequest, MomentMapSummary, PvImageSummary, export_fits,
+    image_analysis_ui_schema_json, imhead, immoments, import_fits, impv, imstat,
+    read_image_analysis_request_source, run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use browser_render::{

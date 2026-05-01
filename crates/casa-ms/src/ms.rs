@@ -801,7 +801,7 @@ fn apply_column_metadata(table: &mut Table, defs: &[ColumnDef]) {
     }
 }
 
-fn measurement_set_table_options(path: &Path) -> TableOptions {
+pub(crate) fn measurement_set_table_options(path: &Path) -> TableOptions {
     TableOptions::new(path).with_data_manager(DataManagerKind::StandardStMan)
 }
 
@@ -843,7 +843,7 @@ fn save_main_table_with_policy(main: &Table, path: &Path, assume_valid: bool) ->
     Ok(())
 }
 
-fn measurement_set_main_table_bindings(main: &Table) -> HashMap<String, ColumnBinding> {
+pub(crate) fn measurement_set_main_table_bindings(main: &Table) -> HashMap<String, ColumnBinding> {
     let column_names: HashSet<_> = main
         .schema()
         .map(|schema| {

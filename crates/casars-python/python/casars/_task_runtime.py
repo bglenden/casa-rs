@@ -40,6 +40,8 @@ IMEXPLORE_BINARY_NAME = "imexplore"
 IMEXPLORE_BINARY_ENVVAR = "CASARS_IMEXPLORE_BIN"
 IMMOMENTS_BINARY_NAME = "immoments"
 IMMOMENTS_BINARY_ENVVAR = "CASARS_IMMOMENTS_BIN"
+IMPV_BINARY_NAME = "impv"
+IMPV_BINARY_ENVVAR = "CASARS_IMPV_BIN"
 EXPORTFITS_BINARY_NAME = "exportfits"
 EXPORTFITS_BINARY_ENVVAR = "CASARS_EXPORTFITS_BIN"
 IMPORTFITS_BINARY_NAME = "importfits"
@@ -53,6 +55,7 @@ _configured_msexplore_binary: str | None = None
 _configured_imager_binary: str | None = None
 _configured_imexplore_binary: str | None = None
 _configured_immoments_binary: str | None = None
+_configured_impv_binary: str | None = None
 _configured_exportfits_binary: str | None = None
 _configured_importfits_binary: str | None = None
 
@@ -169,6 +172,13 @@ def configure_immoments_binary(binary: StrPath | None) -> None:
     _configured_immoments_binary = None if binary is None else os.fspath(binary)
 
 
+def configure_impv_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default impv binary override."""
+
+    global _configured_impv_binary
+    _configured_impv_binary = None if binary is None else os.fspath(binary)
+
+
 def configure_exportfits_binary(binary: StrPath | None) -> None:
     """Set or clear the module-wide default exportfits binary override."""
 
@@ -258,6 +268,19 @@ def resolve_immoments_binary(binary: StrPath | None = None) -> str:
         binary_name=IMMOMENTS_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="immoments",
+    )
+
+
+def resolve_impv_binary(binary: StrPath | None = None) -> str:
+    """Resolve the impv binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_impv_binary,
+        envvar=IMPV_BINARY_ENVVAR,
+        binary_name=IMPV_BINARY_NAME,
+        missing_error_cls=ImageAnalysisBinaryNotFoundError,
+        description="impv",
     )
 
 
@@ -352,6 +375,19 @@ def get_immoments_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     )
 
 
+def get_impv_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
+    """Return validated protocol info for the selected impv binary."""
+
+    resolved = resolve_impv_binary(binary)
+    return _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+
+
 def get_exportfits_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     """Return validated protocol info for the selected exportfits binary."""
 
@@ -414,6 +450,14 @@ def fetch_immoments_schema(binary: StrPath | None = None) -> dict[str, Any]:
     """Fetch the JSON schema bundle advertised by the immoments binary."""
 
     resolved = resolve_immoments_binary(binary)
+    stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
+    return json.loads(stdout)
+
+
+def fetch_impv_schema(binary: StrPath | None = None) -> dict[str, Any]:
+    """Fetch the JSON schema bundle advertised by the impv binary."""
+
+    resolved = resolve_impv_binary(binary)
     stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
     return json.loads(stdout)
 
@@ -550,6 +594,30 @@ def invoke_immoments_task(
         invocation_error_cls=ImageAnalysisInvocationError,
     )
     payload = json.dumps({"kind": "immoments", "request": request}, sort_keys=True)
+    stdout = _run_process(
+        [resolved, "--json-run", "-"],
+        stdin=payload,
+        error_cls=ImageAnalysisInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_impv_task(
+    *,
+    request: dict[str, Any],
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run one impv task request through ``impv --json-run -``."""
+
+    resolved = resolve_impv_binary(binary)
+    _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+    payload = json.dumps({"kind": "impv", "request": request}, sort_keys=True)
     stdout = _run_process(
         [resolved, "--json-run", "-"],
         stdin=payload,

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ApplyExecutionReport, ApplyPlan, BandpassSolveReport, CalibrationStatsReport,
     CalibrationTableSummary, ContinuumSubtractionReport, ExportCorrectedDataReport,
-    FluxScaleReport, GainSolveReport,
+    FluxScaleReport, GainSolveReport, GencalReport,
 };
 
 /// Canonical structured result for one calibration task execution.
@@ -32,6 +32,8 @@ pub enum CalibrationTaskResult {
     SolveBandpass(BandpassSolveReport),
     /// `calibrate fluxscale`
     FluxScale(FluxScaleReport),
+    /// `calibrate gencal`
+    Gencal(GencalReport),
 }
 
 /// Backward-compatible alias for the launcher-managed calibration output type.

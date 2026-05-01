@@ -2114,7 +2114,7 @@ impl ColumnDescContents {
         }
     }
 
-    fn from_column_schema(col: &ColumnSchema) -> Self {
+    pub(crate) fn from_column_schema(col: &ColumnSchema) -> Self {
         use crate::schema::{ArrayShapeContract, ColumnType};
 
         // Record columns have no primitive type; use TpRecord directly.

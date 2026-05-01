@@ -387,7 +387,7 @@ pub struct CubeChannelRequest {
 }
 
 impl CubeChannelRequest {
-    pub(crate) fn validate(&self) -> Result<(), ImagingError> {
+    pub(crate) fn validate(&self, require_model_interpolation: bool) -> Result<(), ImagingError> {
         if !(self.channel_frequency_hz.is_finite() && self.channel_frequency_hz > 0.0) {
             return Err(ImagingError::InvalidRequest(
                 "cube channel frequencies must be finite positive Hz".to_string(),
@@ -400,6 +400,12 @@ impl CubeChannelRequest {
         }
         for batch in &self.density_batches {
             batch.validate()?;
+        }
+        for batch in &self.visibility_batches {
+            batch.validate()?;
+        }
+        if self.model_interpolation_batches.is_empty() && !require_model_interpolation {
+            return Ok(());
         }
         if self.model_interpolation_batches.len() != self.visibility_batches.len() {
             return Err(ImagingError::InvalidRequest(format!(
@@ -414,7 +420,6 @@ impl CubeChannelRequest {
             .zip(self.model_interpolation_batches.iter())
             .enumerate()
         {
-            batch.validate()?;
             if interpolation.sample_contributions.len() != batch.len() {
                 return Err(ImagingError::InvalidRequest(format!(
                     "cube model interpolation batch {batch_index} length {} does not match visibility batch length {}",
@@ -1047,8 +1052,9 @@ impl CubeImagingRequest {
                 "cube imaging requires at least one spectral plane".to_string(),
             ));
         }
+        let require_model_interpolation = self.clean.niter > 0;
         for channel in &self.channels {
-            channel.validate()?;
+            channel.validate(require_model_interpolation)?;
         }
         Ok(())
     }

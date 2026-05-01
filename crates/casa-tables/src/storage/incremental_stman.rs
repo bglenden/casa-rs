@@ -15,10 +15,12 @@
 //! C++ equivalent: `casacore/tables/DataMan/ISMBase`, `ISMBucket`, `ISMIndex`,
 //! `ISMColumn`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use casa_aipsio::{AipsIo, ByteOrder};
 use casa_types::ScalarValue;
@@ -41,6 +43,26 @@ const ISM_HEADER_SIZE: u64 = 512;
 const AIPSIO_MAGIC: u32 = 0xbebebebe;
 
 type SparseScalarRowValues = Vec<(usize, Option<casa_types::ScalarValue>)>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IsmSelectedScalarRowsCacheKey {
+    file_path: PathBuf,
+    file_len: u64,
+    file_modified: Option<SystemTime>,
+    selected_rows: Vec<usize>,
+    column_names: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct IsmSelectedScalarRowsCache {
+    key: IsmSelectedScalarRowsCacheKey,
+    values_by_column: Vec<Vec<Option<ScalarValue>>>,
+}
+
+thread_local! {
+    static ISM_SELECTED_SCALAR_ROWS_CACHE: RefCell<Option<IsmSelectedScalarRowsCache>> =
+        const { RefCell::new(None) };
+}
 
 // ---------------------------------------------------------------------------
 // In-memory AipsIO helpers
@@ -1016,12 +1038,6 @@ pub(crate) fn read_ism_scalar_column_rows(
         return Ok(Some(Vec::new()));
     }
 
-    let _dm_name = parse_ism_dm_blob(dm_blob)?;
-    let mut file = File::open(file_path)?;
-    let header = parse_ism_header(&mut file)?;
-    let index = parse_ism_index(&mut file, &header)?;
-    let big_endian = header.big_endian;
-
     if target_col_idx >= col_descs.len() {
         return Err(StorageError::FormatMismatch(format!(
             "ISM scalar column index {target_col_idx} is out of range"
@@ -1032,11 +1048,155 @@ pub(crate) fn read_ism_scalar_column_rows(
         return Ok(None);
     }
 
+    let cache_key = ism_selected_scalar_rows_cache_key(file_path, col_descs, selected_rows)?;
+    if let Some(values) =
+        cached_ism_selected_scalar_column(&cache_key, target_col_idx, selected_rows.len())
+    {
+        return Ok(Some(values));
+    }
+
+    let values_by_column =
+        read_ism_scalar_columns_rows_uncached(file_path, dm_blob, col_descs, selected_rows)?;
+    let values = values_by_column
+        .get(target_col_idx)
+        .cloned()
+        .ok_or_else(|| {
+            StorageError::FormatMismatch(format!(
+                "ISM scalar column '{}' missing from selected-row cache",
+                target_col_desc.col_name
+            ))
+        })?;
+    store_ism_selected_scalar_rows_cache(cache_key, values_by_column);
+    Ok(Some(values))
+}
+
+pub(crate) fn read_ism_scalar_column(
+    file_path: &Path,
+    dm_blob: &[u8],
+    col_descs: &[&ColumnDescContents],
+    target_col_idx: usize,
+    nrrow: usize,
+) -> Result<Option<Vec<Option<ScalarValue>>>, StorageError> {
+    if target_col_idx >= col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "ISM scalar column index {target_col_idx} is out of range"
+        )));
+    }
+    let target_col_desc = col_descs[target_col_idx];
+    if target_col_desc.is_array || target_col_desc.is_record() {
+        return Ok(None);
+    }
+
+    let _dm_name = parse_ism_dm_blob(dm_blob)?;
+    let mut file = File::open(file_path)?;
+    let header = parse_ism_header(&mut file)?;
+    let index = parse_ism_index(&mut file, &header)?;
+    let big_endian = header.big_endian;
+    let scalar_dt =
+        CasacoreDataType::from_primitive_type(target_col_desc.require_primitive_type()?, false);
+
+    let mut values = Vec::with_capacity(nrrow);
+    let mut last_bucket_nr = None;
+    let mut cached_bucket = None;
+    for interval in 0..index.bucket_nrs.len() {
+        let bucket_start = index.rows[interval] as usize;
+        let bucket_end = index.rows[interval + 1] as usize;
+        let rows_in_bucket = bucket_end.saturating_sub(bucket_start);
+        let bucket_nr = index.bucket_nrs[interval];
+        if last_bucket_nr != Some(bucket_nr) {
+            let raw_bucket = read_ism_bucket(&mut file, &header, bucket_nr)?;
+            cached_bucket = Some(parse_ism_bucket(&raw_bucket, col_descs.len(), big_endian)?);
+            last_bucket_nr = Some(bucket_nr);
+        }
+        let bucket = cached_bucket
+            .as_ref()
+            .expect("ISM bucket loaded before scalar column extraction");
+        values.extend(load_scalar_bucket_column_values(
+            bucket,
+            target_col_desc,
+            target_col_idx,
+            scalar_dt,
+            rows_in_bucket,
+            big_endian,
+        )?);
+    }
+
+    values.truncate(nrrow);
+    if values.len() < nrrow {
+        values.resize(nrrow, None);
+    }
+    Ok(Some(values))
+}
+
+fn ism_selected_scalar_rows_cache_key(
+    file_path: &Path,
+    col_descs: &[&ColumnDescContents],
+    selected_rows: &[usize],
+) -> Result<IsmSelectedScalarRowsCacheKey, StorageError> {
+    let metadata = std::fs::metadata(file_path)?;
+    Ok(IsmSelectedScalarRowsCacheKey {
+        file_path: file_path.to_path_buf(),
+        file_len: metadata.len(),
+        file_modified: metadata.modified().ok(),
+        selected_rows: selected_rows.to_vec(),
+        column_names: col_descs
+            .iter()
+            .map(|col_desc| col_desc.col_name.clone())
+            .collect(),
+    })
+}
+
+fn cached_ism_selected_scalar_column(
+    key: &IsmSelectedScalarRowsCacheKey,
+    target_col_idx: usize,
+    expected_len: usize,
+) -> Option<Vec<Option<ScalarValue>>> {
+    ISM_SELECTED_SCALAR_ROWS_CACHE.with(|cache| {
+        let cache = cache.borrow();
+        let entry = cache.as_ref()?;
+        if &entry.key != key {
+            return None;
+        }
+        let values = entry.values_by_column.get(target_col_idx)?;
+        (values.len() == expected_len).then(|| values.clone())
+    })
+}
+
+fn store_ism_selected_scalar_rows_cache(
+    key: IsmSelectedScalarRowsCacheKey,
+    values_by_column: Vec<Vec<Option<ScalarValue>>>,
+) {
+    ISM_SELECTED_SCALAR_ROWS_CACHE.with(|cache| {
+        *cache.borrow_mut() = Some(IsmSelectedScalarRowsCache {
+            key,
+            values_by_column,
+        });
+    });
+}
+
+fn read_ism_scalar_columns_rows_uncached(
+    file_path: &Path,
+    dm_blob: &[u8],
+    col_descs: &[&ColumnDescContents],
+    selected_rows: &[usize],
+) -> Result<Vec<Vec<Option<ScalarValue>>>, StorageError> {
+    let _dm_name = parse_ism_dm_blob(dm_blob)?;
+    let mut file = File::open(file_path)?;
+    let header = parse_ism_header(&mut file)?;
+    let index = parse_ism_index(&mut file, &header)?;
+    let big_endian = header.big_endian;
+
     let owned_col_descs: Vec<ColumnDescContents> =
         col_descs.iter().map(|col| (*col).clone()).collect();
     let col_info: Vec<(CasacoreDataType, usize)> = owned_col_descs
         .iter()
         .map(|col_desc| {
+            if col_desc.is_array || col_desc.is_record() {
+                return Err(StorageError::FormatMismatch(format!(
+                    "ISM selected scalar reader only supports scalar columns, found '{}'",
+                    col_desc.col_name
+                )));
+            }
             let scalar_dt =
                 CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
             let nrelem = if col_desc.is_array && !col_desc.shape.is_empty() {
@@ -1056,10 +1216,12 @@ pub(crate) fn read_ism_scalar_column_rows(
         .collect();
     requests.sort_unstable_by_key(|&(row_index, _)| row_index);
 
-    let mut values = vec![None; selected_rows.len()];
     let mut cached_interval = None;
     let mut cached_bucket_start = 0usize;
-    let mut cached_bucket_values: Vec<Option<ScalarValue>> = Vec::new();
+    let mut cached_bucket_values: Vec<Vec<Option<ScalarValue>>> = Vec::new();
+    let mut values_by_column = (0..col_descs.len())
+        .map(|_| vec![None; selected_rows.len()])
+        .collect::<Vec<_>>();
 
     for (row_index, out_idx) in requests {
         let interval = index
@@ -1090,21 +1252,21 @@ pub(crate) fn read_ism_scalar_column_rows(
                 bucket_end.saturating_sub(cached_bucket_start),
                 big_endian,
             )?;
-            cached_bucket_values = bucket_rows.get(target_col_idx).cloned().ok_or_else(|| {
-                StorageError::FormatMismatch(format!(
-                    "ISM scalar column '{}' missing from parsed bucket",
-                    target_col_desc.col_name
-                ))
-            })?;
+            cached_bucket_values = bucket_rows;
         }
 
-        values[out_idx] = cached_bucket_values
-            .get(row_index.saturating_sub(cached_bucket_start))
-            .cloned()
-            .unwrap_or(None);
+        let bucket_row = row_index.saturating_sub(cached_bucket_start);
+        for (column_values, bucket_column_values) in
+            values_by_column.iter_mut().zip(cached_bucket_values.iter())
+        {
+            column_values[out_idx] = bucket_column_values
+                .get(bucket_row)
+                .cloned()
+                .unwrap_or(None);
+        }
     }
 
-    Ok(Some(values))
+    Ok(values_by_column)
 }
 
 fn default_value(
@@ -1614,6 +1776,158 @@ fn encode_value_bytes(
     buf
 }
 
+fn encode_scalar_column_value_bytes(
+    value: Option<&casa_types::ScalarValue>,
+    dt: CasacoreDataType,
+    nrelem: usize,
+    big_endian: bool,
+) -> Vec<u8> {
+    use casa_types::ScalarValue;
+
+    if nrelem != 1 {
+        let value = value.cloned().map(casa_types::Value::Scalar);
+        return encode_value_bytes(value.as_ref(), dt, nrelem, big_endian);
+    }
+
+    if dt == CasacoreDataType::TpString {
+        let string = match value {
+            Some(ScalarValue::String(value)) => value.as_str(),
+            _ => "",
+        };
+        let total_length = (4 + string.len()) as u32;
+        let mut buf = Vec::with_capacity(total_length as usize);
+        if big_endian {
+            buf.extend_from_slice(&total_length.to_be_bytes());
+        } else {
+            buf.extend_from_slice(&total_length.to_le_bytes());
+        }
+        buf.extend_from_slice(string.as_bytes());
+        return buf;
+    }
+
+    if dt == CasacoreDataType::TpBool {
+        return vec![match value {
+            Some(ScalarValue::Bool(true)) => 1,
+            _ => 0,
+        }];
+    }
+
+    let elem_size = ism_element_size(dt);
+    let mut buf = vec![0u8; elem_size];
+    match dt {
+        CasacoreDataType::TpUChar => {
+            if let Some(ScalarValue::UInt8(value)) = value {
+                buf[0] = *value;
+            }
+        }
+        CasacoreDataType::TpShort => {
+            let value = match value {
+                Some(ScalarValue::Int16(value)) => *value,
+                _ => 0,
+            };
+            if big_endian {
+                write_i16_be(&mut buf, value);
+            } else {
+                write_i16_le(&mut buf, value);
+            }
+        }
+        CasacoreDataType::TpUShort => {
+            let value = match value {
+                Some(ScalarValue::UInt16(value)) => *value,
+                _ => 0,
+            };
+            if big_endian {
+                write_u16_be(&mut buf, value);
+            } else {
+                write_u16_le(&mut buf, value);
+            }
+        }
+        CasacoreDataType::TpInt => {
+            let value = match value {
+                Some(ScalarValue::Int32(value)) => *value,
+                _ => 0,
+            };
+            if big_endian {
+                write_i32_be(&mut buf, value);
+            } else {
+                write_i32_le(&mut buf, value);
+            }
+        }
+        CasacoreDataType::TpUInt => {
+            let value = match value {
+                Some(ScalarValue::UInt32(value)) => *value,
+                _ => 0,
+            };
+            if big_endian {
+                write_u32_be(&mut buf, value);
+            } else {
+                write_u32_le(&mut buf, value);
+            }
+        }
+        CasacoreDataType::TpFloat => {
+            let value = match value {
+                Some(ScalarValue::Float32(value)) => *value,
+                _ => 0.0,
+            };
+            if big_endian {
+                write_f32_be(&mut buf, value);
+            } else {
+                write_f32_le(&mut buf, value);
+            }
+        }
+        CasacoreDataType::TpDouble => {
+            let value = match value {
+                Some(ScalarValue::Float64(value)) => *value,
+                _ => 0.0,
+            };
+            if big_endian {
+                write_f64_be(&mut buf, value);
+            } else {
+                write_f64_le(&mut buf, value);
+            }
+        }
+        CasacoreDataType::TpInt64 => {
+            let value = match value {
+                Some(ScalarValue::Int64(value)) => *value,
+                _ => 0,
+            };
+            if big_endian {
+                write_i64_be(&mut buf, value);
+            } else {
+                write_i64_le(&mut buf, value);
+            }
+        }
+        CasacoreDataType::TpComplex => {
+            let (re, im) = match value {
+                Some(ScalarValue::Complex32(value)) => (value.re, value.im),
+                _ => (0.0, 0.0),
+            };
+            if big_endian {
+                write_f32_be(&mut buf, re);
+                write_f32_be(&mut buf[4..], im);
+            } else {
+                write_f32_le(&mut buf, re);
+                write_f32_le(&mut buf[4..], im);
+            }
+        }
+        CasacoreDataType::TpDComplex => {
+            let (re, im) = match value {
+                Some(ScalarValue::Complex64(value)) => (value.re, value.im),
+                _ => (0.0, 0.0),
+            };
+            if big_endian {
+                write_f64_be(&mut buf, re);
+                write_f64_be(&mut buf[8..], im);
+            } else {
+                write_f64_le(&mut buf, re);
+                write_f64_le(&mut buf[8..], im);
+            }
+        }
+        _ => {}
+    }
+    buf
+}
+
 /// Encode string value(s) in ISM format (C++ `ISMColumn::fromString`):
 ///
 /// Scalar (nrelem == 1): `[u32: total_length] [string_bytes]`
@@ -1773,15 +2087,20 @@ pub(crate) fn write_ism_file_scalar_columns(
             let rel_row = (row_idx - *bucket_start_rows.last().unwrap()) as u32;
 
             let mut new_data_estimate = 0usize;
+            let mut row_encoded_values = Vec::with_capacity(ncol);
             for col_idx in 0..ncol {
                 let (dt, nrelem) = col_info[col_idx];
-                let temp_value = scalar_columns[col_idx][row_idx]
-                    .as_ref()
-                    .cloned()
-                    .map(casa_types::Value::Scalar);
-                let encoded = encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian);
+                let encoded = encode_scalar_column_value_bytes(
+                    scalar_columns[col_idx][row_idx].as_ref(),
+                    dt,
+                    nrelem,
+                    big_endian,
+                );
                 if rel_row == 0 || encoded != last_values[col_idx] {
                     new_data_estimate += encoded.len();
+                    row_encoded_values.push(Some(encoded));
+                } else {
+                    row_encoded_values.push(None);
                 }
             }
 
@@ -1818,11 +2137,14 @@ pub(crate) fn write_ism_file_scalar_columns(
                 }
                 for col_idx in 0..ncol {
                     let (dt, nrelem) = col_info[col_idx];
-                    let temp_value = scalar_columns[col_idx][row_idx]
-                        .as_ref()
-                        .cloned()
-                        .map(casa_types::Value::Scalar);
-                    let encoded = encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian);
+                    let encoded = row_encoded_values[col_idx].take().unwrap_or_else(|| {
+                        encode_scalar_column_value_bytes(
+                            scalar_columns[col_idx][row_idx].as_ref(),
+                            dt,
+                            nrelem,
+                            big_endian,
+                        )
+                    });
                     if encoded != last_values[col_idx] {
                         let offset = current.data.len() as u32;
                         current.data.extend_from_slice(&encoded);
@@ -1836,14 +2158,7 @@ pub(crate) fn write_ism_file_scalar_columns(
             }
 
             for col_idx in 0..ncol {
-                let (dt, nrelem) = col_info[col_idx];
-                let temp_value = scalar_columns[col_idx][row_idx]
-                    .as_ref()
-                    .cloned()
-                    .map(casa_types::Value::Scalar);
-                let encoded = encode_value_bytes(temp_value.as_ref(), dt, nrelem, big_endian);
-
-                if rel_row == 0 || encoded != last_values[col_idx] {
+                if let Some(encoded) = row_encoded_values[col_idx].take() {
                     let offset = current.data.len() as u32;
                     current.data.extend_from_slice(&encoded);
                     current.col_indices[col_idx].0.push(rel_row);
@@ -2530,6 +2845,66 @@ fn load_scalar_bucket_values(
             }
         }
         values.push(column);
+    }
+    Ok(values)
+}
+
+fn load_scalar_bucket_column_values(
+    bucket: &IsmBucket,
+    col_desc: &ColumnDescContents,
+    col_idx: usize,
+    dt: CasacoreDataType,
+    rows_in_bucket: usize,
+    big_endian: bool,
+) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+    if col_idx >= bucket.col_indices.len() {
+        let value = default_value(dt, false, col_desc);
+        let scalar = match value {
+            casa_types::Value::Scalar(scalar) => scalar,
+            other => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "ISM default value for column '{}' is not scalar: {other:?}",
+                    col_desc.col_name
+                )));
+            }
+        };
+        let value = if (col_desc.option & 2) != 0
+            && scalar_value_is_default(
+                &casa_types::Value::Scalar(scalar.clone()),
+                col_desc.require_primitive_type()?,
+            ) {
+            None
+        } else {
+            Some(scalar)
+        };
+        return Ok(vec![value; rows_in_bucket]);
+    }
+
+    let col_index = &bucket.col_indices[col_idx];
+    let mut values = Vec::with_capacity(rows_in_bucket);
+    for rel_row in 0..rows_in_bucket {
+        let interval = get_interval(col_index, rel_row as u32);
+        let data_offset = col_index.offsets[interval] as usize;
+        let value = read_scalar_at(&bucket.data, data_offset, dt, big_endian)?;
+        let scalar = match value {
+            casa_types::Value::Scalar(scalar) => scalar,
+            other => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "ISM sparse bucket value for column '{}' is not scalar: {other:?}",
+                    col_desc.col_name
+                )));
+            }
+        };
+        if (col_desc.option & 2) != 0
+            && scalar_value_is_default(
+                &casa_types::Value::Scalar(scalar.clone()),
+                col_desc.require_primitive_type()?,
+            )
+        {
+            values.push(None);
+        } else {
+            values.push(Some(scalar));
+        }
     }
     Ok(values)
 }

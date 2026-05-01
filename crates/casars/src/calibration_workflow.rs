@@ -314,6 +314,7 @@ pub(crate) fn workflow_stage_from_report(
         ManagedCalibrationOutput::SolveGain(_) => Some(WorkflowStageId::SolveGain),
         ManagedCalibrationOutput::SolveBandpass(_) => Some(WorkflowStageId::SolveBandpass),
         ManagedCalibrationOutput::FluxScale(_) => Some(WorkflowStageId::FluxScale),
+        ManagedCalibrationOutput::Gencal(_) => Some(WorkflowStageId::InspectResults),
         ManagedCalibrationOutput::PlanApply(_) => None,
     }
 }
@@ -339,6 +340,12 @@ pub(crate) fn workflow_product_metadata_from_report(
             WorkflowStageId::FluxScale,
             "Fluxscale".to_string(),
             "fluxscale output".to_string(),
+        )),
+        ManagedCalibrationOutput::Gencal(report) => Some((
+            report.output_table.clone(),
+            WorkflowStageId::InspectResults,
+            report.table_subtype.clone(),
+            "generated prior calibration table".to_string(),
         )),
         ManagedCalibrationOutput::Apply(report) => {
             report.plan.measurement_set_path.clone().map(|path| {

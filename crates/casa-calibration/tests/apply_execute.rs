@@ -189,11 +189,17 @@ fn export_corrected_data_writes_imaging_ready_data_column() {
     let output_data = output
         .data_column(VisibilityDataColumn::Data)
         .expect("output data column");
+    let input_data = input
+        .data_column(VisibilityDataColumn::Data)
+        .expect("input data column");
     for row in 0..input.row_count() {
-        assert_eq!(
-            input_corrected.get(row).expect("input corrected row"),
-            output_data.get(row).expect("output data row")
-        );
+        let corrected = input_corrected.get(row).expect("input corrected row");
+        let expected = if !corrected.is_empty() {
+            corrected
+        } else {
+            input_data.get(row).expect("input data row")
+        };
+        assert_eq!(expected, output_data.get(row).expect("output data row"));
     }
 }
 

@@ -33,6 +33,7 @@ use casa_imaging::{
     trace_w_project_plan,
 };
 use casa_ms::MeasurementSet;
+#[cfg(test)]
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::columns::weight_columns::WeightSpectrumColumn;
 use casa_ms::derived::engine::{MsCalEngine, resolve_field_phase_direction_j2000};
@@ -1308,6 +1309,13 @@ fn maybe_log_frontend_progress(stage: &str, stage_elapsed: Duration, total_elaps
     }
 }
 
+fn config_for_cube_residual_trace_preparation(config: &CliConfig) -> CliConfig {
+    let mut trace_config = config.clone();
+    trace_config.dirty_only = false;
+    trace_config.niter = trace_config.niter.max(1);
+    trace_config
+}
+
 /// Trace the standard residual-refresh seam for a single prepared cube channel.
 ///
 /// This reuses the same MeasurementSet preparation path as `run_from_config()`,
@@ -1331,7 +1339,8 @@ pub fn trace_cube_channel_residual_refresh_from_config(
     let mut model_planes = Vec::new();
     let ms = MeasurementSet::open(&config.ms).map_err(|error| format!("open MS: {error}"))?;
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
-    let prepared = prepare_plane_input(&ms, config, data_column)?;
+    let trace_config = config_for_cube_residual_trace_preparation(config);
+    let prepared = prepare_plane_input(&ms, &trace_config, data_column)?;
     let PreparedInput::Cube(cube) = prepared else {
         return Err("trace_cube_channel_residual_refresh_from_config requires cube input".into());
     };
@@ -1402,7 +1411,8 @@ pub fn trace_cube_channel_residual_refresh_from_config_with_model_cube(
 ) -> Result<ResidualRefreshDiagnostics, String> {
     let ms = MeasurementSet::open(&config.ms).map_err(|error| format!("open MS: {error}"))?;
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
-    let prepared = prepare_plane_input(&ms, config, data_column)?;
+    let trace_config = config_for_cube_residual_trace_preparation(config);
+    let prepared = prepare_plane_input(&ms, &trace_config, data_column)?;
     let PreparedInput::Cube(cube) = prepared else {
         return Err("trace_cube_channel_residual_refresh_from_config requires cube input".into());
     };
@@ -1465,7 +1475,8 @@ pub fn trace_cube_channel_residual_refresh_from_config_with_model_cube_model_cha
 ) -> Result<ResidualRefreshDiagnostics, String> {
     let ms = MeasurementSet::open(&config.ms).map_err(|error| format!("open MS: {error}"))?;
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
-    let prepared = prepare_plane_input(&ms, config, data_column)?;
+    let trace_config = config_for_cube_residual_trace_preparation(config);
+    let prepared = prepare_plane_input(&ms, &trace_config, data_column)?;
     let PreparedInput::Cube(cube) = prepared else {
         return Err("trace_cube_channel_residual_refresh_from_config requires cube input".into());
     };
@@ -2595,7 +2606,11 @@ fn select_main_rows(
         select_started_at.elapsed(),
     );
     let allowed_ddids = allowed_ddids(config, ddid_info)?;
-    let time_column = TimeColumn::new(ms.main_table());
+    let time_values = if needs_row_times {
+        Some(load_f64_main_column_owned(ms, "TIME")?)
+    } else {
+        None
+    };
     let allowed_field_ids = config
         .field_ids
         .as_ref()
@@ -2628,9 +2643,10 @@ fn select_main_rows(
         let field_id_usize = usize::try_from(field_id)
             .map_err(|_| format!("FIELD_ID row {row} must be non-negative, found {field_id}"))?;
         let row_time_mjd_sec = if needs_row_times {
-            let row_time_mjd_sec = time_column
-                .get_mjd_seconds(row)
-                .map_err(|error| format!("read TIME row {row}: {error}"))?;
+            let row_time_mjd_sec = *time_values
+                .as_ref()
+                .and_then(|values| values.get(row))
+                .ok_or_else(|| format!("TIME row {row} is missing"))?;
             reference_row_time_mjd_sec.get_or_insert(row_time_mjd_sec);
             if config.spectral_mode.is_cube_like() {
                 match &mut time_bounds_mjd_sec {
@@ -2727,6 +2743,37 @@ fn load_i32_main_column_owned(
             Some(ScalarValue::Int32(value)) => Ok(value),
             Some(other) => Err(format!(
                 "{column_name} row {row} must be Int32, found {:?}",
+                other.primitive_type()
+            )),
+            None => Err(format!("{column_name} row {row} is missing")),
+        })
+        .collect()
+}
+
+fn load_f64_main_column_owned(
+    ms: &MeasurementSet,
+    column_name: &'static str,
+) -> Result<Vec<f64>, String> {
+    let values = ms
+        .main_table()
+        .column_accessor(column_name)
+        .and_then(|column| column.scalar_cells_owned())
+        .map_err(|error| format!("load {column_name} column: {error}"))?;
+    if values.len() != ms.main_table().row_count() {
+        return Err(format!(
+            "{column_name} length {} does not match MAIN row count {}",
+            values.len(),
+            ms.main_table().row_count()
+        ));
+    }
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| match value {
+            Some(ScalarValue::Float64(value)) => Ok(value),
+            Some(ScalarValue::Float32(value)) => Ok(value as f64),
+            Some(other) => Err(format!(
+                "{column_name} row {row} must be Float64, found {:?}",
                 other.primitive_type()
             )),
             None => Err(format!("{column_name} row {row} is missing")),
@@ -3155,6 +3202,8 @@ fn prepare_plane_input_inner(
     };
     let fast_standard_mfs =
         !force_trace && can_prepare_standard_mfs_without_trace(config, &selection);
+    let build_trace =
+        force_trace || (matches!(config.spectral_mode, SpectralMode::Mfs) && !fast_standard_mfs);
     let mut prepared = PreparedSelection::new(
         config,
         selection.selected_ddid,
@@ -3163,7 +3212,7 @@ fn prepare_plane_input_inner(
         &polarization,
         selection.phase_center.clone(),
         cube_context,
-        !fast_standard_mfs,
+        build_trace,
     );
     if let Some(init_error) = prepared.initialization_error.take() {
         return Err(init_error);
@@ -3197,6 +3246,16 @@ fn prepare_plane_input_inner(
         let prepared_input = prepared.finish_standard_mfs_without_trace()?;
         maybe_log_frontend_progress(
             "prepare_plane_input/finish_standard_mfs_without_trace",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+        return Ok((prepared_input, None));
+    }
+    if !force_trace && config.spectral_mode.is_cube_like() {
+        let stage_started_at = Instant::now();
+        let prepared_input = prepared.finish_cube_without_trace()?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/finish_cube_without_trace",
             stage_started_at.elapsed(),
             prepare_started_at.elapsed(),
         );
@@ -3597,6 +3656,8 @@ struct PreparedSelection {
     cube_spectral_setup: Option<CubeSpectralSetup>,
     cube_row_spectral_cache: HashMap<(u64, usize), Rc<CubeRowSpectralContributions>>,
     casa_cube_grid_interpolation: bool,
+    use_density_batches: bool,
+    use_model_interpolation_batches: bool,
     phase_center: PhaseCenter,
     state: PreparedState,
     trace_state: PreparedTraceState,
@@ -3690,6 +3751,14 @@ enum PreparedState {
         channel_density_batches: Vec<VisibilityBatch>,
         channel_model_interpolation_samples: Vec<Vec<Vec<CubeModelChannelContribution>>>,
         pair: (usize, usize),
+    },
+    CollapsedCube {
+        plane_stokes: PlaneStokes,
+        transform: PairCollapseTransform,
+        pair: (usize, usize),
+        channel_batches: Vec<VisibilityBatch>,
+        channel_density_batches: Vec<VisibilityBatch>,
+        channel_model_interpolation_samples: Vec<Vec<Vec<CubeModelChannelContribution>>>,
     },
 }
 
@@ -3922,6 +3991,8 @@ impl PreparedSelection {
                 .as_ref()
                 .map(|setup| setup.output_freq_ref)
                 .unwrap_or(freq_ref);
+            let use_density_batches = config.weighting != WeightingMode::Natural;
+            let use_model_interpolation_batches = !(config.dirty_only || config.niter == 0);
             let selected_frequency_range_hz = [
                 *output_channel_frequencies_hz
                     .first()
@@ -3994,23 +4065,44 @@ impl PreparedSelection {
                             pair,
                             batch: empty_visibility_batch(max_samples),
                         },
-                        SpectralMode::Cube | SpectralMode::Cubedata => PreparedState::PairedCube {
-                            plane_stokes,
-                            transform,
-                            pair,
-                            channel_batches: output_channel_frequencies_hz
-                                .iter()
-                                .map(|_| empty_parallel_hand_batch(16))
-                                .collect(),
-                            channel_density_batches: output_channel_frequencies_hz
-                                .iter()
-                                .map(|_| empty_visibility_batch(16))
-                                .collect(),
-                            channel_model_interpolation_samples: output_channel_frequencies_hz
-                                .iter()
-                                .map(|_| Vec::new())
-                                .collect(),
-                        },
+                        SpectralMode::Cube | SpectralMode::Cubedata if trace_enabled => {
+                            PreparedState::PairedCube {
+                                plane_stokes,
+                                transform,
+                                pair,
+                                channel_batches: output_channel_frequencies_hz
+                                    .iter()
+                                    .map(|_| empty_parallel_hand_batch(16))
+                                    .collect(),
+                                channel_density_batches: output_channel_frequencies_hz
+                                    .iter()
+                                    .map(|_| empty_visibility_batch(16))
+                                    .collect(),
+                                channel_model_interpolation_samples: output_channel_frequencies_hz
+                                    .iter()
+                                    .map(|_| Vec::new())
+                                    .collect(),
+                            }
+                        }
+                        SpectralMode::Cube | SpectralMode::Cubedata => {
+                            PreparedState::CollapsedCube {
+                                plane_stokes,
+                                transform,
+                                pair,
+                                channel_batches: output_channel_frequencies_hz
+                                    .iter()
+                                    .map(|_| empty_visibility_batch(16))
+                                    .collect(),
+                                channel_density_batches: output_channel_frequencies_hz
+                                    .iter()
+                                    .map(|_| empty_visibility_batch(16))
+                                    .collect(),
+                                channel_model_interpolation_samples: output_channel_frequencies_hz
+                                    .iter()
+                                    .map(|_| Vec::new())
+                                    .collect(),
+                            }
+                        }
                     }
                 }
             } else {
@@ -4028,13 +4120,32 @@ impl PreparedSelection {
                         pair,
                         batch: empty_visibility_batch(max_samples),
                     },
-                    SpectralMode::Cube | SpectralMode::Cubedata => PreparedState::PairedCube {
+                    SpectralMode::Cube | SpectralMode::Cubedata if trace_enabled => {
+                        PreparedState::PairedCube {
+                            plane_stokes: PlaneStokes::I,
+                            transform,
+                            pair,
+                            channel_batches: output_channel_frequencies_hz
+                                .iter()
+                                .map(|_| empty_parallel_hand_batch(16))
+                                .collect(),
+                            channel_density_batches: output_channel_frequencies_hz
+                                .iter()
+                                .map(|_| empty_visibility_batch(16))
+                                .collect(),
+                            channel_model_interpolation_samples: output_channel_frequencies_hz
+                                .iter()
+                                .map(|_| Vec::new())
+                                .collect(),
+                        }
+                    }
+                    SpectralMode::Cube | SpectralMode::Cubedata => PreparedState::CollapsedCube {
                         plane_stokes: PlaneStokes::I,
                         transform,
                         pair,
                         channel_batches: output_channel_frequencies_hz
                             .iter()
-                            .map(|_| empty_parallel_hand_batch(16))
+                            .map(|_| empty_visibility_batch(16))
                             .collect(),
                         channel_density_batches: output_channel_frequencies_hz
                             .iter()
@@ -4089,6 +4200,8 @@ impl PreparedSelection {
                         config.weighting,
                         WeightingMode::Briggs { .. } | WeightingMode::BriggsBwTaper { .. }
                     ),
+                use_density_batches,
+                use_model_interpolation_batches,
                 phase_center,
                 state,
                 trace_state,
@@ -4108,6 +4221,8 @@ impl PreparedSelection {
                 cube_spectral_setup: None,
                 cube_row_spectral_cache: HashMap::new(),
                 casa_cube_grid_interpolation: false,
+                use_density_batches: false,
+                use_model_interpolation_batches: false,
                 phase_center: PhaseCenter {
                     field_id: Some(0),
                     angles_rad: [0.0, 0.0],
@@ -4193,7 +4308,9 @@ impl PreparedSelection {
             .map(|setup| setup.output_channel_frequencies_hz.clone());
         let cube_row_spectral_contributions = if matches!(
             &self.state,
-            PreparedState::ExplicitCube { .. } | PreparedState::PairedCube { .. }
+            PreparedState::ExplicitCube { .. }
+                | PreparedState::PairedCube { .. }
+                | PreparedState::CollapsedCube { .. }
         ) {
             let cube_setup = self
                 .cube_spectral_setup
@@ -4248,6 +4365,8 @@ impl PreparedSelection {
         };
         let trace_enabled = self.trace_enabled;
         let use_casa_cube_grid_interpolation = self.casa_cube_grid_interpolation;
+        let use_density_batches = self.use_density_batches;
+        let use_model_interpolation_batches = self.use_model_interpolation_batches;
         let mfs_freq_ref = self.freq_ref;
         let mfs_frequency_scale = if matches!(
             &self.state,
@@ -4388,34 +4507,36 @@ impl PreparedSelection {
                     .len()
                     .saturating_sub(channel_density_batches.len()))
                     / 2;
-                for (output_channel, density_batch) in
-                    channel_density_batches.iter_mut().enumerate()
-                {
-                    let source_slot = if use_casa_cube_grid_interpolation {
-                        output_channel + density_slot_offset
-                    } else {
-                        match row_spectral_contributions
-                            .source_channel_output_map
-                            .iter()
-                            .position(|mapped| *mapped == Some(output_channel))
-                        {
-                            Some(source_slot) => source_slot,
-                            None => continue,
+                if use_density_batches {
+                    for (output_channel, density_batch) in
+                        channel_density_batches.iter_mut().enumerate()
+                    {
+                        let source_slot = if use_casa_cube_grid_interpolation {
+                            output_channel + density_slot_offset
+                        } else {
+                            match row_spectral_contributions
+                                .source_channel_output_map
+                                .iter()
+                                .position(|mapped| *mapped == Some(output_channel))
+                            {
+                                Some(source_slot) => source_slot,
+                                None => continue,
+                            }
+                        };
+                        if source_slot >= self.source_channel_indices.len() {
+                            continue;
                         }
-                    };
-                    if source_slot >= self.source_channel_indices.len() {
-                        continue;
+                        push_explicit_cube_density_sample(
+                            density_batch,
+                            &flags_2d,
+                            &weights,
+                            *corr_index,
+                            self.source_channel_indices[source_slot],
+                            self.source_channel_frequencies_hz[source_slot],
+                            uvw_m,
+                            is_cross,
+                        )?;
                     }
-                    push_explicit_cube_density_sample(
-                        density_batch,
-                        &flags_2d,
-                        &weights,
-                        *corr_index,
-                        self.source_channel_indices[source_slot],
-                        self.source_channel_frequencies_hz[source_slot],
-                        uvw_m,
-                        is_cross,
-                    )?;
                 }
                 let grid_assignments;
                 let assignment_iter: Box<
@@ -4480,12 +4601,14 @@ impl PreparedSelection {
                     batch.sumwt_factor.push(sample.sumwt_factor);
                     batch.gridable.push(is_cross);
                     batch.visibility.push(sample.visibility);
-                    channel_model_interpolation_samples[output_channel].push(
-                        combine_model_channel_contributions(
-                            contributions,
-                            source_model_contributions,
-                        ),
-                    );
+                    if use_model_interpolation_batches {
+                        channel_model_interpolation_samples[output_channel].push(
+                            combine_model_channel_contributions(
+                                contributions,
+                                source_model_contributions,
+                            ),
+                        );
+                    }
                     channel_samples[output_channel].push(PreparedVisibilitySampleTrace {
                         row_index: selected_row.row_index,
                         input_field_id: selected_row.field_id,
@@ -4716,6 +4839,145 @@ impl PreparedSelection {
                 }
             }
             (
+                PreparedState::CollapsedCube {
+                    plane_stokes,
+                    transform: pair_transform,
+                    channel_batches,
+                    channel_density_batches,
+                    channel_model_interpolation_samples,
+                    pair,
+                },
+                PreparedTraceState::PairedCube { .. },
+            ) => {
+                let row_spectral_contributions = cube_row_spectral_contributions
+                    .as_ref()
+                    .expect("cube spectral contributions prepared for cube state");
+                let source_model_contributions =
+                    &row_spectral_contributions.source_channel_model_contributions;
+                let assignments = &row_spectral_contributions.output_channel_contributions;
+                let density_slot_offset = (self
+                    .source_channel_indices
+                    .len()
+                    .saturating_sub(channel_density_batches.len()))
+                    / 2;
+                if use_density_batches {
+                    for (output_channel, density_batch) in
+                        channel_density_batches.iter_mut().enumerate()
+                    {
+                        let source_slot = if use_casa_cube_grid_interpolation {
+                            output_channel + density_slot_offset
+                        } else {
+                            match row_spectral_contributions
+                                .source_channel_output_map
+                                .iter()
+                                .position(|mapped| *mapped == Some(output_channel))
+                            {
+                                Some(source_slot) => source_slot,
+                                None => continue,
+                            }
+                        };
+                        if source_slot >= self.source_channel_indices.len() {
+                            continue;
+                        }
+                        push_paired_cube_density_sample(
+                            density_batch,
+                            &flags_2d,
+                            &weights,
+                            *pair,
+                            self.source_channel_indices[source_slot],
+                            self.source_channel_frequencies_hz[source_slot],
+                            uvw_m,
+                            is_cross,
+                        )?;
+                    }
+                }
+                let grid_assignments;
+                let assignment_iter: Box<
+                    dyn Iterator<Item = (usize, f64, &[CubeChannelContribution])> + '_,
+                > = if use_casa_cube_grid_interpolation {
+                    Box::new(
+                        row_spectral_contributions
+                            .grid_channel_contributions
+                            .iter()
+                            .map(|grid| {
+                                (
+                                    grid.output_channel,
+                                    grid.grid_frequency_hz,
+                                    grid.contributions.as_slice(),
+                                )
+                            }),
+                    )
+                } else {
+                    grid_assignments = assignments
+                        .iter()
+                        .enumerate()
+                        .map(|(output_channel, contributions)| {
+                            (
+                                output_channel,
+                                cube_output_channel_frequencies_hz
+                                    .as_ref()
+                                    .expect("missing cube spectral setup")[output_channel],
+                                contributions.as_slice(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    Box::new(grid_assignments.into_iter())
+                };
+                let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
+                for (output_channel, output_frequency_hz, contributions) in assignment_iter {
+                    if contributions.is_empty() {
+                        continue;
+                    }
+                    let Some(sample) = interpolate_paired_cube_output_sample(
+                        data,
+                        flags,
+                        row_weights,
+                        weight_spectrum_row,
+                        *pair,
+                        &self.source_channel_indices,
+                        &self.source_channel_frequencies_hz,
+                        transform.phase_shift_m,
+                        contributions,
+                        use_casa_cube_grid_interpolation,
+                    )?
+                    else {
+                        continue;
+                    };
+                    if !(output_frequency_hz.is_finite() && output_frequency_hz > 0.0) {
+                        continue;
+                    }
+                    let visibility = collapse_paired_visibility(
+                        sample.first_visibility,
+                        sample.second_visibility,
+                        *pair_transform,
+                    );
+                    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                        continue;
+                    }
+                    let combined_weight = 0.5 * (sample.first_weight + sample.second_weight);
+                    if !(combined_weight.is_finite() && combined_weight > 0.0) {
+                        continue;
+                    }
+                    let lambda_scale = output_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let batch = &mut channel_batches[output_channel];
+                    batch.u_lambda.push(uvw_m[0] * lambda_scale);
+                    batch.v_lambda.push(uvw_m[1] * lambda_scale);
+                    batch.w_lambda.push(uvw_m[2] * lambda_scale);
+                    batch.weight.push(combined_weight);
+                    batch.sumwt_factor.push(sumwt_factor);
+                    batch.gridable.push(is_cross);
+                    batch.visibility.push(visibility);
+                    if use_model_interpolation_batches {
+                        channel_model_interpolation_samples[output_channel].push(
+                            combine_model_channel_contributions(
+                                contributions,
+                                source_model_contributions,
+                            ),
+                        );
+                    }
+                }
+            }
+            (
                 PreparedState::PairedCube {
                     channel_batches,
                     channel_density_batches,
@@ -4736,34 +4998,36 @@ impl PreparedSelection {
                     .len()
                     .saturating_sub(channel_density_batches.len()))
                     / 2;
-                for (output_channel, density_batch) in
-                    channel_density_batches.iter_mut().enumerate()
-                {
-                    let source_slot = if use_casa_cube_grid_interpolation {
-                        output_channel + density_slot_offset
-                    } else {
-                        match row_spectral_contributions
-                            .source_channel_output_map
-                            .iter()
-                            .position(|mapped| *mapped == Some(output_channel))
-                        {
-                            Some(source_slot) => source_slot,
-                            None => continue,
+                if use_density_batches {
+                    for (output_channel, density_batch) in
+                        channel_density_batches.iter_mut().enumerate()
+                    {
+                        let source_slot = if use_casa_cube_grid_interpolation {
+                            output_channel + density_slot_offset
+                        } else {
+                            match row_spectral_contributions
+                                .source_channel_output_map
+                                .iter()
+                                .position(|mapped| *mapped == Some(output_channel))
+                            {
+                                Some(source_slot) => source_slot,
+                                None => continue,
+                            }
+                        };
+                        if source_slot >= self.source_channel_indices.len() {
+                            continue;
                         }
-                    };
-                    if source_slot >= self.source_channel_indices.len() {
-                        continue;
+                        push_paired_cube_density_sample(
+                            density_batch,
+                            &flags_2d,
+                            &weights,
+                            *pair,
+                            self.source_channel_indices[source_slot],
+                            self.source_channel_frequencies_hz[source_slot],
+                            uvw_m,
+                            is_cross,
+                        )?;
                     }
-                    push_paired_cube_density_sample(
-                        density_batch,
-                        &flags_2d,
-                        &weights,
-                        *pair,
-                        self.source_channel_indices[source_slot],
-                        self.source_channel_frequencies_hz[source_slot],
-                        uvw_m,
-                        is_cross,
-                    )?;
                 }
                 let grid_assignments;
                 let assignment_iter: Box<
@@ -4831,48 +5095,52 @@ impl PreparedSelection {
                     batch.first_flagged.push(false);
                     batch.second_flagged.push(false);
                     batch.gridable.push(is_cross);
-                    channel_model_interpolation_samples[output_channel].push(
-                        combine_model_channel_contributions(
-                            contributions,
-                            source_model_contributions,
-                        ),
-                    );
-                    channel_samples[output_channel].push(PendingPairedSampleTrace {
-                        common: TraceSampleCommon {
-                            row_index: selected_row.row_index,
-                            input_field_id: selected_row.field_id,
-                            phase_center_field_id: self.phase_center.field_id,
-                            ddid: selected_row.ddid,
-                            spw_id: selected_row.spw_id,
-                            polarization_id: selected_row.polarization_id,
-                            antenna1_id,
-                            antenna2_id,
-                            is_cross,
-                            raw_uvw_m,
-                            imaging_uvw_m: uvw_m,
-                            phase_shift_m: transform.phase_shift_m,
-                            output_channel_index: Some(output_channel),
-                            output_frequency_hz,
-                            field_phase_center_direction_rad: geometry_row
-                                .field_phase_center_direction_rad,
-                            pointing_direction_rad: baseline_pointing_direction_rad,
-                            source_contributions: build_source_contribution_traces(
-                                &self.source_channel_indices,
-                                &self.source_channel_frequencies_hz,
+                    if use_model_interpolation_batches {
+                        channel_model_interpolation_samples[output_channel].push(
+                            combine_model_channel_contributions(
                                 contributions,
+                                source_model_contributions,
                             ),
-                            gridable: is_cross,
-                        },
-                        correlation_indices: [pair.0, pair.1],
-                        first_visibility: sample.first_visibility,
-                        second_visibility: sample.second_visibility,
-                        first_weight: sample.first_weight,
-                        second_weight: sample.second_weight,
-                        first_weight_source: sample.first_weight_source,
-                        second_weight_source: sample.second_weight_source,
-                        first_flagged: false,
-                        second_flagged: false,
-                    });
+                        );
+                    }
+                    if trace_enabled {
+                        channel_samples[output_channel].push(PendingPairedSampleTrace {
+                            common: TraceSampleCommon {
+                                row_index: selected_row.row_index,
+                                input_field_id: selected_row.field_id,
+                                phase_center_field_id: self.phase_center.field_id,
+                                ddid: selected_row.ddid,
+                                spw_id: selected_row.spw_id,
+                                polarization_id: selected_row.polarization_id,
+                                antenna1_id,
+                                antenna2_id,
+                                is_cross,
+                                raw_uvw_m,
+                                imaging_uvw_m: uvw_m,
+                                phase_shift_m: transform.phase_shift_m,
+                                output_channel_index: Some(output_channel),
+                                output_frequency_hz,
+                                field_phase_center_direction_rad: geometry_row
+                                    .field_phase_center_direction_rad,
+                                pointing_direction_rad: baseline_pointing_direction_rad,
+                                source_contributions: build_source_contribution_traces(
+                                    &self.source_channel_indices,
+                                    &self.source_channel_frequencies_hz,
+                                    contributions,
+                                ),
+                                gridable: is_cross,
+                            },
+                            correlation_indices: [pair.0, pair.1],
+                            first_visibility: sample.first_visibility,
+                            second_visibility: sample.second_visibility,
+                            first_weight: sample.first_weight,
+                            second_weight: sample.second_weight,
+                            first_weight_source: sample.first_weight_source,
+                            second_weight_source: sample.second_weight_source,
+                            first_flagged: false,
+                            second_flagged: false,
+                        });
+                    }
                 }
             }
             _ => {
@@ -4898,6 +5166,8 @@ impl PreparedSelection {
             cube_spectral_setup: _,
             cube_row_spectral_cache: _,
             casa_cube_grid_interpolation: _,
+            use_density_batches: _,
+            use_model_interpolation_batches: _,
             phase_center,
             state,
             trace_state: _,
@@ -4955,6 +5225,171 @@ impl PreparedSelection {
         }
     }
 
+    fn finish_cube_without_trace(self) -> Result<PreparedInput, String> {
+        let PreparedSelection {
+            initialization_error: _,
+            source_channel_indices: _,
+            source_channel_frequencies_hz,
+            source_channel_widths_hz: _,
+            selected_frequency_range_hz: _,
+            reffreq_hz: _,
+            freq_ref,
+            cube_spectral_setup,
+            cube_row_spectral_cache: _,
+            casa_cube_grid_interpolation: _,
+            use_density_batches,
+            use_model_interpolation_batches,
+            phase_center,
+            state,
+            trace_state: _,
+            trace_enabled: _,
+        } = self;
+        let output_channel_frequencies_hz = cube_spectral_setup
+            .as_ref()
+            .map(|setup| setup.output_channel_frequencies_hz.clone())
+            .unwrap_or(source_channel_frequencies_hz);
+        match state {
+            PreparedState::ExplicitCube {
+                plane_stokes,
+                channel_batches,
+                channel_density_batches,
+                channel_model_interpolation_samples,
+                ..
+            } => {
+                let channels = output_channel_frequencies_hz
+                    .iter()
+                    .copied()
+                    .zip(channel_batches)
+                    .zip(channel_density_batches)
+                    .zip(channel_model_interpolation_samples)
+                    .map(
+                        |(
+                            ((channel_frequency_hz, batch), density_batch),
+                            model_interpolation_samples,
+                        )| CubeChannelRequest {
+                            channel_frequency_hz,
+                            visibility_batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                            density_batches: chunk_density_batch(
+                                density_batch,
+                                use_density_batches,
+                            ),
+                            model_interpolation_batches:
+                                chunk_model_interpolation_batches_if_needed(
+                                    model_interpolation_samples,
+                                    use_model_interpolation_batches,
+                                ),
+                        },
+                    )
+                    .collect();
+                Ok(PreparedInput::Cube(CubePlaneInput {
+                    phase_center,
+                    freq_ref,
+                    plane_stokes,
+                    channels,
+                }))
+            }
+            PreparedState::CollapsedCube {
+                plane_stokes,
+                transform: _,
+                pair: _,
+                channel_batches,
+                channel_density_batches,
+                channel_model_interpolation_samples,
+            } => {
+                let channels = output_channel_frequencies_hz
+                    .iter()
+                    .copied()
+                    .zip(channel_batches)
+                    .zip(channel_density_batches)
+                    .zip(channel_model_interpolation_samples)
+                    .map(
+                        |(
+                            ((channel_frequency_hz, batch), density_batch),
+                            model_interpolation_samples,
+                        )| CubeChannelRequest {
+                            channel_frequency_hz,
+                            visibility_batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                            density_batches: chunk_density_batch(
+                                density_batch,
+                                use_density_batches,
+                            ),
+                            model_interpolation_batches:
+                                chunk_model_interpolation_batches_if_needed(
+                                    model_interpolation_samples,
+                                    use_model_interpolation_batches,
+                                ),
+                        },
+                    )
+                    .collect();
+                Ok(PreparedInput::Cube(CubePlaneInput {
+                    phase_center,
+                    freq_ref,
+                    plane_stokes,
+                    channels,
+                }))
+            }
+            PreparedState::PairedCube {
+                plane_stokes,
+                transform,
+                channel_batches,
+                channel_density_batches,
+                channel_model_interpolation_samples,
+                ..
+            } => {
+                let channels = output_channel_frequencies_hz
+                    .iter()
+                    .copied()
+                    .zip(channel_batches)
+                    .zip(channel_density_batches)
+                    .zip(channel_model_interpolation_samples)
+                    .map(
+                        |(
+                            ((channel_frequency_hz, batch), density_batch),
+                            model_interpolation_samples,
+                        )| {
+                            let collapsed =
+                                collapse_paired_visibility_batch(&batch, transform, plane_stokes)
+                                    .map_err(|error| error.to_string())?;
+                            let collapsed_model_interpolation_samples =
+                                if use_model_interpolation_batches {
+                                    collapse_paired_model_interpolation_samples_from_batch(
+                                        &batch,
+                                        model_interpolation_samples,
+                                        transform,
+                                    )?
+                                } else {
+                                    Vec::new()
+                                };
+                            Ok(CubeChannelRequest {
+                                channel_frequency_hz,
+                                visibility_batches: chunk_visibility_batch(
+                                    collapsed,
+                                    DEFAULT_BATCH_SIZE,
+                                ),
+                                density_batches: chunk_density_batch(
+                                    density_batch,
+                                    use_density_batches,
+                                ),
+                                model_interpolation_batches:
+                                    chunk_model_interpolation_batches_if_needed(
+                                        collapsed_model_interpolation_samples,
+                                        use_model_interpolation_batches,
+                                    ),
+                            })
+                        },
+                    )
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(PreparedInput::Cube(CubePlaneInput {
+                    phase_center,
+                    freq_ref,
+                    plane_stokes,
+                    channels,
+                }))
+            }
+            _ => Err("internal error: trace-free cube prepare requires cube state".to_string()),
+        }
+    }
+
     fn finish_with_trace(
         self,
         ms: &MeasurementSet,
@@ -4975,6 +5410,8 @@ impl PreparedSelection {
             cube_spectral_setup,
             cube_row_spectral_cache: _,
             casa_cube_grid_interpolation: _,
+            use_density_batches,
+            use_model_interpolation_batches,
             phase_center: prepared_phase_center,
             state,
             trace_state,
@@ -5087,14 +5524,15 @@ impl PreparedSelection {
                                     batch,
                                     DEFAULT_BATCH_SIZE,
                                 ),
-                                density_batches: chunk_visibility_batch(
+                                density_batches: chunk_density_batch(
                                     density_batch,
-                                    DEFAULT_BATCH_SIZE,
+                                    use_density_batches,
                                 ),
-                                model_interpolation_batches: chunk_model_interpolation_batches(
-                                    model_interpolation_samples,
-                                    DEFAULT_BATCH_SIZE,
-                                ),
+                                model_interpolation_batches:
+                                    chunk_model_interpolation_batches_if_needed(
+                                        model_interpolation_samples,
+                                        use_model_interpolation_batches,
+                                    ),
                             }
                         },
                     )
@@ -5136,25 +5574,30 @@ impl PreparedSelection {
                                 collapse_paired_visibility_batch(&batch, transform, plane_stokes)
                                     .map_err(|error| error.to_string())?;
                             let collapsed_model_interpolation_samples =
-                                collapse_pending_pair_model_interpolation_samples(
-                                    trace_samples,
-                                    model_interpolation_samples,
-                                    transform,
-                                )?;
+                                if use_model_interpolation_batches {
+                                    collapse_pending_pair_model_interpolation_samples(
+                                        trace_samples,
+                                        model_interpolation_samples,
+                                        transform,
+                                    )?
+                                } else {
+                                    Vec::new()
+                                };
                             Ok(CubeChannelRequest {
                                 channel_frequency_hz,
                                 visibility_batches: chunk_visibility_batch(
                                     collapsed,
                                     DEFAULT_BATCH_SIZE,
                                 ),
-                                density_batches: chunk_visibility_batch(
+                                density_batches: chunk_density_batch(
                                     density_batch,
-                                    DEFAULT_BATCH_SIZE,
+                                    use_density_batches,
                                 ),
-                                model_interpolation_batches: chunk_model_interpolation_batches(
-                                    collapsed_model_interpolation_samples,
-                                    DEFAULT_BATCH_SIZE,
-                                ),
+                                model_interpolation_batches:
+                                    chunk_model_interpolation_batches_if_needed(
+                                        collapsed_model_interpolation_samples,
+                                        use_model_interpolation_batches,
+                                    ),
                             })
                         },
                     )
@@ -6164,6 +6607,14 @@ fn chunk_visibility_batch(batch: VisibilityBatch, max_batch_size: usize) -> Vec<
     batches
 }
 
+fn chunk_density_batch(batch: VisibilityBatch, use_density_batches: bool) -> Vec<VisibilityBatch> {
+    if use_density_batches {
+        chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE)
+    } else {
+        Vec::new()
+    }
+}
+
 fn chunk_sample_frequencies_hz_from_samples(
     samples: &[PreparedVisibilitySampleTrace],
     max_batch_size: usize,
@@ -6441,6 +6892,17 @@ fn chunk_model_interpolation_batches(
         start = end;
     }
     batches
+}
+
+fn chunk_model_interpolation_batches_if_needed(
+    sample_contributions: Vec<Vec<CubeModelChannelContribution>>,
+    use_model_interpolation_batches: bool,
+) -> Vec<CubeModelInterpolationBatch> {
+    if use_model_interpolation_batches {
+        chunk_model_interpolation_batches(sample_contributions, DEFAULT_BATCH_SIZE)
+    } else {
+        Vec::new()
+    }
 }
 
 enum ComplexRow2d<'a> {
@@ -6855,6 +7317,48 @@ fn collapse_pending_pair_model_interpolation_samples(
                 CollapsedPairTrace::Accepted(_)
             )
             .then_some(model_contributions)
+        })
+        .collect())
+}
+
+fn collapse_paired_model_interpolation_samples_from_batch(
+    paired: &ParallelHandBatch,
+    model_interpolation_samples: Vec<Vec<CubeModelChannelContribution>>,
+    transform: PairCollapseTransform,
+) -> Result<Vec<Vec<CubeModelChannelContribution>>, String> {
+    if paired.len() != model_interpolation_samples.len() {
+        return Err(format!(
+            "paired cube model interpolation sample count {} does not match paired batch count {}",
+            model_interpolation_samples.len(),
+            paired.len()
+        ));
+    }
+    Ok(model_interpolation_samples
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, model_contributions)| {
+            if paired.first_flagged[index] || paired.second_flagged[index] {
+                return None;
+            }
+            let first_weight = paired.first_weight[index];
+            let second_weight = paired.second_weight[index];
+            if !(first_weight.is_finite()
+                && first_weight > 0.0
+                && second_weight.is_finite()
+                && second_weight > 0.0)
+            {
+                return None;
+            }
+            let visibility = collapse_paired_visibility(
+                paired.first_visibility[index],
+                paired.second_visibility[index],
+                transform,
+            );
+            if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                return None;
+            }
+            let combined_weight = 0.5 * (first_weight + second_weight);
+            (combined_weight.is_finite() && combined_weight > 0.0).then_some(model_contributions)
         })
         .collect())
 }

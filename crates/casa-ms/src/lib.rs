@@ -59,6 +59,7 @@ pub mod selection_helpers;
 pub mod selection_syntax;
 pub mod spectral_selection;
 pub mod subtables;
+pub mod transform;
 pub mod ui_schema;
 pub mod validate;
 
@@ -125,4 +126,7 @@ pub use subtables::{
     MsPolarization, MsPolarizationMut, MsProcessor, MsProcessorMut, MsSource, MsSourceMut,
     MsSpectralWindow, MsSpectralWindowMut, MsState, MsStateMut, MsSysCal, MsSysCalMut, MsWeather,
     MsWeatherMut, SubTable,
+};
+pub use transform::{
+    MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
 };

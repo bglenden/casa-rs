@@ -272,6 +272,83 @@ impl Table {
         Ok(())
     }
 
+    /// Save the table with per-column bindings and complete column-value overrides.
+    ///
+    /// This advanced writer is for high-volume materialization paths that
+    /// build some large array columns column-wise while the rest of the table
+    /// is still represented as rows. Each override must contain exactly one
+    /// value slot per table row. Overrides can be written directly for
+    /// single-column tiled data-manager groups, matching MeasurementSet
+    /// visibility columns such as `DATA` and `FLAG`, and for scalar
+    /// IncrementalStMan groups when the whole scalar group is overridden.
+    ///
+    /// The caller is responsible for ensuring that override values satisfy the
+    /// table schema; this method intentionally shares the same "assuming
+    /// valid" contract as [`save_with_bindings_assuming_valid`](Self::save_with_bindings_assuming_valid).
+    pub fn save_with_bindings_and_column_overrides_assuming_valid(
+        &self,
+        options: TableOptions,
+        bindings: &std::collections::HashMap<String, ColumnBinding>,
+        column_overrides: &std::collections::HashMap<String, Vec<Option<Value>>>,
+    ) -> Result<(), TableError> {
+        let row_count = self.inner.row_count();
+        if let Some(schema) = self.inner.schema() {
+            for column in column_overrides.keys() {
+                if !schema.contains_column(column) {
+                    return Err(TableError::SchemaColumnUnknown {
+                        column: column.clone(),
+                    });
+                }
+            }
+        }
+        for (column, values) in column_overrides {
+            if values.len() != row_count {
+                return Err(TableError::Storage(format!(
+                    "column override {column} has {} values for {row_count} rows",
+                    values.len()
+                )));
+            }
+        }
+
+        let mut profiler = StorageProfiler::start(format!(
+            "Table::save_with_bindings_and_column_overrides path={}",
+            options.path.display()
+        ));
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "validate",
+                Some(format!(
+                    "rows={} bindings={} overrides={} skipped=true",
+                    row_count,
+                    bindings.len(),
+                    column_overrides.len()
+                )),
+            );
+        }
+        let storage = CompositeStorage;
+        storage.save_with_bindings_and_column_overrides_borrowed(
+            &options.path,
+            self.inner.rows()?,
+            self.inner.undefined_cells()?,
+            self.inner.keywords(),
+            self.inner.all_column_keywords(),
+            self.inner.schema(),
+            &self.table_info,
+            &self.virtual_columns,
+            &self.virtual_bindings,
+            options.data_manager,
+            options.endian_format.is_big_endian(),
+            options.tile_shape.as_deref(),
+            bindings,
+            column_overrides,
+        )?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark("storage_save");
+        }
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
+        Ok(())
+    }
+
     /// Rewrites only the existing data-manager groups that contain `changed_columns`.
     ///
     /// This is a narrow in-place optimization for schema-stable disk-backed
@@ -663,6 +740,150 @@ impl Table {
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(source_path);
         Ok(())
+    }
+
+    /// Persists a newly-added variable-shape array column as a standalone
+    /// `TiledShapeStMan` data manager without rewriting existing managers.
+    ///
+    /// The column must already exist in the in-memory schema and must not
+    /// exist in the on-disk `table.dat` descriptor. Defined cells are written
+    /// to the tiled row map; undefined or absent cells are left undefined.
+    ///
+    /// C++ equivalent: `Table::addColumn(desc, TiledShapeStMan(...))` followed
+    /// by cell writes.
+    pub fn save_added_tiled_shape_column_in_place_assuming_valid(
+        &mut self,
+        column: &str,
+        changed_rows: &[usize],
+        tile_shape: Option<&[usize]>,
+    ) -> Result<(), TableError> {
+        if self.kind != TableKind::Plain {
+            return Err(TableError::Storage(
+                "adding a tiled column in place requires a plain disk-backed table".to_string(),
+            ));
+        }
+        if !self.virtual_columns.is_empty() || !self.virtual_bindings.is_empty() {
+            return Err(TableError::Storage(
+                "adding a tiled column in place does not support virtual columns".to_string(),
+            ));
+        }
+
+        let source_path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| TableError::Storage("table has no source path".to_string()))?
+            .clone();
+        let schema_column = self
+            .inner
+            .schema()
+            .and_then(|schema| schema.column(column))
+            .cloned()
+            .ok_or_else(|| TableError::SchemaColumnUnknown {
+                column: column.to_string(),
+            })?;
+
+        let auto_unlock = self.begin_write_operation("save_added_tiled_shape_column")?;
+        let result = (|| {
+            let control_path = source_path.join(crate::storage::TABLE_CONTROL_FILE);
+            let mut table_dat =
+                match crate::storage::table_control::read_table_dat_dispatch(&control_path)? {
+                    crate::storage::table_control::TableDatResult::Plain(table_dat) => table_dat,
+                    _ => {
+                        return Err(TableError::Storage(
+                            "adding a tiled column in place only supports plain tables".to_string(),
+                        ));
+                    }
+                };
+
+            if table_dat
+                .table_desc
+                .columns
+                .iter()
+                .any(|desc| desc.col_name == column)
+            {
+                return Err(TableError::Storage(format!(
+                    "column \"{column}\" already exists on disk"
+                )));
+            }
+
+            let mut desc = crate::storage::table_control::ColumnDescContents::from_column_schema(
+                &schema_column,
+            );
+            desc.data_manager_type = "TiledShapeStMan".to_string();
+            desc.data_manager_group = column.to_string();
+            if let Some(keywords) = self.inner.column_keywords(column) {
+                desc.keywords = keywords.clone();
+            }
+
+            let seq_nr = table_dat
+                .column_set
+                .data_managers
+                .iter()
+                .map(|dm| dm.seq_nr)
+                .max()
+                .map_or(0, |seq| seq + 1);
+            let mut value_storage = vec![None; self.row_count()];
+            if let Some(pending_values) = self.inner.pending_array_cells(column) {
+                for (row_idx, value) in pending_values {
+                    if *row_idx < value_storage.len() {
+                        value_storage[*row_idx] = Some(Value::Array(value.clone()));
+                    }
+                }
+            }
+            for &row_idx in changed_rows {
+                if row_idx >= value_storage.len() || value_storage[row_idx].is_some() {
+                    continue;
+                }
+                value_storage[row_idx] = current_value_for_column(self, row_idx, &desc)?;
+            }
+            let values: Vec<Option<&Value>> = value_storage.iter().map(Option::as_ref).collect();
+
+            crate::storage::tiled_stman::save_tiled_single_column_values(
+                &source_path,
+                seq_nr,
+                &desc,
+                &values,
+                crate::storage::tiled_stman::SingleColumnTiledSaveOptions {
+                    dm_type_name: "TiledShapeStMan",
+                    big_endian: table_dat.big_endian,
+                    default_tile_shape: tile_shape,
+                    dm_name: column,
+                },
+            )?;
+
+            table_dat.table_desc.columns.push(desc);
+            table_dat
+                .column_set
+                .columns
+                .push(crate::storage::table_control::PlainColumnEntry {
+                    original_name: column.to_string(),
+                    dm_seq_nr: seq_nr,
+                    is_array: true,
+                });
+            table_dat.column_set.data_managers.push(
+                crate::storage::table_control::DataManagerEntry {
+                    type_name: "TiledShapeStMan".to_string(),
+                    seq_nr,
+                    data: Vec::new(),
+                },
+            );
+            table_dat.column_set.seq_count = table_dat
+                .column_set
+                .data_managers
+                .iter()
+                .map(|dm| dm.seq_nr + 1)
+                .max()
+                .unwrap_or(1);
+            crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+            crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
+            self.dm_info.push(crate::storage::DataManagerInfo {
+                dm_type: "TiledShapeStMan".to_string(),
+                seq_nr,
+                columns: vec![column.to_string()],
+            });
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
     }
 
     /// Returns the filesystem path this table was opened from or saved to,
@@ -1067,13 +1288,14 @@ fn collect_sparse_array_group_values_from_current_cells(
         let Some(pending_values) = table.inner.pending_array_cells(&col_desc.col_name) else {
             return Ok(None);
         };
+        let pending_by_row: std::collections::HashMap<usize, &ArrayValue> = pending_values
+            .iter()
+            .map(|(row_index, value)| (*row_index, value))
+            .collect();
         let mut values = Vec::with_capacity(row_indices.len());
         for &row_index in row_indices {
-            if let Some((_, value)) = pending_values
-                .iter()
-                .find(|(pending_row, _)| *pending_row == row_index)
-            {
-                values.push((row_index, Some(value.clone())));
+            if let Some(value) = pending_by_row.get(&row_index) {
+                values.push((row_index, Some((*value).clone())));
             }
         }
         columns.push(Some(values));

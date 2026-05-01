@@ -651,6 +651,7 @@ mod tests {
                 "solve_gain",
                 "solve_bandpass",
                 "fluxscale",
+                "gencal",
             ]
         );
         let gaintables = schema

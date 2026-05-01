@@ -20,9 +20,9 @@ echo "==> Building release binaries for suite install smoke test"
 cargo build --release -p casars --bin casars
 cargo build --release -p casa-calibration --bin calibrate
 cargo build --release -p casars-importvla --bin casars-importvla
-cargo build --release -p casa-ms --bin msexplore
+cargo build --release -p casa-ms --bin msexplore --bin mstransform
 cargo build --release -p casars-imager --bin casars-imager
-cargo build --release -p casa-images --bin imexplore --bin immoments --bin exportfits --bin importfits
+cargo build --release -p casa-images --bin imexplore --bin immoments --bin impv --bin exportfits --bin importfits
 
 echo "==> Building Python wheel artifacts for suite install smoke test"
 scripts/build-python-dist.sh "$wheel_dir"
@@ -65,9 +65,11 @@ echo "==> Verifying installed launchers"
 "$bin_dir/calibrate-stable" --protocol-info >/dev/null
 "$install_root/$version/bin/casars-importvla" --protocol-info >/dev/null
 "$install_root/$version/bin/msexplore" --protocol-info >/dev/null
+test -x "$install_root/$version/bin/mstransform"
 "$install_root/$version/bin/casars-imager" --protocol-info >/dev/null
 "$install_root/$version/bin/imexplore" --protocol-info >/dev/null
 "$install_root/$version/bin/immoments" --protocol-info >/dev/null
+"$install_root/$version/bin/impv" --protocol-info >/dev/null
 "$install_root/$version/bin/exportfits" --protocol-info >/dev/null
 "$install_root/$version/bin/importfits" --protocol-info >/dev/null
 
@@ -85,6 +87,7 @@ assert importvla.protocol_info().protocol_name == "casa_importvla_task"
 assert msexplore.protocol_info().protocol_name == "casa_msexplore_task"
 assert imager.protocol_info().protocol_name == "casa_imager_task"
 assert image_analysis.immoments_protocol_info().protocol_name == "casa_image_analysis_task"
+assert image_analysis.impv_protocol_info().protocol_name == "casa_image_analysis_task"
 assert image_analysis.exportfits_protocol_info().protocol_name == "casa_image_analysis_task"
 assert image_analysis.importfits_protocol_info().protocol_name == "casa_image_analysis_task"
 PY

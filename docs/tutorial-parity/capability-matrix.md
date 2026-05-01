@@ -52,7 +52,7 @@ Status legend:
 | `bandpass` | partial/available | `casa-calibration` | `calibrate` | VLA tutorial parameter coverage, BPOLY tails | CASA bandpass caltables | calibration benchmark scripts | #122, #128 |
 | `fluxscale` | partial/available | `casa-calibration` | `calibrate` | VLA tutorial models/fields, selection tails | CASA fluxscale tables/results | calibration benchmark scripts | #122 |
 | `setjy` | missing/partial model setup | `casa-calibration`, `casa-ms` | no first-class task stage | calibrator model setup, component/image model writes | CASA model columns/caltable downstream parity | tutorial calibration timings | #122 |
-| `gencal` | missing/partial | `casa-calibration` | none | antenna-position, opacity, gaincurve, prior-cal tutorial subset | CASA generated caltables | tutorial prior-cal timings | #121 |
+| `gencal` | partial/available | `casa-calibration` | `calibrate gencal`, Python calibration wrapper | automatic antenna-position lookup, remaining caltypes beyond antpos/gceff/opac | CASA generated caltables | tutorial prior-cal timings | #121 |
 | `flagdata` | missing/partial | `casa-ms` | no tutorial task surface | manual/list/rflag/tfcrop subsets used by VLA/ALMA breadth | CASA FLAG column deltas | flagging timing on tutorial MS | #121, #128 |
 | `flagmanager` | missing | `casa-ms` | none | save/restore flag versions | CASA flag version products | VLA/ALMA breadth timing | #127, #128 |
 | `statwt` | missing | `casa-ms` | none | weight recomputation for data-combination tutorials | CASA WEIGHT/SIGMA columns | tutorial timing | #127, #128 |

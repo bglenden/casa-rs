@@ -15,6 +15,7 @@
 //! `TiledColumnStMan`, `TiledShapeStMan`, `TiledCellStMan`, `TiledStMan`,
 //! `TSMCube`, `TSMFile`.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::{Read as IoRead, Seek, SeekFrom, Write as IoWrite};
@@ -178,6 +179,17 @@ pub(crate) fn shared_tile_cache_entry_count() -> usize {
         .expect("shared tile cache lock poisoned")
         .entries
         .len()
+}
+
+#[cfg(test)]
+fn shared_tile_cache_entry_count_for_table(table_path: &Path) -> usize {
+    SHARED_TILE_CACHE
+        .lock()
+        .expect("shared tile cache lock poisoned")
+        .entries
+        .keys()
+        .filter(|key| key.table_path == table_path)
+        .count()
 }
 
 pub(crate) fn invalidate_shared_tile_cache_for_table(table_path: &Path) {
@@ -1060,26 +1072,21 @@ fn encode_array_value(
         }
     };
 
-    // IMPORTANT: Tile data is stored in Fortran (column-major) order.
-    // For arrays already in Fortran layout, `as_slice_memory_order()` provides
-    // a zero-copy fast path. For C-order arrays, `t().as_standard_layout()`
-    // creates a contiguous Fortran-order copy (avoids cache-unfriendly strided
-    // iteration that causes ~100× slowdowns on large arrays).
+    // Tile data is stored in Fortran (column-major) order. Most arrays read
+    // from casacore tables already have that memory order, so use the raw
+    // memory-order slice before falling back to a transposed contiguous copy.
     match arr {
         ArrayValue::Bool(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let slice = f.as_slice().expect("contiguous after as_standard_layout");
+            let slice = array_memory_order_values(a);
             let data: Vec<u8> = slice.iter().map(|&b| if b { 1u8 } else { 0u8 }).collect();
             Ok((data, CasacoreDataType::TpBool))
         }
         ArrayValue::UInt8(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let data = f.as_slice().expect("contiguous").to_vec();
+            let data = array_memory_order_values(a).as_ref().to_vec();
             Ok((data, CasacoreDataType::TpUChar))
         }
         ArrayValue::Int16(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let slice = f.as_slice().expect("contiguous");
+            let slice = array_memory_order_values(a);
             let mut data = vec![0u8; slice.len() * 2];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -1091,8 +1098,7 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpShort))
         }
         ArrayValue::UInt16(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let slice = f.as_slice().expect("contiguous");
+            let slice = array_memory_order_values(a);
             let mut data = vec![0u8; slice.len() * 2];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -1104,8 +1110,7 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpUShort))
         }
         ArrayValue::Int32(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let slice = f.as_slice().expect("contiguous");
+            let slice = array_memory_order_values(a);
             let mut data = vec![0u8; slice.len() * 4];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -1117,8 +1122,7 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpInt))
         }
         ArrayValue::UInt32(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let slice = f.as_slice().expect("contiguous");
+            let slice = array_memory_order_values(a);
             let mut data = vec![0u8; slice.len() * 4];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -1130,8 +1134,7 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpUInt))
         }
         ArrayValue::Float32(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let slice = f.as_slice().expect("contiguous");
+            let slice = array_memory_order_values(a);
             let mut data = vec![0u8; slice.len() * 4];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -1143,8 +1146,7 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpFloat))
         }
         ArrayValue::Float64(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let slice = f.as_slice().expect("contiguous");
+            let slice = array_memory_order_values(a);
             let mut data = vec![0u8; slice.len() * 8];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -1156,8 +1158,7 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpDouble))
         }
         ArrayValue::Int64(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let slice = f.as_slice().expect("contiguous");
+            let slice = array_memory_order_values(a);
             let mut data = vec![0u8; slice.len() * 8];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -1169,8 +1170,7 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpInt64))
         }
         ArrayValue::Complex32(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let slice = f.as_slice().expect("contiguous");
+            let slice = array_memory_order_values(a);
             let mut data = vec![0u8; slice.len() * 8];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -1184,8 +1184,7 @@ fn encode_array_value(
             Ok((data, CasacoreDataType::TpComplex))
         }
         ArrayValue::Complex64(a) => {
-            let f = a.t().as_standard_layout().into_owned();
-            let slice = f.as_slice().expect("contiguous");
+            let slice = array_memory_order_values(a);
             let mut data = vec![0u8; slice.len() * 16];
             for (i, &v) in slice.iter().enumerate() {
                 if big_endian {
@@ -1202,6 +1201,33 @@ fn encode_array_value(
             "string arrays not supported in tiled storage".to_string(),
         )),
     }
+}
+
+fn array_memory_order_values<T: Clone>(array: &ArrayD<T>) -> Cow<'_, [T]> {
+    if is_fortran_contiguous(array.shape(), array.strides())
+        && let Some(slice) = array.as_slice_memory_order()
+    {
+        Cow::Borrowed(slice)
+    } else {
+        let fortran_ordered = array.t().as_standard_layout().into_owned();
+        Cow::Owned(
+            fortran_ordered
+                .as_slice()
+                .expect("contiguous after as_standard_layout")
+                .to_vec(),
+        )
+    }
+}
+
+fn is_fortran_contiguous(shape: &[usize], strides: &[isize]) -> bool {
+    let mut expected = 1isize;
+    for (&dim, &stride) in shape.iter().zip(strides.iter()) {
+        if dim > 1 && stride != expected {
+            return false;
+        }
+        expected = expected.saturating_mul(dim.max(1) as isize);
+    }
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -1628,6 +1654,9 @@ fn load_tiled_shape_stman(
             }
 
             let diff = row_map[interval] as usize - row_idx;
+            if diff > pos_map[interval] as usize {
+                continue;
+            }
             let Some(pos_in_cube) = (pos_map[interval] as usize).checked_sub(diff) else {
                 return Err(StorageError::FormatMismatch(format!(
                     "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
@@ -1715,6 +1744,9 @@ fn load_tiled_column_rows_shape_variant(
             continue;
         }
         let diff = mapping.row_map[interval] as usize - row_idx;
+        if diff > mapping.pos_map[interval] as usize {
+            continue;
+        }
         let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
             return Err(StorageError::FormatMismatch(format!(
                 "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
@@ -3081,6 +3113,73 @@ fn encode_column_cube_values(
     Ok(cube_bytes)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn encode_single_column_shape_cube_direct(
+    values: &[Option<&Value>],
+    cell_shape: &[usize],
+    tile_shape: &[usize],
+    cell_nelem: usize,
+    elem_size: usize,
+    nr_tiles: usize,
+    bucket_size: usize,
+    col_offset: usize,
+    col_data_type: CasacoreDataType,
+    big_endian: bool,
+) -> Result<Option<Vec<u8>>, StorageError> {
+    if tile_shape.len() != cell_shape.len() + 1 {
+        return Ok(None);
+    }
+    if tile_shape[..cell_shape.len()] != *cell_shape {
+        return Ok(None);
+    }
+    let rows_per_tile = tile_shape[cell_shape.len()];
+    if rows_per_tile == 0 {
+        return Ok(None);
+    }
+
+    let row_bytes = cell_nelem * elem_size;
+    let tile_nelem: usize = tile_shape.iter().product();
+    let tile_storage_len = tile_storage_bytes(col_data_type, tile_nelem);
+    let mut tsm_data = vec![0u8; nr_tiles * bucket_size];
+    for (pos_in_cube, value) in values.iter().enumerate() {
+        let Some(value) = value else {
+            continue;
+        };
+        let (encoded, encoded_type) = encode_array_value(value, big_endian)?;
+        if encoded_type != col_data_type {
+            return Ok(None);
+        }
+        let tile_idx = pos_in_cube / rows_per_tile;
+        let row_in_tile = pos_in_cube % rows_per_tile;
+        let tile_start = tile_idx * bucket_size + col_offset;
+        if col_data_type == CasacoreDataType::TpBool {
+            if encoded.len() != cell_nelem {
+                return Ok(None);
+            }
+            let tile_end = tile_start + tile_storage_len;
+            if tile_end > tsm_data.len() {
+                return Ok(None);
+            }
+            write_bool_bits_from_bytes(
+                &mut tsm_data[tile_start..tile_end],
+                row_in_tile * cell_nelem,
+                &encoded,
+            );
+        } else {
+            if encoded.len() != row_bytes {
+                return Ok(None);
+            }
+            let dst_start = tile_start + row_in_tile * row_bytes;
+            let dst_end = dst_start + row_bytes;
+            if dst_end > tsm_data.len() {
+                return Ok(None);
+            }
+            tsm_data[dst_start..dst_end].copy_from_slice(&encoded);
+        }
+    }
+    Ok(Some(tsm_data))
+}
+
 fn save_single_column_tiled_column_stman(
     table_path: &Path,
     dm_seq_nr: u32,
@@ -3291,7 +3390,10 @@ fn save_single_column_tiled_shape_stman(
 
     let mut shape_groups: Vec<(Vec<usize>, Vec<usize>)> = Vec::new();
     for (row_idx, value) in values.iter().enumerate() {
-        let shape = if let Some(Value::Array(av)) = value {
+        let Some(value) = *value else {
+            continue;
+        };
+        let shape = if let Value::Array(av) = value {
             array_shape(av)
         } else {
             vec![]
@@ -3364,48 +3466,65 @@ fn save_single_column_tiled_shape_stman(
 
         let group_values: Vec<Option<&Value>> =
             group_rows.iter().map(|&row_idx| values[row_idx]).collect();
-        let cube_bytes = encode_column_cube_values(
+        let tsm_data = if let Some(tsm_data) = encode_single_column_shape_cube_direct(
             &group_values,
-            &cube_shape,
+            cell_shape,
+            &tile_shape,
             cell_nelem,
             elem_size,
+            nr_tiles,
+            bucket_size,
+            col_offsets[0],
+            col_data_type,
             big_endian,
-        )?;
-
-        let mut tsm_data = vec![0u8; nr_tiles * bucket_size];
-        for tile_idx in 0..nr_tiles {
-            let tile_pos = linear_to_nd(tile_idx, &tiles_per_dim);
-            let cube_start: Vec<usize> = cube_shape
-                .iter()
-                .zip(tile_pos.iter())
-                .zip(tile_shape.iter())
-                .map(|((_, &tp), &ts)| tp * ts)
-                .collect();
-            let actual_extent: Vec<usize> = cube_shape
-                .iter()
-                .zip(cube_start.iter())
-                .zip(tile_shape.iter())
-                .map(|((&cs, &st), &ts)| std::cmp::min(ts, cs - st))
-                .collect();
-
-            let mut tile_col = vec![0u8; nrpixels * elem_size];
-            copy_cube_to_tile(
-                &cube_bytes,
+        )? {
+            tsm_data
+        } else {
+            let cube_bytes = encode_column_cube_values(
+                &group_values,
                 &cube_shape,
-                &mut tile_col,
-                &tile_shape,
-                &cube_start,
-                &actual_extent,
+                cell_nelem,
                 elem_size,
-            );
-            let dst_start = tile_idx * bucket_size + col_offsets[0];
-            write_tile_storage(
-                &mut tsm_data[dst_start..dst_start + tile_storage_bytes(col_data_type, nrpixels)],
-                col_data_type,
-                &tile_col,
-                nrpixels,
-            );
-        }
+                big_endian,
+            )?;
+
+            let mut tsm_data = vec![0u8; nr_tiles * bucket_size];
+            for tile_idx in 0..nr_tiles {
+                let tile_pos = linear_to_nd(tile_idx, &tiles_per_dim);
+                let cube_start: Vec<usize> = cube_shape
+                    .iter()
+                    .zip(tile_pos.iter())
+                    .zip(tile_shape.iter())
+                    .map(|((_, &tp), &ts)| tp * ts)
+                    .collect();
+                let actual_extent: Vec<usize> = cube_shape
+                    .iter()
+                    .zip(cube_start.iter())
+                    .zip(tile_shape.iter())
+                    .map(|((&cs, &st), &ts)| std::cmp::min(ts, cs - st))
+                    .collect();
+
+                let mut tile_col = vec![0u8; nrpixels * elem_size];
+                copy_cube_to_tile(
+                    &cube_bytes,
+                    &cube_shape,
+                    &mut tile_col,
+                    &tile_shape,
+                    &cube_start,
+                    &actual_extent,
+                    elem_size,
+                );
+                let dst_start = tile_idx * bucket_size + col_offsets[0];
+                write_tile_storage(
+                    &mut tsm_data
+                        [dst_start..dst_start + tile_storage_bytes(col_data_type, nrpixels)],
+                    col_data_type,
+                    &tile_col,
+                    nrpixels,
+                );
+            }
+            tsm_data
+        };
 
         let tsm_path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
         std::fs::write(&tsm_path, &tsm_data)?;
@@ -4647,6 +4766,40 @@ fn decode_selected_cube_row_from_shared_tiles(
         .collect();
     let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
     let (bucket_size, col_offsets) = compute_tile_layout(&header.col_data_types, &cube.tile_shape);
+
+    if cell_tile_shape == cell_shape.as_slice() {
+        let tile_index = row_tile * tile_grid_strides[cell_ndim];
+        let tile = load_shared_column_tile(
+            table_path,
+            dm_seq_nr,
+            header,
+            cube_idx,
+            cube,
+            target_col_idx,
+            bucket_size,
+            col_offsets[target_col_idx],
+            dt,
+            tile_index,
+            session,
+        )?;
+        let src_start = row_in_tile * row_tile_nelem * elem_size;
+        let src_end = src_start + row_tile_nelem * elem_size;
+        let value = decode_array_value(
+            &tile[src_start..src_end],
+            &cell_shape,
+            dt,
+            header.big_endian,
+        )?;
+        return match value {
+            Value::Array(array) => Ok(Some(array)),
+            other => Err(StorageError::FormatMismatch(format!(
+                "tiled array column {} decoded as non-array value {:?}",
+                col_desc.col_name,
+                other.kind()
+            ))),
+        };
+    }
+
     let mut raw = vec![0u8; cell_nelem * elem_size];
 
     for cell_tile_linear in 0..cell_tiles_per_dim.iter().product::<usize>() {
@@ -6340,11 +6493,11 @@ mod tests {
             .expect("save tiled-shape table");
 
         let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
-        assert_eq!(shared_tile_cache_entry_count(), 0);
+        assert_eq!(shared_tile_cache_entry_count_for_table(&root), 0);
         reopened
             .get_array_cells_owned("data", &[0, 1, 4, 5])
             .expect("first tiled selected-row read");
-        let cache_entries_after_first_read = shared_tile_cache_entry_count();
+        let cache_entries_after_first_read = shared_tile_cache_entry_count_for_table(&root);
         assert!(
             cache_entries_after_first_read > 0,
             "first tiled selected-row read should populate the shared tile cache"
@@ -6354,7 +6507,7 @@ mod tests {
             .get_array_cells_owned("data", &[0, 1, 4, 5])
             .expect("second tiled selected-row read");
         assert_eq!(
-            shared_tile_cache_entry_count(),
+            shared_tile_cache_entry_count_for_table(&root),
             cache_entries_after_first_read,
             "repeated tiled selected-row reads should reuse the shared tile cache"
         );

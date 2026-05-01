@@ -19,8 +19,8 @@ use crate::{
     BandpassSolveRequest, BandpassType, CalibrationStatsAxis, CalibrationStatsRequest,
     ContinuumSubtractionDataColumn, ContinuumSubtractionRequest, FluxScaleRequest,
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainType, RefAntSelector, calibration_stats, command_schema, continuum_subtract,
-    execute_apply_from_path, export_corrected_data, fluxscale, plan_apply_from_path,
+    GainType, GencalRequest, RefAntSelector, calibration_stats, command_schema, continuum_subtract,
+    execute_apply_from_path, export_corrected_data, fluxscale, gencal, plan_apply_from_path,
     solve_bandpass_from_path, solve_gain_from_path, summarize_tables,
 };
 
@@ -166,6 +166,11 @@ fn calibration_task_operations() -> Vec<TaskOperationDescriptor> {
             request_kind: "flux_scale".to_string(),
             result_kind: Some("flux_scale".to_string()),
         },
+        TaskOperationDescriptor {
+            name: "gencal".to_string(),
+            request_kind: "gencal".to_string(),
+            result_kind: Some("gencal".to_string()),
+        },
     ]
 }
 
@@ -188,6 +193,9 @@ pub struct StatsTaskRequest {
     /// Whether flagged values should be included.
     pub use_flags: bool,
 }
+
+/// Request for generating one externally specified calibration table.
+pub type GencalTaskRequest = GencalRequest;
 
 /// Request for planning an `applycal`-class operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -356,6 +364,8 @@ pub enum CalibrationTaskRequest {
     SolveBandpass(SolveBandpassTaskRequest),
     /// Bootstrap flux density scaling.
     FluxScale(FluxScaleRequest),
+    /// Generate a prior calibration table.
+    Gencal(GencalTaskRequest),
 }
 
 impl CalibrationTaskRequest {
@@ -467,6 +477,9 @@ impl CalibrationTaskRequest {
             .map_err(|error| error.to_string()),
             Self::FluxScale(request) => fluxscale(request)
                 .map(CalibrationTaskResult::FluxScale)
+                .map_err(|error| error.to_string()),
+            Self::Gencal(request) => gencal(request)
+                .map(CalibrationTaskResult::Gencal)
                 .map_err(|error| error.to_string()),
         }
     }
@@ -683,7 +696,7 @@ mod tests {
             CALIBRATION_TASK_PROTOCOL_VERSION
         );
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
-        assert_eq!(bundle.semantic.operations.len(), 9);
+        assert_eq!(bundle.semantic.operations.len(), 10);
         assert!(
             bundle
                 .semantic
@@ -697,6 +710,13 @@ mod tests {
                 .operations
                 .iter()
                 .any(|operation| operation.request_kind == "flux_scale")
+        );
+        assert!(
+            bundle
+                .semantic
+                .operations
+                .iter()
+                .any(|operation| operation.request_kind == "gencal")
         );
         assert!(bundle.components.contains_key("SummaryTaskRequest"));
         assert!(bundle.projections.ui_schema.is_some());

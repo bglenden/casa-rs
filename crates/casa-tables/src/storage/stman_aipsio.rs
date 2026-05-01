@@ -691,23 +691,18 @@ pub(crate) fn read_stman_array_column_rows(
         return Ok(Some(Vec::new()));
     }
     let layouts = parse_sparse_column_layouts(path, columns, byte_order)?;
-    let Some(SparseColumnLayout::IndirectArrayOffsetsU32 { data_type, extents }) = layouts
+    let Some(layout) = layouts
         .get(target_col_idx)
         .and_then(|layout| layout.as_ref())
     else {
         return Ok(None);
     };
+    let column = columns.get(target_col_idx).ok_or_else(|| {
+        StorageError::FormatMismatch(format!(
+            "target StManAipsIO array column index {target_col_idx} is out of range"
+        ))
+    })?;
 
-    let array_file_path = indirect_array_file_path(path);
-    if std::fs::metadata(&array_file_path)
-        .map(|meta| meta.len())
-        .unwrap_or(0)
-        >= LARGE_OFFSET_MARKER as u64
-    {
-        return Ok(None);
-    }
-
-    let mut main_file = std::fs::File::open(path)?;
     let mut requests: Vec<(usize, usize)> = selected_rows
         .iter()
         .copied()
@@ -715,32 +710,75 @@ pub(crate) fn read_stman_array_column_rows(
         .map(|(out_idx, row_index)| (row_index, out_idx))
         .collect();
     requests.sort_unstable_by_key(|&(row_index, _)| row_index);
+    let mut main_file = std::fs::File::open(path)?;
 
-    let mut offsets = vec![0u32; selected_rows.len()];
-    for (row_index, out_idx) in requests {
-        let slot = locate_extent_slot(extents, row_index)?;
-        main_file.seek(SeekFrom::Start(slot))?;
-        offsets[out_idx] = read_be_u32(&mut main_file)?;
+    match layout {
+        SparseColumnLayout::IndirectArrayOffsetsU32 { data_type, extents } => {
+            let array_file_path = indirect_array_file_path(path);
+            if std::fs::metadata(&array_file_path)
+                .map(|meta| meta.len())
+                .unwrap_or(0)
+                >= LARGE_OFFSET_MARKER as u64
+            {
+                return Ok(None);
+            }
+
+            let mut offsets = vec![0u32; selected_rows.len()];
+            for (row_index, out_idx) in requests {
+                let slot = locate_extent_slot(extents, row_index)?;
+                main_file.seek(SeekFrom::Start(slot))?;
+                offsets[out_idx] = read_be_u32(&mut main_file)?;
+            }
+
+            let mut reader =
+                StManArrayFileReader::open(&array_file_path, byte_order == ByteOrder::BigEndian)?;
+            let mut values = Vec::with_capacity(offsets.len());
+            for offset in offsets {
+                let value = reader
+                    .read_array_at(offset as i64, *data_type)?
+                    .map(|value| match value {
+                        Value::Array(array) => Ok(array),
+                        other => Err(StorageError::FormatMismatch(format!(
+                            "expected array value in indirect StManAipsIO column, found {:?}",
+                            other.kind()
+                        ))),
+                    })
+                    .transpose()?;
+                values.push(value);
+            }
+            Ok(Some(values))
+        }
+        SparseColumnLayout::DirectArrayFixed { data_type, extents } => {
+            let shape: Vec<usize> = column.shape.iter().map(|&dim| dim as usize).collect();
+            if shape.is_empty() {
+                return Ok(None);
+            }
+            let row_width = extents
+                .first()
+                .map(|extent| extent.row_width_bytes)
+                .ok_or_else(|| {
+                    StorageError::FormatMismatch(format!(
+                        "direct StManAipsIO array column '{}' has no extents",
+                        column.col_name
+                    ))
+                })?;
+            let mut row_bytes = vec![0u8; row_width];
+            let mut values = vec![None; selected_rows.len()];
+            for (row_index, out_idx) in requests {
+                let slot = locate_extent_slot(extents, row_index)?;
+                main_file.seek(SeekFrom::Start(slot))?;
+                main_file.read_exact(&mut row_bytes)?;
+                values[out_idx] = Some(decode_fixed_array_value(
+                    *data_type,
+                    &shape,
+                    &row_bytes,
+                    &column.col_name,
+                )?);
+            }
+            Ok(Some(values))
+        }
+        _ => Ok(None),
     }
-
-    let mut reader =
-        StManArrayFileReader::open(&array_file_path, byte_order == ByteOrder::BigEndian)?;
-    let mut values = Vec::with_capacity(offsets.len());
-    for offset in offsets {
-        let value = reader
-            .read_array_at(offset as i64, *data_type)?
-            .map(|value| match value {
-                Value::Array(array) => Ok(array),
-                other => Err(StorageError::FormatMismatch(format!(
-                    "expected array value in indirect StManAipsIO column, found {:?}",
-                    other.kind()
-                ))),
-            })
-            .transpose()?;
-        values.push(value);
-    }
-
-    Ok(Some(values))
 }
 
 pub(crate) fn read_stman_scalar_column_rows(
@@ -1259,6 +1297,118 @@ fn decode_fixed_scalar_value(
         }
     };
     Ok(scalar)
+}
+
+fn decode_fixed_array_value(
+    data_type: CasacoreDataType,
+    shape: &[usize],
+    bytes: &[u8],
+    column_name: &str,
+) -> Result<ArrayValue, StorageError> {
+    let elem_width = scalar_fixed_width_bytes(data_type).ok_or_else(|| {
+        StorageError::FormatMismatch(format!(
+            "unsupported direct StManAipsIO array type {data_type:?}"
+        ))
+    })?;
+    let elements_per_row: usize = shape.iter().product();
+    if bytes.len() != elements_per_row * elem_width {
+        return Err(StorageError::FormatMismatch(format!(
+            "direct StManAipsIO array column '{column_name}' row width {} does not match shape {:?} and type {:?}",
+            bytes.len(),
+            shape,
+            data_type
+        )));
+    }
+
+    match data_type {
+        CasacoreDataType::TpBool => {
+            let values = bytes.iter().map(|byte| *byte != 0).collect();
+            Ok(ArrayValue::Bool(array_from_fixed_row(shape, values)?))
+        }
+        CasacoreDataType::TpUChar | CasacoreDataType::TpChar => Ok(ArrayValue::UInt8(
+            array_from_fixed_row(shape, bytes.to_vec())?,
+        )),
+        CasacoreDataType::TpShort => {
+            let mut values = Vec::with_capacity(elements_per_row);
+            for chunk in bytes.chunks_exact(elem_width) {
+                values.push(i16::from_be_bytes(chunk.try_into().expect("chunk width")));
+            }
+            Ok(ArrayValue::Int16(array_from_fixed_row(shape, values)?))
+        }
+        CasacoreDataType::TpUShort => {
+            let mut values = Vec::with_capacity(elements_per_row);
+            for chunk in bytes.chunks_exact(elem_width) {
+                values.push(u16::from_be_bytes(chunk.try_into().expect("chunk width")));
+            }
+            Ok(ArrayValue::UInt16(array_from_fixed_row(shape, values)?))
+        }
+        CasacoreDataType::TpInt => {
+            let mut values = Vec::with_capacity(elements_per_row);
+            for chunk in bytes.chunks_exact(elem_width) {
+                values.push(i32::from_be_bytes(chunk.try_into().expect("chunk width")));
+            }
+            Ok(ArrayValue::Int32(array_from_fixed_row(shape, values)?))
+        }
+        CasacoreDataType::TpUInt => {
+            let mut values = Vec::with_capacity(elements_per_row);
+            for chunk in bytes.chunks_exact(elem_width) {
+                values.push(u32::from_be_bytes(chunk.try_into().expect("chunk width")));
+            }
+            Ok(ArrayValue::UInt32(array_from_fixed_row(shape, values)?))
+        }
+        CasacoreDataType::TpInt64 => {
+            let mut values = Vec::with_capacity(elements_per_row);
+            for chunk in bytes.chunks_exact(elem_width) {
+                values.push(i64::from_be_bytes(chunk.try_into().expect("chunk width")));
+            }
+            Ok(ArrayValue::Int64(array_from_fixed_row(shape, values)?))
+        }
+        CasacoreDataType::TpFloat => {
+            let mut values = Vec::with_capacity(elements_per_row);
+            for chunk in bytes.chunks_exact(elem_width) {
+                values.push(f32::from_be_bytes(chunk.try_into().expect("chunk width")));
+            }
+            Ok(ArrayValue::Float32(array_from_fixed_row(shape, values)?))
+        }
+        CasacoreDataType::TpDouble => {
+            let mut values = Vec::with_capacity(elements_per_row);
+            for chunk in bytes.chunks_exact(elem_width) {
+                values.push(f64::from_be_bytes(chunk.try_into().expect("chunk width")));
+            }
+            Ok(ArrayValue::Float64(array_from_fixed_row(shape, values)?))
+        }
+        CasacoreDataType::TpComplex => {
+            let mut values = Vec::with_capacity(elements_per_row);
+            for chunk in bytes.chunks_exact(elem_width) {
+                values.push(casa_types::Complex32 {
+                    re: f32::from_be_bytes(chunk[0..4].try_into().expect("chunk width")),
+                    im: f32::from_be_bytes(chunk[4..8].try_into().expect("chunk width")),
+                });
+            }
+            Ok(ArrayValue::Complex32(array_from_fixed_row(shape, values)?))
+        }
+        CasacoreDataType::TpDComplex => {
+            let mut values = Vec::with_capacity(elements_per_row);
+            for chunk in bytes.chunks_exact(elem_width) {
+                values.push(casa_types::Complex64 {
+                    re: f64::from_be_bytes(chunk[0..8].try_into().expect("chunk width")),
+                    im: f64::from_be_bytes(chunk[8..16].try_into().expect("chunk width")),
+                });
+            }
+            Ok(ArrayValue::Complex64(array_from_fixed_row(shape, values)?))
+        }
+        other => Err(StorageError::FormatMismatch(format!(
+            "unsupported direct StManAipsIO array decode for {other:?}"
+        ))),
+    }
+}
+
+fn array_from_fixed_row<T: Clone>(
+    shape: &[usize],
+    values: Vec<T>,
+) -> Result<ArrayD<T>, StorageError> {
+    ArrayD::from_shape_vec(IxDyn(shape).f(), values)
+        .map_err(|err| StorageError::FormatMismatch(format!("array shape: {err}")))
 }
 
 fn encode_fixed_scalar_value(

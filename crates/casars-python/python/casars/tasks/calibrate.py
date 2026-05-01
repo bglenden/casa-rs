@@ -26,6 +26,7 @@ GainSolveMode: TypeAlias = Literal["p", "ap"]
 GainSolveModelSource: TypeAlias = Literal["point", "point_source", "model_column"]
 GainSolveInterval: TypeAlias = Literal["inf", "int"] | float
 BandpassType: TypeAlias = Literal["b", "bpoly"]
+GencalType: TypeAlias = Literal["antpos", "gceff", "gc", "opac"]
 GainFieldValue: TypeAlias = int | str | Literal["nearest"]
 ReferenceAntenna: TypeAlias = int | str
 StatsAxis: TypeAlias = Literal["amp", "phase", "real", "imag"] | str
@@ -369,6 +370,36 @@ def fluxscale(
     )
 
 
+def gencal(
+    measurement_set: StrPath,
+    output_table: StrPath,
+    *,
+    caltype: GencalType,
+    antenna: str = "",
+    spw: str = "",
+    parameter: Sequence[float] = (),
+    gaincurve_table: StrPath | None = None,
+    binary: StrPath | None = None,
+) -> TaskResult:
+    """Generate a native CASA-compatible prior calibration table."""
+
+    return invoke_calibration_task(
+        kind="gencal",
+        request={
+            "measurement_set": os.fspath(measurement_set),
+            "output_table": os.fspath(output_table),
+            "caltype": caltype,
+            "antenna": antenna,
+            "spw": spw,
+            "parameter": [float(value) for value in parameter],
+            "gaincurve_table": None
+            if gaincurve_table is None
+            else os.fspath(gaincurve_table),
+        },
+        binary=binary,
+    )
+
+
 def validate_signature_parity(*, binary: StrPath | None = None) -> None:
     """Fail if the Python wrapper metadata drifts from the Rust task schema."""
 
@@ -698,6 +729,35 @@ _WRAPPER_CONTRACTS: dict[str, dict[str, Any]] = {
             "binary": None,
         },
     },
+    "gencal": {
+        "schema": "GencalRequest",
+        "request_fields": [
+            "measurement_set",
+            "output_table",
+            "caltype",
+            "antenna",
+            "spw",
+            "parameter",
+            "gaincurve_table",
+        ],
+        "signature": [
+            "measurement_set",
+            "output_table",
+            "caltype",
+            "antenna",
+            "spw",
+            "parameter",
+            "gaincurve_table",
+            "binary",
+        ],
+        "defaults": {
+            "antenna": "",
+            "spw": "",
+            "parameter": (),
+            "gaincurve_table": None,
+            "binary": None,
+        },
+    },
 }
 
 __all__ = [
@@ -711,6 +771,7 @@ __all__ = [
     "GainSolveMode",
     "GainSolveModelSource",
     "GainType",
+    "GencalType",
     "InterpolationMode",
     "ProtocolInfo",
     "ReferenceAntenna",
@@ -723,6 +784,7 @@ __all__ = [
     "continuum_subtract",
     "export_corrected_data",
     "fluxscale",
+    "gencal",
     "plan_apply",
     "protocol_info",
     "schema",

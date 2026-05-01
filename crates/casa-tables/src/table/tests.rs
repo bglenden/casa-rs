@@ -2123,6 +2123,72 @@ fn lazy_disk_open_reads_selected_array_cells_without_loading_full_tiled_column()
 }
 
 #[test]
+fn lazy_disk_open_reads_selected_fixed_array_cells_without_loading_full_column() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "uvw",
+        PrimitiveType::Float64,
+        vec![3],
+    )])
+    .expect("schema");
+
+    for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+        let mut table = Table::with_schema(schema.clone());
+        for row_idx in 0..6 {
+            table
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "uvw",
+                    Value::Array(ArrayValue::Float64(
+                        ArrayD::from_shape_vec(
+                            vec![3],
+                            vec![row_idx as f64, row_idx as f64 + 10.0, row_idx as f64 + 20.0],
+                        )
+                        .expect("shape uvw"),
+                    )),
+                )]))
+                .expect("push row");
+        }
+
+        let root = unique_test_dir(&format!("lazy_selected_fixed_array_rows_{dm:?}"));
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .expect("save table");
+
+        let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        assert!(!reopened.inner.has_loaded_rows());
+        assert!(!reopened.inner.has_loaded_array_column("uvw"));
+
+        let selected =
+            table_array_cells_owned(&reopened, "uvw", &[5, 2, 4]).expect("read selected uvw rows");
+        assert_eq!(
+            selected,
+            vec![
+                Some(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(vec![3], vec![5.0, 15.0, 25.0]).unwrap()
+                )),
+                Some(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(vec![3], vec![2.0, 12.0, 22.0]).unwrap()
+                )),
+                Some(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(vec![3], vec![4.0, 14.0, 24.0]).unwrap()
+                )),
+            ],
+            "dm={dm:?}"
+        );
+        assert!(
+            !reopened.inner.has_loaded_rows(),
+            "selected fixed-array reads should not force row materialization for {dm:?}"
+        );
+        assert!(
+            !reopened.inner.has_loaded_array_column("uvw"),
+            "selected fixed-array reads should not populate the full array-column cache for {dm:?}"
+        );
+
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
+}
+
+#[test]
 fn lazy_disk_open_reads_array_cells_without_loading_full_tiled_column() {
     let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
         "data",
@@ -3170,6 +3236,71 @@ fn save_with_bindings_keeps_different_tiled_array_dims_in_separate_groups() {
     std::fs::remove_dir_all(&root).expect("cleanup");
 }
 
+#[test]
+fn save_with_bindings_column_overrides_write_single_tiled_array_column() {
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("ROW_ID", PrimitiveType::Int32),
+        ColumnSchema::array_variable("DATA", PrimitiveType::Int32, Some(2)),
+    ])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    for row_id in 0..3 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "ROW_ID",
+                Value::Scalar(ScalarValue::Int32(row_id)),
+            )]))
+            .expect("add scalar-only row");
+    }
+
+    let root = unique_test_dir("save_with_bindings_column_overrides");
+    std::fs::create_dir_all(&root).expect("mkdir");
+
+    let bindings = HashMap::from([(
+        "DATA".to_string(),
+        ColumnBinding {
+            data_manager: DataManagerKind::TiledShapeStMan,
+            tile_shape: None,
+        },
+    )]);
+    let overrides = HashMap::from([(
+        "DATA".to_string(),
+        vec![
+            Some(Value::Array(ArrayValue::Int32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![1, 2, 3, 4]).expect("row 0 shape"),
+            ))),
+            Some(Value::Array(ArrayValue::Int32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![5, 6, 7, 8]).expect("row 1 shape"),
+            ))),
+            Some(Value::Array(ArrayValue::Int32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![9, 10, 11, 12]).expect("row 2 shape"),
+            ))),
+        ],
+    )]);
+
+    table
+        .save_with_bindings_and_column_overrides_assuming_valid(
+            TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+            &overrides,
+        )
+        .expect("save with column overrides");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    assert_eq!(
+        table_scalar(&reopened, 1, "ROW_ID").expect("row id"),
+        &ScalarValue::Int32(1)
+    );
+    assert_eq!(
+        table_array(&reopened, 2, "DATA").expect("data row 2"),
+        &ArrayValue::Int32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![9, 10, 11, 12]).expect("expected shape")
+        )
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
 fn assert_save_with_bindings_preserves_scalar_values_when_row_field_order_varies(
     dm_kind: DataManagerKind,
     label: &str,
@@ -3487,6 +3618,69 @@ fn add_column_none_default_with_undefined() {
     for i in 0..3 {
         assert_eq!(table_cell(&table, i, "opt"), Ok(None));
     }
+}
+
+#[test]
+fn add_variable_shape_tiled_column_in_place_persists_defined_rows_only() {
+    let root = unique_test_dir("add_sparse_tiled_shape_col");
+    std::fs::create_dir_all(&root).expect("mkdir");
+    build_mutation_test_table()
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::StandardStMan))
+        .expect("save base table");
+
+    let mut table = Table::open(TableOptions::new(&root)).expect("open base table");
+    let column = ColumnSchema::array_variable("vis", PrimitiveType::Float32, Some(2));
+    table.add_column(column, None).expect("add column");
+    table_set_cell(
+        &mut table,
+        1,
+        "vis",
+        Value::Array(ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]).unwrap(),
+        )),
+    )
+    .expect("set row 1");
+    table_set_cell(
+        &mut table,
+        2,
+        "vis",
+        Value::Array(ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![1, 3], vec![5.0, 6.0, 7.0]).unwrap(),
+        )),
+    )
+    .expect("set row 2");
+    table
+        .save_added_tiled_shape_column_in_place_assuming_valid("vis", &[1, 2], Some(&[2, 2, 8]))
+        .expect("save added tiled column");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    match table_cell(&reopened, 0, "vis") {
+        Ok(None) => {}
+        Ok(Some(Value::Array(ArrayValue::Float32(array)))) => {
+            assert_eq!(array.shape(), &[0, 0]);
+        }
+        other => panic!("unexpected row 0 value: {other:?}"),
+    }
+    assert_eq!(
+        table_array(&reopened, 1, "vis"),
+        Ok(&ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]).unwrap()
+        ))
+    );
+    assert_eq!(
+        table_array(&reopened, 2, "vis"),
+        Ok(&ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![1, 3], vec![5.0, 6.0, 7.0]).unwrap()
+        ))
+    );
+    assert!(
+        reopened
+            .data_manager_info()
+            .iter()
+            .any(|dm| dm.dm_type == "TiledShapeStMan" && dm.columns == ["vis"])
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
 }
 
 #[test]

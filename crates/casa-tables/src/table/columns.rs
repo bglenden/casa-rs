@@ -316,6 +316,36 @@ impl Table {
         self.finish_write_operation(auto_unlock, result)
     }
 
+    /// Appends rows without re-validating them against the attached schema.
+    ///
+    /// This is the bulk counterpart to [`add_row_assuming_valid`](Table::add_row_assuming_valid)
+    /// for writers that already have schema-compatible records and need to
+    /// avoid per-row write-operation overhead.
+    pub fn add_rows_assuming_valid<I>(&mut self, rows: I) -> Result<usize, TableError>
+    where
+        I: IntoIterator<Item = RecordValue>,
+    {
+        let auto_unlock = self.begin_write_operation("add_rows_assuming_valid")?;
+        let result = (|| {
+            let schema = self.schema().cloned();
+            let mut count = 0usize;
+            for row in rows {
+                let undefined = schema
+                    .as_ref()
+                    .map(|schema| undefined_columns_for_row(&row, schema));
+                self.inner.add_row(row)?;
+                if let Some(undefined) = undefined
+                    && let Some(set) = self.inner.undefined_for_row_mut(self.row_count() - 1)?
+                {
+                    *set = undefined;
+                }
+                count += 1;
+            }
+            Ok(count)
+        })();
+        self.finish_write_operation(auto_unlock, result)
+    }
+
     /// Returns a shared reference to the row at `row_index`.
     ///
     /// Compatibility note: new row-oriented code should prefer
@@ -845,6 +875,41 @@ impl Table {
         }
         (0..self.row_count())
             .map(|row_index| match self.cell(row_index, column)? {
+                Some(Value::Scalar(scalar)) => Ok(Some(scalar.clone())),
+                Some(value) => Err(TableError::ColumnTypeMismatch {
+                    row_index,
+                    column: column.to_string(),
+                    expected: "scalar",
+                    found: value.kind(),
+                }),
+                None => Ok(None),
+            })
+            .collect()
+    }
+
+    pub(crate) fn get_scalar_cells_owned_for_rows(
+        &self,
+        column: &str,
+        row_indices: &[usize],
+    ) -> Result<Vec<Option<ScalarValue>>, TableError> {
+        self.require_column(column)?;
+        for &row_index in row_indices {
+            if row_index >= self.row_count() {
+                return Err(TableError::RowOutOfBounds {
+                    row_index,
+                    row_count: self.row_count(),
+                });
+            }
+        }
+        if let Some(values) = self
+            .inner
+            .scalar_cells_owned_for_rows(row_indices, column)?
+        {
+            return Ok(values);
+        }
+        row_indices
+            .iter()
+            .map(|&row_index| match self.cell(row_index, column)? {
                 Some(Value::Scalar(scalar)) => Ok(Some(scalar.clone())),
                 Some(value) => Err(TableError::ColumnTypeMismatch {
                     row_index,
@@ -1503,6 +1568,18 @@ impl<'a> TableColumn<'a> {
     /// Returns owned scalar values for the column.
     pub fn scalar_cells_owned(&self) -> Result<Vec<Option<ScalarValue>>, TableError> {
         self.table.get_scalar_cells_owned(&self.column)
+    }
+
+    /// Returns owned scalar values for selected rows in this column.
+    ///
+    /// The output preserves the order of `row_indices`. Missing cells are
+    /// returned as `None`.
+    pub fn scalar_cells_owned_for_rows(
+        &self,
+        row_indices: &[usize],
+    ) -> Result<Vec<Option<ScalarValue>>, TableError> {
+        self.table
+            .get_scalar_cells_owned_for_rows(&self.column, row_indices)
     }
 
     /// Returns owned array values for the selected rows.

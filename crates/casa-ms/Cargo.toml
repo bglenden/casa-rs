@@ -37,6 +37,10 @@ tempfile = "3"
 name = "msexplore"
 path = "src/bin/msexplore.rs"
 
+[[bin]]
+name = "mstransform"
+path = "src/bin/mstransform.rs"
+
 [lints]
 workspace = true
 

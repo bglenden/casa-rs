@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Tutorial-scoped image-analysis operations matching CASA image task semantics.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -108,6 +109,11 @@ impl ImageAnalysisTaskSchemaBundle {
                         result_kind: Some("immoments".to_string()),
                     },
                     TaskOperationDescriptor {
+                        name: "impv".to_string(),
+                        request_kind: "impv".to_string(),
+                        result_kind: Some("impv".to_string()),
+                    },
+                    TaskOperationDescriptor {
                         name: "exportfits".to_string(),
                         request_kind: "exportfits".to_string(),
                         result_kind: Some("exportfits".to_string()),
@@ -134,7 +140,7 @@ impl ImageAnalysisTaskSchemaBundle {
                 ui_schema: None,
                 python: Some(serde_json::json!({
                     "module": "casars.tasks.image_analysis",
-                    "functions": ["imhead", "imstat", "immoments", "exportfits", "importfits"],
+                    "functions": ["imhead", "imstat", "immoments", "impv", "exportfits", "importfits"],
                 })),
             },
             request_schema,
@@ -211,6 +217,91 @@ pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError>
                     id: "overwrite",
                     label: "Overwrite",
                     order: 5,
+                    parser: toggle(["--overwrite"], []),
+                    value_kind: "bool",
+                    required: false,
+                    default: serde_json::json!("false"),
+                    help: "Replace existing output image",
+                    group: "Output",
+                })
+            ]),
+        ),
+        "impv" => (
+            "impv",
+            "Position-Velocity Slice",
+            "Extract a CASA-style position-velocity image",
+            "impv <imagename> --outfile <path> --start x,y --end x,y [--width pixels] [--chans 4~12] [--overwrite]",
+            serde_json::json!([
+                arg(UiArgument {
+                    id: "imagename",
+                    label: "Image",
+                    order: 0,
+                    parser: positional("imagename"),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Input CASA image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "outfile",
+                    label: "Output",
+                    order: 1,
+                    parser: option(["--outfile"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Output CASA image path",
+                    group: "Output",
+                }),
+                arg(UiArgument {
+                    id: "start",
+                    label: "Start",
+                    order: 2,
+                    parser: option(["--start"], "x,y", []),
+                    value_kind: "string",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Start pixel coordinate",
+                    group: "Slice",
+                }),
+                arg(UiArgument {
+                    id: "end",
+                    label: "End",
+                    order: 3,
+                    parser: option(["--end"], "x,y", []),
+                    value_kind: "string",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "End pixel coordinate",
+                    group: "Slice",
+                }),
+                arg(UiArgument {
+                    id: "width",
+                    label: "Width",
+                    order: 4,
+                    parser: option(["--width"], "pixels", []),
+                    value_kind: "number",
+                    required: false,
+                    default: serde_json::json!("1"),
+                    help: "Averaging width in pixels",
+                    group: "Slice",
+                }),
+                arg(UiArgument {
+                    id: "chans",
+                    label: "Channels",
+                    order: 5,
+                    parser: option(["--chans"], "range", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "CASA channel range, for example 4~12",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "overwrite",
+                    label: "Overwrite",
+                    order: 6,
                     parser: toggle(["--overwrite"], []),
                     value_kind: "bool",
                     required: false,
@@ -402,6 +493,8 @@ pub enum ImageAnalysisTaskRequest {
     Imstat(ImstatRequest),
     /// CASA `immoments` style moment map generation.
     Immoments(ImmomentsRequest),
+    /// CASA `impv` style position-velocity extraction.
+    Impv(ImpvRequest),
     /// CASA `exportfits` style FITS image export.
     Exportfits(ExportFitsRequest),
     /// CASA `importfits` style FITS image import.
@@ -418,6 +511,8 @@ pub enum ImageAnalysisTaskResult {
     Imstat(ImageStatisticsSummary),
     /// Result for [`ImageAnalysisTaskRequest::Immoments`].
     Immoments(MomentMapSummary),
+    /// Result for [`ImageAnalysisTaskRequest::Impv`].
+    Impv(PvImageSummary),
     /// Result for [`ImageAnalysisTaskRequest::Exportfits`].
     Exportfits(FitsExportSummary),
     /// Result for [`ImageAnalysisTaskRequest::Importfits`].
@@ -465,6 +560,56 @@ pub struct ImmomentsRequest {
     /// Replace an existing output image.
     #[serde(default)]
     pub overwrite: bool,
+}
+
+/// CASA `impv` request for a tutorial-scoped position-velocity image.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImpvRequest {
+    /// Input CASA image path.
+    pub imagename: PathBuf,
+    /// Output CASA image path.
+    pub outfile: PathBuf,
+    /// CASA mode. This implementation supports `coords`.
+    #[serde(default = "default_impv_mode")]
+    pub mode: String,
+    /// Start pixel coordinate as `x,y`.
+    pub start: String,
+    /// End pixel coordinate as `x,y`.
+    pub end: String,
+    /// Slice width in pixels, averaged perpendicular to the path.
+    #[serde(default = "default_impv_width")]
+    pub width: usize,
+    /// CASA channel expression, supporting tutorial forms like `4~12`.
+    #[serde(default)]
+    pub chans: Option<String>,
+    /// Replace an existing output image.
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+fn default_impv_mode() -> String {
+    "coords".to_string()
+}
+
+fn default_impv_width() -> usize {
+    1
+}
+
+/// Summary returned after writing a PV image.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PvImageSummary {
+    /// Input CASA image path.
+    pub imagename: String,
+    /// Output CASA image path.
+    pub outfile: String,
+    /// Output image shape.
+    pub shape: Vec<usize>,
+    /// Number of samples along the PV path.
+    pub path_pixels: usize,
+    /// Width in pixels averaged perpendicular to the path.
+    pub width: usize,
+    /// Pixel units copied from the input image.
+    pub units: String,
 }
 
 /// CASA `exportfits` request.
@@ -656,6 +801,9 @@ pub fn run_image_analysis_task(
         ImageAnalysisTaskRequest::Immoments(request) => {
             Ok(ImageAnalysisTaskResult::Immoments(immoments(&request)?))
         }
+        ImageAnalysisTaskRequest::Impv(request) => {
+            Ok(ImageAnalysisTaskResult::Impv(impv(&request)?))
+        }
         ImageAnalysisTaskRequest::Exportfits(request) => {
             Ok(ImageAnalysisTaskResult::Exportfits(export_fits(
                 &request.imagename,
@@ -752,6 +900,18 @@ pub fn immoments(request: &ImmomentsRequest) -> Result<MomentMapSummary, ImageEr
                 "immoments currently supports real-valued images".to_string(),
             ))
         }
+    }
+}
+
+/// Extract a CASA `impv`-style position-velocity image for pixel-coordinate slices.
+pub fn impv(request: &ImpvRequest) -> Result<PvImageSummary, ImageError> {
+    let image = AnyPagedImage::open(&request.imagename)?;
+    match &image {
+        AnyPagedImage::Float32(image) => impv_typed(image, request),
+        AnyPagedImage::Float64(image) => impv_typed(image, request),
+        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => Err(
+            ImageError::InvalidMetadata("impv currently supports real-valued images".to_string()),
+        ),
     }
 }
 
@@ -1294,6 +1454,14 @@ fn direction_pixel_area(coords: &CoordinateSystem) -> Option<f64> {
     None
 }
 
+fn collapsed_image_info<T: ImagePixel>(image: &PagedImage<T>) -> Result<ImageInfo, ImageError> {
+    let mut info = image.image_info()?;
+    if info.beam_set.is_multi() {
+        info.beam_set = ImageBeamSet::new(info.beam_set.common_beam()?);
+    }
+    Ok(info)
+}
+
 fn immoments_typed<T>(
     image: &PagedImage<T>,
     request: &ImmomentsRequest,
@@ -1339,11 +1507,13 @@ where
     let out_shape = output_data.shape().to_vec();
     let mut output = TempImage::<f32>::new(out_shape.clone(), image.coordinates().clone())?;
     output.set_units(moment_units(image.units(), request.moments))?;
-    output.set_image_info(&image.image_info()?)?;
+    output.set_image_info(&collapsed_image_info(image)?)?;
     output.set_misc_info(image.misc_info())?;
     output.put_slice(&output_data, &vec![0; output.ndim()])?;
-    output.put_mask("mask0", &output_mask)?;
-    output.set_default_mask("mask0")?;
+    if output_mask.iter().any(|valid| !*valid) {
+        output.put_mask("mask0", &output_mask)?;
+        output.set_default_mask("mask0")?;
+    }
     output.save_as(&request.outfile)?;
     let valid_profiles = output_mask.iter().filter(|value| **value).count();
     Ok(MomentMapSummary {
@@ -1354,6 +1524,211 @@ where
         units: output.units().to_string(),
         valid_profiles,
     })
+}
+
+fn impv_typed<T>(image: &PagedImage<T>, request: &ImpvRequest) -> Result<PvImageSummary, ImageError>
+where
+    T: ImagePixel + Into<f64> + Copy,
+{
+    if !request.mode.eq_ignore_ascii_case("coords") {
+        return Err(ImageError::InvalidMetadata(format!(
+            "impv mode {:?} is not supported by the tutorial path; use mode='coords'",
+            request.mode
+        )));
+    }
+    if image.ndim() < 2 {
+        return Err(ImageError::InvalidMetadata(
+            "impv requires at least two image axes".to_string(),
+        ));
+    }
+    if request.outfile.exists() {
+        if request.overwrite {
+            fs::remove_dir_all(&request.outfile)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+        } else {
+            return Err(ImageError::Io(format!(
+                "PV output already exists: {}",
+                request.outfile.display()
+            )));
+        }
+    }
+    let [x0, y0] = parse_pixel_pair(&request.start)?;
+    let [x1, y1] = parse_pixel_pair(&request.end)?;
+    let path = bresenham_line(x0, y0, x1, y1);
+    if path.is_empty() {
+        return Err(ImageError::InvalidMetadata(
+            "impv path contains no pixels".to_string(),
+        ));
+    }
+    let mut start = vec![0; image.ndim()];
+    let mut shape = image.shape().to_vec();
+    let spectral_axis = image.find_axis(CoordinateType::Spectral);
+    let channel_indices = if let (Some(axis), Some(chans)) = (
+        spectral_axis,
+        request
+            .chans
+            .as_deref()
+            .filter(|text| !text.trim().is_empty()),
+    ) {
+        let indices = parse_indices(chans, image.shape()[axis])?;
+        start[axis] = indices[0];
+        shape[axis] = indices[indices.len() - 1] - indices[0] + 1;
+        Some((axis, indices))
+    } else {
+        None
+    };
+    let input = image.get_slice(&start, &shape)?;
+    let mut output_shape = shape.clone();
+    output_shape[0] = path.len();
+    output_shape[1] = 1;
+    if let Some((axis, indices)) = &channel_indices {
+        output_shape[*axis] = indices.len();
+    }
+    let mut output_data = ArrayD::<f32>::zeros(IxDyn(&output_shape).f());
+    let other_shape = output_shape[2..].to_vec();
+    let offsets = perpendicular_offsets(x0, y0, x1, y1, request.width.max(1));
+    let mut input_index = vec![0; input.ndim()];
+    let mut output_index = vec![0; output_shape.len()];
+    for sample_index in all_indices_for_shape(&other_shape) {
+        for (path_index, &(x, y)) in path.iter().enumerate() {
+            let mut sum = 0.0;
+            let mut count = 0usize;
+            for &(dx, dy) in &offsets {
+                let sx = x + dx;
+                let sy = y + dy;
+                if sx < 0
+                    || sy < 0
+                    || sx as usize >= image.shape()[0]
+                    || sy as usize >= image.shape()[1]
+                {
+                    continue;
+                }
+                input_index[0] = sx as usize;
+                input_index[1] = sy as usize;
+                for (offset_axis, value) in sample_index.iter().copied().enumerate() {
+                    input_index[offset_axis + 2] = value;
+                }
+                if let Some((axis, indices)) = &channel_indices {
+                    let local = sample_index[*axis - 2];
+                    input_index[*axis] = indices[local] - start[*axis];
+                }
+                sum += input[IxDyn(&input_index)].into();
+                count += 1;
+            }
+            if count > 0 {
+                output_index[0] = path_index;
+                output_index[1] = 0;
+                for (offset_axis, value) in sample_index.iter().copied().enumerate() {
+                    output_index[offset_axis + 2] = value;
+                }
+                output_data[IxDyn(&output_index)] = (sum / count as f64) as f32;
+            }
+        }
+    }
+    let mut output = TempImage::<f32>::new(output_shape.clone(), image.coordinates().clone())?;
+    output.set_units(image.units())?;
+    output.set_image_info(&collapsed_image_info(image)?)?;
+    output.set_misc_info(image.misc_info())?;
+    output.put_slice(&output_data, &vec![0; output.ndim()])?;
+    output.save_as(&request.outfile)?;
+    Ok(PvImageSummary {
+        imagename: request.imagename.display().to_string(),
+        outfile: request.outfile.display().to_string(),
+        shape: output_shape,
+        path_pixels: path.len(),
+        width: request.width.max(1),
+        units: output.units().to_string(),
+    })
+}
+
+fn parse_pixel_pair(text: &str) -> Result<[isize; 2], ImageError> {
+    let values = text
+        .split(',')
+        .map(|part| {
+            part.trim().parse::<isize>().map_err(|error| {
+                ImageError::InvalidMetadata(format!("invalid pixel coordinate {text:?}: {error}"))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if values.len() != 2 {
+        return Err(ImageError::InvalidMetadata(format!(
+            "pixel coordinate must be x,y, got {text:?}"
+        )));
+    }
+    Ok([values[0], values[1]])
+}
+
+fn bresenham_line(x0: isize, y0: isize, x1: isize, y1: isize) -> Vec<(isize, isize)> {
+    let mut points = Vec::new();
+    let mut x = x0;
+    let mut y = y0;
+    let dx = (x1 - x0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let dy = -(y1 - y0).abs();
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    loop {
+        points.push((x, y));
+        if x == x1 && y == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y += sy;
+        }
+    }
+    points
+}
+
+fn perpendicular_offsets(
+    x0: isize,
+    y0: isize,
+    x1: isize,
+    y1: isize,
+    width: usize,
+) -> Vec<(isize, isize)> {
+    let dx = (x1 - x0) as f64;
+    let dy = (y1 - y0) as f64;
+    let length = (dx * dx + dy * dy).sqrt();
+    let (px, py) = if length > 0.0 {
+        (-dy / length, dx / length)
+    } else {
+        (0.0, 1.0)
+    };
+    let center = (width as isize - 1) as f64 / 2.0;
+    (0..width)
+        .map(|index| {
+            let offset = index as f64 - center;
+            (
+                (px * offset).round() as isize,
+                (py * offset).round() as isize,
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn all_indices_for_shape(shape: &[usize]) -> Vec<Vec<usize>> {
+    fn push(shape: &[usize], axis: usize, current: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+        if axis == shape.len() {
+            out.push(current.clone());
+            return;
+        }
+        for value in 0..shape[axis] {
+            current.push(value);
+            push(shape, axis + 1, current, out);
+            current.pop();
+        }
+    }
+    let mut out = Vec::new();
+    push(shape, 0, &mut Vec::new(), &mut out);
+    out
 }
 
 fn collapse_moment<T>(
@@ -1865,7 +2240,7 @@ mod tests {
             bundle.protocol.protocol_name,
             IMAGE_ANALYSIS_TASK_PROTOCOL_NAME
         );
-        assert_eq!(bundle.semantic.operations.len(), 5);
+        assert_eq!(bundle.semantic.operations.len(), 6);
         assert_eq!(
             bundle
                 .projections
@@ -1884,6 +2259,7 @@ mod tests {
 
         for (binary, expected_args) in [
             ("immoments", ["imagename", "outfile", "moments"].as_slice()),
+            ("impv", ["imagename", "outfile", "start", "end"].as_slice()),
             (
                 "exportfits",
                 ["imagename", "fitsimage", "velocity"].as_slice(),
@@ -1972,7 +2348,27 @@ mod tests {
         assert_eq!(moment.units, "Jy/beam.km/s");
         assert_eq!(moment.valid_profiles, 4);
         let moment_image = PagedImage::<f32>::open(&moment_path).unwrap();
-        assert_eq!(moment_image.default_mask_name().as_deref(), Some("mask0"));
+        assert_eq!(moment_image.default_mask_name(), None);
+
+        let pv_path = temp.path().join("pv.image");
+        let pv_result = run_image_analysis_task(ImageAnalysisTaskRequest::Impv(ImpvRequest {
+            imagename: source_path.clone(),
+            outfile: pv_path.clone(),
+            mode: "coords".to_string(),
+            start: "0,0".to_string(),
+            end: "1,1".to_string(),
+            width: 1,
+            chans: Some("1~2".to_string()),
+            overwrite: false,
+        }))
+        .unwrap();
+        let ImageAnalysisTaskResult::Impv(pv) = pv_result else {
+            panic!("expected impv result");
+        };
+        assert_eq!(pv.shape, vec![2, 1, 2]);
+        assert_eq!(pv.path_pixels, 2);
+        let pv_image = PagedImage::<f32>::open(&pv_path).unwrap();
+        assert_eq!(pv_image.shape(), &[2, 1, 2]);
 
         run_image_analysis_task(ImageAnalysisTaskRequest::Exportfits(ExportFitsRequest {
             imagename: source_path.clone(),

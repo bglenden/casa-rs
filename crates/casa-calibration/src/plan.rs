@@ -500,20 +500,21 @@ fn build_selected_rows(
         .data_description()
         .map_err(|source| ApplyPlanError::Selection { source })?;
     let table = ms.main_table();
-    let data_desc_ids = load_i32_column(table, "DATA_DESC_ID")?;
-    let field_ids = load_i32_column(table, "FIELD_ID")?;
-    let observation_ids = load_i32_column(table, "OBSERVATION_ID")?;
-    let antenna1s = load_i32_column(table, "ANTENNA1")?;
-    let antenna2s = load_i32_column(table, "ANTENNA2")?;
-    let feed1s = load_i32_column(table, "FEED1")?;
-    let feed2s = load_i32_column(table, "FEED2")?;
-    let times = load_f64_column(table, "TIME")?;
-    let intervals = load_f64_column(table, "INTERVAL")?;
+    let data_desc_ids = load_i32_column_rows(table, "DATA_DESC_ID", row_indices)?;
+    let field_ids = load_i32_column_rows(table, "FIELD_ID", row_indices)?;
+    let observation_ids = load_i32_column_rows(table, "OBSERVATION_ID", row_indices)?;
+    let antenna1s = load_i32_column_rows(table, "ANTENNA1", row_indices)?;
+    let antenna2s = load_i32_column_rows(table, "ANTENNA2", row_indices)?;
+    let feed1s = load_i32_column_rows(table, "FEED1", row_indices)?;
+    let feed2s = load_i32_column_rows(table, "FEED2", row_indices)?;
+    let times = load_f64_column_rows(table, "TIME", row_indices)?;
+    let intervals = load_f64_column_rows(table, "INTERVAL", row_indices)?;
 
     row_indices
         .iter()
-        .map(|&row_index| {
-            let data_desc_id = value_at_i32(&data_desc_ids, row_index, "DATA_DESC_ID")?;
+        .enumerate()
+        .map(|(selected_idx, &row_index)| {
+            let data_desc_id = value_at_i32(&data_desc_ids, selected_idx, "DATA_DESC_ID")?;
             let ddid_index = usize::try_from(data_desc_id).map_err(|_| {
                 ApplyPlanError::MissingDataDescription {
                     row_index,
@@ -529,8 +530,8 @@ fn build_selected_rows(
 
             Ok(ApplyRowPlan {
                 row_index,
-                field_id: value_at_i32(&field_ids, row_index, "FIELD_ID")?,
-                observation_id: value_at_i32(&observation_ids, row_index, "OBSERVATION_ID")?,
+                field_id: value_at_i32(&field_ids, selected_idx, "FIELD_ID")?,
+                observation_id: value_at_i32(&observation_ids, selected_idx, "OBSERVATION_ID")?,
                 data_desc_id,
                 data_spw_id: dd
                     .spectral_window_id(ddid_index)
@@ -538,30 +539,34 @@ fn build_selected_rows(
                 polarization_id: dd
                     .polarization_id(ddid_index)
                     .map_err(|source| ApplyPlanError::Selection { source })?,
-                antenna1: value_at_i32(&antenna1s, row_index, "ANTENNA1")?,
-                antenna2: value_at_i32(&antenna2s, row_index, "ANTENNA2")?,
-                feed1: value_at_i32(&feed1s, row_index, "FEED1")?,
-                feed2: value_at_i32(&feed2s, row_index, "FEED2")?,
-                time_seconds: value_at_f64(&times, row_index, "TIME")?,
-                interval_seconds: value_at_f64(&intervals, row_index, "INTERVAL")?,
+                antenna1: value_at_i32(&antenna1s, selected_idx, "ANTENNA1")?,
+                antenna2: value_at_i32(&antenna2s, selected_idx, "ANTENNA2")?,
+                feed1: value_at_i32(&feed1s, selected_idx, "FEED1")?,
+                feed2: value_at_i32(&feed2s, selected_idx, "FEED2")?,
+                time_seconds: value_at_f64(&times, selected_idx, "TIME")?,
+                interval_seconds: value_at_f64(&intervals, selected_idx, "INTERVAL")?,
             })
         })
         .collect()
 }
 
-fn load_i32_column(table: &Table, column: &str) -> Result<Vec<Option<i32>>, ApplyPlanError> {
+fn load_i32_column_rows(
+    table: &Table,
+    column: &str,
+    row_indices: &[usize],
+) -> Result<Vec<Option<i32>>, ApplyPlanError> {
     table
         .column_accessor(column)
-        .and_then(|column| column.scalar_cells_owned())
+        .and_then(|column| column.scalar_cells_owned_for_rows(row_indices))
         .map_err(|source| ApplyPlanError::Selection {
             source: MsError::from(source),
         })?
         .into_iter()
         .enumerate()
-        .map(|(row_index, value)| match value {
+        .map(|(selected_idx, value)| match value {
             Some(casa_types::ScalarValue::Int32(v)) => Ok(Some(v)),
             Some(other) => Err(ApplyPlanError::ScalarTypeMismatch {
-                context: format!("{column} row {row_index}"),
+                context: format!("{column} selected row {selected_idx}"),
                 expected: "Int32",
                 found: scalar_kind(&other),
             }),
@@ -570,19 +575,23 @@ fn load_i32_column(table: &Table, column: &str) -> Result<Vec<Option<i32>>, Appl
         .collect()
 }
 
-fn load_f64_column(table: &Table, column: &str) -> Result<Vec<Option<f64>>, ApplyPlanError> {
+fn load_f64_column_rows(
+    table: &Table,
+    column: &str,
+    row_indices: &[usize],
+) -> Result<Vec<Option<f64>>, ApplyPlanError> {
     table
         .column_accessor(column)
-        .and_then(|column| column.scalar_cells_owned())
+        .and_then(|column| column.scalar_cells_owned_for_rows(row_indices))
         .map_err(|source| ApplyPlanError::Selection {
             source: MsError::from(source),
         })?
         .into_iter()
         .enumerate()
-        .map(|(row_index, value)| match value {
+        .map(|(selected_idx, value)| match value {
             Some(casa_types::ScalarValue::Float64(v)) => Ok(Some(v)),
             Some(other) => Err(ApplyPlanError::ScalarTypeMismatch {
-                context: format!("{column} row {row_index}"),
+                context: format!("{column} selected row {selected_idx}"),
                 expected: "Float64",
                 found: scalar_kind(&other),
             }),
@@ -685,8 +694,16 @@ fn build_table_plan(
     } else {
         summary.spectral_window_ids.clone()
     };
+    let effective_spec;
+    let spec_for_spw_mapping = if summary.table_subtype == "KAntPos Jones" && spec.spwmap.is_empty()
+    {
+        effective_spec = k_antpos_default_spwmap_spec(spec, &applicable_data_spw_ids);
+        &effective_spec
+    } else {
+        spec
+    };
     let spw_mapping = resolve_spw_mapping(
-        spec,
+        spec_for_spw_mapping,
         &available_calibration_spw_ids,
         &applicable_data_spw_ids,
     )?;
@@ -709,6 +726,21 @@ fn build_table_plan(
         interp: spec.interp,
         calwt: spec.calwt,
     })
+}
+
+fn k_antpos_default_spwmap_spec(
+    spec: &ApplyCalibrationTableSpec,
+    applicable_data_spw_ids: &[i32],
+) -> ApplyCalibrationTableSpec {
+    let mut spec = spec.clone();
+    let len = applicable_data_spw_ids
+        .iter()
+        .filter_map(|spw| usize::try_from(*spw).ok())
+        .max()
+        .map(|spw| spw + 1)
+        .unwrap_or_default();
+    spec.spwmap = vec![0; len];
+    spec
 }
 
 fn resolve_gainfield(

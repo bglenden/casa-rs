@@ -28,6 +28,7 @@ mod continuum_subtract;
 mod corrected_export;
 mod execute;
 mod fluxscale;
+mod gencal;
 mod least_squares;
 mod managed_output;
 mod model;
@@ -60,6 +61,7 @@ pub use fluxscale::{
     FluxScaleError, FluxScaleFieldResult, FluxScaleReport, FluxScaleRequest, FluxScaleSpwResult,
     fluxscale,
 };
+pub use gencal::{GencalError, GencalReport, GencalRequest, GencalType, gencal};
 pub use managed_output::{CalibrationTaskResult, ManagedCalibrationOutput};
 pub use model::{
     CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
@@ -88,6 +90,7 @@ pub use summary::{CalibrationTableError, summarize_table, summarize_tables};
 pub use task_contract::{
     CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationProtocolInfo,
     CalibrationTaskRequest, CalibrationTaskSchemaBundle, ContinuumSubtractionTaskRequest,
-    ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest, PlanApplyTaskRequest,
-    SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest, SummaryTaskRequest,
+    ExecuteApplyTaskRequest, ExportCorrectedDataTaskRequest, GencalTaskRequest,
+    PlanApplyTaskRequest, SolveBandpassTaskRequest, SolveGainTaskRequest, StatsTaskRequest,
+    SummaryTaskRequest,
 };

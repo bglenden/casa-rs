@@ -34,7 +34,7 @@ use super::canonical::{
     write_u16_be, write_u16_le, write_u32_be, write_u32_le,
 };
 use super::data_type::CasacoreDataType;
-use super::stman_aipsio::ColumnRawData;
+use super::stman_aipsio::{ColumnRawData, extract_row_value};
 use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter};
 use super::table_control::ColumnDescContents;
 
@@ -1131,6 +1131,153 @@ pub(crate) fn read_ssm_scalar_column_rows(
     Ok(Some(values))
 }
 
+pub(crate) fn read_ssm_array_column_rows(
+    file_path: &Path,
+    dm_blob: &[u8],
+    col_descs: &[&ColumnDescContents],
+    target_col_idx: usize,
+    selected_rows: &[usize],
+) -> Result<Option<Vec<Option<ArrayValue>>>, StorageError> {
+    if selected_rows.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+
+    let mut file = File::open(file_path)?;
+    let header = parse_ssm_header(&mut file)?;
+    let dm_info = parse_ssm_dm_blob(dm_blob)?;
+    let indices = parse_ssm_indices(&mut file, &header)?;
+
+    if target_col_idx >= col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM array column index {target_col_idx} is out of range"
+        )));
+    }
+    if target_col_idx >= dm_info.column_offsets.len()
+        || target_col_idx >= dm_info.col_index_map.len()
+    {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM array column index {target_col_idx} missing dm blob metadata"
+        )));
+    }
+
+    let col_desc = col_descs[target_col_idx];
+    if !col_desc.is_array || col_desc.is_record() || is_ssm_variable_string(col_desc) {
+        return Ok(None);
+    }
+
+    let column_offset = dm_info.column_offsets[target_col_idx] as usize;
+    let index_nr = dm_info.col_index_map[target_col_idx] as usize;
+    if index_nr >= indices.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM column '{}' references index {index_nr} but only {} indices exist",
+            col_desc.col_name,
+            indices.len()
+        )));
+    }
+    let index = &indices[index_nr];
+    let rows_to_read = selected_rows
+        .iter()
+        .copied()
+        .max()
+        .map(|row| row + 1)
+        .unwrap_or(0);
+
+    if is_ssm_array_file_indirect(col_desc) {
+        let offsets = read_column_from_buckets(
+            &mut file,
+            &header,
+            index,
+            column_offset,
+            CasacoreDataType::TpInt64,
+            1,
+            rows_to_read,
+        )?;
+        let offset_values = match offsets {
+            ColumnRawData::Int64(values) => values,
+            _ => {
+                return Err(StorageError::FormatMismatch(
+                    "SSM indirect array: expected Int64 offsets".to_string(),
+                ));
+            }
+        };
+
+        let dt = CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
+        let mut array_path = file_path.as_os_str().to_os_string();
+        array_path.push("i");
+        let array_path = std::path::PathBuf::from(array_path);
+        if !array_path.exists() {
+            if selected_rows
+                .iter()
+                .all(|&row| offset_values.get(row).copied().unwrap_or(0) == 0)
+            {
+                return Ok(Some(vec![None; selected_rows.len()]));
+            }
+            return Err(StorageError::FormatMismatch(
+                "SSM indirect array column but no array file found".to_string(),
+            ));
+        }
+
+        let mut reader = StManArrayFileReader::open(&array_path, header.big_endian)?;
+        let mut values = Vec::with_capacity(selected_rows.len());
+        for &row in selected_rows {
+            let offset = *offset_values.get(row).ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "SSM indirect array column '{}' missing offset for row {row}",
+                    col_desc.col_name
+                ))
+            })?;
+            let value = reader.read_array_at(offset, dt).map_err(|err| {
+                StorageError::FormatMismatch(format!(
+                    "SSM indirect array column '{}' row {row} offset {offset} type {:?}: {err}",
+                    col_desc.col_name, dt
+                ))
+            })?;
+            values.push(match value {
+                Some(Value::Array(array)) => Some(array),
+                Some(other) => {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "SSM indirect array column '{}' row {row} expected array value, found {:?}",
+                        col_desc.col_name,
+                        other.kind()
+                    )));
+                }
+                None => None,
+            });
+        }
+        return Ok(Some(values));
+    }
+
+    let nrelem = if col_desc.nrdim > 0 && !col_desc.shape.is_empty() {
+        col_desc.shape.iter().map(|&s| s as usize).product()
+    } else {
+        return Ok(None);
+    };
+    let raw = read_column_from_buckets(
+        &mut file,
+        &header,
+        index,
+        column_offset,
+        col_desc.data_type,
+        nrelem,
+        rows_to_read,
+    )?;
+    let mut values = Vec::with_capacity(selected_rows.len());
+    for &row in selected_rows {
+        let value = extract_row_value(&raw, col_desc, row, rows_to_read)?;
+        values.push(match value {
+            Value::Array(array) => Some(array),
+            other => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "SSM direct array column '{}' row {row} expected array value, found {:?}",
+                    col_desc.col_name,
+                    other.kind()
+                )));
+            }
+        });
+    }
+    Ok(Some(values))
+}
+
 fn read_column_from_buckets(
     file: &mut File,
     header: &SsmHeader,
@@ -1505,7 +1652,7 @@ pub(crate) fn write_ssm_file(
     rows: &[casa_types::RecordValue],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    write_ssm_file_impl(file_path, col_descs, rows, None, big_endian)
+    write_ssm_file_impl(file_path, col_descs, rows, None, None, big_endian)
 }
 
 pub(crate) fn write_ssm_file_indexed(
@@ -1515,23 +1662,53 @@ pub(crate) fn write_ssm_file_indexed(
     field_indices: &[usize],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    write_ssm_file_impl(file_path, col_descs, rows, Some(field_indices), big_endian)
+    write_ssm_file_impl(
+        file_path,
+        col_descs,
+        rows,
+        Some(field_indices),
+        None,
+        big_endian,
+    )
 }
 
-fn row_value_at_index<'a>(
-    row: &'a casa_types::RecordValue,
-    field_index: usize,
-    field_name: &str,
-) -> Option<&'a casa_types::Value> {
-    if let Some(field) = row.fields().get(field_index) {
-        if field.name == field_name {
-            return Some(&field.value);
+pub(crate) fn write_ssm_file_scalar_columns(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &[&[Option<ScalarValue>]],
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    let nrrow = scalar_columns.first().map_or(0, |values| values.len());
+    if scalar_columns.len() != col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "SSM scalar column count mismatch: expected {}, got {}",
+            col_descs.len(),
+            scalar_columns.len()
+        )));
+    }
+    for values in scalar_columns.iter().skip(1) {
+        if values.len() != nrrow {
+            return Err(StorageError::FormatMismatch(
+                "SSM scalar columns have inconsistent row counts".to_string(),
+            ));
         }
     }
-    row.fields()
+    if col_descs
         .iter()
-        .find(|field| field.name == field_name)
-        .map(|field| &field.value)
+        .any(|col_desc| col_desc.is_array || col_desc.is_record())
+    {
+        return Err(StorageError::FormatMismatch(
+            "SSM scalar column writer only supports scalar non-record columns".to_string(),
+        ));
+    }
+    write_ssm_file_impl(
+        file_path,
+        col_descs,
+        &[],
+        None,
+        Some(scalar_columns),
+        big_endian,
+    )
 }
 
 fn write_ssm_file_impl(
@@ -1539,9 +1716,12 @@ fn write_ssm_file_impl(
     col_descs: &[ColumnDescContents],
     rows: &[casa_types::RecordValue],
     field_indices: Option<&[usize]>,
+    scalar_columns: Option<&[&[Option<ScalarValue>]]>,
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    let nrrow = rows.len();
+    let nrrow = scalar_columns
+        .and_then(|columns| columns.first().map(|values| values.len()))
+        .unwrap_or(rows.len());
     let ncol = col_descs.len();
 
     // Check if any array columns are stored indirectly.
@@ -1662,20 +1842,35 @@ fn write_ssm_file_impl(
                 )
             })?;
 
-            for (row, row_record) in rows.iter().enumerate() {
+            for row in 0..nrrow {
                 let bucket_idx = row / rows_per_bucket as usize;
                 let row_in_bucket = row % rows_per_bucket as usize;
                 let bucket = &mut buckets[bucket_idx];
                 let byte_off = col_off + row_in_bucket * 8;
 
-                let value = if let Some(indices) = field_indices {
-                    row_value_at_index(row_record, indices[col_idx], &col_desc.col_name)
+                let scalar_value;
+                let value = if let Some(columns) = scalar_columns {
+                    scalar_value = columns[col_idx][row].as_ref().cloned().map(Value::Scalar);
+                    scalar_value.as_ref()
                 } else {
+                    let row_record = &rows[row];
                     row_record
                         .fields()
-                        .iter()
-                        .find(|f| f.name == col_desc.col_name)
-                        .map(|f| &f.value)
+                        .get(
+                            field_indices
+                                .and_then(|indices| indices.get(col_idx))
+                                .copied()
+                                .unwrap_or(usize::MAX),
+                        )
+                        .filter(|field| field.name == col_desc.col_name)
+                        .map(|field| &field.value)
+                        .or_else(|| {
+                            row_record
+                                .fields()
+                                .iter()
+                                .find(|f| f.name == col_desc.col_name)
+                                .map(|f| &f.value)
+                        })
                 };
 
                 let offset: i64 =
@@ -1712,19 +1907,34 @@ fn write_ssm_file_impl(
                 }
             }
         } else {
-            for (row, row_record) in rows.iter().enumerate() {
+            for row in 0..nrrow {
                 let bucket_idx = row / rows_per_bucket as usize;
                 let row_in_bucket = row % rows_per_bucket as usize;
                 let bucket = &mut buckets[bucket_idx];
 
-                let value = if let Some(indices) = field_indices {
-                    row_value_at_index(row_record, indices[col_idx], &col_desc.col_name)
+                let scalar_value;
+                let value = if let Some(columns) = scalar_columns {
+                    scalar_value = columns[col_idx][row].as_ref().cloned().map(Value::Scalar);
+                    scalar_value.as_ref()
                 } else {
+                    let row_record = &rows[row];
                     row_record
                         .fields()
-                        .iter()
-                        .find(|f| f.name == col_desc.col_name)
-                        .map(|f| &f.value)
+                        .get(
+                            field_indices
+                                .and_then(|indices| indices.get(col_idx))
+                                .copied()
+                                .unwrap_or(usize::MAX),
+                        )
+                        .filter(|field| field.name == col_desc.col_name)
+                        .map(|field| &field.value)
+                        .or_else(|| {
+                            row_record
+                                .fields()
+                                .iter()
+                                .find(|f| f.name == col_desc.col_name)
+                                .map(|f| &f.value)
+                        })
                 };
 
                 write_cell_to_bucket(
