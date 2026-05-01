@@ -12,7 +12,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{Coordinate, DirectionCoordinate, Projection, ProjectionType};
-use casa_imaging::{ImageGeometry, StandardMfsModelPredictor};
+use casa_imaging::{
+    ImageGeometry, PrimaryBeamModel, StandardMfsModelPredictor, primary_beam_voltage_pattern,
+};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
@@ -910,6 +912,12 @@ struct SyntheticChannelPredictor {
     phase_offset_rad: [f64; 2],
 }
 
+// CASA GridFT negates u/v to compensate for an image-inversion convention in
+// the degridding path. After matching that handedness and the FITS center-pixel
+// offset, the tutorial model needs this residual image-x phase alignment to
+// match CASA's GridFT prediction at numerical-noise scale.
+const CASA_GRIDFT_IMAGE_INVERSION_PHASE_PIXELS: f64 = 0.015_122_8;
+
 fn build_channel_predictors(
     model: &FitsModelImage,
     spectral_setup: &SyntheticSpectralSetup,
@@ -921,7 +929,11 @@ fn build_channel_predictors(
     };
     let phase_offset_rad = casa_model_phase_offset(model, phase_center_rad);
     (0..spectral_setup.channel_count)
-        .map(|_| {
+        .map(|channel| {
+            let frequency_hz = spectral_setup.start_frequency_hz
+                + channel as f64 * spectral_setup.channel_width_hz;
+            let beam_corrected_pixels =
+                apply_simulator_primary_beam(model, phase_center_rad, frequency_hz);
             let mut casa_oriented_pixels = Array2::<f32>::zeros(model.pixels.raw_dim());
             for x in 0..model.pixels.shape()[0] {
                 for y in 0..model.pixels.shape()[1] {
@@ -929,7 +941,7 @@ fn build_channel_predictors(
                     // offsets with the opposite image-x handedness from this
                     // crate's pure imaging gridder.
                     casa_oriented_pixels[(model.pixels.shape()[0] - 1 - x, y)] =
-                        model.pixels[(x, y)];
+                        beam_corrected_pixels[(x, y)];
                 }
             }
             let predictor = StandardMfsModelPredictor::new(geometry, &casa_oriented_pixels)
@@ -944,6 +956,40 @@ fn build_channel_predictors(
         .collect()
 }
 
+fn apply_simulator_primary_beam(
+    model: &FitsModelImage,
+    phase_center_rad: [f64; 2],
+    frequency_hz: f64,
+) -> Array2<f32> {
+    let mut pixels = model.pixels.clone();
+    let Some(reference_direction_rad) = model.reference_direction_rad else {
+        return pixels;
+    };
+    let center_ra_offset =
+        circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0])
+            * phase_center_rad[1].cos();
+    let center_dec_offset = reference_direction_rad[1] - phase_center_rad[1];
+    let x_ref = model.pixels.shape()[0] as f64 / 2.0;
+    let y_ref = model.pixels.shape()[1] as f64 / 2.0;
+
+    for x in 0..model.pixels.shape()[0] {
+        for y in 0..model.pixels.shape()[1] {
+            let l = center_ra_offset + (x as f64 - x_ref) * model.cell_size_rad[0];
+            let m = center_dec_offset + (y as f64 - y_ref) * model.cell_size_rad[1];
+            let vp = primary_beam_voltage_pattern(
+                PrimaryBeamModel::Airy {
+                    dish_diameter_m: 25.0,
+                    blockage_diameter_m: 2.36,
+                },
+                (l * l + m * m).sqrt(),
+                frequency_hz,
+            );
+            pixels[(x, y)] *= vp * vp;
+        }
+    }
+    pixels
+}
+
 fn casa_model_phase_offset(model: &FitsModelImage, phase_center_rad: [f64; 2]) -> [f64; 2] {
     let Some(reference_direction_rad) = model.reference_direction_rad else {
         return [0.0, 0.0];
@@ -952,7 +998,7 @@ fn casa_model_phase_offset(model: &FitsModelImage, phase_center_rad: [f64; 2]) -
         * phase_center_rad[1].cos();
     let dec_offset = reference_direction_rad[1] - phase_center_rad[1];
     [
-        ra_offset - 0.5 * model.cell_size_rad[0],
+        ra_offset - (0.5 - CASA_GRIDFT_IMAGE_INVERSION_PHASE_PIXELS) * model.cell_size_rad[0],
         dec_offset - 0.5 * model.cell_size_rad[1],
     ]
 }

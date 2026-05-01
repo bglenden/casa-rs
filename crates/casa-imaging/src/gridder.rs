@@ -61,18 +61,26 @@ impl StandardGridder {
     pub(crate) fn new_with_casa_composite_padding(
         geometry: ImageGeometry,
     ) -> Result<Self, ImagingError> {
-        Self::new_with_padding(geometry, casa_composite_padded_len)
+        Self::new_with_padding_factor(geometry, casa_composite_padded_len, 1.3)
     }
 
     fn new_with_padding(
         geometry: ImageGeometry,
         padded_len_for_axis: fn(usize, f64) -> usize,
     ) -> Result<Self, ImagingError> {
+        Self::new_with_padding_factor(geometry, padded_len_for_axis, 1.2)
+    }
+
+    fn new_with_padding_factor(
+        geometry: ImageGeometry,
+        padded_len_for_axis: fn(usize, f64) -> usize,
+        padding: f64,
+    ) -> Result<Self, ImagingError> {
         geometry.validate()?;
 
         let grid_shape = [
-            padded_len_for_axis(geometry.nx(), 1.2),
-            padded_len_for_axis(geometry.ny(), 1.2),
+            padded_len_for_axis(geometry.nx(), padding),
+            padded_len_for_axis(geometry.ny(), padding),
         ];
         let image_blc = [
             (grid_shape[0] - geometry.nx() + (grid_shape[0] % 2 == 0) as usize) / 2,
@@ -1751,6 +1759,72 @@ mod tests {
             (-210.25_f64, 98.125_f64),
             (15.875_f64, 144.625_f64),
             (301.4_f64, -12.2_f64),
+        ];
+
+        for &(u, v) in &samples {
+            let plan = gridder
+                .plan_sample(u, v)
+                .expect("sample should lie on grid");
+            let rust = gridder.degrid_sample_product_planned(&model_grid, &plan.positive);
+            let Ok(cpp) = cpp_convolve_gridder_predict_visibility_2d(
+                gridder.grid_shape(),
+                geometry.image_shape,
+                [
+                    gridder.grid_shape()[0] as f64 * geometry.cell_size_rad[0],
+                    gridder.grid_shape()[1] as f64 * geometry.cell_size_rad[1],
+                ],
+                [
+                    gridder.grid_shape()[0] as f64 / 2.0,
+                    gridder.grid_shape()[1] as f64 / 2.0,
+                ],
+                [u, -v],
+                model.as_slice().unwrap(),
+            ) else {
+                return;
+            };
+            assert!(
+                (rust.re - cpp.re).abs() < 1.0e-6,
+                "predicted visibility real mismatch at ({u}, {v}): rust={} cpp={}",
+                rust.re,
+                cpp.re
+            );
+            assert!(
+                (rust.im - cpp.im).abs() < 1.0e-6,
+                "predicted visibility imag mismatch at ({u}, {v}): rust={} cpp={}",
+                rust.im,
+                cpp.im
+            );
+        }
+    }
+
+    #[test]
+    #[serial(casa_cpp)]
+    fn convolve_gridder_degrids_odd_composite_padded_model_like_casacore() {
+        let geometry = ImageGeometry {
+            image_shape: [257, 257],
+            cell_size_rad: [8.638_889_530_690e-7_f64.to_radians(); 2],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        assert_eq!(gridder.grid_shape(), [360, 360]);
+
+        let mut model = Array2::<f32>::zeros((257, 257));
+        for x in 0..257 {
+            for y in 0..257 {
+                let dx = (x as f32 - 129.25) / 27.0;
+                let dy = (y as f32 - 126.5) / 19.0;
+                let ring = (-(dx * dx + dy * dy)).exp();
+                let shoulder = (-(((x as f32 - 87.0) / 13.0).powi(2)
+                    + ((y as f32 - 169.0) / 21.0).powi(2)))
+                .exp();
+                model[(x, y)] = 0.0025 * ring - 0.0007 * shoulder;
+            }
+        }
+        let model_grid = centered_fft2(&gridder.apodize_model(&model));
+        let samples = [
+            (4_806.297_926_382_51_f64, 41_290.840_313_424_32_f64),
+            (-38_890.191_177_123_3_f64, -12_300.584_882_047_77_f64),
+            (24_915.177_739_689_71_f64, -34_020.365_105_376_14_f64),
+            (-9_024.365_419_946_97_f64, 7_115.436_092_750_48_f64),
         ];
 
         for &(u, v) in &samples {

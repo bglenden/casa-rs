@@ -42,13 +42,15 @@ generated products are structurally comparable but not numerically identical.
 | `UVW` p95 abs diff | `0.00022301637018244934 m` |
 | uv-distance max abs diff | `0.0002631813404150307 m` |
 | uv-distance p95 abs diff | `0.00016473680607305118 m` |
-| `DATA` max abs diff | `0.00012725180545661448 Jy` |
-| `DATA` p95 abs diff | `0.00003876001790270493 Jy` |
-| amplitude max abs diff | `0.0001270262737504222 Jy` |
-| amplitude p95 abs diff | `0.00003824164161010807 Jy` |
+| `DATA` max abs diff | `0.000020302598486117852 Jy` |
+| `DATA` p95 abs diff | `0.000000018524588085711002 Jy` |
+| `DATA` p99.9 abs diff | `0.000000021139580825483745 Jy` |
+| `DATA` cells above `1e-6 Jy` | `14 / 1263600` |
+| amplitude max abs diff | `0.00002001160520101919 Jy` |
+| amplitude p95 abs diff | `0.000000001565668994213572 Jy` |
 | CASA `simobserve` runtime | `5.15946508385241 s` |
 | casa-rs debug task runtime | `24.447 s` |
-| casa-rs release task runtime | `4.654 s` |
+| casa-rs release task runtime | `4.024 s` |
 
 Inspectable artifacts:
 
@@ -72,13 +74,18 @@ Release-mode performance is again comparable with CASA because casa-rs now
 computes per-antenna UVW once per integration instead of doing a measures
 conversion per baseline row.
 
-The remaining correctness gap is in the image model prediction. The CASA
-`.skymodel` pixels match the scaled FITS model. Applying the CASA simulator RA
-handedness convention, CASA `modifymodel` image-center phase offset, and CASA's
-composite padded FFT grid reduced the complex `DATA` p95 residual by an order of
-magnitude from the first full-tutorial comparison. Complex visibility parity is
-still outside a closeout tolerance, with the remaining residual now dominated by
-amplitude rather than phase. Wave 5 should stay in progress until the remaining
-`sm.predict`/`ConvolveGridder` amplitude convention is traced to the same
-standard as the UVW path, or a narrower accepted tolerance is explicitly defined
-for this tutorial slice.
+The CASA `.skymodel` pixels match the scaled FITS model. Source inspection shows
+`Simulator::predict` drives `SkyEquation`, `GridFT`, and `VPSkyJones`; `GridFT`
+negates `u`/`v` before degridding, pads the 257-pixel model with CASA's default
+`1.3` GridFT padding, chooses a composite FFT size of 360, divides by
+`ConvolveGridder::correctX1D`, and applies `LatticeFFT::cfft2d` before
+degridding. Matching those details, plus the CASA simulator RA handedness,
+`modifymodel` image-center phase offset, and VLA Q-band primary-beam screen,
+reduced the full-tutorial complex `DATA` p95 residual to `1.85e-8 Jy`.
+
+Strict max-absolute `DATA` allclose at `1e-6 Jy` is still false because 14 of
+1263600 complex cells remain above `1e-6 Jy`, with the largest outlier
+`2.03e-5 Jy` on a low-amplitude visibility near a model null. The normal row
+population is now at numerical-noise scale, but Wave 5 should stay in progress
+until the near-null outliers are either traced to the same source-backed
+standard or explicitly accepted as a bounded tutorial tolerance.

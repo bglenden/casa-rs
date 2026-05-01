@@ -993,7 +993,7 @@ fn build_mosaic_projector(
 ) -> Result<ScreenProjector, ImagingError> {
     let projector = ScreenProjector::from_screen(geometry, gridder, conv_sampling, |l, m| {
         let radius_rad = (l * l + m * m).sqrt();
-        let vp = voltage_pattern_value(primary_beam_model, radius_rad, frequency_hz);
+        let vp = primary_beam_voltage_pattern(primary_beam_model, radius_rad, frequency_hz);
         let value = match screen_power {
             1 => vp,
             2 => vp * vp,
@@ -1111,7 +1111,8 @@ fn circular_angle_delta_rad(angle_rad: f64) -> f64 {
     (angle_rad + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
 }
 
-fn voltage_pattern_value(
+/// Return the CASA-compatible voltage-pattern value for a homogeneous primary beam.
+pub fn primary_beam_voltage_pattern(
     primary_beam_model: PrimaryBeamModel,
     radius_rad: f64,
     frequency_hz: f64,

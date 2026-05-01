@@ -106,6 +106,8 @@ def compare_array(rust: np.ndarray, casa: np.ndarray) -> dict[str, Any]:
             "max_abs_diff": finite_float(np.max(mag)) if mag.size else 0.0,
             "mean_abs_diff": finite_float(np.mean(mag)) if mag.size else 0.0,
             "p95_abs_diff": finite_float(np.percentile(mag, 95)) if mag.size else 0.0,
+            "p99_9_abs_diff": finite_float(np.percentile(mag, 99.9)) if mag.size else 0.0,
+            "count_abs_diff_gt_1e_6": int(np.count_nonzero(mag > 1.0e-6)),
             "allclose_1e_6": bool(np.allclose(rust, casa, rtol=1e-6, atol=1e-6)),
         }
     )
