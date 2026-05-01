@@ -61,6 +61,9 @@ run_rust_case bandpass \
 run_rust_case pointing \
   --pointing-offset-ra-arcsec 2.0 \
   --pointing-offset-dec-arcsec -1.0
+run_rust_case pointing-visual \
+  --pointing-offset-ra-arcsec 20.0 \
+  --pointing-offset-dec-arcsec -10.0
 
 CASA_RS_OUTDIR="$outdir" CASA_RS_CLEAN_MS="$clean_ms" "$CASA_RS_CASA_PYTHON" - <<'PY'
 import json
@@ -155,7 +158,7 @@ image_ms() {
 }
 
 image_ms clean "$clean_ms"
-for slug in noise gain-phase leakage bandpass pointing; do
+for slug in noise gain-phase leakage bandpass pointing pointing-visual; do
   image_ms "rust-$slug" "$outdir/rust-$slug.ms"
   if [[ -d "$outdir/casa-$slug.ms" ]]; then
     image_ms "casa-$slug" "$outdir/casa-$slug.ms"
@@ -199,6 +202,16 @@ def read_ms_data(path):
     finally:
         tb.close()
     return data
+
+def read_ms_columns(path):
+    tb = table()
+    tb.open(str(path))
+    try:
+        data = np.asarray(tb.getcol("DATA"), dtype=np.complex64)
+        time = np.asarray(tb.getcol("TIME"), dtype=np.float64)
+    finally:
+        tb.close()
+    return data, time
 
 def read_fits_image(path):
     raw = path.read_bytes()
@@ -258,9 +271,158 @@ def compare_delta(rust, casa):
         "mean_abs_diff_jy": float(np.mean(np.abs(diff))),
     }
 
+def rms(data):
+    return float(np.sqrt(np.mean(np.asarray(data, dtype=np.float64) ** 2)))
+
+def phase_delta_deg(clean, data, axis=None):
+    cross = data * np.conj(clean)
+    if axis is None:
+        cross = np.mean(cross)
+    else:
+        cross = np.mean(cross, axis=axis)
+    return np.degrees(np.angle(cross))
+
+def time_series(clean, data, time):
+    unique_time = np.unique(time)
+    t_min = (unique_time - unique_time[0]) / 60.0
+    amp_ratio = []
+    phase_deg = []
+    for value in unique_time:
+        mask = time == value
+        clean_slice = clean[:, :, mask]
+        data_slice = data[:, :, mask]
+        amp_ratio.append(float(np.mean(np.abs(data_slice)) / np.mean(np.abs(clean_slice))))
+        phase_deg.append(float(phase_delta_deg(clean_slice, data_slice)))
+    return t_min, np.asarray(amp_ratio), np.asarray(phase_deg)
+
+def channel_series(clean, data):
+    clean_amp = np.mean(np.abs(clean), axis=(0, 2))
+    data_amp = np.mean(np.abs(data), axis=(0, 2))
+    ratio = data_amp / clean_amp
+    phase = phase_delta_deg(clean, data, axis=(0, 2))
+    channel = np.arange(clean.shape[1])
+    return channel, ratio, np.asarray(phase)
+
+def plot_noise_residual_panel(clean_image, rust_image, casa_image, outdir):
+    rust_resid = rust_image - clean_image
+    casa_resid = casa_image - clean_image
+    residual_stack = np.concatenate([rust_resid.ravel(), casa_resid.ravel()])
+    resid_abs = float(np.percentile(np.abs(residual_stack), 99.5)) or 1.0
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
+    panels = [
+        (axes[0, 0], clean_image, "Clean dirty image", *percentile_limits(clean_image), "viridis"),
+        (axes[0, 1], rust_resid, f"casa-rs noise residual; RMS={rms(rust_resid):.3e}", -resid_abs, resid_abs, "coolwarm"),
+        (axes[1, 0], casa_resid, f"CASA noise residual; RMS={rms(casa_resid):.3e}", -resid_abs, resid_abs, "coolwarm"),
+    ]
+    for ax, data, label, vmin, vmax, cmap in panels:
+        im = ax.imshow(data.T, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
+        ax.set_title(label)
+        ax.set_xlabel("x pixel")
+        ax.set_ylabel("y pixel")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    axes[1, 1].hist(rust_resid.ravel(), bins=80, histtype="step", density=True, label="casa-rs")
+    axes[1, 1].hist(casa_resid.ravel(), bins=80, histtype="step", density=True, label="CASA")
+    axes[1, 1].set_title("Residual pixel distribution")
+    axes[1, 1].set_xlabel("Jy/beam")
+    axes[1, 1].set_ylabel("density")
+    axes[1, 1].legend()
+    panel_path = outdir / "wave5-issue126-noise-residual-panel.png"
+    fig.savefig(panel_path, dpi=150)
+    plt.close(fig)
+    return panel_path, {"rust_residual_rms": rms(rust_resid), "casa_residual_rms": rms(casa_resid)}
+
+def plot_gain_time_panel(clean_ms, rust_ms, casa_ms, time, outdir):
+    rust_t, rust_amp, rust_phase = time_series(clean_ms, rust_ms, time)
+    casa_t, casa_amp, casa_phase = time_series(clean_ms, casa_ms, time)
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), constrained_layout=True, sharex=True)
+    axes[0].plot(rust_t, rust_amp, ".", label="casa-rs")
+    axes[0].plot(casa_t, casa_amp, ".", label="CASA")
+    axes[0].axhline(1.0, color="black", linewidth=0.8)
+    axes[0].set_title("Gain corruption amplitude ratio vs time")
+    axes[0].set_ylabel("mean |corrupted| / |clean|")
+    axes[0].legend()
+    axes[1].plot(rust_t, rust_phase, ".", label="casa-rs")
+    axes[1].plot(casa_t, casa_phase, ".", label="CASA")
+    axes[1].axhline(0.0, color="black", linewidth=0.8)
+    axes[1].set_title("Gain corruption phase offset vs time")
+    axes[1].set_xlabel("minutes from start")
+    axes[1].set_ylabel("degrees")
+    axes[1].legend()
+    panel_path = outdir / "wave5-issue126-gain-phase-time-panel.png"
+    fig.savefig(panel_path, dpi=150)
+    plt.close(fig)
+    return panel_path
+
+def plot_bandpass_channel_panel(clean_ms, rust_ms, outdir):
+    channel, amp_ratio, phase = channel_series(clean_ms, rust_ms)
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8), constrained_layout=True, sharex=True)
+    axes[0].plot(channel, amp_ratio, "o-")
+    axes[0].axhline(1.0, color="black", linewidth=0.8)
+    axes[0].set_title("Bandpass amplitude ratio vs channel")
+    axes[0].set_ylabel("mean |corrupted| / |clean|")
+    axes[1].plot(channel, phase, "o-")
+    axes[1].axhline(0.0, color="black", linewidth=0.8)
+    axes[1].set_title("Bandpass phase offset vs channel")
+    axes[1].set_xlabel("channel")
+    axes[1].set_ylabel("degrees")
+    panel_path = outdir / "wave5-issue126-bandpass-channel-panel.png"
+    fig.savefig(panel_path, dpi=150)
+    plt.close(fig)
+    return panel_path
+
+def plot_leakage_visibility_panel(clean_ms, rust_ms, time, outdir):
+    t_min, amp_ratio, phase = time_series(clean_ms, rust_ms, time)
+    delta = rust_ms - clean_ms
+    corr0_delta = np.mean(np.abs(delta[0, :, :]), axis=0)
+    corr1_delta = np.mean(np.abs(delta[1, :, :]), axis=0)
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8), constrained_layout=True, sharex=True)
+    axes[0].plot(t_min, amp_ratio, ".")
+    axes[0].axhline(1.0, color="black", linewidth=0.8)
+    axes[0].set_title("Polarization leakage mean amplitude ratio vs time")
+    axes[0].set_ylabel("mean |corrupted| / |clean|")
+    axes[1].scatter((time - time.min()) / 60.0, corr0_delta, s=4, alpha=0.35, label="corr 0")
+    axes[1].scatter((time - time.min()) / 60.0, corr1_delta, s=4, alpha=0.35, label="corr 1")
+    axes[1].set_title("Leakage visibility delta by correlation")
+    axes[1].set_xlabel("minutes from start")
+    axes[1].set_ylabel("mean channel |delta| Jy")
+    axes[1].legend()
+    panel_path = outdir / "wave5-issue126-leakage-visibility-panel.png"
+    fig.savefig(panel_path, dpi=150)
+    plt.close(fig)
+    return panel_path
+
+def plot_pointing_impact_panel(clean_image, pointing_image, visual_image, outdir):
+    standard_diff = pointing_image - clean_image
+    visual_diff = visual_image - clean_image
+    diff_abs = float(np.percentile(np.abs(visual_diff), 99.5)) or 1.0
+    ratio = np.divide(
+        visual_image,
+        clean_image,
+        out=np.ones_like(visual_image),
+        where=np.abs(clean_image) > max(float(np.max(np.abs(clean_image))) * 1e-4, 1e-12),
+    )
+    ratio_vmin, ratio_vmax = percentile_limits(ratio[np.isfinite(ratio)])
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
+    panels = [
+        (axes[0, 0], clean_image, "Clean dirty image", *percentile_limits(clean_image), "viridis"),
+        (axes[0, 1], visual_image, "20/-10 arcsec pointing diagnostic", *percentile_limits(visual_image), "viridis"),
+        (axes[1, 0], visual_diff, f"visual offset minus clean; RMS={rms(visual_diff):.3e}", -diff_abs, diff_abs, "coolwarm"),
+        (axes[1, 1], ratio, "visual offset / clean", ratio_vmin, ratio_vmax, "magma"),
+    ]
+    for ax, data, label, vmin, vmax, cmap in panels:
+        im = ax.imshow(data.T, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
+        ax.set_title(label)
+        ax.set_xlabel("x pixel")
+        ax.set_ylabel("y pixel")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    panel_path = outdir / "wave5-issue126-pointing-impact-panel.png"
+    fig.savefig(panel_path, dpi=150)
+    plt.close(fig)
+    return panel_path, {"standard_offset_rms": rms(standard_diff), "visual_offset_rms": rms(visual_diff)}
+
 model = read_fits_image(model_path)
 clean_image = read_casa_image(images / "clean.image")
-clean_ms = read_ms_data(outdir / "clean.ms")
+clean_ms, clean_time = read_ms_columns(outdir / "clean.ms")
 with open(outdir / "casa-corruption-status.json", encoding="utf-8") as handle:
     casa_status = json.load(handle)
 
@@ -331,6 +493,42 @@ for slug, title in cases:
 with open(outdir / "wave5-issue126-panel-summary.json", "w", encoding="utf-8") as handle:
     json.dump(summary, handle, indent=2, sort_keys=True)
 print(json.dumps(summary, indent=2, sort_keys=True))
+
+tutorial_panels = {}
+if casa_status.get("noise", {}).get("available"):
+    path, stats = plot_noise_residual_panel(
+        clean_image,
+        read_casa_image(images / "rust-noise.image"),
+        read_casa_image(images / "casa-noise.image"),
+        outdir,
+    )
+    tutorial_panels["noise_residual"] = {"panel_png": str(path), **stats}
+if casa_status.get("gain-phase", {}).get("available"):
+    path = plot_gain_time_panel(
+        clean_ms,
+        read_ms_data(outdir / "rust-gain-phase.ms"),
+        read_ms_data(outdir / "casa-gain-phase.ms"),
+        clean_time,
+        outdir,
+    )
+    tutorial_panels["gain_phase_time"] = {"panel_png": str(path)}
+tutorial_panels["bandpass_channel"] = {
+    "panel_png": str(plot_bandpass_channel_panel(clean_ms, read_ms_data(outdir / "rust-bandpass.ms"), outdir))
+}
+tutorial_panels["leakage_visibility"] = {
+    "panel_png": str(plot_leakage_visibility_panel(clean_ms, read_ms_data(outdir / "rust-leakage.ms"), clean_time, outdir))
+}
+path, stats = plot_pointing_impact_panel(
+    clean_image,
+    read_casa_image(images / "rust-pointing.image"),
+    read_casa_image(images / "rust-pointing-visual.image"),
+    outdir,
+)
+tutorial_panels["pointing_impact"] = {"panel_png": str(path), **stats}
+
+with open(outdir / "wave5-issue126-tutorial-panel-summary.json", "w", encoding="utf-8") as handle:
+    json.dump(tutorial_panels, handle, indent=2, sort_keys=True)
+print(json.dumps(tutorial_panels, indent=2, sort_keys=True))
 PY
 
 echo "Wrote corruption panels and summary under $outdir"

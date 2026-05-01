@@ -220,6 +220,12 @@ Artifacts:
 - `target/wave5-issue126-panels/wave5-issue126-bandpass-panel.png`
 - `target/wave5-issue126-panels/wave5-issue126-pointing-panel.png`
 - `target/wave5-issue126-panels/wave5-issue126-panel-summary.json`
+- `target/wave5-issue126-panels/wave5-issue126-noise-residual-panel.png`
+- `target/wave5-issue126-panels/wave5-issue126-gain-phase-time-panel.png`
+- `target/wave5-issue126-panels/wave5-issue126-bandpass-channel-panel.png`
+- `target/wave5-issue126-panels/wave5-issue126-leakage-visibility-panel.png`
+- `target/wave5-issue126-panels/wave5-issue126-pointing-impact-panel.png`
+- `target/wave5-issue126-panels/wave5-issue126-tutorial-panel-summary.json`
 
 Measured result:
 
@@ -270,3 +276,16 @@ Per-effect summary:
 | leakage | no, CASA fails on two-correlation MS | `2.8077792535441404e-07 Jy` | n/a | n/a |
 | bandpass | no, CASA `setbandpass` not implemented | `0.00017571824719198048 Jy` | n/a | n/a |
 | pointing | no, CASA requires pointing-error table | `8.060932259468245e-07 Jy` | n/a | n/a |
+
+Tutorial-style diagnostic panels are also generated because the CASA simulation
+guides emphasize residual/fidelity images, image statistics, `plotms`-style
+visibility plots, and channelized visual checks rather than only dirty-image
+comparisons:
+
+| Diagnostic | Artifact | Result |
+|---|---|---:|
+| noise residual image and residual histogram | `target/wave5-issue126-panels/wave5-issue126-noise-residual-panel.png` | rust residual RMS `2.360620283261362e-06 Jy/beam`; CASA residual RMS `2.48095804209798e-06 Jy/beam` |
+| gain/phase amplitude ratio and phase offset vs time | `target/wave5-issue126-panels/wave5-issue126-gain-phase-time-panel.png` | direct CASA and casa-rs visibility-domain comparison |
+| bandpass amplitude ratio and phase offset vs channel | `target/wave5-issue126-panels/wave5-issue126-bandpass-channel-panel.png` | native casa-rs channel-dependent signature |
+| polarization-leakage visibility delta by correlation | `target/wave5-issue126-panels/wave5-issue126-leakage-visibility-panel.png` | native casa-rs visibility-domain signature; CASA direct path unavailable on this two-correlation MS |
+| pointing primary-beam impact | `target/wave5-issue126-panels/wave5-issue126-pointing-impact-panel.png` | production `2/-1 arcsec` offset image RMS `1.5238555183271463e-07 Jy/beam`; visualization `20/-10 arcsec` offset image RMS `0.00017008024922316966 Jy/beam` |
