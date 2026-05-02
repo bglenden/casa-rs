@@ -232,6 +232,28 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         relative_path: "tutorial-parity/alma/first-look/twhya/twhya_n2hp.image",
     },
     TutorialDataset {
+        key: "alma/antennae/band7/calibrated-data",
+        source_url: "https://casaguides.nrao.edu/index.php/AntennaeBand7_Imaging_6.6.6",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/Antennae_Band7_6.6.6/Antennae_Band7_CalibratedData.tgz",
+        expected_filename: "Antennae_Band7_CalibratedData.tgz",
+        casa_guide_version: Some("6.6.6"),
+        expected_size_bytes: Some(912_711_095),
+        expected_sha256: Some("1976fea9239dea06c144c963c3750b03e7c53e82787f0a3c46b72fe17b5df339"),
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/antennae/band7/Antennae_Band7_CalibratedData.tgz",
+    },
+    TutorialDataset {
+        key: "alma/antennae/band7/reference-images",
+        source_url: "https://casaguides.nrao.edu/index.php/AntennaeBand7",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/Antennae_Band7_6.6.6/Antennae_Band7_ReferenceImages.tgz",
+        expected_filename: "Antennae_Band7_ReferenceImages.tgz",
+        casa_guide_version: Some("6.6.6"),
+        expected_size_bytes: Some(83_981_505),
+        expected_sha256: Some("cd52ffdc8f7b18f28ede2be70f6334f2f3f435fe31d7cff66f6e3a446eed2190"),
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/antennae/band7/Antennae_Band7_ReferenceImages.tgz",
+    },
+    TutorialDataset {
         key: "vla/irc10216/ms-10s",
         source_url: "https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216",
         artifact_url: "http://casa.nrao.edu/Data/EVLA/IRC10216/TDRW0001_10s.ms.tgz",
@@ -2771,8 +2793,14 @@ mod tests {
             .map(|dataset| dataset.key)
             .collect::<Vec<_>>();
         assert!(tutorial_keys.contains(&"alma/first-look/twhya/calibrated-ms"));
+        assert!(tutorial_keys.contains(&"alma/antennae/band7/calibrated-data"));
+        assert!(tutorial_keys.contains(&"alma/antennae/band7/reference-images"));
         assert!(tutorial_keys.contains(&"vla/irc10216/fors1-fits"));
         assert!(!tutorial_keys.contains(&"vla/irc10216/ms-10s"));
+
+        let antennae = tutorial_dataset("alma/antennae/band7/calibrated-data").unwrap();
+        assert_eq!(antennae.expected_size_bytes, Some(912_711_095));
+        assert_eq!(antennae.casa_guide_version, Some("6.6.6"));
 
         let ppdisk = tutorial_dataset("simulation/vla-ppdisk/model-fits").unwrap();
         assert_eq!(ppdisk.casa_guide_version, Some("6.7.2"));

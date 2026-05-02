@@ -1,7 +1,7 @@
 # CASA Tutorial Parity Program
 
 Truth class: current descriptive
-Last reality check: 2026-04-26
+Last reality check: 2026-05-02
 Verification: just docs-check
 
 This directory contains stable reference artifacts for the CASA Guide tutorial
@@ -31,6 +31,7 @@ functionality.
 
 - [Breadth expansion issue map](wave-6-breadth-expansion.md)
 - [Issue 53 mosaic panel evidence](wave-6-issue-53-mosaic-panels.md)
+- [Issue 161 Antennae Band 7 evidence](wave-6-issue-161-antennae-band7.md)
 
 ## Source Pages
 
