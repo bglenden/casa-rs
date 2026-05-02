@@ -12,6 +12,14 @@ waves. It does not claim tutorial parity by itself. Each issue below must still
 run the named CASA Guide flow end-to-end in CASA 6.7.5-9/CASA C++ and in
 casa-rs from the same staged inputs before it can move to Review.
 
+Each implementation issue must also produce a human-review document that pairs
+the original CASA Guide plot, figure, image panel, or tutorial-visible table
+with the generated CASA C++ reference artifact and the generated casa-rs
+artifact. Image-like and numeric-grid-like products should include
+residual/difference panels where practical. Any tutorial visual or table that
+cannot be reproduced must be classified explicitly as external,
+illustrative-only, unavailable, or deferred with a shaped follow-up.
+
 ## ALMA Assignments
 
 Parent: #127
