@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["SIMOBSERVE_TASK_PROTOCOL_NAME","SIMOBSERVE_TASK_PROTOCOL_VERSION"],"enum":["SimobserveTaskRequest","SimobserveTaskResult"],"fn":["command_schema","run_with_cli_args"],"struct":["SimobserveProtocolInfo","SimobserveRunTaskRequest","SimobserveRunTaskResult","SimobserveTaskSchemaBundle"]};

@@ -999,11 +999,11 @@ and oracle map; it does not add public APIs.</p>
 </tr>
 <tr>
 <td>simulator tool <code>sm.setnoise</code> / <code>sm.setgain</code> / <code>sm.corrupt</code></td>
-<td>missing</td>
+<td>partial</td>
 <td>simulation owner, calibration/noise models</td>
-<td>future simulation controls</td>
-<td>deterministic noise/gain/bandpass/pointing/polarization corruptions</td>
-<td>seeded CASA simulator outputs</td>
+<td><code>simobserve</code> task/Python corruption controls</td>
+<td>deterministic simple noise, gain/phase, bandpass, polarization leakage, and primary-beam pointing offset; not full calibration-table corruption</td>
+<td>CASA simulator noise+gain reference plus native common-corruption output</td>
 <td>corrupted vs uncorrupted timing</td>
 <td>#126</td>
 </tr>
