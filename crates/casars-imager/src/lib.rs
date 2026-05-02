@@ -21,10 +21,11 @@ use casa_coordinates::{
 };
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
 use casa_imaging::{
-    BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMode,
-    CubeChannelRequest, CubeImagingRequest, CubeModelChannelContribution,
-    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode, HogbomIterationMode,
-    ImageGeometry, ImagingRequest, ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig,
+    AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
+    CompatibilityMode, CubeChannelRequest, CubeImagingDiagnostics, CubeImagingRequest,
+    CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
+    GaussianUvTaper, GridderMode, HogbomIterationMode, ImageGeometry, ImagingDiagnostics,
+    ImagingError, ImagingRequest, ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig,
     MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics,
     RestoringBeamMode, StandardMfsModelPredictor, UvTaperSize, VisibilityBatch,
     VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
@@ -1185,46 +1186,28 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
                 )
             }
         }
-        PreparedInput::Cube(cube) => RunProducts::Cube(
-            run_cube(&CubeImagingRequest {
-                geometry,
-                channels: cube.channels,
-                plane_stokes: cube.plane_stokes,
-                weighting: config.weighting,
-                weight_density_mode: if config.per_channel_weight_density {
-                    WeightDensityMode::PerPlane
-                } else {
-                    WeightDensityMode::Combined
-                },
-                uv_taper: config.uv_taper,
-                restoring_beam_mode: config.restoring_beam_mode,
-                deconvolver: config.deconvolver,
-                multiscale_scales: config.multiscale_scales.clone(),
-                small_scale_bias: config.small_scale_bias,
-                clean: CleanConfig {
-                    niter: if config.dirty_only { 0 } else { config.niter },
-                    gain: config.gain,
-                    threshold_jy_per_beam: config.threshold_jy,
-                    nsigma: config.nsigma,
-                    psf_cutoff: config.psf_cutoff,
-                    minor_cycle_length: config.minor_cycle_length,
-                    cyclefactor: config.cyclefactor,
-                    min_psf_fraction: config.min_psf_fraction,
-                    max_psf_fraction: config.max_psf_fraction,
-                    hogbom_iteration_mode: config.hogbom_iteration_mode,
-                },
-                clean_mask: build_clean_mask(
-                    config.imsize,
-                    &config.mask_boxes,
-                    config.mask_image.as_deref(),
-                )?,
+        PreparedInput::Cube(cube) => {
+            let clean = CleanConfig {
+                niter: if config.dirty_only { 0 } else { config.niter },
+                gain: config.gain,
+                threshold_jy_per_beam: config.threshold_jy,
+                nsigma: config.nsigma,
                 psf_cutoff: config.psf_cutoff,
-                w_term_mode: config.w_term_mode,
-                w_project_planes: config.w_project_planes,
-                compatibility: CompatibilityMode::CasaStandardMfs,
-            })
-            .map_err(|error| error.to_string())?,
-        ),
+                minor_cycle_length: config.minor_cycle_length,
+                cyclefactor: config.cyclefactor,
+                min_psf_fraction: config.min_psf_fraction,
+                max_psf_fraction: config.max_psf_fraction,
+                hogbom_iteration_mode: config.hogbom_iteration_mode,
+            };
+            let clean_mask = build_clean_mask(
+                config.imsize,
+                &config.mask_boxes,
+                config.mask_image.as_deref(),
+            )?;
+            RunProducts::Cube(run_frontend_cube(
+                geometry, cube, config, clean, clean_mask,
+            )?)
+        }
     };
     let run_imaging_time = stage_start.elapsed();
     maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
@@ -2140,6 +2123,7 @@ struct CubePlaneInput {
     freq_ref: FrequencyRef,
     plane_stokes: PlaneStokes,
     channels: Vec<CubeChannelRequest>,
+    gridder_modes: Vec<GridderMode>,
 }
 
 enum PreparedInput {
@@ -2159,7 +2143,12 @@ impl PreparedInput {
 enum RunProducts {
     Mfs(casa_imaging::ImagingResult),
     Mtmfs(casa_imaging::MtmfsResult),
-    Cube(casa_imaging::CubeImagingResult),
+    Cube(CubeRunProducts),
+}
+
+struct CubeRunProducts {
+    result: casa_imaging::CubeImagingResult,
+    mosaic_weight: Option<Array4<f32>>,
 }
 
 impl RunProducts {
@@ -2167,7 +2156,7 @@ impl RunProducts {
         match self {
             Self::Mfs(result) => result.compatibility.plane_stokes,
             Self::Mtmfs(result) => result.compatibility.plane_stokes,
-            Self::Cube(result) => result.compatibility.plane_stokes,
+            Self::Cube(products) => products.result.compatibility.plane_stokes,
         }
     }
 
@@ -2175,7 +2164,7 @@ impl RunProducts {
         match self {
             Self::Mfs(result) => &result.compatibility.channel_frequencies_hz,
             Self::Mtmfs(result) => &result.compatibility.channel_frequencies_hz,
-            Self::Cube(result) => &result.compatibility.channel_frequencies_hz,
+            Self::Cube(products) => &products.result.compatibility.channel_frequencies_hz,
         }
     }
 
@@ -2183,7 +2172,7 @@ impl RunProducts {
         match self {
             Self::Mfs(result) => result.diagnostics.warnings.clone(),
             Self::Mtmfs(result) => result.diagnostics.warnings.clone(),
-            Self::Cube(result) => result.diagnostics.warnings.clone(),
+            Self::Cube(products) => products.result.diagnostics.warnings.clone(),
         }
     }
 
@@ -2191,7 +2180,7 @@ impl RunProducts {
         match self {
             Self::Mfs(result) => result.diagnostics.gridded_samples,
             Self::Mtmfs(result) => result.diagnostics.gridded_samples,
-            Self::Cube(result) => result.diagnostics.gridded_samples,
+            Self::Cube(products) => products.result.diagnostics.gridded_samples,
         }
     }
 
@@ -2199,7 +2188,7 @@ impl RunProducts {
         match self {
             Self::Mfs(result) => result.diagnostics.major_cycles,
             Self::Mtmfs(result) => result.diagnostics.major_cycles,
-            Self::Cube(result) => result.diagnostics.major_cycles,
+            Self::Cube(products) => products.result.diagnostics.major_cycles,
         }
     }
 
@@ -2207,7 +2196,7 @@ impl RunProducts {
         match self {
             Self::Mfs(result) => result.diagnostics.minor_iterations,
             Self::Mtmfs(result) => result.diagnostics.minor_iterations,
-            Self::Cube(result) => result.diagnostics.minor_iterations,
+            Self::Cube(products) => products.result.diagnostics.minor_iterations,
         }
     }
 
@@ -2215,7 +2204,7 @@ impl RunProducts {
         match self {
             Self::Mfs(result) => result.diagnostics.clean_stop_reason,
             Self::Mtmfs(result) => result.diagnostics.clean_stop_reason,
-            Self::Cube(result) => result.diagnostics.clean_stop_reason,
+            Self::Cube(products) => products.result.diagnostics.clean_stop_reason,
         }
     }
 
@@ -2223,7 +2212,8 @@ impl RunProducts {
         match self {
             Self::Mfs(_) => Vec::new(),
             Self::Mtmfs(_) => Vec::new(),
-            Self::Cube(result) => result
+            Self::Cube(products) => products
+                .result
                 .diagnostics
                 .channel_diagnostics
                 .iter()
@@ -2247,8 +2237,262 @@ impl RunProducts {
         match self {
             Self::Mfs(result) => result.diagnostics.stage_timings,
             Self::Mtmfs(result) => result.diagnostics.stage_timings,
-            Self::Cube(result) => result.diagnostics.stage_timings,
+            Self::Cube(products) => products.result.diagnostics.stage_timings,
         }
+    }
+}
+
+fn add_imaging_stage_timings(total: &mut ImagingStageTimings, next: ImagingStageTimings) {
+    total.controller_overhead += next.controller_overhead;
+    total.weighting += next.weighting;
+    total.psf_grid += next.psf_grid;
+    total.psf_fft += next.psf_fft;
+    total.psf_normalize += next.psf_normalize;
+    total.model_fft += next.model_fft;
+    total.residual_degrid_grid += next.residual_degrid_grid;
+    total.residual_fft += next.residual_fft;
+    total.residual_normalize += next.residual_normalize;
+    total.minor_cycle += next.minor_cycle;
+    total.minor_cycle_solve += next.minor_cycle_solve;
+    total.major_cycle_refresh += next.major_cycle_refresh;
+    total.beam_fit += next.beam_fit;
+    total.restore += next.restore;
+    total.total += next.total;
+}
+
+fn run_frontend_cube(
+    geometry: ImageGeometry,
+    cube: CubePlaneInput,
+    config: &CliConfig,
+    clean: CleanConfig,
+    clean_mask: Option<Array2<bool>>,
+) -> Result<CubeRunProducts, String> {
+    if cube.gridder_modes.len() != cube.channels.len() {
+        return Err(format!(
+            "internal error: cube gridder mode count {} does not match channel count {}",
+            cube.gridder_modes.len(),
+            cube.channels.len()
+        ));
+    }
+    let weight_density_mode = if config.per_channel_weight_density {
+        WeightDensityMode::PerPlane
+    } else {
+        WeightDensityMode::Combined
+    };
+    if cube
+        .gridder_modes
+        .iter()
+        .all(|mode| matches!(mode, GridderMode::Standard))
+    {
+        let result = run_cube(&CubeImagingRequest {
+            geometry,
+            channels: cube.channels,
+            plane_stokes: cube.plane_stokes,
+            weighting: config.weighting,
+            weight_density_mode,
+            uv_taper: config.uv_taper,
+            restoring_beam_mode: config.restoring_beam_mode,
+            deconvolver: config.deconvolver,
+            multiscale_scales: config.multiscale_scales.clone(),
+            small_scale_bias: config.small_scale_bias,
+            clean,
+            clean_mask,
+            psf_cutoff: config.psf_cutoff,
+            w_term_mode: config.w_term_mode,
+            w_project_planes: config.w_project_planes,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .map_err(|error| error.to_string())?;
+        return Ok(CubeRunProducts {
+            result,
+            mosaic_weight: None,
+        });
+    }
+    if config.uv_taper.is_some() {
+        return Err("mosaic cube frontend path does not yet support uv taper".to_string());
+    }
+    if weight_density_mode != WeightDensityMode::PerPlane {
+        return Err(
+            "mosaic cube frontend path currently requires --perchanweightdensity".to_string(),
+        );
+    }
+
+    let started = Instant::now();
+    let [nx, ny] = geometry.image_shape;
+    let nchan = cube.channels.len();
+    let channel_frequencies_hz = cube
+        .channels
+        .iter()
+        .map(|channel| channel.channel_frequency_hz)
+        .collect::<Vec<_>>();
+    let min_freq_hz = channel_frequencies_hz
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let max_freq_hz = channel_frequencies_hz
+        .iter()
+        .copied()
+        .fold(0.0f64, f64::max);
+    let reffreq_hz = 0.5 * (channel_frequencies_hz[0] + channel_frequencies_hz[nchan - 1]);
+
+    let mut psf = Array4::<f32>::zeros((nx, ny, 1, nchan));
+    let mut residual = Array4::<f32>::zeros((nx, ny, 1, nchan));
+    let mut model = Array4::<f32>::zeros((nx, ny, 1, nchan));
+    let mut image = Array4::<f32>::zeros((nx, ny, 1, nchan));
+    let mut sumwt = Array4::<f32>::zeros((1, 1, 1, nchan));
+    let mut weight = Array4::<f32>::zeros((nx, ny, 1, nchan));
+    let mut has_mosaic_weight = false;
+    let mut beams = Vec::with_capacity(nchan);
+    let mut restored_beams = Vec::with_capacity(nchan);
+    let mut diagnostics = Vec::with_capacity(nchan);
+    let mut warnings = Vec::new();
+    let mut stage_timings = ImagingStageTimings::default();
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+    let mut major_cycles = 0usize;
+    let mut minor_iterations = 0usize;
+
+    for (channel_index, (channel, gridder_mode)) in cube
+        .channels
+        .into_iter()
+        .zip(cube.gridder_modes.into_iter())
+        .enumerate()
+    {
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: channel.visibility_batches,
+            gridder_mode,
+            plane_stokes: cube.plane_stokes,
+            weighting: config.weighting,
+            reffreq_hz: channel.channel_frequency_hz,
+            selected_frequency_range_hz: [min_freq_hz, max_freq_hz],
+            deconvolver: config.deconvolver,
+            multiscale_scales: config.multiscale_scales.clone(),
+            small_scale_bias: config.small_scale_bias,
+            clean,
+            clean_mask: clean_mask.clone(),
+            w_term_mode: config.w_term_mode,
+            w_project_planes: config.w_project_planes,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let plane = match run_imaging(&request) {
+            Ok(plane) => plane,
+            Err(ImagingError::NoUsableSamples) => {
+                let warning = format!(
+                    "channel {channel_index}: no usable visibility samples remain after validation and flagging; writing blank cube plane"
+                );
+                warnings.push(warning.clone());
+                beams.push(None);
+                restored_beams.push(None);
+                diagnostics.push(blank_frontend_cube_channel_diagnostics(&request, warning));
+                continue;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "run mosaic cube channel {channel_index} at {:.9e} Hz: {error}",
+                    channel.channel_frequency_hz
+                ));
+            }
+        };
+        psf.slice_mut(s![.., .., 0, channel_index])
+            .assign(&plane.psf.slice(s![.., .., 0, 0]));
+        residual
+            .slice_mut(s![.., .., 0, channel_index])
+            .assign(&plane.residual.slice(s![.., .., 0, 0]));
+        model
+            .slice_mut(s![.., .., 0, channel_index])
+            .assign(&plane.model.slice(s![.., .., 0, 0]));
+        image
+            .slice_mut(s![.., .., 0, channel_index])
+            .assign(&plane.image.slice(s![.., .., 0, 0]));
+        sumwt[(0, 0, 0, channel_index)] = plane.sumwt[(0, 0, 0, 0)];
+        if let Some(weight_image) = plane.diagnostics.mosaic_weight_image.as_ref() {
+            weight
+                .slice_mut(s![.., .., 0, channel_index])
+                .assign(weight_image);
+            has_mosaic_weight = true;
+        }
+        for warning in &plane.diagnostics.warnings {
+            warnings.push(format!("channel {channel_index}: {warning}"));
+        }
+        gridded_samples += plane.diagnostics.gridded_samples;
+        skipped_samples += plane.diagnostics.skipped_samples;
+        major_cycles = major_cycles.max(plane.diagnostics.major_cycles);
+        minor_iterations += plane.diagnostics.minor_iterations;
+        add_imaging_stage_timings(&mut stage_timings, plane.diagnostics.stage_timings);
+        beams.push(plane.beam);
+        restored_beams.push(plane.beam);
+        diagnostics.push(plane.diagnostics);
+    }
+    stage_timings.total = started.elapsed();
+
+    Ok(CubeRunProducts {
+        result: CubeImagingResult {
+            psf,
+            residual,
+            model,
+            image,
+            sumwt,
+            restored_beams,
+            beams,
+            diagnostics: CubeImagingDiagnostics {
+                warnings,
+                gridded_samples,
+                skipped_samples,
+                major_cycles,
+                minor_iterations,
+                clean_stop_reason: None,
+                channel_diagnostics: diagnostics,
+                stage_timings,
+            },
+            compatibility: CompatibilityMetadata {
+                axis_order: [
+                    AxisKind::RightAscension,
+                    AxisKind::Declination,
+                    AxisKind::Stokes,
+                    AxisKind::Frequency,
+                ],
+                plane_stokes: cube.plane_stokes,
+                reffreq_hz,
+                channel_frequencies_hz,
+                psf_units: String::new(),
+                residual_units: "Jy/beam".to_string(),
+                model_units: "Jy/pixel".to_string(),
+                image_units: "Jy/beam".to_string(),
+            },
+        },
+        mosaic_weight: has_mosaic_weight.then_some(weight),
+    })
+}
+
+fn blank_frontend_cube_channel_diagnostics(
+    request: &ImagingRequest,
+    warning: String,
+) -> ImagingDiagnostics {
+    ImagingDiagnostics {
+        warnings: vec![warning],
+        gridded_samples: 0,
+        skipped_samples: 0,
+        major_cycles: 0,
+        minor_iterations: 0,
+        clean_stop_reason: None,
+        minor_cycle_traces: Vec::new(),
+        initial_residual_peak_jy_per_beam: 0.0,
+        final_residual_peak_jy_per_beam: 0.0,
+        max_abs_w_lambda: 0.0,
+        fractional_bandwidth: 0.0,
+        max_psf_sidelobe_level: 0.0,
+        final_cycle_threshold_jy_per_beam: request.clean.threshold_jy_per_beam,
+        clean_mask_pixels: request
+            .clean_mask
+            .as_ref()
+            .map(|mask| mask.iter().filter(|value| **value).count())
+            .unwrap_or(request.geometry.nx() * request.geometry.ny()),
+        beam_fit_attempts: 0,
+        beam_fit_cutoff_used: Some(request.clean.psf_cutoff),
+        beam_fit_debug: None,
+        mosaic_weight_image: None,
+        stage_timings: ImagingStageTimings::default(),
     }
 }
 
@@ -3244,8 +3488,13 @@ fn prepare_plane_input_inner(
     };
     let fast_standard_mfs =
         !force_trace && can_prepare_standard_mfs_without_trace(config, &selection);
-    let build_trace =
-        force_trace || (matches!(config.spectral_mode, SpectralMode::Mfs) && !fast_standard_mfs);
+    let trace_free_cube = !force_trace
+        && config.spectral_mode.is_cube_like()
+        && !config.use_pointing
+        && config.phasecenter_field.is_none();
+    let build_trace = force_trace
+        || (matches!(config.spectral_mode, SpectralMode::Mfs) && !fast_standard_mfs)
+        || (config.spectral_mode.is_cube_like() && !trace_free_cube);
     let mut prepared = PreparedSelection::new(
         config,
         selection.selected_ddid,
@@ -3293,7 +3542,7 @@ fn prepare_plane_input_inner(
         );
         return Ok((prepared_input, None));
     }
-    if !force_trace && config.spectral_mode.is_cube_like() {
+    if trace_free_cube {
         let stage_started_at = Instant::now();
         let prepared_input = prepared.finish_cube_without_trace()?;
         maybe_log_frontend_progress(
@@ -4920,7 +5169,7 @@ impl PreparedSelection {
                     channel_model_interpolation_samples,
                     pair,
                 },
-                PreparedTraceState::PairedCube { .. },
+                PreparedTraceState::PairedCube { channel_samples },
             ) => {
                 let row_spectral_contributions = cube_row_spectral_contributions
                     .as_ref()
@@ -5047,6 +5296,52 @@ impl PreparedSelection {
                                 source_model_contributions,
                             ),
                         );
+                    }
+                    if trace_enabled {
+                        let PairedCubeOutputSample {
+                            first_visibility,
+                            second_visibility,
+                            first_weight,
+                            second_weight,
+                            first_weight_source,
+                            second_weight_source,
+                        } = sample;
+                        channel_samples[output_channel].push(PendingPairedSampleTrace {
+                            common: TraceSampleCommon {
+                                row_index: selected_row.row_index,
+                                input_field_id: selected_row.field_id,
+                                phase_center_field_id: self.phase_center.field_id,
+                                ddid: selected_row.ddid,
+                                spw_id: selected_row.spw_id,
+                                polarization_id: selected_row.polarization_id,
+                                antenna1_id,
+                                antenna2_id,
+                                is_cross,
+                                raw_uvw_m,
+                                imaging_uvw_m: uvw_m,
+                                phase_shift_m: transform.phase_shift_m,
+                                output_channel_index: Some(output_channel),
+                                output_frequency_hz,
+                                field_phase_center_direction_rad: geometry_row
+                                    .field_phase_center_direction_rad,
+                                pointing_direction_rad: baseline_pointing_direction_rad,
+                                source_contributions: build_source_contribution_traces(
+                                    &self.source_channel_indices,
+                                    &self.source_channel_frequencies_hz,
+                                    contributions,
+                                ),
+                                gridable: is_cross,
+                            },
+                            correlation_indices: [pair.0, pair.1],
+                            first_visibility,
+                            second_visibility,
+                            first_weight,
+                            second_weight,
+                            first_weight_source,
+                            second_weight_source,
+                            first_flagged: false,
+                            second_flagged: false,
+                        });
                     }
                 }
             }
@@ -5395,6 +5690,7 @@ impl PreparedSelection {
                     freq_ref,
                     plane_stokes,
                     channels,
+                    gridder_modes: vec![GridderMode::Standard; output_channel_frequencies_hz.len()],
                 }))
             }
             PreparedState::CollapsedCube {
@@ -5435,6 +5731,7 @@ impl PreparedSelection {
                     freq_ref,
                     plane_stokes,
                     channels,
+                    gridder_modes: vec![GridderMode::Standard; output_channel_frequencies_hz.len()],
                 }))
             }
             PreparedState::PairedCube {
@@ -5493,6 +5790,7 @@ impl PreparedSelection {
                     freq_ref,
                     plane_stokes,
                     channels,
+                    gridder_modes: vec![GridderMode::Standard; output_channel_frequencies_hz.len()],
                 }))
             }
             _ => Err("internal error: trace-free cube prepare requires cube state".to_string()),
@@ -5620,6 +5918,12 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::ExplicitCube { channel_samples },
             ) => {
+                let gridder_modes = channel_samples
+                    .iter()
+                    .map(|samples| {
+                        infer_mfs_gridder_mode(ms, &prepared_phase_center, samples, mosaic_pb_limit)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 let channels = output_channel_frequencies_hz
                     .iter()
                     .copied()
@@ -5656,6 +5960,7 @@ impl PreparedSelection {
                         freq_ref,
                         plane_stokes,
                         channels,
+                        gridder_modes,
                     }),
                     make_trace_bundle(channel_samples.into_iter().flatten().collect(), Vec::new()),
                 ))
@@ -5671,6 +5976,21 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::PairedCube { channel_samples },
             ) => {
+                let mut channel_gridder_modes = Vec::with_capacity(channel_samples.len());
+                let mut all_accepted = Vec::new();
+                let mut all_rejected = Vec::new();
+                for samples in &channel_samples {
+                    let (accepted, rejected) =
+                        collapse_pending_pair_traces(samples.clone(), transform, plane_stokes);
+                    channel_gridder_modes.push(infer_mfs_gridder_mode(
+                        ms,
+                        &prepared_phase_center,
+                        &accepted,
+                        mosaic_pb_limit,
+                    )?);
+                    all_accepted.extend(accepted);
+                    all_rejected.extend(rejected);
+                }
                 let channels = output_channel_frequencies_hz
                     .iter()
                     .copied()
@@ -5715,19 +6035,77 @@ impl PreparedSelection {
                         },
                     )
                     .collect::<Result<Vec<_>, String>>()?;
-                let (accepted, rejected) = collapse_pending_pair_traces(
-                    channel_samples.into_iter().flatten().collect(),
-                    transform,
-                    plane_stokes,
-                );
                 Ok((
                     PreparedInput::Cube(CubePlaneInput {
                         phase_center: prepared_phase_center,
                         freq_ref,
                         plane_stokes,
                         channels,
+                        gridder_modes: channel_gridder_modes,
                     }),
-                    make_trace_bundle(accepted, rejected),
+                    make_trace_bundle(all_accepted, all_rejected),
+                ))
+            }
+            (
+                PreparedState::CollapsedCube {
+                    plane_stokes,
+                    transform,
+                    channel_batches,
+                    channel_density_batches,
+                    channel_model_interpolation_samples,
+                    ..
+                },
+                PreparedTraceState::PairedCube { channel_samples },
+            ) => {
+                let mut channel_gridder_modes = Vec::with_capacity(channel_samples.len());
+                let mut all_accepted = Vec::new();
+                let mut all_rejected = Vec::new();
+                for samples in &channel_samples {
+                    let (accepted, rejected) =
+                        collapse_pending_pair_traces(samples.clone(), transform, plane_stokes);
+                    channel_gridder_modes.push(infer_mfs_gridder_mode(
+                        ms,
+                        &prepared_phase_center,
+                        &accepted,
+                        mosaic_pb_limit,
+                    )?);
+                    all_accepted.extend(accepted);
+                    all_rejected.extend(rejected);
+                }
+                let channels = output_channel_frequencies_hz
+                    .iter()
+                    .copied()
+                    .zip(channel_batches)
+                    .zip(channel_density_batches)
+                    .zip(channel_model_interpolation_samples)
+                    .map(
+                        |(
+                            ((channel_frequency_hz, batch), density_batch),
+                            model_interpolation_samples,
+                        )| CubeChannelRequest {
+                            channel_frequency_hz,
+                            visibility_batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                            density_batches: chunk_density_batch(
+                                density_batch,
+                                use_density_batches,
+                            ),
+                            model_interpolation_batches:
+                                chunk_model_interpolation_batches_if_needed(
+                                    model_interpolation_samples,
+                                    use_model_interpolation_batches,
+                                ),
+                        },
+                    )
+                    .collect();
+                Ok((
+                    PreparedInput::Cube(CubePlaneInput {
+                        phase_center: prepared_phase_center,
+                        freq_ref,
+                        plane_stokes,
+                        channels,
+                        gridder_modes: channel_gridder_modes,
+                    }),
+                    make_trace_bundle(all_accepted, all_rejected),
                 ))
             }
             _ => Err(
@@ -5738,24 +6116,37 @@ impl PreparedSelection {
     }
 }
 
+#[cfg(test)]
 fn mosaic_pb_product_from_weight(weight_image: &Array2<f32>) -> Array4<f32> {
-    let peak = weight_image
-        .iter()
-        .copied()
-        .filter(|value| value.is_finite())
-        .fold(0.0f32, f32::max);
-    let mut pb = Array2::<f32>::zeros(weight_image.dim());
-    if peak > 0.0 {
-        Zip::from(&mut pb)
-            .and(weight_image)
-            .for_each(|pb_value, weight_value| {
-                let normalized = (*weight_value).max(0.0) / peak;
-                if normalized.is_finite() && normalized > 0.0 {
-                    *pb_value = normalized.sqrt();
-                }
-            });
+    mosaic_pb_product_from_weight_product(&expand_plane_for_write(weight_image))
+}
+
+fn mosaic_pb_product_from_weight_product(weight_product: &Array4<f32>) -> Array4<f32> {
+    let mut pb = Array4::<f32>::zeros(weight_product.dim());
+    let (_, _, nstokes, nchan) = weight_product.dim();
+    for stokes_index in 0..nstokes {
+        for channel_index in 0..nchan {
+            let weight_plane = weight_product.slice(s![.., .., stokes_index, channel_index]);
+            let peak = weight_plane
+                .iter()
+                .copied()
+                .filter(|value| value.is_finite())
+                .fold(0.0f32, f32::max);
+            if peak <= 0.0 {
+                continue;
+            }
+            let mut pb_plane = pb.slice_mut(s![.., .., stokes_index, channel_index]);
+            Zip::from(&mut pb_plane)
+                .and(&weight_plane)
+                .for_each(|pb_value, weight_value| {
+                    let normalized = (*weight_value).max(0.0) / peak;
+                    if normalized.is_finite() && normalized > 0.0 {
+                        *pb_value = normalized.sqrt();
+                    }
+                });
+        }
     }
-    expand_plane_for_write(&pb)
+    pb
 }
 
 fn pb_correct_image_product(image: &Array4<f32>, pb: &Array4<f32>, pb_limit: f32) -> Array4<f32> {
@@ -5918,7 +6309,7 @@ fn write_products(
         model,
         image,
         sumwt,
-        debug_weight_image,
+        debug_weight_product,
         psf_beams,
         residual_beams,
         image_beams,
@@ -5933,7 +6324,11 @@ fn write_products(
             &result.model,
             &result.image,
             &result.sumwt,
-            result.diagnostics.mosaic_weight_image.as_ref(),
+            result
+                .diagnostics
+                .mosaic_weight_image
+                .as_ref()
+                .map(expand_plane_for_write),
             result
                 .beam
                 .map(beam_to_gaussian)
@@ -5954,24 +6349,29 @@ fn write_products(
             result.compatibility.model_units.as_str(),
             result.compatibility.image_units.as_str(),
         ),
-        RunProducts::Cube(result) => (
-            &result.psf,
-            &result.residual,
-            &result.model,
-            &result.image,
-            &result.sumwt,
-            None,
-            beam_set_from_channel_beams(&result.beams, RestoringBeamMode::PerPlane)?,
-            beam_set_from_channel_beams(&result.beams, RestoringBeamMode::PerPlane)?,
-            beam_set_from_channel_beams(&result.restored_beams, config.restoring_beam_mode)?,
-            result.compatibility.psf_units.as_str(),
-            result.compatibility.residual_units.as_str(),
-            result.compatibility.model_units.as_str(),
-            result.compatibility.image_units.as_str(),
+        RunProducts::Cube(products) => (
+            &products.result.psf,
+            &products.result.residual,
+            &products.result.model,
+            &products.result.image,
+            &products.result.sumwt,
+            products.mosaic_weight.clone(),
+            beam_set_from_channel_beams(&products.result.beams, RestoringBeamMode::PerPlane)?,
+            beam_set_from_channel_beams(&products.result.beams, RestoringBeamMode::PerPlane)?,
+            beam_set_from_channel_beams(
+                &products.result.restored_beams,
+                config.restoring_beam_mode,
+            )?,
+            products.result.compatibility.psf_units.as_str(),
+            products.result.compatibility.residual_units.as_str(),
+            products.result.compatibility.model_units.as_str(),
+            products.result.compatibility.image_units.as_str(),
         ),
         RunProducts::Mtmfs(_) => unreachable!("MTMFS products are handled by the early return"),
     };
-    let mosaic_pb_product = debug_weight_image.map(mosaic_pb_product_from_weight);
+    let mosaic_pb_product = debug_weight_product
+        .as_ref()
+        .map(mosaic_pb_product_from_weight_product);
     let mosaic_support_mask = mosaic_pb_product
         .as_ref()
         .map(|pb| pb_support_mask_product(pb, config.mosaic_pb_limit));
@@ -6032,11 +6432,10 @@ fn write_products(
         channel_frequencies_hz,
         reffreq_hz,
     )?;
-    if let Some(weight_image) = debug_weight_image {
-        let weight_product = expand_plane_for_write(weight_image);
+    if let Some(weight_product) = debug_weight_product.as_ref() {
         write_single_product(
             &PathBuf::from(format!("{base}.weight")),
-            &weight_product,
+            weight_product,
             coords,
             "",
             ImageBeamSet::default(),
@@ -6081,13 +6480,9 @@ fn write_products(
         write_preview_png(&PathBuf::from(format!("{base}.residual.png")), residual)?;
         write_preview_png(&PathBuf::from(format!("{base}.model.png")), model)?;
         write_preview_png(&PathBuf::from(format!("{base}.image.png")), image)?;
-        if let Some(weight_image) = debug_weight_image {
-            let weight_product = expand_plane_for_write(weight_image);
-            write_preview_png(
-                &PathBuf::from(format!("{base}.weight.png")),
-                &weight_product,
-            )?;
-            let pb_product = mosaic_pb_product_from_weight(weight_image);
+        if let Some(weight_product) = debug_weight_product.as_ref() {
+            write_preview_png(&PathBuf::from(format!("{base}.weight.png")), weight_product)?;
+            let pb_product = mosaic_pb_product_from_weight_product(weight_product);
             write_preview_png(&PathBuf::from(format!("{base}.pb.png")), &pb_product)?;
             if config.pbcor {
                 let pbcor_product =
@@ -9635,6 +10030,36 @@ mod tests {
         assert!(support[[0, 1, 0, 0]]);
         assert!(!support[[1, 0, 0, 0]]);
         assert!(!support[[1, 1, 0, 0]]);
+    }
+
+    #[test]
+    fn cube_pb_product_normalizes_each_channel_plane() {
+        let mut weight = Array4::<f32>::zeros((2, 2, 1, 2));
+        weight[[0, 0, 0, 0]] = 4.0;
+        weight[[0, 1, 0, 0]] = 1.0;
+        weight[[1, 0, 0, 0]] = 0.04;
+        weight[[0, 0, 0, 1]] = 16.0;
+        weight[[0, 1, 0, 1]] = 4.0;
+        weight[[1, 0, 0, 1]] = 1.0;
+
+        let pb = mosaic_pb_product_from_weight_product(&weight);
+
+        assert_eq!(pb[[0, 0, 0, 0]], 1.0);
+        assert_eq!(pb[[0, 1, 0, 0]], 0.5);
+        assert!((pb[[1, 0, 0, 0]] - 0.1).abs() < 1.0e-6);
+        assert_eq!(pb[[1, 1, 0, 0]], 0.0);
+        assert_eq!(pb[[0, 0, 0, 1]], 1.0);
+        assert_eq!(pb[[0, 1, 0, 1]], 0.5);
+        assert_eq!(pb[[1, 0, 0, 1]], 0.25);
+        assert_eq!(pb[[1, 1, 0, 1]], 0.0);
+
+        let support = pb_support_mask_product(&pb, 0.1);
+        assert!(support[[0, 0, 0, 0]]);
+        assert!(support[[0, 1, 0, 0]]);
+        assert!(!support[[1, 0, 0, 0]]);
+        assert!(support[[0, 0, 0, 1]]);
+        assert!(support[[0, 1, 0, 1]]);
+        assert!(support[[1, 0, 0, 1]]);
     }
 
     #[test]

@@ -106,7 +106,9 @@ if [[ ! -d "$north_ms" || ! -d "$south_ms" ]]; then
 fi
 
 run_dir="$outdir/continuum"
+line_dir="$outdir/line-cube"
 mkdir -p "$run_dir"
+mkdir -p "$line_dir"
 
 if [[ "$skip_imaging" == "1" ]]; then
   echo "Skipping imaging because CASA_RS_WAVE6_ISSUE161_SKIP_IMAGING=1"
@@ -183,6 +185,47 @@ for job in jobs:
     )
 PY
     record_timing casa_continuum_seconds "$casa_start"
+
+    casa_line_start="$(now_seconds)"
+    "$casa_py" - "$north_ms" "$line_dir" <<'PY'
+import shutil
+import sys
+from pathlib import Path
+
+from casatasks import tclean
+
+north_ms = sys.argv[1]
+outdir = Path(sys.argv[2])
+outdir.mkdir(parents=True, exist_ok=True)
+prefix = outdir / "casa-antennae-north-line-dirty-probe"
+
+for suffix in [".image", ".model", ".image.pbcor", ".psf", ".residual", ".pb", ".sumwt", ".weight", ".mask"]:
+    shutil.rmtree(str(prefix) + suffix, ignore_errors=True)
+
+tclean(
+    vis=north_ms,
+    imagename=str(prefix),
+    field="",
+    phasecenter=12,
+    deconvolver="hogbom",
+    specmode="cube",
+    spw="0",
+    nchan=2,
+    start=120,
+    width=1,
+    gridder="mosaic",
+    datacolumn="data",
+    mosweight=True,
+    perchanweightdensity=True,
+    imsize=64,
+    cell="0.13arcsec",
+    interactive=False,
+    niter=0,
+    threshold="0Jy",
+    pblimit=0.2,
+)
+PY
+    record_timing casa_line_cube_probe_seconds "$casa_line_start"
   else
     echo "Skipping CASA C++ continuum run because CASA_RS_WAVE6_ISSUE161_SKIP_CASA=1"
   fi
@@ -236,6 +279,28 @@ PY
     --threshold-jy 0.0004 \
     --no-preview-pngs
   record_timing rust_continuum_seconds "$rust_start"
+
+  rust_line_start="$(now_seconds)"
+  rm -rf "$line_dir/rust-antennae-north-line-dirty-probe".*
+  run_casars_imager \
+    --ms "$north_ms" \
+    --imagename "$line_dir/rust-antennae-north-line-dirty-probe" \
+    --imsize 64 \
+    --cell-arcsec 0.13 \
+    --phasecenter-field 12 \
+    --spw "0" \
+    --channel-start 120 \
+    --channel-count 2 \
+    --datacolumn DATA \
+    --specmode cube \
+    --deconvolver hogbom \
+    --niter 0 \
+    --dirty-only \
+    --threshold-jy 0 \
+    --perchanweightdensity \
+    --pblimit 0.2 \
+    --no-preview-pngs
+  record_timing rust_line_cube_probe_seconds "$rust_line_start"
 fi
 
 "$casa_py" - "$outdir" "$run_stamp" "$generated_at" <<'PY'
@@ -254,6 +319,7 @@ outdir = Path(sys.argv[1])
 run_stamp = sys.argv[2]
 generated_at = sys.argv[3]
 run_dir = outdir / "continuum"
+line_dir = outdir / "line-cube"
 timings_path = outdir / "wave6-issue161-timings.tsv"
 
 originals = {
@@ -272,6 +338,10 @@ originals = {
     "continuum_image": (
         "https://casaguides.nrao.edu/images/4/44/Antennae_North.Cont.Clean.image-Antennae_South.Cont.Clean.image.png",
         outdir / "original-antennae-north-south-cont-clean-image.png",
+    ),
+    "north_line_clean": (
+        "https://casaguides.nrao.edu/images/b/bd/Antennae_North.CO3_2Line.Clean.image.png",
+        outdir / "original-antennae-north-co32-line-clean-image.png",
     ),
 }
 for url, path in originals.values():
@@ -329,7 +399,7 @@ def pct(value):
 def sci(value):
     return "n/a" if value is None or not np.isfinite(value) else f"{value:.3e}"
 
-def compare_panel(key, title, original_key, casa_prefix, rust_prefix, product):
+def compare_panel(key, title, original_key, casa_prefix, rust_prefix, product, colorbar_label="Jy/beam"):
     casa, casa_mask = read_image(str(casa_prefix) + product)
     rust, rust_mask = read_image(str(rust_prefix) + product)
     casa, rust, casa_mask, rust_mask = crop_common(casa, rust, casa_mask, rust_mask)
@@ -357,7 +427,7 @@ def compare_panel(key, title, original_key, casa_prefix, rust_prefix, product):
     axes[3].set_title("casa-rs - CASA")
     for ax, artist in zip(axes[1:], artists):
         colorbar = fig.colorbar(artist, ax=ax, fraction=0.046, pad=0.02)
-        colorbar.set_label("Jy/beam")
+        colorbar.set_label(colorbar_label)
     for ax in axes:
         ax.set_xticks([])
         ax.set_yticks([])
@@ -412,9 +482,10 @@ summary = {
     "generated_at": generated_at,
     "timings": read_timings(),
     "continuum": {},
+    "line_cube": {},
     "line_cube_status": {
-        "status": "not_claimed",
-        "reason": "Antennae line products require specmode='cube' with gridder='mosaic', restoringbeam='common', and savemodel='modelcolumn'. The current cube engine still images cube planes through the standard-gridder path, so #161 must not claim line cube or selfcal parity from this continuum proof.",
+        "status": "partial_mosaic_dirty_probe",
+        "reason": "This run now includes a bounded North two-channel dirty line-cube probe with specmode='cube', gridder='mosaic', per-channel weight density, PB products, and CASA C++ / casa-rs image panels. It is not the full tutorial line-clean/selfcal workflow because restoringbeam='common', savemodel='modelcolumn', interactive clean masks, selfcal, moments, contours, and FITS exports are still not claimed.",
     },
 }
 summary["continuum"]["north_dirty_image"] = compare_panel(
@@ -457,6 +528,23 @@ summary["continuum"]["south_clean_image"] = compare_panel(
     run_dir / "rust-antennae-south-cont-clean",
     ".image",
 )
+summary["line_cube"]["north_dirty_probe_image_channel0"] = compare_panel(
+    "alma-antennae-north-line-dirty-probe",
+    "Antennae North CO(3-2) line cube dirty mosaic probe, channel 0",
+    "north_line_clean",
+    line_dir / "casa-antennae-north-line-dirty-probe",
+    line_dir / "rust-antennae-north-line-dirty-probe",
+    ".image",
+)
+summary["line_cube"]["north_dirty_probe_pb_channel0"] = compare_panel(
+    "alma-antennae-north-line-dirty-probe",
+    "Antennae North CO(3-2) line cube primary beam probe, channel 0",
+    "north_line_clean",
+    line_dir / "casa-antennae-north-line-dirty-probe",
+    line_dir / "rust-antennae-north-line-dirty-probe",
+    ".pb",
+    "primary beam",
+)
 (outdir / "wave6-issue161-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
 print(json.dumps(summary, indent=2, sort_keys=True))
 PY
@@ -474,9 +562,9 @@ This artifact set is bounded to #161. It regenerates same-input CASA C++ and
 casa-rs continuum mosaic products for the Antennae North/South tutorial data,
 then writes stamped CASA Guide / CASA C++ / casa-rs / difference panels.
 
-Line cube and selfcal products are inventoried but not claimed by this run until
-the casa-rs cube engine supports mosaic cube gridding for the tutorial command
-shape.
+This run also includes a bounded North two-channel dirty line-cube mosaic probe
+with PB products. Full line CLEAN, model-column selfcal, moment, contour, and
+FITS products are inventoried but not claimed yet.
 
 Summary JSON: \`wave6-issue161-summary.json\`
 EOF

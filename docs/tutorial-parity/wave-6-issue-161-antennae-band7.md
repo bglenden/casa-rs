@@ -4,8 +4,11 @@ Truth class: current evidence
 Last reality check: 2026-05-02
 Verification:
 - `bash -n scripts/run-wave6-issue161-antennae.sh`
+- `cargo check -p casars-imager`
+- `cargo test -p casars-imager pbcor_products_apply_primary_beam_cutoff`
+- `cargo test -p casars-imager cube_pb_product_normalizes_each_channel_plane`
 - `cargo test -p casa-test-support tutorial_dataset_registry_contains_first_wave_candidates`
-- `CASA_RS_FETCH_TUTORIAL_DATA=1 scripts/run-wave6-issue161-antennae.sh target/wave6-issue161-antennae`
+- `scripts/run-wave6-issue161-antennae.sh target/wave6-issue161-antennae`
 
 Wave issue: #143
 Child issue: #161
@@ -38,8 +41,9 @@ Each reproduced image panel contains four columns:
 - casa-rs product generated locally from the same staged tutorial data
 - `casa-rs - CASA C++` difference image
 
-Colorbars are labeled in Jy/beam. Masked pixels render in gray. Metrics are
-computed on the shared valid CASA C++ and casa-rs image support.
+Image colorbars are labeled in Jy/beam; PB colorbars are labeled as primary
+beam. Masked pixels render in gray. Metrics are computed on the shared valid
+CASA C++ and casa-rs image support.
 
 ## Tutorial Inputs
 
@@ -50,8 +54,8 @@ computed on the shared valid CASA C++ and casa-rs image support.
 
 ## Current Continuum Results
 
-Current run stamp: `20260502T170637-0600`, generated
-`2026-05-02 17:06:37 -0600`.
+Current run stamp: `20260502T174920-0600`, generated
+`2026-05-02 17:49:20 -0600`.
 
 The continuum run completed against local CASA C++ and casa-rs products. The
 runner uses the tutorial mosaic geometry for North and South continuum imaging
@@ -63,8 +67,11 @@ Wall-clock timing on the local tutorial run:
 
 | Runner | Seconds | Relative |
 |---|---:|---:|
-| CASA C++ | `42.581` | `1.00x` |
-| casa-rs | `212.667` | `4.99x CASA` |
+| CASA C++ | `42.621` | `1.00x` |
+| casa-rs | `196.387` | `4.61x CASA` |
+
+The bounded North two-channel dirty line-cube probe took `3.343s` in CASA C++
+and `3.423s` in casa-rs.
 
 ### Continuum Metrics
 
@@ -81,12 +88,26 @@ Source-region peak-relative differences use shared valid pixels with
 
 ### Inspectable Panels
 
-- `target/wave6-issue161-antennae/alma-antennae-north-cont-dirty-image-20260502T170637-0600-panel.png`
-- `target/wave6-issue161-antennae/alma-antennae-north-cont-clean-residual-20260502T170637-0600-panel.png`
-- `target/wave6-issue161-antennae/alma-antennae-north-cont-clean-image-20260502T170637-0600-panel.png`
-- `target/wave6-issue161-antennae/alma-antennae-south-cont-clean-residual-20260502T170637-0600-panel.png`
-- `target/wave6-issue161-antennae/alma-antennae-south-cont-clean-image-20260502T170637-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-north-cont-dirty-image-20260502T174920-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-north-cont-clean-residual-20260502T174920-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-north-cont-clean-image-20260502T174920-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-south-cont-clean-residual-20260502T174920-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-south-cont-clean-image-20260502T174920-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-north-line-dirty-probe-image-20260502T174920-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-north-line-dirty-probe-pb-20260502T174920-0600-panel.png`
 - `target/wave6-issue161-antennae/wave6-issue161-summary.json`
+
+## Current Line-Cube Probe
+
+This pass adds a bounded North CO(3-2) dirty line-cube probe for the tutorial
+command shape that first forced the remaining #161 work: `specmode='cube'`,
+`gridder='mosaic'`, two selected channels, and PB products. This is not the
+full tutorial line CLEAN or selfcal sequence.
+
+| Probe product | Shared valid pixels | CASA valid pixels | casa-rs valid pixels | CASA RMS | Difference RMS | Diff/CASA RMS | source p90 abs(diff)/peak | source max abs(diff)/peak |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| North dirty line `.image`, channel 0 | `4096 / 4096` | `4096` | `4096` | `0.007540386763608376` | `0.00043732891898679596` | `0.057998207876742466` | `0.0278877279949779` | `0.0675429373295499` |
+| North dirty line `.pb`, channel 0 | `4096 / 4096` | `4096` | `4096` | `0.9160840541070369` | `0.00002234636227047943` | `0.000024393353612362345` | `0.00003415346145629883` | `0.000050187110900878906` |
 
 ## Tutorial Figure Coverage
 
@@ -98,7 +119,7 @@ Source-region peak-relative differences use shared valid pixels with
 | North and South continuum restored images | Reproduced with panels and metrics | North source p90 `0.040%`; South source p90 `0.060%`. |
 | Line velocity-selection plots | Inventoried, not reproduced in this #161 pass | Downstream line cube workflow is not claimed yet. |
 | Interactive clean-mask screenshots | Inventoried, not reproduced in this #161 pass | The runner uses bounded noninteractive CLEAN for reproducible evidence. |
-| CO(3-2) line cube images | Not claimed | The tutorial command uses `specmode='cube'`, `gridder='mosaic'`, `restoringbeam='common'`, and `savemodel='modelcolumn'`; current cube imaging still routes planes through the standard gridder. |
+| CO(3-2) line cube images | Partially probed, not full tutorial parity | A bounded North two-channel dirty cube now runs with `specmode='cube'`, `gridder='mosaic'`, per-channel weight density, and PB products. The PB probe matches very tightly; the dirty image still has few-percent source-region differences and does not cover full line CLEAN, `restoringbeam='common'`, or `savemodel='modelcolumn'`. |
 | Selfcal channel/model plots and phase calibration plots | Not claimed | Depends on the tutorial line-cube model column and selfcal/applycal chain. |
 | Selfcal comparison images | Not claimed | Depends on the line cube/selfcal chain. |
 | Contour and moment-map products | Not claimed | Depends on line cube products, then `immoments` and contour-panel generation. |
@@ -106,14 +127,18 @@ Source-region peak-relative differences use shared valid pixels with
 
 ## Current Interpretation
 
-This pass adds the #161 dataset registry entries and a reproducible Antennae
-continuum panel harness. It demonstrates that the already-landed mosaic MFS
-path can reproduce the tutorial's North and South continuum CLEAN image
-products from same-input CASA C++ and casa-rs runs with sub-percent
-source-region p90 differences.
+This pass adds the #161 dataset registry entries, a reproducible Antennae
+continuum panel harness, and a bounded line-cube mosaic probe. It demonstrates
+that the already-landed mosaic MFS path can reproduce the tutorial's North and
+South continuum CLEAN image products from same-input CASA C++ and casa-rs runs
+with sub-percent source-region p90 differences. It also demonstrates that the
+frontend can now keep `gridder='mosaic'` through cube channel preparation and
+write CASA-shaped `.image`, `.pb`, `.weight`, `.psf`, `.residual`, and `.sumwt`
+cube products for the Antennae line selection.
 
-It does not close #161. The remaining #161 blocker is the line cube and selfcal
-workflow. The next implementation step is to extend the cube imaging path so
-`specmode='cube'` can honor `gridder='mosaic'` for the Antennae line command
-shape, then regenerate the line cube, selfcal, moment, contour, and FITS
-products in the same panel format.
+It does not close #161. The remaining #161 blockers are the full line CLEAN
+workflow and downstream selfcal/moment/contour/FITS products. The next
+implementation step is to move beyond the dirty cube probe by supporting the
+tutorial line CLEAN details, especially common restoring-beam behavior and
+`savemodel='modelcolumn'`, then regenerate the selfcal, moment, contour, and
+FITS products in the same panel format.
