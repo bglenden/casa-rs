@@ -7,6 +7,9 @@ casa_py="${CASA_RS_CASA_PYTHON:-$HOME/SoftwareProjects/casa-build/venv/bin/pytho
 fetch="${CASA_RS_FETCH_TUTORIAL_DATA:-0}"
 dataset="${CASA_RS_WAVE6_DATASET:-all}"
 skip_casa="${CASA_RS_WAVE6_SKIP_CASA:-0}"
+skip_imaging="${CASA_RS_WAVE6_SKIP_IMAGING:-0}"
+run_stamp="${CASA_RS_WAVE6_RUN_STAMP:-$(date '+%Y%m%dT%H%M%S%z')}"
+generated_at="${CASA_RS_WAVE6_GENERATED_AT:-$(date '+%Y-%m-%d %H:%M:%S %z')}"
 
 case "$dataset" in
   all|alma|vla) ;;
@@ -18,7 +21,7 @@ esac
 
 mkdir -p "$outdir"
 timings_file="$outdir/wave6-issue53-mosaic-timings.tsv"
-if [[ "$dataset" == "all" && "$skip_casa" != "1" ]]; then
+if [[ "$dataset" == "all" && "$skip_casa" != "1" && "$skip_imaging" != "1" ]]; then
   rm -f "$timings_file"
 fi
 
@@ -127,6 +130,9 @@ vla_run="$outdir/vla-3c391"
 mkdir -p "$alma_run" "$vla_run"
 
 if want_dataset alma; then
+if [[ "$skip_imaging" == "1" ]]; then
+  echo "Skipping ALMA imaging because CASA_RS_WAVE6_SKIP_IMAGING=1"
+else
 if [[ "$skip_casa" != "1" ]]; then
 alma_casa_start="$(now_seconds)"
 "$casa_py" - "$alma_ms" "$alma_run" <<'PY'
@@ -178,13 +184,19 @@ run_casars_imager \
   --datacolumn DATA \
   --deconvolver hogbom \
   --niter 32 \
+  --minor-cycle-length 32 \
+  --casa-hogbom-iterations \
   --gain 0.1 \
   --threshold-jy 0.0004 \
   --pbcor
 record_timing alma_rust_seconds "$alma_rust_start"
 fi
+fi
 
 if want_dataset vla; then
+if [[ "$skip_imaging" == "1" ]]; then
+  echo "Skipping VLA imaging because CASA_RS_WAVE6_SKIP_IMAGING=1"
+else
 if [[ "$skip_casa" != "1" ]]; then
 vla_casa_start="$(now_seconds)"
 "$casa_py" - "$vla_ms_full" "$vla_run" <<'PY'
@@ -242,11 +254,13 @@ run_casars_imager \
   --niter 500 \
   --gain 0.1 \
   --threshold-jy 0.001 \
+  --minor-cycle-length 500 \
   --pbcor
 record_timing vla_rust_seconds "$vla_rust_start"
 fi
+fi
 
-"$casa_py" - "$outdir" "$dataset" <<'PY'
+"$casa_py" - "$outdir" "$dataset" "$run_stamp" "$generated_at" <<'PY'
 import json
 import math
 import sys
@@ -261,6 +275,8 @@ from casatools import image as image_tool
 
 outdir = Path(sys.argv[1])
 dataset = sys.argv[2]
+run_stamp = sys.argv[3]
+generated_at = sys.argv[4]
 timings_path = outdir / "wave6-issue53-mosaic-timings.tsv"
 
 def want_dataset(name):
@@ -333,6 +349,11 @@ def seconds(value):
         return "n/a"
     return f"{value:.1f}s"
 
+def pct(value):
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    return f"{100.0 * value:.3f}%"
+
 def finite_ratio(numerator, denominator):
     if not np.isfinite(numerator) or not np.isfinite(denominator) or abs(denominator) <= 0:
         return float("nan")
@@ -349,8 +370,8 @@ def write_panel(name, title, original_path, casa_prefix, rust_prefix, product, t
     valid_diff = diff[shared_valid]
     dpeak = np.nanpercentile(np.abs(valid_diff), 99) if valid_diff.size else 1.0
     dpeak = float(max(dpeak, 1.0e-12))
-    casa_display = np.ma.array(casa, mask=~shared_valid)
-    rust_display = np.ma.array(rust, mask=~shared_valid)
+    casa_display = np.ma.array(casa, mask=~(casa_mask & np.isfinite(casa)))
+    rust_display = np.ma.array(rust, mask=~(rust_mask & np.isfinite(rust)))
     diff_display = np.ma.array(diff, mask=~shared_valid)
     image_cmap = plt.get_cmap("inferno").copy()
     image_cmap.set_bad("#d9d9d9")
@@ -406,30 +427,47 @@ def write_panel(name, title, original_path, casa_prefix, rust_prefix, product, t
         float(np.nanmax(source25_abs_diff)) if source25_count else float("nan"),
         casa_peak_abs,
     )
+    rust_only_valid = int(np.count_nonzero(rust_mask & ~casa_mask))
+    casa_only_valid = int(np.count_nonzero(casa_mask & ~rust_mask))
     casa_seconds = timings.get(f"{timing_key}_casa_seconds")
     rust_seconds = timings.get(f"{timing_key}_rust_seconds")
     speed_ratio = float(rust_seconds / casa_seconds) if casa_seconds and rust_seconds else None
-    metrics = (
-        f"stats on shared valid PB/mask support: {valid_count}/{total_count} pixels "
+    mask_metrics = (
+        f"generated={run_stamp}; shared valid PB/mask support={valid_count}/{total_count} "
         f"({100.0 * valid_count / max(total_count, 1):.1f}%); "
+        f"native mask mismatch rust-only={rust_only_valid}, casa-only={casa_only_valid}"
+    )
+    rms_metrics = (
         f"RMS CASA={sci(casa_rms)}, casa-rs={sci(rust_rms)}, diff={sci(diff_rms)}, "
-        f"diff/CASA={rel_diff_rms:.2f}x, max|diff|={sci(diff_max_abs)}; "
+        f"RMS diff/CASA={pct(rel_diff_rms)}, max|diff|={sci(diff_max_abs)}; "
         f"wall CASA={seconds(casa_seconds)}, casa-rs={seconds(rust_seconds)}"
     )
     if speed_ratio is not None:
-        metrics += f", casa-rs/CASA={speed_ratio:.2f}x"
+        rms_metrics += f", casa-rs/CASA={speed_ratio:.2f}x"
     peak_metrics = (
         f"peak |CASA|={sci(casa_peak_abs)}; "
-        f"|diff at CASA peak|/peak={diff_at_peak_over_peak:.2f}; "
-        f"source(|CASA|>=25% peak) p90|diff|/peak={source25_diff_p90_over_peak:.2f}, "
-        f"max|diff|/peak={source25_diff_max_over_peak:.2f}"
+        f"|diff at CASA peak|/peak={pct(diff_at_peak_over_peak)}; "
+        f"source(|CASA|>=25% peak) p90|diff|/peak={pct(source25_diff_p90_over_peak)}, "
+        f"max|diff|/peak={pct(source25_diff_max_over_peak)}"
     )
-    fig.text(0.5, 0.01, metrics + "\n" + peak_metrics, ha="center", va="bottom", fontsize=8.5)
-    panel = outdir / f"{name}-{product.strip('.')}-panel.png"
+    fig.text(
+        0.5,
+        0.01,
+        mask_metrics + "\n" + rms_metrics + "\n" + peak_metrics,
+        ha="center",
+        va="bottom",
+        fontsize=7.8,
+    )
+    latest_panel = outdir / f"{name}-{product.strip('.')}-panel.png"
+    panel = outdir / f"{name}-{product.strip('.')}-{run_stamp}-panel.png"
     fig.savefig(panel, dpi=150)
+    fig.savefig(latest_panel, dpi=150)
     plt.close(fig)
     return {
         "panel_png": str(panel),
+        "latest_panel_png": str(latest_panel),
+        "generated_stamp": run_stamp,
+        "generated_at": generated_at,
         "casa_rms": casa_rms,
         "rust_rms": rust_rms,
         "diff_rms": diff_rms,
@@ -447,6 +485,8 @@ def write_panel(name, title, original_path, casa_prefix, rust_prefix, product, t
         "total_pixels": total_count,
         "casa_valid_pixels": int(np.count_nonzero(casa_mask)),
         "rust_valid_pixels": int(np.count_nonzero(rust_mask)),
+        "rust_only_valid_pixels": rust_only_valid,
+        "casa_only_valid_pixels": casa_only_valid,
         "casa_seconds": casa_seconds,
         "rust_seconds": rust_seconds,
         "rust_over_casa_wall_time": speed_ratio,
@@ -507,6 +547,10 @@ cat > "$outdir/README.md" <<EOF
 
 Generated by \`scripts/run-wave6-issue53-mosaic-panels.sh\`.
 
+Generated at: \`$generated_at\`
+
+Run stamp: \`$run_stamp\`
+
 Dataset selector for this run: \`$dataset\`.
 
 The summary JSON is accumulated when \`CASA_RS_WAVE6_DATASET=alma\` or
@@ -515,6 +559,10 @@ panel entries from both tutorial datasets even when this README records a
 single-dataset refresh.
 
 Panels place the CASA Guide figure, CASA C++ product, casa-rs product, and casa-rs minus CASA difference image side by side.
+
+The stamped panel filenames are the review artifacts. The non-stamped
+\`*-panel.png\` files are overwritten convenience aliases and should not be used
+for signoff screenshots when stale image caching is a concern.
 
 Summary JSON: \`wave6-issue53-mosaic-panel-summary.json\`
 EOF

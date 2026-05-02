@@ -683,6 +683,7 @@ pub fn build_prepare_geometry_trace_from_config(
         &selection.phase_center,
         derived_engine.as_ref(),
         config.use_pointing,
+        uvw_reprojection_mode_for_selection(config, &selection),
     )?;
     Ok(PreparedGeometryTraceBundle {
         schema_version: ORACLE_SCHEMA_VERSION,
@@ -1667,7 +1668,7 @@ impl CliConfig {
         let mut threshold_jy = 0.0f32;
         let mut nsigma = 0.0f32;
         let mut psf_cutoff = 0.35f32;
-        let mut mosaic_pb_limit = 0.1f32;
+        let mut mosaic_pb_limit = 0.2f32;
         let mut pbcor = false;
         let mut minor_cycle_length = 8usize;
         let mut cyclefactor = 1.0f32;
@@ -2927,6 +2928,7 @@ fn build_prepared_geometry_rows(
     phase_center: &PhaseCenter,
     derived_engine: Option<&MsCalEngine>,
     use_pointing: bool,
+    reprojection_mode: UvwReprojectionMode,
 ) -> Result<Vec<PreparedGeometryRow>, String> {
     let geometry_started_at = Instant::now();
     let antenna1 = load_i32_main_column_owned(ms, "ANTENNA1")?;
@@ -2984,6 +2986,7 @@ fn build_prepared_geometry_rows(
             phase_center,
             raw_uvw_m,
             derived_engine,
+            reprojection_mode,
         )?;
         let row_phase_center =
             if let Some(angles_rad) = field_phase_centers.get(&selected_row.field_id) {
@@ -3214,6 +3217,7 @@ fn prepare_plane_input_inner(
         &selection.phase_center,
         derived_engine.as_ref(),
         config.use_pointing,
+        uvw_reprojection_mode_for_selection(config, &selection),
     )?;
     maybe_log_frontend_progress(
         "prepare_plane_input/build_prepared_geometry_rows",
@@ -3332,6 +3336,23 @@ fn can_prepare_standard_mfs_without_trace(
             .selected_rows
             .iter()
             .all(|row| Some(row.field_id) == selection.phase_center.field_id)
+}
+
+fn uvw_reprojection_mode_for_selection(
+    config: &CliConfig,
+    selection: &SelectedRowsContext,
+) -> UvwReprojectionMode {
+    if config.use_pointing
+        || selection.phase_center.field_id.is_none()
+        || selection
+            .selected_rows
+            .iter()
+            .any(|row| Some(row.field_id) != selection.phase_center.field_id)
+    {
+        UvwReprojectionMode::Mosaic
+    } else {
+        UvwReprojectionMode::Standard
+    }
 }
 
 fn data_description_index(
@@ -3752,6 +3773,12 @@ struct RowImagingTransform {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UvwReprojectionMode {
+    Standard,
+    Mosaic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PairCollapseTransform {
     HalfSum,
     HalfDifference,
@@ -3808,6 +3835,7 @@ fn row_imaging_transform(
     phase_center: &PhaseCenter,
     raw_uvw_m: [f64; 3],
     derived_engine: Option<&MsCalEngine>,
+    reprojection_mode: UvwReprojectionMode,
 ) -> Result<RowImagingTransform, String> {
     if phase_center.field_id == Some(row_field_id) {
         return Ok(RowImagingTransform {
@@ -3823,6 +3851,7 @@ fn row_imaging_transform(
             derived_engine,
             row_field_id,
             phase_center_field_id,
+            reprojection_mode,
         )?
     } else {
         reproject_row_uvw_to_phase_center(
@@ -3831,6 +3860,7 @@ fn row_imaging_transform(
             derived_engine,
             row_field_id,
             phase_center,
+            reprojection_mode,
         )?
     };
     Ok(RowImagingTransform {
@@ -3845,12 +3875,23 @@ fn reproject_row_uvw_m(
     derived_engine: Option<&MsCalEngine>,
     source_field_id: usize,
     target_field_id: usize,
+    reprojection_mode: UvwReprojectionMode,
 ) -> Result<([f64; 3], f64), String> {
     let derived_engine = derived_engine
         .ok_or_else(|| "internal error: missing derived engine for row reprojection".to_string())?;
-    derived_engine
-        .reproject_raw_uvw_between_fields(raw_uvw_m, source_field_id, target_field_id)
-        .map_err(|error| format!("reproject UVW row {row} between field phase centers: {error}"))
+    let result = match reprojection_mode {
+        UvwReprojectionMode::Standard => derived_engine.reproject_raw_uvw_between_fields(
+            raw_uvw_m,
+            source_field_id,
+            target_field_id,
+        ),
+        UvwReprojectionMode::Mosaic => derived_engine.reproject_raw_uvw_for_mosaic_between_fields(
+            raw_uvw_m,
+            source_field_id,
+            target_field_id,
+        ),
+    };
+    result.map_err(|error| format!("reproject UVW row {row} between field phase centers: {error}"))
 }
 
 fn reproject_row_uvw_to_phase_center(
@@ -3859,6 +3900,7 @@ fn reproject_row_uvw_to_phase_center(
     derived_engine: Option<&MsCalEngine>,
     source_field_id: usize,
     phase_center: &PhaseCenter,
+    reprojection_mode: UvwReprojectionMode,
 ) -> Result<([f64; 3], f64), String> {
     let derived_engine = derived_engine
         .ok_or_else(|| "internal error: missing derived engine for row reprojection".to_string())?;
@@ -3867,9 +3909,15 @@ fn reproject_row_uvw_to_phase_center(
         phase_center.angles_rad[1],
         phase_center.reference,
     );
-    derived_engine
-        .reproject_raw_uvw_to_direction(raw_uvw_m, source_field_id, &target)
-        .map_err(|error| format!("reproject UVW row {row} to explicit phase center: {error}"))
+    let result =
+        match reprojection_mode {
+            UvwReprojectionMode::Standard => {
+                derived_engine.reproject_raw_uvw_to_direction(raw_uvw_m, source_field_id, &target)
+            }
+            UvwReprojectionMode::Mosaic => derived_engine
+                .reproject_raw_uvw_for_mosaic_to_direction(raw_uvw_m, source_field_id, &target),
+        };
+    result.map_err(|error| format!("reproject UVW row {row} to explicit phase center: {error}"))
 }
 
 fn phase_rotate_visibility(
@@ -8223,7 +8271,7 @@ Options:
   --threshold-jy VALUE      absolute CLEAN threshold in Jy/beam
   --nsigma VALUE            robust-RMS stopping multiplier (default 0.0)
   --psfcutoff VALUE         PSF beam-fit cutoff fraction (default 0.35)
-  --pblimit VALUE           mosaic primary-beam cutoff for flat-noise normalization (default 0.1)
+  --pblimit VALUE           mosaic primary-beam cutoff for flat-noise normalization (default 0.2)
   --pbcor                   write mosaic primary-beam-corrected image products
   --minor-cycle-length N    residual refresh cadence (default 8)
   --cycleniter N            alias for --minor-cycle-length
@@ -10865,7 +10913,7 @@ mod tests {
         assert!((samples[0].3 - Complex32::new(1.0, 0.5)).norm() < 1.0e-6);
 
         let (target_uvw_m, phase_shift_m) = engine
-            .reproject_raw_uvw_between_fields([-25.0, 20.0, -7.5], 1, 0)
+            .reproject_raw_uvw_for_mosaic_between_fields([-25.0, 20.0, -7.5], 1, 0)
             .unwrap();
         let second_frequency_hz = convert_frequency_to_frame(
             FrequencyRef::TOPO,
@@ -10995,7 +11043,7 @@ mod tests {
         let ms = MeasurementSet::open(&config.ms).unwrap();
         let engine = MsCalEngine::new(&ms).unwrap();
         let (target_uvw_m, phase_shift_m) = engine
-            .reproject_raw_uvw_between_fields([-25.0, 20.0, -7.5], 1, 0)
+            .reproject_raw_uvw_for_mosaic_between_fields([-25.0, 20.0, -7.5], 1, 0)
             .unwrap();
         let frequency_hz = convert_frequency_to_frame(
             FrequencyRef::TOPO,
@@ -11292,7 +11340,7 @@ mod tests {
         let ms = MeasurementSet::open(&config.ms).unwrap();
         let engine = MsCalEngine::new(&ms).unwrap();
         let (target_uvw_m, phase_shift_m) = engine
-            .reproject_raw_uvw_between_fields([-25.0, 20.0, -7.5], 1, 0)
+            .reproject_raw_uvw_for_mosaic_between_fields([-25.0, 20.0, -7.5], 1, 0)
             .unwrap();
         assert!((trace.rows[1].raw_uvw_m[0] + 25.0).abs() < 1.0e-9);
         assert!((trace.rows[1].raw_uvw_m[2] + 7.5).abs() < 1.0e-9);

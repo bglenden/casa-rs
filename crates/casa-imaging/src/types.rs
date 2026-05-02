@@ -112,7 +112,7 @@ pub enum PrimaryBeamModel {
         /// Central blockage diameter in meters.
         blockage_diameter_m: f64,
     },
-    /// CASA `PBMath1DEVLA` common L-band primary-beam voltage model.
+    /// CASA `PBMath1DEVLA` common primary-beam voltage model.
     EvlaLBandCommon,
 }
 

@@ -4,7 +4,10 @@
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
-use crate::{ImageGeometry, ImagingError, fft::fft2};
+use crate::{
+    ImageGeometry, ImagingError,
+    fft::{centered_fft2_f64, fft2},
+};
 
 const GRIDDER_SUPPORT: usize = 3;
 const GRIDDER_TAP_COUNT: usize = GRIDDER_SUPPORT * 2 + 1;
@@ -56,6 +59,10 @@ pub(crate) struct StandardGridder {
 impl StandardGridder {
     pub(crate) fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
         Self::new_with_padding(geometry, padded_len)
+    }
+
+    pub(crate) fn new_unpadded(geometry: ImageGeometry) -> Result<Self, ImagingError> {
+        Self::new_with_padding_factor(geometry, |len, _| len, 1.0)
     }
 
     pub(crate) fn new_with_casa_composite_padding(
@@ -378,6 +385,24 @@ impl StandardGridder {
         apodized
     }
 
+    pub(crate) fn apodize_mosaic_model(
+        &self,
+        model: &Array2<f32>,
+        conv_sampling: usize,
+    ) -> Array2<Complex32> {
+        let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
+        let mut apodized = Array2::<Complex32>::zeros((self.grid_shape[0], self.grid_shape[1]));
+        for x in 0..self.geometry.nx() {
+            for y in 0..self.geometry.ny() {
+                let grid_x = self.image_blc[0] + x;
+                let grid_y = self.image_blc[1] + y;
+                let factor = sinc[grid_x] * sinc[grid_y];
+                apodized[(grid_x, grid_y)] = Complex32::new(model[(x, y)] * factor, 0.0);
+            }
+        }
+        apodized
+    }
+
     pub(crate) fn corrected_image_from_grid(&self, raw: &Array2<Complex32>) -> Array2<f32> {
         self.corrected_complex_image_from_grid(raw)
             .mapv(|value| value.re)
@@ -435,6 +460,28 @@ impl StandardGridder {
     ) -> Array2<f32> {
         self.corrected_w_project_complex_image_from_grid(raw, conv_sampling)
             .mapv(|value| value.re)
+    }
+
+    pub(crate) fn corrected_mosaic_image_from_grid_f64(
+        &self,
+        raw: &Array2<Complex64>,
+        conv_sampling: usize,
+    ) -> Array2<f32> {
+        let sinc = build_sinc_axis(self.grid_shape[0].max(self.grid_shape[1]), conv_sampling);
+        let mut image = Array2::<f32>::zeros((self.geometry.nx(), self.geometry.ny()));
+        for x in 0..self.geometry.nx() {
+            for y in 0..self.geometry.ny() {
+                let grid_x = self.image_blc[0] + x;
+                let grid_y = self.image_blc[1] + y;
+                let sinc_factor = f64::from(sinc[grid_x] * sinc[grid_y]);
+                image[(x, y)] = if sinc_factor.abs() > 1.0e-6 {
+                    (raw[(grid_x, grid_y)] / sinc_factor).re as f32
+                } else {
+                    0.0
+                };
+            }
+        }
+        image
     }
 
     #[cfg(test)]
@@ -641,6 +688,7 @@ pub(crate) struct ScreenProjectSamplePlan {
     pub(crate) normalization: f32,
 }
 
+#[derive(Clone)]
 pub(crate) struct ScreenProjector {
     grid_shape: [usize; 2],
     du_lambda: f64,
@@ -649,6 +697,7 @@ pub(crate) struct ScreenProjector {
     support: usize,
     kernel_center: usize,
     kernel_weights: Array2<Complex32>,
+    normalization_sum: Complex32,
     phase_gradient_rad_per_sample: [f64; 2],
 }
 
@@ -661,6 +710,11 @@ impl ScreenProjector {
         self.sampling
     }
 
+    pub(crate) fn normalization_sum(&self) -> Complex32 {
+        self.normalization_sum
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn from_screen<F>(
         geometry: ImageGeometry,
         gridder: &StandardGridder,
@@ -681,9 +735,10 @@ impl ScreenProjector {
         let inner = (conv_size / sampling).max(2);
         let correction_x = build_gridder_correction_axis(inner);
         let correction_y = build_gridder_correction_axis(inner);
-        let s0 = geometry.cell_size_rad[0].abs() * sampling as f64 * grid_shape[0] as f64
+        let screen_sampling = 2.0 * sampling as f64;
+        let s0 = geometry.cell_size_rad[0].abs() * screen_sampling * grid_shape[0] as f64
             / conv_size as f64;
-        let s1 = geometry.cell_size_rad[1].abs() * sampling as f64 * grid_shape[1] as f64
+        let s1 = geometry.cell_size_rad[1].abs() * screen_sampling * grid_shape[1] as f64
             / conv_size as f64;
 
         let mut screen = Array2::<Complex32>::zeros((conv_size, conv_size));
@@ -696,8 +751,6 @@ impl ScreenProjector {
                 if rsq >= 1.0 {
                     continue;
                 }
-                let correction = correction_x[(ix + inner as isize / 2) as usize]
-                    * correction_y[(iy + inner as isize / 2) as usize];
                 let x = if ix >= 0 {
                     ix as usize
                 } else {
@@ -708,6 +761,8 @@ impl ScreenProjector {
                 } else {
                     (iy + conv_size as isize) as usize
                 };
+                let correction = correction_x[(ix + inner as isize / 2) as usize]
+                    * correction_y[(iy + inner as isize / 2) as usize];
                 screen[(x, y)] = evaluator(l, m) * correction;
             }
         }
@@ -726,7 +781,7 @@ impl ScreenProjector {
                 weights[(x, y)] = transformed[(x, y)] / peak;
             }
         }
-        let support = find_screen_projector_support(&weights, sampling);
+        let support = find_screen_projector_support(&weights, sampling).max(7);
         // Mirror CASA SimplePBConvFunc's cropped kernel extent:
         // newConvSize = 2 * (support + 2) * convSampling.
         let kernel_size = 2 * (support + 2) * sampling;
@@ -765,6 +820,75 @@ impl ScreenProjector {
             sampling,
             support,
             kernel_center,
+            kernel_weights,
+            normalization_sum: kernel_sum,
+            phase_gradient_rad_per_sample: [0.0, 0.0],
+        })
+    }
+
+    pub(crate) fn from_hetarray_screens<I, W>(
+        geometry: ImageGeometry,
+        gridder: &StandardGridder,
+        sampling: usize,
+        mut imaging_evaluator: I,
+        mut weight_evaluator: W,
+    ) -> Result<Self, ImagingError>
+    where
+        I: FnMut(f64, f64) -> Complex32,
+        W: FnMut(f64, f64) -> Complex32,
+    {
+        if sampling == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "screen projector sampling must be >= 1".to_string(),
+            ));
+        }
+        let conv_size = hetarray_screen_conv_size(geometry);
+        let imaging_temp = hetarray_screen_fft_temp(geometry, conv_size, &mut imaging_evaluator)?;
+        let weight_temp = hetarray_screen_fft_temp(geometry, conv_size, &mut weight_evaluator)?;
+        let support = find_hetarray_screen_support(&weight_temp, 1);
+        if support == 0 {
+            return Err(ImagingError::Normalization(
+                "mosaic screen projector support is zero".to_string(),
+            ));
+        }
+
+        let mut normalized_imaging = imaging_temp;
+        let imaging_sum = screen_projector_plane_sum(
+            &normalized_imaging,
+            normalized_imaging.dim().0 / 2,
+            support,
+            1,
+        );
+        let imaging_norm = imaging_sum.re;
+        if !(imaging_norm.is_finite() && imaging_norm > 1.0e-6) {
+            return Err(ImagingError::Normalization(
+                "mosaic screen projector kernel normalization is non-finite or zero".to_string(),
+            ));
+        }
+        normalized_imaging.mapv_inplace(|value| value / imaging_norm);
+
+        let cropped_size = 2 * (support + 2);
+        let cropped_center = cropped_size / 2;
+        let temp_center = normalized_imaging.dim().0 / 2;
+        let mut cropped = Array2::<Complex32>::zeros((cropped_size, cropped_size));
+        for y in 0..cropped_size {
+            let source_y = temp_center + y - cropped_center;
+            for x in 0..cropped_size {
+                let source_x = temp_center + x - cropped_center;
+                cropped[(x, y)] = normalized_imaging[(source_x, source_y)];
+            }
+        }
+
+        let kernel_weights = lanczos_resample_complex(&cropped, sampling);
+        let kernel_center = kernel_weights.dim().0 / 2;
+        Ok(Self {
+            grid_shape: gridder.grid_shape(),
+            du_lambda: gridder.grid_spacing_lambda()[0],
+            dv_lambda: gridder.grid_spacing_lambda()[1],
+            sampling,
+            support,
+            kernel_center,
+            normalization_sum: Complex32::new(imaging_norm, 0.0),
             kernel_weights,
             phase_gradient_rad_per_sample: [0.0, 0.0],
         })
@@ -820,6 +944,7 @@ impl ScreenProjector {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn grid_sample_planned(
         &self,
         grid: &mut Array2<Complex32>,
@@ -840,6 +965,114 @@ impl ScreenProjector {
                 grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] += value * cwt;
             }
         }
+    }
+
+    pub(crate) fn grid_sample_planned_f64(
+        &self,
+        grid: &mut Array2<Complex64>,
+        plan: &ScreenProjectSamplePlan,
+        value: Complex64,
+    ) {
+        for iy in plan.min_iy..=plan.max_iy {
+            let kernel_y =
+                (self.kernel_center as isize + iy * self.sampling as isize + plan.off_y) as usize;
+            for ix in plan.min_ix..=plan.max_ix {
+                let signed_x = ix * self.sampling as isize + plan.off_x;
+                let signed_y = iy * self.sampling as isize + plan.off_y;
+                let kernel_x = (self.kernel_center as isize + signed_x) as usize;
+                let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
+                    + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
+                let phasor = Complex64::new(phase.cos(), phase.sin());
+                let kernel = self.kernel_weights[(kernel_x, kernel_y)];
+                let cwt = Complex64::new(kernel.re as f64, kernel.im as f64) * phasor;
+                grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] += value * cwt;
+            }
+        }
+    }
+
+    pub(crate) fn degrid_sample_planned(
+        &self,
+        grid: &Array2<Complex32>,
+        plan: &ScreenProjectSamplePlan,
+    ) -> Complex32 {
+        let mut value = Complex32::new(0.0, 0.0);
+        for iy in plan.min_iy..=plan.max_iy {
+            let kernel_y =
+                (self.kernel_center as isize + iy * self.sampling as isize + plan.off_y) as usize;
+            for ix in plan.min_ix..=plan.max_ix {
+                let signed_x = ix * self.sampling as isize + plan.off_x;
+                let signed_y = iy * self.sampling as isize + plan.off_y;
+                let kernel_x = (self.kernel_center as isize + signed_x) as usize;
+                let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
+                    + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
+                let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+                let cwt = self.kernel_weights[(kernel_x, kernel_y)] * phasor;
+                value +=
+                    cwt.conj() * grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)];
+            }
+        }
+        value
+    }
+
+    pub(crate) fn trace_sample_taps(
+        &self,
+        plan: &ScreenProjectSamplePlan,
+    ) -> Option<(Complex32, Complex32, Complex32)> {
+        let mut sum = Complex32::new(0.0, 0.0);
+        let mut center = Complex32::new(0.0, 0.0);
+        let mut first = Complex32::new(0.0, 0.0);
+        let mut first_set = false;
+        for iy in plan.min_iy..=plan.max_iy {
+            let kernel_y = usize::try_from(
+                self.kernel_center as isize + iy * self.sampling as isize + plan.off_y,
+            )
+            .ok()?;
+            for ix in plan.min_ix..=plan.max_ix {
+                let signed_x = ix * self.sampling as isize + plan.off_x;
+                let signed_y = iy * self.sampling as isize + plan.off_y;
+                let kernel_x = usize::try_from(self.kernel_center as isize + signed_x).ok()?;
+                let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
+                    + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
+                let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+                let tap = *self.kernel_weights.get((kernel_x, kernel_y))? * phasor;
+                sum += tap;
+                if ix == 0 && iy == 0 {
+                    center = tap;
+                }
+                if !first_set {
+                    first = tap;
+                    first_set = true;
+                }
+            }
+        }
+        Some((sum, center, first))
+    }
+
+    pub(crate) fn trace_sample_tap_matrix(
+        &self,
+        plan: &ScreenProjectSamplePlan,
+    ) -> Option<Vec<(isize, isize, Complex32)>> {
+        let mut taps = Vec::new();
+        for iy in plan.min_iy..=plan.max_iy {
+            let kernel_y = usize::try_from(
+                self.kernel_center as isize + iy * self.sampling as isize + plan.off_y,
+            )
+            .ok()?;
+            for ix in plan.min_ix..=plan.max_ix {
+                let signed_x = ix * self.sampling as isize + plan.off_x;
+                let signed_y = iy * self.sampling as isize + plan.off_y;
+                let kernel_x = usize::try_from(self.kernel_center as isize + signed_x).ok()?;
+                let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
+                    + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
+                let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+                taps.push((
+                    ix,
+                    iy,
+                    *self.kernel_weights.get((kernel_x, kernel_y))? * phasor,
+                ));
+            }
+        }
+        Some(taps)
     }
 
     fn sample_normalization(
@@ -1184,6 +1417,7 @@ fn find_w_project_support(weights: &Array2<Complex32>, sampling: usize) -> usize
     (((trial as f32 / sampling as f32) + 0.5).floor() as usize + 1).min(max_support.max(1))
 }
 
+#[allow(dead_code)]
 fn find_screen_projector_support(weights: &Array2<Complex32>, sampling: usize) -> usize {
     let quarter_len = weights.dim().0;
     let max_abs = weights
@@ -1222,6 +1456,53 @@ fn find_screen_projector_support(weights: &Array2<Complex32>, sampling: usize) -
     ((((trial as f32) / (sampling as f32)) + 0.5).floor() as usize + 1).min(max_support)
 }
 
+fn find_hetarray_screen_support(weights: &Array2<Complex32>, sampling: usize) -> usize {
+    let conv_size = weights.dim().0;
+    let mut max_abs = 0.0f32;
+    let mut max_pos = (conv_size / 2, conv_size / 2);
+    for ((x, y), value) in weights.indexed_iter() {
+        let amplitude = value.norm();
+        if amplitude > max_abs {
+            max_abs = amplitude;
+            max_pos = (x, y);
+        }
+    }
+    if !(max_abs.is_finite() && max_abs > 0.0) {
+        return conv_size / 2 / sampling - 1;
+    }
+
+    let cut_level = 2.5e-2f32;
+    let mut found = false;
+    let mut trial = 0usize;
+    let max_axis = max_pos.0.max(max_pos.1);
+    for candidate in 0..conv_size.saturating_sub(max_axis + 2) {
+        let x_probe = max_pos.0.saturating_sub(candidate);
+        let y_probe = max_pos.1.saturating_sub(candidate);
+        if weights[(x_probe, max_pos.1)].norm() < cut_level * max_abs
+            && weights[(max_pos.0, y_probe)].norm() < cut_level * max_abs
+        {
+            found = true;
+            trial = candidate;
+            break;
+        }
+    }
+    if !found {
+        trial = conv_size / 2 - 4 * sampling;
+    }
+    if trial < 5 * sampling {
+        trial = if 10 * sampling < conv_size {
+            5 * sampling
+        } else {
+            conv_size / 2 - 4 * sampling
+        };
+    }
+    let mut support = (((trial as f32) / (sampling as f32)) + 0.5).floor() as usize + 1;
+    if support * sampling >= conv_size / 2 {
+        support = conv_size / 2 / sampling - 1;
+    }
+    support
+}
+
 fn w_project_plane_sum(kernel: &WProjectKernel, sampling: usize) -> f32 {
     let support = kernel.support as isize;
     let mut sum = 0.0f32;
@@ -1252,10 +1533,114 @@ fn screen_projector_plane_sum(
     sum
 }
 
+#[allow(dead_code)]
 fn screen_projector_conv_size(geometry: ImageGeometry, sampling: usize) -> usize {
     let image_max = geometry.nx().max(geometry.ny());
-    let scaled = ((image_max * sampling).max(4)) / 4;
+    let scaled = (image_max * sampling * 2).max(4);
     if scaled % 2 == 0 { scaled } else { scaled + 1 }
+}
+
+fn hetarray_screen_conv_size(geometry: ImageGeometry) -> usize {
+    let mut conv_size = geometry.nx().max(geometry.ny()).max(16);
+    while conv_size % 2 != 0 || !is_casa_composite_len(conv_size) {
+        conv_size += 1;
+    }
+    (conv_size / 16).max(1) * 16
+}
+
+fn hetarray_screen_fft_temp<F>(
+    geometry: ImageGeometry,
+    conv_size: usize,
+    evaluator: &mut F,
+) -> Result<Array2<Complex32>, ImagingError>
+where
+    F: FnMut(f64, f64) -> Complex32,
+{
+    let s0 = geometry.cell_size_rad[0].abs() * geometry.nx() as f64 / conv_size as f64;
+    let s1 = geometry.cell_size_rad[1].abs() * geometry.ny() as f64 / conv_size as f64;
+    let center = conv_size as isize / 2;
+    let mut screen = Array2::<Complex64>::zeros((conv_size, conv_size));
+    for y in 0..conv_size {
+        let m = (y as isize - center) as f64 * s1;
+        for x in 0..conv_size {
+            let l = (x as isize - center) as f64 * s0;
+            let value = evaluator(l, m);
+            screen[(x, y)] = Complex64::new(value.re as f64, value.im as f64);
+        }
+    }
+    let transformed = centered_fft2_f64(&screen);
+    let peak = transformed[(conv_size / 2, conv_size / 2)].norm();
+    if !(peak.is_finite() && peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "mosaic screen projector FFT peak is non-finite or zero".to_string(),
+        ));
+    }
+    let temp_size = conv_size / 4;
+    let start = conv_size * 3 / 8;
+    let mut temp = Array2::<Complex32>::zeros((temp_size, temp_size));
+    for y in 0..temp_size {
+        for x in 0..temp_size {
+            let value = transformed[(start + x, start + y)];
+            temp[(x, y)] = Complex32::new(value.re as f32, value.im as f32);
+        }
+    }
+    Ok(temp)
+}
+
+fn lanczos_resample_complex(input: &Array2<Complex32>, factor: usize) -> Array2<Complex32> {
+    let nx = input.dim().0;
+    let ny = input.dim().1;
+    let out_nx = (nx * factor / 2) * 2;
+    let out_ny = (ny * factor / 2) * 2;
+    let mut output = Array2::<Complex32>::zeros((out_nx, out_ny));
+    for y in 0..out_ny {
+        let source_y = y as f64 / out_ny as f64 * ny as f64;
+        for x in 0..out_nx {
+            let source_x = x as f64 / out_nx as f64 * nx as f64;
+            output[(x, y)] = lanczos_sample_complex(input, source_x, source_y, 3.0);
+        }
+    }
+    output
+}
+
+fn lanczos_sample_complex(input: &Array2<Complex32>, x: f64, y: f64, a: f64) -> Complex32 {
+    let nx = input.dim().0 as f64;
+    let ny = input.dim().1 as f64;
+    let floor_x = x.floor();
+    let floor_y = y.floor();
+    if nx > 2.0 * a
+        && ny > 2.0 * a
+        && (floor_x < a || floor_x >= nx - a || floor_y < a || floor_y >= ny - a)
+    {
+        return Complex32::new(0.0, 0.0);
+    }
+    let mut result = Complex32::new(0.0, 0.0);
+    let mut xx = floor_x - a + 1.0;
+    while xx <= floor_x + a {
+        if xx < 0.0 || xx >= nx {
+            xx += 1.0;
+            continue;
+        }
+        let wx = lanczos_sinc(x - xx) * lanczos_sinc((x - xx) / a);
+        let mut yy = floor_y - a + 1.0;
+        while yy <= floor_y + a {
+            if yy >= 0.0 && yy < ny {
+                let wy = lanczos_sinc(y - yy) * lanczos_sinc((y - yy) / a);
+                result += input[(xx as usize, yy as usize)] * (wx * wy) as f32;
+            }
+            yy += 1.0;
+        }
+        xx += 1.0;
+    }
+    result
+}
+
+fn lanczos_sinc(x: f64) -> f64 {
+    if x == 0.0 {
+        1.0
+    } else {
+        (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
+    }
 }
 
 fn padded_len(image_len: usize, padding_factor: f64) -> usize {

@@ -12,6 +12,7 @@ Verification:
 - `CASA_RS_WAVE6_DATASET=alma scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels`
 - `CASA_RS_WAVE6_DATASET=vla scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels`
 - `CASA_RS_WAVE6_SKIP_CASA=1 scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels`
+- `CASA_RS_WAVE6_SKIP_IMAGING=1 scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels`
 
 ## Purpose
 
@@ -29,6 +30,12 @@ scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels
 Set `CASA_RS_FETCH_TUTORIAL_DATA=1` to download missing official tutorial data.
 Set `CASA_RS_WAVE6_DATASET=alma` or `CASA_RS_WAVE6_DATASET=vla` to run one
 dataset while preserving the same panel format.
+Each panel run writes immutable stamped filenames using a
+`YYYYMMDDTHHMMSS-0600`-style local-time stamp with signed UTC offset, records
+the same stamp in the image footer and summary JSON, and also refreshes
+non-stamped `*-panel.png` convenience aliases. The stamped `panel_png` paths in
+`target/wave6-issue53-mosaic-panels/wave6-issue53-mosaic-panel-summary.json`
+are the review artifacts to avoid stale image-cache confusion.
 
 Each panel contains four columns:
 
@@ -66,12 +73,15 @@ surface.
 
 ## Current Results
 
+Current panel-only refresh stamp: `20260502T164801-0600`, generated
+`2026-05-02 16:48:01 -0600`.
+
 ### ALMA Antennae
 
 The Antennae North run completed against local CASA C++ and casa-rs products.
 It uses the tutorial SPW selection `0:1~50;120~164`, `gridder='mosaic'`,
 `niter=32`, `threshold='0.4mJy'`, and PB-corrected output. The casa-rs run
-reported `7058235` gridded samples, `5` major cycles, and `32` minor
+reported `7058235` gridded samples, `2` major cycles, and `33` minor
 iterations. The residual panel uses the tutorial residual screenshot as the
 original reference column. The PB-corrected image panel uses the tutorial
 continuum-image figure as the original visual reference because the guide does
@@ -81,26 +91,26 @@ Wall-clock timing on the local tutorial run:
 
 | Runner | Seconds | Relative |
 |---|---:|---:|
-| CASA C++ | `13.673` | `1.00x` |
-| casa-rs | `48.071` | `3.52x CASA` |
+| CASA C++ | `13.730` | `1.00x` |
+| casa-rs | `55.821` | `4.07x CASA` |
 
-| Panel | Shared valid pixels | CASA valid pixels | casa-rs valid pixels | CASA RMS | casa-rs RMS | Difference RMS | Diff/CASA RMS | Difference max abs |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `alma-antennae-north-cont-clean-residual-panel.png` | `134322 / 250000` | `134322` | `242602` | `0.0004842421539966355` | `0.0005555694340461607` | `0.0001939154632399948` | `0.4004514304249153` | `0.0013848665403202176` |
-| `alma-antennae-north-cont-clean-image.pbcor-panel.png` | `134322 / 250000` | `134322` | `242602` | `0.0010904309546444929` | `0.0007543814432682847` | `0.0005618691211086539` | `0.5152725339605174` | `0.005424286471679807` |
+| Panel | Shared valid pixels | CASA valid pixels | casa-rs valid pixels | Rust-only valid | CASA-only valid | CASA RMS | casa-rs RMS | Difference RMS | Diff/CASA RMS | Difference max abs |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `alma-antennae-north-cont-clean-residual-panel.png` | `134322 / 250000` | `134322` | `134378` | `56` | `0` | `0.0004842421539966355` | `0.00048387927411415444` | `4.2211890958799533e-7` | `0.0008717103748694464` | `2.6238849386572838e-6` |
+| `alma-antennae-north-cont-clean-image.pbcor-panel.png` | `134322 / 250000` | `134322` | `134378` | `56` | `0` | `0.0010904309546444929` | `0.0010882589706488754` | `2.330101509614948e-6` | `0.0021368629528447473` | `2.0388048142194748e-5` |
 
 Source-region peak-relative differences use shared valid pixels with
 `abs(CASA) >= 25%` of the CASA peak.
 
 | Panel | CASA peak abs | abs(diff at CASA peak) / peak | source p90 abs(diff) / peak | source max abs(diff) / peak |
 |---|---:|---:|---:|---:|
-| `alma-antennae-north-cont-clean-residual-panel.png` | `0.001685870112851262` | `0.32450543499802575` | `0.22181278835900722` | `0.8214550633310854` |
-| `alma-antennae-north-cont-clean-image.pbcor-panel.png` | `0.008220789022743702` | `0.4258877728062916` | `0.30440361424968043` | `0.6598255297238418` |
+| `alma-antennae-north-cont-clean-residual-panel.png` | `0.001685870112851262` | `0.0005867480430568241` | `0.0005840204276983746` | `0.001556398039597241` |
+| `alma-antennae-north-cont-clean-image.pbcor-panel.png` | `0.008220789022743702` | `0.0018307455360000362` | `0.0012526729054758664` | `0.0024800597711228216` |
 
 Inspectable artifacts:
 
-- `target/wave6-issue53-mosaic-panels/alma-antennae-north-cont-clean-residual-panel.png`
-- `target/wave6-issue53-mosaic-panels/alma-antennae-north-cont-clean-image.pbcor-panel.png`
+- `target/wave6-issue53-mosaic-panels/alma-antennae-north-cont-clean-residual-20260502T164801-0600-panel.png`
+- `target/wave6-issue53-mosaic-panels/alma-antennae-north-cont-clean-image.pbcor-20260502T164801-0600-panel.png`
 - `target/wave6-issue53-mosaic-panels/wave6-issue53-mosaic-panel-summary.json`
 
 ### VLA 3C391
@@ -108,35 +118,33 @@ Inspectable artifacts:
 The 3C391 run completed against the official final-calibrated mosaic MS. It
 uses `gridder='mosaic'`, `deconvolver='multiscale'`, scales `[0, 5, 15, 45]`,
 Briggs `robust=0.5`, `niter=500`, `threshold='1.0mJy'`, and PB-corrected
-output. The casa-rs run reported `32039616` gridded samples, `7` major cycles,
-and `41` minor CLEAN iterations/components before the divergence guard stopped
-the run. This is distinct from the requested CASA-style `niter=500` component
-limit, which the guard stops before exhausting.
+output. The casa-rs run reported `32039616` gridded samples, `3` major cycles,
+and `499` minor iterations.
 
 Wall-clock timing on the local tutorial run:
 
 | Runner | Seconds | Relative |
 |---|---:|---:|
 | CASA C++ | `72.850` | `1.00x` |
-| casa-rs | `148.957` | `2.04x CASA` |
+| casa-rs | `199.787` | `2.74x CASA` |
 
-| Panel | Shared valid pixels | CASA valid pixels | casa-rs valid pixels | CASA RMS | casa-rs RMS | Difference RMS | Diff/CASA RMS | Difference max abs |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `vla-3c391-multiscale-image-panel.png` | `115741 / 230400` | `115741` | `223251` | `0.009522959519475125` | `0.0084792279050309` | `0.0028014254769549185` | `0.29417593041593904` | `0.015739932656288147` |
-| `vla-3c391-multiscale-image.pbcor-panel.png` | `115741 / 230400` | `115741` | `223251` | `0.011692938714363256` | `0.008668273808957848` | `0.004698084600377237` | `0.40178818303445396` | `0.02817557007074356` |
+| Panel | Shared valid pixels | CASA valid pixels | casa-rs valid pixels | Rust-only valid | CASA-only valid | CASA RMS | casa-rs RMS | Difference RMS | Diff/CASA RMS | Difference max abs |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `vla-3c391-multiscale-image-panel.png` | `115741 / 230400` | `115741` | `115863` | `122` | `0` | `0.009522959519475125` | `0.009452154271988065` | `0.00024029965477125512` | `0.02523371587160749` | `0.0011738985776901245` |
+| `vla-3c391-multiscale-image.pbcor-panel.png` | `115741 / 230400` | `115741` | `115863` | `122` | `0` | `0.011692938714363256` | `0.011715722851676892` | `0.00046985084698270084` | `0.04018244330704907` | `0.0025981832295656204` |
 
 Source-region peak-relative differences use shared valid pixels with
 `abs(CASA) >= 25%` of the CASA peak.
 
 | Panel | CASA peak abs | abs(diff at CASA peak) / peak | source p90 abs(diff) / peak | source max abs(diff) / peak |
 |---|---:|---:|---:|---:|
-| `vla-3c391-multiscale-image-panel.png` | `0.13652297854423523` | `0.11391662997486766` | `0.0885403161919872` | `0.11529145367413884` |
-| `vla-3c391-multiscale-image.pbcor-panel.png` | `0.15053795278072357` | `0.1871658910612703` | `0.12656380182156154` | `0.1871658910612703` |
+| `vla-3c391-multiscale-image-panel.png` | `0.13652297854423523` | `0.005085625233712389` | `0.006757079479784874` | `0.008299750423001687` |
+| `vla-3c391-multiscale-image.pbcor-panel.png` | `0.15053795278072357` | `0.005148463770749833` | `0.006609384414503797` | `0.00820752945503909` |
 
 Inspectable artifacts:
 
-- `target/wave6-issue53-mosaic-panels/vla-3c391-multiscale-image-panel.png`
-- `target/wave6-issue53-mosaic-panels/vla-3c391-multiscale-image.pbcor-panel.png`
+- `target/wave6-issue53-mosaic-panels/vla-3c391-multiscale-image-20260502T164801-0600-panel.png`
+- `target/wave6-issue53-mosaic-panels/vla-3c391-multiscale-image.pbcor-20260502T164801-0600-panel.png`
 - `target/wave6-issue53-mosaic-panels/wave6-issue53-mosaic-panel-summary.json`
 
 ## Current Interpretation
@@ -156,16 +164,14 @@ This lands the tutorial-data proof for #53:
   fall back to scalar `WEIGHT` instead of aborting the imager.
 
 The current mosaic CLEAN implementation uses image-domain PSF residual
-refreshes. The generated diagnostics intentionally warn that exact
-direction-dependent visibility-domain major-cycle refresh remains a parity
-limitation. The 3C391 run also triggers the divergence guard before using the
-full requested `niter=500`. Both limitations are visible in the difference
-panels and should stay in the issue/PR evidence until a later parity tranche
-replaces the image-domain refresh path with the visibility-domain major-cycle
-semantics.
+refreshes during minor-cycle blocks but now finishes each mosaic residual
+refresh through the visibility-domain mosaic path. The CASA C++ vs casa-rs
+tutorial products are now within the sub-percent source-region target when
+measured as `abs(diff) / CASA peak` over pixels with `abs(CASA) >= 25%` of the
+CASA peak.
 
-The casa-rs PB support mask is broader than CASA C++ for both tutorial products
-at the same nominal `pblimit=0.1`. The panel metrics therefore report both
-CASA-valid and casa-rs-valid pixel counts and compute image differences on their
-shared valid support. This keeps the visual comparison honest while preserving
-the PB-shape/support mismatch as explicit follow-up evidence.
+The casa-rs PB support mask is still marginally broader than CASA C++ at the
+same nominal `pblimit=0.1`: 56 ALMA pixels and 122 VLA pixels are Rust-valid
+only, with zero CASA-only valid pixels. The panels now render each product with
+its native mask and compute image differences on the shared valid support, so
+large PB-support mismatches cannot be hidden in the visual evidence.

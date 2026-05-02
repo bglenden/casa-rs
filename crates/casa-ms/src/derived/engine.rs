@@ -439,6 +439,30 @@ impl MsCalEngine {
         Ok((imaging_uvw_m, phase_shift_m))
     }
 
+    /// Reproject raw MS UVW coordinates for CASA mosaic gridding.
+    ///
+    /// CASA's `MosaicFT` uses `FTMachine::girarUVW()`, which starts from
+    /// `negateUV(vb)` and then applies the image-center phase shifter with
+    /// only the image-plane terms contributing to the new u/v coordinates.
+    /// That differs subtly from the standard `rotateUVW()` / `fixvis` path
+    /// matched by [`Self::reproject_raw_uvw_between_fields`].
+    pub fn reproject_raw_uvw_for_mosaic_between_fields(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_field_id: usize,
+        target_field_id: usize,
+    ) -> MsResult<([f64; 3], f64)> {
+        if source_field_id == target_field_id {
+            return Ok((raw_uvw_m, 0.0));
+        }
+
+        let source_dir = self.field_dir(source_field_id)?;
+        let target_dir = self.field_dir(target_field_id)?;
+        Ok(reproject_raw_uvw_for_mosaic(
+            raw_uvw_m, source_dir, target_dir,
+        ))
+    }
+
     /// Reproject raw MS UVW coordinates from one field phase center to an
     /// explicit fixed J2000 direction.
     ///
@@ -465,6 +489,30 @@ impl MsCalEngine {
         let phrot = uvw_phase_rotation_vector(target_direction, source_dir);
         let phase_shift_m = dot3(phrot, imaging_uvw_m);
         Ok((imaging_uvw_m, phase_shift_m))
+    }
+
+    /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction
+    /// using the CASA mosaic `girarUVW()` convention.
+    pub fn reproject_raw_uvw_for_mosaic_to_direction(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_field_id: usize,
+        target_direction: &MDirection,
+    ) -> MsResult<([f64; 3], f64)> {
+        if target_direction.refer() != DirectionRef::J2000 {
+            return Err(MsError::ColumnTypeMismatch {
+                column: "PHASE_DIR".to_string(),
+                table: "FIELD".to_string(),
+                expected: "explicit target direction in J2000".to_string(),
+                found: target_direction.refer().as_str().to_string(),
+            });
+        }
+        let source_dir = self.field_dir(source_field_id)?;
+        Ok(reproject_raw_uvw_for_mosaic(
+            raw_uvw_m,
+            source_dir,
+            target_direction,
+        ))
     }
 
     /// The observatory position used by this engine.
@@ -542,6 +590,32 @@ fn uvw_phase_rotation_vector(
             target_cosines[1] - source_cosines[1],
             target_cosines[2] - source_cosines[2],
         ],
+    )
+}
+
+fn reproject_raw_uvw_for_mosaic(
+    raw_uvw_m: [f64; 3],
+    source_direction: &MDirection,
+    target_direction: &MDirection,
+) -> ([f64; 3], f64) {
+    let casa_input_uvw_m = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
+    let rot = uvw_rotation_matrix(source_direction, target_direction);
+    let casa_output_uvw_m = [
+        casa_input_uvw_m[0] * rot[0][0] + casa_input_uvw_m[1] * rot[1][0],
+        casa_input_uvw_m[1] * rot[1][1] + casa_input_uvw_m[0] * rot[0][1],
+        casa_input_uvw_m[0] * rot[0][2]
+            + casa_input_uvw_m[1] * rot[1][2]
+            + casa_input_uvw_m[2] * rot[2][2],
+    ];
+    let phrot = uvw_phase_rotation_vector(source_direction, target_direction);
+    let phase_shift_m = phrot[0] * casa_output_uvw_m[0] + phrot[1] * casa_output_uvw_m[1];
+    (
+        [
+            -casa_output_uvw_m[0],
+            -casa_output_uvw_m[1],
+            casa_output_uvw_m[2],
+        ],
+        phase_shift_m,
     )
 }
 
@@ -1069,6 +1143,56 @@ mod tests {
         );
         assert!(
             (phase_shift_m - -0.090_130_307_463_740_37).abs() < 1.0e-12,
+            "phase_shift_m={phase_shift_m}"
+        );
+    }
+
+    #[test]
+    fn reproject_raw_uvw_for_mosaic_matches_casa_giraruvw_reference_values() {
+        let engine = MsCalEngine::from_parts(
+            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
+            vec![
+                MDirection::from_angles(
+                    3.149_807_242_890_337,
+                    -0.329_299_608_769_085_2,
+                    DirectionRef::J2000,
+                ),
+                MDirection::from_angles(
+                    3.149_884_015_678_791,
+                    -0.329_299_608_408_283,
+                    DirectionRef::J2000,
+                ),
+            ],
+            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+        );
+        let (uvw_m, phase_shift_m) = engine
+            .reproject_raw_uvw_for_mosaic_between_fields(
+                [
+                    4.324_749_385_347_82,
+                    -121.757_651_483_641_07,
+                    -15.081_385_958_149_532,
+                ],
+                1,
+                0,
+            )
+            .unwrap();
+        assert!(
+            (uvw_m[0] - 4.321_726_518_390_6).abs() < 1.0e-12,
+            "u={}",
+            uvw_m[0]
+        );
+        assert!(
+            (uvw_m[1] - -121.757_758_815_853_26).abs() < 1.0e-12,
+            "v={}",
+            uvw_m[1]
+        );
+        assert!(
+            (uvw_m[2] - -15.081_699_947_780_477).abs() < 1.0e-12,
+            "w={}",
+            uvw_m[2]
+        );
+        assert!(
+            (phase_shift_m - -0.000_314_029_427_521_723_44).abs() < 1.0e-12,
             "phase_shift_m={phase_shift_m}"
         );
     }

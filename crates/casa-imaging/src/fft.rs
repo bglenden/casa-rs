@@ -19,6 +19,13 @@ pub(crate) fn centered_fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     fftshift2(&shifted)
 }
 
+pub(crate) fn centered_fft2_f64(input: &Array2<Complex64>) -> Array2<Complex64> {
+    let mut shifted = ifftshift2_f64(input);
+    transform_axis_f64(&mut shifted, Axis(0), false);
+    transform_axis_f64(&mut shifted, Axis(1), false);
+    fftshift2_f64(&shifted)
+}
+
 pub(crate) fn centered_ifft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut shifted = ifftshift2(input);
     transform_axis(&mut shifted, Axis(0), true);
