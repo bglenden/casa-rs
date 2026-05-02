@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
-use casa_imaging::{Deconvolver, RestoringBeamMode, WTermMode, WeightingMode};
+use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode};
 use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation, CubeSpecMode};
 use casa_test_support::{casatestdata_path, discover_casa_python};
 use casa_types::measures::doppler::DopplerRef;
@@ -256,7 +256,8 @@ fn assert_spectral_matches_casa_oracle(config: &CliConfig, staged_name: &str) {
             "sample[{index}] input_field_id"
         );
         assert_eq!(
-            rust_sample.phase_center_field_id, casa_sample.phase_center_field_id,
+            rust_sample.phase_center_field_id,
+            Some(casa_sample.phase_center_field_id),
             "sample[{index}] phase_center_field_id"
         );
         assert_eq!(rust_sample.ddid, casa_sample.ddid, "sample[{index}] ddid");
@@ -350,7 +351,8 @@ fn assert_spectral_matches_casa_oracle(config: &CliConfig, staged_name: &str) {
             "rejected[{index}] input_field_id"
         );
         assert_eq!(
-            rust_sample.phase_center_field_id, casa_sample.phase_center_field_id,
+            rust_sample.phase_center_field_id,
+            Some(casa_sample.phase_center_field_id),
             "rejected[{index}] phase_center_field_id"
         );
         assert_eq!(rust_sample.ddid, casa_sample.ddid, "rejected[{index}] ddid");
@@ -470,20 +472,24 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         cell_arcsec: 20.0,
         field_ids: Some(vec![0]),
         phasecenter_field: Some(0),
+        phasecenter: None,
         ddid: None,
         spw: Some(0),
         spw_selector: None,
         channel_start: None,
         channel_count: None,
         datacolumn: None,
+        save_model: casars_imager::SaveModelMode::None,
         correlation: None,
         spectral_mode,
         cube_axis: CubeAxisConfig::default(),
         weighting: WeightingMode::Natural,
         per_channel_weight_density: false,
+        use_pointing: false,
         uv_taper: None,
         restoring_beam_mode: RestoringBeamMode::PerPlane,
         deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 0,
@@ -491,10 +497,13 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         threshold_jy: 0.0,
         nsigma: 0.0,
         psf_cutoff: 0.35,
+        mosaic_pb_limit: 0.1,
+        pbcor: false,
         minor_cycle_length: 2,
         cyclefactor: 1.0,
         min_psf_fraction: 0.1,
         max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::Strict,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,
@@ -554,7 +563,10 @@ fn run_casa_spectral_oracle(
     let trace_seed_path = staged_ms_path.with_extension("rust_trace_seed.json");
     let outputvis_path = staged_ms_path.with_extension("mstransform.ms");
     let trace_seed = RustTraceSeed {
-        phase_center_field_id: rust_trace.phase_center.field_id,
+        phase_center_field_id: rust_trace
+            .phase_center
+            .field_id
+            .expect("spectral CASA oracle expects a field phase center"),
         selected_rows: rust_trace.selected_rows.clone(),
         samples: rust_trace
             .samples
@@ -562,7 +574,9 @@ fn run_casa_spectral_oracle(
             .map(|sample| RustSampleSeed {
                 row_index: sample.row_index,
                 input_field_id: sample.input_field_id,
-                phase_center_field_id: sample.phase_center_field_id,
+                phase_center_field_id: sample
+                    .phase_center_field_id
+                    .expect("spectral CASA oracle expects sample phase center field"),
                 ddid: sample.ddid,
                 spw_id: sample.spw_id,
                 polarization_id: sample.polarization_id,
@@ -589,7 +603,9 @@ fn run_casa_spectral_oracle(
             .map(|sample| RustRejectedSampleSeed {
                 row_index: sample.row_index,
                 input_field_id: sample.input_field_id,
-                phase_center_field_id: sample.phase_center_field_id,
+                phase_center_field_id: sample
+                    .phase_center_field_id
+                    .expect("spectral CASA oracle expects rejected sample phase center field"),
                 ddid: sample.ddid,
                 spw_id: sample.spw_id,
                 polarization_id: sample.polarization_id,
@@ -632,7 +648,13 @@ fn run_casa_spectral_oracle(
                 .collect::<Vec<_>>()
                 .join(",")
         })
-        .unwrap_or_else(|| rust_trace.phase_center.field_id.to_string());
+        .unwrap_or_else(|| {
+            rust_trace
+                .phase_center
+                .field_id
+                .expect("spectral CASA oracle expects a field phase center")
+                .to_string()
+        });
     let script = r#"
 import json
 import os
@@ -1147,7 +1169,11 @@ with open(output_json, "w", encoding="utf-8") as handle:
     command.env("CASA_FIELD_SELECTOR", field_selector);
     command.env(
         "CASA_PHASECENTER_FIELD_ID",
-        rust_trace.phase_center.field_id.to_string(),
+        rust_trace
+            .phase_center
+            .field_id
+            .expect("spectral CASA oracle expects a field phase center")
+            .to_string(),
     );
     command.env(
         "CASA_SPECTRAL_MODE",

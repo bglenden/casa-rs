@@ -40,10 +40,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use casa_coordinates::{Coordinate, DirectionCoordinate, Projection, ProjectionType};
 use casa_images::ImageBeamSet;
 use casa_lattices::array_madfm;
-use casa_types::measures::direction::DirectionRef;
 use libm::{erfc, j1};
 use ndarray::{Array2, Array4, Zip, s};
 use num_complex::{Complex32, Complex64};
@@ -1046,15 +1044,7 @@ fn build_mosaic_projector(
         return Ok(projector);
     }
     let pixel_offset =
-        mosaic_pointing_pixel_offset(geometry, phase_center_direction_rad, pointing_direction_rad)
-            .unwrap_or_else(|| {
-                let [delta_ra, delta_dec] =
-                    mosaic_pointing_offset_rad(phase_center_direction_rad, pointing_direction_rad);
-                [
-                    delta_ra / geometry.cell_size_rad[0].abs(),
-                    delta_dec / geometry.cell_size_rad[1].abs(),
-                ]
-            });
+        mosaic_pointing_pixel_offset(geometry, phase_center_direction_rad, pointing_direction_rad);
     let phase_gradient_rad_per_sample = [
         -pixel_offset[0] * std::f64::consts::TAU / (geometry.nx() as f64 * conv_sampling as f64),
         -pixel_offset[1] * std::f64::consts::TAU / (geometry.ny() as f64 * conv_sampling as f64),
@@ -1085,15 +1075,7 @@ fn mosaic_pointing_contributes_by_simple_pb_center(
         geometry,
         phase_center_direction_rad,
         pointing_direction_rad,
-    )
-    .unwrap_or_else(|| {
-        let [delta_ra, delta_dec] =
-            mosaic_pointing_offset_rad(phase_center_direction_rad, pointing_direction_rad);
-        [
-            geometry.nx() as f64 / 2.0 + delta_ra / geometry.cell_size_rad[0].abs(),
-            geometry.ny() as f64 / 2.0 + delta_dec / geometry.cell_size_rad[1].abs(),
-        ]
-    });
+    );
     mosaic_pointing_pixel_inside_image(geometry, [pixel_x, pixel_y])
 }
 
@@ -1108,48 +1090,32 @@ fn mosaic_pointing_pixel_offset(
     geometry: ImageGeometry,
     phase_center_direction_rad: [f64; 2],
     pointing_direction_rad: [f64; 2],
-) -> Option<[f64; 2]> {
+) -> [f64; 2] {
     let [pixel_x, pixel_y] = mosaic_pointing_pixel_position(
         geometry,
         phase_center_direction_rad,
         pointing_direction_rad,
-    )?;
-    Some([
+    );
+    [
         pixel_x - geometry.nx() as f64 / 2.0,
         pixel_y - geometry.ny() as f64 / 2.0,
-    ])
+    ]
 }
 
 fn mosaic_pointing_pixel_position(
     geometry: ImageGeometry,
     phase_center_direction_rad: [f64; 2],
     pointing_direction_rad: [f64; 2],
-) -> Option<[f64; 2]> {
-    let coord = DirectionCoordinate::new(
-        DirectionRef::J2000,
-        Projection::new(ProjectionType::SIN),
-        phase_center_direction_rad,
-        [
-            -geometry.cell_size_rad[0].abs(),
-            geometry.cell_size_rad[1].abs(),
-        ],
-        [geometry.nx() as f64 / 2.0, geometry.ny() as f64 / 2.0],
-    );
-    let pixel = coord.to_pixel(&pointing_direction_rad).ok()?;
-    if pixel.len() != 2 || !(pixel[0].is_finite() && pixel[1].is_finite()) {
-        return None;
-    }
-    Some([pixel[0], pixel[1]])
-}
-
-fn mosaic_pointing_offset_rad(
-    phase_center_direction_rad: [f64; 2],
-    pointing_direction_rad: [f64; 2],
 ) -> [f64; 2] {
+    let delta_ra =
+        circular_angle_delta_rad(pointing_direction_rad[0] - phase_center_direction_rad[0]);
+    let dec = pointing_direction_rad[1];
+    let dec0 = phase_center_direction_rad[1];
+    let l = dec.cos() * delta_ra.sin();
+    let m = dec.sin() * dec0.cos() - dec.cos() * dec0.sin() * delta_ra.cos();
     [
-        circular_angle_delta_rad(pointing_direction_rad[0] - phase_center_direction_rad[0])
-            * phase_center_direction_rad[1].cos(),
-        pointing_direction_rad[1] - phase_center_direction_rad[1],
+        geometry.nx() as f64 / 2.0 - l / geometry.cell_size_rad[0].abs(),
+        geometry.ny() as f64 / 2.0 + m / geometry.cell_size_rad[1].abs(),
     ]
 }
 
@@ -4964,7 +4930,7 @@ mod tests {
     fn mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule() {
         let geometry = ImageGeometry {
             image_shape: [100, 80],
-            cell_size_rad: [1.0e-4, 1.0e-4],
+            cell_size_rad: [1.0e-6, 1.0e-6],
         };
 
         assert!(mosaic_pointing_pixel_inside_image(geometry, [0.0, 0.0]));
@@ -4989,6 +4955,29 @@ mod tests {
             geometry,
             phase_center,
             [phase_center[0] + 2.0, phase_center[1]]
+        ));
+
+        let papersky_geometry = ImageGeometry {
+            image_shape: [128, 128],
+            cell_size_rad: [8.0_f64.to_radians() / 3600.0, 8.0_f64.to_radians() / 3600.0],
+        };
+        let papersky_phase_center = [5.224970365079775, 0.7022114079242685];
+        let north_neighbor = [5.224970365079775, 0.7065747310542544];
+        let east_neighbor = [5.229333688209761, 0.7022114079242685];
+        assert!(mosaic_pointing_contributes_by_simple_pb_center(
+            papersky_geometry,
+            papersky_phase_center,
+            papersky_phase_center
+        ));
+        assert!(!mosaic_pointing_contributes_by_simple_pb_center(
+            papersky_geometry,
+            papersky_phase_center,
+            north_neighbor
+        ));
+        assert!(!mosaic_pointing_contributes_by_simple_pb_center(
+            papersky_geometry,
+            papersky_phase_center,
+            east_neighbor
         ));
     }
 
