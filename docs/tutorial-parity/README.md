@@ -27,6 +27,10 @@ functionality.
 - [Issue 119 line-imaging evidence](wave-3-issue-119-line-imaging.md)
 - [Issue 120 image-analysis evidence](wave-3-issue-120-image-analysis.md)
 
+## Wave 6 Artifacts
+
+- [Breadth expansion issue map](wave-6-breadth-expansion.md)
+
 ## Source Pages
 
 - CASA Guides main page:
