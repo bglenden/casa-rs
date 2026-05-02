@@ -55,11 +55,32 @@ pub(crate) struct StandardGridder {
 
 impl StandardGridder {
     pub(crate) fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
+        Self::new_with_padding(geometry, padded_len)
+    }
+
+    pub(crate) fn new_with_casa_composite_padding(
+        geometry: ImageGeometry,
+    ) -> Result<Self, ImagingError> {
+        Self::new_with_padding_factor(geometry, casa_composite_padded_len, 1.3)
+    }
+
+    fn new_with_padding(
+        geometry: ImageGeometry,
+        padded_len_for_axis: fn(usize, f64) -> usize,
+    ) -> Result<Self, ImagingError> {
+        Self::new_with_padding_factor(geometry, padded_len_for_axis, 1.2)
+    }
+
+    fn new_with_padding_factor(
+        geometry: ImageGeometry,
+        padded_len_for_axis: fn(usize, f64) -> usize,
+        padding: f64,
+    ) -> Result<Self, ImagingError> {
         geometry.validate()?;
 
         let grid_shape = [
-            padded_len(geometry.nx(), 1.2),
-            padded_len(geometry.ny(), 1.2),
+            padded_len_for_axis(geometry.nx(), padding),
+            padded_len_for_axis(geometry.ny(), padding),
         ];
         let image_blc = [
             (grid_shape[0] - geometry.nx() + (grid_shape[0] % 2 == 0) as usize) / 2,
@@ -219,7 +240,6 @@ impl StandardGridder {
         value
     }
 
-    #[cfg(test)]
     pub(crate) fn degrid_sample_product_planned(
         &self,
         grid: &Array2<Complex32>,
@@ -237,6 +257,47 @@ impl StandardGridder {
             value += grid[(taps.x_indices[tap], taps.y_indices[tap])] * taps.weights[tap];
         }
         value
+    }
+
+    pub(crate) fn degrid_sample_product_planned_sectdgrid(
+        &self,
+        grid: &Array2<Complex32>,
+        u_lambda: f64,
+        v_lambda: f64,
+    ) -> Option<Complex32> {
+        let x_taps =
+            self.sample_taps_unnormalized(self.grid_coordinate_x(u_lambda), self.grid_shape[0])?;
+        let y_taps =
+            self.sample_taps_unnormalized(self.grid_coordinate_y(v_lambda), self.grid_shape[1])?;
+        let mut value = Complex32::new(0.0, 0.0);
+        let mut norm = 0.0f32;
+        if let Some(storage) = grid.as_slice_memory_order() {
+            let grid_stride = self.grid_shape[1];
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = x_taps.indices[x_tap];
+                let x_weight = x_taps.weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    let weight = x_weight * y_taps.weights[y_tap];
+                    value += storage[x_index * grid_stride + y_taps.indices[y_tap]] * weight;
+                    norm += weight;
+                }
+            }
+        } else {
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = x_taps.indices[x_tap];
+                let x_weight = x_taps.weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    let weight = x_weight * y_taps.weights[y_tap];
+                    value += grid[(x_index, y_taps.indices[y_tap])] * weight;
+                    norm += weight;
+                }
+            }
+        }
+        if norm > 0.0 && norm.is_finite() {
+            Some(value / norm)
+        } else {
+            None
+        }
     }
 
     pub(crate) fn degrid_sample_product_planned_normalized(
@@ -491,6 +552,34 @@ impl StandardGridder {
         }
         for weight in &mut weights {
             *weight /= norm;
+        }
+        Some(TapSet { indices, weights })
+    }
+
+    fn sample_taps_unnormalized(&self, coordinate: f64, size: usize) -> Option<TapSet> {
+        if !coordinate.is_finite() {
+            return None;
+        }
+        let anchor = coordinate.round() as isize;
+        let offset = ((anchor as f64 - coordinate) * self.oversampling as f64).round() as isize;
+        let mut indices = [0usize; GRIDDER_TAP_COUNT];
+        let mut weights = [0.0f32; GRIDDER_TAP_COUNT];
+        let mut norm = 0.0f32;
+        for (tap, index) in
+            ((anchor - GRIDDER_SUPPORT as isize)..=(anchor + GRIDDER_SUPPORT as isize)).enumerate()
+        {
+            if index < 0 || index >= size as isize {
+                return None;
+            }
+            let delta = index - anchor;
+            let lookup = (delta * self.oversampling as isize + offset).unsigned_abs();
+            let weight = self.kernel_table.get(lookup).copied().unwrap_or(0.0);
+            indices[tap] = index as usize;
+            weights[tap] = weight;
+            norm += weight;
+        }
+        if norm <= 0.0 {
+            return None;
         }
         Some(TapSet { indices, weights })
     }
@@ -1175,6 +1264,23 @@ fn padded_len(image_len: usize, padding_factor: f64) -> usize {
     if padded % 2 == 0 { padded } else { padded + 1 }
 }
 
+fn casa_composite_padded_len(image_len: usize, padding_factor: f64) -> usize {
+    let mut padded = padded_len(image_len, padding_factor);
+    while !is_casa_composite_len(padded) {
+        padded += 2;
+    }
+    padded
+}
+
+fn is_casa_composite_len(mut value: usize) -> bool {
+    for factor in [2, 3, 5] {
+        while value > 1 && value % factor == 0 {
+            value /= factor;
+        }
+    }
+    value == 1
+}
+
 fn build_correction_axis(size: usize) -> Vec<f32> {
     let center = size as f64 / 2.0;
     (0..size)
@@ -1722,6 +1828,72 @@ mod tests {
             (-210.25_f64, 98.125_f64),
             (15.875_f64, 144.625_f64),
             (301.4_f64, -12.2_f64),
+        ];
+
+        for &(u, v) in &samples {
+            let plan = gridder
+                .plan_sample(u, v)
+                .expect("sample should lie on grid");
+            let rust = gridder.degrid_sample_product_planned(&model_grid, &plan.positive);
+            let Ok(cpp) = cpp_convolve_gridder_predict_visibility_2d(
+                gridder.grid_shape(),
+                geometry.image_shape,
+                [
+                    gridder.grid_shape()[0] as f64 * geometry.cell_size_rad[0],
+                    gridder.grid_shape()[1] as f64 * geometry.cell_size_rad[1],
+                ],
+                [
+                    gridder.grid_shape()[0] as f64 / 2.0,
+                    gridder.grid_shape()[1] as f64 / 2.0,
+                ],
+                [u, -v],
+                model.as_slice().unwrap(),
+            ) else {
+                return;
+            };
+            assert!(
+                (rust.re - cpp.re).abs() < 1.0e-6,
+                "predicted visibility real mismatch at ({u}, {v}): rust={} cpp={}",
+                rust.re,
+                cpp.re
+            );
+            assert!(
+                (rust.im - cpp.im).abs() < 1.0e-6,
+                "predicted visibility imag mismatch at ({u}, {v}): rust={} cpp={}",
+                rust.im,
+                cpp.im
+            );
+        }
+    }
+
+    #[test]
+    #[serial(casa_cpp)]
+    fn convolve_gridder_degrids_odd_composite_padded_model_like_casacore() {
+        let geometry = ImageGeometry {
+            image_shape: [257, 257],
+            cell_size_rad: [8.638_889_530_690e-7_f64.to_radians(); 2],
+        };
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        assert_eq!(gridder.grid_shape(), [360, 360]);
+
+        let mut model = Array2::<f32>::zeros((257, 257));
+        for x in 0..257 {
+            for y in 0..257 {
+                let dx = (x as f32 - 129.25) / 27.0;
+                let dy = (y as f32 - 126.5) / 19.0;
+                let ring = (-(dx * dx + dy * dy)).exp();
+                let shoulder = (-(((x as f32 - 87.0) / 13.0).powi(2)
+                    + ((y as f32 - 169.0) / 21.0).powi(2)))
+                .exp();
+                model[(x, y)] = 0.0025 * ring - 0.0007 * shoulder;
+            }
+        }
+        let model_grid = centered_fft2(&gridder.apodize_model(&model));
+        let samples = [
+            (4_806.297_926_382_51_f64, 41_290.840_313_424_32_f64),
+            (-38_890.191_177_123_3_f64, -12_300.584_882_047_77_f64),
+            (24_915.177_739_689_71_f64, -34_020.365_105_376_14_f64),
+            (-9_024.365_419_946_97_f64, 7_115.436_092_750_48_f64),
         ];
 
         for &(u, v) in &samples {

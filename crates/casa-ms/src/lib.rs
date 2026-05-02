@@ -57,6 +57,8 @@ pub mod schema;
 pub mod selection;
 pub mod selection_helpers;
 pub mod selection_syntax;
+pub mod simulation;
+pub mod simulation_task;
 pub mod spectral_selection;
 pub mod subtables;
 pub mod transform;
@@ -111,6 +113,19 @@ pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selection_syntax::{
     ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
     parse_spw_selector,
+};
+pub use simulation::{
+    SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
+    SyntheticCorruptionConfig, SyntheticGainCorruption, SyntheticGainMode,
+    SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationReport,
+    SyntheticObservationRequest, SyntheticPointingCorruption,
+    SyntheticPolarizationLeakageCorruption, SyntheticPolarizationLeakageMode,
+    SyntheticSpectralSetup, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+};
+pub use simulation_task::{
+    SIMOBSERVE_TASK_PROTOCOL_NAME, SIMOBSERVE_TASK_PROTOCOL_VERSION, SimobserveProtocolInfo,
+    SimobserveRunTaskRequest, SimobserveRunTaskResult, SimobserveTaskRequest, SimobserveTaskResult,
+    SimobserveTaskSchemaBundle,
 };
 pub use spectral_selection::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,

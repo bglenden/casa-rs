@@ -15,6 +15,8 @@ cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 performance-tests = ["casa-test-support/performance-tests"]
 
 [dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
+casa-imaging = { path = "../casa-imaging" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
@@ -25,6 +27,7 @@ printpdf = { version = "0.9.1", default-features = false, features = ["png"] }
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sofars.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
@@ -40,6 +43,10 @@ path = "src/bin/msexplore.rs"
 [[bin]]
 name = "mstransform"
 path = "src/bin/mstransform.rs"
+
+[[bin]]
+name = "simobserve"
+path = "src/bin/simobserve.rs"
 
 [lints]
 workspace = true
@@ -98,3 +105,7 @@ path = "tests/transform.rs"
 name = "spectral_frame_parity"
 path = "tests/spectral_frame_parity.rs"
 required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "simulation_ms"
+path = "tests/simulation_ms.rs"

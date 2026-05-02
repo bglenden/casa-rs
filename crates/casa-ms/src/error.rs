@@ -77,6 +77,10 @@ pub enum MsError {
     /// A schema construction error.
     #[error("schema error: {0}")]
     Schema(#[from] casa_tables::SchemaError),
+
+    /// Invalid input for native synthetic-observation generation.
+    #[error("synthetic observation input: {0}")]
+    SyntheticObservation(String),
 }
 
 /// Convenience type alias for MS operations.

@@ -17,6 +17,7 @@ from .._task_runtime import (
 StrPath: TypeAlias = str | PathLike[str]
 TaskResult: TypeAlias = dict[str, Any]
 SummaryFormat: TypeAlias = Literal["text", "json"]
+PlotFormat: TypeAlias = Literal["png", "pdf", "txt"]
 
 
 def configure(*, binary: StrPath | None) -> None:
@@ -72,6 +73,61 @@ def summary(
     return run(request, binary=binary)
 
 
+def plot(
+    measurement_set: StrPath,
+    output_path: StrPath,
+    *,
+    x_axis: str = "Time",
+    y_axis: str = "Amplitude",
+    data_column: str = "data",
+    color_by: str = "Field",
+    format: PlotFormat = "png",
+    width: int = 1200,
+    height: int = 800,
+    selection: dict[str, Any] | None = None,
+    title: str | None = None,
+    binary: StrPath | None = None,
+) -> TaskResult:
+    """Render one ``plotms``-style visibility plot through ``msexplore``."""
+
+    request = {
+        "spec": {
+            "ms_path": os.fspath(measurement_set),
+            "summary_format": "Json",
+            "selection": _selection_request(selection),
+            "header_items": [],
+            "page_title": None,
+            "exprange": "current",
+            "max_plot_points": 100000,
+            "plots": [
+                {
+                    "preset": None,
+                    "x_axis": x_axis,
+                    "y_axes": [y_axis],
+                    "data_column": data_column,
+                    "color_by": color_by,
+                    "averaging": _averaging_request(),
+                    "transforms": _transform_request(),
+                    "layout": _layout_request(),
+                    "iteration": _iteration_request(),
+                    "style": _style_request(title=title),
+                    "flag_edit": None,
+                }
+            ],
+        },
+        "summary_output_path": None,
+        "overwrite_outputs": True,
+        "flag_edit": None,
+        "plot_export": {
+            "output_path": os.fspath(output_path),
+            "format": _plot_format(format),
+            "width": width,
+            "height": height,
+        },
+    }
+    return run(request, binary=binary)
+
+
 def _summary_format(format: SummaryFormat) -> str:
     if format == "json":
         return "Json"
@@ -99,3 +155,73 @@ def _selection_request(selection: dict[str, Any] | None) -> dict[str, Any]:
     if selection is not None:
         defaults.update(selection)
     return defaults
+
+
+def _plot_format(format: PlotFormat) -> str:
+    if format == "png":
+        return "Png"
+    if format == "pdf":
+        return "Pdf"
+    if format == "txt":
+        return "Txt"
+    raise ValueError("format must be 'png', 'pdf', or 'txt'")
+
+
+def _averaging_request() -> dict[str, Any]:
+    return {
+        "avgchannel": None,
+        "avgtime": None,
+        "avgscan": False,
+        "avgfield": False,
+        "avgbaseline": False,
+        "avgantenna": False,
+        "avgspw": False,
+        "scalar": False,
+    }
+
+
+def _transform_request() -> dict[str, Any]:
+    return {
+        "transform": True,
+        "freqframe": None,
+        "restfreq": None,
+        "veldef": "RADIO",
+        "phasecenter": None,
+        "xframe": None,
+        "xinterp": None,
+        "yframe": None,
+        "yinterp": None,
+    }
+
+
+def _layout_request() -> dict[str, int]:
+    return {
+        "gridrows": 1,
+        "gridcols": 1,
+        "rowindex": 0,
+        "colindex": 0,
+        "plotindex": 0,
+    }
+
+
+def _iteration_request() -> dict[str, Any]:
+    return {
+        "iteraxis": None,
+        "xselfscale": False,
+        "yselfscale": False,
+        "xsharedaxis": False,
+        "ysharedaxis": False,
+    }
+
+
+def _style_request(*, title: str | None) -> dict[str, Any]:
+    return {
+        "title": title,
+        "xlabel": None,
+        "ylabel": None,
+        "symbol_size": None,
+        "showlegend": False,
+        "legendposition": "upperRight",
+        "showmajorgrid": False,
+        "showminorgrid": False,
+    }

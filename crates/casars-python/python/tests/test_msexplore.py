@@ -104,6 +104,33 @@ def test_summary_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert spec["plots"] == []
 
 
+def test_plot_wrapper_encodes_plot_export_request(tmp_path: Path) -> None:
+    binary = _write_stub_binary(tmp_path / "ok" / "msexplore", version="ok")
+
+    result = msexplore.plot(
+        "ppdisk.synthetic.ms",
+        "amp-time.png",
+        x_axis="Time",
+        y_axis="Amplitude",
+        data_column="data",
+        title="Synthetic amplitudes",
+        binary=binary,
+    )
+
+    request = result["result"]["request"]
+    assert request["plot_export"] == {
+        "output_path": "amp-time.png",
+        "format": "Png",
+        "width": 1200,
+        "height": 800,
+    }
+    plot = request["spec"]["plots"][0]
+    assert plot["x_axis"] == "Time"
+    assert plot["y_axes"] == ["Amplitude"]
+    assert plot["data_column"] == "data"
+    assert plot["style"]["title"] == "Synthetic amplitudes"
+
+
 def _write_stub_binary(
     path: Path,
     *,

@@ -560,6 +560,8 @@ dependencies = [
 name = "casa-ms"
 version = "0.16.3"
 dependencies = [
+ "casa-coordinates",
+ "casa-imaging",
  "casa-provider-contracts",
  "casa-tables",
  "casa-test-support",
@@ -573,6 +575,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sofars",
  "tar",
  "tempfile",
  "thiserror 2.0.18",

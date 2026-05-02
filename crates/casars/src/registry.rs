@@ -266,12 +266,13 @@ pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
         "calibrate" => Ok(calibrate_app()),
         "importvla" => Ok(importvla_app()),
         "imager" => Ok(imager_app()),
+        "simobserve" => Ok(simobserve_app()),
         "tablebrowser" => Ok(tablebrowser_app()),
         "imexplore" => Ok(imexplore_app()),
         "immoments" => Ok(immoments_app()),
         "exportfits" => Ok(exportfits_app()),
         other => Err(format!(
-            "unknown casars app {other:?}; expected one of: msexplore, calibrate, importvla, imager, tablebrowser, imexplore, immoments, exportfits"
+            "unknown casars app {other:?}; expected one of: msexplore, calibrate, importvla, imager, simobserve, tablebrowser, imexplore, immoments, exportfits"
         )),
     }
 }
@@ -282,6 +283,7 @@ pub(crate) fn registered_apps() -> Vec<RegistryApp> {
         calibrate_app(),
         importvla_app(),
         imager_app(),
+        simobserve_app(),
         tablebrowser_app(),
         imexplore_app(),
         immoments_app(),
@@ -329,6 +331,21 @@ pub(crate) fn imager_app() -> RegistryApp {
             binary_name: "casars-imager",
             cargo_package: "casars-imager",
             override_env: "CASARS_IMAGER_BIN",
+            interaction: AppInteraction::OneShot,
+        },
+    }
+}
+
+pub(crate) fn simobserve_app() -> RegistryApp {
+    RegistryApp {
+        id: "simobserve",
+        category: "Simulation",
+        display_name: "SimObserve",
+        shell_kind: AppShellKind::Workflow,
+        kind: RegistryAppKind::Subprocess {
+            binary_name: "simobserve",
+            cargo_package: "casa-ms",
+            override_env: "CASARS_SIMOBSERVE_BIN",
             interaction: AppInteraction::OneShot,
         },
     }
@@ -466,6 +483,7 @@ mod tests {
         assert_eq!(resolve_app(Some("msexplore")).unwrap().id, "msexplore");
         assert_eq!(resolve_app(Some("calibrate")).unwrap().id, "calibrate");
         assert_eq!(resolve_app(Some("importvla")).unwrap().id, "importvla");
+        assert_eq!(resolve_app(Some("simobserve")).unwrap().id, "simobserve");
         assert_eq!(
             resolve_app(Some("tablebrowser")).unwrap().id,
             "tablebrowser"
@@ -506,6 +524,14 @@ mod tests {
         assert_eq!(importvla.browser_path_field_id(), None);
         assert_eq!(
             importvla.ready_status_line(),
+            "Ready. Press r to run the selected workflow stage."
+        );
+
+        let simobserve = simobserve_app();
+        assert!(!simobserve.is_browser_session());
+        assert_eq!(simobserve.browser_kind(), None);
+        assert_eq!(
+            simobserve.ready_status_line(),
             "Ready. Press r to run the selected workflow stage."
         );
 
@@ -716,6 +742,18 @@ mod tests {
         assert_eq!(specmode.group, "Stages");
         let managed_output = schema.managed_output.expect("managed output");
         assert_eq!(managed_output.renderer, "imager-run-v1");
+    }
+
+    #[test]
+    fn simobserve_load_schema_describes_public_workflow_surface() {
+        let schema = simobserve_app()
+            .load_schema()
+            .expect("load simobserve schema");
+        assert_eq!(schema.command_id, "simobserve");
+        assert_eq!(schema.display_name, "SimObserve");
+        assert_eq!(schema.category, "Simulation");
+        assert!(schema.argument("model").is_some());
+        assert!(schema.argument("out").is_some());
     }
 
     #[test]

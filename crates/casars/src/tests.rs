@@ -85,6 +85,7 @@ fn launcher_lists_registered_apps_in_expected_order() {
             "calibrate",
             "importvla",
             "imager",
+            "simobserve",
             "tablebrowser",
             "imexplore",
             "immoments",

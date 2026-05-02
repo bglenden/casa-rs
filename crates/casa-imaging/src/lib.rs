@@ -100,7 +100,7 @@ pub struct StandardMfsModelPredictor {
 impl StandardMfsModelPredictor {
     /// Build a predictor for one image geometry and final model plane.
     pub fn new(geometry: ImageGeometry, model: &Array2<f32>) -> Result<Self, ImagingError> {
-        let gridder = StandardGridder::new(geometry)?;
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry)?;
         let model_has_components = model.iter().any(|value| value.abs() > 0.0);
         let model_grid = model_has_components.then(|| centered_fft2(&gridder.apodize_model(model)));
         Ok(Self {
@@ -118,7 +118,11 @@ impl StandardMfsModelPredictor {
             return Complex32::new(0.0, 0.0);
         };
         self.gridder
-            .degrid_sample_product_planned_normalized(model_grid, &plan.positive)
+            .degrid_sample_product_planned_sectdgrid(model_grid, u_lambda, v_lambda)
+            .unwrap_or_else(|| {
+                self.gridder
+                    .degrid_sample_product_planned(model_grid, &plan.positive)
+            })
     }
 }
 
@@ -993,7 +997,7 @@ fn build_mosaic_projector(
 ) -> Result<ScreenProjector, ImagingError> {
     let projector = ScreenProjector::from_screen(geometry, gridder, conv_sampling, |l, m| {
         let radius_rad = (l * l + m * m).sqrt();
-        let vp = voltage_pattern_value(primary_beam_model, radius_rad, frequency_hz);
+        let vp = primary_beam_voltage_pattern(primary_beam_model, radius_rad, frequency_hz);
         let value = match screen_power {
             1 => vp,
             2 => vp * vp,
@@ -1111,7 +1115,8 @@ fn circular_angle_delta_rad(angle_rad: f64) -> f64 {
     (angle_rad + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
 }
 
-fn voltage_pattern_value(
+/// Return the CASA-compatible voltage-pattern value for a homogeneous primary beam.
+pub fn primary_beam_voltage_pattern(
     primary_beam_model: PrimaryBeamModel,
     radius_rad: f64,
     frequency_hz: f64,
