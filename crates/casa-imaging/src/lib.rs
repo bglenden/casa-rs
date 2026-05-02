@@ -4900,7 +4900,10 @@ fn expand_scalar(value: f32) -> Array4<f32> {
 #[cfg(test)]
 #[allow(clippy::excessive_precision, clippy::useless_vec)]
 mod tests {
-    use casa_test_support::gridder_interop::cpp_convolve_gridder_make_model_residual_image_2d;
+    use casa_test_support::gridder_interop::{
+        cpp_convolve_gridder_make_model_residual_image_2d,
+        cpp_convolve_gridder_predict_visibility_2d,
+    };
     use casa_test_support::hogbom_interop::cpp_hogbom_clean_minor_cycle_2d;
     use ndarray::{Array2, s};
     use num_complex::Complex32;
@@ -4911,9 +4914,9 @@ mod tests {
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
         HogbomIterationMode, ImageGeometry, ImagingRequest, ImagingStageTimings,
         MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
-        PsfState, RestoringBeamMode, StandardGridder, VisibilityBatch, VisibilityMetadataBatch,
-        WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
-        apply_chauvenet_clipping, apply_weighting, build_direct_components,
+        PsfState, RestoringBeamMode, StandardGridder, StandardMfsModelPredictor, VisibilityBatch,
+        VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
+        add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
         build_direct_pixel_coordinates, compute_cycle_threshold,
         compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
@@ -5013,6 +5016,57 @@ mod tests {
             flux,
             true,
         )
+    }
+
+    fn assert_standard_residual_trace_matches_casacore(
+        label: &str,
+        request: &ImagingRequest,
+        gridder: &StandardGridder,
+        model: &Array2<f32>,
+        expected_samples: usize,
+    ) -> (f32, f32) {
+        let trace = trace_residual_refresh(request, model).unwrap();
+        assert_eq!(trace.samples.len(), expected_samples);
+        let pixels = build_direct_pixel_coordinates(request.geometry);
+        let components = build_direct_components(model, &pixels, request.geometry.image_shape[1]);
+        let mut max_trace_casacore_delta = 0.0f32;
+        let mut max_trace_direct_delta = 0.0f32;
+        for trace_sample in &trace.samples {
+            let cpp = match cpp_convolve_gridder_predict_visibility_2d(
+                gridder.grid_shape(),
+                request.geometry.image_shape,
+                [
+                    gridder.grid_shape()[0] as f64 * request.geometry.cell_size_rad[0],
+                    gridder.grid_shape()[1] as f64 * request.geometry.cell_size_rad[1],
+                ],
+                [
+                    gridder.grid_shape()[0] as f64 / 2.0,
+                    gridder.grid_shape()[1] as f64 / 2.0,
+                ],
+                [trace_sample.u_lambda, -trace_sample.v_lambda],
+                model.as_slice().unwrap(),
+            ) {
+                Ok(result) => result,
+                Err(error) if error == "casacore C++ backend unavailable" => return (0.0, 0.0),
+                Err(error) => panic!("run predict-visibility interop: {error}"),
+            };
+            let cpp_value = Complex32::new(cpp.re, cpp.im);
+            let direct = direct_predict_visibility(
+                &components,
+                trace_sample.u_lambda,
+                trace_sample.v_lambda,
+                trace_sample.w_lambda,
+            );
+            max_trace_casacore_delta = max_trace_casacore_delta
+                .max((trace_sample.predicted_visibility - cpp_value).norm());
+            max_trace_direct_delta =
+                max_trace_direct_delta.max((trace_sample.predicted_visibility - direct).norm());
+        }
+        assert!(
+            max_trace_casacore_delta < 1.0e-5,
+            "standard MFS residual-refresh predictions should match casacore per visibility for {label}: max_casacore_delta={max_trace_casacore_delta} max_direct_delta={max_trace_direct_delta}"
+        );
+        (max_trace_casacore_delta, max_trace_direct_delta)
     }
 
     fn assert_close_f32(actual: f32, expected: f32, tol: f32) {
@@ -6085,6 +6139,14 @@ mod tests {
         )
         .unwrap();
         let fft_peak = peak_abs_value(&fft_residual);
+        let (max_trace_casacore_delta, max_trace_direct_delta) =
+            assert_standard_residual_trace_matches_casacore(
+                "off-center source",
+                &request,
+                &gridder,
+                &model,
+                samples.len(),
+            );
         let cpp = match cpp_convolve_gridder_make_model_residual_image_2d(
             gridder.grid_shape(),
             geometry.image_shape,
@@ -6126,6 +6188,9 @@ mod tests {
             cpp_peak = cpp_peak.max(cpp_value.abs());
         }
         let rms = (sum_sq / cpp.pixels.len() as f64).sqrt() as f32;
+        eprintln!(
+            "standard MFS off-center predictor diagnostics: max_trace_casacore_delta={max_trace_casacore_delta:.3e} max_trace_direct_delta={max_trace_direct_delta:.3e} residual_rms={rms:.3e} residual_max_abs={max_abs:.3e}"
+        );
         assert!(
             rms < 1.0e-5 && max_abs < 1.0e-4,
             "FFT residual should match casacore for the off-center source: rust_peak={fft_peak} cpp_peak={cpp_peak} rms={rms} max_abs={max_abs}"
@@ -6208,6 +6273,14 @@ mod tests {
         )
         .unwrap();
         let fft_peak = peak_abs_value(&fft_residual);
+        let (max_trace_casacore_delta, max_trace_direct_delta) =
+            assert_standard_residual_trace_matches_casacore(
+                "structured model",
+                &request,
+                &gridder,
+                &model,
+                samples.len(),
+            );
         let cpp = match cpp_convolve_gridder_make_model_residual_image_2d(
             gridder.grid_shape(),
             geometry.image_shape,
@@ -6249,9 +6322,78 @@ mod tests {
             cpp_peak = cpp_peak.max(cpp_value.abs());
         }
         let rms = (sum_sq / cpp.pixels.len() as f64).sqrt() as f32;
+        eprintln!(
+            "standard MFS structured residual-refresh diagnostics: max_trace_casacore_delta={max_trace_casacore_delta:.3e} max_trace_direct_delta={max_trace_direct_delta:.3e} residual_rms={rms:.3e} residual_max_abs={max_abs:.3e}"
+        );
         assert!(
             rms < 1.0e-5 && max_abs < 1.0e-4,
             "FFT residual should match casacore for the structured model: rust_peak={fft_peak} cpp_peak={cpp_peak} rms={rms} max_abs={max_abs}"
+        );
+    }
+
+    #[test]
+    #[serial(casa_cpp)]
+    fn standard_mfs_model_predictor_matches_casacore_for_structured_model() {
+        let geometry = ImageGeometry {
+            image_shape: [257, 257],
+            cell_size_rad: [8.638_889_530_690e-7_f64.to_radians(); 2],
+        };
+        let mut model = Array2::<f32>::zeros((257, 257));
+        for x in 0..257 {
+            for y in 0..257 {
+                let dx = (x as f32 - 129.25) / 27.0;
+                let dy = (y as f32 - 126.5) / 19.0;
+                let ring = (-(dx * dx + dy * dy)).exp();
+                let shoulder = (-(((x as f32 - 87.0) / 13.0).powi(2)
+                    + ((y as f32 - 169.0) / 21.0).powi(2)))
+                .exp();
+                model[(x, y)] = 0.0025 * ring - 0.0007 * shoulder;
+            }
+        }
+        let predictor = StandardMfsModelPredictor::new(geometry, &model).unwrap();
+        let gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+        let pixels = build_direct_pixel_coordinates(geometry);
+        let components = build_direct_components(&model, &pixels, geometry.image_shape[1]);
+        let samples = [
+            (4_806.297_926_382_51_f64, 41_290.840_313_424_32_f64),
+            (-38_890.191_177_123_3_f64, -12_300.584_882_047_77_f64),
+            (24_915.177_739_689_71_f64, -34_020.365_105_376_14_f64),
+            (-9_024.365_419_946_97_f64, 7_115.436_092_750_48_f64),
+        ];
+
+        let mut max_casacore_delta = 0.0f32;
+        let mut max_direct_delta = 0.0f32;
+        for &(u, v) in &samples {
+            let rust = predictor.predict(u, v);
+            let direct = direct_predict_visibility(&components, u, v, 0.0);
+            let cpp = match cpp_convolve_gridder_predict_visibility_2d(
+                gridder.grid_shape(),
+                geometry.image_shape,
+                [
+                    gridder.grid_shape()[0] as f64 * geometry.cell_size_rad[0],
+                    gridder.grid_shape()[1] as f64 * geometry.cell_size_rad[1],
+                ],
+                [
+                    gridder.grid_shape()[0] as f64 / 2.0,
+                    gridder.grid_shape()[1] as f64 / 2.0,
+                ],
+                [u, -v],
+                model.as_slice().unwrap(),
+            ) {
+                Ok(result) => result,
+                Err(error) if error == "casacore C++ backend unavailable" => return,
+                Err(error) => panic!("run predict-visibility interop: {error}"),
+            };
+            let cpp_value = Complex32::new(cpp.re, cpp.im);
+            max_casacore_delta = max_casacore_delta.max((rust - cpp_value).norm());
+            max_direct_delta = max_direct_delta.max((rust - direct).norm());
+        }
+        assert!(
+            max_casacore_delta < 1.0e-5,
+            "standard MFS MODEL_DATA predictor should match casacore ConvolveGridder for a structured model: max_casacore_delta={max_casacore_delta} max_direct_delta={max_direct_delta}"
+        );
+        eprintln!(
+            "standard MFS MODEL_DATA predictor diagnostics: max_casacore_delta={max_casacore_delta:.3e} max_direct_delta={max_direct_delta:.3e}"
         );
     }
 
