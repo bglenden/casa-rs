@@ -82,7 +82,7 @@ Wall-clock timing on the local tutorial run:
 | Runner | Seconds | Relative |
 |---|---:|---:|
 | CASA C++ | `13.673` | `1.00x` |
-| casa-rs | `40.073` | `2.93x CASA` |
+| casa-rs | `48.071` | `3.52x CASA` |
 
 | Panel | Shared valid pixels | CASA valid pixels | casa-rs valid pixels | CASA RMS | casa-rs RMS | Difference RMS | Diff/CASA RMS | Difference max abs |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
