@@ -82,12 +82,20 @@ Wall-clock timing on the local tutorial run:
 | Runner | Seconds | Relative |
 |---|---:|---:|
 | CASA C++ | `13.673` | `1.00x` |
-| casa-rs | `55.358` | `4.05x CASA` |
+| casa-rs | `40.073` | `2.93x CASA` |
 
 | Panel | Shared valid pixels | CASA valid pixels | casa-rs valid pixels | CASA RMS | casa-rs RMS | Difference RMS | Diff/CASA RMS | Difference max abs |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | `alma-antennae-north-cont-clean-residual-panel.png` | `134322 / 250000` | `134322` | `242602` | `0.0004842421539966355` | `0.0005555694340461607` | `0.0001939154632399948` | `0.4004514304249153` | `0.0013848665403202176` |
 | `alma-antennae-north-cont-clean-image.pbcor-panel.png` | `134322 / 250000` | `134322` | `242602` | `0.0010904309546444929` | `0.0007543814432682847` | `0.0005618691211086539` | `0.5152725339605174` | `0.005424286471679807` |
+
+Source-region peak-relative differences use shared valid pixels with
+`abs(CASA) >= 25%` of the CASA peak.
+
+| Panel | CASA peak abs | abs(diff at CASA peak) / peak | source p90 abs(diff) / peak | source max abs(diff) / peak |
+|---|---:|---:|---:|---:|
+| `alma-antennae-north-cont-clean-residual-panel.png` | `0.001685870112851262` | `0.32450543499802575` | `0.22181278835900722` | `0.8214550633310854` |
+| `alma-antennae-north-cont-clean-image.pbcor-panel.png` | `0.008220789022743702` | `0.4258877728062916` | `0.30440361424968043` | `0.6598255297238418` |
 
 Inspectable artifacts:
 
@@ -110,12 +118,20 @@ Wall-clock timing on the local tutorial run:
 | Runner | Seconds | Relative |
 |---|---:|---:|
 | CASA C++ | `72.850` | `1.00x` |
-| casa-rs | `148.132` | `2.03x CASA` |
+| casa-rs | `148.957` | `2.04x CASA` |
 
 | Panel | Shared valid pixels | CASA valid pixels | casa-rs valid pixels | CASA RMS | casa-rs RMS | Difference RMS | Diff/CASA RMS | Difference max abs |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | `vla-3c391-multiscale-image-panel.png` | `115741 / 230400` | `115741` | `223251` | `0.009522959519475125` | `0.0084792279050309` | `0.0028014254769549185` | `0.29417593041593904` | `0.015739932656288147` |
 | `vla-3c391-multiscale-image.pbcor-panel.png` | `115741 / 230400` | `115741` | `223251` | `0.011692938714363256` | `0.008668273808957848` | `0.004698084600377237` | `0.40178818303445396` | `0.02817557007074356` |
+
+Source-region peak-relative differences use shared valid pixels with
+`abs(CASA) >= 25%` of the CASA peak.
+
+| Panel | CASA peak abs | abs(diff at CASA peak) / peak | source p90 abs(diff) / peak | source max abs(diff) / peak |
+|---|---:|---:|---:|---:|
+| `vla-3c391-multiscale-image-panel.png` | `0.13652297854423523` | `0.11391662997486766` | `0.0885403161919872` | `0.11529145367413884` |
+| `vla-3c391-multiscale-image.pbcor-panel.png` | `0.15053795278072357` | `0.1871658910612703` | `0.12656380182156154` | `0.1871658910612703` |
 
 Inspectable artifacts:
 

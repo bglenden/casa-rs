@@ -333,6 +333,11 @@ def seconds(value):
         return "n/a"
     return f"{value:.1f}s"
 
+def finite_ratio(numerator, denominator):
+    if not np.isfinite(numerator) or not np.isfinite(denominator) or abs(denominator) <= 0:
+        return float("nan")
+    return float(numerator / abs(denominator))
+
 def write_panel(name, title, original_path, casa_prefix, rust_prefix, product, timing_key):
     casa, casa_mask = read_image(str(casa_prefix) + product)
     rust, rust_mask = read_image(str(rust_prefix) + product)
@@ -378,6 +383,29 @@ def write_panel(name, title, original_path, casa_prefix, rust_prefix, product, t
     diff_rms = float(np.sqrt(np.nanmean(valid_diff * valid_diff))) if valid_count else float("nan")
     diff_max_abs = float(np.nanmax(np.abs(valid_diff))) if valid_count else float("nan")
     rel_diff_rms = float(diff_rms / abs(casa_rms)) if np.isfinite(casa_rms) and abs(casa_rms) > 0 else float("nan")
+    casa_peak_abs = float(np.nanmax(np.abs(casa[shared_valid]))) if valid_count else float("nan")
+    peak_pos = np.unravel_index(
+        np.nanargmax(np.where(shared_valid, np.abs(casa), np.nan)),
+        casa.shape,
+    ) if valid_count else (0, 0)
+    diff_at_casa_peak = float(diff[peak_pos]) if valid_count else float("nan")
+    diff_at_peak_over_peak = finite_ratio(abs(diff_at_casa_peak), casa_peak_abs)
+    diff_max_abs_over_peak = finite_ratio(diff_max_abs, casa_peak_abs)
+    source25 = shared_valid & (np.abs(casa) >= 0.25 * casa_peak_abs) if valid_count else shared_valid
+    source25_count = int(np.count_nonzero(source25))
+    source25_abs_diff = np.abs(diff[source25])
+    source25_diff_rms_over_peak = finite_ratio(
+        float(np.sqrt(np.nanmean(diff[source25] * diff[source25]))) if source25_count else float("nan"),
+        casa_peak_abs,
+    )
+    source25_diff_p90_over_peak = finite_ratio(
+        float(np.nanpercentile(source25_abs_diff, 90)) if source25_count else float("nan"),
+        casa_peak_abs,
+    )
+    source25_diff_max_over_peak = finite_ratio(
+        float(np.nanmax(source25_abs_diff)) if source25_count else float("nan"),
+        casa_peak_abs,
+    )
     casa_seconds = timings.get(f"{timing_key}_casa_seconds")
     rust_seconds = timings.get(f"{timing_key}_rust_seconds")
     speed_ratio = float(rust_seconds / casa_seconds) if casa_seconds and rust_seconds else None
@@ -390,7 +418,13 @@ def write_panel(name, title, original_path, casa_prefix, rust_prefix, product, t
     )
     if speed_ratio is not None:
         metrics += f", casa-rs/CASA={speed_ratio:.2f}x"
-    fig.text(0.5, 0.01, metrics, ha="center", va="bottom", fontsize=9)
+    peak_metrics = (
+        f"peak |CASA|={sci(casa_peak_abs)}; "
+        f"|diff at CASA peak|/peak={diff_at_peak_over_peak:.2f}; "
+        f"source(|CASA|>=25% peak) p90|diff|/peak={source25_diff_p90_over_peak:.2f}, "
+        f"max|diff|/peak={source25_diff_max_over_peak:.2f}"
+    )
+    fig.text(0.5, 0.01, metrics + "\n" + peak_metrics, ha="center", va="bottom", fontsize=8.5)
     panel = outdir / f"{name}-{product.strip('.')}-panel.png"
     fig.savefig(panel, dpi=150)
     plt.close(fig)
@@ -401,6 +435,14 @@ def write_panel(name, title, original_path, casa_prefix, rust_prefix, product, t
         "diff_rms": diff_rms,
         "diff_max_abs": diff_max_abs,
         "diff_rms_over_casa_rms": rel_diff_rms,
+        "casa_peak_abs": casa_peak_abs,
+        "diff_at_casa_peak": diff_at_casa_peak,
+        "diff_at_casa_peak_over_peak": diff_at_peak_over_peak,
+        "diff_max_abs_over_casa_peak": diff_max_abs_over_peak,
+        "source25_pixels": source25_count,
+        "source25_diff_rms_over_casa_peak": source25_diff_rms_over_peak,
+        "source25_diff_p90_over_casa_peak": source25_diff_p90_over_peak,
+        "source25_diff_max_over_casa_peak": source25_diff_max_over_peak,
         "shared_valid_pixels": valid_count,
         "total_pixels": total_count,
         "casa_valid_pixels": int(np.count_nonzero(casa_mask)),
