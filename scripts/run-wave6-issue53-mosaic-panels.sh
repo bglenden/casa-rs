@@ -6,6 +6,7 @@ tutorial_root="${CASA_RS_TUTORIAL_DATA_ROOT:-$HOME/SoftwareProjects/casa-tutoria
 casa_py="${CASA_RS_CASA_PYTHON:-$HOME/SoftwareProjects/casa-build/venv/bin/python}"
 fetch="${CASA_RS_FETCH_TUTORIAL_DATA:-0}"
 dataset="${CASA_RS_WAVE6_DATASET:-all}"
+skip_casa="${CASA_RS_WAVE6_SKIP_CASA:-0}"
 
 case "$dataset" in
   all|alma|vla) ;;
@@ -16,6 +17,32 @@ case "$dataset" in
 esac
 
 mkdir -p "$outdir"
+timings_file="$outdir/wave6-issue53-mosaic-timings.tsv"
+if [[ "$dataset" == "all" && "$skip_casa" != "1" ]]; then
+  rm -f "$timings_file"
+fi
+
+now_seconds() {
+  python - <<'PY'
+import time
+print(f"{time.time():.9f}")
+PY
+}
+
+record_timing() {
+  local key="$1"
+  local start="$2"
+  python - "$timings_file" "$key" "$start" <<'PY'
+import sys
+import time
+
+path, key, start = sys.argv[1], sys.argv[2], float(sys.argv[3])
+elapsed = time.time() - start
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(f"{key}\t{elapsed:.3f}\n")
+print(f"{key}={elapsed:.3f}s")
+PY
+}
 
 want_dataset() {
   [[ "$dataset" == "all" || "$dataset" == "$1" ]]
@@ -100,6 +127,8 @@ vla_run="$outdir/vla-3c391"
 mkdir -p "$alma_run" "$vla_run"
 
 if want_dataset alma; then
+if [[ "$skip_casa" != "1" ]]; then
+alma_casa_start="$(now_seconds)"
 "$casa_py" - "$alma_ms" "$alma_run" <<'PY'
 import os
 import shutil
@@ -133,7 +162,12 @@ tclean(
     pbcor=True,
 )
 PY
+record_timing alma_casa_seconds "$alma_casa_start"
+else
+  echo "Skipping ALMA CASA C++ run because CASA_RS_WAVE6_SKIP_CASA=1"
+fi
 
+alma_rust_start="$(now_seconds)"
 run_casars_imager \
   --ms "$alma_ms" \
   --imagename "$alma_run/rust-antennae-north-cont-clean" \
@@ -147,9 +181,12 @@ run_casars_imager \
   --gain 0.1 \
   --threshold-jy 0.0004 \
   --pbcor
+record_timing alma_rust_seconds "$alma_rust_start"
 fi
 
 if want_dataset vla; then
+if [[ "$skip_casa" != "1" ]]; then
+vla_casa_start="$(now_seconds)"
 "$casa_py" - "$vla_ms_full" "$vla_run" <<'PY'
 import os
 import shutil
@@ -185,7 +222,12 @@ tclean(
     pbcor=True,
 )
 PY
+record_timing vla_casa_seconds "$vla_casa_start"
+else
+  echo "Skipping VLA CASA C++ run because CASA_RS_WAVE6_SKIP_CASA=1"
+fi
 
+vla_rust_start="$(now_seconds)"
 run_casars_imager \
   --ms "$vla_ms_full" \
   --imagename "$vla_run/rust-3c391-ctm-spw0-multiscale" \
@@ -201,6 +243,7 @@ run_casars_imager \
   --gain 0.1 \
   --threshold-jy 0.001 \
   --pbcor
+record_timing vla_rust_seconds "$vla_rust_start"
 fi
 
 "$casa_py" - "$outdir" "$dataset" <<'PY'
@@ -218,6 +261,7 @@ from casatools import image as image_tool
 
 outdir = Path(sys.argv[1])
 dataset = sys.argv[2]
+timings_path = outdir / "wave6-issue53-mosaic-timings.tsv"
 
 def want_dataset(name):
     return dataset == "all" or dataset == name
@@ -232,25 +276,42 @@ for url, path in originals.values():
     if not path.exists():
         urlretrieve(url, path)
 
+def read_timings():
+    timings = {}
+    if not timings_path.exists():
+        return timings
+    with open(timings_path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            parts = line.strip().split("\t")
+            if len(parts) == 2:
+                try:
+                    timings[parts[0]] = float(parts[1])
+                except ValueError:
+                    pass
+    return timings
+
 def read_image(path):
     ia = image_tool()
     ia.open(str(path))
     try:
         data = np.asarray(ia.getchunk(), dtype=float)
+        mask = np.asarray(ia.getchunk(getmask=True), dtype=bool)
     finally:
         ia.close()
     while data.ndim > 2:
         data = data[:, :, 0]
-    return data.T
+    while mask.ndim > 2:
+        mask = mask[:, :, 0]
+    return data.T, mask.T
 
-def crop_common(a, b):
-    ny = min(a.shape[0], b.shape[0])
-    nx = min(a.shape[1], b.shape[1])
+def crop_common(*arrays):
+    ny = min(array.shape[0] for array in arrays)
+    nx = min(array.shape[1] for array in arrays)
     def center_crop(x):
         y0 = (x.shape[0] - ny) // 2
         x0 = (x.shape[1] - nx) // 2
         return x[y0:y0+ny, x0:x0+nx]
-    return center_crop(a), center_crop(b)
+    return tuple(center_crop(array) for array in arrays)
 
 def robust_limits(data):
     finite = data[np.isfinite(data)]
@@ -262,38 +323,94 @@ def robust_limits(data):
         return -peak, peak
     return float(lo), float(hi)
 
-def write_panel(name, title, original_path, casa_prefix, rust_prefix, product):
-    casa = read_image(str(casa_prefix) + product)
-    rust = read_image(str(rust_prefix) + product)
-    casa, rust = crop_common(casa, rust)
+def sci(value):
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    return f"{value:.3e}"
+
+def seconds(value):
+    if value is None:
+        return "n/a"
+    return f"{value:.1f}s"
+
+def write_panel(name, title, original_path, casa_prefix, rust_prefix, product, timing_key):
+    casa, casa_mask = read_image(str(casa_prefix) + product)
+    rust, rust_mask = read_image(str(rust_prefix) + product)
+    casa, rust, casa_mask, rust_mask = crop_common(casa, rust, casa_mask, rust_mask)
+    shared_valid = casa_mask & rust_mask & np.isfinite(casa) & np.isfinite(rust)
     diff = rust - casa
-    vmin, vmax = robust_limits(np.concatenate([casa.ravel(), rust.ravel()]))
-    dpeak = np.nanpercentile(np.abs(diff[np.isfinite(diff)]), 99) if np.isfinite(diff).any() else 1.0
+    valid_values = np.concatenate([casa[shared_valid], rust[shared_valid]]) if shared_valid.any() else np.concatenate([casa.ravel(), rust.ravel()])
+    vmin, vmax = robust_limits(valid_values)
+    valid_diff = diff[shared_valid]
+    dpeak = np.nanpercentile(np.abs(valid_diff), 99) if valid_diff.size else 1.0
     dpeak = float(max(dpeak, 1.0e-12))
-    fig, axes = plt.subplots(1, 4, figsize=(16, 4.5), constrained_layout=True)
+    casa_display = np.ma.array(casa, mask=~shared_valid)
+    rust_display = np.ma.array(rust, mask=~shared_valid)
+    diff_display = np.ma.array(diff, mask=~shared_valid)
+    image_cmap = plt.get_cmap("inferno").copy()
+    image_cmap.set_bad("#d9d9d9")
+    diff_cmap = plt.get_cmap("coolwarm").copy()
+    diff_cmap.set_bad("#d9d9d9")
+    fig, axes = plt.subplots(1, 4, figsize=(17.5, 5.4), constrained_layout=True)
     axes[0].imshow(plt.imread(original_path))
     axes[0].set_title("CASA Guide figure")
-    axes[1].imshow(casa, origin="lower", cmap="inferno", vmin=vmin, vmax=vmax)
+    casa_artist = axes[1].imshow(casa_display, origin="lower", cmap=image_cmap, vmin=vmin, vmax=vmax)
     axes[1].set_title("CASA C++ " + product)
-    axes[2].imshow(rust, origin="lower", cmap="inferno", vmin=vmin, vmax=vmax)
+    rust_artist = axes[2].imshow(rust_display, origin="lower", cmap=image_cmap, vmin=vmin, vmax=vmax)
     axes[2].set_title("casa-rs " + product)
-    axes[3].imshow(diff, origin="lower", cmap="coolwarm", vmin=-dpeak, vmax=dpeak)
+    diff_artist = axes[3].imshow(diff_display, origin="lower", cmap=diff_cmap, vmin=-dpeak, vmax=dpeak)
     axes[3].set_title("casa-rs - CASA")
+    for ax, artist, label in [
+        (axes[1], casa_artist, "Jy/beam"),
+        (axes[2], rust_artist, "Jy/beam"),
+        (axes[3], diff_artist, "Jy/beam"),
+    ]:
+        colorbar = fig.colorbar(artist, ax=ax, fraction=0.046, pad=0.02)
+        colorbar.set_label(label)
     for ax in axes:
         ax.set_xticks([])
         ax.set_yticks([])
     fig.suptitle(title)
+    valid_count = int(np.count_nonzero(shared_valid))
+    total_count = int(shared_valid.size)
+    casa_rms = float(np.sqrt(np.nanmean(casa[shared_valid] * casa[shared_valid]))) if valid_count else float("nan")
+    rust_rms = float(np.sqrt(np.nanmean(rust[shared_valid] * rust[shared_valid]))) if valid_count else float("nan")
+    diff_rms = float(np.sqrt(np.nanmean(valid_diff * valid_diff))) if valid_count else float("nan")
+    diff_max_abs = float(np.nanmax(np.abs(valid_diff))) if valid_count else float("nan")
+    rel_diff_rms = float(diff_rms / abs(casa_rms)) if np.isfinite(casa_rms) and abs(casa_rms) > 0 else float("nan")
+    casa_seconds = timings.get(f"{timing_key}_casa_seconds")
+    rust_seconds = timings.get(f"{timing_key}_rust_seconds")
+    speed_ratio = float(rust_seconds / casa_seconds) if casa_seconds and rust_seconds else None
+    metrics = (
+        f"stats on shared valid PB/mask support: {valid_count}/{total_count} pixels "
+        f"({100.0 * valid_count / max(total_count, 1):.1f}%); "
+        f"RMS CASA={sci(casa_rms)}, casa-rs={sci(rust_rms)}, diff={sci(diff_rms)}, "
+        f"diff/CASA={rel_diff_rms:.2f}x, max|diff|={sci(diff_max_abs)}; "
+        f"wall CASA={seconds(casa_seconds)}, casa-rs={seconds(rust_seconds)}"
+    )
+    if speed_ratio is not None:
+        metrics += f", casa-rs/CASA={speed_ratio:.2f}x"
+    fig.text(0.5, 0.01, metrics, ha="center", va="bottom", fontsize=9)
     panel = outdir / f"{name}-{product.strip('.')}-panel.png"
     fig.savefig(panel, dpi=150)
     plt.close(fig)
     return {
         "panel_png": str(panel),
-        "casa_rms": float(np.sqrt(np.nanmean(casa * casa))),
-        "rust_rms": float(np.sqrt(np.nanmean(rust * rust))),
-        "diff_rms": float(np.sqrt(np.nanmean(diff * diff))),
-        "diff_max_abs": float(np.nanmax(np.abs(diff))),
+        "casa_rms": casa_rms,
+        "rust_rms": rust_rms,
+        "diff_rms": diff_rms,
+        "diff_max_abs": diff_max_abs,
+        "diff_rms_over_casa_rms": rel_diff_rms,
+        "shared_valid_pixels": valid_count,
+        "total_pixels": total_count,
+        "casa_valid_pixels": int(np.count_nonzero(casa_mask)),
+        "rust_valid_pixels": int(np.count_nonzero(rust_mask)),
+        "casa_seconds": casa_seconds,
+        "rust_seconds": rust_seconds,
+        "rust_over_casa_wall_time": speed_ratio,
     }
 
+timings = read_timings()
 summary_path = outdir / "wave6-issue53-mosaic-panel-summary.json"
 if summary_path.exists() and dataset != "all":
     with open(summary_path, "r", encoding="utf-8") as handle:
@@ -308,6 +425,7 @@ if want_dataset("alma"):
         outdir / "alma-antennae-north" / "casa-antennae-north-cont-clean",
         outdir / "alma-antennae-north" / "rust-antennae-north-cont-clean",
         ".residual",
+        "alma",
     )
     summary["alma_image_pbcor"] = write_panel(
         "alma-antennae-north-cont-clean",
@@ -316,6 +434,7 @@ if want_dataset("alma"):
         outdir / "alma-antennae-north" / "casa-antennae-north-cont-clean",
         outdir / "alma-antennae-north" / "rust-antennae-north-cont-clean",
         ".image.pbcor",
+        "alma",
     )
 if want_dataset("vla"):
     summary["vla_image"] = write_panel(
@@ -325,6 +444,7 @@ if want_dataset("vla"):
         outdir / "vla-3c391" / "casa-3c391-ctm-spw0-multiscale",
         outdir / "vla-3c391" / "rust-3c391-ctm-spw0-multiscale",
         ".image",
+        "vla",
     )
     summary["vla_image_pbcor"] = write_panel(
         "vla-3c391-multiscale",
@@ -333,6 +453,7 @@ if want_dataset("vla"):
         outdir / "vla-3c391" / "casa-3c391-ctm-spw0-multiscale",
         outdir / "vla-3c391" / "rust-3c391-ctm-spw0-multiscale",
         ".image.pbcor",
+        "vla",
     )
 with open(summary_path, "w", encoding="utf-8") as handle:
     json.dump(summary, handle, indent=2, sort_keys=True)

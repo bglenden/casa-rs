@@ -5722,6 +5722,11 @@ fn pb_correct_image_product(image: &Array4<f32>, pb: &Array4<f32>, pb_limit: f32
     corrected
 }
 
+fn pb_support_mask_product(pb: &Array4<f32>, pb_limit: f32) -> ArrayD<bool> {
+    pb.mapv(|value| value.is_finite() && value > pb_limit)
+        .into_dyn()
+}
+
 fn write_products(
     config: &CliConfig,
     coords: &CoordinateSystem,
@@ -5918,6 +5923,10 @@ fn write_products(
         ),
         RunProducts::Mtmfs(_) => unreachable!("MTMFS products are handled by the early return"),
     };
+    let mosaic_pb_product = debug_weight_image.map(mosaic_pb_product_from_weight);
+    let mosaic_support_mask = mosaic_pb_product
+        .as_ref()
+        .map(|pb| pb_support_mask_product(pb, config.mosaic_pb_limit));
     write_single_product(
         &PathBuf::from(format!("{base}.psf")),
         psf,
@@ -5929,17 +5938,18 @@ fn write_products(
         channel_frequencies_hz,
         reffreq_hz,
     )?;
-    write_single_product(
-        &PathBuf::from(format!("{base}.residual")),
-        residual,
+    write_single_product_inner(SingleProductWrite {
+        path: &PathBuf::from(format!("{base}.residual")),
+        data: residual,
         coords,
-        residual_units,
-        residual_beams,
-        "residual",
+        units: residual_units,
+        beam_set: residual_beams,
+        role: "residual",
         plane_stokes,
         channel_frequencies_hz,
         reffreq_hz,
-    )?;
+        mask: mosaic_support_mask.as_ref(),
+    })?;
     write_single_product(
         &PathBuf::from(format!("{base}.model")),
         model,
@@ -5951,17 +5961,18 @@ fn write_products(
         channel_frequencies_hz,
         reffreq_hz,
     )?;
-    write_single_product(
-        &PathBuf::from(format!("{base}.image")),
-        image,
+    write_single_product_inner(SingleProductWrite {
+        path: &PathBuf::from(format!("{base}.image")),
+        data: image,
         coords,
-        image_units,
-        image_beams,
-        "image",
+        units: image_units,
+        beam_set: image_beams,
+        role: "image",
         plane_stokes,
         channel_frequencies_hz,
         reffreq_hz,
-    )?;
+        mask: mosaic_support_mask.as_ref(),
+    })?;
     write_single_product(
         &PathBuf::from(format!("{base}.sumwt")),
         sumwt,
@@ -5986,32 +5997,34 @@ fn write_products(
             channel_frequencies_hz,
             reffreq_hz,
         )?;
-        let pb_product = mosaic_pb_product_from_weight(weight_image);
-        write_single_product(
-            &PathBuf::from(format!("{base}.pb")),
-            &pb_product,
+        let pb_product = mosaic_pb_product.expect("mosaic PB product computed from weight image");
+        write_single_product_inner(SingleProductWrite {
+            path: &PathBuf::from(format!("{base}.pb")),
+            data: &pb_product,
             coords,
-            "",
-            ImageBeamSet::default(),
-            "pb",
+            units: "",
+            beam_set: ImageBeamSet::default(),
+            role: "pb",
             plane_stokes,
             channel_frequencies_hz,
             reffreq_hz,
-        )?;
+            mask: mosaic_support_mask.as_ref(),
+        })?;
         if config.pbcor {
             let pbcor_product =
                 pb_correct_image_product(image, &pb_product, config.mosaic_pb_limit);
-            write_single_product(
-                &PathBuf::from(format!("{base}.image.pbcor")),
-                &pbcor_product,
+            write_single_product_inner(SingleProductWrite {
+                path: &PathBuf::from(format!("{base}.image.pbcor")),
+                data: &pbcor_product,
                 coords,
-                image_units,
-                ImageBeamSet::default(),
-                "image.pbcor",
+                units: image_units,
+                beam_set: ImageBeamSet::default(),
+                role: "image.pbcor",
                 plane_stokes,
                 channel_frequencies_hz,
                 reffreq_hz,
-            )?;
+                mask: mosaic_support_mask.as_ref(),
+            })?;
         }
     }
 
@@ -6212,12 +6225,60 @@ fn write_single_product(
     channel_frequencies_hz: &[f64],
     reffreq_hz: f64,
 ) -> Result<(), String> {
+    write_single_product_inner(SingleProductWrite {
+        path,
+        data,
+        coords,
+        units,
+        beam_set,
+        role,
+        plane_stokes,
+        channel_frequencies_hz,
+        reffreq_hz,
+        mask: None,
+    })
+}
+
+struct SingleProductWrite<'a> {
+    path: &'a Path,
+    data: &'a Array4<f32>,
+    coords: &'a CoordinateSystem,
+    units: &'a str,
+    beam_set: ImageBeamSet,
+    role: &'a str,
+    plane_stokes: &'a str,
+    channel_frequencies_hz: &'a [f64],
+    reffreq_hz: f64,
+    mask: Option<&'a ArrayD<bool>>,
+}
+
+fn write_single_product_inner(spec: SingleProductWrite<'_>) -> Result<(), String> {
+    let SingleProductWrite {
+        path,
+        data,
+        coords,
+        units,
+        beam_set,
+        role,
+        plane_stokes,
+        channel_frequencies_hz,
+        reffreq_hz,
+        mask,
+    } = spec;
     remove_existing_product(path)?;
     let mut image = PagedImage::<f32>::create(data.shape().to_vec(), coords.clone(), path)
         .map_err(|error| format!("create image {}: {error}", path.display()))?;
     image
         .put_slice(&data.clone().into_dyn(), &[0, 0, 0, 0])
         .map_err(|error| format!("write pixels {}: {error}", path.display()))?;
+    if let Some(mask) = mask {
+        image
+            .put_mask("mask0", mask)
+            .map_err(|error| format!("write mask {}: {error}", path.display()))?;
+        image
+            .set_default_mask("mask0")
+            .map_err(|error| format!("set default mask {}: {error}", path.display()))?;
+    }
     image
         .set_units(units)
         .map_err(|error| format!("set units {}: {error}", path.display()))?;
@@ -9520,6 +9581,12 @@ mod tests {
         assert_eq!(corrected[[0, 1, 0, 0]], 4.0);
         assert_eq!(corrected[[1, 0, 0, 0]], 0.0);
         assert_eq!(corrected[[1, 1, 0, 0]], 0.0);
+
+        let support = pb_support_mask_product(&pb, 0.1);
+        assert!(support[[0, 0, 0, 0]]);
+        assert!(support[[0, 1, 0, 0]]);
+        assert!(!support[[1, 0, 0, 0]]);
+        assert!(!support[[1, 1, 0, 0]]);
     }
 
     #[test]
