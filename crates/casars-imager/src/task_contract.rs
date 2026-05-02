@@ -745,6 +745,9 @@ pub struct ImagerRunTaskRequest {
     /// Mosaic primary-beam cutoff used for flat-noise normalization.
     #[serde(default = "default_mosaic_pb_limit")]
     pub mosaic_pb_limit: f32,
+    /// Write CASA-style PB-corrected mosaic image products.
+    #[serde(default)]
+    pub pbcor: bool,
     /// Residual-refresh cadence.
     #[serde(default = "default_minor_cycle_length")]
     pub minor_cycle_length: usize,
@@ -820,6 +823,7 @@ impl ImagerRunTaskRequest {
             nsigma: config.nsigma,
             psf_cutoff: config.psf_cutoff,
             mosaic_pb_limit: config.mosaic_pb_limit,
+            pbcor: config.pbcor,
             minor_cycle_length: config.minor_cycle_length,
             cyclefactor: config.cyclefactor,
             min_psf_fraction: config.min_psf_fraction,
@@ -898,6 +902,7 @@ impl ImagerRunTaskRequest {
             nsigma: self.nsigma,
             psf_cutoff: self.psf_cutoff,
             mosaic_pb_limit: self.mosaic_pb_limit,
+            pbcor: self.pbcor,
             minor_cycle_length: self.minor_cycle_length,
             cyclefactor: self.cyclefactor,
             min_psf_fraction: self.min_psf_fraction,
@@ -1062,6 +1067,12 @@ pub enum ImagerArtifactKind {
     Model,
     /// Restored image.
     Image,
+    /// Mosaic weight/sensitivity image.
+    Weight,
+    /// Mosaic primary-beam image.
+    PrimaryBeam,
+    /// Primary-beam-corrected restored image.
+    ImagePbcor,
     /// Spectral-index image.
     Alpha,
 }
@@ -1073,6 +1084,9 @@ impl ImagerArtifactKind {
             Self::Residual => "residual",
             Self::Model => "model",
             Self::Image => "image",
+            Self::Weight => "weight",
+            Self::PrimaryBeam => "pb",
+            Self::ImagePbcor => "image.pbcor",
             Self::Alpha => "alpha",
         }
     }
@@ -1345,6 +1359,23 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
                     preview,
                 ));
             }
+            if request.pbcor {
+                for (kind, label) in [
+                    (ImagerArtifactKind::PrimaryBeam, "Primary Beam"),
+                    (ImagerArtifactKind::ImagePbcor, "PB-corrected Image"),
+                ] {
+                    let suffix = kind.as_suffix();
+                    let preview = request
+                        .write_preview_pngs
+                        .then(|| PathBuf::from(format!("{base}.{suffix}.png")));
+                    artifacts.push(artifact(
+                        kind,
+                        label.to_string(),
+                        PathBuf::from(format!("{base}.{suffix}")),
+                        preview,
+                    ));
+                }
+            }
         }
     }
     artifacts
@@ -1538,6 +1569,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -1591,6 +1623,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -1827,6 +1860,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -1980,6 +2014,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,

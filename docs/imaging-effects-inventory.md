@@ -2,7 +2,11 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-02
-Verification: `cargo test -p casa-imaging mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule`
+Verification:
+- `cargo test -p casa-imaging mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule`
+- `cargo test -p casa-imaging mosaic_clean_reduces_residual_peak_and_tracks_pb_weight_image`
+- `cargo test -p casars-imager pbcor_products_apply_primary_beam_cutoff`
+- `CASA_RS_WAVE6_DATASET=alma scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels`
 
 ## Purpose
 
@@ -22,11 +26,11 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 | `fwproj.f` / `fmosft.f` `dphase` paths | per-row phase correction in wproject and mosaic gridders | `casars-imager` row preparation, `casa-imaging` wproject/mosaic projectors | partial; mosaic tutorial proof still needed on #161/#169 |
 | `SimplePBConvFunc::findConvFunction` | homogeneous mosaic PB convolution, beam-frequency bucketing, support search | `casa-imaging::build_mosaic_projector`, `infer_mosaic_beam_frequencies_hz` | partial; dirty MFS only before #53 |
 | `SimplePBConvFunc::addPBToFlux` | add PB coverage only when pointing center pixel is inside the image | `mosaic_pointing_contributes_by_simple_pb_center` | implemented as the source-backed #50 rule |
-| `PBMosaicFT::getImage` | PB/flat-noise normalization and `pblimit` cutoff | `MosaicGridderConfig::pb_limit`, `casars-imager --pblimit` | partial; cutoff is now configurable, but cleaned mosaic/PB-corrected products remain #53 work |
-| `tclean(gridder='mosaic')` product writing | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, PB/weight-like products | `casars-imager::write_products` | partial; mosaic weight/sensitivity is now emitted as `.weight` when present |
-| CASA minor-cycle controllers | cleaned mosaic images, masks, thresholds, cycle controls | `run_cotton_schwab_controller` for standard MFS only | missing for mosaic; #53 owns extending beyond dirty MFS |
+| `PBMosaicFT::getImage` | PB/flat-noise normalization and `pblimit` cutoff | `MosaicGridderConfig::pb_limit`, `casars-imager --pblimit`, `casars-imager --pbcor` | implemented for the homogeneous mosaic MFS proof path; exact CASA PB math remains tracked by visual panel residuals |
+| `tclean(gridder='mosaic')` product writing | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, PB/weight-like products | `casars-imager::write_products` | implemented for mosaic MFS `.weight`, `.pb`, and optional `.image.pbcor`; panel proof started in #53 |
+| CASA minor-cycle controllers | cleaned mosaic images, masks, thresholds, cycle controls | standard controller plus mosaic image-domain PSF refresh path | partial; mosaic `niter > 0` now runs for Hogbom/Clark/Multiscale, with visibility-domain major-cycle refresh still a parity limitation |
 | CASA cube mosaic path | spectral cube imaging with frequency-dependent PB and common beams | `run_cube` standard gridder only | missing for mosaic; required by #161 line products |
-| CASA `pbcor` products | PB-corrected restored images with cutoff semantics | none | missing; #53 follow-up before tutorial closeout if figures require PB-corrected products |
+| CASA `pbcor` products | PB-corrected restored images with cutoff semantics | `mosaic_pb_product_from_weight`, `pb_correct_image_product`, `--pbcor` | implemented for mosaic MFS products using the current mosaic weight image and explicit `--pblimit` cutoff |
 | CASA `usemask='auto-multithresh'` | automask generation | manual `--mask-box` / `--mask-image` only | missing; #53 follow-up when tutorials require automask products |
 | CASA `startmodel` / `outlierfile` | model seeding and outlier-field orchestration | none | missing; keep out of #161/#169 unless the tutorial product needs it |
 
@@ -36,8 +40,8 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 |---|---|---|---|---|---|
 | Standard MFS | implemented for selected rows and phase center | standard convolution gridder | Hogbom/Clark/Multiscale/MTMFS paths exist | normal image sidecars | reusable for non-mosaic Wave 6 rows |
 | WProject MFS | partial, source-backed dirty gates exist | wproject projector | standard CLEAN controller path | normal image sidecars | not first Wave 6 blocker |
-| Mosaic MFS dirty | source-backed center-pixel contribution rule, phase-gradient projector | homogeneous ALMA/EVLA PB models, beam-frequency buckets, natural weighting | intentionally not run when `niter > 0` | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, `.weight` | first #161/#169 blocker |
-| Mosaic MFS cleaned | same as dirty path needed | same as dirty plus residual/model major-cycle refresh | missing | missing restored parity evidence | #53 prerequisite |
+| Mosaic MFS dirty | source-backed center-pixel contribution rule, phase-gradient projector | homogeneous ALMA/EVLA PB models, beam-frequency buckets, natural/Briggs weighting | dirty path remains available | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, `.weight`, `.pb` | reused by #53 panel harness |
+| Mosaic MFS cleaned | same as dirty path | same as dirty plus image-domain residual/model refresh | Hogbom/Clark/Multiscale now run for `niter > 0`; exact visibility-domain major-cycle refresh remains a parity limitation | restored and PB-corrected products now written for MFS mosaic | first ALMA #161 proof generated; VLA #169 proof uses the same panel harness |
 | Mosaic cube | phase/PB must be channel aware | missing from cube runner | missing | missing cube/moment-ready products | #161 line products |
 | Heterogeneous mosaic / AW-style | not yet part of Wave 6 proof | partial or future | missing | missing | defer unless #161/#169 force it |
 
@@ -57,9 +61,10 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 - #50 owns the pointing contribution rule. Current CASA evidence supports a
   center-pixel rule for the `SimplePBConvFunc` path, not a broad PB-wing overlap
   estimate.
-- #53 owns the remaining tutorial-visible `tclean` surface: cleaned mosaic,
-  mosaic cube, PB-corrected products, automasking, start models, outliers, and
-  any weighting controls needed by #161 or #169.
+- #53 owns the remaining tutorial-visible `tclean` surface. The current tranche
+  implements cleaned MFS mosaic and PB-corrected products, while mosaic cube,
+  automasking, start models, outliers, and exact visibility-domain major-cycle
+  refresh remain follow-up scope if required by #161 or #169.
 - #161 and #169 must show the final proof with tutorial data and human-review
   artifact documents.
 - #163, #177, and #181 are follow-on breadth tutorials that reuse the same

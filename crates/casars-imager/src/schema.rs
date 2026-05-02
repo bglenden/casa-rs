@@ -587,6 +587,17 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 required: false,
                 advanced: true,
             }),
+            toggle_argument(ToggleArgumentConfig {
+                id: "pbcor",
+                label: "PB Correct",
+                order: 39,
+                true_flags: &["--pbcor"],
+                false_flags: &[],
+                default: Some("false"),
+                help: "Write mosaic primary-beam-corrected image products",
+                group: "Stage Parameters",
+                advanced: true,
+            }),
             option_argument(OptionArgumentConfig {
                 id: "cyclefactor",
                 label: "Cycle Factor",

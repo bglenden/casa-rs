@@ -53,7 +53,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use image::{ImageBuffer, Rgb};
-use ndarray::{Array2, Array4, ArrayD, IxDyn, s};
+use ndarray::{Array2, Array4, ArrayD, IxDyn, Zip, s};
 use num_complex::{Complex32, Complex64};
 
 pub use managed_output::{
@@ -403,6 +403,7 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
         "mosaic_pb_limit".to_string(),
         config.mosaic_pb_limit.to_string(),
     );
+    manifest.insert("pbcor".to_string(), config.pbcor.to_string());
     manifest.insert(
         "minor_cycle_length".to_string(),
         config.minor_cycle_length.to_string(),
@@ -1605,6 +1606,8 @@ pub struct CliConfig {
     pub psf_cutoff: f32,
     /// Mosaic primary-beam cutoff used for flat-noise normalization.
     pub mosaic_pb_limit: f32,
+    /// Write CASA-style PB-corrected mosaic image products.
+    pub pbcor: bool,
     /// Residual-refresh cadence.
     pub minor_cycle_length: usize,
     /// CASA-style cycle-threshold scale factor.
@@ -1665,6 +1668,7 @@ impl CliConfig {
         let mut nsigma = 0.0f32;
         let mut psf_cutoff = 0.35f32;
         let mut mosaic_pb_limit = 0.1f32;
+        let mut pbcor = false;
         let mut minor_cycle_length = 8usize;
         let mut cyclefactor = 1.0f32;
         let mut min_psf_fraction = 0.1f32;
@@ -1902,6 +1906,10 @@ impl CliConfig {
                         .map_err(|error| format!("parse --pblimit: {error}"))?;
                     continue;
                 }
+                "--pbcor" => {
+                    pbcor = true;
+                    continue;
+                }
                 "--minor-cycle-length" => {
                     minor_cycle_length = next_value(&mut args, "--minor-cycle-length")?
                         .parse()
@@ -2029,6 +2037,7 @@ impl CliConfig {
             nsigma,
             psf_cutoff,
             mosaic_pb_limit,
+            pbcor,
             minor_cycle_length,
             cyclefactor,
             min_psf_fraction,
@@ -2272,6 +2281,18 @@ impl SelectedMainArrayColumn {
             .ok_or_else(|| {
                 format!(
                     "{} data missing for selected row slot {}",
+                    self.column_name, row_slot
+                )
+            })
+    }
+
+    fn get_optional(&self, row_slot: usize) -> Result<Option<&ArrayValue>, String> {
+        self.values
+            .get(row_slot)
+            .map(|value| value.as_ref())
+            .ok_or_else(|| {
+                format!(
+                    "{} selected row slot {} is out of bounds",
                     self.column_name, row_slot
                 )
             })
@@ -4012,14 +4033,7 @@ impl PreparedSelection {
                 .unwrap_or(freq_ref);
             let use_density_batches = config.weighting != WeightingMode::Natural;
             let use_model_interpolation_batches = !(config.dirty_only || config.niter == 0);
-            let selected_frequency_range_hz = [
-                *output_channel_frequencies_hz
-                    .first()
-                    .ok_or_else(|| "channel selection resolved to zero frequencies".to_string())?,
-                *output_channel_frequencies_hz
-                    .last()
-                    .ok_or_else(|| "channel selection resolved to zero frequencies".to_string())?,
-            ];
+            let selected_frequency_range_hz = frequency_range_hz(&output_channel_frequencies_hz)?;
             let reffreq_hz =
                 0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
             let corr_types = polarization
@@ -4307,9 +4321,10 @@ impl PreparedSelection {
         timings.weight_column += stage_started_at.elapsed();
         let stage_started_at = Instant::now();
         let weight_spectrum_row = weight_spectrum
-            .map(|column| column.get(row_slot))
+            .map(|column| column.get_optional(row_slot))
             .transpose()
             .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
+        let weight_spectrum_row = weight_spectrum_row.flatten();
         timings.weight_spectrum += stage_started_at.elapsed();
         let adapt_started_at = Instant::now();
         let data_2d = ComplexRow2d::new(data)?;
@@ -5675,6 +5690,38 @@ impl PreparedSelection {
     }
 }
 
+fn mosaic_pb_product_from_weight(weight_image: &Array2<f32>) -> Array4<f32> {
+    let peak = weight_image
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .fold(0.0f32, f32::max);
+    let mut pb = Array2::<f32>::zeros(weight_image.dim());
+    if peak > 0.0 {
+        Zip::from(&mut pb)
+            .and(weight_image)
+            .for_each(|pb_value, weight_value| {
+                let normalized = (*weight_value).max(0.0) / peak;
+                if normalized.is_finite() && normalized > 0.0 {
+                    *pb_value = normalized.sqrt();
+                }
+            });
+    }
+    expand_plane_for_write(&pb)
+}
+
+fn pb_correct_image_product(image: &Array4<f32>, pb: &Array4<f32>, pb_limit: f32) -> Array4<f32> {
+    let mut corrected = Array4::<f32>::zeros(image.dim());
+    Zip::from(&mut corrected).and(image).and(pb).for_each(
+        |corrected_value, image_value, pb_value| {
+            if pb_value.is_finite() && *pb_value > pb_limit {
+                *corrected_value = *image_value / *pb_value;
+            }
+        },
+    );
+    corrected
+}
+
 fn write_products(
     config: &CliConfig,
     coords: &CoordinateSystem,
@@ -5939,6 +5986,33 @@ fn write_products(
             channel_frequencies_hz,
             reffreq_hz,
         )?;
+        let pb_product = mosaic_pb_product_from_weight(weight_image);
+        write_single_product(
+            &PathBuf::from(format!("{base}.pb")),
+            &pb_product,
+            coords,
+            "",
+            ImageBeamSet::default(),
+            "pb",
+            plane_stokes,
+            channel_frequencies_hz,
+            reffreq_hz,
+        )?;
+        if config.pbcor {
+            let pbcor_product =
+                pb_correct_image_product(image, &pb_product, config.mosaic_pb_limit);
+            write_single_product(
+                &PathBuf::from(format!("{base}.image.pbcor")),
+                &pbcor_product,
+                coords,
+                image_units,
+                ImageBeamSet::default(),
+                "image.pbcor",
+                plane_stokes,
+                channel_frequencies_hz,
+                reffreq_hz,
+            )?;
+        }
     }
 
     if config.write_preview_pngs {
@@ -5952,6 +6026,16 @@ fn write_products(
                 &PathBuf::from(format!("{base}.weight.png")),
                 &weight_product,
             )?;
+            let pb_product = mosaic_pb_product_from_weight(weight_image);
+            write_preview_png(&PathBuf::from(format!("{base}.pb.png")), &pb_product)?;
+            if config.pbcor {
+                let pbcor_product =
+                    pb_correct_image_product(image, &pb_product, config.mosaic_pb_limit);
+                write_preview_png(
+                    &PathBuf::from(format!("{base}.image.pbcor.png")),
+                    &pbcor_product,
+                )?;
+            }
         }
     }
 
@@ -6379,6 +6463,24 @@ fn plane_to_corr_code(plane: PlaneStokes) -> Option<i32> {
         PlaneStokes::YY => Some(12),
         PlaneStokes::I | PlaneStokes::Q | PlaneStokes::U | PlaneStokes::V => None,
     }
+}
+
+fn frequency_range_hz(frequencies_hz: &[f64]) -> Result<[f64; 2], String> {
+    let mut min_hz = f64::INFINITY;
+    let mut max_hz = f64::NEG_INFINITY;
+    for &frequency_hz in frequencies_hz {
+        if !frequency_hz.is_finite() || frequency_hz <= 0.0 {
+            return Err(
+                "channel selection resolved to a non-positive or non-finite frequency".to_string(),
+            );
+        }
+        min_hz = min_hz.min(frequency_hz);
+        max_hz = max_hz.max(frequency_hz);
+    }
+    if min_hz.is_infinite() {
+        return Err("channel selection resolved to zero frequencies".to_string());
+    }
+    Ok([min_hz, max_hz])
 }
 
 fn correlation_index(corr_types: &[i32], corr_code: i32) -> Option<usize> {
@@ -8061,6 +8163,7 @@ Options:
   --nsigma VALUE            robust-RMS stopping multiplier (default 0.0)
   --psfcutoff VALUE         PSF beam-fit cutoff fraction (default 0.35)
   --pblimit VALUE           mosaic primary-beam cutoff for flat-noise normalization (default 0.1)
+  --pbcor                   write mosaic primary-beam-corrected image products
   --minor-cycle-length N    residual refresh cadence (default 8)
   --cycleniter N            alias for --minor-cycle-length
   --cyclefactor VALUE       cycle-threshold scale factor (default 1.0)
@@ -8980,6 +9083,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9028,6 +9132,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9092,6 +9197,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9148,6 +9254,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9207,6 +9314,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9263,6 +9371,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9311,6 +9420,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9383,6 +9493,7 @@ mod tests {
             OsString::from("direct"),
             OsString::from("--pblimit"),
             OsString::from("0.2"),
+            OsString::from("--pbcor"),
         ])
         .unwrap();
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: -1.0 });
@@ -9391,6 +9502,34 @@ mod tests {
         assert!(config.use_pointing);
         assert_eq!(config.w_term_mode, WTermMode::Direct);
         assert_eq!(config.mosaic_pb_limit, 0.2);
+        assert!(config.pbcor);
+    }
+
+    #[test]
+    fn pbcor_products_apply_primary_beam_cutoff() {
+        let weight = Array2::from_shape_vec((2, 2), vec![4.0, 1.0, 0.04, 0.0]).unwrap();
+        let pb = mosaic_pb_product_from_weight(&weight);
+        assert_eq!(pb[[0, 0, 0, 0]], 1.0);
+        assert_eq!(pb[[0, 1, 0, 0]], 0.5);
+        assert!((pb[[1, 0, 0, 0]] - 0.1).abs() < 1.0e-6);
+        assert_eq!(pb[[1, 1, 0, 0]], 0.0);
+
+        let image = Array4::from_shape_vec((2, 2, 1, 1), vec![2.0, 2.0, 2.0, 2.0]).unwrap();
+        let corrected = pb_correct_image_product(&image, &pb, 0.1);
+        assert_eq!(corrected[[0, 0, 0, 0]], 2.0);
+        assert_eq!(corrected[[0, 1, 0, 0]], 4.0);
+        assert_eq!(corrected[[1, 0, 0, 0]], 0.0);
+        assert_eq!(corrected[[1, 1, 0, 0]], 0.0);
+    }
+
+    #[test]
+    fn frequency_range_hz_accepts_descending_spectral_windows() {
+        assert_eq!(
+            frequency_range_hz(&[344.8e9, 344.2e9, 343.9e9]).unwrap(),
+            [343.9e9, 344.8e9]
+        );
+        assert!(frequency_range_hz(&[]).is_err());
+        assert!(frequency_range_hz(&[1.0e9, f64::NAN]).is_err());
     }
 
     #[test]
@@ -10175,6 +10314,21 @@ mod tests {
     }
 
     #[test]
+    fn selected_weight_spectrum_missing_cells_fall_back_to_weight() {
+        let column = SelectedMainArrayColumn {
+            column_name: "WEIGHT_SPECTRUM",
+            values: vec![None],
+        };
+        assert_eq!(column.get_optional(0).unwrap(), None);
+
+        let weight_row =
+            ArrayValue::Float32(ArrayD::from_shape_vec(vec![2], vec![1.0f32, 2.0]).unwrap());
+        let (weight, source) = resolve_weight_with_source(&weight_row, None, 1, 0).unwrap();
+        assert_eq!(weight, 2.0);
+        assert_eq!(source, WeightSourceKind::Weight);
+    }
+
+    #[test]
     fn explicit_cube_linear_interpolation_drops_when_any_contributor_is_flagged() {
         let data = ArrayValue::Complex32(
             ArrayD::from_shape_vec(
@@ -10408,6 +10562,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10501,6 +10656,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10590,6 +10746,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10731,6 +10888,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10852,6 +11010,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10926,6 +11085,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11032,6 +11192,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11133,6 +11294,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11216,6 +11378,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11353,6 +11516,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11442,6 +11606,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11532,6 +11697,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11617,6 +11783,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11718,6 +11885,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11827,6 +11995,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11913,6 +12082,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12142,6 +12312,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12241,6 +12412,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12357,6 +12529,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12490,6 +12663,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12590,6 +12764,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12690,6 +12865,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12824,6 +13000,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12936,6 +13113,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -13047,6 +13225,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -13136,6 +13315,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -13219,6 +13399,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -13303,6 +13484,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,

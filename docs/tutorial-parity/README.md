@@ -30,6 +30,7 @@ functionality.
 ## Wave 6 Artifacts
 
 - [Breadth expansion issue map](wave-6-breadth-expansion.md)
+- [Issue 53 mosaic panel evidence](wave-6-issue-53-mosaic-panels.md)
 
 ## Source Pages
 

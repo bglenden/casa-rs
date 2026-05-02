@@ -640,19 +640,9 @@ fn run_mosaic_dirty_imaging(
     config: &MosaicGridderConfig,
     total_started: Instant,
 ) -> Result<ImagingResult, ImagingError> {
-    if request.clean.niter > 0 {
-        return Err(ImagingError::Unsupported(
-            "mosaic gridder currently supports dirty MFS imaging only".to_string(),
-        ));
-    }
     if request.w_term_mode != WTermMode::None {
         return Err(ImagingError::Unsupported(
             "mosaic gridder currently supports only w_term_mode='none'".to_string(),
-        ));
-    }
-    if request.weighting != WeightingMode::Natural {
-        return Err(ImagingError::Unsupported(
-            "mosaic gridder currently supports natural weighting only".to_string(),
         ));
     }
 
@@ -670,7 +660,7 @@ fn run_mosaic_dirty_imaging(
     let [nx, ny] = request.geometry.image_shape;
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex32>::zeros((grid_nx, grid_ny));
-    let model = Array2::<f32>::zeros((nx, ny));
+    let mut model = Array2::<f32>::zeros((nx, ny));
     let mut accumulated_residual_image = Array2::<f32>::zeros((nx, ny));
     let mut accumulated_weight_image = Array2::<f32>::zeros((nx, ny));
     let mut reported_sumwt = 0.0f64;
@@ -872,38 +862,83 @@ fn run_mosaic_dirty_imaging(
         .map(|mask| mask.iter().filter(|value| **value).count())
         .unwrap_or(nx * ny);
     let initial_peak = peak_abs_value_masked(&accumulated_residual, request.clean_mask.as_ref());
-    let beam_fit_started = Instant::now();
-    let BeamFitOutcome {
-        beam,
-        warnings,
-        attempts: beam_fit_attempts,
-        cutoff_used: beam_fit_cutoff_used,
-        debug: beam_fit_debug,
-    } = fit_beam_from_psf(
-        &accumulated_psf,
-        request.geometry.cell_size_rad,
-        request.clean.psf_cutoff,
-    );
-    stage_timings.beam_fit += beam_fit_started.elapsed();
-    stage_timings.total = total_started.elapsed();
-
-    Ok(ImagingResult {
-        psf: expand_plane(&accumulated_psf),
-        residual: expand_plane(&accumulated_residual),
-        model: expand_plane(&model),
-        image: expand_plane(&accumulated_residual),
-        sumwt: expand_scalar(reported_sumwt),
-        beam,
-        diagnostics: ImagingDiagnostics {
-            warnings,
-            gridded_samples,
-            skipped_samples,
+    let psf_state = PsfState {
+        psf: accumulated_psf,
+        normalization_sumwt: normalization_sumwt as f32,
+        reported_sumwt,
+        psf_peak,
+        gridded_samples,
+        skipped_samples,
+    };
+    let mut warnings = Vec::<String>::new();
+    let controller_started = Instant::now();
+    let clean_state = if request.clean.niter > 0 {
+        run_mosaic_image_domain_controller(
+            request,
+            &psf_state,
+            &mut stage_timings,
+            &mut model,
+            accumulated_residual,
+            max_psf_sidelobe_level,
+            initial_peak,
+            &mut warnings,
+        )?
+    } else {
+        CottonSchwabState {
+            residual: accumulated_residual,
             major_cycles: 0,
             minor_iterations: 0,
             clean_stop_reason: None,
             minor_cycle_traces: Vec::new(),
+            final_cycle_threshold_jy_per_beam: 0.0,
+        }
+    };
+    let accounted = stage_timings
+        .minor_cycle_solve
+        .saturating_add(stage_timings.major_cycle_refresh);
+    stage_timings.controller_overhead += controller_started.elapsed().saturating_sub(accounted);
+    let residual = clean_state.residual;
+
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    warnings.extend(beam_warnings);
+    let restore_started = Instant::now();
+    let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
+    stage_timings.restore += restore_started.elapsed();
+    let restored_image = &restored_model + &residual;
+    stage_timings.total = total_started.elapsed();
+
+    Ok(ImagingResult {
+        psf: expand_plane(&psf_state.psf),
+        residual: expand_plane(&residual),
+        model: expand_plane(&model),
+        image: expand_plane(&restored_image),
+        sumwt: expand_scalar(psf_state.reported_sumwt),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            major_cycles: casa_major_cycle_count(clean_state.major_cycles, request.clean.niter),
+            minor_iterations: clean_state.minor_iterations,
+            clean_stop_reason: clean_state.clean_stop_reason,
+            minor_cycle_traces: clean_state.minor_cycle_traces,
             initial_residual_peak_jy_per_beam: initial_peak,
-            final_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            ),
             max_abs_w_lambda: request
                 .visibility_batches
                 .iter()
@@ -913,7 +948,7 @@ fn run_mosaic_dirty_imaging(
                 - request.selected_frequency_range_hz[0])
                 / request.reffreq_hz,
             max_psf_sidelobe_level,
-            final_cycle_threshold_jy_per_beam: 0.0,
+            final_cycle_threshold_jy_per_beam: clean_state.final_cycle_threshold_jy_per_beam,
             clean_mask_pixels,
             beam_fit_attempts,
             beam_fit_cutoff_used,
@@ -1339,6 +1374,218 @@ fn run_cotton_schwab_controller(
             "standard MFS CLEAN does not support deconvolver='mtmfs'; use run_mtmfs()".to_string(),
         )),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_mosaic_image_domain_controller(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    stage_timings: &mut ImagingStageTimings,
+    model: &mut Array2<f32>,
+    mut residual: Array2<f32>,
+    max_psf_sidelobe_level: f32,
+    initial_peak: f32,
+    warnings: &mut Vec<String>,
+) -> Result<CottonSchwabState, ImagingError> {
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "mosaic gridder does not support deconvolver='mtmfs'".to_string(),
+        ));
+    }
+    warnings.push(
+        "mosaic CLEAN uses image-domain PSF residual refreshes; exact direction-dependent visibility-domain major-cycle refresh remains a parity limitation"
+            .to_string(),
+    );
+
+    let dirty_residual = residual.clone();
+    let mut multiscale_state = (request.deconvolver == Deconvolver::Multiscale).then(|| {
+        let scales = effective_multiscale_scales(request);
+        build_multiscale_state(&residual, &psf_state.psf, &scales, request.small_scale_bias)
+    });
+    let clark_psf_patch = (request.deconvolver == Deconvolver::Clark).then(|| {
+        build_clark_psf_patch(
+            &psf_state.psf,
+            request.geometry.cell_size_rad,
+            request.clean.psf_cutoff,
+        )
+    });
+    let mut minor_iterations = 0usize;
+    let mut reported_minor_iterations = 0usize;
+    let mut major_cycles = 0usize;
+    let mut clean_stop_reason = None::<CleanStopReason>;
+    let mut minor_cycle_traces = Vec::<MinorCycleTrace>::new();
+    let mut final_cycle_threshold_jy_per_beam = request.clean.threshold_jy_per_beam;
+    let mut min_residual_peak_jy_per_beam = initial_peak;
+    let mut divergence_warned = false;
+    let mut residual_needs_refresh = false;
+
+    while reported_minor_iterations < request.clean.niter {
+        let cycle_peak = match request.deconvolver {
+            Deconvolver::Multiscale => multiscale_state
+                .as_ref()
+                .and_then(|state| select_multiscale_candidate(state, request.clean_mask.as_ref()))
+                .map(|candidate| candidate.strength.abs()),
+            _ => peak_location_masked(&residual, request.clean_mask.as_ref())
+                .map(|(_, value)| value.abs()),
+        };
+        let Some(cycle_peak) = cycle_peak else {
+            clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
+            break;
+        };
+        let cycle_nsigma_threshold_jy_per_beam =
+            nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
+        if let Some(stop_reason) = tolerant_clean_stop_reason(
+            cycle_peak,
+            request.clean.threshold_jy_per_beam,
+            cycle_nsigma_threshold_jy_per_beam,
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
+
+        let remaining_reported = request.clean.niter - reported_minor_iterations;
+        let cycle_reported_niter = remaining_reported.min(request.clean.minor_cycle_length);
+        let start_reported_iteration = reported_minor_iterations;
+        final_cycle_threshold_jy_per_beam =
+            compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+
+        let (outcome, probe) = match request.deconvolver {
+            Deconvolver::Hogbom => (
+                run_hogbom_minor_cycle(
+                    request,
+                    psf_state,
+                    model,
+                    &mut residual,
+                    cycle_reported_niter,
+                    final_cycle_threshold_jy_per_beam,
+                    cycle_nsigma_threshold_jy_per_beam,
+                    stage_timings,
+                ),
+                MinorCycleProbe::default(),
+            ),
+            Deconvolver::Clark => {
+                let patch = clark_psf_patch.as_ref().expect("Clark patch should exist");
+                (
+                    run_clark_minor_cycle(
+                        request,
+                        &psf_state.psf,
+                        model,
+                        &mut residual,
+                        cycle_reported_niter,
+                        final_cycle_threshold_jy_per_beam,
+                        cycle_nsigma_threshold_jy_per_beam,
+                        patch,
+                        stage_timings,
+                    ),
+                    MinorCycleProbe::default(),
+                )
+            }
+            Deconvolver::Multiscale => {
+                let state = multiscale_state
+                    .as_mut()
+                    .expect("multiscale state should exist");
+                let probe = select_multiscale_candidate(state, request.clean_mask.as_ref())
+                    .map(|candidate| MinorCycleProbe {
+                        initial_scale_pixels: Some(
+                            effective_multiscale_scales(request)[candidate.scale_index],
+                        ),
+                        initial_candidate_strength_jy_per_beam: Some(candidate.strength),
+                        initial_candidate_position: Some([
+                            candidate.position.0,
+                            candidate.position.1,
+                        ]),
+                    })
+                    .unwrap_or_default();
+                (
+                    run_multiscale_minor_cycle(
+                        request,
+                        &psf_state.psf,
+                        state,
+                        model,
+                        &mut residual,
+                        cycle_reported_niter,
+                        final_cycle_threshold_jy_per_beam,
+                        cycle_nsigma_threshold_jy_per_beam,
+                        stage_timings,
+                    ),
+                    probe,
+                )
+            }
+            Deconvolver::Mtmfs => unreachable!("MTMFS mosaic was rejected above"),
+        };
+
+        minor_cycle_traces.push(make_minor_cycle_trace(
+            minor_cycle_traces.len(),
+            start_reported_iteration,
+            outcome,
+            cycle_peak,
+            &residual,
+            model,
+            probe,
+        ));
+        minor_iterations += outcome.actual_updates;
+        reported_minor_iterations += outcome.reported_updates;
+        if let Some(reason) = outcome.stop_reason {
+            clean_stop_reason = Some(reason);
+        }
+        if !outcome.updated_model {
+            break;
+        }
+        residual_needs_refresh = true;
+        let minor_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+        update_divergence_state(
+            warnings,
+            &mut min_residual_peak_jy_per_beam,
+            minor_peak,
+            &mut divergence_warned,
+        );
+        if clean_stop_reason.is_none() && reported_minor_iterations >= request.clean.niter {
+            clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+            break;
+        }
+
+        let refresh_started = Instant::now();
+        residual = &dirty_residual - &fft_convolve_real(&psf_state.psf, model);
+        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        major_cycles += 1;
+        residual_needs_refresh = false;
+        if let Some(state) = multiscale_state.as_mut() {
+            refresh_multiscale_dirty_conv_scales(state, &residual);
+        }
+        let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+        let refreshed_nsigma_threshold_jy_per_beam =
+            nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
+        if let Some(stop_reason) = tolerant_clean_stop_reason(
+            refreshed_peak,
+            request.clean.threshold_jy_per_beam,
+            refreshed_nsigma_threshold_jy_per_beam,
+        ) {
+            clean_stop_reason = Some(stop_reason);
+            break;
+        }
+        if outcome.stop_reason.is_some() {
+            break;
+        }
+    }
+
+    if request.clean.niter > 0 && clean_stop_reason.is_none() {
+        clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
+    }
+    if residual_needs_refresh {
+        let refresh_started = Instant::now();
+        residual = &dirty_residual - &fft_convolve_real(&psf_state.psf, model);
+        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        major_cycles += 1;
+    }
+
+    Ok(CottonSchwabState {
+        residual,
+        major_cycles,
+        minor_iterations,
+        clean_stop_reason,
+        minor_cycle_traces,
+        final_cycle_threshold_jy_per_beam,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4696,10 +4943,11 @@ mod tests {
     use super::{
         CleanConfig, CleanStopReason, CompatibilityMode, CubeChannelRequest, CubeImagingRequest,
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
-        HogbomIterationMode, ImageGeometry, ImagingRequest, ImagingStageTimings, MtmfsRequest,
-        ParallelHandBatch, PlaneStokes, PsfState, RestoringBeamMode, StandardGridder,
-        VisibilityBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
-        add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
+        HogbomIterationMode, ImageGeometry, ImagingRequest, ImagingStageTimings,
+        MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
+        PsfState, RestoringBeamMode, StandardGridder, VisibilityBatch, VisibilityMetadataBatch,
+        WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, add_shifted_kernel,
+        apply_chauvenet_clipping, apply_weighting, build_direct_components,
         build_direct_pixel_coordinates, compute_cycle_threshold,
         compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
@@ -4860,6 +5108,87 @@ mod tests {
             ));
         }
         batch
+    }
+
+    fn centered_mosaic_metadata(
+        batch: &VisibilityBatch,
+        frequency_hz: f64,
+    ) -> VisibilityMetadataBatch {
+        VisibilityMetadataBatch {
+            sample_frequency_hz: vec![frequency_hz; batch.len()],
+            beam_frequency_hz: vec![frequency_hz; batch.len()],
+            pointing_direction_rad: vec![[0.0, 0.0]; batch.len()],
+        }
+    }
+
+    #[test]
+    fn mosaic_clean_reduces_residual_peak_and_tracks_pb_weight_image() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [
+            (-95.0, -35.0, 0.0),
+            (-70.0, 40.0, 0.0),
+            (-35.0, -80.0, 0.0),
+            (22.0, 75.0, 0.0),
+            (55.0, -25.0, 0.0),
+            (105.0, 50.0, 0.0),
+        ];
+        let batch = point_source_visibilities(
+            &samples,
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (34.0, 30.0),
+            1.0,
+        );
+        let metadata = centered_mosaic_metadata(&batch, 1.4e9);
+        let gridder_mode = GridderMode::Mosaic(MosaicGridderConfig {
+            phase_center_direction_rad: [0.0, 0.0],
+            primary_beam_model: PrimaryBeamModel::Airy {
+                dish_diameter_m: 25.0,
+                blockage_diameter_m: 0.0,
+            },
+            pb_limit: 0.1,
+            metadata_batches: vec![metadata],
+        });
+        let request = |niter| ImagingRequest {
+            geometry,
+            visibility_batches: vec![batch.clone()],
+            gridder_mode: gridder_mode.clone(),
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Briggs { robust: 0.5 },
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter,
+                gain: 0.2,
+                minor_cycle_length: 2,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let dirty = run_imaging(&request(0)).unwrap();
+        let clean = run_imaging(&request(8)).unwrap();
+
+        assert!(clean.diagnostics.mosaic_weight_image.is_some());
+        assert!(clean.diagnostics.minor_iterations > 0);
+        assert!(clean.diagnostics.major_cycles > 0);
+        assert_eq!(
+            clean.diagnostics.clean_stop_reason,
+            Some(CleanStopReason::IterationLimitReached)
+        );
+        assert!(
+            clean.diagnostics.final_residual_peak_jy_per_beam
+                < dirty.diagnostics.initial_residual_peak_jy_per_beam
+        );
+        assert!(peak_abs_value(&clean.model.slice(s![.., .., 0, 0]).to_owned()) > 0.0);
     }
 
     fn rms_difference(left: &Array2<f32>, right: &Array2<f32>) -> f32 {
