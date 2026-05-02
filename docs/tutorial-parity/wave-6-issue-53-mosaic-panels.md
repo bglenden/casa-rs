@@ -101,7 +101,9 @@ The 3C391 run completed against the official final-calibrated mosaic MS. It
 uses `gridder='mosaic'`, `deconvolver='multiscale'`, scales `[0, 5, 15, 45]`,
 Briggs `robust=0.5`, `niter=500`, `threshold='1.0mJy'`, and PB-corrected
 output. The casa-rs run reported `32039616` gridded samples, `7` major cycles,
-and `41` minor iterations before the divergence guard stopped the run.
+and `41` minor CLEAN iterations/components before the divergence guard stopped
+the run. This is distinct from the requested CASA-style `niter=500` component
+limit, which the guard stops before exhausting.
 
 Wall-clock timing on the local tutorial run:
 
