@@ -400,6 +400,10 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
     manifest.insert("nsigma".to_string(), config.nsigma.to_string());
     manifest.insert("psf_cutoff".to_string(), config.psf_cutoff.to_string());
     manifest.insert(
+        "mosaic_pb_limit".to_string(),
+        config.mosaic_pb_limit.to_string(),
+    );
+    manifest.insert(
         "minor_cycle_length".to_string(),
         config.minor_cycle_length.to_string(),
     );
@@ -1599,6 +1603,8 @@ pub struct CliConfig {
     pub nsigma: f32,
     /// Restoring-beam fit cutoff.
     pub psf_cutoff: f32,
+    /// Mosaic primary-beam cutoff used for flat-noise normalization.
+    pub mosaic_pb_limit: f32,
     /// Residual-refresh cadence.
     pub minor_cycle_length: usize,
     /// CASA-style cycle-threshold scale factor.
@@ -1658,6 +1664,7 @@ impl CliConfig {
         let mut threshold_jy = 0.0f32;
         let mut nsigma = 0.0f32;
         let mut psf_cutoff = 0.35f32;
+        let mut mosaic_pb_limit = 0.1f32;
         let mut minor_cycle_length = 8usize;
         let mut cyclefactor = 1.0f32;
         let mut min_psf_fraction = 0.1f32;
@@ -1889,6 +1896,12 @@ impl CliConfig {
                         .map_err(|error| format!("parse --psfcutoff: {error}"))?;
                     continue;
                 }
+                "--pblimit" => {
+                    mosaic_pb_limit = next_value(&mut args, "--pblimit")?
+                        .parse()
+                        .map_err(|error| format!("parse --pblimit: {error}"))?;
+                    continue;
+                }
                 "--minor-cycle-length" => {
                     minor_cycle_length = next_value(&mut args, "--minor-cycle-length")?
                         .parse()
@@ -1977,6 +1990,9 @@ impl CliConfig {
         if nterms == 0 {
             return Err("--nterms must be at least 1".to_string());
         }
+        if !(mosaic_pb_limit.is_finite() && mosaic_pb_limit > 0.0) {
+            return Err("--pblimit must be finite and > 0".to_string());
+        }
 
         Ok(Self {
             ms: ms.ok_or_else(|| format!("missing --ms\n\n{}", help_text()))?,
@@ -2012,6 +2028,7 @@ impl CliConfig {
             threshold_jy,
             nsigma,
             psf_cutoff,
+            mosaic_pb_limit,
             minor_cycle_length,
             cyclefactor,
             min_psf_fraction,
@@ -3659,6 +3676,7 @@ struct PreparedSelection {
     casa_cube_grid_interpolation: bool,
     use_density_batches: bool,
     use_model_interpolation_batches: bool,
+    mosaic_pb_limit: f32,
     phase_center: PhaseCenter,
     state: PreparedState,
     trace_state: PreparedTraceState,
@@ -4204,6 +4222,7 @@ impl PreparedSelection {
                     ),
                 use_density_batches,
                 use_model_interpolation_batches,
+                mosaic_pb_limit: config.mosaic_pb_limit,
                 phase_center,
                 state,
                 trace_state,
@@ -4226,6 +4245,7 @@ impl PreparedSelection {
                 casa_cube_grid_interpolation: false,
                 use_density_batches: false,
                 use_model_interpolation_batches: false,
+                mosaic_pb_limit: config.mosaic_pb_limit,
                 phase_center: PhaseCenter {
                     field_id: Some(0),
                     angles_rad: [0.0, 0.0],
@@ -5191,6 +5211,7 @@ impl PreparedSelection {
             casa_cube_grid_interpolation: _,
             use_density_batches: _,
             use_model_interpolation_batches: _,
+            mosaic_pb_limit: _,
             phase_center,
             state,
             trace_state: _,
@@ -5263,6 +5284,7 @@ impl PreparedSelection {
             casa_cube_grid_interpolation: _,
             use_density_batches,
             use_model_interpolation_batches,
+            mosaic_pb_limit: _,
             phase_center,
             state,
             trace_state: _,
@@ -5437,6 +5459,7 @@ impl PreparedSelection {
             casa_cube_grid_interpolation: _,
             use_density_batches,
             use_model_interpolation_batches,
+            mosaic_pb_limit,
             phase_center: prepared_phase_center,
             state,
             trace_state,
@@ -5473,7 +5496,8 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
-                let gridder_mode = infer_mfs_gridder_mode(ms, &prepared_phase_center, &samples)?;
+                let gridder_mode =
+                    infer_mfs_gridder_mode(ms, &prepared_phase_center, &samples, mosaic_pb_limit)?;
                 Ok((
                     PreparedInput::Mfs(PlaneInput {
                         phase_center: prepared_phase_center.clone(),
@@ -5504,7 +5528,8 @@ impl PreparedSelection {
                     .map_err(|error| error.to_string())?;
                 let (accepted, rejected) =
                     collapse_pending_pair_traces(samples, transform, plane_stokes);
-                let gridder_mode = infer_mfs_gridder_mode(ms, &prepared_phase_center, &accepted)?;
+                let gridder_mode =
+                    infer_mfs_gridder_mode(ms, &prepared_phase_center, &accepted, mosaic_pb_limit)?;
                 Ok((
                     PreparedInput::Mfs(PlaneInput {
                         phase_center: prepared_phase_center.clone(),
@@ -5901,21 +5926,19 @@ fn write_products(
         channel_frequencies_hz,
         reffreq_hz,
     )?;
-    if env::var_os("CASA_RS_WRITE_MOSAIC_DEBUG_PRODUCTS").is_some() {
-        if let Some(weight_image) = debug_weight_image {
-            let weight_product = expand_plane_for_write(weight_image);
-            write_single_product(
-                &PathBuf::from(format!("{base}.weight")),
-                &weight_product,
-                coords,
-                "",
-                ImageBeamSet::default(),
-                "weight",
-                plane_stokes,
-                channel_frequencies_hz,
-                reffreq_hz,
-            )?;
-        }
+    if let Some(weight_image) = debug_weight_image {
+        let weight_product = expand_plane_for_write(weight_image);
+        write_single_product(
+            &PathBuf::from(format!("{base}.weight")),
+            &weight_product,
+            coords,
+            "",
+            ImageBeamSet::default(),
+            "weight",
+            plane_stokes,
+            channel_frequencies_hz,
+            reffreq_hz,
+        )?;
     }
 
     if config.write_preview_pngs {
@@ -5923,6 +5946,13 @@ fn write_products(
         write_preview_png(&PathBuf::from(format!("{base}.residual.png")), residual)?;
         write_preview_png(&PathBuf::from(format!("{base}.model.png")), model)?;
         write_preview_png(&PathBuf::from(format!("{base}.image.png")), image)?;
+        if let Some(weight_image) = debug_weight_image {
+            let weight_product = expand_plane_for_write(weight_image);
+            write_preview_png(
+                &PathBuf::from(format!("{base}.weight.png")),
+                &weight_product,
+            )?;
+        }
     }
 
     Ok(())
@@ -6870,6 +6900,7 @@ fn infer_mfs_gridder_mode(
     ms: &MeasurementSet,
     phase_center: &PhaseCenter,
     samples: &[PreparedVisibilitySampleTrace],
+    mosaic_pb_limit: f32,
 ) -> Result<GridderMode, String> {
     let phase_center_direction_rad = phase_center.angles_rad;
     let needs_mosaic = samples.iter().any(|sample| {
@@ -6893,7 +6924,7 @@ fn infer_mfs_gridder_mode(
     Ok(GridderMode::Mosaic(MosaicGridderConfig {
         phase_center_direction_rad,
         primary_beam_model: infer_primary_beam_model(ms)?,
-        pb_limit: 0.1,
+        pb_limit: mosaic_pb_limit,
         metadata_batches: chunk_visibility_metadata_batches(samples, DEFAULT_BATCH_SIZE),
     }))
 }
@@ -8029,6 +8060,7 @@ Options:
   --threshold-jy VALUE      absolute CLEAN threshold in Jy/beam
   --nsigma VALUE            robust-RMS stopping multiplier (default 0.0)
   --psfcutoff VALUE         PSF beam-fit cutoff fraction (default 0.35)
+  --pblimit VALUE           mosaic primary-beam cutoff for flat-noise normalization (default 0.1)
   --minor-cycle-length N    residual refresh cadence (default 8)
   --cycleniter N            alias for --minor-cycle-length
   --cyclefactor VALUE       cycle-threshold scale factor (default 1.0)
@@ -8947,6 +8979,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -8994,6 +9027,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9057,6 +9091,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9112,6 +9147,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9170,6 +9206,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9225,6 +9262,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9272,6 +9310,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -9342,6 +9381,8 @@ mod tests {
             OsString::from("--usepointing"),
             OsString::from("--wterm"),
             OsString::from("direct"),
+            OsString::from("--pblimit"),
+            OsString::from("0.2"),
         ])
         .unwrap();
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: -1.0 });
@@ -9349,6 +9390,7 @@ mod tests {
         assert_eq!(config.mask_image, Some(PathBuf::from("demo.mask")));
         assert!(config.use_pointing);
         assert_eq!(config.w_term_mode, WTermMode::Direct);
+        assert_eq!(config.mosaic_pb_limit, 0.2);
     }
 
     #[test]
@@ -10365,6 +10407,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10457,6 +10500,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10545,6 +10589,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10685,6 +10730,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10805,6 +10851,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10878,6 +10925,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -10983,6 +11031,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11083,6 +11132,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11165,6 +11215,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11301,6 +11352,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11389,6 +11441,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11478,6 +11531,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11562,6 +11616,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11662,6 +11717,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11770,6 +11826,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -11855,6 +11912,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12083,6 +12141,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12181,6 +12240,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12296,6 +12356,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12428,6 +12489,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12527,6 +12589,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12626,6 +12689,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12759,6 +12823,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12870,6 +12935,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -12980,6 +13046,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -13068,6 +13135,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -13150,6 +13218,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -13233,6 +13302,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,

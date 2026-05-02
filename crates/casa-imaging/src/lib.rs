@@ -679,9 +679,7 @@ fn run_mosaic_dirty_imaging(
     let mut skipped_samples = 0usize;
 
     for group in groups {
-        // Keep the current center-in-image cull until issue #50 replaces it
-        // with a source-backed PB/image overlap test.
-        if !mosaic_pointing_center_within_image(
+        if !mosaic_pointing_contributes_by_simple_pb_center(
             request.geometry,
             config.phase_center_direction_rad,
             group.pointing_direction_rad,
@@ -1038,11 +1036,16 @@ fn mosaic_projector_sampling(geometry: ImageGeometry) -> usize {
     }
 }
 
-fn mosaic_pointing_center_within_image(
+fn mosaic_pointing_contributes_by_simple_pb_center(
     geometry: ImageGeometry,
     phase_center_direction_rad: [f64; 2],
     pointing_direction_rad: [f64; 2],
 ) -> bool {
+    // CASA's SimplePBConvFunc::addPBToFlux() records PB coverage only when
+    // the pointing center converts to a pixel inside the target image. This is
+    // intentionally a center-pixel rule, not a PB-wing overlap estimate; an
+    // earlier broader estimate admitted far off-image pointings and broke
+    // `papersky_mosaic.ms` parity.
     let [pixel_x, pixel_y] = mosaic_pointing_pixel_position(
         geometry,
         phase_center_direction_rad,
@@ -1056,10 +1059,14 @@ fn mosaic_pointing_center_within_image(
             geometry.ny() as f64 / 2.0 + delta_dec / geometry.cell_size_rad[1].abs(),
         ]
     });
-    pixel_x >= 0.0
-        && pixel_x < geometry.nx() as f64
-        && pixel_y >= 0.0
-        && pixel_y < geometry.ny() as f64
+    mosaic_pointing_pixel_inside_image(geometry, [pixel_x, pixel_y])
+}
+
+fn mosaic_pointing_pixel_inside_image(geometry: ImageGeometry, pixel: [f64; 2]) -> bool {
+    pixel[0] >= 0.0
+        && pixel[0] < geometry.nx() as f64
+        && pixel[1] >= 0.0
+        && pixel[1] < geometry.ny() as f64
 }
 
 fn mosaic_pointing_pixel_offset(
@@ -4696,13 +4703,47 @@ mod tests {
         build_direct_pixel_coordinates, compute_cycle_threshold,
         compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
-        make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason, peak_abs_value,
-        peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle, run_imaging,
-        run_mtmfs, tolerant_clean_stop_reason, trace_cube_channel_residual_refresh,
+        make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
+        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
+        peak_abs_value, peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle,
+        run_imaging, run_mtmfs, tolerant_clean_stop_reason, trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda,
         trace_cube_channel_w_project_plan, trace_cube_weighting, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
+
+    #[test]
+    fn mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule() {
+        let geometry = ImageGeometry {
+            image_shape: [100, 80],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+
+        assert!(mosaic_pointing_pixel_inside_image(geometry, [0.0, 0.0]));
+        assert!(mosaic_pointing_pixel_inside_image(
+            geometry,
+            [99.999, 79.999]
+        ));
+        assert!(!mosaic_pointing_pixel_inside_image(
+            geometry,
+            [-0.001, 40.0]
+        ));
+        assert!(!mosaic_pointing_pixel_inside_image(geometry, [100.0, 40.0]));
+        assert!(!mosaic_pointing_pixel_inside_image(geometry, [50.0, 80.0]));
+
+        let phase_center = [1.0, 0.5];
+        assert!(mosaic_pointing_contributes_by_simple_pb_center(
+            geometry,
+            phase_center,
+            phase_center
+        ));
+        assert!(!mosaic_pointing_contributes_by_simple_pb_center(
+            geometry,
+            phase_center,
+            [phase_center[0] + 2.0, phase_center[1]]
+        ));
+    }
+
     fn point_source_visibilities(
         samples: &[(f64, f64, f64)],
         cell_rad: f64,

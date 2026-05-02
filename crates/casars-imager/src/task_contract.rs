@@ -742,6 +742,9 @@ pub struct ImagerRunTaskRequest {
     /// Restoring-beam fit cutoff.
     #[serde(default = "default_psf_cutoff")]
     pub psf_cutoff: f32,
+    /// Mosaic primary-beam cutoff used for flat-noise normalization.
+    #[serde(default = "default_mosaic_pb_limit")]
+    pub mosaic_pb_limit: f32,
     /// Residual-refresh cadence.
     #[serde(default = "default_minor_cycle_length")]
     pub minor_cycle_length: usize,
@@ -816,6 +819,7 @@ impl ImagerRunTaskRequest {
             threshold_jy: config.threshold_jy,
             nsigma: config.nsigma,
             psf_cutoff: config.psf_cutoff,
+            mosaic_pb_limit: config.mosaic_pb_limit,
             minor_cycle_length: config.minor_cycle_length,
             cyclefactor: config.cyclefactor,
             min_psf_fraction: config.min_psf_fraction,
@@ -845,6 +849,9 @@ impl ImagerRunTaskRequest {
         }
         if self.nterms == 0 {
             return Err("nterms must be at least 1".to_string());
+        }
+        if !(self.mosaic_pb_limit.is_finite() && self.mosaic_pb_limit > 0.0) {
+            return Err("mosaic_pb_limit must be finite and > 0".to_string());
         }
         for scale in &self.multiscale_scales {
             if !(scale.is_finite() && *scale >= 0.0) {
@@ -890,6 +897,7 @@ impl ImagerRunTaskRequest {
             threshold_jy: self.threshold_jy,
             nsigma: self.nsigma,
             psf_cutoff: self.psf_cutoff,
+            mosaic_pb_limit: self.mosaic_pb_limit,
             minor_cycle_length: self.minor_cycle_length,
             cyclefactor: self.cyclefactor,
             min_psf_fraction: self.min_psf_fraction,
@@ -1197,6 +1205,10 @@ fn default_gain() -> f32 {
 
 fn default_psf_cutoff() -> f32 {
     0.35
+}
+
+fn default_mosaic_pb_limit() -> f32 {
+    0.1
 }
 
 fn default_minor_cycle_length() -> usize {
@@ -1525,6 +1537,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -1577,6 +1590,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -1812,6 +1826,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -1964,6 +1979,7 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
