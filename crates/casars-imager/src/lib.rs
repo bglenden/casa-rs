@@ -2259,6 +2259,18 @@ impl SelectedMainArrayColumn {
                 )
             })
     }
+
+    fn get_optional(&self, row_slot: usize) -> Result<Option<&ArrayValue>, String> {
+        self.values
+            .get(row_slot)
+            .map(|value| value.as_ref())
+            .ok_or_else(|| {
+                format!(
+                    "{} selected row slot {} is out of bounds",
+                    self.column_name, row_slot
+                )
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -4287,8 +4299,9 @@ impl PreparedSelection {
         timings.weight_column += stage_started_at.elapsed();
         let stage_started_at = Instant::now();
         let weight_spectrum_row = weight_spectrum
-            .map(|column| column.get(row_slot))
+            .map(|column| column.get_optional(row_slot))
             .transpose()
+            .map(|row| row.flatten())
             .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
         timings.weight_spectrum += stage_started_at.elapsed();
         let adapt_started_at = Instant::now();
@@ -10130,6 +10143,22 @@ mod tests {
             resolve_weight_with_source(&weight_row, Some(&weight_spectrum), 1, 0).unwrap();
         assert_eq!(weight, 4.0);
         assert_eq!(source, WeightSourceKind::WeightSpectrum);
+    }
+
+    #[test]
+    fn selected_optional_array_column_allows_missing_cells() {
+        let column = SelectedMainArrayColumn {
+            column_name: "WEIGHT_SPECTRUM",
+            values: vec![None],
+        };
+
+        assert_eq!(column.get_optional(0).unwrap(), None);
+        assert!(
+            column
+                .get_optional(1)
+                .unwrap_err()
+                .contains("out of bounds")
+        );
     }
 
     #[test]
