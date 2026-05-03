@@ -1734,12 +1734,10 @@ fn build_mosaic_projector(
 }
 
 fn mosaic_projector_sampling(geometry: ImageGeometry) -> usize {
-    let max_axis = geometry.nx().max(geometry.ny());
-    if max_axis < 50 {
-        100
-    } else {
-        ((5000.0 / max_axis as f64).ceil() as usize).max(10)
-    }
+    // CASA's HetArrayConvFunc path uses the `mosaic.oversampling` Aipsrc value,
+    // which defaults to 10, after enforcing a minimum of 10.
+    let _ = geometry;
+    10
 }
 
 fn mosaic_pointing_contributes_by_simple_pb_center(
@@ -5716,12 +5714,34 @@ mod tests {
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
         make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
         mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
-        peak_abs_value, peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle,
-        run_imaging, run_mtmfs, tolerant_clean_stop_reason, trace_cube_channel_residual_refresh,
+        mosaic_projector_sampling, peak_abs_value, peak_location_masked, run_cube, run_dirty_cube,
+        run_hogbom_minor_cycle, run_imaging, run_mtmfs, tolerant_clean_stop_reason,
+        trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda,
         trace_cube_channel_w_project_plan, trace_cube_weighting, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
+
+    #[test]
+    fn mosaic_projector_sampling_matches_casa_hetarray_default() {
+        let line_probe_geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [
+                0.13_f64.to_radians() / 3600.0,
+                0.13_f64.to_radians() / 3600.0,
+            ],
+        };
+        let continuum_geometry = ImageGeometry {
+            image_shape: [750, 750],
+            cell_size_rad: [
+                0.13_f64.to_radians() / 3600.0,
+                0.13_f64.to_radians() / 3600.0,
+            ],
+        };
+
+        assert_eq!(mosaic_projector_sampling(line_probe_geometry), 10);
+        assert_eq!(mosaic_projector_sampling(continuum_geometry), 10);
+    }
 
     #[test]
     fn mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule() {

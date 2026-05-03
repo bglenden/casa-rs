@@ -8,6 +8,7 @@ Verification:
 - `cargo test -p casars-imager pbcor_products_apply_primary_beam_cutoff`
 - `cargo test -p casars-imager cube_pb_product_normalizes_each_channel_plane`
 - `cargo test -p casa-test-support tutorial_dataset_registry_contains_first_wave_candidates`
+- `cargo test -p casa-imaging mosaic_projector_sampling_matches_casa_hetarray_default`
 - `scripts/run-wave6-issue161-antennae.sh target/wave6-issue161-antennae`
 
 Wave issue: #143
@@ -54,8 +55,8 @@ CASA C++ and casa-rs image support.
 
 ## Current Continuum Results
 
-Current run stamp: `20260502T174920-0600`, generated
-`2026-05-02 17:49:20 -0600`.
+Current run stamp: `20260502T180927-0600`, generated
+`2026-05-02 18:09:27 -0600`.
 
 The continuum run completed against local CASA C++ and casa-rs products. The
 runner uses the tutorial mosaic geometry for North and South continuum imaging
@@ -67,11 +68,11 @@ Wall-clock timing on the local tutorial run:
 
 | Runner | Seconds | Relative |
 |---|---:|---:|
-| CASA C++ | `42.621` | `1.00x` |
-| casa-rs | `196.387` | `4.61x CASA` |
+| CASA C++ | `42.026` | `1.00x` |
+| casa-rs | `193.242` | `4.60x CASA` |
 
-The bounded North two-channel dirty line-cube probe took `3.343s` in CASA C++
-and `3.423s` in casa-rs.
+The bounded North two-channel dirty line-cube probe took `3.124s` in CASA C++
+and `2.395s` in casa-rs.
 
 ### Continuum Metrics
 
@@ -80,7 +81,7 @@ Source-region peak-relative differences use shared valid pixels with
 
 | Panel | Shared valid pixels | CASA valid pixels | casa-rs valid pixels | Rust-only valid | CASA-only valid | CASA RMS | Difference RMS | Diff/CASA RMS | source p90 abs(diff)/peak | source max abs(diff)/peak |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| North dirty `.image` | `56562 / 90000` | `56562` | `56569` | `7` | `0` | `0.0005037589748977789` | `0.00003076951378478472` | `0.0610798324556468` | `0.013065663439904404` | `0.041348320178813285` |
+| North dirty `.image` | `56562 / 90000` | `56562` | `56585` | `23` | `0` | `0.0005037589748977789` | `0.0000005228669157339375` | `0.0010379307204204866` | `0.0004913167103931669` | `0.0011243051253385552` |
 | North clean `.residual` | `134322 / 250000` | `134322` | `134378` | `56` | `0` | `0.0004842421539966355` | `0.00000042211890958799533` | `0.0008717103748694464` | `0.0005840204276983746` | `0.001556398039597241` |
 | North clean `.image` | `134322 / 250000` | `134322` | `134378` | `56` | `0` | `0.0004930845920012612` | `0.00000042435802932331366` | `0.0008606191233860907` | `0.0003973664956661594` | `0.0007032833744921095` |
 | South clean `.residual` | `174195 / 562500` | `174199` | `174222` | `27` | `4` | `0.00046585536101634024` | `0.0000013179985508508814` | `0.002829201209524455` | `0.0009942126057312414` | `0.03202537645946853` |
@@ -88,13 +89,13 @@ Source-region peak-relative differences use shared valid pixels with
 
 ### Inspectable Panels
 
-- `target/wave6-issue161-antennae/alma-antennae-north-cont-dirty-image-20260502T174920-0600-panel.png`
-- `target/wave6-issue161-antennae/alma-antennae-north-cont-clean-residual-20260502T174920-0600-panel.png`
-- `target/wave6-issue161-antennae/alma-antennae-north-cont-clean-image-20260502T174920-0600-panel.png`
-- `target/wave6-issue161-antennae/alma-antennae-south-cont-clean-residual-20260502T174920-0600-panel.png`
-- `target/wave6-issue161-antennae/alma-antennae-south-cont-clean-image-20260502T174920-0600-panel.png`
-- `target/wave6-issue161-antennae/alma-antennae-north-line-dirty-probe-image-20260502T174920-0600-panel.png`
-- `target/wave6-issue161-antennae/alma-antennae-north-line-dirty-probe-pb-20260502T174920-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-north-cont-dirty-image-20260502T180927-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-north-cont-clean-residual-20260502T180927-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-north-cont-clean-image-20260502T180927-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-south-cont-clean-residual-20260502T180927-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-south-cont-clean-image-20260502T180927-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-north-line-dirty-probe-image-20260502T180927-0600-panel.png`
+- `target/wave6-issue161-antennae/alma-antennae-north-line-dirty-probe-pb-20260502T180927-0600-panel.png`
 - `target/wave6-issue161-antennae/wave6-issue161-summary.json`
 
 ## Current Line-Cube Probe
@@ -106,20 +107,20 @@ full tutorial line CLEAN or selfcal sequence.
 
 | Probe product | Shared valid pixels | CASA valid pixels | casa-rs valid pixels | CASA RMS | Difference RMS | Diff/CASA RMS | source p90 abs(diff)/peak | source max abs(diff)/peak |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| North dirty line `.image`, channel 0 | `4096 / 4096` | `4096` | `4096` | `0.007540386763608376` | `0.00043732891898679596` | `0.057998207876742466` | `0.0278877279949779` | `0.0675429373295499` |
-| North dirty line `.pb`, channel 0 | `4096 / 4096` | `4096` | `4096` | `0.9160840541070369` | `0.00002234636227047943` | `0.000024393353612362345` | `0.00003415346145629883` | `0.000050187110900878906` |
+| North dirty line `.image`, channel 0 | `4096 / 4096` | `4096` | `4096` | `0.007540386763608376` | `0.000010449885420215083` | `0.001385855360980767` | `0.0009621304710746463` | `0.0016088204622905734` |
+| North dirty line `.pb`, channel 0 | `4096 / 4096` | `4096` | `4096` | `0.9160840541070369` | `0.001388818455867956` | `0.0015160382386763867` | `0.0021275877952575684` | `0.0031310319900512695` |
 
 ## Tutorial Figure Coverage
 
 | CASA Guide visible product | Current #161 status | Evidence / blocker |
 |---|---|---|
 | North and South `plotms` amplitude vs channel plots | Inventoried, not reproduced in this #161 pass | Requires plot-data export/panel parity for this dataset rather than imager capability. |
-| North dirty continuum image | Reproduced with panel and metrics | Difference is larger than the CLEAN products: source p90 `1.31%`, source max `4.13%` of CASA peak. |
+| North dirty continuum image | Reproduced with panel and metrics | Source p90 `0.049%`, source max `0.112%` of CASA peak after matching CASA's HetArray mosaic oversampling. |
 | North and South continuum CLEAN residual images | Reproduced with panels and metrics | North source p90 `0.058%`; South source p90 `0.099%`. South residual has a localized source-region max outlier of `3.20%`. |
 | North and South continuum restored images | Reproduced with panels and metrics | North source p90 `0.040%`; South source p90 `0.060%`. |
 | Line velocity-selection plots | Inventoried, not reproduced in this #161 pass | Downstream line cube workflow is not claimed yet. |
 | Interactive clean-mask screenshots | Inventoried, not reproduced in this #161 pass | The runner uses bounded noninteractive CLEAN for reproducible evidence. |
-| CO(3-2) line cube images | Partially probed, not full tutorial parity | A bounded North two-channel dirty cube now runs with `specmode='cube'`, `gridder='mosaic'`, per-channel weight density, and PB products. The PB probe matches very tightly; the dirty image still has few-percent source-region differences and does not cover full line CLEAN, `restoringbeam='common'`, or `savemodel='modelcolumn'`. |
+| CO(3-2) line cube images | Partially probed, not full tutorial parity | A bounded North two-channel dirty cube now runs with `specmode='cube'`, `gridder='mosaic'`, per-channel weight density, and PB products. The dirty image source p90 is `0.096%` and source max is `0.161%` of CASA peak; this still does not cover full line CLEAN, `restoringbeam='common'`, or `savemodel='modelcolumn'`. |
 | Selfcal channel/model plots and phase calibration plots | Not claimed | Depends on the tutorial line-cube model column and selfcal/applycal chain. |
 | Selfcal comparison images | Not claimed | Depends on the line cube/selfcal chain. |
 | Contour and moment-map products | Not claimed | Depends on line cube products, then `immoments` and contour-panel generation. |
@@ -135,6 +136,12 @@ with sub-percent source-region p90 differences. It also demonstrates that the
 frontend can now keep `gridder='mosaic'` through cube channel preparation and
 write CASA-shaped `.image`, `.pb`, `.weight`, `.psf`, `.residual`, and `.sumwt`
 cube products for the Antennae line selection.
+
+The latest correctness fix matched casa-rs HetArray mosaic convolution
+oversampling to the CASA C++ default of 10. C++ instrumentation on the bounded
+line probe reported `conv_support=6` and `conv_sampling=10`; the earlier
+casa-rs path used `sampling=79` for 64-pixel images, which produced the
+PSF-shaped few-percent dirty-image differences.
 
 It does not close #161. The remaining #161 blockers are the full line CLEAN
 workflow and downstream selfcal/moment/contour/FITS products. The next
