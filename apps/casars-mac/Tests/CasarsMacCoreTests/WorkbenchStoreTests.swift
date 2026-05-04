@@ -12,6 +12,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertFalse(snapshot.leftDockCollapsed)
         XCTAssertEqual(snapshot.selectedDataset, "IRC+10216.ms")
         XCTAssertEqual(snapshot.pythonOwner, .user)
+        XCTAssertEqual(snapshot.interfaceFontSize, WorkbenchState.defaultInterfaceFontSize)
         XCTAssertTrue(snapshot.openTabs.contains("AI Chat"))
         XCTAssertEqual(snapshot.aiProposalStates["proposal-spw"], .pending)
         XCTAssertEqual(
@@ -139,6 +140,26 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.discoveredDatasets, ["probed.ms"])
         XCTAssertEqual(snapshot.probeDiagnostics, ["skipped /data/notes.txt"])
         XCTAssertEqual(store.state.selectedDataset?.spectralWindows, ["spw 0: 4 chan, 1.420000 GHz center"])
+    }
+
+    func testInterfaceFontSizeIsAdjustableClampedAndPreservedAcrossFixtureOpen() {
+        let store = WorkbenchStore.fixture()
+
+        store.adjustInterfaceFontSize(by: 3)
+        XCTAssertEqual(store.state.interfaceFontSize, WorkbenchState.defaultInterfaceFontSize + 3)
+
+        store.setInterfaceFontSize(100)
+        XCTAssertEqual(store.state.interfaceFontSize, WorkbenchState.maximumInterfaceFontSize)
+
+        store.setInterfaceFontSize(5)
+        XCTAssertEqual(store.state.interfaceFontSize, WorkbenchState.minimumInterfaceFontSize)
+
+        store.setInterfaceFontSize(17)
+        store.openFixtureProject()
+        XCTAssertEqual(store.debugSnapshot().interfaceFontSize, 17)
+
+        store.resetInterfaceFontSize()
+        XCTAssertEqual(store.state.interfaceFontSize, WorkbenchState.defaultInterfaceFontSize)
     }
 }
 

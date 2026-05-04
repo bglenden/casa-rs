@@ -6,7 +6,10 @@ import SwiftUI
 
 @main
 struct CasarsMacApp: App {
+    private static let interfaceFontSizeKey = "interfaceFontSize"
+
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @AppStorage(Self.interfaceFontSizeKey) private var interfaceFontSize = WorkbenchState.defaultInterfaceFontSize
     @StateObject private var store = WorkbenchStore.fixture()
 
     init() {
@@ -24,7 +27,17 @@ struct CasarsMacApp: App {
         WindowGroup("casa-rs Workbench") {
             WorkbenchView(store: store)
                 .frame(minWidth: 1120, minHeight: 720)
+                .environment(\.workbenchFontSize, store.state.interfaceFontSize)
                 .background(WindowConfigurationView())
+                .onAppear {
+                    syncStoreFontSizeFromSettings()
+                }
+                .onChange(of: interfaceFontSize) { newValue in
+                    store.setInterfaceFontSize(newValue)
+                }
+                .onChange(of: store.state.interfaceFontSize) { newValue in
+                    interfaceFontSize = newValue
+                }
         }
         .commands {
             CommandMenu("Workbench") {
@@ -72,11 +85,34 @@ struct CasarsMacApp: App {
                 }
                 .keyboardShortcut("f", modifiers: [.command, .control])
             }
+
+            CommandMenu("Display") {
+                Button("Increase Font Size") {
+                    setStoredInterfaceFontSize(interfaceFontSize + 1)
+                }
+                .keyboardShortcut("+", modifiers: [.command])
+                .disabled(interfaceFontSize >= WorkbenchState.maximumInterfaceFontSize)
+
+                Button("Decrease Font Size") {
+                    setStoredInterfaceFontSize(interfaceFontSize - 1)
+                }
+                .keyboardShortcut("-", modifiers: [.command])
+                .disabled(interfaceFontSize <= WorkbenchState.minimumInterfaceFontSize)
+
+                Button("Reset Font Size") {
+                    setStoredInterfaceFontSize(WorkbenchState.defaultInterfaceFontSize)
+                }
+                .keyboardShortcut("0", modifiers: [.command])
+            }
+        }
+        Settings {
+            DisplaySettingsView(interfaceFontSize: $interfaceFontSize)
         }
     }
 
     private func dumpDebugState(simulateMainFlow: Bool, projectPath: String?) {
         let store = WorkbenchStore.fixture()
+        store.setInterfaceFontSize(storedInterfaceFontSize())
         if let projectPath {
             store.openProject(path: projectPath)
         }
@@ -103,6 +139,60 @@ struct CasarsMacApp: App {
             return nil
         }
         return arguments[index + 1]
+    }
+
+    private func syncStoreFontSizeFromSettings() {
+        store.setInterfaceFontSize(interfaceFontSize)
+    }
+
+    private func setStoredInterfaceFontSize(_ size: Double) {
+        interfaceFontSize = WorkbenchState.clampedInterfaceFontSize(size)
+    }
+
+    private func storedInterfaceFontSize() -> Double {
+        guard let value = UserDefaults.standard.object(forKey: Self.interfaceFontSizeKey) as? Double else {
+            return WorkbenchState.defaultInterfaceFontSize
+        }
+        return WorkbenchState.clampedInterfaceFontSize(value)
+    }
+}
+
+struct DisplaySettingsView: View {
+    @Binding var interfaceFontSize: Double
+
+    var body: some View {
+        Form {
+            Section("Display") {
+                HStack {
+                    Text("Font size")
+                    Spacer()
+                    Stepper(
+                        value: $interfaceFontSize,
+                        in: WorkbenchState.minimumInterfaceFontSize...WorkbenchState.maximumInterfaceFontSize,
+                        step: 1
+                    ) {
+                        Text("\(Int(interfaceFontSize.rounded())) pt")
+                            .monospacedDigit()
+                            .frame(width: 48, alignment: .trailing)
+                    }
+                    .accessibilityIdentifier("settings.fontSize.stepper")
+                }
+
+                Slider(
+                    value: $interfaceFontSize,
+                    in: WorkbenchState.minimumInterfaceFontSize...WorkbenchState.maximumInterfaceFontSize,
+                    step: 1
+                )
+                .accessibilityIdentifier("settings.fontSize.slider")
+
+                Button("Reset Font Size") {
+                    interfaceFontSize = WorkbenchState.defaultInterfaceFontSize
+                }
+                .accessibilityIdentifier("settings.fontSize.reset")
+            }
+        }
+        .padding(24)
+        .frame(width: 360)
     }
 }
 

@@ -41,7 +41,9 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openFixtureProject() {
+        let interfaceFontSize = state.interfaceFontSize
         state = FixtureWorkbench.makeState()
+        state.interfaceFontSize = interfaceFontSize
     }
 
     public func openProject(path: String) {
@@ -257,6 +259,18 @@ public final class WorkbenchStore: ObservableObject {
 
     public func setPythonOwner(_ owner: PythonOwner) {
         state.python.owner = owner
+    }
+
+    public func setInterfaceFontSize(_ size: Double) {
+        state.interfaceFontSize = WorkbenchState.clampedInterfaceFontSize(size)
+    }
+
+    public func adjustInterfaceFontSize(by delta: Double) {
+        setInterfaceFontSize(state.interfaceFontSize + delta)
+    }
+
+    public func resetInterfaceFontSize() {
+        setInterfaceFontSize(WorkbenchState.defaultInterfaceFontSize)
     }
 
     public func debugSnapshot() -> DebugStateSnapshot {

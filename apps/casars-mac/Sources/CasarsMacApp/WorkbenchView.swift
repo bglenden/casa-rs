@@ -59,7 +59,7 @@ struct CommandSearchField: View {
                 store.runCommandQuery()
             }
             Text("⌘K")
-                .font(.caption)
+                .workbenchFont(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 10)
@@ -79,7 +79,7 @@ struct LeftDockView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text(store.state.project.name)
-                        .font(.headline)
+                        .workbenchFont(.headline)
                         .lineLimit(1)
 
                     Spacer()
@@ -96,7 +96,7 @@ struct LeftDockView: View {
                 }
 
                 Text(store.state.project.rootPath)
-                    .font(.caption)
+                    .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -119,7 +119,7 @@ struct LeftDockView: View {
                         VStack(spacing: 2) {
                             Image(systemName: mode.systemImage)
                             Text(mode.title)
-                                .font(.caption2)
+                                .workbenchFont(.caption2)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.65)
                         }
@@ -167,7 +167,7 @@ struct LeftDockView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Text("Fixture project tree")
-                    .font(.caption)
+                    .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding()
@@ -178,12 +178,12 @@ struct LeftDockView: View {
             List(store.state.history) { event in
                 VStack(alignment: .leading, spacing: 3) {
                     Text(event.title)
-                        .font(.subheadline)
+                        .workbenchFont(.subheadline)
                     Text(event.timestamp)
-                        .font(.caption)
+                        .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
                     Text(event.reason)
-                        .font(.caption)
+                        .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -209,7 +209,7 @@ struct DatasetRow: View {
                 Text(dataset.name)
                     .lineLimit(1)
                 Text(dataset.path)
-                    .font(.caption)
+                    .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -234,7 +234,7 @@ struct InspectorView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("Inspector")
-                    .font(.headline)
+                    .workbenchFont(.headline)
                 Spacer()
                 Button {
                     store.setInspectorCollapsed(true)
@@ -256,12 +256,12 @@ struct InspectorView: View {
                 Divider()
 
                 Text(dataset.notes)
-                    .font(.caption)
+                    .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text("Fixture/demo metadata")
-                    .font(.caption2)
+                    .workbenchFont(.caption2)
                     .foregroundStyle(.tertiary)
                     .padding(.top, 4)
             } else {
@@ -283,10 +283,10 @@ struct InfoRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.caption)
+                .workbenchFont(.caption)
                 .foregroundStyle(.secondary)
             Text(value.isEmpty ? "None" : value)
-                .font(.subheadline)
+                .workbenchFont(.subheadline)
                 .lineLimit(3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

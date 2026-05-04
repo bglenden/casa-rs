@@ -261,6 +261,10 @@ public struct ProcessingHistoryEvent: Identifiable, Codable, Equatable {
 }
 
 public struct WorkbenchState: Codable, Equatable {
+    public static let defaultInterfaceFontSize = 13.0
+    public static let minimumInterfaceFontSize = 10.0
+    public static let maximumInterfaceFontSize = 22.0
+
     public var project: ProjectFixture
     public var dockMode: DockMode
     public var leftDockCollapsed: Bool
@@ -277,6 +281,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var commandQuery: String
     public var lastErrors: [String]
     public var probeDiagnostics: [String]
+    public var interfaceFontSize: Double
 
     public init(
         project: ProjectFixture,
@@ -294,7 +299,8 @@ public struct WorkbenchState: Codable, Equatable {
         history: [ProcessingHistoryEvent],
         commandQuery: String,
         lastErrors: [String],
-        probeDiagnostics: [String] = []
+        probeDiagnostics: [String] = [],
+        interfaceFontSize: Double = Self.defaultInterfaceFontSize
     ) {
         self.project = project
         self.dockMode = dockMode
@@ -312,10 +318,15 @@ public struct WorkbenchState: Codable, Equatable {
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors
         self.probeDiagnostics = probeDiagnostics
+        self.interfaceFontSize = Self.clampedInterfaceFontSize(interfaceFontSize)
     }
 
     public var selectedDataset: DatasetSummary? {
         project.datasets.first { $0.id == selectedDatasetID }
+    }
+
+    public static func clampedInterfaceFontSize(_ value: Double) -> Double {
+        min(maximumInterfaceFontSize, max(minimumInterfaceFontSize, value))
     }
 }
 
@@ -337,6 +348,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var processingHistoryEvents: [String]
     public var commandQuery: String
     public var lastErrors: [String]
+    public var interfaceFontSize: Double
 
     public init(state: WorkbenchState) {
         activeProject = state.project.name
@@ -358,5 +370,6 @@ public struct DebugStateSnapshot: Codable, Equatable {
         processingHistoryEvents = state.history.map(\.title)
         commandQuery = state.commandQuery
         lastErrors = state.lastErrors
+        interfaceFontSize = state.interfaceFontSize
     }
 }

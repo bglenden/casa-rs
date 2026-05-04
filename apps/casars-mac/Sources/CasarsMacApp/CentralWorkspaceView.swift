@@ -118,7 +118,7 @@ struct DatasetExplorerPanel: View {
                 }
 
                 Text("Fixture/demo data")
-                    .font(.caption)
+                    .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(20)
@@ -135,8 +135,7 @@ struct TaskPanel: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Calibrate")
-                        .font(.title3)
-                        .fontWeight(.semibold)
+                        .workbenchFont(.title3, weight: .semibold)
                     Text("Fixture task with dataset-scoped parameters")
                         .foregroundStyle(.secondary)
                 }
@@ -175,7 +174,7 @@ struct TaskPanel: View {
     private var parameterBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Parameters")
-                .font(.headline)
+                .workbenchFont(.headline)
             Picker("Field", selection: Binding(
                 get: { store.state.taskParameters.selectedField },
                 set: { _ in }
@@ -208,17 +207,16 @@ struct TaskPanel: View {
     private var aiProposalBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("AI proposal")
-                .font(.headline)
+                .workbenchFont(.headline)
 
             ForEach(store.state.aiProposals) { proposal in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(proposal.title)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                        .workbenchFont(.subheadline, weight: .semibold)
                     Text("\(proposal.parameterName): \(proposal.oldValue) -> \(proposal.newValue)")
-                        .font(.caption)
+                        .workbenchFont(.caption)
                     Text(proposal.detail)
-                        .font(.caption)
+                        .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
 
                     HStack {
@@ -235,7 +233,7 @@ struct TaskPanel: View {
                         .accessibilityIdentifier("aiProposal.reject.\(proposal.id)")
 
                         Text(proposal.state.rawValue)
-                            .font(.caption)
+                            .workbenchFont(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -249,14 +247,14 @@ struct TaskPanel: View {
     private var runBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Run state")
-                .font(.headline)
+                .workbenchFont(.headline)
             ProgressView(value: store.state.taskRun.progress)
             Text(store.state.taskRun.state.rawValue)
-                .font(.caption)
+                .workbenchFont(.caption)
                 .foregroundStyle(.secondary)
             ForEach(store.state.taskRun.logLines, id: \.self) { line in
                 Text(line)
-                    .font(.system(.caption, design: .monospaced))
+                    .workbenchFont(.caption, design: .monospaced)
             }
         }
         .padding()
@@ -277,7 +275,7 @@ struct AIChatPanel: View {
             List(store.state.aiMessages) { message in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(message.author.rawValue)
-                        .font(.caption)
+                        .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
                     Text(message.text)
                 }
@@ -320,12 +318,12 @@ struct PythonPanel: View {
             }
 
             Text(store.state.python.owner == .ai ? "AI owns input; user entry is locked." : "User owns input.")
-                .font(.caption)
+                .workbenchFont(.caption)
                 .foregroundStyle(store.state.python.owner == .ai ? .orange : .secondary)
                 .accessibilityIdentifier("python.ownershipState")
 
             TextEditor(text: .constant(store.state.python.buffer))
-                .font(.system(.body, design: .monospaced))
+                .workbenchFont(.body, design: .monospaced)
                 .disabled(store.state.python.owner == .ai)
                 .frame(minHeight: 180)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
@@ -354,17 +352,17 @@ struct HistoryPanel: View {
                 ForEach(store.state.history) { event in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(event.timestamp)
-                            .font(.caption)
+                            .workbenchFont(.caption)
                             .foregroundStyle(.secondary)
                         Text(event.title)
-                            .font(.headline)
+                            .workbenchFont(.headline)
                         Text(event.reason)
                         Text("Approval: \(event.approval)")
-                            .font(.caption)
+                            .workbenchFont(.caption)
                             .foregroundStyle(.secondary)
                         ForEach(event.affectedPaths, id: \.self) { path in
                             Text(path)
-                                .font(.system(.caption, design: .monospaced))
+                                .workbenchFont(.caption, design: .monospaced)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -388,10 +386,9 @@ struct PanelHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.title2)
-                .fontWeight(.semibold)
+                .workbenchFont(.title2, weight: .semibold)
             Text(subtitle)
-                .font(.subheadline)
+                .workbenchFont(.subheadline)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -405,10 +402,10 @@ struct SummaryBox: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.headline)
+                .workbenchFont(.headline)
             ForEach(values.isEmpty ? ["None"] : values, id: \.self) { value in
                 Text(value)
-                    .font(.caption)
+                    .workbenchFont(.caption)
                     .lineLimit(1)
             }
         }
@@ -426,15 +423,15 @@ struct PlotPlaceholder: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.headline)
+                .workbenchFont(.headline)
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.accentColor.opacity(0.10))
                 VStack(spacing: 10) {
                     Image(systemName: "waveform.path.ecg.rectangle")
-                        .font(.largeTitle)
+                        .workbenchFont(.largeTitle)
                     Text(caption)
-                        .font(.caption)
+                        .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
