@@ -48,5 +48,26 @@ with tempfile.TemporaryDirectory() as tmp:
     assert direct_probe.kind == frontend.DatasetKind.MEASUREMENT_SET
     assert direct_probe.data_columns == ["DATA"]
 
+    plot = frontend.build_measurement_set_plot(
+        frontend.MeasurementSetPlotRequest(
+            dataset_path=str(ms_path),
+            preset=frontend.MeasurementSetPlotPreset.AMPLITUDE_VS_FREQUENCY,
+            field=None,
+            spectral_window=None,
+            correlation=None,
+            data_column="DATA",
+            width=640,
+            height=420,
+            max_plot_points=10000,
+        )
+    )
+    assert plot.preset == frontend.MeasurementSetPlotPreset.AMPLITUDE_VS_FREQUENCY
+    assert plot.render.image_format == "png"
+    assert plot.image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    assert plot.x_axis.label
+    assert plot.y_axis.label
+    assert plot.series
+    assert plot.sampling.rendered_point_count > 0
+
 print("frontend services Python UniFFI smoke passed")
 PY

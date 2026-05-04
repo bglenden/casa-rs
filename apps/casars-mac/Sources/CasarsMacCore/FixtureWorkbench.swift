@@ -119,6 +119,7 @@ public enum FixtureWorkbench {
                 """,
                 capturedPlots: ["Amplitude vs. channel preview", "UV distance scatter preview"]
             ),
+            measurementSetPlots: [:],
             history: [
                 ProcessingHistoryEvent(
                     id: "hist-import",

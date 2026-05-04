@@ -24,16 +24,78 @@ public struct UniFFIProjectProbeClient: ProjectProbeClient {
     }
 }
 
+public struct MeasurementSetPlotBuildRequest: Equatable {
+    public var datasetPath: String
+    public var preset: MeasurementSetExplorerPlotPreset
+    public var field: String?
+    public var spectralWindow: String?
+    public var correlation: String?
+    public var dataColumn: String
+    public var width: UInt32
+    public var height: UInt32
+    public var maxPlotPoints: UInt64
+
+    public init(
+        datasetPath: String,
+        preset: MeasurementSetExplorerPlotPreset,
+        field: String?,
+        spectralWindow: String?,
+        correlation: String?,
+        dataColumn: String,
+        width: UInt32 = 960,
+        height: UInt32 = 600,
+        maxPlotPoints: UInt64 = 250_000
+    ) {
+        self.datasetPath = datasetPath
+        self.preset = preset
+        self.field = field
+        self.spectralWindow = spectralWindow
+        self.correlation = correlation
+        self.dataColumn = dataColumn
+        self.width = width
+        self.height = height
+        self.maxPlotPoints = maxPlotPoints
+    }
+}
+
+public protocol MeasurementSetPlotClient {
+    func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary
+}
+
+public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
+    public init() {}
+
+    public func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary {
+        let result = try CasarsFrontendServices.buildMeasurementSetPlot(
+            request: CasarsFrontendServices.MeasurementSetPlotRequest(
+                datasetPath: request.datasetPath,
+                preset: CasarsFrontendServices.MeasurementSetPlotPreset(preset: request.preset),
+                field: request.field,
+                spectralWindow: request.spectralWindow,
+                correlation: request.correlation,
+                dataColumn: request.dataColumn,
+                width: request.width,
+                height: request.height,
+                maxPlotPoints: request.maxPlotPoints
+            )
+        )
+        return MeasurementSetPlotResultSummary(result: result)
+    }
+}
+
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
     private let probeClient: ProjectProbeClient
+    private let plotClient: MeasurementSetPlotClient
 
     public init(
         state: WorkbenchState = EmptyWorkbench.makeState(),
-        probeClient: ProjectProbeClient = UniFFIProjectProbeClient()
+        probeClient: ProjectProbeClient = UniFFIProjectProbeClient(),
+        plotClient: MeasurementSetPlotClient = UniFFIMeasurementSetPlotClient()
     ) {
         self.state = state
         self.probeClient = probeClient
+        self.plotClient = plotClient
     }
 
     public static func empty() -> WorkbenchStore {
@@ -110,6 +172,87 @@ public final class WorkbenchStore: ObservableObject {
 
         state.selectedDatasetID = datasetID
         openExplorer(for: dataset)
+    }
+
+    public func setMeasurementSetPlotPreset(_ preset: MeasurementSetExplorerPlotPreset, datasetID: String) {
+        var plotState = measurementSetPlotState(for: datasetID)
+        plotState.preset = preset
+        plotState.status = .idle
+        plotState.lastError = nil
+        state.measurementSetPlots[datasetID] = plotState
+    }
+
+    public func setMeasurementSetPlotField(_ field: String?, datasetID: String) {
+        var plotState = measurementSetPlotState(for: datasetID)
+        plotState.selectedField = normalizedPickerValue(field)
+        plotState.status = .idle
+        plotState.lastError = nil
+        state.measurementSetPlots[datasetID] = plotState
+    }
+
+    public func setMeasurementSetPlotSpectralWindow(_ spectralWindow: String?, datasetID: String) {
+        var plotState = measurementSetPlotState(for: datasetID)
+        plotState.selectedSpectralWindow = normalizedPickerValue(spectralWindow)
+        plotState.status = .idle
+        plotState.lastError = nil
+        state.measurementSetPlots[datasetID] = plotState
+    }
+
+    public func setMeasurementSetPlotCorrelation(_ correlation: String?, datasetID: String) {
+        var plotState = measurementSetPlotState(for: datasetID)
+        plotState.selectedCorrelation = normalizedPickerValue(correlation)
+        plotState.status = .idle
+        plotState.lastError = nil
+        state.measurementSetPlots[datasetID] = plotState
+    }
+
+    public func setMeasurementSetPlotDataColumn(_ dataColumn: String, datasetID: String) {
+        var plotState = measurementSetPlotState(for: datasetID)
+        plotState.dataColumn = dataColumn
+        plotState.status = .idle
+        plotState.lastError = nil
+        state.measurementSetPlots[datasetID] = plotState
+    }
+
+    public func runMeasurementSetPlot(datasetID: String) {
+        guard !state.isDemoProject else {
+            state.lastErrors.append("Real MeasurementSet plots are not available in the demo project")
+            return
+        }
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        guard dataset.kind == .measurementSet else {
+            state.lastErrors.append("Dataset \(dataset.name) is not a MeasurementSet")
+            return
+        }
+
+        var plotState = measurementSetPlotState(for: datasetID)
+        plotState.status = .running
+        plotState.lastError = nil
+        state.measurementSetPlots[datasetID] = plotState
+
+        do {
+            let result = try plotClient.buildPlot(
+                request: MeasurementSetPlotBuildRequest(
+                    datasetPath: dataset.path,
+                    preset: plotState.preset,
+                    field: selectorToken(plotState.selectedField),
+                    spectralWindow: selectorToken(plotState.selectedSpectralWindow),
+                    correlation: selectorToken(plotState.selectedCorrelation),
+                    dataColumn: plotState.dataColumn
+                )
+            )
+            plotState.result = result
+            plotState.status = .ready
+            state.measurementSetPlots[datasetID] = plotState
+        } catch {
+            plotState.status = .failed
+            plotState.lastError = "\(error)"
+            state.measurementSetPlots[datasetID] = plotState
+            state.lastErrors.append("Render plot for \(dataset.name): \(error)")
+        }
     }
 
     public func setInspectorCollapsed(_ collapsed: Bool) {
@@ -360,6 +503,9 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func openExplorer(for dataset: DatasetSummary) {
+        if dataset.kind == .measurementSet && !state.isDemoProject {
+            _ = measurementSetPlotState(for: dataset.id)
+        }
         openTab(
             WorkbenchTab(
                 id: dataset.explorerTabID,
@@ -368,6 +514,49 @@ public final class WorkbenchStore: ObservableObject {
                 datasetID: dataset.id
             )
         )
+    }
+
+    private func measurementSetPlotState(for datasetID: String) -> MeasurementSetExplorerPlotState {
+        if let plotState = state.measurementSetPlots[datasetID] {
+            return plotState
+        }
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            return MeasurementSetExplorerPlotState(
+                datasetID: datasetID,
+                preset: .amplitudeVsFrequency,
+                selectedField: nil,
+                selectedSpectralWindow: nil,
+                selectedCorrelation: nil,
+                dataColumn: "DATA",
+                status: .idle,
+                lastError: nil,
+                result: nil
+            )
+        }
+        let plotState = MeasurementSetExplorerPlotState.defaultState(for: dataset)
+        state.measurementSetPlots[datasetID] = plotState
+        return plotState
+    }
+
+    private func normalizedPickerValue(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty, value != "all" else {
+            return nil
+        }
+        return value
+    }
+
+    private func selectorToken(_ value: String?) -> String? {
+        guard let value = normalizedPickerValue(value) else {
+            return nil
+        }
+        if value.hasPrefix("spw ") {
+            let remainder = value.dropFirst(4)
+            return String(remainder.prefix { $0.isNumber })
+        }
+        if let colon = value.firstIndex(of: ":") {
+            return String(value[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value
     }
 }
 
@@ -419,5 +608,62 @@ extension DatasetKind {
         case .table:
             self = .table
         }
+    }
+}
+
+extension CasarsFrontendServices.MeasurementSetPlotPreset {
+    init(preset: MeasurementSetExplorerPlotPreset) {
+        switch preset {
+        case .amplitudeVsFrequency:
+            self = .amplitudeVsFrequency
+        case .amplitudeVsChannel:
+            self = .amplitudeVsChannel
+        case .amplitudeVsUvDistance:
+            self = .amplitudeVsUvDistance
+        case .amplitudeVsTime:
+            self = .amplitudeVsTime
+        }
+    }
+}
+
+extension PlotAxisSummary {
+    init(axis: CasarsFrontendServices.PlotAxisMetadata) {
+        self.init(id: axis.id, label: axis.label, unit: axis.unit)
+    }
+}
+
+extension PlotSeriesSummary {
+    init(series: CasarsFrontendServices.PlotSeriesMetadata) {
+        self.init(
+            label: series.label,
+            colorGroup: series.colorGroup,
+            pointCount: series.pointCount,
+            firstRow: series.firstRow,
+            lastRow: series.lastRow
+        )
+    }
+}
+
+extension MeasurementSetPlotResultSummary {
+    init(result: CasarsFrontendServices.MeasurementSetPlotResult) {
+        self.init(
+            presetLabel: result.presetLabel,
+            title: result.title,
+            summary: result.summary,
+            datasetPath: result.datasetPath,
+            dataColumn: result.dataColumn,
+            selectionSummary: result.selectionSummary,
+            xAxis: PlotAxisSummary(axis: result.xAxis),
+            yAxis: PlotAxisSummary(axis: result.yAxis),
+            series: result.series.map(PlotSeriesSummary.init(series:)),
+            requestedMaxPoints: result.sampling.requestedMaxPoints,
+            renderedPointCount: result.sampling.renderedPointCount,
+            diagnostics: result.sampling.diagnostics,
+            renderer: result.render.renderer,
+            imageFormat: result.render.imageFormat,
+            imageWidth: result.render.width,
+            imageHeight: result.render.height,
+            imageBytes: result.imageBytes
+        )
     }
 }

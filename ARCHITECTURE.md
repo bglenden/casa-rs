@@ -58,7 +58,10 @@ than a shared background service model.
 `apps/casars-mac` is a SwiftPM package for the macOS-native GUI prototype. Its
 workbench state remains headlessly testable in SwiftPM. GUI-Wave-1 introduces a
 small UniFFI runtime boundary through `casars-frontend-services` for read-only
-project and dataset probing. This is not a shared background service contract:
+project and dataset probing. GUI-Wave-3 extends that boundary with a narrow
+MeasurementSet explorer plot API: Rust owns `casa-ms` / `msexplore` plot payload
+construction and PNG rendering, while Swift owns native controls, layout, and
+debug-state projection. This is not a shared background service contract:
 long-running tasks, cancellation, and provider execution remain separate
 protocol work.
 

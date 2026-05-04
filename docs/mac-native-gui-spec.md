@@ -521,25 +521,37 @@ These choices should be made before the first clickable prototype:
   visible.
 - Reserve a global command/search surface early so dataset, task, AI, and
   navigation actions do not become disconnected panel-local affordances.
-- Start with fixture providers, static plot/image assets, and a narrow real
-  dataset-discovery probe.
+- Start with fixture providers, static plot/image assets, and narrow real
+  dataset-discovery and MeasurementSet plotting probes.
 - Do not start with Electron, Tauri, or a webview UI.
 - Use UniFFI as the primary binding mechanism for new frontend service APIs
   that should be available to both Swift and Python. Existing PyO3 Python
   bindings may remain temporarily, but they should be consolidated later so the
   project does not keep two long-term binding systems for the same frontend
   capabilities.
-- Defer charting, image rendering, Python kernel, and real AI provider library
-  choices until panel behavior proves what is needed.
+- Defer general charting, image rendering, Python kernel, and real AI provider
+  library choices until panel behavior proves what is needed.
+- For the first real MeasurementSet explorer plotting slice, render plots in
+  Rust through the existing `casa-ms` `msexplore` plotting path and pass a PNG
+  plus typed axis, series, selection, sampling, and renderer metadata through
+  UniFFI. SwiftUI owns controls and native layout; it does not reimplement
+  scientific plotting semantics.
+- This PNG-first rendering is a first useful artifact, not the final
+  interaction model. The durable boundary is that Rust owns scientific data
+  extraction, MS selection semantics, averaging, decimation, and point
+  provenance. Swift should eventually be able to render and adjust plots
+  interactively from bounded typed point arrays returned by Rust, with the PNG
+  retained as a preview/export artifact when useful.
 
 The key architectural requirement is not just "native SwiftUI." It is
 "native SwiftUI over a headlessly testable workbench core."
 
 GUI-Wave-0 implements this in `apps/casars-mac` as a SwiftPM package with a
 `CasarsMacCore` library and `casars-mac` SwiftUI executable. GUI-Wave-1 adds
-`casars-frontend-services` for read-only real project/dataset probing while
-keeping task execution, image exploration, Python execution, and AI behavior
-stubbed unless separately approved.
+`casars-frontend-services` for read-only real project/dataset probing. GUI-Wave-3
+adds a first real MeasurementSet plot API through the same frontend-service
+boundary while keeping task execution, image exploration, Python execution, and
+AI behavior stubbed unless separately approved.
 
 ## Testability And Debuggability
 

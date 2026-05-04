@@ -18,6 +18,7 @@ cargo_metadata = "0.19"
 casa-images = { path = "../casa-images" }
 casa-ms = { path = "../casa-ms" }
 casa-tables = { path = "../casa-tables" }
+image = { version = "0.25", default-features = false, features = ["png"] }
 thiserror.workspace = true
 uniffi = "0.29.5"
 uniffi_bindgen = "0.29.5"

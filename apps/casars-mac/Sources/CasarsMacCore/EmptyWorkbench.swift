@@ -30,6 +30,7 @@ public enum EmptyWorkbench {
             aiMessages: [],
             aiProposals: [],
             python: PythonPanelState(owner: .user, buffer: "", capturedPlots: []),
+            measurementSetPlots: [:],
             history: [],
             commandQuery: "",
             lastErrors: [],

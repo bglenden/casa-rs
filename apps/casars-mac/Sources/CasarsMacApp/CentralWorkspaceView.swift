@@ -1,4 +1,5 @@
 import CasarsMacCore
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -248,10 +249,7 @@ struct DatasetExplorerPanel: View {
                 SummaryBox(title: "Subtables", values: dataset.subtables)
             }
 
-            SummaryBox(
-                title: "Plotting",
-                values: ["Scientific plots are tracked separately in GUI-Wave-3 (#190)."]
-            )
+            MeasurementSetPlotPanel(store: store, dataset: dataset)
         } else {
             SummaryBox(
                 title: "Explorer Status",
@@ -358,6 +356,169 @@ private struct ExplorerPlot: Identifiable {
     let caption: String
 
     var id: String { title }
+}
+
+struct MeasurementSetPlotPanel: View {
+    @ObservedObject var store: WorkbenchStore
+    let dataset: DatasetSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Plots")
+                        .workbenchFont(.headline)
+                    Text(plotState.result?.selectionSummary ?? "Render a real MeasurementSet plot from Rust msexplore data.")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    store.runMeasurementSetPlot(datasetID: dataset.id)
+                } label: {
+                    Label(plotState.result == nil ? "Render" : "Re-render", systemImage: "play.fill")
+                }
+                .disabled(plotState.status == .running)
+                .accessibilityIdentifier("msPlot.render.\(dataset.id)")
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Preset", selection: Binding(
+                        get: { plotState.preset },
+                        set: { store.setMeasurementSetPlotPreset($0, datasetID: dataset.id) }
+                    )) {
+                        ForEach(MeasurementSetExplorerPlotPreset.allCases) { preset in
+                            Text(preset.title).tag(preset)
+                        }
+                    }
+                    .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
+
+                    Picker("Field", selection: Binding(
+                        get: { plotState.selectedField ?? "all" },
+                        set: { store.setMeasurementSetPlotField($0, datasetID: dataset.id) }
+                    )) {
+                        Text("all").tag("all")
+                        ForEach(dataset.fields, id: \.self) { field in
+                            Text(field).tag(field)
+                        }
+                    }
+                    .accessibilityIdentifier("msPlot.field.\(dataset.id)")
+
+                    Picker("Spectral window", selection: Binding(
+                        get: { plotState.selectedSpectralWindow ?? "all" },
+                        set: { store.setMeasurementSetPlotSpectralWindow($0, datasetID: dataset.id) }
+                    )) {
+                        Text("all").tag("all")
+                        ForEach(dataset.spectralWindows, id: \.self) { spectralWindow in
+                            Text(spectralWindow).tag(spectralWindow)
+                        }
+                    }
+                    .accessibilityIdentifier("msPlot.spw.\(dataset.id)")
+
+                    Picker("Correlation", selection: Binding(
+                        get: { plotState.selectedCorrelation ?? "all" },
+                        set: { store.setMeasurementSetPlotCorrelation($0, datasetID: dataset.id) }
+                    )) {
+                        Text("all").tag("all")
+                        ForEach(dataset.correlations, id: \.self) { correlation in
+                            Text(correlation).tag(correlation)
+                        }
+                    }
+                    .accessibilityIdentifier("msPlot.correlation.\(dataset.id)")
+
+                    Picker("Data column", selection: Binding(
+                        get: { plotState.dataColumn },
+                        set: { store.setMeasurementSetPlotDataColumn($0, datasetID: dataset.id) }
+                    )) {
+                        ForEach(dataset.dataColumns.isEmpty ? ["DATA"] : dataset.dataColumns, id: \.self) { column in
+                            Text(column).tag(column)
+                        }
+                    }
+                    .accessibilityIdentifier("msPlot.dataColumn.\(dataset.id)")
+
+                    plotMetadata
+                }
+                .frame(width: 280, alignment: .topLeading)
+
+                plotImage
+            }
+        }
+        .padding()
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("msPlot.panel.\(dataset.id)")
+    }
+
+    private var plotState: MeasurementSetExplorerPlotState {
+        store.state.measurementSetPlots[dataset.id] ?? MeasurementSetExplorerPlotState.defaultState(for: dataset)
+    }
+
+    @ViewBuilder
+    private var plotMetadata: some View {
+        if let result = plotState.result {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(result.presetLabel)
+                    .workbenchFont(.subheadline, weight: .semibold)
+                Text("\(result.xAxis.label) -> \(result.yAxis.label)")
+                Text("\(result.renderedPointCount) points, \(result.series.count) series")
+                Text(result.renderer)
+                ForEach(result.diagnostics, id: \.self) { diagnostic in
+                    Text(diagnostic)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .workbenchFont(.caption)
+            .foregroundStyle(.secondary)
+        } else if let error = plotState.lastError {
+            Text(error)
+                .workbenchFont(.caption)
+                .foregroundStyle(.red)
+        } else {
+            Text("No plot rendered yet.")
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var plotImage: some View {
+        if let result = plotState.result, let image = NSImage(data: result.imageBytes) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(result.title)
+                    .workbenchFont(.subheadline, weight: .semibold)
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, minHeight: 320, maxHeight: 520)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                Text(result.summary)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .accessibilityIdentifier("msPlot.image.\(dataset.id)")
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.20)))
+                VStack(spacing: 10) {
+                    Image(systemName: "chart.xyaxis.line")
+                        .workbenchFont(.largeTitle)
+                    Text(plotState.status == .running ? "Rendering" : "Waiting for render")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 320)
+            .accessibilityIdentifier("msPlot.empty.\(dataset.id)")
+        }
+    }
 }
 
 struct TaskPanel: View {

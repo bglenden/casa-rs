@@ -400,6 +400,22 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
+    typealias FfiType = UInt32
+    typealias SwiftType = UInt32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     typealias FfiType = UInt64
     typealias SwiftType = UInt64
@@ -475,6 +491,24 @@ fileprivate struct FfiConverterString: FfiConverter {
         let len = Int32(value.utf8.count)
         writeInt(&buf, len)
         writeBytes(&buf, value.utf8)
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterData: FfiConverterRustBuffer {
+    typealias SwiftType = Data
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
+        let len: Int32 = try readInt(&buf)
+        return Data(try readBytes(&buf, count: Int(len)))
+    }
+
+    public static func write(_ value: Data, into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        writeBytes(&buf, value)
     }
 }
 
@@ -695,6 +729,654 @@ public func FfiConverterTypeDatasetProbe_lower(_ value: DatasetProbe) -> RustBuf
 }
 
 
+public struct MeasurementSetPlotRequest {
+    public var datasetPath: String
+    public var preset: MeasurementSetPlotPreset
+    public var field: String?
+    public var spectralWindow: String?
+    public var correlation: String?
+    public var dataColumn: String
+    public var width: UInt32
+    public var height: UInt32
+    public var maxPlotPoints: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(datasetPath: String, preset: MeasurementSetPlotPreset, field: String?, spectralWindow: String?, correlation: String?, dataColumn: String, width: UInt32, height: UInt32, maxPlotPoints: UInt64) {
+        self.datasetPath = datasetPath
+        self.preset = preset
+        self.field = field
+        self.spectralWindow = spectralWindow
+        self.correlation = correlation
+        self.dataColumn = dataColumn
+        self.width = width
+        self.height = height
+        self.maxPlotPoints = maxPlotPoints
+    }
+}
+
+#if compiler(>=6)
+extension MeasurementSetPlotRequest: Sendable {}
+#endif
+
+
+extension MeasurementSetPlotRequest: Equatable, Hashable {
+    public static func ==(lhs: MeasurementSetPlotRequest, rhs: MeasurementSetPlotRequest) -> Bool {
+        if lhs.datasetPath != rhs.datasetPath {
+            return false
+        }
+        if lhs.preset != rhs.preset {
+            return false
+        }
+        if lhs.field != rhs.field {
+            return false
+        }
+        if lhs.spectralWindow != rhs.spectralWindow {
+            return false
+        }
+        if lhs.correlation != rhs.correlation {
+            return false
+        }
+        if lhs.dataColumn != rhs.dataColumn {
+            return false
+        }
+        if lhs.width != rhs.width {
+            return false
+        }
+        if lhs.height != rhs.height {
+            return false
+        }
+        if lhs.maxPlotPoints != rhs.maxPlotPoints {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(datasetPath)
+        hasher.combine(preset)
+        hasher.combine(field)
+        hasher.combine(spectralWindow)
+        hasher.combine(correlation)
+        hasher.combine(dataColumn)
+        hasher.combine(width)
+        hasher.combine(height)
+        hasher.combine(maxPlotPoints)
+    }
+}
+
+extension MeasurementSetPlotRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMeasurementSetPlotRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MeasurementSetPlotRequest {
+        return
+            try MeasurementSetPlotRequest(
+                datasetPath: FfiConverterString.read(from: &buf),
+                preset: FfiConverterTypeMeasurementSetPlotPreset.read(from: &buf),
+                field: FfiConverterOptionString.read(from: &buf),
+                spectralWindow: FfiConverterOptionString.read(from: &buf),
+                correlation: FfiConverterOptionString.read(from: &buf),
+                dataColumn: FfiConverterString.read(from: &buf),
+                width: FfiConverterUInt32.read(from: &buf),
+                height: FfiConverterUInt32.read(from: &buf),
+                maxPlotPoints: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MeasurementSetPlotRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.datasetPath, into: &buf)
+        FfiConverterTypeMeasurementSetPlotPreset.write(value.preset, into: &buf)
+        FfiConverterOptionString.write(value.field, into: &buf)
+        FfiConverterOptionString.write(value.spectralWindow, into: &buf)
+        FfiConverterOptionString.write(value.correlation, into: &buf)
+        FfiConverterString.write(value.dataColumn, into: &buf)
+        FfiConverterUInt32.write(value.width, into: &buf)
+        FfiConverterUInt32.write(value.height, into: &buf)
+        FfiConverterUInt64.write(value.maxPlotPoints, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetPlotRequest_lift(_ buf: RustBuffer) throws -> MeasurementSetPlotRequest {
+    return try FfiConverterTypeMeasurementSetPlotRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetPlotRequest_lower(_ value: MeasurementSetPlotRequest) -> RustBuffer {
+    return FfiConverterTypeMeasurementSetPlotRequest.lower(value)
+}
+
+
+public struct MeasurementSetPlotResult {
+    public var preset: MeasurementSetPlotPreset
+    public var presetLabel: String
+    public var title: String
+    public var summary: String
+    public var datasetPath: String
+    public var dataColumn: String
+    public var selectionSummary: String
+    public var xAxis: PlotAxisMetadata
+    public var yAxis: PlotAxisMetadata
+    public var series: [PlotSeriesMetadata]
+    public var sampling: PlotSamplingDiagnostics
+    public var render: PlotRenderProvenance
+    public var imageBytes: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(preset: MeasurementSetPlotPreset, presetLabel: String, title: String, summary: String, datasetPath: String, dataColumn: String, selectionSummary: String, xAxis: PlotAxisMetadata, yAxis: PlotAxisMetadata, series: [PlotSeriesMetadata], sampling: PlotSamplingDiagnostics, render: PlotRenderProvenance, imageBytes: Data) {
+        self.preset = preset
+        self.presetLabel = presetLabel
+        self.title = title
+        self.summary = summary
+        self.datasetPath = datasetPath
+        self.dataColumn = dataColumn
+        self.selectionSummary = selectionSummary
+        self.xAxis = xAxis
+        self.yAxis = yAxis
+        self.series = series
+        self.sampling = sampling
+        self.render = render
+        self.imageBytes = imageBytes
+    }
+}
+
+#if compiler(>=6)
+extension MeasurementSetPlotResult: Sendable {}
+#endif
+
+
+extension MeasurementSetPlotResult: Equatable, Hashable {
+    public static func ==(lhs: MeasurementSetPlotResult, rhs: MeasurementSetPlotResult) -> Bool {
+        if lhs.preset != rhs.preset {
+            return false
+        }
+        if lhs.presetLabel != rhs.presetLabel {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.summary != rhs.summary {
+            return false
+        }
+        if lhs.datasetPath != rhs.datasetPath {
+            return false
+        }
+        if lhs.dataColumn != rhs.dataColumn {
+            return false
+        }
+        if lhs.selectionSummary != rhs.selectionSummary {
+            return false
+        }
+        if lhs.xAxis != rhs.xAxis {
+            return false
+        }
+        if lhs.yAxis != rhs.yAxis {
+            return false
+        }
+        if lhs.series != rhs.series {
+            return false
+        }
+        if lhs.sampling != rhs.sampling {
+            return false
+        }
+        if lhs.render != rhs.render {
+            return false
+        }
+        if lhs.imageBytes != rhs.imageBytes {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(preset)
+        hasher.combine(presetLabel)
+        hasher.combine(title)
+        hasher.combine(summary)
+        hasher.combine(datasetPath)
+        hasher.combine(dataColumn)
+        hasher.combine(selectionSummary)
+        hasher.combine(xAxis)
+        hasher.combine(yAxis)
+        hasher.combine(series)
+        hasher.combine(sampling)
+        hasher.combine(render)
+        hasher.combine(imageBytes)
+    }
+}
+
+extension MeasurementSetPlotResult: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMeasurementSetPlotResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MeasurementSetPlotResult {
+        return
+            try MeasurementSetPlotResult(
+                preset: FfiConverterTypeMeasurementSetPlotPreset.read(from: &buf),
+                presetLabel: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                datasetPath: FfiConverterString.read(from: &buf),
+                dataColumn: FfiConverterString.read(from: &buf),
+                selectionSummary: FfiConverterString.read(from: &buf),
+                xAxis: FfiConverterTypePlotAxisMetadata.read(from: &buf),
+                yAxis: FfiConverterTypePlotAxisMetadata.read(from: &buf),
+                series: FfiConverterSequenceTypePlotSeriesMetadata.read(from: &buf),
+                sampling: FfiConverterTypePlotSamplingDiagnostics.read(from: &buf),
+                render: FfiConverterTypePlotRenderProvenance.read(from: &buf),
+                imageBytes: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MeasurementSetPlotResult, into buf: inout [UInt8]) {
+        FfiConverterTypeMeasurementSetPlotPreset.write(value.preset, into: &buf)
+        FfiConverterString.write(value.presetLabel, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterString.write(value.datasetPath, into: &buf)
+        FfiConverterString.write(value.dataColumn, into: &buf)
+        FfiConverterString.write(value.selectionSummary, into: &buf)
+        FfiConverterTypePlotAxisMetadata.write(value.xAxis, into: &buf)
+        FfiConverterTypePlotAxisMetadata.write(value.yAxis, into: &buf)
+        FfiConverterSequenceTypePlotSeriesMetadata.write(value.series, into: &buf)
+        FfiConverterTypePlotSamplingDiagnostics.write(value.sampling, into: &buf)
+        FfiConverterTypePlotRenderProvenance.write(value.render, into: &buf)
+        FfiConverterData.write(value.imageBytes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetPlotResult_lift(_ buf: RustBuffer) throws -> MeasurementSetPlotResult {
+    return try FfiConverterTypeMeasurementSetPlotResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetPlotResult_lower(_ value: MeasurementSetPlotResult) -> RustBuffer {
+    return FfiConverterTypeMeasurementSetPlotResult.lower(value)
+}
+
+
+public struct PlotAxisMetadata {
+    public var id: String
+    public var label: String
+    public var unit: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, label: String, unit: String) {
+        self.id = id
+        self.label = label
+        self.unit = unit
+    }
+}
+
+#if compiler(>=6)
+extension PlotAxisMetadata: Sendable {}
+#endif
+
+
+extension PlotAxisMetadata: Equatable, Hashable {
+    public static func ==(lhs: PlotAxisMetadata, rhs: PlotAxisMetadata) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.unit != rhs.unit {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(label)
+        hasher.combine(unit)
+    }
+}
+
+extension PlotAxisMetadata: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotAxisMetadata: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotAxisMetadata {
+        return
+            try PlotAxisMetadata(
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                unit: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlotAxisMetadata, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.unit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotAxisMetadata_lift(_ buf: RustBuffer) throws -> PlotAxisMetadata {
+    return try FfiConverterTypePlotAxisMetadata.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotAxisMetadata_lower(_ value: PlotAxisMetadata) -> RustBuffer {
+    return FfiConverterTypePlotAxisMetadata.lower(value)
+}
+
+
+public struct PlotRenderProvenance {
+    public var renderer: String
+    public var imageFormat: String
+    public var width: UInt32
+    public var height: UInt32
+    public var source: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(renderer: String, imageFormat: String, width: UInt32, height: UInt32, source: String) {
+        self.renderer = renderer
+        self.imageFormat = imageFormat
+        self.width = width
+        self.height = height
+        self.source = source
+    }
+}
+
+#if compiler(>=6)
+extension PlotRenderProvenance: Sendable {}
+#endif
+
+
+extension PlotRenderProvenance: Equatable, Hashable {
+    public static func ==(lhs: PlotRenderProvenance, rhs: PlotRenderProvenance) -> Bool {
+        if lhs.renderer != rhs.renderer {
+            return false
+        }
+        if lhs.imageFormat != rhs.imageFormat {
+            return false
+        }
+        if lhs.width != rhs.width {
+            return false
+        }
+        if lhs.height != rhs.height {
+            return false
+        }
+        if lhs.source != rhs.source {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(renderer)
+        hasher.combine(imageFormat)
+        hasher.combine(width)
+        hasher.combine(height)
+        hasher.combine(source)
+    }
+}
+
+extension PlotRenderProvenance: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotRenderProvenance: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotRenderProvenance {
+        return
+            try PlotRenderProvenance(
+                renderer: FfiConverterString.read(from: &buf),
+                imageFormat: FfiConverterString.read(from: &buf),
+                width: FfiConverterUInt32.read(from: &buf),
+                height: FfiConverterUInt32.read(from: &buf),
+                source: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlotRenderProvenance, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.renderer, into: &buf)
+        FfiConverterString.write(value.imageFormat, into: &buf)
+        FfiConverterUInt32.write(value.width, into: &buf)
+        FfiConverterUInt32.write(value.height, into: &buf)
+        FfiConverterString.write(value.source, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotRenderProvenance_lift(_ buf: RustBuffer) throws -> PlotRenderProvenance {
+    return try FfiConverterTypePlotRenderProvenance.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotRenderProvenance_lower(_ value: PlotRenderProvenance) -> RustBuffer {
+    return FfiConverterTypePlotRenderProvenance.lower(value)
+}
+
+
+public struct PlotSamplingDiagnostics {
+    public var requestedMaxPoints: UInt64
+    public var renderedPointCount: UInt64
+    public var seriesCount: UInt64
+    public var diagnostics: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(requestedMaxPoints: UInt64, renderedPointCount: UInt64, seriesCount: UInt64, diagnostics: [String]) {
+        self.requestedMaxPoints = requestedMaxPoints
+        self.renderedPointCount = renderedPointCount
+        self.seriesCount = seriesCount
+        self.diagnostics = diagnostics
+    }
+}
+
+#if compiler(>=6)
+extension PlotSamplingDiagnostics: Sendable {}
+#endif
+
+
+extension PlotSamplingDiagnostics: Equatable, Hashable {
+    public static func ==(lhs: PlotSamplingDiagnostics, rhs: PlotSamplingDiagnostics) -> Bool {
+        if lhs.requestedMaxPoints != rhs.requestedMaxPoints {
+            return false
+        }
+        if lhs.renderedPointCount != rhs.renderedPointCount {
+            return false
+        }
+        if lhs.seriesCount != rhs.seriesCount {
+            return false
+        }
+        if lhs.diagnostics != rhs.diagnostics {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(requestedMaxPoints)
+        hasher.combine(renderedPointCount)
+        hasher.combine(seriesCount)
+        hasher.combine(diagnostics)
+    }
+}
+
+extension PlotSamplingDiagnostics: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotSamplingDiagnostics: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotSamplingDiagnostics {
+        return
+            try PlotSamplingDiagnostics(
+                requestedMaxPoints: FfiConverterUInt64.read(from: &buf),
+                renderedPointCount: FfiConverterUInt64.read(from: &buf),
+                seriesCount: FfiConverterUInt64.read(from: &buf),
+                diagnostics: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlotSamplingDiagnostics, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.requestedMaxPoints, into: &buf)
+        FfiConverterUInt64.write(value.renderedPointCount, into: &buf)
+        FfiConverterUInt64.write(value.seriesCount, into: &buf)
+        FfiConverterSequenceString.write(value.diagnostics, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotSamplingDiagnostics_lift(_ buf: RustBuffer) throws -> PlotSamplingDiagnostics {
+    return try FfiConverterTypePlotSamplingDiagnostics.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotSamplingDiagnostics_lower(_ value: PlotSamplingDiagnostics) -> RustBuffer {
+    return FfiConverterTypePlotSamplingDiagnostics.lower(value)
+}
+
+
+public struct PlotSeriesMetadata {
+    public var label: String
+    public var colorGroup: String
+    public var pointCount: UInt64
+    public var firstRow: UInt64?
+    public var lastRow: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(label: String, colorGroup: String, pointCount: UInt64, firstRow: UInt64?, lastRow: UInt64?) {
+        self.label = label
+        self.colorGroup = colorGroup
+        self.pointCount = pointCount
+        self.firstRow = firstRow
+        self.lastRow = lastRow
+    }
+}
+
+#if compiler(>=6)
+extension PlotSeriesMetadata: Sendable {}
+#endif
+
+
+extension PlotSeriesMetadata: Equatable, Hashable {
+    public static func ==(lhs: PlotSeriesMetadata, rhs: PlotSeriesMetadata) -> Bool {
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.colorGroup != rhs.colorGroup {
+            return false
+        }
+        if lhs.pointCount != rhs.pointCount {
+            return false
+        }
+        if lhs.firstRow != rhs.firstRow {
+            return false
+        }
+        if lhs.lastRow != rhs.lastRow {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(label)
+        hasher.combine(colorGroup)
+        hasher.combine(pointCount)
+        hasher.combine(firstRow)
+        hasher.combine(lastRow)
+    }
+}
+
+extension PlotSeriesMetadata: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotSeriesMetadata: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotSeriesMetadata {
+        return
+            try PlotSeriesMetadata(
+                label: FfiConverterString.read(from: &buf),
+                colorGroup: FfiConverterString.read(from: &buf),
+                pointCount: FfiConverterUInt64.read(from: &buf),
+                firstRow: FfiConverterOptionUInt64.read(from: &buf),
+                lastRow: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlotSeriesMetadata, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.colorGroup, into: &buf)
+        FfiConverterUInt64.write(value.pointCount, into: &buf)
+        FfiConverterOptionUInt64.write(value.firstRow, into: &buf)
+        FfiConverterOptionUInt64.write(value.lastRow, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotSeriesMetadata_lift(_ buf: RustBuffer) throws -> PlotSeriesMetadata {
+    return try FfiConverterTypePlotSeriesMetadata.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotSeriesMetadata_lower(_ value: PlotSeriesMetadata) -> RustBuffer {
+    return FfiConverterTypePlotSeriesMetadata.lower(value)
+}
+
+
 public struct ProjectProbe {
     public var name: String
     public var rootPath: String
@@ -890,6 +1572,8 @@ public enum FrontendServiceError: Swift.Error {
     )
     case Probe(reason: String
     )
+    case Plot(reason: String
+    )
 }
 
 
@@ -913,6 +1597,9 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf)
             )
         case 3: return .Probe(
+            reason: try FfiConverterString.read(from: &buf)
+            )
+        case 4: return .Plot(
             reason: try FfiConverterString.read(from: &buf)
             )
 
@@ -939,6 +1626,11 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
 
         case let .Probe(reason):
             writeInt(&buf, Int32(3))
+            FfiConverterString.write(reason, into: &buf)
+
+
+        case let .Plot(reason):
+            writeInt(&buf, Int32(4))
             FfiConverterString.write(reason, into: &buf)
 
         }
@@ -977,6 +1669,94 @@ extension FrontendServiceError: Foundation.LocalizedError {
 
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum MeasurementSetPlotPreset {
+
+    case amplitudeVsFrequency
+    case amplitudeVsChannel
+    case amplitudeVsUvDistance
+    case amplitudeVsTime
+}
+
+
+#if compiler(>=6)
+extension MeasurementSetPlotPreset: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMeasurementSetPlotPreset: FfiConverterRustBuffer {
+    typealias SwiftType = MeasurementSetPlotPreset
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MeasurementSetPlotPreset {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .amplitudeVsFrequency
+
+        case 2: return .amplitudeVsChannel
+
+        case 3: return .amplitudeVsUvDistance
+
+        case 4: return .amplitudeVsTime
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MeasurementSetPlotPreset, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .amplitudeVsFrequency:
+            writeInt(&buf, Int32(1))
+
+
+        case .amplitudeVsChannel:
+            writeInt(&buf, Int32(2))
+
+
+        case .amplitudeVsUvDistance:
+            writeInt(&buf, Int32(3))
+
+
+        case .amplitudeVsTime:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetPlotPreset_lift(_ buf: RustBuffer) throws -> MeasurementSetPlotPreset {
+    return try FfiConverterTypeMeasurementSetPlotPreset.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetPlotPreset_lower(_ value: MeasurementSetPlotPreset) -> RustBuffer {
+    return FfiConverterTypeMeasurementSetPlotPreset.lower(value)
+}
+
+
+extension MeasurementSetPlotPreset: Equatable, Hashable {}
+
+extension MeasurementSetPlotPreset: Codable {}
+
+
+
+
+extension MeasurementSetPlotPreset: CaseIterable {}
+
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -996,6 +1776,30 @@ fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -1099,6 +1903,38 @@ fileprivate struct FfiConverterSequenceTypeDatasetProbe: FfiConverterRustBuffer 
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePlotSeriesMetadata: FfiConverterRustBuffer {
+    typealias SwiftType = [PlotSeriesMetadata]
+
+    public static func write(_ value: [PlotSeriesMetadata], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePlotSeriesMetadata.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PlotSeriesMetadata] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PlotSeriesMetadata]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePlotSeriesMetadata.read(from: &buf))
+        }
+        return seq
+    }
+}
+public func buildMeasurementSetPlot(request: MeasurementSetPlotRequest)throws  -> MeasurementSetPlotResult  {
+    return try  FfiConverterTypeMeasurementSetPlotResult_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_build_measurement_set_plot(
+        FfiConverterTypeMeasurementSetPlotRequest_lower(request),$0
+    )
+})
+}
 public func probePath(path: String)throws  -> DatasetProbe?  {
     return try  FfiConverterOptionTypeDatasetProbe.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_probe_path(
@@ -1128,6 +1964,9 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_casars_frontend_services_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_build_measurement_set_plot() != 34309) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_probe_path() != 47483) {
         return InitializationResult.apiChecksumMismatch

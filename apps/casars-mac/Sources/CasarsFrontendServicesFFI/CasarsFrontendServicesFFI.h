@@ -251,6 +251,11 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureStr
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CASARS_FRONTEND_SERVICES_FN_FUNC_BUILD_MEASUREMENT_SET_PLOT
+#define UNIFFI_FFIDEF_UNIFFI_CASARS_FRONTEND_SERVICES_FN_FUNC_BUILD_MEASUREMENT_SET_PLOT
+RustBuffer uniffi_casars_frontend_services_fn_func_build_measurement_set_plot(RustBuffer request, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CASARS_FRONTEND_SERVICES_FN_FUNC_PROBE_PATH
 #define UNIFFI_FFIDEF_UNIFFI_CASARS_FRONTEND_SERVICES_FN_FUNC_PROBE_PATH
 RustBuffer uniffi_casars_frontend_services_fn_func_probe_path(RustBuffer path, RustCallStatus *_Nonnull out_status
@@ -539,6 +544,12 @@ void ffi_casars_frontend_services_rust_future_free_void(uint64_t handle
 #ifndef UNIFFI_FFIDEF_FFI_CASARS_FRONTEND_SERVICES_RUST_FUTURE_COMPLETE_VOID
 #define UNIFFI_FFIDEF_FFI_CASARS_FRONTEND_SERVICES_RUST_FUTURE_COMPLETE_VOID
 void ffi_casars_frontend_services_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CASARS_FRONTEND_SERVICES_CHECKSUM_FUNC_BUILD_MEASUREMENT_SET_PLOT
+#define UNIFFI_FFIDEF_UNIFFI_CASARS_FRONTEND_SERVICES_CHECKSUM_FUNC_BUILD_MEASUREMENT_SET_PLOT
+uint16_t uniffi_casars_frontend_services_checksum_func_build_measurement_set_plot(void
+    
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CASARS_FRONTEND_SERVICES_CHECKSUM_FUNC_PROBE_PATH

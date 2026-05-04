@@ -133,6 +133,8 @@ struct CasarsMacApp: App {
                 store.setPythonOwner(.ai)
                 store.runTask()
                 store.openDefaultTab(kind: .history)
+            } else if let dataset = store.state.selectedDataset, dataset.kind == .measurementSet {
+                store.runMeasurementSetPlot(datasetID: dataset.id)
             }
         }
 

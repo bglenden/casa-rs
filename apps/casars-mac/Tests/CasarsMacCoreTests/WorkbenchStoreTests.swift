@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import CasarsMacCore
 
@@ -273,6 +274,63 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(store.state.tabs.contains { $0.kind == .task })
     }
 
+    func testRealMeasurementSetPlotRunUsesPlotClientAndDebugState() {
+        let probedDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            scans: ["scan 1: 12 rows, Target"],
+            antennas: ["ea01", "ea02"],
+            correlations: ["XX", "YY"],
+            columns: ["UVW", "DATA", "FLAG"],
+            dataColumns: ["DATA"],
+            subtables: ["ANTENNA (required)", "FIELD (required)"],
+            shape: [12],
+            notes: "Recognized by Rust probe."
+        )
+        let probeClient = StubProjectProbeClient(
+            result: ProjectFixtureProbe(
+                project: ProjectFixture(
+                    name: "Real Project",
+                    rootPath: "/data",
+                    datasets: [probedDataset],
+                    source: .probed
+                ),
+                diagnostics: []
+            )
+        )
+        let plotClient = StubMeasurementSetPlotClient()
+        let store = WorkbenchStore(probeClient: probeClient, plotClient: plotClient)
+
+        store.openProject(path: "/data")
+        store.runMeasurementSetPlot(datasetID: probedDataset.id)
+
+        var snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.status, .ready)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.title, "Amplitude vs Frequency")
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.imageByteCount, 8)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.renderedPointCount, 42)
+        XCTAssertEqual(plotClient.requests.last?.preset, .amplitudeVsFrequency)
+        XCTAssertNil(plotClient.requests.last?.field)
+        XCTAssertNil(plotClient.requests.last?.spectralWindow)
+
+        store.setMeasurementSetPlotPreset(.amplitudeVsUvDistance, datasetID: probedDataset.id)
+        store.setMeasurementSetPlotField("0: Target", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotSpectralWindow("spw 0: 4 chan, 1.420000 GHz center", datasetID: probedDataset.id)
+        store.runMeasurementSetPlot(datasetID: probedDataset.id)
+
+        snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.preset, .amplitudeVsUvDistance)
+        XCTAssertEqual(plotClient.requests.last?.field, "0")
+        XCTAssertEqual(plotClient.requests.last?.spectralWindow, "0")
+        XCTAssertEqual(plotClient.requests.last?.dataColumn, "DATA")
+    }
+
     func testInterfaceFontSizeIsAdjustableClampedAndPreservedAcrossFixtureOpen() {
         let store = WorkbenchStore.fixture()
 
@@ -299,5 +357,34 @@ private struct StubProjectProbeClient: ProjectProbeClient {
 
     func probeProject(path: String) throws -> ProjectFixtureProbe {
         result
+    }
+}
+
+private final class StubMeasurementSetPlotClient: MeasurementSetPlotClient {
+    var requests: [MeasurementSetPlotBuildRequest] = []
+
+    func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary {
+        requests.append(request)
+        return MeasurementSetPlotResultSummary(
+            presetLabel: request.preset.title,
+            title: request.preset.title,
+            summary: "Synthetic plot result for tests.",
+            datasetPath: request.datasetPath,
+            dataColumn: request.dataColumn,
+            selectionSummary: "data column \(request.dataColumn)",
+            xAxis: PlotAxisSummary(id: "frequency", label: "Frequency (Hz)", unit: "Hz"),
+            yAxis: PlotAxisSummary(id: "amplitude", label: "Amplitude", unit: ""),
+            series: [
+                PlotSeriesSummary(label: "Target", colorGroup: "field-0", pointCount: 42, firstRow: 0, lastRow: 11)
+            ],
+            requestedMaxPoints: request.maxPlotPoints,
+            renderedPointCount: 42,
+            diagnostics: [],
+            renderer: "stub renderer",
+            imageFormat: "png",
+            imageWidth: request.width,
+            imageHeight: request.height,
+            imageBytes: Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+        )
     }
 }

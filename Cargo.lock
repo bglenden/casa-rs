@@ -804,6 +804,7 @@ dependencies = [
  "casa-tables",
  "casa-types",
  "flate2",
+ "image 0.25.10",
  "ndarray",
  "tar",
  "tempfile",

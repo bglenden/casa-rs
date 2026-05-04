@@ -310,6 +310,169 @@ public struct PythonPanelState: Codable, Equatable {
     }
 }
 
+public enum MeasurementSetExplorerPlotPreset: String, CaseIterable, Codable, Equatable, Identifiable {
+    case amplitudeVsFrequency
+    case amplitudeVsChannel
+    case amplitudeVsUvDistance
+    case amplitudeVsTime
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .amplitudeVsFrequency:
+            "Amplitude vs Frequency"
+        case .amplitudeVsChannel:
+            "Amplitude vs Channel"
+        case .amplitudeVsUvDistance:
+            "Amplitude vs UV Distance"
+        case .amplitudeVsTime:
+            "Amplitude vs Time"
+        }
+    }
+}
+
+public enum MeasurementSetPlotStatus: String, Codable, Equatable {
+    case idle
+    case running
+    case ready
+    case failed
+}
+
+public struct PlotAxisSummary: Codable, Equatable {
+    public var id: String
+    public var label: String
+    public var unit: String
+
+    public init(id: String, label: String, unit: String) {
+        self.id = id
+        self.label = label
+        self.unit = unit
+    }
+}
+
+public struct PlotSeriesSummary: Codable, Equatable {
+    public var label: String
+    public var colorGroup: String
+    public var pointCount: UInt64
+    public var firstRow: UInt64?
+    public var lastRow: UInt64?
+
+    public init(label: String, colorGroup: String, pointCount: UInt64, firstRow: UInt64?, lastRow: UInt64?) {
+        self.label = label
+        self.colorGroup = colorGroup
+        self.pointCount = pointCount
+        self.firstRow = firstRow
+        self.lastRow = lastRow
+    }
+}
+
+public struct MeasurementSetPlotResultSummary: Codable, Equatable {
+    public var presetLabel: String
+    public var title: String
+    public var summary: String
+    public var datasetPath: String
+    public var dataColumn: String
+    public var selectionSummary: String
+    public var xAxis: PlotAxisSummary
+    public var yAxis: PlotAxisSummary
+    public var series: [PlotSeriesSummary]
+    public var requestedMaxPoints: UInt64
+    public var renderedPointCount: UInt64
+    public var diagnostics: [String]
+    public var renderer: String
+    public var imageFormat: String
+    public var imageWidth: UInt32
+    public var imageHeight: UInt32
+    public var imageBytes: Data
+
+    public init(
+        presetLabel: String,
+        title: String,
+        summary: String,
+        datasetPath: String,
+        dataColumn: String,
+        selectionSummary: String,
+        xAxis: PlotAxisSummary,
+        yAxis: PlotAxisSummary,
+        series: [PlotSeriesSummary],
+        requestedMaxPoints: UInt64,
+        renderedPointCount: UInt64,
+        diagnostics: [String],
+        renderer: String,
+        imageFormat: String,
+        imageWidth: UInt32,
+        imageHeight: UInt32,
+        imageBytes: Data
+    ) {
+        self.presetLabel = presetLabel
+        self.title = title
+        self.summary = summary
+        self.datasetPath = datasetPath
+        self.dataColumn = dataColumn
+        self.selectionSummary = selectionSummary
+        self.xAxis = xAxis
+        self.yAxis = yAxis
+        self.series = series
+        self.requestedMaxPoints = requestedMaxPoints
+        self.renderedPointCount = renderedPointCount
+        self.diagnostics = diagnostics
+        self.renderer = renderer
+        self.imageFormat = imageFormat
+        self.imageWidth = imageWidth
+        self.imageHeight = imageHeight
+        self.imageBytes = imageBytes
+    }
+}
+
+public struct MeasurementSetExplorerPlotState: Codable, Equatable {
+    public var datasetID: String
+    public var preset: MeasurementSetExplorerPlotPreset
+    public var selectedField: String?
+    public var selectedSpectralWindow: String?
+    public var selectedCorrelation: String?
+    public var dataColumn: String
+    public var status: MeasurementSetPlotStatus
+    public var lastError: String?
+    public var result: MeasurementSetPlotResultSummary?
+
+    public init(
+        datasetID: String,
+        preset: MeasurementSetExplorerPlotPreset,
+        selectedField: String?,
+        selectedSpectralWindow: String?,
+        selectedCorrelation: String?,
+        dataColumn: String,
+        status: MeasurementSetPlotStatus,
+        lastError: String?,
+        result: MeasurementSetPlotResultSummary?
+    ) {
+        self.datasetID = datasetID
+        self.preset = preset
+        self.selectedField = selectedField
+        self.selectedSpectralWindow = selectedSpectralWindow
+        self.selectedCorrelation = selectedCorrelation
+        self.dataColumn = dataColumn
+        self.status = status
+        self.lastError = lastError
+        self.result = result
+    }
+
+    public static func defaultState(for dataset: DatasetSummary) -> MeasurementSetExplorerPlotState {
+        MeasurementSetExplorerPlotState(
+            datasetID: dataset.id,
+            preset: .amplitudeVsFrequency,
+            selectedField: nil,
+            selectedSpectralWindow: nil,
+            selectedCorrelation: nil,
+            dataColumn: dataset.dataColumns.first ?? "DATA",
+            status: .idle,
+            lastError: nil,
+            result: nil
+        )
+    }
+}
+
 public struct ProcessingHistoryEvent: Identifiable, Codable, Equatable {
     public let id: String
     public var timestamp: String
@@ -352,6 +515,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var aiMessages: [AIChatMessage]
     public var aiProposals: [AIProposal]
     public var python: PythonPanelState
+    public var measurementSetPlots: [String: MeasurementSetExplorerPlotState]
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -371,6 +535,7 @@ public struct WorkbenchState: Codable, Equatable {
         aiMessages: [AIChatMessage],
         aiProposals: [AIProposal],
         python: PythonPanelState,
+        measurementSetPlots: [String: MeasurementSetExplorerPlotState] = [:],
         history: [ProcessingHistoryEvent],
         commandQuery: String,
         lastErrors: [String],
@@ -389,6 +554,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.aiMessages = aiMessages
         self.aiProposals = aiProposals
         self.python = python
+        self.measurementSetPlots = measurementSetPlots
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors
@@ -467,6 +633,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var taskState: TaskRunState
     public var aiProposalStates: [String: AIProposalState]
     public var pythonOwner: PythonOwner
+    public var measurementSetPlots: [String: DebugMeasurementSetPlotSnapshot]
     public var processingHistoryEvents: [String]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -490,9 +657,50 @@ public struct DebugStateSnapshot: Codable, Equatable {
             uniqueKeysWithValues: state.aiProposals.map { ($0.id, $0.state) }
         )
         pythonOwner = state.python.owner
+        measurementSetPlots = Dictionary(
+            uniqueKeysWithValues: state.measurementSetPlots.map { datasetID, plotState in
+                (datasetID, DebugMeasurementSetPlotSnapshot(plotState: plotState))
+            }
+        )
         processingHistoryEvents = state.history.map(\.title)
         commandQuery = state.commandQuery
         lastErrors = state.lastErrors
         interfaceFontSize = state.interfaceFontSize
+    }
+}
+
+public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
+    public var preset: MeasurementSetExplorerPlotPreset
+    public var status: MeasurementSetPlotStatus
+    public var selectedField: String?
+    public var selectedSpectralWindow: String?
+    public var selectedCorrelation: String?
+    public var dataColumn: String
+    public var lastError: String?
+    public var title: String?
+    public var xAxis: PlotAxisSummary?
+    public var yAxis: PlotAxisSummary?
+    public var renderedPointCount: UInt64?
+    public var seriesCount: Int?
+    public var imageByteCount: Int?
+    public var renderer: String?
+    public var diagnostics: [String]
+
+    public init(plotState: MeasurementSetExplorerPlotState) {
+        preset = plotState.preset
+        status = plotState.status
+        selectedField = plotState.selectedField
+        selectedSpectralWindow = plotState.selectedSpectralWindow
+        selectedCorrelation = plotState.selectedCorrelation
+        dataColumn = plotState.dataColumn
+        lastError = plotState.lastError
+        title = plotState.result?.title
+        xAxis = plotState.result?.xAxis
+        yAxis = plotState.result?.yAxis
+        renderedPointCount = plotState.result?.renderedPointCount
+        seriesCount = plotState.result?.series.count
+        imageByteCount = plotState.result?.imageBytes.count
+        renderer = plotState.result?.renderer
+        diagnostics = plotState.result?.diagnostics ?? []
     }
 }

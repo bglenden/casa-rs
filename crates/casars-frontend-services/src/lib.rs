@@ -3,16 +3,28 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_images::{AnyPagedImage, ImagePixelType};
-use casa_ms::{MeasurementSet, VisibilityDataColumn};
+use casa_ms::{
+    MeasurementSet, MeasurementSetPlotTheme, MeasurementSetSummaryOutputFormat, MsExploreSpec,
+    MsPageExportRange, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsScatterGridPayload,
+    MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec,
+    VisibilityDataColumn, build_msexplore_payload_from_spec, render_msexplore_plot_image,
+};
 use casa_tables::{Table, TableOptions};
+use image::ImageFormat;
 use thiserror::Error;
 
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
 const MAX_PROJECT_SCAN_DEPTH: usize = 4;
+const DEFAULT_GUI_MAX_PLOT_POINTS: u64 = 250_000;
+#[cfg(test)]
+const DEFAULT_PLOT_WIDTH: u32 = 960;
+#[cfg(test)]
+const DEFAULT_PLOT_HEIGHT: u32 = 600;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum DatasetKind {
@@ -55,6 +67,77 @@ pub struct ProjectProbe {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum MeasurementSetPlotPreset {
+    AmplitudeVsFrequency,
+    AmplitudeVsChannel,
+    AmplitudeVsUvDistance,
+    AmplitudeVsTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MeasurementSetPlotRequest {
+    pub dataset_path: String,
+    pub preset: MeasurementSetPlotPreset,
+    pub field: Option<String>,
+    pub spectral_window: Option<String>,
+    pub correlation: Option<String>,
+    pub data_column: String,
+    pub width: u32,
+    pub height: u32,
+    pub max_plot_points: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PlotAxisMetadata {
+    pub id: String,
+    pub label: String,
+    pub unit: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PlotSeriesMetadata {
+    pub label: String,
+    pub color_group: String,
+    pub point_count: u64,
+    pub first_row: Option<u64>,
+    pub last_row: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PlotSamplingDiagnostics {
+    pub requested_max_points: u64,
+    pub rendered_point_count: u64,
+    pub series_count: u64,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PlotRenderProvenance {
+    pub renderer: String,
+    pub image_format: String,
+    pub width: u32,
+    pub height: u32,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MeasurementSetPlotResult {
+    pub preset: MeasurementSetPlotPreset,
+    pub preset_label: String,
+    pub title: String,
+    pub summary: String,
+    pub dataset_path: String,
+    pub data_column: String,
+    pub selection_summary: String,
+    pub x_axis: PlotAxisMetadata,
+    pub y_axis: PlotAxisMetadata,
+    pub series: Vec<PlotSeriesMetadata>,
+    pub sampling: PlotSamplingDiagnostics,
+    pub render: PlotRenderProvenance,
+    pub image_bytes: Vec<u8>,
+}
+
 #[derive(Debug, Error, uniffi::Error)]
 pub enum FrontendServiceError {
     #[error("invalid path: {reason}")]
@@ -63,6 +146,8 @@ pub enum FrontendServiceError {
     Io { reason: String },
     #[error("probe failed: {reason}")]
     Probe { reason: String },
+    #[error("plot failed: {reason}")]
+    Plot { reason: String },
 }
 
 type FrontendResult<T> = Result<T, FrontendServiceError>;
@@ -104,6 +189,303 @@ pub fn probe_project(path: String) -> FrontendResult<ProjectProbe> {
         scanned_entry_count: scan.scanned_entry_count as u64,
         truncated: scan.truncated,
     })
+}
+
+#[uniffi::export]
+pub fn build_measurement_set_plot(
+    request: MeasurementSetPlotRequest,
+) -> FrontendResult<MeasurementSetPlotResult> {
+    let dataset_path = PathBuf::from(&request.dataset_path);
+    if !dataset_path.is_dir() {
+        return Err(FrontendServiceError::InvalidPath {
+            reason: format!(
+                "{} is not a MeasurementSet directory",
+                dataset_path.display()
+            ),
+        });
+    }
+
+    let width = request.width.clamp(320, 4096);
+    let height = request.height.clamp(240, 4096);
+    let max_plot_points = if request.max_plot_points == 0 {
+        DEFAULT_GUI_MAX_PLOT_POINTS
+    } else {
+        request.max_plot_points
+    };
+    let data_column = normalize_data_column(&request.data_column);
+    let mut plot = MsPlotSpec::from_preset(ms_plot_preset(request.preset));
+    plot.data_column =
+        casa_ms::MsDataColumn::parse(&data_column).map_err(|error| FrontendServiceError::Plot {
+            reason: format!("{}: {error}", dataset_path.display()),
+        })?;
+    if matches!(
+        request.preset,
+        MeasurementSetPlotPreset::AmplitudeVsChannel
+            | MeasurementSetPlotPreset::AmplitudeVsFrequency
+    ) {
+        plot.averaging.avgchannel = Some(4);
+    }
+
+    let selection = MsSelectionSpec {
+        field: normalized_optional(request.field.clone()),
+        spw: normalized_optional(request.spectral_window.clone()),
+        correlation: normalized_optional(request.correlation.clone()),
+        ..MsSelectionSpec::default()
+    };
+    let spec = MsExploreSpec {
+        ms_path: dataset_path.clone(),
+        summary_format: MeasurementSetSummaryOutputFormat::Text,
+        selection,
+        header_items: vec![],
+        page_title: None,
+        exprange: MsPageExportRange::Current,
+        max_plot_points: usize::try_from(max_plot_points).unwrap_or(usize::MAX),
+        plots: vec![plot],
+    };
+
+    let payload =
+        build_msexplore_payload_from_spec(&spec).map_err(|error| FrontendServiceError::Plot {
+            reason: format!("{}: {error}", dataset_path.display()),
+        })?;
+    let metadata = plot_payload_metadata(&payload, request.preset, max_plot_points);
+    let image =
+        render_msexplore_plot_image(&payload, MeasurementSetPlotTheme::light(), width, height)
+            .map_err(|error| FrontendServiceError::Plot {
+                reason: format!("render {}: {error}", dataset_path.display()),
+            })?;
+    let mut encoded = Cursor::new(Vec::new());
+    image
+        .write_to(&mut encoded, ImageFormat::Png)
+        .map_err(|error| FrontendServiceError::Plot {
+            reason: format!("encode PNG {}: {error}", dataset_path.display()),
+        })?;
+
+    Ok(MeasurementSetPlotResult {
+        preset: request.preset,
+        preset_label: ms_plot_preset(request.preset).display_name().to_string(),
+        title: metadata.title,
+        summary: metadata.summary,
+        dataset_path: dataset_path.display().to_string(),
+        data_column,
+        selection_summary: selection_summary(&request),
+        x_axis: metadata.x_axis,
+        y_axis: metadata.y_axis,
+        series: metadata.series,
+        sampling: metadata.sampling,
+        render: PlotRenderProvenance {
+            renderer: "casa-ms msexplore plotters PNG".to_string(),
+            image_format: "png".to_string(),
+            width,
+            height,
+            source: "Rust casa-ms MeasurementSet payload rendered through UniFFI".to_string(),
+        },
+        image_bytes: encoded.into_inner(),
+    })
+}
+
+struct PayloadMetadata {
+    title: String,
+    summary: String,
+    x_axis: PlotAxisMetadata,
+    y_axis: PlotAxisMetadata,
+    series: Vec<PlotSeriesMetadata>,
+    sampling: PlotSamplingDiagnostics,
+}
+
+fn ms_plot_preset(preset: MeasurementSetPlotPreset) -> MsPlotPreset {
+    match preset {
+        MeasurementSetPlotPreset::AmplitudeVsFrequency => MsPlotPreset::AmplitudeVsFrequency,
+        MeasurementSetPlotPreset::AmplitudeVsChannel => MsPlotPreset::AmplitudeVsChannel,
+        MeasurementSetPlotPreset::AmplitudeVsUvDistance => MsPlotPreset::AmplitudeVsUvDistance,
+        MeasurementSetPlotPreset::AmplitudeVsTime => MsPlotPreset::AmplitudeVsTime,
+    }
+}
+
+fn plot_payload_metadata(
+    payload: &MsPlotPayload,
+    preset: MeasurementSetPlotPreset,
+    requested_max_points: u64,
+) -> PayloadMetadata {
+    match payload {
+        MsPlotPayload::Scatter(payload) => scatter_metadata(payload, requested_max_points),
+        MsPlotPayload::ScatterGrid(payload) => scatter_grid_metadata(payload, requested_max_points),
+        MsPlotPayload::ScatterPage(payload) => scatter_page_metadata(payload, requested_max_points),
+        MsPlotPayload::ListObs(payload) => PayloadMetadata {
+            title: format!("{:?}", payload.kind()),
+            summary: "Metadata-oriented MeasurementSet plot.".to_string(),
+            x_axis: axis_metadata(
+                ms_plot_preset(preset).as_str(),
+                ms_plot_preset(preset).display_name(),
+            ),
+            y_axis: axis_metadata("metadata", "Metadata"),
+            series: vec![],
+            sampling: PlotSamplingDiagnostics {
+                requested_max_points,
+                rendered_point_count: 0,
+                series_count: 0,
+                diagnostics: vec!["metadata-oriented plot has no visibility series".to_string()],
+            },
+        },
+    }
+}
+
+fn scatter_grid_metadata(
+    payload: &MsScatterGridPayload,
+    requested_max_points: u64,
+) -> PayloadMetadata {
+    let series = payload
+        .panels
+        .iter()
+        .flat_map(|panel| panel.series.iter())
+        .map(series_metadata)
+        .collect::<Vec<_>>();
+    let rendered_point_count = series.iter().map(|series| series.point_count).sum();
+    PayloadMetadata {
+        title: payload.title.clone(),
+        summary: payload.summary.clone(),
+        x_axis: axis_metadata(payload.x_axis.as_str(), &payload.x_label),
+        y_axis: axis_metadata(payload.y_axis.as_str(), &payload.y_label),
+        series,
+        sampling: PlotSamplingDiagnostics {
+            requested_max_points,
+            rendered_point_count,
+            series_count: payload
+                .panels
+                .iter()
+                .map(|panel| panel.series.len() as u64)
+                .sum(),
+            diagnostics: sampling_diagnostics(&payload.summary, rendered_point_count),
+        },
+    }
+}
+
+fn scatter_page_metadata(
+    payload: &MsScatterPagePayload,
+    requested_max_points: u64,
+) -> PayloadMetadata {
+    let first_plot = payload.items.first().map(|item| &item.plot);
+    let series = payload
+        .items
+        .iter()
+        .flat_map(|item| item.plot.series.iter())
+        .map(series_metadata)
+        .collect::<Vec<_>>();
+    let rendered_point_count = series.iter().map(|series| series.point_count).sum();
+    PayloadMetadata {
+        title: payload.title.clone(),
+        summary: payload.summary.clone(),
+        x_axis: first_plot
+            .map(|plot| axis_metadata(plot.x_axis.as_str(), &plot.x_label))
+            .unwrap_or_else(|| axis_metadata("unknown", "Unknown")),
+        y_axis: first_plot
+            .map(|plot| axis_metadata(plot.y_axis.as_str(), &plot.y_label))
+            .unwrap_or_else(|| axis_metadata("unknown", "Unknown")),
+        series,
+        sampling: PlotSamplingDiagnostics {
+            requested_max_points,
+            rendered_point_count,
+            series_count: payload
+                .items
+                .iter()
+                .map(|item| item.plot.series.len() as u64)
+                .sum(),
+            diagnostics: sampling_diagnostics(&payload.summary, rendered_point_count),
+        },
+    }
+}
+
+fn scatter_metadata(payload: &MsScatterPlotPayload, requested_max_points: u64) -> PayloadMetadata {
+    let series = payload
+        .series
+        .iter()
+        .map(series_metadata)
+        .collect::<Vec<_>>();
+    let series_count = series.len() as u64;
+    let rendered_point_count = series.iter().map(|series| series.point_count).sum();
+    PayloadMetadata {
+        title: payload.title.clone(),
+        summary: payload.summary.clone(),
+        x_axis: axis_metadata(payload.x_axis.as_str(), &payload.x_label),
+        y_axis: axis_metadata(payload.y_axis.as_str(), &payload.y_label),
+        series,
+        sampling: PlotSamplingDiagnostics {
+            requested_max_points,
+            rendered_point_count,
+            series_count,
+            diagnostics: sampling_diagnostics(&payload.summary, rendered_point_count),
+        },
+    }
+}
+
+fn series_metadata(series: &MsScatterSeries) -> PlotSeriesMetadata {
+    let first_row = series.provenance.first().map(|point| point.row as u64);
+    let last_row = series.provenance.last().map(|point| point.row as u64);
+    PlotSeriesMetadata {
+        label: series.label.clone(),
+        color_group: series.color_group.clone(),
+        point_count: series.points.len() as u64,
+        first_row,
+        last_row,
+    }
+}
+
+fn axis_metadata(id: &str, label: &str) -> PlotAxisMetadata {
+    PlotAxisMetadata {
+        id: id.to_string(),
+        label: label.to_string(),
+        unit: label_unit(label),
+    }
+}
+
+fn label_unit(label: &str) -> String {
+    label
+        .rsplit_once('(')
+        .and_then(|(_, suffix)| suffix.strip_suffix(')'))
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn sampling_diagnostics(summary: &str, rendered_point_count: u64) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+    if rendered_point_count == 0 {
+        diagnostics.push("plot produced no drawable visibility points".to_string());
+    }
+    if summary.contains("Decimated points") || summary.contains("Downsampled plot") {
+        diagnostics.push("point budget decimation was applied".to_string());
+    }
+    diagnostics
+}
+
+fn normalize_data_column(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "data".to_string();
+    }
+    trimmed.to_ascii_lowercase()
+}
+
+fn normalized_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "all")
+}
+
+fn selection_summary(request: &MeasurementSetPlotRequest) -> String {
+    let mut parts = vec![format!(
+        "data column {}",
+        normalize_data_column(&request.data_column)
+    )];
+    if let Some(field) = normalized_optional(request.field.clone()) {
+        parts.push(format!("field {field}"));
+    }
+    if let Some(spw) = normalized_optional(request.spectral_window.clone()) {
+        parts.push(format!("spw {spw}"));
+    }
+    if let Some(correlation) = normalized_optional(request.correlation.clone()) {
+        parts.push(format!("correlation {correlation}"));
+    }
+    parts.join(", ")
 }
 
 #[derive(Default)]
@@ -572,6 +954,43 @@ mod tests {
                 .any(|subtable| subtable == "ANTENNA (required)")
         );
         assert!(probe.size_bytes > 0);
+    }
+
+    #[test]
+    fn measurement_set_plot_builds_real_png_and_typed_metadata() {
+        let (_dir, ms_path) = unpack_small_ms();
+
+        for preset in [
+            MeasurementSetPlotPreset::AmplitudeVsFrequency,
+            MeasurementSetPlotPreset::AmplitudeVsUvDistance,
+        ] {
+            let plot = build_measurement_set_plot(MeasurementSetPlotRequest {
+                dataset_path: ms_path.display().to_string(),
+                preset,
+                field: None,
+                spectral_window: None,
+                correlation: None,
+                data_column: "DATA".to_string(),
+                width: DEFAULT_PLOT_WIDTH,
+                height: DEFAULT_PLOT_HEIGHT,
+                max_plot_points: 10_000,
+            })
+            .expect("plot");
+
+            assert_eq!(plot.preset, preset);
+            assert_eq!(plot.data_column, "data");
+            assert_eq!(plot.render.image_format, "png");
+            assert_eq!(plot.render.width, DEFAULT_PLOT_WIDTH);
+            assert_eq!(plot.render.height, DEFAULT_PLOT_HEIGHT);
+            assert!(plot.image_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+            assert!(!plot.title.is_empty());
+            assert!(!plot.x_axis.label.is_empty());
+            assert!(!plot.y_axis.label.is_empty());
+            assert!(!plot.series.is_empty());
+            assert!(plot.sampling.rendered_point_count > 0);
+            assert_eq!(plot.sampling.requested_max_points, 10_000);
+            assert!(plot.selection_summary.contains("data column data"));
+        }
     }
 
     #[test]
