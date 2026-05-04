@@ -737,9 +737,12 @@ public final class WorkbenchStore: ObservableObject {
         for dataset: DatasetSummary,
         plotState: MeasurementSetExplorerPlotState
     ) -> MeasurementSetPlotResultSummary? {
-        state.measurementSetPlotResultCache[
+        guard let result = state.measurementSetPlotResultCache[
             measurementSetPlotCacheKey(for: dataset, plotState: plotState)
-        ]
+        ] else {
+            return nil
+        }
+        return result.matches(plotState: plotState) ? result : nil
     }
 
     private func cacheMeasurementSetPlotResult(
@@ -1009,6 +1012,23 @@ extension CasarsFrontendServices.MeasurementSetPlotPreset {
     }
 }
 
+extension MeasurementSetExplorerPlotPreset {
+    init(preset: CasarsFrontendServices.MeasurementSetPlotPreset) {
+        switch preset {
+        case .uvCoverage:
+            self = .uvCoverage
+        case .amplitudeVsFrequency:
+            self = .amplitudeVsFrequency
+        case .amplitudeVsChannel:
+            self = .amplitudeVsChannel
+        case .amplitudeVsUvDistance:
+            self = .amplitudeVsUvDistance
+        case .amplitudeVsTime:
+            self = .amplitudeVsTime
+        }
+    }
+}
+
 extension PlotAxisSummary {
     init(axis: CasarsFrontendServices.PlotAxisMetadata) {
         self.init(id: axis.id, label: axis.label, unit: axis.unit)
@@ -1030,6 +1050,7 @@ extension PlotSeriesSummary {
 extension MeasurementSetPlotResultSummary {
     init(result: CasarsFrontendServices.MeasurementSetPlotResult) {
         self.init(
+            preset: MeasurementSetExplorerPlotPreset(preset: result.preset),
             presetLabel: result.presetLabel,
             title: result.title,
             summary: result.summary,

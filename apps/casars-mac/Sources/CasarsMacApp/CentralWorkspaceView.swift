@@ -364,6 +364,13 @@ struct MeasurementSetPlotPanel: View {
         store.state.measurementSetPlots[dataset.id] ?? MeasurementSetExplorerPlotState.defaultState(for: dataset)
     }
 
+    private var visiblePlotResult: MeasurementSetPlotResultSummary? {
+        guard let result = plotState.result, result.matches(plotState: plotState) else {
+            return nil
+        }
+        return result
+    }
+
     private var plotCommandBar: some View {
         HStack(spacing: 10) {
             Picker("Plot", selection: Binding(
@@ -468,7 +475,7 @@ struct MeasurementSetPlotPanel: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text(dataset.name)
                     .workbenchFont(.caption, weight: .semibold)
-                Text(plotState.result?.selectionSummary ?? "Select a plot and generate it")
+                Text(visiblePlotResult?.selectionSummary ?? "Select a plot and generate it")
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -482,7 +489,7 @@ struct MeasurementSetPlotPanel: View {
 
     @ViewBuilder
     private var plotMetadata: some View {
-        if let result = plotState.result {
+        if let result = visiblePlotResult {
             VStack(alignment: .leading, spacing: 5) {
                 Text(result.presetLabel)
                     .workbenchFont(.subheadline, weight: .semibold)
@@ -509,11 +516,12 @@ struct MeasurementSetPlotPanel: View {
 
     @ViewBuilder
     private var plotImage: some View {
-        if let result = plotState.result {
+        if let result = visiblePlotResult {
             VStack(alignment: .leading, spacing: 8) {
                 Text(result.title)
                     .workbenchFont(.subheadline, weight: .semibold)
                 CachedPlotImage(result: result)
+                    .id(result.imageCacheID)
                 Text(result.summary)
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)

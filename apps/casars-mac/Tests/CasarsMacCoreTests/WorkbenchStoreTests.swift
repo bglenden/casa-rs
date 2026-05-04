@@ -424,12 +424,19 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(plotClient.requests.count, 1)
 
         store.setMeasurementSetPlotPreset(.amplitudeVsUvDistance, datasetID: probedDataset.id)
+        snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.preset, .amplitudeVsUvDistance)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.status, .idle)
+        XCTAssertNil(snapshot.measurementSetPlots[probedDataset.id]?.resultPreset)
+        XCTAssertNil(snapshot.measurementSetPlots[probedDataset.id]?.title)
+
         store.setMeasurementSetPlotField("0: Target", datasetID: probedDataset.id)
         store.setMeasurementSetPlotSpectralWindow("spw 0: 4 chan, 1.420000 GHz center", datasetID: probedDataset.id)
         store.runMeasurementSetPlot(datasetID: probedDataset.id)
 
         snapshot = store.debugSnapshot()
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.preset, .amplitudeVsUvDistance)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.resultPreset, .amplitudeVsUvDistance)
         XCTAssertEqual(plotClient.requests.last?.field, "0")
         XCTAssertEqual(plotClient.requests.last?.spectralWindow, "0")
         XCTAssertEqual(plotClient.requests.last?.dataColumn, "DATA")
@@ -441,6 +448,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
         snapshot = store.debugSnapshot()
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.status, .ready)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.resultPreset, .uvCoverage)
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.title, "UV Coverage")
         XCTAssertEqual(plotClient.requests.count, 2)
 
@@ -491,6 +499,7 @@ private final class StubMeasurementSetPlotClient: MeasurementSetPlotClient {
     func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary {
         requests.append(request)
         return makePlotResult(
+            preset: request.preset,
             presetLabel: request.preset.title,
             title: request.preset.title,
             datasetPath: request.datasetPath,
@@ -503,6 +512,7 @@ private final class StubMeasurementSetPlotClient: MeasurementSetPlotClient {
 }
 
 private func makePlotResult(
+    preset: MeasurementSetExplorerPlotPreset = .uvCoverage,
     presetLabel: String = "UV Coverage",
     title: String = "UV Coverage",
     datasetPath: String = "/data/probed.ms",
@@ -514,6 +524,7 @@ private func makePlotResult(
         = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 ) -> MeasurementSetPlotResultSummary {
     MeasurementSetPlotResultSummary(
+        preset: preset,
         presetLabel: presetLabel,
         title: title,
         summary: "Synthetic plot result for tests.",

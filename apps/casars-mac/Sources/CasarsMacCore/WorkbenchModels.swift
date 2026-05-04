@@ -386,6 +386,7 @@ public struct PlotSeriesSummary: Codable, Equatable {
 }
 
 public struct MeasurementSetPlotResultSummary: Codable, Equatable {
+    public var preset: MeasurementSetExplorerPlotPreset
     public var presetLabel: String
     public var title: String
     public var summary: String
@@ -406,6 +407,7 @@ public struct MeasurementSetPlotResultSummary: Codable, Equatable {
     public var imageCacheID: String
 
     public init(
+        preset: MeasurementSetExplorerPlotPreset,
         presetLabel: String,
         title: String,
         summary: String,
@@ -424,6 +426,7 @@ public struct MeasurementSetPlotResultSummary: Codable, Equatable {
         imageHeight: UInt32,
         imageBytes: Data
     ) {
+        self.preset = preset
         self.presetLabel = presetLabel
         self.title = title
         self.summary = summary
@@ -509,6 +512,13 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
             lastError: nil,
             result: nil
         )
+    }
+}
+
+public extension MeasurementSetPlotResultSummary {
+    func matches(plotState: MeasurementSetExplorerPlotState) -> Bool {
+        preset == plotState.preset
+            && dataColumn == plotState.dataColumn
     }
 }
 
@@ -728,6 +738,7 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
     public var selectedCorrelation: String?
     public var dataColumn: String
     public var lastError: String?
+    public var resultPreset: MeasurementSetExplorerPlotPreset?
     public var title: String?
     public var xAxis: PlotAxisSummary?
     public var yAxis: PlotAxisSummary?
@@ -745,13 +756,15 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
         selectedCorrelation = plotState.selectedCorrelation
         dataColumn = plotState.dataColumn
         lastError = plotState.lastError
-        title = plotState.result?.title
-        xAxis = plotState.result?.xAxis
-        yAxis = plotState.result?.yAxis
-        renderedPointCount = plotState.result?.renderedPointCount
-        seriesCount = plotState.result?.series.count
-        imageByteCount = plotState.result?.imageBytes.count
-        renderer = plotState.result?.renderer
-        diagnostics = plotState.result?.diagnostics ?? []
+        let visibleResult = plotState.result?.matches(plotState: plotState) == true ? plotState.result : nil
+        resultPreset = visibleResult?.preset
+        title = visibleResult?.title
+        xAxis = visibleResult?.xAxis
+        yAxis = visibleResult?.yAxis
+        renderedPointCount = visibleResult?.renderedPointCount
+        seriesCount = visibleResult?.series.count
+        imageByteCount = visibleResult?.imageBytes.count
+        renderer = visibleResult?.renderer
+        diagnostics = visibleResult?.diagnostics ?? []
     }
 }
