@@ -553,6 +553,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var aiProposals: [AIProposal]
     public var python: PythonPanelState
     public var measurementSetPlots: [String: MeasurementSetExplorerPlotState]
+    public var measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary]
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -574,6 +575,7 @@ public struct WorkbenchState: Codable, Equatable {
         aiProposals: [AIProposal],
         python: PythonPanelState,
         measurementSetPlots: [String: MeasurementSetExplorerPlotState] = [:],
+        measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary] = [:],
         history: [ProcessingHistoryEvent],
         commandQuery: String,
         lastErrors: [String],
@@ -594,6 +596,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.aiProposals = aiProposals
         self.python = python
         self.measurementSetPlots = measurementSetPlots
+        self.measurementSetPlotResultCache = measurementSetPlotResultCache
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors

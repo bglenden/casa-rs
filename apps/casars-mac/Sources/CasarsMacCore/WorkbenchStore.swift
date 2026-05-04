@@ -181,40 +181,40 @@ public final class WorkbenchStore: ObservableObject {
     public func setMeasurementSetPlotPreset(_ preset: MeasurementSetExplorerPlotPreset, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
         plotState.preset = preset
-        plotState.status = .idle
         plotState.lastError = nil
+        refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
     }
 
     public func setMeasurementSetPlotField(_ field: String?, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
         plotState.selectedField = normalizedPickerValue(field)
-        plotState.status = .idle
         plotState.lastError = nil
+        refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
     }
 
     public func setMeasurementSetPlotSpectralWindow(_ spectralWindow: String?, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
         plotState.selectedSpectralWindow = normalizedPickerValue(spectralWindow)
-        plotState.status = .idle
         plotState.lastError = nil
+        refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
     }
 
     public func setMeasurementSetPlotCorrelation(_ correlation: String?, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
         plotState.selectedCorrelation = normalizedPickerValue(correlation)
-        plotState.status = .idle
         plotState.lastError = nil
+        refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
     }
 
     public func setMeasurementSetPlotDataColumn(_ dataColumn: String, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
         plotState.dataColumn = dataColumn
-        plotState.status = .idle
         plotState.lastError = nil
+        refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
     }
 
@@ -233,6 +233,13 @@ public final class WorkbenchStore: ObservableObject {
         }
 
         var plotState = measurementSetPlotState(for: datasetID)
+        if let cached = cachedMeasurementSetPlotResult(for: dataset, plotState: plotState) {
+            plotState.result = cached
+            plotState.status = .ready
+            plotState.lastError = nil
+            state.measurementSetPlots[datasetID] = plotState
+            return
+        }
         plotState.status = .running
         plotState.lastError = nil
         state.measurementSetPlots[datasetID] = plotState
@@ -250,6 +257,7 @@ public final class WorkbenchStore: ObservableObject {
             )
             plotState.result = result
             plotState.status = .ready
+            cacheMeasurementSetPlotResult(result, for: dataset, plotState: plotState)
             state.measurementSetPlots[datasetID] = plotState
         } catch {
             plotState.status = .failed
@@ -707,6 +715,61 @@ public final class WorkbenchStore: ObservableObject {
         let plotState = MeasurementSetExplorerPlotState.defaultState(for: dataset)
         state.measurementSetPlots[datasetID] = plotState
         return plotState
+    }
+
+    private func refreshMeasurementSetPlotStateFromCache(
+        _ plotState: inout MeasurementSetExplorerPlotState,
+        datasetID: String
+    ) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }),
+              let cached = cachedMeasurementSetPlotResult(for: dataset, plotState: plotState)
+        else {
+            plotState.status = .idle
+            plotState.result = nil
+            return
+        }
+
+        plotState.status = .ready
+        plotState.result = cached
+    }
+
+    private func cachedMeasurementSetPlotResult(
+        for dataset: DatasetSummary,
+        plotState: MeasurementSetExplorerPlotState
+    ) -> MeasurementSetPlotResultSummary? {
+        state.measurementSetPlotResultCache[
+            measurementSetPlotCacheKey(for: dataset, plotState: plotState)
+        ]
+    }
+
+    private func cacheMeasurementSetPlotResult(
+        _ result: MeasurementSetPlotResultSummary,
+        for dataset: DatasetSummary,
+        plotState: MeasurementSetExplorerPlotState
+    ) {
+        state.measurementSetPlotResultCache[
+            measurementSetPlotCacheKey(for: dataset, plotState: plotState)
+        ] = result
+    }
+
+    private func measurementSetPlotCacheKey(
+        for dataset: DatasetSummary,
+        plotState: MeasurementSetExplorerPlotState
+    ) -> String {
+        [
+            "ms-plot",
+            dataset.id,
+            dataset.path,
+            "bytes:\(dataset.sizeBytes)",
+            "modified:\(dataset.modifiedUnixSeconds.map(String.init) ?? "unknown")",
+            "preset:\(plotState.preset.rawValue)",
+            "field:\(plotState.selectedField ?? "all")",
+            "spw:\(plotState.selectedSpectralWindow ?? "all")",
+            "corr:\(plotState.selectedCorrelation ?? "all")",
+            "data:\(plotState.dataColumn)",
+            "size:960x600",
+            "maxPoints:250000"
+        ].joined(separator: "|")
     }
 
     private func defaultDirtyImagingParameters(for dataset: DatasetSummary) -> DirtyImagingTaskParameters {

@@ -421,6 +421,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(plotClient.requests.last?.preset, .uvCoverage)
         XCTAssertNil(plotClient.requests.last?.field)
         XCTAssertNil(plotClient.requests.last?.spectralWindow)
+        XCTAssertEqual(plotClient.requests.count, 1)
 
         store.setMeasurementSetPlotPreset(.amplitudeVsUvDistance, datasetID: probedDataset.id)
         store.setMeasurementSetPlotField("0: Target", datasetID: probedDataset.id)
@@ -432,6 +433,20 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(plotClient.requests.last?.field, "0")
         XCTAssertEqual(plotClient.requests.last?.spectralWindow, "0")
         XCTAssertEqual(plotClient.requests.last?.dataColumn, "DATA")
+        XCTAssertEqual(plotClient.requests.count, 2)
+
+        store.setMeasurementSetPlotField("all", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotSpectralWindow("all", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotPreset(.uvCoverage, datasetID: probedDataset.id)
+
+        snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.status, .ready)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.title, "UV Coverage")
+        XCTAssertEqual(plotClient.requests.count, 2)
+
+        store.runMeasurementSetPlot(datasetID: probedDataset.id)
+
+        XCTAssertEqual(plotClient.requests.count, 2)
     }
 
     func testInterfaceFontSizeIsAdjustableClampedAndPreservedAcrossFixtureOpen() {
