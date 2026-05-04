@@ -1,0 +1,33 @@
+[package]
+name = "casars-frontend-services"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Shared Swift and Python frontend services for casa-rs"
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib", "staticlib"]
+
+[dependencies]
+anyhow = "1"
+camino = "1.2"
+cargo_metadata = "0.19"
+casa-images = { path = "../casa-images" }
+casa-ms = { path = "../casa-ms" }
+casa-tables = { path = "../casa-tables" }
+thiserror.workspace = true
+uniffi = "0.29.5"
+uniffi_bindgen = "0.29.5"
+
+[dev-dependencies]
+casa-types = { path = "../casa-types" }
+flate2 = "1"
+ndarray.workspace = true
+tar = "0.4"
+tempfile = "3"
+
+[lints]
+workspace = true

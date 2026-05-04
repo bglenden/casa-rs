@@ -221,6 +221,7 @@ struct DatasetRow: View {
         case .measurementSet: "antenna.radiowaves.left.and.right"
         case .imageCube: "cube"
         case .calibrationTable: "tablecells"
+        case .table: "tablecells.badge.ellipsis"
         case .runProduct: "checkmark.seal"
         }
     }

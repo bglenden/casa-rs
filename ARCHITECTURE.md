@@ -1,8 +1,8 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-04-19
-Verification: just arch-check
+Last reality check: 2026-05-04
+Verification: just docs-check
 
 ## System purpose
 
@@ -19,7 +19,7 @@ coordinates, measures, and related workflows.
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | Versioned schema bundles and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
-| apps and runtimes (`casars`, `casars-imager`, `casars-importvla`, `casars-python`, `ratatui-graphics`, `apps/casars-mac`) | Terminal shells, orchestration binaries, Python bindings/package, rendering/runtime support, and the native macOS GUI prototype | boundary contracts, domain libraries, foundation crates; `apps/casars-mac` is fixture-only until real provider integration is approved |
+| apps and runtimes (`casars`, `casars-imager`, `casars-importvla`, `casars-python`, `casars-frontend-services`, `ratatui-graphics`, `apps/casars-mac`) | Terminal shells, orchestration binaries, Python bindings/package, frontend service bindings, rendering/runtime support, and the native macOS GUI prototype | boundary contracts, domain libraries, foundation crates; lightweight frontend services may expose read-only domain-library probes through UniFFI |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
 ## Dependency direction
@@ -39,9 +39,13 @@ Additional constraints:
 - Within `casa-tables`, row/column/cell accessor objects are the public table-data surface; prepared-row accessors provide the reusable selected-column row fast path, and the old table-level convenience wrappers have been removed from the public API.
 - Versioned provider bundles are boundary contracts; UI projections are derived
   views, not separate truth sources.
-- `apps/casars-mac` keeps GUI-Wave-0 fixture schemas inside its SwiftPM core.
-  They may model proposed provider capabilities but must not become real
-  provider contracts without canonical contract work.
+- `apps/casars-mac` keeps fixture schemas inside its SwiftPM core when modeling
+  proposed UI behavior. Real, read-only dataset discovery enters through
+  `casars-frontend-services`, whose Rust API is exposed to Swift and Python
+  with UniFFI.
+- `casars-frontend-services` is an apps/runtime boundary crate. It may compose
+  domain-library reads into GUI-appropriate summaries, but it must not become a
+  second implementation of persistence, task semantics, or provider contracts.
 
 ## Runtime model
 
@@ -52,9 +56,11 @@ shell/Python scripts, integration tests, or subprocess orchestration rather
 than a shared background service model.
 
 `apps/casars-mac` is a SwiftPM package for the macOS-native GUI prototype. Its
-GUI-Wave-0 runtime is fixture-only and exposes headless debug-state inspection
-through the executable; it does not introduce a Rust/Swift FFI runtime or shared
-background service contract.
+workbench state remains headlessly testable in SwiftPM. GUI-Wave-1 introduces a
+small UniFFI runtime boundary through `casars-frontend-services` for read-only
+project and dataset probing. This is not a shared background service contract:
+long-running tasks, cancellation, and provider execution remain separate
+protocol work.
 
 ## Persistence / external systems
 
@@ -69,6 +75,8 @@ background service contract.
 - published Rust library crates, especially `casa-types`, `casa-tables`, `casa-ms`, `casa-lattices`, `casa-coordinates`, and `casa-images`
 - CLI/TUI apps such as `casars`, `msexplore`, `tablebrowser`, `imexplore`, `calibrate`, and `casars-importvla`
 - native macOS GUI prototype package `apps/casars-mac`
+- experimental UniFFI frontend service bindings generated from
+  `casars-frontend-services`
 - Python package `casars-python`
 - persisted CASA-compatible on-disk table, image, and related data formats
 - versioned provider contract bundles and protocol schemas

@@ -1,10 +1,39 @@
 import Foundation
+import CasarsFrontendServices
+
+public protocol ProjectProbeClient {
+    func probeProject(path: String) throws -> ProjectFixtureProbe
+}
+
+public struct ProjectFixtureProbe: Equatable {
+    public var project: ProjectFixture
+    public var diagnostics: [String]
+
+    public init(project: ProjectFixture, diagnostics: [String]) {
+        self.project = project
+        self.diagnostics = diagnostics
+    }
+}
+
+public struct UniFFIProjectProbeClient: ProjectProbeClient {
+    public init() {}
+
+    public func probeProject(path: String) throws -> ProjectFixtureProbe {
+        let probe = try CasarsFrontendServices.probeProject(path: path)
+        return ProjectFixtureProbe(project: ProjectFixture(probe: probe), diagnostics: probe.diagnostics)
+    }
+}
 
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
+    private let probeClient: ProjectProbeClient
 
-    public init(state: WorkbenchState = FixtureWorkbench.makeState()) {
+    public init(
+        state: WorkbenchState = FixtureWorkbench.makeState(),
+        probeClient: ProjectProbeClient = UniFFIProjectProbeClient()
+    ) {
         self.state = state
+        self.probeClient = probeClient
     }
 
     public static func fixture() -> WorkbenchStore {
@@ -13,6 +42,42 @@ public final class WorkbenchStore: ObservableObject {
 
     public func openFixtureProject() {
         state = FixtureWorkbench.makeState()
+    }
+
+    public func openProject(path: String) {
+        do {
+            let probed = try probeClient.probeProject(path: path)
+            state.project = probed.project
+            state.probeDiagnostics = probed.diagnostics
+            state.selectedDatasetID = probed.project.datasets.first?.id
+            state.dockMode = .datasets
+            state.leftDockCollapsed = false
+            state.inspectorCollapsed = false
+            state.tabs = []
+            state.activeTabID = ""
+            if let dataset = state.selectedDataset {
+                openTab(
+                    WorkbenchTab(
+                        id: "tab-\(dataset.id)",
+                        title: dataset.name,
+                        kind: .datasetExplorer,
+                        datasetID: dataset.id
+                    )
+                )
+            }
+            state.history.append(
+                ProcessingHistoryEvent(
+                    id: "hist-project-open-\(state.history.count + 1)",
+                    timestamp: "probed",
+                    title: "Project opened",
+                    reason: "Opened real project directory and probed datasets with Rust frontend services.",
+                    affectedPaths: [probed.project.rootPath],
+                    approval: "user"
+                )
+            )
+        } catch {
+            state.lastErrors.append("Open project \(path): \(error)")
+        }
     }
 
     public func selectDockMode(_ mode: DockMode) {
@@ -205,5 +270,46 @@ public final class WorkbenchStore: ObservableObject {
         }
         let data = try encoder.encode(debugSnapshot())
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+extension ProjectFixture {
+    init(probe: CasarsFrontendServices.ProjectProbe) {
+        self.init(
+            name: probe.name,
+            rootPath: probe.rootPath,
+            datasets: probe.datasets.map(DatasetSummary.init(probe:)),
+            source: .probed
+        )
+    }
+}
+
+extension DatasetSummary {
+    init(probe: CasarsFrontendServices.DatasetProbe) {
+        self.init(
+            id: probe.id,
+            name: probe.name,
+            path: probe.path,
+            kind: DatasetKind(probeKind: probe.kind),
+            size: probe.logicalSize,
+            units: probe.units,
+            fields: probe.fields,
+            spectralWindows: probe.spectralWindows,
+            scans: probe.scans,
+            notes: probe.notes
+        )
+    }
+}
+
+extension DatasetKind {
+    init(probeKind: CasarsFrontendServices.DatasetKind) {
+        switch probeKind {
+        case .measurementSet:
+            self = .measurementSet
+        case .image:
+            self = .imageCube
+        case .table:
+            self = .table
+        }
     }
 }

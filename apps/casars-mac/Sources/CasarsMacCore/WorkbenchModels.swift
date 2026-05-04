@@ -28,6 +28,7 @@ public enum DatasetKind: String, Codable, Equatable {
     case measurementSet
     case imageCube
     case calibrationTable
+    case table
     case runProduct
 }
 
@@ -72,12 +73,24 @@ public struct ProjectFixture: Codable, Equatable {
     public var name: String
     public var rootPath: String
     public var datasets: [DatasetSummary]
+    public var source: ProjectSource
 
-    public init(name: String, rootPath: String, datasets: [DatasetSummary]) {
+    public init(
+        name: String,
+        rootPath: String,
+        datasets: [DatasetSummary],
+        source: ProjectSource = .fixture
+    ) {
         self.name = name
         self.rootPath = rootPath
         self.datasets = datasets
+        self.source = source
     }
+}
+
+public enum ProjectSource: String, Codable, Equatable {
+    case fixture
+    case probed
 }
 
 public enum WorkbenchTabKind: String, Codable, Equatable {
@@ -263,6 +276,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
     public var lastErrors: [String]
+    public var probeDiagnostics: [String]
 
     public init(
         project: ProjectFixture,
@@ -279,7 +293,8 @@ public struct WorkbenchState: Codable, Equatable {
         python: PythonPanelState,
         history: [ProcessingHistoryEvent],
         commandQuery: String,
-        lastErrors: [String]
+        lastErrors: [String],
+        probeDiagnostics: [String] = []
     ) {
         self.project = project
         self.dockMode = dockMode
@@ -296,6 +311,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors
+        self.probeDiagnostics = probeDiagnostics
     }
 
     public var selectedDataset: DatasetSummary? {
@@ -308,6 +324,10 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var activeLeftDockMode: DockMode
     public var leftDockCollapsed: Bool
     public var selectedDataset: String?
+    public var activeProjectRoot: String
+    public var activeProjectSource: ProjectSource
+    public var discoveredDatasets: [String]
+    public var probeDiagnostics: [String]
     public var inspectorCollapsed: Bool
     public var openTabs: [String]
     public var activeTab: String
@@ -320,9 +340,13 @@ public struct DebugStateSnapshot: Codable, Equatable {
 
     public init(state: WorkbenchState) {
         activeProject = state.project.name
+        activeProjectRoot = state.project.rootPath
+        activeProjectSource = state.project.source
         activeLeftDockMode = state.dockMode
         leftDockCollapsed = state.leftDockCollapsed
         selectedDataset = state.selectedDataset?.name
+        discoveredDatasets = state.project.datasets.map(\.name)
+        probeDiagnostics = state.probeDiagnostics
         inspectorCollapsed = state.inspectorCollapsed
         openTabs = state.tabs.map(\.title)
         activeTab = state.tabs.first { $0.id == state.activeTabID }?.title ?? state.activeTabID

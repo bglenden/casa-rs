@@ -19,7 +19,23 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "CasarsMacCore"
+            name: "CasarsFrontendServices",
+            dependencies: ["CasarsFrontendServicesFFI"],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-L", "../../target/debug",
+                    "-lcasars_frontend_services",
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", "../../target/debug"
+                ])
+            ]
+        ),
+        .systemLibrary(
+            name: "CasarsFrontendServicesFFI"
+        ),
+        .target(
+            name: "CasarsMacCore",
+            dependencies: ["CasarsFrontendServices"]
         ),
         .executableTarget(
             name: "CasarsMacApp",

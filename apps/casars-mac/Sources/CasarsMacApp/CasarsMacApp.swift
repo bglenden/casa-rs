@@ -12,7 +12,10 @@ struct CasarsMacApp: App {
     init() {
         let arguments = CommandLine.arguments
         if arguments.contains("--dump-debug-state") {
-            dumpDebugState(simulateMainFlow: arguments.contains("--simulate-main-flow"))
+            dumpDebugState(
+                simulateMainFlow: arguments.contains("--simulate-main-flow"),
+                projectPath: argumentValue(after: "--probe-project", in: arguments)
+            )
             exit(0)
         }
     }
@@ -29,6 +32,13 @@ struct CasarsMacApp: App {
                     store.openFixtureProject()
                 }
                 .keyboardShortcut("o", modifiers: [.command])
+
+                Button("Open Project Directory...") {
+                    if let url = ProjectOpenPanel.chooseDirectory() {
+                        store.openProject(path: url.path)
+                    }
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
 
                 Button("Open AI Chat") {
                     store.openDefaultTab(kind: .aiChat)
@@ -65,8 +75,11 @@ struct CasarsMacApp: App {
         }
     }
 
-    private func dumpDebugState(simulateMainFlow: Bool) {
+    private func dumpDebugState(simulateMainFlow: Bool, projectPath: String?) {
         let store = WorkbenchStore.fixture()
+        if let projectPath {
+            store.openProject(path: projectPath)
+        }
         if simulateMainFlow {
             store.selectDockMode(.history)
             store.setInspectorCollapsed(true)
@@ -84,6 +97,13 @@ struct CasarsMacApp: App {
             exit(1)
         }
     }
+
+    private func argumentValue(after flag: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {
+            return nil
+        }
+        return arguments[index + 1]
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -98,6 +118,17 @@ enum FullScreenController {
         if let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.canBecomeKey }) {
             window.toggleFullScreen(nil)
         }
+    }
+}
+
+enum ProjectOpenPanel {
+    static func chooseDirectory() -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open"
+        return panel.runModal() == .OK ? panel.url : nil
     }
 }
 

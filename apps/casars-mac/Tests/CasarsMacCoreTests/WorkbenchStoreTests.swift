@@ -102,4 +102,50 @@ final class WorkbenchStoreTests: XCTestCase {
 
         XCTAssertEqual(store.debugSnapshot().lastErrors.count, 2)
     }
+
+    func testOpenProjectIngestsProbeResultsIntoDatasetDockAndInspectorState() {
+        let probedDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            scans: ["scan 1: 12 rows, Target"],
+            notes: "Recognized by Rust probe."
+        )
+        let client = StubProjectProbeClient(
+            result: ProjectFixtureProbe(
+                project: ProjectFixture(
+                    name: "Real Project",
+                    rootPath: "/data",
+                    datasets: [probedDataset],
+                    source: .probed
+                ),
+                diagnostics: ["skipped /data/notes.txt"]
+            )
+        )
+        let store = WorkbenchStore(state: FixtureWorkbench.makeState(), probeClient: client)
+
+        store.openProject(path: "/data")
+
+        let snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.activeProject, "Real Project")
+        XCTAssertEqual(snapshot.activeProjectRoot, "/data")
+        XCTAssertEqual(snapshot.activeProjectSource, .probed)
+        XCTAssertEqual(snapshot.selectedDataset, "probed.ms")
+        XCTAssertEqual(snapshot.discoveredDatasets, ["probed.ms"])
+        XCTAssertEqual(snapshot.probeDiagnostics, ["skipped /data/notes.txt"])
+        XCTAssertEqual(store.state.selectedDataset?.spectralWindows, ["spw 0: 4 chan, 1.420000 GHz center"])
+    }
+}
+
+private struct StubProjectProbeClient: ProjectProbeClient {
+    var result: ProjectFixtureProbe
+
+    func probeProject(path: String) throws -> ProjectFixtureProbe {
+        result
+    }
 }

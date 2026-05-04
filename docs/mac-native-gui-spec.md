@@ -481,10 +481,13 @@ The native app should read provider schemas and project them into SwiftUI
 controls with coarse presentation hints. Dataset-specific choices should come
 from casa-rs summaries and session/object queries, not hard-coded GUI lists.
 
-For v0, the native app should supervise provider subprocesses over JSON and
-JSON Lines protocols. Direct Rust in-process object access should wait until
-FFI, threading, lifetime, and cancellation rules are designed. Long-running
-operations need explicit cancellation semantics:
+For v0 task execution, the native app should supervise provider subprocesses
+over JSON and JSON Lines protocols. Lightweight read-only project and dataset
+probing is allowed through `casars-frontend-services`, a Rust-owned UniFFI
+boundary that can generate Swift and Python bindings from one source API. Broad
+direct Rust object access, mutation, threading, lifetimes, and cancellation
+remain separate design work. Long-running operations need explicit cancellation
+semantics:
 
 - provider-level cancel request when the protocol supports it
 - process signal fallback when cancellation is not yet protocol-native
@@ -518,9 +521,14 @@ These choices should be made before the first clickable prototype:
   visible.
 - Reserve a global command/search surface early so dataset, task, AI, and
   navigation actions do not become disconnected panel-local affordances.
-- Start with fixture providers and static plot/image assets.
-- Do not start with Electron, Tauri, a webview UI, or direct Rust in-process
-  bindings.
+- Start with fixture providers, static plot/image assets, and a narrow real
+  dataset-discovery probe.
+- Do not start with Electron, Tauri, or a webview UI.
+- Use UniFFI as the primary binding mechanism for new frontend service APIs
+  that should be available to both Swift and Python. Existing PyO3 Python
+  bindings may remain temporarily, but they should be consolidated later so the
+  project does not keep two long-term binding systems for the same frontend
+  capabilities.
 - Defer charting, image rendering, Python kernel, and real AI provider library
   choices until panel behavior proves what is needed.
 
@@ -528,8 +536,10 @@ The key architectural requirement is not just "native SwiftUI." It is
 "native SwiftUI over a headlessly testable workbench core."
 
 GUI-Wave-0 implements this in `apps/casars-mac` as a SwiftPM package with a
-`CasarsMacCore` library and `casars-mac` SwiftUI executable. The prototype
-remains fixture-only until real provider-contract work is explicitly approved.
+`CasarsMacCore` library and `casars-mac` SwiftUI executable. GUI-Wave-1 adds
+`casars-frontend-services` for read-only real project/dataset probing while
+keeping task execution, image exploration, Python execution, and AI behavior
+stubbed unless separately approved.
 
 ## Testability And Debuggability
 
@@ -614,6 +624,11 @@ Rules for expansion:
   result model rather than relying on stdout scraping.
 - AI-facing context must be explicit and auditable, not an implicit capture of
   hidden UI state.
+- Read-only file/dataset probes should interrogate the data with casa-rs
+  libraries rather than infer type from filename suffixes. Probe results should
+  carry enough freshness metadata, such as path, modification time, and probe
+  time, to support a future cache without making the underlying data structures
+  appear intrinsically versioned.
 
 Prototype exception:
 
@@ -657,6 +672,7 @@ providers before treating current protocol limitations as product constraints.
 Allowed early scaffolding:
 
 - static project fixtures
+- real read-only dataset discovery through `casars-frontend-services`
 - fake MeasurementSet, image, calibration-table, and run-output inventories
 - mocked task schemas and context-dependent parameter options
 - fake task execution timelines, logs, progress, products, and failures
