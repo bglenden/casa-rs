@@ -27,7 +27,9 @@ final class WorkbenchStoreTests: XCTestCase {
         store.selectDockMode(.history)
         store.setLeftDockCollapsed(true)
         store.setInspectorCollapsed(true)
+        let tabCount = store.state.tabs.count
         store.selectDataset("image-cube")
+        XCTAssertEqual(store.state.tabs.count, tabCount)
         store.openDefaultTab(kind: .history)
 
         XCTAssertEqual(store.state.dockMode, .history)
@@ -39,6 +41,26 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertFalse(store.debugSnapshot().inspectorCollapsed)
         XCTAssertEqual(store.state.selectedDataset?.name, "IRC+10216.clean.image")
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .history)
+    }
+
+    func testDatasetExplorerOpenUsesSelectedDatasetTypeAndDatasetID() {
+        let store = WorkbenchStore.fixture()
+
+        store.selectDataset("image-cube")
+        store.openDefaultTab(kind: .datasetExplorer)
+
+        var activeTab = store.state.tabs.first { $0.id == store.state.activeTabID }
+        XCTAssertEqual(activeTab?.kind, .datasetExplorer)
+        XCTAssertEqual(activeTab?.datasetID, "image-cube")
+        XCTAssertEqual(activeTab?.title, "Image: IRC+10216.clean.image")
+
+        store.openDatasetExplorer("phase-cal")
+
+        activeTab = store.state.tabs.first { $0.id == store.state.activeTabID }
+        XCTAssertEqual(store.state.selectedDatasetID, "phase-cal")
+        XCTAssertEqual(activeTab?.kind, .datasetExplorer)
+        XCTAssertEqual(activeTab?.datasetID, "phase-cal")
+        XCTAssertEqual(activeTab?.title, "Cal: phase.cal")
     }
 
     func testCommandQueryRoutesWorkbenchShellSurfaces() {
@@ -140,6 +162,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.discoveredDatasets, ["probed.ms"])
         XCTAssertEqual(snapshot.probeDiagnostics, ["skipped /data/notes.txt"])
         XCTAssertEqual(store.state.selectedDataset?.spectralWindows, ["spw 0: 4 chan, 1.420000 GHz center"])
+        XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.title, "MS: probed.ms")
     }
 
     func testInterfaceFontSizeIsAdjustableClampedAndPreservedAcrossFixtureOpen() {

@@ -58,14 +58,7 @@ public final class WorkbenchStore: ObservableObject {
             state.tabs = []
             state.activeTabID = ""
             if let dataset = state.selectedDataset {
-                openTab(
-                    WorkbenchTab(
-                        id: "tab-\(dataset.id)",
-                        title: dataset.name,
-                        kind: .datasetExplorer,
-                        datasetID: dataset.id
-                    )
-                )
+                openExplorer(for: dataset)
             }
             state.history.append(
                 ProcessingHistoryEvent(
@@ -94,16 +87,25 @@ public final class WorkbenchStore: ObservableObject {
         }
 
         state.selectedDatasetID = datasetID
-        if let dataset = state.selectedDataset {
-            openTab(
-                WorkbenchTab(
-                    id: "tab-\(dataset.id)",
-                    title: dataset.name,
-                    kind: .datasetExplorer,
-                    datasetID: dataset.id
-                )
-            )
+    }
+
+    public func openSelectedDatasetExplorer() {
+        guard let dataset = state.selectedDataset else {
+            state.lastErrors.append("No selected dataset to explore")
+            return
         }
+
+        openExplorer(for: dataset)
+    }
+
+    public func openDatasetExplorer(_ datasetID: String) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+
+        state.selectedDatasetID = datasetID
+        openExplorer(for: dataset)
     }
 
     public func setInspectorCollapsed(_ collapsed: Bool) {
@@ -172,9 +174,7 @@ public final class WorkbenchStore: ObservableObject {
     public func openDefaultTab(kind: WorkbenchTabKind) {
         switch kind {
         case .datasetExplorer:
-            if let dataset = state.selectedDataset {
-                selectDataset(dataset.id)
-            }
+            openSelectedDatasetExplorer()
         case .task:
             openTab(WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: state.selectedDatasetID))
         case .aiChat:
@@ -284,6 +284,17 @@ public final class WorkbenchStore: ObservableObject {
         }
         let data = try encoder.encode(debugSnapshot())
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private func openExplorer(for dataset: DatasetSummary) {
+        openTab(
+            WorkbenchTab(
+                id: dataset.explorerTabID,
+                title: dataset.explorerTabTitle,
+                kind: .datasetExplorer,
+                datasetID: dataset.id
+            )
+        )
     }
 }
 

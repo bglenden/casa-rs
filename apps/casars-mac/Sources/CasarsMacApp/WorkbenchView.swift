@@ -152,6 +152,9 @@ struct LeftDockView: View {
                 ForEach(store.state.project.datasets) { dataset in
                     DatasetRow(dataset: dataset)
                         .tag(Optional(dataset.id))
+                        .onTapGesture(count: 2) {
+                            store.openDatasetExplorer(dataset.id)
+                        }
                         .accessibilityIdentifier("dataset.row.\(dataset.id)")
                 }
             }

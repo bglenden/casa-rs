@@ -30,6 +30,36 @@ public enum DatasetKind: String, Codable, Equatable {
     case calibrationTable
     case table
     case runProduct
+
+    public var explorerName: String {
+        switch self {
+        case .measurementSet:
+            "MeasurementSet Explorer"
+        case .imageCube:
+            "Image Explorer"
+        case .calibrationTable:
+            "Calibration Table Explorer"
+        case .table:
+            "Table Explorer"
+        case .runProduct:
+            "Run Product Explorer"
+        }
+    }
+
+    public var explorerTabPrefix: String {
+        switch self {
+        case .measurementSet:
+            "MS"
+        case .imageCube:
+            "Image"
+        case .calibrationTable:
+            "Cal"
+        case .table:
+            "Table"
+        case .runProduct:
+            "Product"
+        }
+    }
 }
 
 public struct DatasetSummary: Identifiable, Codable, Equatable {
@@ -66,6 +96,14 @@ public struct DatasetSummary: Identifiable, Codable, Equatable {
         self.spectralWindows = spectralWindows
         self.scans = scans
         self.notes = notes
+    }
+
+    public var explorerTabID: String {
+        "tab-explorer-\(id)"
+    }
+
+    public var explorerTabTitle: String {
+        "\(kind.explorerTabPrefix): \(name)"
     }
 }
 

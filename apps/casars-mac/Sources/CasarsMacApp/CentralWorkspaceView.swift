@@ -69,19 +69,20 @@ struct CentralWorkspaceView: View {
 
     @ViewBuilder
     private var activePanel: some View {
-        let tab = store.state.tabs.first { $0.id == store.state.activeTabID }
-        switch tab?.kind {
+        if let tab = store.state.tabs.first(where: { $0.id == store.state.activeTabID }) {
+            switch tab.kind {
         case .datasetExplorer:
-            DatasetExplorerPanel(store: store)
+                DatasetExplorerPanel(store: store, datasetID: tab.datasetID)
         case .task:
-            TaskPanel(store: store)
+                TaskPanel(store: store)
         case .aiChat:
-            AIChatPanel(store: store)
+                AIChatPanel(store: store)
         case .python:
-            PythonPanel(store: store)
+                PythonPanel(store: store)
         case .history:
-            HistoryPanel(store: store)
-        case .none:
+                HistoryPanel(store: store)
+            }
+        } else {
             Text("No active tab")
                 .foregroundStyle(.secondary)
         }
@@ -100,31 +101,129 @@ struct CentralWorkspaceView: View {
 
 struct DatasetExplorerPanel: View {
     @ObservedObject var store: WorkbenchStore
+    let datasetID: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PanelHeader(title: store.state.selectedDataset?.name ?? "Dataset Explorer", subtitle: "Fixture explorer: summary, fields, spectral windows, scans, and preview plots")
+                if let dataset {
+                    PanelHeader(title: dataset.kind.explorerName, subtitle: explorerSubtitle(for: dataset))
 
-                HStack(alignment: .top, spacing: 16) {
-                    SummaryBox(title: "Fields", values: store.state.selectedDataset?.fields ?? [])
-                    SummaryBox(title: "Spectral windows", values: store.state.selectedDataset?.spectralWindows ?? [])
-                    SummaryBox(title: "Scans", values: store.state.selectedDataset?.scans ?? [])
+                    HStack(alignment: .top, spacing: 16) {
+                        SummaryBox(title: primarySummaryTitle(for: dataset), values: primarySummaryValues(for: dataset))
+                        SummaryBox(title: secondarySummaryTitle(for: dataset), values: secondarySummaryValues(for: dataset))
+                        SummaryBox(title: "Notes", values: [dataset.notes])
+                    }
+
+                    HStack(spacing: 16) {
+                        ForEach(plotPlaceholders(for: dataset)) { plot in
+                            PlotPlaceholder(title: plot.title, caption: plot.caption)
+                        }
+                    }
+
+                    Text(dataset.path)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                } else {
+                    PanelHeader(title: "Dataset Explorer", subtitle: "Select a dataset before opening an explorer")
                 }
-
-                HStack(spacing: 16) {
-                    PlotPlaceholder(title: "Amplitude vs. channel", caption: "spw 1, target field")
-                    PlotPlaceholder(title: "UV distance", caption: "fixture visibility sample")
-                }
-
-                Text("Fixture/demo data")
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
             }
             .padding(20)
         }
         .accessibilityIdentifier("panel.datasetExplorer")
     }
+
+    private var dataset: DatasetSummary? {
+        if let datasetID {
+            return store.state.project.datasets.first { $0.id == datasetID }
+        }
+        return store.state.selectedDataset
+    }
+
+    private func explorerSubtitle(for dataset: DatasetSummary) -> String {
+        "\(dataset.name) - \(dataset.size) - \(dataset.units)"
+    }
+
+    private func primarySummaryTitle(for dataset: DatasetSummary) -> String {
+        switch dataset.kind {
+        case .measurementSet, .runProduct:
+            "Fields"
+        case .imageCube:
+            "Axes and planes"
+        case .calibrationTable, .table:
+            "Rows and columns"
+        }
+    }
+
+    private func primarySummaryValues(for dataset: DatasetSummary) -> [String] {
+        switch dataset.kind {
+        case .measurementSet, .runProduct:
+            dataset.fields
+        case .imageCube:
+            [dataset.size, dataset.units] + dataset.spectralWindows
+        case .calibrationTable, .table:
+            [dataset.size, dataset.units]
+        }
+    }
+
+    private func secondarySummaryTitle(for dataset: DatasetSummary) -> String {
+        switch dataset.kind {
+        case .measurementSet, .imageCube, .runProduct:
+            "Spectral windows"
+        case .calibrationTable:
+            "Solutions"
+        case .table:
+            "Metadata"
+        }
+    }
+
+    private func secondarySummaryValues(for dataset: DatasetSummary) -> [String] {
+        switch dataset.kind {
+        case .measurementSet, .imageCube, .runProduct:
+            dataset.spectralWindows
+        case .calibrationTable:
+            dataset.fields + dataset.spectralWindows + dataset.scans
+        case .table:
+            [dataset.kind.rawValue, dataset.path]
+        }
+    }
+
+    private func plotPlaceholders(for dataset: DatasetSummary) -> [ExplorerPlot] {
+        switch dataset.kind {
+        case .measurementSet:
+            [
+                ExplorerPlot(title: "Amplitude vs. channel", caption: "selected target field"),
+                ExplorerPlot(title: "UV distance", caption: "visibility sample")
+            ]
+        case .imageCube:
+            [
+                ExplorerPlot(title: "Cube movie", caption: "channel planes"),
+                ExplorerPlot(title: "Spectrum", caption: "cursor sample")
+            ]
+        case .calibrationTable:
+            [
+                ExplorerPlot(title: "Gain amplitude", caption: "solution intervals"),
+                ExplorerPlot(title: "Gain phase", caption: "antenna overlay")
+            ]
+        case .table:
+            [
+                ExplorerPlot(title: "Table preview", caption: "schema and rows"),
+                ExplorerPlot(title: "Column statistics", caption: "numeric columns")
+            ]
+        case .runProduct:
+            [
+                ExplorerPlot(title: "Product summary", caption: "derived dataset"),
+                ExplorerPlot(title: "History links", caption: "upstream task lineage")
+            ]
+        }
+    }
+}
+
+private struct ExplorerPlot: Identifiable {
+    let title: String
+    let caption: String
+
+    var id: String { title }
 }
 
 struct TaskPanel: View {

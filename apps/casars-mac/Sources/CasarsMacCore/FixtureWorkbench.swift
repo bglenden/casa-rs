@@ -66,12 +66,12 @@ public enum FixtureWorkbench {
             selectedDatasetID: "ms-irc10216",
             inspectorCollapsed: false,
             tabs: [
-                WorkbenchTab(id: "tab-ms", title: "IRC+10216.ms", kind: .datasetExplorer, datasetID: "ms-irc10216"),
+                WorkbenchTab(id: datasets[0].explorerTabID, title: datasets[0].explorerTabTitle, kind: .datasetExplorer, datasetID: "ms-irc10216"),
                 WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: "ms-irc10216"),
                 WorkbenchTab(id: "tab-ai", title: "AI Chat", kind: .aiChat),
                 WorkbenchTab(id: "tab-python", title: "Python", kind: .python)
             ],
-            activeTabID: "tab-ms",
+            activeTabID: datasets[0].explorerTabID,
             taskParameters: TaskParameters(
                 taskName: "calibrate",
                 selectedField: "IRC+10216",
