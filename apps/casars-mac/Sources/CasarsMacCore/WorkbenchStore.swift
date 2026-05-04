@@ -171,6 +171,35 @@ public final class WorkbenchStore: ObservableObject {
         state.activeTabID = tabID
     }
 
+    public func closeTab(_ tabID: String) {
+        guard let index = state.tabs.firstIndex(where: { $0.id == tabID }) else {
+            state.lastErrors.append("Unknown tab \(tabID)")
+            return
+        }
+
+        let wasActive = state.activeTabID == tabID
+        state.tabs.remove(at: index)
+
+        guard wasActive else {
+            return
+        }
+
+        if state.tabs.isEmpty {
+            state.activeTabID = ""
+        } else {
+            let replacementIndex = min(index, state.tabs.count - 1)
+            state.activeTabID = state.tabs[replacementIndex].id
+        }
+    }
+
+    public func closeActiveTab() {
+        guard !state.activeTabID.isEmpty else {
+            return
+        }
+
+        closeTab(state.activeTabID)
+    }
+
     public func openDefaultTab(kind: WorkbenchTabKind) {
         switch kind {
         case .datasetExplorer:

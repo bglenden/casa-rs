@@ -58,6 +58,12 @@ struct CasarsMacApp: App {
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
 
+                Button("Close Active Tab") {
+                    store.closeActiveTab()
+                }
+                .keyboardShortcut("w", modifiers: [.command])
+                .disabled(store.state.tabs.isEmpty)
+
                 Button("Toggle Inspector") {
                     store.toggleInspector()
                 }

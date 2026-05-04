@@ -63,6 +63,37 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(activeTab?.title, "Cal: phase.cal")
     }
 
+    func testTabDismissalKeepsOrMovesActiveTab() {
+        let store = WorkbenchStore.fixture()
+        let initialActiveTabID = store.state.activeTabID
+
+        store.closeTab("tab-ai")
+
+        XCTAssertFalse(store.state.tabs.contains { $0.id == "tab-ai" })
+        XCTAssertEqual(store.state.activeTabID, initialActiveTabID)
+
+        store.closeTab(initialActiveTabID)
+
+        XCTAssertEqual(store.state.activeTabID, "tab-task")
+
+        store.closeActiveTab()
+
+        XCTAssertEqual(store.state.activeTabID, "tab-python")
+
+        store.closeActiveTab()
+
+        XCTAssertTrue(store.state.tabs.isEmpty)
+        XCTAssertEqual(store.state.activeTabID, "")
+    }
+
+    func testClosingUnknownTabRecordsDebugError() {
+        let store = WorkbenchStore.fixture()
+
+        store.closeTab("missing")
+
+        XCTAssertEqual(store.debugSnapshot().lastErrors, ["Unknown tab missing"])
+    }
+
     func testCommandQueryRoutesWorkbenchShellSurfaces() {
         let store = WorkbenchStore.fixture()
 

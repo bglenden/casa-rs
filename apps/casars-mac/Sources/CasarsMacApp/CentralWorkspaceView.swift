@@ -19,20 +19,37 @@ struct CentralWorkspaceView: View {
     private var tabStrip: some View {
         HStack(spacing: 4) {
             ForEach(store.state.tabs) { tab in
-                Button {
-                    store.activateTab(tab.id)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: icon(for: tab.kind))
-                        Text(tab.title)
-                            .lineLimit(1)
+                let isActive = tab.id == store.state.activeTabID
+                HStack(spacing: 4) {
+                    Button {
+                        store.activateTab(tab.id)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: icon(for: tab.kind))
+                            Text(tab.title)
+                                .lineLimit(1)
+                        }
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(tab.id == store.state.activeTabID ? Color.accentColor.opacity(0.14) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .buttonStyle(.borderless)
+
+                    Button {
+                        store.closeTab(tab.id)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .workbenchFont(.caption2, weight: .semibold)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 16, height: 16)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Close \(tab.title)")
+                    .accessibilityLabel("Close \(tab.title)")
+                    .accessibilityIdentifier("central.tab.close.\(tab.id)")
                 }
-                .buttonStyle(.borderless)
+                .padding(.leading, 10)
+                .padding(.trailing, 6)
+                .padding(.vertical, 7)
+                .background(isActive ? Color.accentColor.opacity(0.14) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
                 .accessibilityIdentifier("central.tab.\(tab.id)")
             }
 
@@ -71,15 +88,15 @@ struct CentralWorkspaceView: View {
     private var activePanel: some View {
         if let tab = store.state.tabs.first(where: { $0.id == store.state.activeTabID }) {
             switch tab.kind {
-        case .datasetExplorer:
+            case .datasetExplorer:
                 DatasetExplorerPanel(store: store, datasetID: tab.datasetID)
-        case .task:
+            case .task:
                 TaskPanel(store: store)
-        case .aiChat:
+            case .aiChat:
                 AIChatPanel(store: store)
-        case .python:
+            case .python:
                 PythonPanel(store: store)
-        case .history:
+            case .history:
                 HistoryPanel(store: store)
             }
         } else {
