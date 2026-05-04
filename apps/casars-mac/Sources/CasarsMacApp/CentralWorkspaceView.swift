@@ -379,23 +379,23 @@ struct MeasurementSetPlotPanel: View {
             .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
 
             Button {
+                showingAdvancedSetup.toggle()
+            } label: {
+                Label("Selections", systemImage: "slider.horizontal.3")
+            }
+            .popover(isPresented: $showingAdvancedSetup, arrowEdge: .top) {
+                plotSelections
+                    .frame(width: 320)
+            }
+            .accessibilityIdentifier("msPlot.selections.\(dataset.id)")
+
+            Button {
                 store.runMeasurementSetPlot(datasetID: dataset.id)
             } label: {
                 Label(plotState.status == .running ? "Generating" : "Generate", systemImage: "play.fill")
             }
             .disabled(plotState.status == .running)
             .accessibilityIdentifier("msPlot.generate.\(dataset.id)")
-
-            Button {
-                showingAdvancedSetup.toggle()
-            } label: {
-                Label("Advanced", systemImage: "slider.horizontal.3")
-            }
-            .popover(isPresented: $showingAdvancedSetup, arrowEdge: .top) {
-                advancedPlotSetup
-                    .frame(width: 320)
-            }
-            .accessibilityIdentifier("msPlot.advanced.\(dataset.id)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -404,9 +404,9 @@ struct MeasurementSetPlotPanel: View {
         .shadow(color: Color.black.opacity(0.16), radius: 10, x: 0, y: 4)
     }
 
-    private var advancedPlotSetup: some View {
+    private var plotSelections: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Plot Filters")
+            Text("Selections")
                 .workbenchFont(.headline)
 
             Picker("Field", selection: Binding(
