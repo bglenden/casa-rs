@@ -175,7 +175,12 @@ struct LeftDockView: View {
                 )) {
                     ForEach(store.state.project.datasets) { dataset in
                         DatasetRow(dataset: dataset)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                             .tag(Optional(dataset.id))
+                            .onTapGesture {
+                                store.selectDataset(dataset.id)
+                            }
                             .onTapGesture(count: 2) {
                                 store.openDatasetExplorer(dataset.id)
                             }

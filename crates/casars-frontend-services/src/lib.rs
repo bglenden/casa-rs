@@ -620,51 +620,26 @@ fn probe_measurement_set(
         Ok(ms) => ms,
         Err(_) => return Ok(None),
     };
-    let summary = match ms.summary() {
-        Ok(summary) => summary,
+    let fields = match ms_field_labels(&ms) {
+        Ok(fields) => fields,
+        Err(_) => return Ok(None),
+    };
+    let spectral_windows = match ms_spectral_window_labels(&ms) {
+        Ok(spectral_windows) => spectral_windows,
+        Err(_) => return Ok(None),
+    };
+    let antennas = match ms_antenna_labels(&ms) {
+        Ok(antennas) => antennas,
+        Err(_) => return Ok(None),
+    };
+    let correlations = match ms_correlation_labels(&ms) {
+        Ok(correlations) => correlations,
         Err(_) => return Ok(None),
     };
     let columns = table_columns(ms.main_table());
     let data_columns = visibility_data_columns(&columns);
     let subtables = ms_subtables(&ms);
-    let fields = summary
-        .fields
-        .iter()
-        .map(|field| format!("{}: {}", field.field_id, field.name))
-        .collect();
-    let spectral_windows = summary
-        .spectral_windows
-        .iter()
-        .map(|spw| {
-            format!(
-                "spw {}: {} chan, {:.6} GHz center",
-                spw.spectral_window_id,
-                spw.num_channels,
-                spw.center_frequency_hz / 1.0e9
-            )
-        })
-        .collect();
-    let scans = summary
-        .scans
-        .iter()
-        .map(|scan| {
-            format!(
-                "scan {}: {} rows, {}",
-                scan.scan_number, scan.row_count, scan.field_name
-            )
-        })
-        .collect();
-    let antennas = summary
-        .antennas
-        .iter()
-        .map(|antenna| antenna.name.clone())
-        .collect();
-    let correlations = unique_sorted(
-        summary
-            .polarization_setups
-            .iter()
-            .flat_map(|polarization| polarization.correlation_types.iter().cloned()),
-    );
+    let row_count = ms.row_count();
 
     Ok(Some(DatasetProbe {
         id: stable_id(path),
@@ -676,25 +651,111 @@ fn probe_measurement_set(
         probed_unix_seconds: now_unix_seconds(),
         logical_size: format!(
             "{} rows, {} fields, {} spw, {} antennas",
-            summary.measurement_set.row_count,
-            summary.measurement_set.field_count,
-            summary.measurement_set.spectral_window_count,
-            summary.measurement_set.antenna_count
+            row_count,
+            fields.len(),
+            spectral_windows.len(),
+            antennas.len()
         ),
         units: "Jy, Hz, seconds".to_string(),
         fields,
         spectral_windows,
-        scans,
+        scans: vec![],
         antennas,
         correlations,
         columns,
         data_columns,
         subtables,
-        shape: vec![summary.measurement_set.row_count as u64],
-        notes: "Recognized by opening the path as a MeasurementSet and reading MS metadata."
+        shape: vec![row_count as u64],
+        notes: "Recognized by opening the path as a MeasurementSet and reading lightweight MS metadata."
             .to_string(),
         diagnostics,
     }))
+}
+
+fn ms_field_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
+    let fields = ms.field().map_err(|error| error.to_string())?;
+    (0..fields.row_count())
+        .map(|row| {
+            fields
+                .name(row)
+                .map(|name| format!("{row}: {name}"))
+                .map_err(|error| error.to_string())
+        })
+        .collect()
+}
+
+fn ms_spectral_window_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
+    let spectral_windows = ms.spectral_window().map_err(|error| error.to_string())?;
+    (0..spectral_windows.row_count())
+        .map(|row| {
+            let num_chan = spectral_windows
+                .num_chan(row)
+                .map_err(|error| error.to_string())?;
+            let chan_freq = spectral_windows.chan_freq(row).unwrap_or_default();
+            let center_hz = if chan_freq.is_empty() {
+                spectral_windows
+                    .ref_frequency(row)
+                    .map_err(|error| error.to_string())?
+            } else {
+                mean_or_zero(&chan_freq)
+            };
+            Ok(format!(
+                "spw {}: {} chan, {:.6} GHz center",
+                row,
+                num_chan,
+                center_hz / 1.0e9
+            ))
+        })
+        .collect()
+}
+
+fn ms_antenna_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
+    let antennas = ms.antenna().map_err(|error| error.to_string())?;
+    (0..antennas.row_count())
+        .map(|row| antennas.name(row).map_err(|error| error.to_string()))
+        .collect()
+}
+
+fn ms_correlation_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
+    let polarization = ms.polarization().map_err(|error| error.to_string())?;
+    let mut labels = Vec::new();
+    for row in 0..polarization.row_count() {
+        labels.extend(
+            polarization
+                .corr_type(row)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(stokes_name)
+                .map(str::to_string),
+        );
+    }
+    Ok(unique_sorted(labels))
+}
+
+fn stokes_name(code: i32) -> &'static str {
+    match code {
+        1 => "I",
+        2 => "Q",
+        3 => "U",
+        4 => "V",
+        5 => "RR",
+        6 => "RL",
+        7 => "LR",
+        8 => "LL",
+        9 => "XX",
+        10 => "XY",
+        11 => "YX",
+        12 => "YY",
+        _ => "??",
+    }
+}
+
+fn mean_or_zero(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        0.0
+    } else {
+        values.iter().sum::<f64>() / values.len() as f64
+    }
 }
 
 fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetProbe>, String> {
