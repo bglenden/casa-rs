@@ -361,6 +361,11 @@ struct DatasetRow: View {
 
 struct InspectorView: View {
     @ObservedObject var store: WorkbenchStore
+    @State private var showFields = false
+    @State private var showSpectralWindows = false
+    @State private var showAntennas = false
+    @State private var showColumns = false
+    @State private var showSubtables = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -381,14 +386,45 @@ struct InspectorView: View {
                 InfoRow(label: "Name", value: dataset.name)
                 InfoRow(label: "Kind", value: dataset.kind.rawValue)
                 InfoRow(label: "Size", value: dataset.size)
-                InfoRow(label: "Units", value: dataset.units)
                 if dataset.sizeBytes > 0 {
                     InfoRow(label: "Bytes", value: byteCount(dataset.sizeBytes))
                 }
-                InfoRow(label: "Fields", value: dataset.fields.joined(separator: ", "))
-                InfoRow(label: "SPWs", value: dataset.spectralWindows.joined(separator: ", "))
-                InfoRow(label: "Antennas", value: dataset.antennas.joined(separator: ", "))
-                InfoRow(label: "Data columns", value: dataset.dataColumns.joined(separator: ", "))
+                if !dataset.units.isEmpty {
+                    InfoRow(label: "Units", value: dataset.units)
+                }
+
+                Divider()
+
+                compactSection(
+                    title: "Fields",
+                    count: dataset.fields.count,
+                    values: dataset.fields,
+                    isExpanded: $showFields
+                )
+                compactSection(
+                    title: "SPWs",
+                    count: dataset.spectralWindows.count,
+                    values: dataset.spectralWindows,
+                    isExpanded: $showSpectralWindows
+                )
+                compactSection(
+                    title: "Antennas",
+                    count: dataset.antennas.count,
+                    values: dataset.antennas,
+                    isExpanded: $showAntennas
+                )
+                InfoRow(label: "Correlations", value: compactList(dataset.correlations))
+                InfoRow(label: "Data", value: compactList(dataset.dataColumns))
+
+                DisclosureGroup("Columns (\(dataset.columns.count))", isExpanded: $showColumns) {
+                    valueList(dataset.columns)
+                }
+                .workbenchFont(.caption)
+
+                DisclosureGroup("Subtables (\(dataset.subtables.count))", isExpanded: $showSubtables) {
+                    valueList(dataset.subtables)
+                }
+                .workbenchFont(.caption)
 
                 Divider()
 
@@ -418,6 +454,44 @@ struct InspectorView: View {
         case .fixture: "Demo metadata"
         case .probed: "Real probe metadata"
         }
+    }
+
+    private func compactSection(
+        title: String,
+        count: Int,
+        values: [String],
+        isExpanded: Binding<Bool>
+    ) -> some View {
+        DisclosureGroup("\(title): \(count)", isExpanded: isExpanded) {
+            valueList(values)
+        }
+        .workbenchFont(.caption)
+    }
+
+    private func valueList(_ values: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if values.isEmpty {
+                Text("None")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(values, id: \.self) { value in
+                    Text(value)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func compactList(_ values: [String]) -> String {
+        if values.isEmpty {
+            return "None"
+        }
+        if values.count <= 3 {
+            return values.joined(separator: ", ")
+        }
+        return "\(values.count)"
     }
 }
 

@@ -166,25 +166,34 @@ struct DatasetExplorerPanel: View {
     let datasetID: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if let dataset {
-                    PanelHeader(title: dataset.kind.explorerName, subtitle: explorerSubtitle(for: dataset))
-
-                    if store.state.isDemoProject {
-                        demoExplorerContent(for: dataset)
-                    } else {
-                        realExplorerContent(for: dataset)
-                    }
-
-                    Text(dataset.path)
-                        .workbenchFont(.caption, design: .monospaced)
-                        .foregroundStyle(.secondary)
+        Group {
+            if let dataset {
+                if dataset.kind == .measurementSet && !store.state.isDemoProject {
+                    MeasurementSetPlotPanel(store: store, dataset: dataset)
                 } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            PanelHeader(title: dataset.kind.explorerName, subtitle: explorerSubtitle(for: dataset))
+
+                            if store.state.isDemoProject {
+                                demoExplorerContent(for: dataset)
+                            } else {
+                                realExplorerContent(for: dataset)
+                            }
+
+                            Text(dataset.path)
+                                .workbenchFont(.caption, design: .monospaced)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(20)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 18) {
                     PanelHeader(title: "Dataset Explorer", subtitle: "Select a dataset before opening an explorer")
                 }
+                .padding(20)
             }
-            .padding(20)
         }
         .accessibilityIdentifier("panel.datasetExplorer")
     }
@@ -221,43 +230,29 @@ struct DatasetExplorerPanel: View {
 
     @ViewBuilder
     private func realExplorerContent(for dataset: DatasetSummary) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            SummaryBox(
-                title: "Overview",
-                values: [
-                    dataset.size,
-                    "Bytes: \(byteCount(dataset.sizeBytes))",
-                    "Shape: \(formatShape(dataset.shape))",
-                    "Modified: \(formatUnixTime(dataset.modifiedUnixSeconds))",
-                    "Probed: \(formatUnixTime(dataset.probedUnixSeconds))"
-                ]
-            )
-            SummaryBox(title: "Fields", values: dataset.fields)
-            SummaryBox(title: "Spectral Windows", values: dataset.spectralWindows)
-        }
-
         if dataset.kind == .measurementSet {
-            HStack(alignment: .top, spacing: 16) {
-                SummaryBox(title: "Scans", values: dataset.scans)
-                SummaryBox(title: "Antennas", values: dataset.antennas)
-                SummaryBox(title: "Correlations", values: dataset.correlations)
-            }
-
-            HStack(alignment: .top, spacing: 16) {
-                SummaryBox(title: "Data Columns", values: dataset.dataColumns)
-                SummaryBox(title: "All Columns", values: dataset.columns)
-                SummaryBox(title: "Subtables", values: dataset.subtables)
-            }
-
             MeasurementSetPlotPanel(store: store, dataset: dataset)
         } else {
+            HStack(alignment: .top, spacing: 16) {
+                SummaryBox(
+                    title: "Overview",
+                    values: [
+                        dataset.size,
+                        "Bytes: \(byteCount(dataset.sizeBytes))",
+                        "Shape: \(formatShape(dataset.shape))"
+                    ]
+                )
+                SummaryBox(title: "Fields", values: dataset.fields)
+                SummaryBox(title: "Spectral Windows", values: dataset.spectralWindows)
+            }
+
             SummaryBox(
                 title: "Explorer Status",
                 values: ["A real summary is available. A specialized \(dataset.kind.explorerName) is not implemented yet."]
             )
-        }
 
-        SummaryBox(title: "Probe Notes", values: [dataset.notes] + dataset.diagnostics)
+            SummaryBox(title: "Probe Notes", values: [dataset.notes] + dataset.diagnostics)
+        }
     }
 
     private func primarySummaryTitle(for dataset: DatasetSummary) -> String {
@@ -343,14 +338,6 @@ private func formatShape(_ shape: [UInt64]) -> String {
     shape.isEmpty ? "None" : shape.map(String.init).joined(separator: " x ")
 }
 
-private func formatUnixTime(_ seconds: UInt64?) -> String {
-    guard let seconds else {
-        return "unknown"
-    }
-    let date = Date(timeIntervalSince1970: TimeInterval(seconds))
-    return date.formatted(date: .abbreviated, time: .shortened)
-}
-
 private struct ExplorerPlot: Identifiable {
     let title: String
     let caption: String
@@ -363,12 +350,12 @@ struct MeasurementSetPlotPanel: View {
     let dataset: DatasetSummary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center) {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Plots")
+                    Text(dataset.name)
                         .workbenchFont(.headline)
-                    Text(plotState.result?.selectionSummary ?? "Render a real MeasurementSet plot from Rust msexplore data.")
+                    Text(plotState.result?.selectionSummary ?? "MeasurementSet plot workspace")
                         .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -383,77 +370,91 @@ struct MeasurementSetPlotPanel: View {
                 .disabled(plotState.status == .running)
                 .accessibilityIdentifier("msPlot.render.\(dataset.id)")
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(.bar)
 
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Picker("Preset", selection: Binding(
-                        get: { plotState.preset },
-                        set: { store.setMeasurementSetPlotPreset($0, datasetID: dataset.id) }
-                    )) {
-                        ForEach(MeasurementSetExplorerPlotPreset.allCases) { preset in
-                            Text(preset.title).tag(preset)
-                        }
-                    }
-                    .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
-
-                    Picker("Field", selection: Binding(
-                        get: { plotState.selectedField ?? "all" },
-                        set: { store.setMeasurementSetPlotField($0, datasetID: dataset.id) }
-                    )) {
-                        Text("all").tag("all")
-                        ForEach(dataset.fields, id: \.self) { field in
-                            Text(field).tag(field)
-                        }
-                    }
-                    .accessibilityIdentifier("msPlot.field.\(dataset.id)")
-
-                    Picker("Spectral window", selection: Binding(
-                        get: { plotState.selectedSpectralWindow ?? "all" },
-                        set: { store.setMeasurementSetPlotSpectralWindow($0, datasetID: dataset.id) }
-                    )) {
-                        Text("all").tag("all")
-                        ForEach(dataset.spectralWindows, id: \.self) { spectralWindow in
-                            Text(spectralWindow).tag(spectralWindow)
-                        }
-                    }
-                    .accessibilityIdentifier("msPlot.spw.\(dataset.id)")
-
-                    Picker("Correlation", selection: Binding(
-                        get: { plotState.selectedCorrelation ?? "all" },
-                        set: { store.setMeasurementSetPlotCorrelation($0, datasetID: dataset.id) }
-                    )) {
-                        Text("all").tag("all")
-                        ForEach(dataset.correlations, id: \.self) { correlation in
-                            Text(correlation).tag(correlation)
-                        }
-                    }
-                    .accessibilityIdentifier("msPlot.correlation.\(dataset.id)")
-
-                    Picker("Data column", selection: Binding(
-                        get: { plotState.dataColumn },
-                        set: { store.setMeasurementSetPlotDataColumn($0, datasetID: dataset.id) }
-                    )) {
-                        ForEach(dataset.dataColumns.isEmpty ? ["DATA"] : dataset.dataColumns, id: \.self) { column in
-                            Text(column).tag(column)
-                        }
-                    }
-                    .accessibilityIdentifier("msPlot.dataColumn.\(dataset.id)")
-
-                    plotMetadata
-                }
-                .frame(width: 280, alignment: .topLeading)
-
+            HSplitView {
+                plotControls
+                    .frame(minWidth: 240, idealWidth: 280, maxWidth: 420)
                 plotImage
+                    .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding()
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("msPlot.panel.\(dataset.id)")
     }
 
     private var plotState: MeasurementSetExplorerPlotState {
         store.state.measurementSetPlots[dataset.id] ?? MeasurementSetExplorerPlotState.defaultState(for: dataset)
+    }
+
+    private var plotControls: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Preset", selection: Binding(
+                    get: { plotState.preset },
+                    set: { store.setMeasurementSetPlotPreset($0, datasetID: dataset.id) }
+                )) {
+                    ForEach(MeasurementSetExplorerPlotPreset.allCases) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
+
+                Picker("Field", selection: Binding(
+                    get: { plotState.selectedField ?? "all" },
+                    set: { store.setMeasurementSetPlotField($0, datasetID: dataset.id) }
+                )) {
+                    Text("all").tag("all")
+                    ForEach(dataset.fields, id: \.self) { field in
+                        Text(field).tag(field)
+                    }
+                }
+                .accessibilityIdentifier("msPlot.field.\(dataset.id)")
+
+                Picker("Spectral window", selection: Binding(
+                    get: { plotState.selectedSpectralWindow ?? "all" },
+                    set: { store.setMeasurementSetPlotSpectralWindow($0, datasetID: dataset.id) }
+                )) {
+                    Text("all").tag("all")
+                    ForEach(dataset.spectralWindows, id: \.self) { spectralWindow in
+                        Text(spectralWindow).tag(spectralWindow)
+                    }
+                }
+                .accessibilityIdentifier("msPlot.spw.\(dataset.id)")
+
+                Picker("Correlation", selection: Binding(
+                    get: { plotState.selectedCorrelation ?? "all" },
+                    set: { store.setMeasurementSetPlotCorrelation($0, datasetID: dataset.id) }
+                )) {
+                    Text("all").tag("all")
+                    ForEach(dataset.correlations, id: \.self) { correlation in
+                        Text(correlation).tag(correlation)
+                    }
+                }
+                .accessibilityIdentifier("msPlot.correlation.\(dataset.id)")
+
+                Picker("Data column", selection: Binding(
+                    get: { plotState.dataColumn },
+                    set: { store.setMeasurementSetPlotDataColumn($0, datasetID: dataset.id) }
+                )) {
+                    ForEach(dataset.dataColumns.isEmpty ? ["DATA"] : dataset.dataColumns, id: \.self) { column in
+                        Text(column).tag(column)
+                    }
+                }
+                .disabled(plotState.preset == .uvCoverage)
+                .accessibilityIdentifier("msPlot.dataColumn.\(dataset.id)")
+
+                Divider()
+
+                plotMetadata
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(.regularMaterial)
     }
 
     @ViewBuilder
@@ -492,7 +493,7 @@ struct MeasurementSetPlotPanel: View {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: .infinity, minHeight: 320, maxHeight: 520)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(nsColor: .windowBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 Text(result.summary)
@@ -500,6 +501,7 @@ struct MeasurementSetPlotPanel: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .accessibilityIdentifier("msPlot.image.\(dataset.id)")
         } else {
@@ -515,7 +517,8 @@ struct MeasurementSetPlotPanel: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 320)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(16)
             .accessibilityIdentifier("msPlot.empty.\(dataset.id)")
         }
     }

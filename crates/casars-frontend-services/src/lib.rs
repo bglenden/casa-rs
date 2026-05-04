@@ -9,10 +9,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_images::{AnyPagedImage, ImagePixelType};
 use casa_ms::{
-    MeasurementSet, MeasurementSetPlotTheme, MeasurementSetSummaryOutputFormat, MsExploreSpec,
-    MsPageExportRange, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsScatterGridPayload,
-    MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec,
-    VisibilityDataColumn, build_msexplore_payload_from_spec, render_msexplore_plot_image,
+    MeasurementSet, MeasurementSetPlotPayload, MeasurementSetPlotTheme,
+    MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPayload,
+    MsPlotPreset, MsPlotSpec, MsScatterGridPayload, MsScatterPagePayload, MsScatterPlotPayload,
+    MsScatterSeries, MsSelectionSpec, VisibilityDataColumn, build_msexplore_payload_from_spec,
+    render_msexplore_plot_image,
 };
 use casa_tables::{Table, TableOptions};
 use image::ImageFormat;
@@ -69,6 +70,7 @@ pub struct ProjectProbe {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum MeasurementSetPlotPreset {
+    UvCoverage,
     AmplitudeVsFrequency,
     AmplitudeVsChannel,
     AmplitudeVsUvDistance,
@@ -294,6 +296,7 @@ struct PayloadMetadata {
 
 fn ms_plot_preset(preset: MeasurementSetPlotPreset) -> MsPlotPreset {
     match preset {
+        MeasurementSetPlotPreset::UvCoverage => MsPlotPreset::UvCoverage,
         MeasurementSetPlotPreset::AmplitudeVsFrequency => MsPlotPreset::AmplitudeVsFrequency,
         MeasurementSetPlotPreset::AmplitudeVsChannel => MsPlotPreset::AmplitudeVsChannel,
         MeasurementSetPlotPreset::AmplitudeVsUvDistance => MsPlotPreset::AmplitudeVsUvDistance,
@@ -310,8 +313,48 @@ fn plot_payload_metadata(
         MsPlotPayload::Scatter(payload) => scatter_metadata(payload, requested_max_points),
         MsPlotPayload::ScatterGrid(payload) => scatter_grid_metadata(payload, requested_max_points),
         MsPlotPayload::ScatterPage(payload) => scatter_page_metadata(payload, requested_max_points),
-        MsPlotPayload::ListObs(payload) => PayloadMetadata {
-            title: format!("{:?}", payload.kind()),
+        MsPlotPayload::ListObs(payload) => listobs_metadata(payload, preset, requested_max_points),
+    }
+}
+
+fn listobs_metadata(
+    payload: &MeasurementSetPlotPayload,
+    preset: MeasurementSetPlotPreset,
+    requested_max_points: u64,
+) -> PayloadMetadata {
+    match payload {
+        MeasurementSetPlotPayload::UvCoverage(payload) => {
+            let rendered_point_count = payload
+                .tracks
+                .iter()
+                .map(|track| track.points.len() as u64)
+                .sum();
+            PayloadMetadata {
+                title: "UV Coverage".to_string(),
+                summary: payload.summary.clone(),
+                x_axis: axis_metadata("u", "u (kλ)"),
+                y_axis: axis_metadata("v", "v (kλ)"),
+                series: payload
+                    .tracks
+                    .iter()
+                    .map(|track| PlotSeriesMetadata {
+                        label: track.label.clone(),
+                        color_group: "uv-track".to_string(),
+                        point_count: track.points.len() as u64,
+                        first_row: None,
+                        last_row: None,
+                    })
+                    .collect(),
+                sampling: PlotSamplingDiagnostics {
+                    requested_max_points,
+                    rendered_point_count,
+                    series_count: payload.tracks.len() as u64,
+                    diagnostics: sampling_diagnostics(&payload.summary, rendered_point_count),
+                },
+            }
+        }
+        _ => PayloadMetadata {
+            title: ms_plot_preset(preset).display_name().to_string(),
             summary: "Metadata-oriented MeasurementSet plot.".to_string(),
             x_axis: axis_metadata(
                 ms_plot_preset(preset).as_str(),
@@ -961,6 +1004,7 @@ mod tests {
         let (_dir, ms_path) = unpack_small_ms();
 
         for preset in [
+            MeasurementSetPlotPreset::UvCoverage,
             MeasurementSetPlotPreset::AmplitudeVsFrequency,
             MeasurementSetPlotPreset::AmplitudeVsUvDistance,
         ] {

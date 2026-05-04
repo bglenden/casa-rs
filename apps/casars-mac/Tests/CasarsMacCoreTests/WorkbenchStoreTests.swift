@@ -312,10 +312,10 @@ final class WorkbenchStoreTests: XCTestCase {
 
         var snapshot = store.debugSnapshot()
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.status, .ready)
-        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.title, "Amplitude vs Frequency")
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.title, "UV Coverage")
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.imageByteCount, 8)
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.renderedPointCount, 42)
-        XCTAssertEqual(plotClient.requests.last?.preset, .amplitudeVsFrequency)
+        XCTAssertEqual(plotClient.requests.last?.preset, .uvCoverage)
         XCTAssertNil(plotClient.requests.last?.field)
         XCTAssertNil(plotClient.requests.last?.spectralWindow)
 

@@ -1674,6 +1674,7 @@ extension FrontendServiceError: Foundation.LocalizedError {
 
 public enum MeasurementSetPlotPreset {
 
+    case uvCoverage
     case amplitudeVsFrequency
     case amplitudeVsChannel
     case amplitudeVsUvDistance
@@ -1695,13 +1696,15 @@ public struct FfiConverterTypeMeasurementSetPlotPreset: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .amplitudeVsFrequency
+        case 1: return .uvCoverage
 
-        case 2: return .amplitudeVsChannel
+        case 2: return .amplitudeVsFrequency
 
-        case 3: return .amplitudeVsUvDistance
+        case 3: return .amplitudeVsChannel
 
-        case 4: return .amplitudeVsTime
+        case 4: return .amplitudeVsUvDistance
+
+        case 5: return .amplitudeVsTime
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1711,20 +1714,24 @@ public struct FfiConverterTypeMeasurementSetPlotPreset: FfiConverterRustBuffer {
         switch value {
 
 
-        case .amplitudeVsFrequency:
+        case .uvCoverage:
             writeInt(&buf, Int32(1))
 
 
-        case .amplitudeVsChannel:
+        case .amplitudeVsFrequency:
             writeInt(&buf, Int32(2))
 
 
-        case .amplitudeVsUvDistance:
+        case .amplitudeVsChannel:
             writeInt(&buf, Int32(3))
 
 
-        case .amplitudeVsTime:
+        case .amplitudeVsUvDistance:
             writeInt(&buf, Int32(4))
+
+
+        case .amplitudeVsTime:
+            writeInt(&buf, Int32(5))
 
         }
     }

@@ -311,6 +311,7 @@ public struct PythonPanelState: Codable, Equatable {
 }
 
 public enum MeasurementSetExplorerPlotPreset: String, CaseIterable, Codable, Equatable, Identifiable {
+    case uvCoverage
     case amplitudeVsFrequency
     case amplitudeVsChannel
     case amplitudeVsUvDistance
@@ -320,6 +321,8 @@ public enum MeasurementSetExplorerPlotPreset: String, CaseIterable, Codable, Equ
 
     public var title: String {
         switch self {
+        case .uvCoverage:
+            "UV Coverage"
         case .amplitudeVsFrequency:
             "Amplitude vs Frequency"
         case .amplitudeVsChannel:
@@ -461,7 +464,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
     public static func defaultState(for dataset: DatasetSummary) -> MeasurementSetExplorerPlotState {
         MeasurementSetExplorerPlotState(
             datasetID: dataset.id,
-            preset: .amplitudeVsFrequency,
+            preset: .uvCoverage,
             selectedField: nil,
             selectedSpectralWindow: nil,
             selectedCorrelation: nil,

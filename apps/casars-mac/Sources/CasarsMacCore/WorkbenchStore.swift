@@ -614,6 +614,8 @@ extension DatasetKind {
 extension CasarsFrontendServices.MeasurementSetPlotPreset {
     init(preset: MeasurementSetExplorerPlotPreset) {
         switch preset {
+        case .uvCoverage:
+            self = .uvCoverage
         case .amplitudeVsFrequency:
             self = .amplitudeVsFrequency
         case .amplitudeVsChannel:
