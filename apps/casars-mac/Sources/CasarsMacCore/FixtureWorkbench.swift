@@ -136,6 +136,7 @@ public enum FixtureWorkbench {
                     approval: "pending"
                 )
             ],
+            commandQuery: "",
             lastErrors: []
         )
     }

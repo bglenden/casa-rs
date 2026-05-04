@@ -505,6 +505,15 @@ These choices should be made before the first clickable prototype:
 - Use `WindowGroup` for the primary workbench window.
 - Use explicit desktop affordances: menus, commands, keyboard shortcuts,
   split views, inspectors, tabs, settings, and native file panels.
+- Preserve standard macOS window behavior for the primary workbench, including
+  full-screen Space support. SwiftPM GUI prototypes should be staged and
+  launched as `.app` bundles for interactive inspection rather than run as raw
+  executables.
+- Any collapsible shell pane, especially the inspector, must have a persistent
+  restore path through visible toolbar chrome, a menu command, and debug-state
+  coverage; collapsed panes must not reserve split-view content width.
+- Reserve a global command/search surface early so dataset, task, AI, and
+  navigation actions do not become disconnected panel-local affordances.
 - Start with fixture providers and static plot/image assets.
 - Do not start with Electron, Tauri, a webview UI, or direct Rust in-process
   bindings.
@@ -550,6 +559,7 @@ should include:
 - inspector collapsed/expanded state
 - open central tabs
 - active central tab
+- command/search query state when present
 - task run states
 - AI chat messages and proposal states
 - Python terminal ownership state

@@ -36,8 +36,22 @@ struct CentralWorkspaceView: View {
                 .accessibilityIdentifier("central.tab.\(tab.id)")
             }
 
-            Button {
-                store.openDefaultTab(kind: .aiChat)
+            Menu {
+                Button("Dataset Explorer") {
+                    store.openDefaultTab(kind: .datasetExplorer)
+                }
+                Button("Calibrate Task") {
+                    store.openDefaultTab(kind: .task)
+                }
+                Button("AI Chat") {
+                    store.openDefaultTab(kind: .aiChat)
+                }
+                Button("Python") {
+                    store.openDefaultTab(kind: .python)
+                }
+                Button("History") {
+                    store.openDefaultTab(kind: .history)
+                }
             } label: {
                 Image(systemName: "plus")
                     .frame(width: 28, height: 28)

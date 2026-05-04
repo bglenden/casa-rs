@@ -13,6 +13,10 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.pythonOwner, .user)
         XCTAssertTrue(snapshot.openTabs.contains("AI Chat"))
         XCTAssertEqual(snapshot.aiProposalStates["proposal-spw"], .pending)
+        XCTAssertEqual(
+            DockMode.allCases.map(\.rawValue),
+            ["datasets", "files", "history", "tasks", "python", "ai"]
+        )
     }
 
     func testSelectionInspectorAndTabsAreActionDriven() {
@@ -25,8 +29,29 @@ final class WorkbenchStoreTests: XCTestCase {
 
         XCTAssertEqual(store.state.dockMode, .history)
         XCTAssertTrue(store.state.inspectorCollapsed)
+        store.setInspectorCollapsed(false)
+        XCTAssertFalse(store.debugSnapshot().inspectorCollapsed)
         XCTAssertEqual(store.state.selectedDataset?.name, "IRC+10216.clean.image")
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .history)
+    }
+
+    func testCommandQueryRoutesWorkbenchShellSurfaces() {
+        let store = WorkbenchStore.fixture()
+
+        store.setCommandQuery("show inspector")
+        store.setInspectorCollapsed(true)
+        store.runCommandQuery()
+        XCTAssertFalse(store.state.inspectorCollapsed)
+
+        store.setCommandQuery("open python")
+        store.runCommandQuery()
+        XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .python)
+
+        store.setCommandQuery("show timeline")
+        store.runCommandQuery()
+        XCTAssertEqual(store.state.dockMode, .history)
+        XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .history)
+        XCTAssertEqual(store.debugSnapshot().commandQuery, "show timeline")
     }
 
     func testAIProposalMustBeAppliedBeforeItMutatesTaskParameters() {

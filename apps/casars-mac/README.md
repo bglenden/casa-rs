@@ -17,8 +17,20 @@ From this directory:
 swift test
 swift build
 swift run casars-mac --dump-debug-state --simulate-main-flow
-swift run casars-mac
+./script/build_and_run.sh
+./script/build_and_run.sh --verify
 ```
 
 The `--dump-debug-state` path is intentionally non-interactive so local
 automation can inspect the workbench model without screenshots.
+
+The app shell keeps inspector restore, command/search routing, dock mode
+selection, Python ownership, and task/AI actions in the testable core state.
+The runnable app also configures the primary macOS window for normal resizable
+and full-screen Space behavior.
+
+Use `./script/build_and_run.sh` for interactive GUI inspection. It stages a
+local `.app` bundle under `dist/` and launches that bundle with `/usr/bin/open`
+so Dock activation, menus, and native full-screen Spaces behave like a normal
+macOS app. `swift run casars-mac` is reserved for non-interactive debug-state
+commands and low-level executable diagnosis.

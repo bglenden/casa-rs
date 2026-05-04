@@ -32,6 +32,16 @@ GUI-Wave-0 is fixture-only. It may model proposed provider capabilities, but
 real provider integration must wait for canonical provider contracts, versioning,
 and drift tests.
 
+The primary shell behavior is part of the prototype boundary, not later visual
+polish. The workbench must keep inspector collapse/restore, left-dock mode
+selection, central tab creation, command/search routing, Python/AI ownership,
+and debug-state inspection in `CasarsMacCore` actions where practical. Native
+macOS window behavior, including full-screen Space support, may use a narrow
+AppKit bridge when SwiftUI does not expose the needed window knob directly.
+Interactive SwiftPM GUI runs should stage a local `.app` bundle rather than
+launching the raw executable, because native Dock activation, menus, and
+full-screen Spaces depend on bundle metadata.
+
 ## Consequences
 
 Positive:
@@ -50,7 +60,7 @@ Neutral / tradeoffs:
 - the Swift fixture schema is intentionally separate from provider contracts
   until real integration starts
 - AppKit remains available for future escape hatches, but GUI-Wave-0 should
-  prefer SwiftUI APIs
+  prefer SwiftUI APIs and keep any bridge narrow and window-specific
 
 ## Alternatives considered
 
@@ -81,5 +91,7 @@ Suspect drift if:
 - fixture schemas are used as real provider contracts
 - GUI behavior cannot be tested with `swift test` or inspected through debug
   state
+- shell controls such as inspector restore, command/search routing, or Python
+  ownership become view-only behavior
 - real provider, Python, AI, or persistence work enters the prototype without a
   shaped follow-up and contract decision

@@ -2,24 +2,33 @@ import Foundation
 
 public enum DockMode: String, CaseIterable, Codable, Equatable, Identifiable {
     case datasets
-    case project
+    case files
     case history
+    case tasks
+    case python
+    case ai
 
     public var id: String { rawValue }
 
     public var title: String {
         switch self {
         case .datasets: "Datasets"
-        case .project: "Project"
+        case .files: "Files"
         case .history: "History"
+        case .tasks: "Tasks"
+        case .python: "Python"
+        case .ai: "AI"
         }
     }
 
     public var systemImage: String {
         switch self {
         case .datasets: "externaldrive"
-        case .project: "folder"
+        case .files: "folder"
         case .history: "clock.arrow.circlepath"
+        case .tasks: "list.bullet.rectangle"
+        case .python: "chevron.left.forwardslash.chevron.right"
+        case .ai: "sparkles"
         }
     }
 }
@@ -260,6 +269,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var aiProposals: [AIProposal]
     public var python: PythonPanelState
     public var history: [ProcessingHistoryEvent]
+    public var commandQuery: String
     public var lastErrors: [String]
 
     public init(
@@ -275,6 +285,7 @@ public struct WorkbenchState: Codable, Equatable {
         aiProposals: [AIProposal],
         python: PythonPanelState,
         history: [ProcessingHistoryEvent],
+        commandQuery: String,
         lastErrors: [String]
     ) {
         self.project = project
@@ -289,6 +300,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.aiProposals = aiProposals
         self.python = python
         self.history = history
+        self.commandQuery = commandQuery
         self.lastErrors = lastErrors
     }
 
@@ -308,6 +320,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var aiProposalStates: [String: AIProposalState]
     public var pythonOwner: PythonOwner
     public var processingHistoryEvents: [String]
+    public var commandQuery: String
     public var lastErrors: [String]
 
     public init(state: WorkbenchState) {
@@ -323,6 +336,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         )
         pythonOwner = state.python.owner
         processingHistoryEvents = state.history.map(\.title)
+        commandQuery = state.commandQuery
         lastErrors = state.lastErrors
     }
 }

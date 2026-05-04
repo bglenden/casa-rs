@@ -22,6 +22,10 @@ struct WorkbenchView: View {
                 .frame(minWidth: 560)
         }
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                CommandSearchField(store: store)
+            }
+
             ToolbarItemGroup {
                 Button {
                     store.openFixtureProject()
@@ -40,11 +44,47 @@ struct WorkbenchView: View {
                 Button {
                     store.toggleInspector()
                 } label: {
-                    Label("Toggle Inspector", systemImage: store.state.inspectorCollapsed ? "sidebar.right" : "sidebar.right")
+                    Label(
+                        store.state.inspectorCollapsed ? "Show Inspector" : "Hide Inspector",
+                        systemImage: store.state.inspectorCollapsed ? "sidebar.right" : "sidebar.right"
+                    )
                 }
-                .accessibilityIdentifier("inspector.collapse")
+                .help(store.state.inspectorCollapsed ? "Show Inspector" : "Hide Inspector")
+                .accessibilityIdentifier(store.state.inspectorCollapsed ? "inspector.restore" : "inspector.collapse")
+
+                Label("AI Online", systemImage: "circle.fill")
+                    .foregroundStyle(.green)
+                    .accessibilityIdentifier("toolbar.aiOnline")
             }
         }
+    }
+}
+
+struct CommandSearchField: View {
+    @ObservedObject var store: WorkbenchStore
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search or run command...", text: Binding(
+                get: { store.state.commandQuery },
+                set: { store.setCommandQuery($0) }
+            ))
+            .textFieldStyle(.plain)
+            .onSubmit {
+                store.runCommandQuery()
+            }
+            Text("⌘K")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(width: 320)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("toolbar.commandSearch")
     }
 }
 
@@ -79,8 +119,14 @@ struct LeftDockView: View {
                     Button {
                         store.selectDockMode(mode)
                     } label: {
-                        Image(systemName: mode.systemImage)
-                            .frame(width: 34, height: 30)
+                        VStack(spacing: 2) {
+                            Image(systemName: mode.systemImage)
+                            Text(mode.title)
+                                .font(.caption2)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.65)
+                        }
+                        .frame(width: 34, height: 38)
                     }
                     .buttonStyle(.borderless)
                     .help(mode.title)
@@ -115,7 +161,7 @@ struct LeftDockView: View {
             .listStyle(.sidebar)
             .accessibilityIdentifier("dock.datasets")
 
-        case .project:
+        case .files:
             VStack(alignment: .leading, spacing: 12) {
                 Label("data", systemImage: "folder")
                 Label("calibration", systemImage: "folder")
@@ -129,7 +175,7 @@ struct LeftDockView: View {
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("dock.project")
+            .accessibilityIdentifier("dock.files")
 
         case .history:
             List(store.state.history) { event in
@@ -148,6 +194,82 @@ struct LeftDockView: View {
             }
             .listStyle(.sidebar)
             .accessibilityIdentifier("dock.history")
+
+        case .tasks:
+            VStack(alignment: .leading, spacing: 12) {
+                Button {
+                    store.openDefaultTab(kind: .task)
+                } label: {
+                    Label("Calibrate", systemImage: "slider.horizontal.3")
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("dock.tasks.calibrate")
+
+                Label("Image", systemImage: "photo")
+                    .foregroundStyle(.secondary)
+                Label("Flag", systemImage: "flag")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("Fixture task launcher")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("dock.tasks")
+
+        case .python:
+            VStack(alignment: .leading, spacing: 12) {
+                Button {
+                    store.openDefaultTab(kind: .python)
+                } label: {
+                    Label("Open Python", systemImage: "terminal")
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("dock.python.open")
+
+                Text(store.state.python.owner == .ai ? "AI owns terminal input" : "User owns terminal input")
+                    .font(.caption)
+                    .foregroundStyle(store.state.python.owner == .ai ? .orange : .secondary)
+
+                Spacer()
+                Text("Dual-ported terminal state")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("dock.python")
+
+        case .ai:
+            VStack(alignment: .leading, spacing: 12) {
+                Button {
+                    store.openDefaultTab(kind: .aiChat)
+                } label: {
+                    Label("Open AI Chat", systemImage: "sparkles")
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("dock.ai.open")
+
+                ForEach(store.state.aiProposals) { proposal in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(proposal.title)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Text(proposal.state.rawValue)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+                Text("AI proposals require approval")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("dock.ai")
         }
     }
 }

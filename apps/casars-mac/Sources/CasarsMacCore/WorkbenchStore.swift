@@ -46,6 +46,37 @@ public final class WorkbenchStore: ObservableObject {
         state.inspectorCollapsed.toggle()
     }
 
+    public func setCommandQuery(_ query: String) {
+        state.commandQuery = query
+    }
+
+    public func runCommandQuery() {
+        let query = state.commandQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            openDefaultTab(kind: .aiChat)
+            return
+        }
+
+        let normalized = query.lowercased()
+        if normalized.contains("python") {
+            openDefaultTab(kind: .python)
+        } else if normalized.contains("history") || normalized.contains("timeline") {
+            openDefaultTab(kind: .history)
+            selectDockMode(.history)
+        } else if normalized.contains("task") || normalized.contains("calibrate") {
+            openDefaultTab(kind: .task)
+            selectDockMode(.tasks)
+        } else if normalized.contains("inspector") {
+            setInspectorCollapsed(false)
+        } else if normalized.contains("dataset") || normalized.contains("ms") {
+            openDefaultTab(kind: .datasetExplorer)
+            selectDockMode(.datasets)
+        } else {
+            appendAIChatMessage(query)
+            openDefaultTab(kind: .aiChat)
+        }
+    }
+
     public func openTab(_ tab: WorkbenchTab) {
         if !state.tabs.contains(where: { $0.id == tab.id }) {
             state.tabs.append(tab)
