@@ -53,6 +53,8 @@ Applications:
 - `tablebrowser`: generic table browsing in `BrowserShell`.
 - `imexplore`: image browsing plus region/mask workflows in `BrowserShell`.
 - `calibrate`: calibration solve/apply/stats/inspection workflows in `WorkflowShell`.
+- `apps/casars-mac`: fixture-backed native macOS SwiftUI prototype for the
+  future AI-enhanced workbench.
 
 Supporting internal crates include `casa-calibration`, `casa-aipsio`,
 `casa-measures-data`, `casa-measures-tools`, `casa-test-support`,

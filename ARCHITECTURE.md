@@ -19,7 +19,7 @@ coordinates, measures, and related workflows.
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | Versioned schema bundles and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
-| apps and runtimes (`casars`, `casars-imager`, `casars-importvla`, `casars-python`, `ratatui-graphics`) | Terminal shells, orchestration binaries, Python bindings/package, and rendering/runtime support | boundary contracts, domain libraries, foundation crates |
+| apps and runtimes (`casars`, `casars-imager`, `casars-importvla`, `casars-python`, `ratatui-graphics`, `apps/casars-mac`) | Terminal shells, orchestration binaries, Python bindings/package, rendering/runtime support, and the native macOS GUI prototype | boundary contracts, domain libraries, foundation crates; `apps/casars-mac` is fixture-only until real provider integration is approved |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
 ## Dependency direction
@@ -37,7 +37,11 @@ Additional constraints:
 - `casa-tables` keeps the broader storage/write path crate-internal even when user-facing table APIs are exposed from the crate.
 - Within `casa-tables`, lazy read paths are safe to share across threads under an in-process multi-reader, single-writer contract; shared tiled reads use a process-wide bounded cache, while dirty write state stays under exclusive mutable ownership.
 - Within `casa-tables`, row/column/cell accessor objects are the public table-data surface; prepared-row accessors provide the reusable selected-column row fast path, and the old table-level convenience wrappers have been removed from the public API.
-- Versioned provider bundles are boundary contracts; UI projections are derived views, not separate truth sources.
+- Versioned provider bundles are boundary contracts; UI projections are derived
+  views, not separate truth sources.
+- `apps/casars-mac` keeps GUI-Wave-0 fixture schemas inside its SwiftPM core.
+  They may model proposed provider capabilities but must not become real
+  provider contracts without canonical contract work.
 
 ## Runtime model
 
@@ -46,6 +50,11 @@ harnesses on top. There is no repo-wide async runtime contract today.
 Long-running interoperability, parity, and packaging work is driven by
 shell/Python scripts, integration tests, or subprocess orchestration rather
 than a shared background service model.
+
+`apps/casars-mac` is a SwiftPM package for the macOS-native GUI prototype. Its
+GUI-Wave-0 runtime is fixture-only and exposes headless debug-state inspection
+through the executable; it does not introduce a Rust/Swift FFI runtime or shared
+background service contract.
 
 ## Persistence / external systems
 
@@ -59,6 +68,7 @@ than a shared background service model.
 
 - published Rust library crates, especially `casa-types`, `casa-tables`, `casa-ms`, `casa-lattices`, `casa-coordinates`, and `casa-images`
 - CLI/TUI apps such as `casars`, `msexplore`, `tablebrowser`, `imexplore`, `calibrate`, and `casars-importvla`
+- native macOS GUI prototype package `apps/casars-mac`
 - Python package `casars-python`
 - persisted CASA-compatible on-disk table, image, and related data formats
 - versioned provider contract bundles and protocol schemas
@@ -92,3 +102,4 @@ than a shared background service model.
 | 0002 | Native Rust implementation with casacore-compatible persistence | accepted |
 | 0003 | Provider schema bundle as boundary contract | accepted |
 | 0004 | Tiered verification and heavy parity gates | accepted |
+| 0005 | Native macOS GUI prototype boundary | accepted |

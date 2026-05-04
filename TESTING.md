@@ -51,6 +51,9 @@ Verification: just verify
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test plus editable Python package checks
 - GitHub tag CI: PR CI plus smoke, suite-install, and CI-like coverage
+- Native macOS GUI prototype: `swift test` from `apps/casars-mac`, plus
+  `swift run casars-mac --dump-debug-state --simulate-main-flow` for the
+  headless debug-state smoke path.
 
 ## Coverage / confidence policy
 

@@ -1,0 +1,328 @@
+import Foundation
+
+public enum DockMode: String, CaseIterable, Codable, Equatable, Identifiable {
+    case datasets
+    case project
+    case history
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .datasets: "Datasets"
+        case .project: "Project"
+        case .history: "History"
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .datasets: "externaldrive"
+        case .project: "folder"
+        case .history: "clock.arrow.circlepath"
+        }
+    }
+}
+
+public enum DatasetKind: String, Codable, Equatable {
+    case measurementSet
+    case imageCube
+    case calibrationTable
+    case runProduct
+}
+
+public struct DatasetSummary: Identifiable, Codable, Equatable {
+    public let id: String
+    public var name: String
+    public var path: String
+    public var kind: DatasetKind
+    public var size: String
+    public var units: String
+    public var fields: [String]
+    public var spectralWindows: [String]
+    public var scans: [String]
+    public var notes: String
+
+    public init(
+        id: String,
+        name: String,
+        path: String,
+        kind: DatasetKind,
+        size: String,
+        units: String,
+        fields: [String] = [],
+        spectralWindows: [String] = [],
+        scans: [String] = [],
+        notes: String
+    ) {
+        self.id = id
+        self.name = name
+        self.path = path
+        self.kind = kind
+        self.size = size
+        self.units = units
+        self.fields = fields
+        self.spectralWindows = spectralWindows
+        self.scans = scans
+        self.notes = notes
+    }
+}
+
+public struct ProjectFixture: Codable, Equatable {
+    public var name: String
+    public var rootPath: String
+    public var datasets: [DatasetSummary]
+
+    public init(name: String, rootPath: String, datasets: [DatasetSummary]) {
+        self.name = name
+        self.rootPath = rootPath
+        self.datasets = datasets
+    }
+}
+
+public enum WorkbenchTabKind: String, Codable, Equatable {
+    case datasetExplorer
+    case task
+    case aiChat
+    case python
+    case history
+}
+
+public struct WorkbenchTab: Identifiable, Codable, Equatable {
+    public let id: String
+    public var title: String
+    public var kind: WorkbenchTabKind
+    public var datasetID: String?
+
+    public init(id: String, title: String, kind: WorkbenchTabKind, datasetID: String? = nil) {
+        self.id = id
+        self.title = title
+        self.kind = kind
+        self.datasetID = datasetID
+    }
+}
+
+public enum TaskRunState: String, Codable, Equatable {
+    case idle
+    case running
+    case completed
+    case stopped
+}
+
+public struct TaskParameters: Codable, Equatable {
+    public var taskName: String
+    public var selectedField: String
+    public var selectedSpectralWindow: String
+    public var outputName: String
+    public var dryRun: Bool
+
+    public init(
+        taskName: String,
+        selectedField: String,
+        selectedSpectralWindow: String,
+        outputName: String,
+        dryRun: Bool
+    ) {
+        self.taskName = taskName
+        self.selectedField = selectedField
+        self.selectedSpectralWindow = selectedSpectralWindow
+        self.outputName = outputName
+        self.dryRun = dryRun
+    }
+}
+
+public struct TaskRun: Codable, Equatable {
+    public var state: TaskRunState
+    public var progress: Double
+    public var logLines: [String]
+    public var warnings: [String]
+    public var products: [String]
+
+    public init(
+        state: TaskRunState,
+        progress: Double,
+        logLines: [String],
+        warnings: [String],
+        products: [String]
+    ) {
+        self.state = state
+        self.progress = progress
+        self.logLines = logLines
+        self.warnings = warnings
+        self.products = products
+    }
+}
+
+public enum AIProposalState: String, Codable, Equatable {
+    case pending
+    case applied
+    case rejected
+}
+
+public struct AIProposal: Identifiable, Codable, Equatable {
+    public let id: String
+    public var title: String
+    public var detail: String
+    public var parameterName: String
+    public var oldValue: String
+    public var newValue: String
+    public var state: AIProposalState
+
+    public init(
+        id: String,
+        title: String,
+        detail: String,
+        parameterName: String,
+        oldValue: String,
+        newValue: String,
+        state: AIProposalState
+    ) {
+        self.id = id
+        self.title = title
+        self.detail = detail
+        self.parameterName = parameterName
+        self.oldValue = oldValue
+        self.newValue = newValue
+        self.state = state
+    }
+}
+
+public enum ChatAuthor: String, Codable, Equatable {
+    case user
+    case assistant
+    case system
+}
+
+public struct AIChatMessage: Identifiable, Codable, Equatable {
+    public let id: String
+    public var author: ChatAuthor
+    public var text: String
+
+    public init(id: String, author: ChatAuthor, text: String) {
+        self.id = id
+        self.author = author
+        self.text = text
+    }
+}
+
+public enum PythonOwner: String, Codable, Equatable {
+    case user
+    case ai
+}
+
+public struct PythonPanelState: Codable, Equatable {
+    public var owner: PythonOwner
+    public var buffer: String
+    public var capturedPlots: [String]
+
+    public init(owner: PythonOwner, buffer: String, capturedPlots: [String]) {
+        self.owner = owner
+        self.buffer = buffer
+        self.capturedPlots = capturedPlots
+    }
+}
+
+public struct ProcessingHistoryEvent: Identifiable, Codable, Equatable {
+    public let id: String
+    public var timestamp: String
+    public var title: String
+    public var reason: String
+    public var affectedPaths: [String]
+    public var approval: String
+
+    public init(
+        id: String,
+        timestamp: String,
+        title: String,
+        reason: String,
+        affectedPaths: [String],
+        approval: String
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.title = title
+        self.reason = reason
+        self.affectedPaths = affectedPaths
+        self.approval = approval
+    }
+}
+
+public struct WorkbenchState: Codable, Equatable {
+    public var project: ProjectFixture
+    public var dockMode: DockMode
+    public var selectedDatasetID: String?
+    public var inspectorCollapsed: Bool
+    public var tabs: [WorkbenchTab]
+    public var activeTabID: String
+    public var taskParameters: TaskParameters
+    public var taskRun: TaskRun
+    public var aiMessages: [AIChatMessage]
+    public var aiProposals: [AIProposal]
+    public var python: PythonPanelState
+    public var history: [ProcessingHistoryEvent]
+    public var lastErrors: [String]
+
+    public init(
+        project: ProjectFixture,
+        dockMode: DockMode,
+        selectedDatasetID: String?,
+        inspectorCollapsed: Bool,
+        tabs: [WorkbenchTab],
+        activeTabID: String,
+        taskParameters: TaskParameters,
+        taskRun: TaskRun,
+        aiMessages: [AIChatMessage],
+        aiProposals: [AIProposal],
+        python: PythonPanelState,
+        history: [ProcessingHistoryEvent],
+        lastErrors: [String]
+    ) {
+        self.project = project
+        self.dockMode = dockMode
+        self.selectedDatasetID = selectedDatasetID
+        self.inspectorCollapsed = inspectorCollapsed
+        self.tabs = tabs
+        self.activeTabID = activeTabID
+        self.taskParameters = taskParameters
+        self.taskRun = taskRun
+        self.aiMessages = aiMessages
+        self.aiProposals = aiProposals
+        self.python = python
+        self.history = history
+        self.lastErrors = lastErrors
+    }
+
+    public var selectedDataset: DatasetSummary? {
+        project.datasets.first { $0.id == selectedDatasetID }
+    }
+}
+
+public struct DebugStateSnapshot: Codable, Equatable {
+    public var activeProject: String
+    public var activeLeftDockMode: DockMode
+    public var selectedDataset: String?
+    public var inspectorCollapsed: Bool
+    public var openTabs: [String]
+    public var activeTab: String
+    public var taskState: TaskRunState
+    public var aiProposalStates: [String: AIProposalState]
+    public var pythonOwner: PythonOwner
+    public var processingHistoryEvents: [String]
+    public var lastErrors: [String]
+
+    public init(state: WorkbenchState) {
+        activeProject = state.project.name
+        activeLeftDockMode = state.dockMode
+        selectedDataset = state.selectedDataset?.name
+        inspectorCollapsed = state.inspectorCollapsed
+        openTabs = state.tabs.map(\.title)
+        activeTab = state.tabs.first { $0.id == state.activeTabID }?.title ?? state.activeTabID
+        taskState = state.taskRun.state
+        aiProposalStates = Dictionary(
+            uniqueKeysWithValues: state.aiProposals.map { ($0.id, $0.state) }
+        )
+        pythonOwner = state.python.owner
+        processingHistoryEvents = state.history.map(\.title)
+        lastErrors = state.lastErrors
+    }
+}
