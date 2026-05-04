@@ -28,12 +28,10 @@ struct WorkbenchView: View {
                 Button {
                     store.toggleLeftDock()
                 } label: {
-                    Label(
-                        store.state.leftDockCollapsed ? "Show Left Dock" : "Hide Left Dock",
-                        systemImage: store.state.leftDockCollapsed ? "sidebar.left" : "sidebar.leading"
-                    )
+                    Image(systemName: store.state.leftDockCollapsed ? "sidebar.left" : "sidebar.leading")
                 }
                 .help(store.state.leftDockCollapsed ? "Show Left Dock" : "Hide Left Dock")
+                .accessibilityLabel(store.state.leftDockCollapsed ? "Show Left Dock" : "Hide Left Dock")
                 .accessibilityIdentifier(store.state.leftDockCollapsed ? "dock.restore" : "dock.collapse")
             }
 
@@ -41,22 +39,6 @@ struct WorkbenchView: View {
                 CommandSearchField(store: store)
             }
 
-            ToolbarItemGroup {
-                Button {
-                    store.openFixtureProject()
-                } label: {
-                    Label("Open Fixture Project", systemImage: "folder")
-                }
-                .accessibilityIdentifier("toolbar.openFixtureProject")
-
-                Button {
-                    store.openDefaultTab(kind: .aiChat)
-                } label: {
-                    Label("Open AI Chat", systemImage: "sparkles")
-                }
-                .accessibilityIdentifier("toolbar.openAIChat")
-
-            }
         }
     }
 }
@@ -105,13 +87,11 @@ struct LeftDockView: View {
                     Button {
                         store.toggleInspector()
                     } label: {
-                        Label(
-                            store.state.inspectorCollapsed ? "Show Inspector" : "Hide Inspector",
-                            systemImage: store.state.inspectorCollapsed ? "sidebar.right" : "sidebar.trailing"
-                        )
+                        Image(systemName: store.state.inspectorCollapsed ? "sidebar.right" : "sidebar.trailing")
                     }
                     .buttonStyle(.borderless)
                     .help(store.state.inspectorCollapsed ? "Show Inspector" : "Hide Inspector")
+                    .accessibilityLabel(store.state.inspectorCollapsed ? "Show Inspector" : "Hide Inspector")
                     .accessibilityIdentifier(store.state.inspectorCollapsed ? "inspector.restore" : "inspector.collapse")
                 }
 
@@ -212,81 +192,6 @@ struct LeftDockView: View {
             .listStyle(.sidebar)
             .accessibilityIdentifier("dock.history")
 
-        case .tasks:
-            VStack(alignment: .leading, spacing: 12) {
-                Button {
-                    store.openDefaultTab(kind: .task)
-                } label: {
-                    Label("Calibrate", systemImage: "slider.horizontal.3")
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("dock.tasks.calibrate")
-
-                Label("Image", systemImage: "photo")
-                    .foregroundStyle(.secondary)
-                Label("Flag", systemImage: "flag")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("Fixture task launcher")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("dock.tasks")
-
-        case .python:
-            VStack(alignment: .leading, spacing: 12) {
-                Button {
-                    store.openDefaultTab(kind: .python)
-                } label: {
-                    Label("Open Python", systemImage: "terminal")
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("dock.python.open")
-
-                Text(store.state.python.owner == .ai ? "AI owns terminal input" : "User owns terminal input")
-                    .font(.caption)
-                    .foregroundStyle(store.state.python.owner == .ai ? .orange : .secondary)
-
-                Spacer()
-                Text("Dual-ported terminal state")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("dock.python")
-
-        case .ai:
-            VStack(alignment: .leading, spacing: 12) {
-                Button {
-                    store.openDefaultTab(kind: .aiChat)
-                } label: {
-                    Label("Open AI Chat", systemImage: "sparkles")
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("dock.ai.open")
-
-                ForEach(store.state.aiProposals) { proposal in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(proposal.title)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                        Text(proposal.state.rawValue)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Spacer()
-                Text("AI proposals require approval")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier("dock.ai")
         }
     }
 }

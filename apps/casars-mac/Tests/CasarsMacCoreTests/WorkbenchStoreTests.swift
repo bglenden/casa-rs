@@ -16,7 +16,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.aiProposalStates["proposal-spw"], .pending)
         XCTAssertEqual(
             DockMode.allCases.map(\.rawValue),
-            ["datasets", "files", "history", "tasks", "python", "ai"]
+            ["datasets", "files", "history"]
         )
     }
 

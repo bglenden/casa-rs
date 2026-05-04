@@ -4,9 +4,6 @@ public enum DockMode: String, CaseIterable, Codable, Equatable, Identifiable {
     case datasets
     case files
     case history
-    case tasks
-    case python
-    case ai
 
     public var id: String { rawValue }
 
@@ -15,9 +12,6 @@ public enum DockMode: String, CaseIterable, Codable, Equatable, Identifiable {
         case .datasets: "Datasets"
         case .files: "Files"
         case .history: "History"
-        case .tasks: "Tasks"
-        case .python: "Python"
-        case .ai: "AI"
         }
     }
 
@@ -26,9 +20,6 @@ public enum DockMode: String, CaseIterable, Codable, Equatable, Identifiable {
         case .datasets: "externaldrive"
         case .files: "folder"
         case .history: "clock.arrow.circlepath"
-        case .tasks: "list.bullet.rectangle"
-        case .python: "chevron.left.forwardslash.chevron.right"
-        case .ai: "sparkles"
         }
     }
 }

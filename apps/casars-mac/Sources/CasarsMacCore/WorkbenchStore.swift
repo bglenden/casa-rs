@@ -76,7 +76,6 @@ public final class WorkbenchStore: ObservableObject {
             setLeftDockCollapsed(false)
         } else if normalized.contains("task") || normalized.contains("calibrate") {
             openDefaultTab(kind: .task)
-            selectDockMode(.tasks)
         } else if normalized.contains("inspector") {
             setInspectorCollapsed(false)
         } else if normalized.contains("dataset") || normalized.contains("ms") {
