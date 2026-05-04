@@ -468,6 +468,13 @@ final class WorkbenchStoreTests: XCTestCase {
         store.resetInterfaceFontSize()
         XCTAssertEqual(store.state.interfaceFontSize, WorkbenchState.defaultInterfaceFontSize)
     }
+
+    func testPlotImageCacheIDTracksFullImageBytes() {
+        let first = makePlotResult(imageBytes: Data([0x89, 0x50, 1, 2, 3, 0x0a]))
+        let second = makePlotResult(imageBytes: Data([0x89, 0x50, 1, 9, 3, 0x0a]))
+
+        XCTAssertNotEqual(first.imageCacheID, second.imageCacheID)
+    }
 }
 
 private struct StubProjectProbeClient: ProjectProbeClient {
@@ -483,28 +490,50 @@ private final class StubMeasurementSetPlotClient: MeasurementSetPlotClient {
 
     func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary {
         requests.append(request)
-        return MeasurementSetPlotResultSummary(
+        return makePlotResult(
             presetLabel: request.preset.title,
             title: request.preset.title,
-            summary: "Synthetic plot result for tests.",
             datasetPath: request.datasetPath,
             dataColumn: request.dataColumn,
-            selectionSummary: "data column \(request.dataColumn)",
-            xAxis: PlotAxisSummary(id: "frequency", label: "Frequency (Hz)", unit: "Hz"),
-            yAxis: PlotAxisSummary(id: "amplitude", label: "Amplitude", unit: ""),
-            series: [
-                PlotSeriesSummary(label: "Target", colorGroup: "field-0", pointCount: 42, firstRow: 0, lastRow: 11)
-            ],
             requestedMaxPoints: request.maxPlotPoints,
-            renderedPointCount: 42,
-            diagnostics: [],
-            renderer: "stub renderer",
-            imageFormat: "png",
             imageWidth: request.width,
-            imageHeight: request.height,
-            imageBytes: Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+            imageHeight: request.height
         )
     }
+}
+
+private func makePlotResult(
+    presetLabel: String = "UV Coverage",
+    title: String = "UV Coverage",
+    datasetPath: String = "/data/probed.ms",
+    dataColumn: String = "DATA",
+    requestedMaxPoints: UInt64 = 250_000,
+    imageWidth: UInt32 = 960,
+    imageHeight: UInt32 = 600,
+    imageBytes: Data
+        = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+) -> MeasurementSetPlotResultSummary {
+    MeasurementSetPlotResultSummary(
+        presetLabel: presetLabel,
+        title: title,
+        summary: "Synthetic plot result for tests.",
+        datasetPath: datasetPath,
+        dataColumn: dataColumn,
+        selectionSummary: "data column \(dataColumn)",
+        xAxis: PlotAxisSummary(id: "frequency", label: "Frequency (Hz)", unit: "Hz"),
+        yAxis: PlotAxisSummary(id: "amplitude", label: "Amplitude", unit: ""),
+        series: [
+            PlotSeriesSummary(label: "Target", colorGroup: "field-0", pointCount: 42, firstRow: 0, lastRow: 11)
+        ],
+        requestedMaxPoints: requestedMaxPoints,
+        renderedPointCount: 42,
+        diagnostics: [],
+        renderer: "stub renderer",
+        imageFormat: "png",
+        imageWidth: imageWidth,
+        imageHeight: imageHeight,
+        imageBytes: imageBytes
+    )
 }
 
 private final class StubDirtyImagingTaskClient: DirtyImagingTaskClient {

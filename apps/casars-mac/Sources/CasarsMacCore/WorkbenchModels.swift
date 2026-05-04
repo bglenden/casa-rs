@@ -403,24 +403,7 @@ public struct MeasurementSetPlotResultSummary: Codable, Equatable {
     public var imageWidth: UInt32
     public var imageHeight: UInt32
     public var imageBytes: Data
-    public var imageCacheID: String {
-        "\(imageFormat):\(imageWidth)x\(imageHeight):\(imageBytes.count):\(imageByteFingerprint):\(renderedPointCount):\(selectionSummary):\(renderer)"
-    }
-
-    private var imageByteFingerprint: UInt64 {
-        var hash: UInt64 = 1_469_598_103_934_665_603
-        let prefix = imageBytes.prefix(64)
-        let suffix = imageBytes.suffix(64)
-        for byte in prefix {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        for byte in suffix {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return hash
-    }
+    public var imageCacheID: String
 
     public init(
         presetLabel: String,
@@ -458,6 +441,26 @@ public struct MeasurementSetPlotResultSummary: Codable, Equatable {
         self.imageWidth = imageWidth
         self.imageHeight = imageHeight
         self.imageBytes = imageBytes
+        self.imageCacheID = Self.makeImageCacheID(
+            imageFormat: imageFormat,
+            imageWidth: imageWidth,
+            imageHeight: imageHeight,
+            imageBytes: imageBytes
+        )
+    }
+
+    private static func makeImageCacheID(
+        imageFormat: String,
+        imageWidth: UInt32,
+        imageHeight: UInt32,
+        imageBytes: Data
+    ) -> String {
+        var hash: UInt64 = 1_469_598_103_934_665_603
+        for byte in imageBytes {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return "\(imageFormat):\(imageWidth)x\(imageHeight):\(imageBytes.count):\(hash)"
     }
 }
 
