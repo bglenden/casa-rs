@@ -1,5 +1,11 @@
 import Foundation
 import CasarsFrontendServices
+import OSLog
+
+private let datasetSelectionLogger = Logger(
+    subsystem: "org.casa-rs.casars-mac",
+    category: "DatasetSelection"
+)
 
 public protocol ProjectProbeClient {
     func probeProject(path: String) throws -> ProjectFixtureProbe
@@ -151,12 +157,29 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func selectDataset(_ datasetID: String) {
+        let started = DispatchTime.now().uptimeNanoseconds
+        let previousDatasetID = state.selectedDatasetID
         guard state.project.datasets.contains(where: { $0.id == datasetID }) else {
             state.lastErrors.append("Unknown dataset \(datasetID)")
+            datasetSelectionLogger.error("select_dataset unknown id=\(datasetID, privacy: .public)")
+            return
+        }
+        guard previousDatasetID != datasetID else {
+            let elapsedMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+            datasetSelectionLogger.debug(
+                "select_dataset noop id=\(datasetID, privacy: .public) elapsed_ms=\(elapsedMilliseconds, privacy: .public)"
+            )
             return
         }
 
         state.selectedDatasetID = datasetID
+        let elapsedMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+        let datasetCount = state.project.datasets.count
+        let inspectorCollapsed = state.inspectorCollapsed
+        let activeTabID = state.activeTabID
+        datasetSelectionLogger.info(
+            "select_dataset changed from=\(previousDatasetID ?? "none", privacy: .public) to=\(datasetID, privacy: .public) dataset_count=\(datasetCount, privacy: .public) inspector_collapsed=\(inspectorCollapsed, privacy: .public) active_tab=\(activeTabID, privacy: .public) elapsed_ms=\(elapsedMilliseconds, privacy: .public)"
+        )
     }
 
     public func openSelectedDatasetExplorer() {
