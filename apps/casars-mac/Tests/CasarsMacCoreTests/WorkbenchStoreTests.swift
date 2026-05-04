@@ -503,7 +503,7 @@ private final class StubMeasurementSetPlotClient: MeasurementSetPlotClient {
             presetLabel: request.preset.title,
             title: request.preset.title,
             datasetPath: request.datasetPath,
-            dataColumn: request.dataColumn,
+            dataColumn: request.dataColumn.lowercased(),
             requestedMaxPoints: request.maxPlotPoints,
             imageWidth: request.width,
             imageHeight: request.height

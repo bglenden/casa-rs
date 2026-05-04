@@ -518,7 +518,11 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
 public extension MeasurementSetPlotResultSummary {
     func matches(plotState: MeasurementSetExplorerPlotState) -> Bool {
         preset == plotState.preset
-            && dataColumn == plotState.dataColumn
+            && Self.canonicalDataColumn(dataColumn) == Self.canonicalDataColumn(plotState.dataColumn)
+    }
+
+    private static func canonicalDataColumn(_ dataColumn: String) -> String {
+        dataColumn.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }
 
