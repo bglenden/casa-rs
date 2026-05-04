@@ -348,39 +348,13 @@ private struct ExplorerPlot: Identifiable {
 struct MeasurementSetPlotPanel: View {
     @ObservedObject var store: WorkbenchStore
     let dataset: DatasetSummary
+    @State private var showingAdvancedSetup = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(dataset.name)
-                        .workbenchFont(.headline)
-                    Text(plotState.result?.selectionSummary ?? "MeasurementSet plot workspace")
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Button {
-                    store.runMeasurementSetPlot(datasetID: dataset.id)
-                } label: {
-                    Label(plotState.result == nil ? "Render" : "Re-render", systemImage: "play.fill")
-                }
-                .disabled(plotState.status == .running)
-                .accessibilityIdentifier("msPlot.render.\(dataset.id)")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(.bar)
-
-            HSplitView {
-                plotControls
-                    .frame(minWidth: 240, idealWidth: 280, maxWidth: 420)
-                plotImage
-                    .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack(alignment: .top) {
+            plotSurface
+            plotCommandBar
+                .padding(.top, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("msPlot.panel.\(dataset.id)")
@@ -390,71 +364,120 @@ struct MeasurementSetPlotPanel: View {
         store.state.measurementSetPlots[dataset.id] ?? MeasurementSetExplorerPlotState.defaultState(for: dataset)
     }
 
-    private var plotControls: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Picker("Preset", selection: Binding(
-                    get: { plotState.preset },
-                    set: { store.setMeasurementSetPlotPreset($0, datasetID: dataset.id) }
-                )) {
-                    ForEach(MeasurementSetExplorerPlotPreset.allCases) { preset in
-                        Text(preset.title).tag(preset)
-                    }
+    private var plotCommandBar: some View {
+        HStack(spacing: 10) {
+            Picker("Plot", selection: Binding(
+                get: { plotState.preset },
+                set: { store.setMeasurementSetPlotPreset($0, datasetID: dataset.id) }
+            )) {
+                ForEach(MeasurementSetExplorerPlotPreset.allCases) { preset in
+                    Text(preset.title).tag(preset)
                 }
-                .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
-
-                Picker("Field", selection: Binding(
-                    get: { plotState.selectedField ?? "all" },
-                    set: { store.setMeasurementSetPlotField($0, datasetID: dataset.id) }
-                )) {
-                    Text("all").tag("all")
-                    ForEach(dataset.fields, id: \.self) { field in
-                        Text(field).tag(field)
-                    }
-                }
-                .accessibilityIdentifier("msPlot.field.\(dataset.id)")
-
-                Picker("Spectral window", selection: Binding(
-                    get: { plotState.selectedSpectralWindow ?? "all" },
-                    set: { store.setMeasurementSetPlotSpectralWindow($0, datasetID: dataset.id) }
-                )) {
-                    Text("all").tag("all")
-                    ForEach(dataset.spectralWindows, id: \.self) { spectralWindow in
-                        Text(spectralWindow).tag(spectralWindow)
-                    }
-                }
-                .accessibilityIdentifier("msPlot.spw.\(dataset.id)")
-
-                Picker("Correlation", selection: Binding(
-                    get: { plotState.selectedCorrelation ?? "all" },
-                    set: { store.setMeasurementSetPlotCorrelation($0, datasetID: dataset.id) }
-                )) {
-                    Text("all").tag("all")
-                    ForEach(dataset.correlations, id: \.self) { correlation in
-                        Text(correlation).tag(correlation)
-                    }
-                }
-                .accessibilityIdentifier("msPlot.correlation.\(dataset.id)")
-
-                Picker("Data column", selection: Binding(
-                    get: { plotState.dataColumn },
-                    set: { store.setMeasurementSetPlotDataColumn($0, datasetID: dataset.id) }
-                )) {
-                    ForEach(dataset.dataColumns.isEmpty ? ["DATA"] : dataset.dataColumns, id: \.self) { column in
-                        Text(column).tag(column)
-                    }
-                }
-                .disabled(plotState.preset == .uvCoverage)
-                .accessibilityIdentifier("msPlot.dataColumn.\(dataset.id)")
-
-                Divider()
-
-                plotMetadata
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .labelsHidden()
+            .frame(width: 220)
+            .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
+
+            Button {
+                store.runMeasurementSetPlot(datasetID: dataset.id)
+            } label: {
+                Label(plotState.status == .running ? "Generating" : "Generate", systemImage: "play.fill")
+            }
+            .disabled(plotState.status == .running)
+            .accessibilityIdentifier("msPlot.generate.\(dataset.id)")
+
+            Button {
+                showingAdvancedSetup.toggle()
+            } label: {
+                Label("Advanced", systemImage: "slider.horizontal.3")
+            }
+            .popover(isPresented: $showingAdvancedSetup, arrowEdge: .top) {
+                advancedPlotSetup
+                    .frame(width: 320)
+            }
+            .accessibilityIdentifier("msPlot.advanced.\(dataset.id)")
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .shadow(color: Color.black.opacity(0.16), radius: 10, x: 0, y: 4)
+    }
+
+    private var advancedPlotSetup: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Plot Filters")
+                .workbenchFont(.headline)
+
+            Picker("Field", selection: Binding(
+                get: { plotState.selectedField ?? "all" },
+                set: { store.setMeasurementSetPlotField($0, datasetID: dataset.id) }
+            )) {
+                Text("all").tag("all")
+                ForEach(dataset.fields, id: \.self) { field in
+                    Text(field).tag(field)
+                }
+            }
+            .accessibilityIdentifier("msPlot.field.\(dataset.id)")
+
+            Picker("Spectral window", selection: Binding(
+                get: { plotState.selectedSpectralWindow ?? "all" },
+                set: { store.setMeasurementSetPlotSpectralWindow($0, datasetID: dataset.id) }
+            )) {
+                Text("all").tag("all")
+                ForEach(dataset.spectralWindows, id: \.self) { spectralWindow in
+                    Text(spectralWindow).tag(spectralWindow)
+                }
+            }
+            .accessibilityIdentifier("msPlot.spw.\(dataset.id)")
+
+            Picker("Correlation", selection: Binding(
+                get: { plotState.selectedCorrelation ?? "all" },
+                set: { store.setMeasurementSetPlotCorrelation($0, datasetID: dataset.id) }
+            )) {
+                Text("all").tag("all")
+                ForEach(dataset.correlations, id: \.self) { correlation in
+                    Text(correlation).tag(correlation)
+                }
+            }
+            .accessibilityIdentifier("msPlot.correlation.\(dataset.id)")
+
+            Picker("Data column", selection: Binding(
+                get: { plotState.dataColumn },
+                set: { store.setMeasurementSetPlotDataColumn($0, datasetID: dataset.id) }
+            )) {
+                ForEach(dataset.dataColumns.isEmpty ? ["DATA"] : dataset.dataColumns, id: \.self) { column in
+                    Text(column).tag(column)
+                }
+            }
+            .disabled(plotState.preset == .uvCoverage)
+            .accessibilityIdentifier("msPlot.dataColumn.\(dataset.id)")
+
+            Divider()
+
+            plotMetadata
+        }
+        .padding(16)
+    }
+
+    private var plotSurface: some View {
+        ZStack(alignment: .bottomLeading) {
+            plotImage
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text(dataset.name)
+                    .workbenchFont(.caption, weight: .semibold)
+                Text(plotState.result?.selectionSummary ?? "Select a plot and generate it")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(14)
+        }
     }
 
     @ViewBuilder
