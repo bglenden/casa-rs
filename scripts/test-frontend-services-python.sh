@@ -40,10 +40,13 @@ with tempfile.TemporaryDirectory() as tmp:
     assert dataset.fields
     assert dataset.spectral_windows
     assert dataset.antennas
+    assert dataset.data_columns == ["DATA"]
+    assert "ANTENNA (required)" in dataset.subtables
 
     direct_probe = frontend.probe_path(str(ms_path))
     assert direct_probe is not None
     assert direct_probe.kind == frontend.DatasetKind.MEASUREMENT_SET
+    assert direct_probe.data_columns == ["DATA"]
 
 print("frontend services Python UniFFI smoke passed")
 PY

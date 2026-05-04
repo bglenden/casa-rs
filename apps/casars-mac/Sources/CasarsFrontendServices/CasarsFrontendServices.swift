@@ -495,13 +495,15 @@ public struct DatasetProbe {
     public var antennas: [String]
     public var correlations: [String]
     public var columns: [String]
+    public var dataColumns: [String]
+    public var subtables: [String]
     public var shape: [UInt64]
     public var notes: String
     public var diagnostics: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, name: String, path: String, kind: DatasetKind, sizeBytes: UInt64, modifiedUnixSeconds: UInt64?, probedUnixSeconds: UInt64, logicalSize: String, units: String, fields: [String], spectralWindows: [String], scans: [String], antennas: [String], correlations: [String], columns: [String], shape: [UInt64], notes: String, diagnostics: [String]) {
+    public init(id: String, name: String, path: String, kind: DatasetKind, sizeBytes: UInt64, modifiedUnixSeconds: UInt64?, probedUnixSeconds: UInt64, logicalSize: String, units: String, fields: [String], spectralWindows: [String], scans: [String], antennas: [String], correlations: [String], columns: [String], dataColumns: [String], subtables: [String], shape: [UInt64], notes: String, diagnostics: [String]) {
         self.id = id
         self.name = name
         self.path = path
@@ -517,6 +519,8 @@ public struct DatasetProbe {
         self.antennas = antennas
         self.correlations = correlations
         self.columns = columns
+        self.dataColumns = dataColumns
+        self.subtables = subtables
         self.shape = shape
         self.notes = notes
         self.diagnostics = diagnostics
@@ -575,6 +579,12 @@ extension DatasetProbe: Equatable, Hashable {
         if lhs.columns != rhs.columns {
             return false
         }
+        if lhs.dataColumns != rhs.dataColumns {
+            return false
+        }
+        if lhs.subtables != rhs.subtables {
+            return false
+        }
         if lhs.shape != rhs.shape {
             return false
         }
@@ -603,6 +613,8 @@ extension DatasetProbe: Equatable, Hashable {
         hasher.combine(antennas)
         hasher.combine(correlations)
         hasher.combine(columns)
+        hasher.combine(dataColumns)
+        hasher.combine(subtables)
         hasher.combine(shape)
         hasher.combine(notes)
         hasher.combine(diagnostics)
@@ -620,23 +632,25 @@ public struct FfiConverterTypeDatasetProbe: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DatasetProbe {
         return
             try DatasetProbe(
-                id: FfiConverterString.read(from: &buf), 
-                name: FfiConverterString.read(from: &buf), 
-                path: FfiConverterString.read(from: &buf), 
-                kind: FfiConverterTypeDatasetKind.read(from: &buf), 
-                sizeBytes: FfiConverterUInt64.read(from: &buf), 
-                modifiedUnixSeconds: FfiConverterOptionUInt64.read(from: &buf), 
-                probedUnixSeconds: FfiConverterUInt64.read(from: &buf), 
-                logicalSize: FfiConverterString.read(from: &buf), 
-                units: FfiConverterString.read(from: &buf), 
-                fields: FfiConverterSequenceString.read(from: &buf), 
-                spectralWindows: FfiConverterSequenceString.read(from: &buf), 
-                scans: FfiConverterSequenceString.read(from: &buf), 
-                antennas: FfiConverterSequenceString.read(from: &buf), 
-                correlations: FfiConverterSequenceString.read(from: &buf), 
-                columns: FfiConverterSequenceString.read(from: &buf), 
-                shape: FfiConverterSequenceUInt64.read(from: &buf), 
-                notes: FfiConverterString.read(from: &buf), 
+                id: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                path: FfiConverterString.read(from: &buf),
+                kind: FfiConverterTypeDatasetKind.read(from: &buf),
+                sizeBytes: FfiConverterUInt64.read(from: &buf),
+                modifiedUnixSeconds: FfiConverterOptionUInt64.read(from: &buf),
+                probedUnixSeconds: FfiConverterUInt64.read(from: &buf),
+                logicalSize: FfiConverterString.read(from: &buf),
+                units: FfiConverterString.read(from: &buf),
+                fields: FfiConverterSequenceString.read(from: &buf),
+                spectralWindows: FfiConverterSequenceString.read(from: &buf),
+                scans: FfiConverterSequenceString.read(from: &buf),
+                antennas: FfiConverterSequenceString.read(from: &buf),
+                correlations: FfiConverterSequenceString.read(from: &buf),
+                columns: FfiConverterSequenceString.read(from: &buf),
+                dataColumns: FfiConverterSequenceString.read(from: &buf),
+                subtables: FfiConverterSequenceString.read(from: &buf),
+                shape: FfiConverterSequenceUInt64.read(from: &buf),
+                notes: FfiConverterString.read(from: &buf),
                 diagnostics: FfiConverterSequenceString.read(from: &buf)
         )
     }
@@ -657,6 +671,8 @@ public struct FfiConverterTypeDatasetProbe: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.antennas, into: &buf)
         FfiConverterSequenceString.write(value.correlations, into: &buf)
         FfiConverterSequenceString.write(value.columns, into: &buf)
+        FfiConverterSequenceString.write(value.dataColumns, into: &buf)
+        FfiConverterSequenceString.write(value.subtables, into: &buf)
         FfiConverterSequenceUInt64.write(value.shape, into: &buf)
         FfiConverterString.write(value.notes, into: &buf)
         FfiConverterSequenceString.write(value.diagnostics, into: &buf)
@@ -748,11 +764,11 @@ public struct FfiConverterTypeProjectProbe: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProjectProbe {
         return
             try ProjectProbe(
-                name: FfiConverterString.read(from: &buf), 
-                rootPath: FfiConverterString.read(from: &buf), 
-                datasets: FfiConverterSequenceTypeDatasetProbe.read(from: &buf), 
-                diagnostics: FfiConverterSequenceString.read(from: &buf), 
-                scannedEntryCount: FfiConverterUInt64.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf),
+                rootPath: FfiConverterString.read(from: &buf),
+                datasets: FfiConverterSequenceTypeDatasetProbe.read(from: &buf),
+                diagnostics: FfiConverterSequenceString.read(from: &buf),
+                scannedEntryCount: FfiConverterUInt64.read(from: &buf),
                 truncated: FfiConverterBool.read(from: &buf)
         )
     }
@@ -786,7 +802,7 @@ public func FfiConverterTypeProjectProbe_lower(_ value: ProjectProbe) -> RustBuf
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum DatasetKind {
-    
+
     case measurementSet
     case image
     case table
@@ -806,32 +822,32 @@ public struct FfiConverterTypeDatasetKind: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DatasetKind {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-        
+
         case 1: return .measurementSet
-        
+
         case 2: return .image
-        
+
         case 3: return .table
-        
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DatasetKind, into buf: inout [UInt8]) {
         switch value {
-        
-        
+
+
         case .measurementSet:
             writeInt(&buf, Int32(1))
-        
-        
+
+
         case .image:
             writeInt(&buf, Int32(2))
-        
-        
+
+
         case .table:
             writeInt(&buf, Int32(3))
-        
+
         }
     }
 }
@@ -866,8 +882,8 @@ extension DatasetKind: CaseIterable {}
 
 public enum FrontendServiceError: Swift.Error {
 
-    
-    
+
+
     case InvalidPath(reason: String
     )
     case Io(reason: String
@@ -887,9 +903,9 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        
 
-        
+
+
         case 1: return .InvalidPath(
             reason: try FfiConverterString.read(from: &buf)
             )
@@ -907,24 +923,24 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
     public static func write(_ value: FrontendServiceError, into buf: inout [UInt8]) {
         switch value {
 
-        
 
-        
-        
+
+
+
         case let .InvalidPath(reason):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(reason, into: &buf)
-            
-        
+
+
         case let .Io(reason):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(reason, into: &buf)
-            
-        
+
+
         case let .Probe(reason):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(reason, into: &buf)
-            
+
         }
     }
 }

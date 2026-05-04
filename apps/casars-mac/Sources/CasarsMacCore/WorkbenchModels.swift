@@ -69,10 +69,20 @@ public struct DatasetSummary: Identifiable, Codable, Equatable {
     public var kind: DatasetKind
     public var size: String
     public var units: String
+    public var sizeBytes: UInt64
+    public var modifiedUnixSeconds: UInt64?
+    public var probedUnixSeconds: UInt64?
     public var fields: [String]
     public var spectralWindows: [String]
     public var scans: [String]
+    public var antennas: [String]
+    public var correlations: [String]
+    public var columns: [String]
+    public var dataColumns: [String]
+    public var subtables: [String]
+    public var shape: [UInt64]
     public var notes: String
+    public var diagnostics: [String]
 
     public init(
         id: String,
@@ -81,10 +91,20 @@ public struct DatasetSummary: Identifiable, Codable, Equatable {
         kind: DatasetKind,
         size: String,
         units: String,
+        sizeBytes: UInt64 = 0,
+        modifiedUnixSeconds: UInt64? = nil,
+        probedUnixSeconds: UInt64? = nil,
         fields: [String] = [],
         spectralWindows: [String] = [],
         scans: [String] = [],
-        notes: String
+        antennas: [String] = [],
+        correlations: [String] = [],
+        columns: [String] = [],
+        dataColumns: [String] = [],
+        subtables: [String] = [],
+        shape: [UInt64] = [],
+        notes: String,
+        diagnostics: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -92,10 +112,20 @@ public struct DatasetSummary: Identifiable, Codable, Equatable {
         self.kind = kind
         self.size = size
         self.units = units
+        self.sizeBytes = sizeBytes
+        self.modifiedUnixSeconds = modifiedUnixSeconds
+        self.probedUnixSeconds = probedUnixSeconds
         self.fields = fields
         self.spectralWindows = spectralWindows
         self.scans = scans
+        self.antennas = antennas
+        self.correlations = correlations
+        self.columns = columns
+        self.dataColumns = dataColumns
+        self.subtables = subtables
+        self.shape = shape
         self.notes = notes
+        self.diagnostics = diagnostics
     }
 
     public var explorerTabID: String {
@@ -127,8 +157,15 @@ public struct ProjectFixture: Codable, Equatable {
 }
 
 public enum ProjectSource: String, Codable, Equatable {
+    case none
     case fixture
     case probed
+}
+
+public extension ProjectSource {
+    var isDemo: Bool {
+        self == .fixture
+    }
 }
 
 public enum WorkbenchTabKind: String, Codable, Equatable {
@@ -366,6 +403,52 @@ public struct WorkbenchState: Codable, Equatable {
     public static func clampedInterfaceFontSize(_ value: Double) -> Double {
         min(maximumInterfaceFontSize, max(minimumInterfaceFontSize, value))
     }
+
+    public var hasProject: Bool {
+        project.source != .none
+    }
+
+    public var isDemoProject: Bool {
+        project.source.isDemo
+    }
+}
+
+public struct DebugDatasetSnapshot: Codable, Equatable {
+    public var name: String
+    public var path: String
+    public var kind: DatasetKind
+    public var size: String
+    public var units: String
+    public var sizeBytes: UInt64
+    public var fields: [String]
+    public var spectralWindows: [String]
+    public var scans: [String]
+    public var antennas: [String]
+    public var correlations: [String]
+    public var columns: [String]
+    public var dataColumns: [String]
+    public var subtables: [String]
+    public var shape: [UInt64]
+    public var diagnostics: [String]
+
+    public init(dataset: DatasetSummary) {
+        name = dataset.name
+        path = dataset.path
+        kind = dataset.kind
+        size = dataset.size
+        units = dataset.units
+        sizeBytes = dataset.sizeBytes
+        fields = dataset.fields
+        spectralWindows = dataset.spectralWindows
+        scans = dataset.scans
+        antennas = dataset.antennas
+        correlations = dataset.correlations
+        columns = dataset.columns
+        dataColumns = dataset.dataColumns
+        subtables = dataset.subtables
+        shape = dataset.shape
+        diagnostics = dataset.diagnostics
+    }
 }
 
 public struct DebugStateSnapshot: Codable, Equatable {
@@ -373,6 +456,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var activeLeftDockMode: DockMode
     public var leftDockCollapsed: Bool
     public var selectedDataset: String?
+    public var selectedDatasetSummary: DebugDatasetSnapshot?
     public var activeProjectRoot: String
     public var activeProjectSource: ProjectSource
     public var discoveredDatasets: [String]
@@ -395,6 +479,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         activeLeftDockMode = state.dockMode
         leftDockCollapsed = state.leftDockCollapsed
         selectedDataset = state.selectedDataset?.name
+        selectedDatasetSummary = state.selectedDataset.map(DebugDatasetSnapshot.init(dataset:))
         discoveredDatasets = state.project.datasets.map(\.name)
         probeDiagnostics = state.probeDiagnostics
         inspectorCollapsed = state.inspectorCollapsed

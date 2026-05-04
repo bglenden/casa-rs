@@ -1,4 +1,5 @@
 import CasarsMacCore
+import Foundation
 import SwiftUI
 
 struct CentralWorkspaceView: View {
@@ -57,15 +58,19 @@ struct CentralWorkspaceView: View {
                 Button("Dataset Explorer") {
                     store.openDefaultTab(kind: .datasetExplorer)
                 }
+                .disabled(store.state.selectedDataset == nil)
                 Button("Calibrate Task") {
                     store.openDefaultTab(kind: .task)
                 }
+                .disabled(!store.state.isDemoProject)
                 Button("AI Chat") {
                     store.openDefaultTab(kind: .aiChat)
                 }
+                .disabled(!store.state.isDemoProject)
                 Button("Python") {
                     store.openDefaultTab(kind: .python)
                 }
+                .disabled(!store.state.isDemoProject)
                 Button("History") {
                     store.openDefaultTab(kind: .history)
                 }
@@ -100,8 +105,7 @@ struct CentralWorkspaceView: View {
                 HistoryPanel(store: store)
             }
         } else {
-            Text("No active tab")
-                .foregroundStyle(.secondary)
+            EmptyWorkbenchPanel(store: store)
         }
     }
 
@@ -116,6 +120,46 @@ struct CentralWorkspaceView: View {
     }
 }
 
+struct EmptyWorkbenchPanel: View {
+    @ObservedObject var store: WorkbenchStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            PanelHeader(
+                title: store.state.hasProject ? "No active tab" : "Open a casa-rs project",
+                subtitle: store.state.hasProject
+                    ? "Select a dataset or open a work tab."
+                    : "Choose a directory and casa-rs will probe it for supported datasets."
+            )
+
+            HStack(spacing: 12) {
+                Button {
+                    if let url = ProjectOpenPanel.chooseDirectory() {
+                        store.openProject(path: url.path)
+                    }
+                } label: {
+                    Label("Open Project Directory", systemImage: "folder")
+                }
+                .accessibilityIdentifier("empty.openProject")
+
+                Button {
+                    store.openFixtureProject()
+                } label: {
+                    Label("Open Demo Project", systemImage: "shippingbox")
+                }
+                .accessibilityIdentifier("empty.openDemoProject")
+            }
+
+            if !store.state.lastErrors.isEmpty {
+                SummaryBox(title: "Recent Errors", values: store.state.lastErrors)
+            }
+        }
+        .frame(maxWidth: 560, alignment: .leading)
+        .padding(28)
+        .accessibilityIdentifier("panel.emptyWorkbench")
+    }
+}
+
 struct DatasetExplorerPanel: View {
     @ObservedObject var store: WorkbenchStore
     let datasetID: String?
@@ -126,16 +170,10 @@ struct DatasetExplorerPanel: View {
                 if let dataset {
                     PanelHeader(title: dataset.kind.explorerName, subtitle: explorerSubtitle(for: dataset))
 
-                    HStack(alignment: .top, spacing: 16) {
-                        SummaryBox(title: primarySummaryTitle(for: dataset), values: primarySummaryValues(for: dataset))
-                        SummaryBox(title: secondarySummaryTitle(for: dataset), values: secondarySummaryValues(for: dataset))
-                        SummaryBox(title: "Notes", values: [dataset.notes])
-                    }
-
-                    HStack(spacing: 16) {
-                        ForEach(plotPlaceholders(for: dataset)) { plot in
-                            PlotPlaceholder(title: plot.title, caption: plot.caption)
-                        }
+                    if store.state.isDemoProject {
+                        demoExplorerContent(for: dataset)
+                    } else {
+                        realExplorerContent(for: dataset)
                     }
 
                     Text(dataset.path)
@@ -158,7 +196,70 @@ struct DatasetExplorerPanel: View {
     }
 
     private func explorerSubtitle(for dataset: DatasetSummary) -> String {
-        "\(dataset.name) - \(dataset.size) - \(dataset.units)"
+        if store.state.isDemoProject {
+            "\(dataset.name) - \(dataset.size) - \(dataset.units)"
+        } else {
+            "\(dataset.name) - \(dataset.size) - \(byteCount(dataset.sizeBytes))"
+        }
+    }
+
+    @ViewBuilder
+    private func demoExplorerContent(for dataset: DatasetSummary) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            SummaryBox(title: primarySummaryTitle(for: dataset), values: primarySummaryValues(for: dataset))
+            SummaryBox(title: secondarySummaryTitle(for: dataset), values: secondarySummaryValues(for: dataset))
+            SummaryBox(title: "Demo Notes", values: [dataset.notes])
+        }
+
+        HStack(spacing: 16) {
+            ForEach(plotPlaceholders(for: dataset)) { plot in
+                PlotPlaceholder(title: plot.title, caption: plot.caption)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func realExplorerContent(for dataset: DatasetSummary) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            SummaryBox(
+                title: "Overview",
+                values: [
+                    dataset.size,
+                    "Bytes: \(byteCount(dataset.sizeBytes))",
+                    "Shape: \(formatShape(dataset.shape))",
+                    "Modified: \(formatUnixTime(dataset.modifiedUnixSeconds))",
+                    "Probed: \(formatUnixTime(dataset.probedUnixSeconds))"
+                ]
+            )
+            SummaryBox(title: "Fields", values: dataset.fields)
+            SummaryBox(title: "Spectral Windows", values: dataset.spectralWindows)
+        }
+
+        if dataset.kind == .measurementSet {
+            HStack(alignment: .top, spacing: 16) {
+                SummaryBox(title: "Scans", values: dataset.scans)
+                SummaryBox(title: "Antennas", values: dataset.antennas)
+                SummaryBox(title: "Correlations", values: dataset.correlations)
+            }
+
+            HStack(alignment: .top, spacing: 16) {
+                SummaryBox(title: "Data Columns", values: dataset.dataColumns)
+                SummaryBox(title: "All Columns", values: dataset.columns)
+                SummaryBox(title: "Subtables", values: dataset.subtables)
+            }
+
+            SummaryBox(
+                title: "Plotting",
+                values: ["Scientific plots are tracked separately in GUI-Wave-3 (#190)."]
+            )
+        } else {
+            SummaryBox(
+                title: "Explorer Status",
+                values: ["A real summary is available. A specialized \(dataset.kind.explorerName) is not implemented yet."]
+            )
+        }
+
+        SummaryBox(title: "Probe Notes", values: [dataset.notes] + dataset.diagnostics)
     }
 
     private func primarySummaryTitle(for dataset: DatasetSummary) -> String {
@@ -234,6 +335,22 @@ struct DatasetExplorerPanel: View {
             ]
         }
     }
+}
+
+private func byteCount(_ bytes: UInt64) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+}
+
+private func formatShape(_ shape: [UInt64]) -> String {
+    shape.isEmpty ? "None" : shape.map(String.init).joined(separator: " x ")
+}
+
+private func formatUnixTime(_ seconds: UInt64?) -> String {
+    guard let seconds else {
+        return "unknown"
+    }
+    let date = Date(timeIntervalSince1970: TimeInterval(seconds))
+    return date.formatted(date: .abbreviated, time: .shortened)
 }
 
 private struct ExplorerPlot: Identifiable {

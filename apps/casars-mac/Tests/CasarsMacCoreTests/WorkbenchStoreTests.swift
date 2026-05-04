@@ -2,6 +2,20 @@ import XCTest
 @testable import CasarsMacCore
 
 final class WorkbenchStoreTests: XCTestCase {
+    func testDefaultStateStartsWithoutFixtureProject() throws {
+        let store = WorkbenchStore()
+
+        let snapshot = store.debugSnapshot()
+
+        XCTAssertEqual(snapshot.activeProject, "No Project")
+        XCTAssertEqual(snapshot.activeProjectSource, .none)
+        XCTAssertNil(snapshot.selectedDataset)
+        XCTAssertNil(snapshot.selectedDatasetSummary)
+        XCTAssertTrue(snapshot.discoveredDatasets.isEmpty)
+        XCTAssertTrue(snapshot.openTabs.isEmpty)
+        XCTAssertEqual(snapshot.activeTab, "")
+    }
+
     func testFixtureStateExposesInitialDebugSnapshot() throws {
         let store = WorkbenchStore.fixture()
 
@@ -168,7 +182,14 @@ final class WorkbenchStoreTests: XCTestCase {
             fields: ["0: Target"],
             spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
             scans: ["scan 1: 12 rows, Target"],
-            notes: "Recognized by Rust probe."
+            antennas: ["ea01", "ea02"],
+            correlations: ["XX", "YY"],
+            columns: ["UVW", "DATA", "FLAG"],
+            dataColumns: ["DATA"],
+            subtables: ["ANTENNA (required)", "FIELD (required)"],
+            shape: [12],
+            notes: "Recognized by Rust probe.",
+            diagnostics: ["probe note"]
         )
         let client = StubProjectProbeClient(
             result: ProjectFixtureProbe(
@@ -190,10 +211,66 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.activeProjectRoot, "/data")
         XCTAssertEqual(snapshot.activeProjectSource, .probed)
         XCTAssertEqual(snapshot.selectedDataset, "probed.ms")
+        XCTAssertEqual(snapshot.selectedDatasetSummary?.dataColumns, ["DATA"])
+        XCTAssertEqual(snapshot.selectedDatasetSummary?.subtables, ["ANTENNA (required)", "FIELD (required)"])
+        XCTAssertEqual(snapshot.selectedDatasetSummary?.shape, [12])
         XCTAssertEqual(snapshot.discoveredDatasets, ["probed.ms"])
         XCTAssertEqual(snapshot.probeDiagnostics, ["skipped /data/notes.txt"])
         XCTAssertEqual(store.state.selectedDataset?.spectralWindows, ["spw 0: 4 chan, 1.420000 GHz center"])
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.title, "MS: probed.ms")
+    }
+
+    func testFakeExecutionTabsAreGatedOutsideDemoProject() {
+        let probedDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            scans: ["scan 1: 12 rows, Target"],
+            notes: "Recognized by Rust probe."
+        )
+        let client = StubProjectProbeClient(
+            result: ProjectFixtureProbe(
+                project: ProjectFixture(
+                    name: "Real Project",
+                    rootPath: "/data",
+                    datasets: [probedDataset],
+                    source: .probed
+                ),
+                diagnostics: []
+            )
+        )
+        let store = WorkbenchStore(probeClient: client)
+
+        store.openDefaultTab(kind: .aiChat)
+        store.openDefaultTab(kind: .python)
+        store.openDefaultTab(kind: .task)
+        XCTAssertTrue(store.state.tabs.isEmpty)
+        XCTAssertEqual(store.state.lastErrors.count, 3)
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .aiChat)
+        store.openDefaultTab(kind: .python)
+        store.openDefaultTab(kind: .task)
+
+        XCTAssertEqual(store.state.tabs.count, 1)
+        XCTAssertEqual(store.state.tabs.first?.kind, .datasetExplorer)
+        XCTAssertTrue(store.state.lastErrors.contains("AI chat is not connected yet"))
+        XCTAssertTrue(store.state.lastErrors.contains("Python is not connected yet"))
+        XCTAssertTrue(store.state.lastErrors.contains("Task panels are not connected for real projects yet"))
+
+        store.openFixtureProject()
+        store.openDefaultTab(kind: .aiChat)
+        store.openDefaultTab(kind: .python)
+        store.openDefaultTab(kind: .task)
+
+        XCTAssertTrue(store.state.tabs.contains { $0.kind == .aiChat })
+        XCTAssertTrue(store.state.tabs.contains { $0.kind == .python })
+        XCTAssertTrue(store.state.tabs.contains { $0.kind == .task })
     }
 
     func testInterfaceFontSizeIsAdjustableClampedAndPreservedAcrossFixtureOpen() {

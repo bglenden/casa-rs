@@ -29,11 +29,15 @@ public final class WorkbenchStore: ObservableObject {
     private let probeClient: ProjectProbeClient
 
     public init(
-        state: WorkbenchState = FixtureWorkbench.makeState(),
+        state: WorkbenchState = EmptyWorkbench.makeState(),
         probeClient: ProjectProbeClient = UniFFIProjectProbeClient()
     ) {
         self.state = state
         self.probeClient = probeClient
+    }
+
+    public static func empty() -> WorkbenchStore {
+        WorkbenchStore(state: EmptyWorkbench.makeState())
     }
 
     public static func fixture() -> WorkbenchStore {
@@ -47,16 +51,16 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func openProject(path: String) {
+        let interfaceFontSize = state.interfaceFontSize
         do {
             let probed = try probeClient.probeProject(path: path)
+            state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
             state.project = probed.project
             state.probeDiagnostics = probed.diagnostics
             state.selectedDatasetID = probed.project.datasets.first?.id
             state.dockMode = .datasets
             state.leftDockCollapsed = false
             state.inspectorCollapsed = false
-            state.tabs = []
-            state.activeTabID = ""
             if let dataset = state.selectedDataset {
                 openExplorer(for: dataset)
             }
@@ -205,10 +209,22 @@ public final class WorkbenchStore: ObservableObject {
         case .datasetExplorer:
             openSelectedDatasetExplorer()
         case .task:
+            guard state.isDemoProject else {
+                state.lastErrors.append("Task panels are not connected for real projects yet")
+                return
+            }
             openTab(WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: state.selectedDatasetID))
         case .aiChat:
+            guard state.isDemoProject else {
+                state.lastErrors.append("AI chat is not connected yet")
+                return
+            }
             openTab(WorkbenchTab(id: "tab-ai", title: "AI Chat", kind: .aiChat))
         case .python:
+            guard state.isDemoProject else {
+                state.lastErrors.append("Python is not connected yet")
+                return
+            }
             openTab(WorkbenchTab(id: "tab-python", title: "Python", kind: .python))
         case .history:
             openTab(WorkbenchTab(id: "tab-history", title: "History", kind: .history))
@@ -216,6 +232,10 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func applyAIProposal(_ proposalID: String) {
+        guard state.isDemoProject else {
+            state.lastErrors.append("AI proposals are only available in the demo project")
+            return
+        }
         guard let index = state.aiProposals.firstIndex(where: { $0.id == proposalID }) else {
             state.lastErrors.append("Unknown AI proposal \(proposalID)")
             return
@@ -239,6 +259,10 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func rejectAIProposal(_ proposalID: String) {
+        guard state.isDemoProject else {
+            state.lastErrors.append("AI proposals are only available in the demo project")
+            return
+        }
         guard let index = state.aiProposals.firstIndex(where: { $0.id == proposalID }) else {
             state.lastErrors.append("Unknown AI proposal \(proposalID)")
             return
@@ -248,15 +272,27 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func appendAIChatMessage(_ text: String, author: ChatAuthor = .user) {
+        guard state.isDemoProject else {
+            state.lastErrors.append("AI chat is not connected yet")
+            return
+        }
         let id = "msg-\(state.aiMessages.count + 1)"
         state.aiMessages.append(AIChatMessage(id: id, author: author, text: text))
     }
 
     public func setTaskSpectralWindow(_ spectralWindow: String) {
+        guard state.isDemoProject else {
+            state.lastErrors.append("Task parameters are only available in the demo project")
+            return
+        }
         state.taskParameters.selectedSpectralWindow = spectralWindow
     }
 
     public func runTask() {
+        guard state.isDemoProject else {
+            state.lastErrors.append("Task execution is not connected yet")
+            return
+        }
         state.taskRun = TaskRun(
             state: .completed,
             progress: 1.0,
@@ -282,11 +318,19 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func stopTask() {
+        guard state.isDemoProject else {
+            state.lastErrors.append("Task execution is not connected yet")
+            return
+        }
         state.taskRun.state = .stopped
         state.taskRun.logLines.append("Stopped fixture task.")
     }
 
     public func setPythonOwner(_ owner: PythonOwner) {
+        guard state.isDemoProject else {
+            state.lastErrors.append("Python is not connected yet")
+            return
+        }
         state.python.owner = owner
     }
 
@@ -347,10 +391,20 @@ extension DatasetSummary {
             kind: DatasetKind(probeKind: probe.kind),
             size: probe.logicalSize,
             units: probe.units,
+            sizeBytes: probe.sizeBytes,
+            modifiedUnixSeconds: probe.modifiedUnixSeconds,
+            probedUnixSeconds: probe.probedUnixSeconds,
             fields: probe.fields,
             spectralWindows: probe.spectralWindows,
             scans: probe.scans,
-            notes: probe.notes
+            antennas: probe.antennas,
+            correlations: probe.correlations,
+            columns: probe.columns,
+            dataColumns: probe.dataColumns,
+            subtables: probe.subtables,
+            shape: probe.shape,
+            notes: probe.notes,
+            diagnostics: probe.diagnostics
         )
     }
 }

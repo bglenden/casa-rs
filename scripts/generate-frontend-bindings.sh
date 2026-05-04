@@ -35,6 +35,7 @@ cp "$lib_path" "$python_out/$lib_name"
 echo "==> Generating Swift UniFFI bindings"
 mkdir -p "$swift_out"
 cargo run -p casars-frontend-services --bin casars-frontend-bindgen -- swift "$lib_path" "$swift_out"
+perl -pi -e 's/[ \t]+$//' "$swift_out/CasarsFrontendServices.swift"
 
 if [[ -d "$repo_root/apps/casars-mac/Sources/CasarsFrontendServices" ]]; then
   cp "$swift_out/CasarsFrontendServices.swift" \

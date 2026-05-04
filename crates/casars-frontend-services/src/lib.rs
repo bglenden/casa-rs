@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_images::{AnyPagedImage, ImagePixelType};
-use casa_ms::MeasurementSet;
+use casa_ms::{MeasurementSet, VisibilityDataColumn};
 use casa_tables::{Table, TableOptions};
 use thiserror::Error;
 
@@ -38,6 +38,8 @@ pub struct DatasetProbe {
     pub antennas: Vec<String>,
     pub correlations: Vec<String>,
     pub columns: Vec<String>,
+    pub data_columns: Vec<String>,
+    pub subtables: Vec<String>,
     pub shape: Vec<u64>,
     pub notes: String,
     pub diagnostics: Vec<String>,
@@ -188,6 +190,7 @@ fn probe_measurement_set(
     path: &Path,
     metadata: &fs::Metadata,
 ) -> Result<Option<DatasetProbe>, String> {
+    let (size_bytes, diagnostics) = dataset_size_bytes(path, metadata);
     let ms = match MeasurementSet::open(path) {
         Ok(ms) => ms,
         Err(_) => return Ok(None),
@@ -197,6 +200,8 @@ fn probe_measurement_set(
         Err(_) => return Ok(None),
     };
     let columns = table_columns(ms.main_table());
+    let data_columns = visibility_data_columns(&columns);
+    let subtables = ms_subtables(&ms);
     let fields = summary
         .fields
         .iter()
@@ -241,7 +246,7 @@ fn probe_measurement_set(
         name: path_name(path),
         path: path.display().to_string(),
         kind: DatasetKind::MeasurementSet,
-        size_bytes: metadata.len(),
+        size_bytes,
         modified_unix_seconds: modified_unix_seconds(metadata),
         probed_unix_seconds: now_unix_seconds(),
         logical_size: format!(
@@ -258,14 +263,17 @@ fn probe_measurement_set(
         antennas,
         correlations,
         columns,
+        data_columns,
+        subtables,
         shape: vec![summary.measurement_set.row_count as u64],
         notes: "Recognized by opening the path as a MeasurementSet and reading MS metadata."
             .to_string(),
-        diagnostics: vec![],
+        diagnostics,
     }))
 }
 
 fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetProbe>, String> {
+    let (size_bytes, mut diagnostics) = dataset_size_bytes(path, metadata);
     let image = match AnyPagedImage::open(path) {
         Ok(image) => image,
         Err(_) => return Ok(None),
@@ -279,7 +287,6 @@ fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
     let shape: Vec<u64> = image.shape().iter().map(|value| *value as u64).collect();
     let mask_names = image.mask_names();
     let region_names = image.region_names();
-    let mut diagnostics = Vec::new();
     if let Some(default_mask) = image.default_mask_name() {
         diagnostics.push(format!("default mask: {default_mask}"));
     }
@@ -289,7 +296,7 @@ fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
         name: path_name(path),
         path: path.display().to_string(),
         kind: DatasetKind::Image,
-        size_bytes: metadata.len(),
+        size_bytes,
         modified_unix_seconds: modified_unix_seconds(metadata),
         probed_unix_seconds: now_unix_seconds(),
         logical_size: format_shape(&shape),
@@ -300,6 +307,8 @@ fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
         antennas: vec![],
         correlations: vec![],
         columns: vec!["map".to_string()],
+        data_columns: vec![],
+        subtables: vec![],
         shape,
         notes: format!(
             "Recognized by opening the path as a casa-rs image; {} masks, {} regions.",
@@ -311,6 +320,7 @@ fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
 }
 
 fn probe_table(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetProbe>, String> {
+    let (size_bytes, diagnostics) = dataset_size_bytes(path, metadata);
     let table = match Table::open(TableOptions::new(path)) {
         Ok(table) => table,
         Err(_) => return Ok(None),
@@ -330,7 +340,7 @@ fn probe_table(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
         name: path_name(path),
         path: path.display().to_string(),
         kind: DatasetKind::Table,
-        size_bytes: metadata.len(),
+        size_bytes,
         modified_unix_seconds: modified_unix_seconds(metadata),
         probed_unix_seconds: now_unix_seconds(),
         logical_size: format!("{} rows, {} columns", table.row_count(), columns.len()),
@@ -341,9 +351,11 @@ fn probe_table(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
         antennas: vec![],
         correlations: vec![],
         columns,
+        data_columns: vec![],
+        subtables: vec![],
         shape: vec![table.row_count() as u64],
         notes: format!("Recognized by opening the path as a {table_type}."),
-        diagnostics: vec![],
+        diagnostics,
     }))
 }
 
@@ -358,6 +370,85 @@ fn table_columns(table: &Table) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn visibility_data_columns(columns: &[String]) -> Vec<String> {
+    VisibilityDataColumn::ALL
+        .iter()
+        .map(|column| column.name())
+        .filter(|name| columns.iter().any(|column| column == *name))
+        .map(str::to_string)
+        .collect()
+}
+
+fn ms_subtables(ms: &MeasurementSet) -> Vec<String> {
+    let mut ids = ms.subtable_ids();
+    ids.sort();
+    ids.into_iter()
+        .map(|id| {
+            let role = if id.is_required() {
+                "required"
+            } else {
+                "optional"
+            };
+            format!("{} ({role})", id.name())
+        })
+        .collect()
+}
+
+fn dataset_size_bytes(path: &Path, metadata: &fs::Metadata) -> (u64, Vec<String>) {
+    if metadata.is_file() {
+        return (metadata.len(), vec![]);
+    }
+    if !metadata.is_dir() {
+        return (metadata.len(), vec![]);
+    }
+
+    let mut diagnostics = Vec::new();
+    match directory_size_bytes(path, 2_048) {
+        Ok((size, truncated)) => {
+            if truncated {
+                diagnostics
+                    .push("size estimate truncated after 2048 filesystem entries".to_string());
+            }
+            (size, diagnostics)
+        }
+        Err(error) => {
+            diagnostics.push(format!("size estimate failed: {error}"));
+            (metadata.len(), diagnostics)
+        }
+    }
+}
+
+fn directory_size_bytes(path: &Path, max_entries: usize) -> Result<(u64, bool), String> {
+    let mut stack = vec![path.to_path_buf()];
+    let mut seen_entries = 0usize;
+    let mut total = 0u64;
+    let mut truncated = false;
+
+    while let Some(current) = stack.pop() {
+        if seen_entries >= max_entries {
+            truncated = true;
+            break;
+        }
+        seen_entries += 1;
+
+        let metadata = fs::metadata(&current)
+            .map_err(|error| format!("metadata {}: {error}", current.display()))?;
+        if metadata.is_file() {
+            total = total.saturating_add(metadata.len());
+        } else if metadata.is_dir() {
+            let entries = fs::read_dir(&current)
+                .map_err(|error| format!("read {}: {error}", current.display()))?;
+            for entry in entries {
+                let entry = entry
+                    .map_err(|error| format!("directory entry {}: {error}", current.display()))?;
+                stack.push(entry.path());
+            }
+        }
+    }
+
+    Ok((total, truncated))
 }
 
 fn stable_id(path: &Path) -> String {
@@ -473,6 +564,14 @@ mod tests {
         assert!(!probe.spectral_windows.is_empty());
         assert!(!probe.antennas.is_empty());
         assert!(probe.columns.iter().any(|column| column == "DATA"));
+        assert_eq!(probe.data_columns, vec!["DATA"]);
+        assert!(
+            probe
+                .subtables
+                .iter()
+                .any(|subtable| subtable == "ANTENNA (required)")
+        );
+        assert!(probe.size_bytes > 0);
     }
 
     #[test]

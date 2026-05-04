@@ -99,6 +99,10 @@ struct LeftDockView: View {
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+
+                Text(projectSourceLabel)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.tertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
@@ -141,27 +145,101 @@ struct LeftDockView: View {
     private var dockContent: some View {
         switch store.state.dockMode {
         case .datasets:
-            List(selection: Binding(
-                get: { store.state.selectedDatasetID },
-                set: { id in
-                    if let id {
-                        store.selectDataset(id)
+            if store.state.project.datasets.isEmpty {
+                EmptyDockState(
+                    title: store.state.hasProject ? "No supported datasets found" : "No project open",
+                    message: store.state.hasProject
+                        ? "The project was probed, but no supported casa-rs datasets were recognized."
+                        : "Open a directory to discover MeasurementSets, images, and tables.",
+                    primaryActionTitle: "Open Project",
+                    primarySystemImage: "folder",
+                    primaryAction: {
+                        if let url = ProjectOpenPanel.chooseDirectory() {
+                            store.openProject(path: url.path)
+                        }
+                    },
+                    secondaryActionTitle: "Open Demo",
+                    secondarySystemImage: "shippingbox",
+                    secondaryAction: {
+                        store.openFixtureProject()
+                    }
+                )
+            } else {
+                List(selection: Binding(
+                    get: { store.state.selectedDatasetID },
+                    set: { id in
+                        if let id {
+                            store.selectDataset(id)
+                        }
+                    }
+                )) {
+                    ForEach(store.state.project.datasets) { dataset in
+                        DatasetRow(dataset: dataset)
+                            .tag(Optional(dataset.id))
+                            .onTapGesture(count: 2) {
+                                store.openDatasetExplorer(dataset.id)
+                            }
+                            .accessibilityIdentifier("dataset.row.\(dataset.id)")
                     }
                 }
-            )) {
-                ForEach(store.state.project.datasets) { dataset in
-                    DatasetRow(dataset: dataset)
-                        .tag(Optional(dataset.id))
-                        .onTapGesture(count: 2) {
-                            store.openDatasetExplorer(dataset.id)
-                        }
-                        .accessibilityIdentifier("dataset.row.\(dataset.id)")
-                }
+                .listStyle(.sidebar)
+                .accessibilityIdentifier("dock.datasets")
             }
-            .listStyle(.sidebar)
-            .accessibilityIdentifier("dock.datasets")
 
         case .files:
+            filesDock
+
+        case .history:
+            if store.state.history.isEmpty {
+                EmptyDockState(
+                    title: "No history yet",
+                    message: "Opening a real project records the first timeline event.",
+                    primaryActionTitle: "Open Project",
+                    primarySystemImage: "folder",
+                    primaryAction: {
+                        if let url = ProjectOpenPanel.chooseDirectory() {
+                            store.openProject(path: url.path)
+                        }
+                    },
+                    secondaryActionTitle: "Open Demo",
+                    secondarySystemImage: "shippingbox",
+                    secondaryAction: {
+                        store.openFixtureProject()
+                    }
+                )
+            } else {
+                List(store.state.history) { event in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(event.title)
+                            .workbenchFont(.subheadline)
+                        Text(event.timestamp)
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(event.reason)
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    .accessibilityIdentifier("history.row.\(event.id)")
+                }
+                .listStyle(.sidebar)
+                .accessibilityIdentifier("dock.history")
+            }
+
+        }
+    }
+
+    private var projectSourceLabel: String {
+        switch store.state.project.source {
+        case .none: "No project"
+        case .fixture: "Demo project"
+        case .probed: "Real project"
+        }
+    }
+
+    @ViewBuilder
+    private var filesDock: some View {
+        if store.state.isDemoProject {
             VStack(alignment: .leading, spacing: 12) {
                 Label("data", systemImage: "folder")
                 Label("calibration", systemImage: "folder")
@@ -169,33 +247,84 @@ struct LeftDockView: View {
                 Label(".casa-rs-demo", systemImage: "shippingbox")
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("Fixture project tree")
+                Text("Demo project tree")
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("dock.files")
-
-        case .history:
-            List(store.state.history) { event in
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(event.title)
-                        .workbenchFont(.subheadline)
-                    Text(event.timestamp)
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(event.reason)
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+        } else if store.state.hasProject {
+            List(store.state.project.datasets) { dataset in
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(dataset.name)
+                            .lineLimit(1)
+                        Text(dataset.path)
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                } icon: {
+                    Image(systemName: "doc")
                 }
-                .accessibilityIdentifier("history.row.\(event.id)")
+                .accessibilityIdentifier("file.row.\(dataset.id)")
             }
             .listStyle(.sidebar)
-            .accessibilityIdentifier("dock.history")
-
+            .accessibilityIdentifier("dock.files")
+        } else {
+            EmptyDockState(
+                title: "No project files",
+                message: "Open a project directory to inspect its recognized datasets.",
+                primaryActionTitle: "Open Project",
+                primarySystemImage: "folder",
+                primaryAction: {
+                    if let url = ProjectOpenPanel.chooseDirectory() {
+                        store.openProject(path: url.path)
+                    }
+                },
+                secondaryActionTitle: "Open Demo",
+                secondarySystemImage: "shippingbox",
+                secondaryAction: {
+                    store.openFixtureProject()
+                }
+            )
         }
+    }
+}
+
+struct EmptyDockState: View {
+    let title: String
+    let message: String
+    let primaryActionTitle: String
+    let primarySystemImage: String
+    let primaryAction: () -> Void
+    let secondaryActionTitle: String
+    let secondarySystemImage: String
+    let secondaryAction: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .workbenchFont(.headline)
+            Text(message)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: primaryAction) {
+                Label(primaryActionTitle, systemImage: primarySystemImage)
+            }
+            .accessibilityIdentifier("dock.empty.primary")
+            Button(action: secondaryAction) {
+                Label(secondaryActionTitle, systemImage: secondarySystemImage)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("dock.empty.secondary")
+            Spacer()
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("dock.empty")
     }
 }
 
@@ -253,8 +382,13 @@ struct InspectorView: View {
                 InfoRow(label: "Kind", value: dataset.kind.rawValue)
                 InfoRow(label: "Size", value: dataset.size)
                 InfoRow(label: "Units", value: dataset.units)
+                if dataset.sizeBytes > 0 {
+                    InfoRow(label: "Bytes", value: byteCount(dataset.sizeBytes))
+                }
                 InfoRow(label: "Fields", value: dataset.fields.joined(separator: ", "))
                 InfoRow(label: "SPWs", value: dataset.spectralWindows.joined(separator: ", "))
+                InfoRow(label: "Antennas", value: dataset.antennas.joined(separator: ", "))
+                InfoRow(label: "Data columns", value: dataset.dataColumns.joined(separator: ", "))
 
                 Divider()
 
@@ -263,7 +397,7 @@ struct InspectorView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text("Fixture/demo metadata")
+                Text(inspectorSourceLabel)
                     .workbenchFont(.caption2)
                     .foregroundStyle(.tertiary)
                     .padding(.top, 4)
@@ -276,6 +410,14 @@ struct InspectorView: View {
         }
         .padding()
         .accessibilityIdentifier("inspector.panel")
+    }
+
+    private var inspectorSourceLabel: String {
+        switch store.state.project.source {
+        case .none: "No project"
+        case .fixture: "Demo metadata"
+        case .probed: "Real probe metadata"
+        }
     }
 }
 
@@ -294,4 +436,8 @@ struct InfoRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+private func byteCount(_ bytes: UInt64) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
 }

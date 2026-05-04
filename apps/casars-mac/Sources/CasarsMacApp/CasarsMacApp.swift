@@ -10,7 +10,7 @@ struct CasarsMacApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage(Self.interfaceFontSizeKey) private var interfaceFontSize = WorkbenchState.defaultInterfaceFontSize
-    @StateObject private var store = WorkbenchStore.fixture()
+    @StateObject private var store = WorkbenchStore.empty()
 
     init() {
         let arguments = CommandLine.arguments
@@ -41,15 +41,15 @@ struct CasarsMacApp: App {
         }
         .commands {
             CommandMenu("Workbench") {
-                Button("Open Fixture Project") {
-                    store.openFixtureProject()
-                }
-                .keyboardShortcut("o", modifiers: [.command])
-
                 Button("Open Project Directory...") {
                     if let url = ProjectOpenPanel.chooseDirectory() {
                         store.openProject(path: url.path)
                     }
+                }
+                .keyboardShortcut("o", modifiers: [.command])
+
+                Button("Open Demo Project") {
+                    store.openFixtureProject()
                 }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
 
@@ -117,18 +117,23 @@ struct CasarsMacApp: App {
     }
 
     private func dumpDebugState(simulateMainFlow: Bool, projectPath: String?) {
-        let store = WorkbenchStore.fixture()
+        let store = WorkbenchStore.empty()
         store.setInterfaceFontSize(storedInterfaceFontSize())
         if let projectPath {
             store.openProject(path: projectPath)
         }
         if simulateMainFlow {
-            store.selectDockMode(.history)
-            store.setInspectorCollapsed(true)
-            store.applyAIProposal("proposal-spw")
-            store.setPythonOwner(.ai)
-            store.runTask()
-            store.openDefaultTab(kind: .history)
+            if projectPath == nil {
+                store.openFixtureProject()
+            }
+            if store.state.isDemoProject {
+                store.selectDockMode(.history)
+                store.setInspectorCollapsed(true)
+                store.applyAIProposal("proposal-spw")
+                store.setPythonOwner(.ai)
+                store.runTask()
+                store.openDefaultTab(kind: .history)
+            }
         }
 
         do {
