@@ -509,16 +509,11 @@ struct MeasurementSetPlotPanel: View {
 
     @ViewBuilder
     private var plotImage: some View {
-        if let result = plotState.result, let image = NSImage(data: result.imageBytes) {
+        if let result = plotState.result {
             VStack(alignment: .leading, spacing: 8) {
                 Text(result.title)
                     .workbenchFont(.subheadline, weight: .semibold)
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                CachedPlotImage(result: result)
                 Text(result.summary)
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
@@ -544,6 +539,44 @@ struct MeasurementSetPlotPanel: View {
             .padding(16)
             .accessibilityIdentifier("msPlot.empty.\(dataset.id)")
         }
+    }
+}
+
+private struct CachedPlotImage: View {
+    let result: MeasurementSetPlotResultSummary
+    @State private var image: NSImage?
+    @State private var imageCacheID: String?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                ZStack {
+                    Color(nsColor: .windowBackgroundColor)
+                    Text("Unable to decode plot image")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .onAppear(perform: refreshImageIfNeeded)
+        .onChange(of: result.imageCacheID) { _ in
+            refreshImageIfNeeded()
+        }
+    }
+
+    private func refreshImageIfNeeded() {
+        guard imageCacheID != result.imageCacheID else {
+            return
+        }
+        image = NSImage(data: result.imageBytes)
+        imageCacheID = result.imageCacheID
     }
 }
 
