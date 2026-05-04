@@ -59,6 +59,7 @@ struct SessionProcessClient {
     stdin: Arc<Mutex<ChildStdin>>,
     responses: Receiver<String>,
     stderr: Arc<Mutex<String>>,
+    stderr_closed: Receiver<()>,
 }
 
 impl SessionProcessClient {
@@ -90,6 +91,7 @@ impl SessionProcessClient {
         let stdin = Arc::new(Mutex::new(stdin));
         let stderr_buffer = Arc::new(Mutex::new(String::new()));
         let (tx, rx) = mpsc::channel();
+        let (stderr_done_tx, stderr_done_rx) = mpsc::channel();
 
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
@@ -118,6 +120,7 @@ impl SessionProcessClient {
                     stderr.push('\n');
                 }
             }
+            let _ = stderr_done_tx.send(());
         });
 
         Ok(Self {
@@ -125,6 +128,7 @@ impl SessionProcessClient {
             stdin,
             responses: rx,
             stderr: stderr_buffer,
+            stderr_closed: stderr_done_rx,
         })
     }
 
@@ -153,7 +157,7 @@ impl SessionProcessClient {
                     let _ = self.terminate_and_wait();
                     format_browser_failure(
                         &format!("timed out waiting for {session_name} response"),
-                        self.stderr_text(),
+                        self.stderr_text_after_drain(),
                         None,
                     )
                 }
@@ -161,7 +165,7 @@ impl SessionProcessClient {
                     let status = self.reap_exit_status();
                     format_browser_failure(
                         &format!("{session_name} session exited"),
-                        self.stderr_text(),
+                        self.stderr_text_after_drain(),
                         status,
                     )
                 }
@@ -177,6 +181,11 @@ impl SessionProcessClient {
             .lock()
             .map(|stderr| stderr.clone())
             .unwrap_or_default()
+    }
+
+    fn stderr_text_after_drain(&self) -> String {
+        let _ = self.stderr_closed.recv_timeout(Duration::from_millis(50));
+        self.stderr_text()
     }
 
     fn reap_exit_status(&self) -> Option<ExitStatus> {
@@ -419,6 +428,7 @@ impl SessionProcessClient {
         let stdin = Arc::new(Mutex::new(stdin));
         let stderr_buffer = Arc::new(Mutex::new(String::new()));
         let (tx, rx) = mpsc::channel();
+        let (stderr_done_tx, stderr_done_rx) = mpsc::channel();
 
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
@@ -447,6 +457,7 @@ impl SessionProcessClient {
                     stderr.push('\n');
                 }
             }
+            let _ = stderr_done_tx.send(());
         });
 
         Self {
@@ -454,6 +465,7 @@ impl SessionProcessClient {
             stdin,
             responses: rx,
             stderr: stderr_buffer,
+            stderr_closed: stderr_done_rx,
         }
     }
 }
