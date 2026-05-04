@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-MODE="${1:-run}"
+MODE="run"
+OPEN_PROJECT=""
 APP_NAME="casars-mac"
 BUNDLE_ID="org.casa-rs.casars-mac"
 MIN_SYSTEM_VERSION="14.0"
@@ -18,6 +19,27 @@ APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 FRONTEND_DYLIB_NAME="libcasars_frontend_services.dylib"
 FRONTEND_DYLIB="$REPO_ROOT/target/debug/$FRONTEND_DYLIB_NAME"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    run|--debug|debug|--logs|logs|--verify|verify)
+      MODE="$1"
+      shift
+      ;;
+    --project|--open-project)
+      if [[ $# -lt 2 ]]; then
+        echo "missing path after $1" >&2
+        exit 2
+      fi
+      OPEN_PROJECT="$2"
+      shift 2
+      ;;
+    *)
+      echo "usage: $0 [run|--debug|--logs|--verify] [--project PATH]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 cd "$REPO_ROOT"
 "$REPO_ROOT/scripts/generate-frontend-bindings.sh" "$REPO_ROOT/target/frontend-bindings"
@@ -71,7 +93,19 @@ codesign --force --sign - "$APP_BINARY" >/dev/null
 codesign --force --sign - "$APP_BUNDLE" >/dev/null
 
 open_app() {
-  /usr/bin/open -n "$APP_BUNDLE"
+  if [[ -n "$OPEN_PROJECT" ]]; then
+    /usr/bin/open -n "$APP_BUNDLE" --args --open-project "$OPEN_PROJECT"
+  else
+    /usr/bin/open -n "$APP_BUNDLE"
+  fi
+}
+
+debug_app() {
+  if [[ -n "$OPEN_PROJECT" ]]; then
+    lldb -- "$APP_BINARY" --open-project "$OPEN_PROJECT"
+  else
+    lldb -- "$APP_BINARY"
+  fi
 }
 
 case "$MODE" in
@@ -79,7 +113,7 @@ case "$MODE" in
     open_app
     ;;
   --debug|debug)
-    lldb -- "$APP_BINARY"
+    debug_app
     ;;
   --logs|logs)
     open_app
@@ -91,7 +125,7 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--verify]" >&2
+    echo "usage: $0 [run|--debug|--logs|--verify] [--project PATH]" >&2
     exit 2
     ;;
 esac

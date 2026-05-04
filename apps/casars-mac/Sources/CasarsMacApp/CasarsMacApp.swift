@@ -11,16 +11,22 @@ struct CasarsMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage(Self.interfaceFontSizeKey) private var interfaceFontSize = WorkbenchState.defaultInterfaceFontSize
     @StateObject private var store = WorkbenchStore.empty()
+    @State private var didOpenStartupProject = false
+    private let startupProjectPath: String?
 
     init() {
         let arguments = CommandLine.arguments
         if arguments.contains("--dump-debug-state") {
-            dumpDebugState(
+            Self.dumpDebugState(
                 simulateMainFlow: arguments.contains("--simulate-main-flow"),
-                projectPath: argumentValue(after: "--probe-project", in: arguments)
+                projectPath: Self.argumentValue(after: "--probe-project", in: arguments)
+                    ?? Self.argumentValue(after: "--open-project", in: arguments)
             )
             exit(0)
         }
+
+        startupProjectPath = Self.argumentValue(after: "--open-project", in: arguments)
+            ?? Self.argumentValue(after: "--probe-project", in: arguments)
     }
 
     var body: some Scene {
@@ -31,6 +37,7 @@ struct CasarsMacApp: App {
                 .background(WindowConfigurationView())
                 .onAppear {
                     syncStoreFontSizeFromSettings()
+                    openStartupProjectIfNeeded()
                 }
                 .onChange(of: interfaceFontSize) { newValue in
                     store.setInterfaceFontSize(newValue)
@@ -116,7 +123,7 @@ struct CasarsMacApp: App {
         }
     }
 
-    private func dumpDebugState(simulateMainFlow: Bool, projectPath: String?) {
+    private static func dumpDebugState(simulateMainFlow: Bool, projectPath: String?) {
         let store = WorkbenchStore.empty()
         store.setInterfaceFontSize(storedInterfaceFontSize())
         if let projectPath {
@@ -147,11 +154,17 @@ struct CasarsMacApp: App {
         }
     }
 
-    private func argumentValue(after flag: String, in arguments: [String]) -> String? {
+    private static func argumentValue(after flag: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {
             return nil
         }
         return arguments[index + 1]
+    }
+
+    private func openStartupProjectIfNeeded() {
+        guard !didOpenStartupProject, let startupProjectPath else { return }
+        didOpenStartupProject = true
+        store.openProject(path: startupProjectPath)
     }
 
     private func syncStoreFontSizeFromSettings() {
@@ -162,7 +175,7 @@ struct CasarsMacApp: App {
         interfaceFontSize = WorkbenchState.clampedInterfaceFontSize(size)
     }
 
-    private func storedInterfaceFontSize() -> Double {
+    private static func storedInterfaceFontSize() -> Double {
         guard let value = UserDefaults.standard.object(forKey: Self.interfaceFontSizeKey) as? Double else {
             return WorkbenchState.defaultInterfaceFontSize
         }
