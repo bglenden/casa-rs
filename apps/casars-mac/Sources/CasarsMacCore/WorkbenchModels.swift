@@ -194,7 +194,10 @@ public enum TaskRunState: String, Codable, Equatable {
     case idle
     case running
     case completed
+    case succeeded
+    case failed
     case stopped
+    case cancelled
 }
 
 public struct TaskParameters: Codable, Equatable {
@@ -220,24 +223,36 @@ public struct TaskParameters: Codable, Equatable {
 }
 
 public struct TaskRun: Codable, Equatable {
+    public var runID: String?
     public var state: TaskRunState
     public var progress: Double
     public var logLines: [String]
     public var warnings: [String]
     public var products: [String]
+    public var diagnostics: [String]
+    public var outputPaths: [String]
+    public var requestSummary: String?
 
     public init(
+        runID: String? = nil,
         state: TaskRunState,
         progress: Double,
         logLines: [String],
         warnings: [String],
-        products: [String]
+        products: [String],
+        diagnostics: [String] = [],
+        outputPaths: [String] = [],
+        requestSummary: String? = nil
     ) {
+        self.runID = runID
         self.state = state
         self.progress = progress
         self.logLines = logLines
         self.warnings = warnings
         self.products = products
+        self.diagnostics = diagnostics
+        self.outputPaths = outputPaths
+        self.requestSummary = requestSummary
     }
 }
 
@@ -514,6 +529,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var tabs: [WorkbenchTab]
     public var activeTabID: String
     public var taskParameters: TaskParameters
+    public var dirtyImagingTaskParameters: DirtyImagingTaskParameters?
     public var taskRun: TaskRun
     public var aiMessages: [AIChatMessage]
     public var aiProposals: [AIProposal]
@@ -534,6 +550,7 @@ public struct WorkbenchState: Codable, Equatable {
         tabs: [WorkbenchTab],
         activeTabID: String,
         taskParameters: TaskParameters,
+        dirtyImagingTaskParameters: DirtyImagingTaskParameters? = nil,
         taskRun: TaskRun,
         aiMessages: [AIChatMessage],
         aiProposals: [AIProposal],
@@ -553,6 +570,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.tabs = tabs
         self.activeTabID = activeTabID
         self.taskParameters = taskParameters
+        self.dirtyImagingTaskParameters = dirtyImagingTaskParameters
         self.taskRun = taskRun
         self.aiMessages = aiMessages
         self.aiProposals = aiProposals
@@ -634,6 +652,9 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var openTabs: [String]
     public var activeTab: String
     public var taskState: TaskRunState
+    public var taskRequest: DirtyImagingTaskParameters?
+    public var taskDiagnostics: [String]
+    public var taskOutputPaths: [String]
     public var aiProposalStates: [String: AIProposalState]
     public var pythonOwner: PythonOwner
     public var measurementSetPlots: [String: DebugMeasurementSetPlotSnapshot]
@@ -656,6 +677,9 @@ public struct DebugStateSnapshot: Codable, Equatable {
         openTabs = state.tabs.map(\.title)
         activeTab = state.tabs.first { $0.id == state.activeTabID }?.title ?? state.activeTabID
         taskState = state.taskRun.state
+        taskRequest = state.dirtyImagingTaskParameters
+        taskDiagnostics = state.taskRun.diagnostics
+        taskOutputPaths = state.taskRun.outputPaths
         aiProposalStates = Dictionary(
             uniqueKeysWithValues: state.aiProposals.map { ($0.id, $0.state) }
         )

@@ -2007,4 +2007,58 @@ mod tests {
                 .all(|artifact| artifact.preview_png_path.is_none())
         );
     }
+
+    #[test]
+    fn dirty_imaging_json_request_accepts_gui_selection_fields() {
+        let payload = r#"{
+          "kind": "run",
+          "request": {
+            "measurement_set": "/data/probed.ms",
+            "image_name": "/data/casa-rs-runs/probed-dirty",
+            "image_size": 256,
+            "cell_arcsec": 0.25,
+            "field_ids": [0],
+            "phasecenter_field": 0,
+            "spw_selector": "0",
+            "channel_start": 2,
+            "channel_count": 4,
+            "data_column": "DATA",
+            "weighting": {
+              "kind": "briggs",
+              "robust": 0.5
+            },
+            "niter": 0,
+            "dirty_only": true,
+            "write_preview_pngs": true
+          }
+        }"#;
+        let request: ImagerTaskRequest =
+            serde_json::from_str(payload).expect("parse GUI dirty-imaging request");
+        let ImagerTaskRequest::Run(request) = request;
+        assert_eq!(request.measurement_set, PathBuf::from("/data/probed.ms"));
+        assert_eq!(
+            request.image_name,
+            PathBuf::from("/data/casa-rs-runs/probed-dirty")
+        );
+        assert_eq!(request.field_ids, Some(vec![0]));
+        assert_eq!(request.phasecenter_field, Some(0));
+        assert_eq!(request.spw_selector.as_deref(), Some("0"));
+        assert_eq!(request.channel_start, Some(2));
+        assert_eq!(request.channel_count, Some(4));
+        assert_eq!(request.data_column.as_deref(), Some("DATA"));
+        assert_eq!(request.weighting, ImagerWeighting::Briggs { robust: 0.5 });
+        assert_eq!(request.niter, 0);
+        assert!(request.dirty_only);
+        assert!(request.write_preview_pngs);
+
+        let config = request.to_cli_config().expect("restore CLI config");
+        assert_eq!(config.field_ids, Some(vec![0]));
+        assert_eq!(config.phasecenter_field, Some(0));
+        assert_eq!(config.spw_selector.as_deref(), Some("0"));
+        assert_eq!(config.channel_start, Some(2));
+        assert_eq!(config.channel_count, Some(4));
+        assert_eq!(config.datacolumn.as_deref(), Some("DATA"));
+        assert_eq!(config.weighting, WeightingMode::Briggs { robust: 0.5 });
+        assert!(config.dirty_only);
+    }
 }

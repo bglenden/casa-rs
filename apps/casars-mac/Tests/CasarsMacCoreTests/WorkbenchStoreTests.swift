@@ -221,7 +221,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.title, "MS: probed.ms")
     }
 
-    func testFakeExecutionTabsAreGatedOutsideDemoProject() {
+    func testFakeExecutionTabsAreGatedOutsideDemoProjectButRealImagingTaskOpens() {
         let probedDataset = DatasetSummary(
             id: "/data/probed.ms",
             name: "probed.ms",
@@ -258,11 +258,17 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openDefaultTab(kind: .python)
         store.openDefaultTab(kind: .task)
 
-        XCTAssertEqual(store.state.tabs.count, 1)
+        XCTAssertEqual(store.state.tabs.count, 2)
         XCTAssertEqual(store.state.tabs.first?.kind, .datasetExplorer)
+        XCTAssertEqual(store.state.tabs.last?.title, "Dirty Image: probed.ms")
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.measurementSetPath, "/data/probed.ms")
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.selectedField, "0: Target")
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.phaseCenterField, "0: Target")
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.selectedSpectralWindow, "spw 0: 4 chan, 1.420000 GHz center")
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.outputPrefix, "/data/casa-rs-runs/dirty-imaging-1/probed.ms-dirty")
         XCTAssertTrue(store.state.lastErrors.contains("AI chat is not connected yet"))
         XCTAssertTrue(store.state.lastErrors.contains("Python is not connected yet"))
-        XCTAssertTrue(store.state.lastErrors.contains("Task panels are not connected for real projects yet"))
+        XCTAssertFalse(store.state.lastErrors.contains("Task panels are not connected for real projects yet"))
 
         store.openFixtureProject()
         store.openDefaultTab(kind: .aiChat)
@@ -272,6 +278,103 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(store.state.tabs.contains { $0.kind == .aiChat })
         XCTAssertTrue(store.state.tabs.contains { $0.kind == .python })
         XCTAssertTrue(store.state.tabs.contains { $0.kind == .task })
+    }
+
+    func testRealDirtyImagingRunUsesTaskClientAndRecordsDebugHistory() throws {
+        let probedDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            scans: ["scan 1: 12 rows, Target"],
+            correlations: ["XX", "YY"],
+            columns: ["UVW", "DATA", "FLAG"],
+            dataColumns: ["DATA"],
+            notes: "Recognized by Rust probe."
+        )
+        let probeClient = StubProjectProbeClient(
+            result: ProjectFixtureProbe(
+                project: ProjectFixture(
+                    name: "Real Project",
+                    rootPath: "/data",
+                    datasets: [probedDataset],
+                    source: .probed
+                ),
+                diagnostics: []
+            )
+        )
+        let taskClient = StubDirtyImagingTaskClient()
+        let store = WorkbenchStore(probeClient: probeClient, dirtyImagingClient: taskClient)
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .task)
+        store.setDirtyImagingImageSize(256)
+        store.setDirtyImagingCellArcsec(0.25)
+        store.setDirtyImagingWeighting(.briggs)
+        store.setDirtyImagingChannelStart("2")
+        store.setDirtyImagingChannelCount("4")
+        store.runTask()
+
+        XCTAssertEqual(taskClient.requests.count, 1)
+        let encoded = String(decoding: try taskClient.requests[0].encodedImagerJSON(), as: UTF8.self)
+        XCTAssertTrue(encoded.contains(#""dirty_only" : true"#))
+        XCTAssertTrue(encoded.contains(#""field_ids" : ["#))
+        XCTAssertTrue(encoded.contains(#""phasecenter_field" : 0"#))
+        XCTAssertTrue(encoded.contains(#""spw_selector" : "0""#))
+        XCTAssertTrue(encoded.contains(#""channel_start" : 2"#))
+        XCTAssertTrue(encoded.contains(#""channel_count" : 4"#))
+        XCTAssertTrue(encoded.contains(#""kind" : "briggs""#))
+
+        let snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.taskState, .succeeded)
+        XCTAssertEqual(snapshot.taskRequest?.imageSize, 256)
+        XCTAssertEqual(snapshot.taskRequest?.cellArcsec, 0.25)
+        XCTAssertTrue(snapshot.taskOutputPaths.contains("/data/casa-rs-runs/output.image"))
+        XCTAssertTrue(snapshot.processingHistoryEvents.contains("Dirty imaging completed"))
+        XCTAssertTrue(store.state.project.datasets.contains { $0.path == "/data/casa-rs-runs/output.image" })
+        XCTAssertNoThrow(try store.debugJSON())
+    }
+
+    func testDirtyImagingValidationFailuresAreDebugVisible() {
+        let probedDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            notes: "Recognized by Rust probe."
+        )
+        let probeClient = StubProjectProbeClient(
+            result: ProjectFixtureProbe(
+                project: ProjectFixture(
+                    name: "Real Project",
+                    rootPath: "/data",
+                    datasets: [probedDataset],
+                    source: .probed
+                ),
+                diagnostics: []
+            )
+        )
+        let taskClient = StubDirtyImagingTaskClient()
+        let store = WorkbenchStore(probeClient: probeClient, dirtyImagingClient: taskClient)
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .task)
+        store.setDirtyImagingImageSize(0)
+        store.setDirtyImagingCellArcsec(-1)
+        store.runTask()
+
+        XCTAssertEqual(taskClient.requests.count, 0)
+        XCTAssertEqual(store.debugSnapshot().taskState, .failed)
+        XCTAssertTrue(store.debugSnapshot().taskDiagnostics.contains("Image size must be positive."))
+        XCTAssertTrue(store.debugSnapshot().taskDiagnostics.contains("Cell size must be a positive finite arcsecond value."))
     }
 
     func testRealMeasurementSetPlotRunUsesPlotClientAndDebugState() {
@@ -386,5 +489,52 @@ private final class StubMeasurementSetPlotClient: MeasurementSetPlotClient {
             imageHeight: request.height,
             imageBytes: Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
         )
+    }
+}
+
+private final class StubDirtyImagingTaskClient: DirtyImagingTaskClient {
+    var requests: [DirtyImagingTaskRequest] = []
+    var event: DirtyImagingTaskEvent?
+
+    func startDirtyImaging(
+        request: DirtyImagingTaskRequest,
+        eventHandler: @escaping (DirtyImagingTaskEvent) -> Void
+    ) throws -> DirtyImagingTaskExecution {
+        requests.append(request)
+        let result = DirtyImagingTaskResult(
+            request: request,
+            report: DirtyImagingRunReport(
+                warnings: ["synthetic warning"],
+                griddedSamples: 128,
+                majorCycles: 1,
+                minorIterations: 0,
+                channelCount: 1
+            ),
+            artifacts: [
+                DirtyImagingArtifact(
+                    kind: "image",
+                    label: "Dirty Image",
+                    path: "/data/casa-rs-runs/output.image",
+                    exists: true,
+                    previewPngPath: "/data/casa-rs-runs/output.image.png",
+                    previewPngExists: true
+                )
+            ],
+            requestJSONPath: "/data/casa-rs-runs/output.casars-request.json",
+            stdoutPath: "/data/casa-rs-runs/output.casars-result.json",
+            stderrPath: "/data/casa-rs-runs/output.casars-stderr.log",
+            protocolSummary: #"{"protocol_name":"casars_imager_task"}"#,
+            diagnostics: ["synthetic warning"]
+        )
+        eventHandler(event ?? .succeeded(result))
+        return StubDirtyImagingExecution()
+    }
+}
+
+private final class StubDirtyImagingExecution: DirtyImagingTaskExecution {
+    var didCancel = false
+
+    func cancel() {
+        didCancel = true
     }
 }

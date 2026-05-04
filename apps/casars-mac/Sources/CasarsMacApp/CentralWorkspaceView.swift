@@ -60,10 +60,10 @@ struct CentralWorkspaceView: View {
                     store.openDefaultTab(kind: .datasetExplorer)
                 }
                 .disabled(store.state.selectedDataset == nil)
-                Button("Calibrate Task") {
+                Button(store.state.isDemoProject ? "Calibrate Task" : "Dirty Imaging Task") {
                     store.openDefaultTab(kind: .task)
                 }
-                .disabled(!store.state.isDemoProject)
+                .disabled(store.state.selectedDataset?.kind != .measurementSet)
                 Button("AI Chat") {
                     store.openDefaultTab(kind: .aiChat)
                 }
@@ -551,6 +551,14 @@ struct TaskPanel: View {
     @ObservedObject var store: WorkbenchStore
 
     var body: some View {
+        if store.state.isDemoProject {
+            fixtureTaskBody
+        } else {
+            DirtyImagingTaskPanel(store: store)
+        }
+    }
+
+    private var fixtureTaskBody: some View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -680,6 +688,244 @@ struct TaskPanel: View {
         .padding()
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct DirtyImagingTaskPanel: View {
+    @ObservedObject var store: WorkbenchStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if let parameters = store.state.dirtyImagingTaskParameters {
+                        selectionBlock(parameters: parameters)
+                        imagingBlock(parameters: parameters)
+                        outputBlock(parameters: parameters)
+                        runBlock
+                    } else {
+                        PanelHeader(title: "Dirty Imaging", subtitle: "Select a MeasurementSet before opening this task")
+                    }
+                }
+                .padding(20)
+            }
+        }
+        .accessibilityIdentifier("panel.task.dirtyImaging")
+    }
+
+    private var header: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Dirty Imaging")
+                    .workbenchFont(.title3, weight: .semibold)
+                Text(selectedDatasetSubtitle)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                store.runTask()
+            } label: {
+                Label(store.state.taskRun.state == .running ? "Running" : "Run", systemImage: "play.fill")
+            }
+            .disabled(store.state.taskRun.state == .running || store.state.dirtyImagingTaskParameters == nil)
+            .accessibilityIdentifier("task.run")
+
+            Button {
+                store.stopTask()
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .disabled(store.state.taskRun.state != .running)
+            .accessibilityIdentifier("task.stop")
+        }
+        .padding()
+        .background(.bar)
+    }
+
+    private var selectedDatasetSubtitle: String {
+        guard let dataset = store.state.selectedDataset else {
+            return "No MeasurementSet selected"
+        }
+        return "\(dataset.name) - \(dataset.size)"
+    }
+
+    private func selectionBlock(parameters: DirtyImagingTaskParameters) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Selections")
+                .workbenchFont(.headline)
+
+            Picker("Source / field", selection: Binding(
+                get: { parameters.selectedField ?? "all" },
+                set: { store.setDirtyImagingField($0) }
+            )) {
+                Text("all").tag("all")
+                ForEach(store.state.selectedDataset?.fields ?? [], id: \.self) { field in
+                    Text(field).tag(field)
+                }
+            }
+            .accessibilityIdentifier("task.parameter.field")
+
+            LabeledContent("Phase center", value: parameters.phaseCenterField ?? "auto")
+
+            Picker("Spectral window", selection: Binding(
+                get: { parameters.selectedSpectralWindow ?? "all" },
+                set: { store.setDirtyImagingSpectralWindow($0) }
+            )) {
+                Text("all").tag("all")
+                ForEach(store.state.selectedDataset?.spectralWindows ?? [], id: \.self) { spw in
+                    Text(spw).tag(spw)
+                }
+            }
+            .accessibilityIdentifier("task.parameter.spw")
+
+            HStack {
+                TextField("Channel start", text: Binding(
+                    get: { parameters.channelStart },
+                    set: { store.setDirtyImagingChannelStart($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("task.parameter.channelStart")
+
+                TextField("Channel count", text: Binding(
+                    get: { parameters.channelCount },
+                    set: { store.setDirtyImagingChannelCount($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("task.parameter.channelCount")
+            }
+
+            Picker("Data column", selection: Binding(
+                get: { parameters.dataColumn },
+                set: { store.setDirtyImagingDataColumn($0) }
+            )) {
+                ForEach(store.state.selectedDataset?.dataColumns.isEmpty == false ? store.state.selectedDataset?.dataColumns ?? [] : ["DATA"], id: \.self) { column in
+                    Text(column).tag(column)
+                }
+            }
+            .accessibilityIdentifier("task.parameter.dataColumn")
+        }
+        .taskCard()
+    }
+
+    private func imagingBlock(parameters: DirtyImagingTaskParameters) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Image")
+                .workbenchFont(.headline)
+
+            Stepper(value: Binding(
+                get: { parameters.imageSize },
+                set: { store.setDirtyImagingImageSize($0) }
+            ), in: 32...8192, step: 32) {
+                LabeledContent("Image size", value: "\(parameters.imageSize) px")
+            }
+            .accessibilityIdentifier("task.parameter.imageSize")
+
+            TextField("Cell size (arcsec)", text: Binding(
+                get: { String(format: "%.3f", parameters.cellArcsec) },
+                set: { value in
+                    if let parsed = Double(value) {
+                        store.setDirtyImagingCellArcsec(parsed)
+                    }
+                }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("task.parameter.cellArcsec")
+
+            Picker("Weighting", selection: Binding(
+                get: { parameters.weighting },
+                set: { store.setDirtyImagingWeighting($0) }
+            )) {
+                ForEach(DirtyImagingWeighting.allCases) { weighting in
+                    Text(weighting.title).tag(weighting)
+                }
+            }
+            .accessibilityIdentifier("task.parameter.weighting")
+
+            Toggle("Dirty only", isOn: .constant(parameters.dirtyOnly))
+                .disabled(true)
+                .accessibilityIdentifier("task.parameter.dirtyOnly")
+        }
+        .taskCard()
+    }
+
+    private func outputBlock(parameters: DirtyImagingTaskParameters) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Output")
+                .workbenchFont(.headline)
+
+            TextField("Image prefix", text: Binding(
+                get: { parameters.outputPrefix },
+                set: { store.setDirtyImagingOutputPrefix($0) }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("task.parameter.outputPrefix")
+
+            TextField("Run reason", text: Binding(
+                get: { parameters.runReason },
+                set: { store.setDirtyImagingRunReason($0) }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("task.parameter.runReason")
+
+            Text(parameters.requestSummary)
+                .workbenchFont(.caption, design: .monospaced)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("task.parameter.requestSummary")
+        }
+        .taskCard()
+    }
+
+    private var runBlock: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Run")
+                .workbenchFont(.headline)
+            ProgressView(value: store.state.taskRun.progress)
+            Text(store.state.taskRun.state.rawValue)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+
+            valueList("Log", values: store.state.taskRun.logLines)
+            valueList("Warnings", values: store.state.taskRun.warnings)
+            valueList("Diagnostics", values: store.state.taskRun.diagnostics)
+            valueList("Products", values: store.state.taskRun.products)
+            valueList("Artifacts", values: store.state.taskRun.outputPaths)
+        }
+        .taskCard()
+        .accessibilityIdentifier("task.runState")
+    }
+
+    private func valueList(_ title: String, values: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .workbenchFont(.subheadline, weight: .semibold)
+            if values.isEmpty {
+                Text("None")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(values, id: \.self) { value in
+                    Text(value)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+
+private extension View {
+    func taskCard() -> some View {
+        self
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 

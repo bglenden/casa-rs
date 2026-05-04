@@ -61,9 +61,12 @@ small UniFFI runtime boundary through `casars-frontend-services` for read-only
 project and dataset probing. GUI-Wave-3 extends that boundary with a narrow
 MeasurementSet explorer plot API: Rust owns `casa-ms` / `msexplore` plot payload
 construction and PNG rendering, while Swift owns native controls, layout, and
-debug-state projection. This is not a shared background service contract:
-long-running tasks, cancellation, and provider execution remain separate
-protocol work.
+debug-state projection. GUI-Wave-4 adds the first real task-execution vertical:
+the Swift workbench supervises a short-lived `casars-imager --json-run`
+process for dirty imaging, records logs/results/products in processing history,
+and exposes the request/run state through the debug snapshot. This remains a
+narrow process-supervision path, not a shared background service, provider
+daemon, or repo-wide async runtime contract.
 
 ## Persistence / external systems
 

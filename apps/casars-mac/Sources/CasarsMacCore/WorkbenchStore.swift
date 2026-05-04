@@ -87,15 +87,19 @@ public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
     private let probeClient: ProjectProbeClient
     private let plotClient: MeasurementSetPlotClient
+    private let dirtyImagingClient: DirtyImagingTaskClient
+    private var activeTaskExecution: DirtyImagingTaskExecution?
 
     public init(
         state: WorkbenchState = EmptyWorkbench.makeState(),
         probeClient: ProjectProbeClient = UniFFIProjectProbeClient(),
-        plotClient: MeasurementSetPlotClient = UniFFIMeasurementSetPlotClient()
+        plotClient: MeasurementSetPlotClient = UniFFIMeasurementSetPlotClient(),
+        dirtyImagingClient: DirtyImagingTaskClient = ProcessDirtyImagingTaskClient()
     ) {
         self.state = state
         self.probeClient = probeClient
         self.plotClient = plotClient
+        self.dirtyImagingClient = dirtyImagingClient
     }
 
     public static func empty() -> WorkbenchStore {
@@ -290,7 +294,7 @@ public final class WorkbenchStore: ObservableObject {
             selectDockMode(.history)
         } else if normalized.contains("left dock") || normalized.contains("sidebar") {
             setLeftDockCollapsed(false)
-        } else if normalized.contains("task") || normalized.contains("calibrate") {
+        } else if normalized.contains("task") || normalized.contains("calibrate") || normalized.contains("image") || normalized.contains("tclean") {
             openDefaultTab(kind: .task)
         } else if normalized.contains("inspector") {
             setInspectorCollapsed(false)
@@ -352,11 +356,11 @@ public final class WorkbenchStore: ObservableObject {
         case .datasetExplorer:
             openSelectedDatasetExplorer()
         case .task:
-            guard state.isDemoProject else {
-                state.lastErrors.append("Task panels are not connected for real projects yet")
-                return
+            if state.isDemoProject {
+                openTab(WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: state.selectedDatasetID))
+            } else {
+                openDirtyImagingTaskForSelectedDataset()
             }
-            openTab(WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: state.selectedDatasetID))
         case .aiChat:
             guard state.isDemoProject else {
                 state.lastErrors.append("AI chat is not connected yet")
@@ -372,6 +376,99 @@ public final class WorkbenchStore: ObservableObject {
         case .history:
             openTab(WorkbenchTab(id: "tab-history", title: "History", kind: .history))
         }
+    }
+
+    public func openDirtyImagingTaskForSelectedDataset() {
+        guard let dataset = state.selectedDataset else {
+            state.lastErrors.append("Select a MeasurementSet before opening an imaging task")
+            return
+        }
+        guard dataset.kind == .measurementSet else {
+            state.lastErrors.append("Dataset \(dataset.name) is not a MeasurementSet")
+            return
+        }
+
+        if state.dirtyImagingTaskParameters?.datasetID != dataset.id {
+            state.dirtyImagingTaskParameters = defaultDirtyImagingParameters(for: dataset)
+            state.taskRun = TaskRun(
+                state: .idle,
+                progress: 0,
+                logLines: ["Dirty imaging task initialized from selected MeasurementSet metadata."],
+                warnings: [],
+                products: [],
+                requestSummary: state.dirtyImagingTaskParameters?.requestSummary
+            )
+        }
+
+        openTab(
+            WorkbenchTab(
+                id: "tab-dirty-imaging-\(dataset.id)",
+                title: "Dirty Image: \(dataset.name)",
+                kind: .task,
+                datasetID: dataset.id
+            )
+        )
+    }
+
+    public func setDirtyImagingField(_ field: String?) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.selectedField = normalizedPickerValue(field)
+        parameters.phaseCenterField = parameters.selectedField
+        updateDirtyImagingParameters(parameters)
+    }
+
+    public func setDirtyImagingSpectralWindow(_ spectralWindow: String?) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.selectedSpectralWindow = normalizedPickerValue(spectralWindow)
+        updateDirtyImagingParameters(parameters)
+    }
+
+    public func setDirtyImagingDataColumn(_ dataColumn: String) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.dataColumn = dataColumn
+        updateDirtyImagingParameters(parameters)
+    }
+
+    public func setDirtyImagingOutputPrefix(_ outputPrefix: String) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.outputPrefix = outputPrefix
+        updateDirtyImagingParameters(parameters)
+    }
+
+    public func setDirtyImagingImageSize(_ imageSize: Int) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.imageSize = imageSize
+        updateDirtyImagingParameters(parameters)
+    }
+
+    public func setDirtyImagingCellArcsec(_ cellArcsec: Double) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.cellArcsec = cellArcsec
+        updateDirtyImagingParameters(parameters)
+    }
+
+    public func setDirtyImagingWeighting(_ weighting: DirtyImagingWeighting) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.weighting = weighting
+        updateDirtyImagingParameters(parameters)
+    }
+
+    public func setDirtyImagingChannelStart(_ channelStart: String) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.channelStart = channelStart
+        updateDirtyImagingParameters(parameters)
+    }
+
+    public func setDirtyImagingChannelCount(_ channelCount: String) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.channelCount = channelCount
+        updateDirtyImagingParameters(parameters)
+    }
+
+    public func setDirtyImagingRunReason(_ reason: String) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.runReason = reason
+        updateDirtyImagingParameters(parameters)
     }
 
     public func applyAIProposal(_ proposalID: String) {
@@ -432,41 +529,115 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func runTask() {
-        guard state.isDemoProject else {
-            state.lastErrors.append("Task execution is not connected yet")
+        if state.isDemoProject {
+            state.taskRun = TaskRun(
+                state: .completed,
+                progress: 1.0,
+                logLines: [
+                    "Started fixture calibrate dry run.",
+                    "Resolved field \(state.taskParameters.selectedField).",
+                    "Resolved spectral window \(state.taskParameters.selectedSpectralWindow).",
+                    "Recorded fixture product \(state.taskParameters.outputName)."
+                ],
+                warnings: ["Fixture run: no science data was modified."],
+                products: ["project/products/\(state.taskParameters.outputName)"]
+            )
+            state.history.append(
+                ProcessingHistoryEvent(
+                    id: "hist-run-\(state.history.count + 1)",
+                    timestamp: currentTimestamp(),
+                    title: "Fixture task completed",
+                    reason: "User ran the dry-run task from the task tab.",
+                    affectedPaths: state.taskRun.products,
+                    approval: "user"
+                )
+            )
             return
         }
-        state.taskRun = TaskRun(
-            state: .completed,
-            progress: 1.0,
-            logLines: [
-                "Started fixture calibrate dry run.",
-                "Resolved field \(state.taskParameters.selectedField).",
-                "Resolved spectral window \(state.taskParameters.selectedSpectralWindow).",
-                "Recorded fixture product \(state.taskParameters.outputName)."
-            ],
-            warnings: ["Fixture run: no science data was modified."],
-            products: ["project/products/\(state.taskParameters.outputName)"]
-        )
-        state.history.append(
-            ProcessingHistoryEvent(
-                id: "hist-run-\(state.history.count + 1)",
-                timestamp: "2026-05-04 09:24",
-                title: "Fixture task completed",
-                reason: "User ran the dry-run task from the task tab.",
-                affectedPaths: state.taskRun.products,
-                approval: "user"
+
+        guard let parameters = state.dirtyImagingTaskParameters else {
+            state.lastErrors.append("Open a dirty-imaging task before running it")
+            return
+        }
+        let validationErrors = parameters.validationErrors()
+        guard validationErrors.isEmpty else {
+            state.taskRun = TaskRun(
+                state: .failed,
+                progress: 0,
+                logLines: ["Dirty imaging request validation failed."],
+                warnings: [],
+                products: [],
+                diagnostics: validationErrors,
+                requestSummary: parameters.requestSummary
             )
+            state.lastErrors.append(contentsOf: validationErrors)
+            return
+        }
+
+        let runID = "dirty-imaging-\(nextDirtyImagingRunIndex())"
+        let request = DirtyImagingTaskRequest(runID: runID, parameters: parameters)
+        state.taskRun = TaskRun(
+            runID: runID,
+            state: .running,
+            progress: 0.05,
+            logLines: [
+                "Starting casars-imager dirty imaging task.",
+                parameters.requestSummary
+            ],
+            warnings: [],
+            products: [],
+            diagnostics: [],
+            requestSummary: parameters.requestSummary
         )
+
+        do {
+            let execution = try dirtyImagingClient.startDirtyImaging(request: request) { [weak self] event in
+                self?.handleDirtyImagingEvent(event, runID: runID)
+            }
+            if state.taskRun.runID == runID && state.taskRun.state == .running {
+                activeTaskExecution = execution
+            }
+        } catch {
+            state.taskRun = TaskRun(
+                runID: runID,
+                state: .failed,
+                progress: 1.0,
+                logLines: ["Failed to start casars-imager."],
+                warnings: [],
+                products: [],
+                diagnostics: ["\(error)"],
+                requestSummary: parameters.requestSummary
+            )
+            state.lastErrors.append("Start dirty imaging: \(error)")
+        }
     }
 
     public func stopTask() {
-        guard state.isDemoProject else {
-            state.lastErrors.append("Task execution is not connected yet")
+        if state.isDemoProject {
+            state.taskRun.state = .stopped
+            state.taskRun.logLines.append("Stopped fixture task.")
             return
         }
-        state.taskRun.state = .stopped
-        state.taskRun.logLines.append("Stopped fixture task.")
+
+        guard state.taskRun.state == .running else {
+            state.lastErrors.append("No dirty imaging task is running")
+            return
+        }
+        activeTaskExecution?.cancel()
+        activeTaskExecution = nil
+        state.taskRun.state = .cancelled
+        state.taskRun.progress = 1.0
+        state.taskRun.logLines.append("Cancellation requested for dirty imaging task.")
+        state.history.append(
+            ProcessingHistoryEvent(
+                id: "hist-run-\(state.history.count + 1)",
+                timestamp: currentTimestamp(),
+                title: "Dirty imaging cancelled",
+                reason: state.dirtyImagingTaskParameters?.runReason ?? "User cancelled the dirty imaging run.",
+                affectedPaths: state.taskRun.outputPaths,
+                approval: "user"
+            )
+        )
     }
 
     public func setPythonOwner(_ owner: PythonOwner) {
@@ -536,6 +707,153 @@ public final class WorkbenchStore: ObservableObject {
         let plotState = MeasurementSetExplorerPlotState.defaultState(for: dataset)
         state.measurementSetPlots[datasetID] = plotState
         return plotState
+    }
+
+    private func defaultDirtyImagingParameters(for dataset: DatasetSummary) -> DirtyImagingTaskParameters {
+        let firstField = dataset.fields.first
+        let outputPrefix = defaultDirtyImagingOutputPrefix(for: dataset)
+        return DirtyImagingTaskParameters(
+            datasetID: dataset.id,
+            measurementSetPath: dataset.path,
+            outputPrefix: outputPrefix,
+            selectedField: firstField,
+            phaseCenterField: firstField,
+            selectedSpectralWindow: dataset.spectralWindows.first,
+            dataColumn: dataset.dataColumns.first ?? "DATA"
+        )
+    }
+
+    private func defaultDirtyImagingOutputPrefix(for dataset: DatasetSummary) -> String {
+        let root = state.project.rootPath.isEmpty ? FileManager.default.currentDirectoryPath : state.project.rootPath
+        let runDirectory = URL(fileURLWithPath: root)
+            .appendingPathComponent("casa-rs-runs", isDirectory: true)
+            .appendingPathComponent("dirty-imaging-\(nextDirtyImagingRunIndex())", isDirectory: true)
+        return runDirectory.appendingPathComponent("\(sanitizedPathComponent(dataset.name))-dirty").path
+    }
+
+    private func nextDirtyImagingRunIndex() -> Int {
+        state.history.filter { $0.title.hasPrefix("Dirty imaging") }.count + 1
+    }
+
+    private func sanitizedPathComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let scalars = value.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        let sanitized = String(scalars).trimmingCharacters(in: CharacterSet(charactersIn: "-."))
+        return sanitized.isEmpty ? "dataset" : sanitized
+    }
+
+    private func updateDirtyImagingParameters(_ parameters: DirtyImagingTaskParameters) {
+        state.dirtyImagingTaskParameters = parameters
+        if state.taskRun.state == .idle || state.taskRun.state == .failed {
+            state.taskRun.requestSummary = parameters.requestSummary
+        }
+    }
+
+    private func handleDirtyImagingEvent(_ event: DirtyImagingTaskEvent, runID: String) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.handleDirtyImagingEvent(event, runID: runID)
+            }
+            return
+        }
+
+        guard state.taskRun.runID == runID else {
+            return
+        }
+
+        switch event {
+        case .succeeded(let result):
+            guard state.taskRun.state != .cancelled else {
+                return
+            }
+            activeTaskExecution = nil
+            state.taskRun = TaskRun(
+                runID: runID,
+                state: .succeeded,
+                progress: 1.0,
+                logLines: [
+                    "casars-imager completed dirty imaging.",
+                    result.report.summary,
+                    "Protocol: \(result.protocolSummary)"
+                ],
+                warnings: result.report.warnings,
+                products: result.artifacts.map(\.path),
+                diagnostics: result.diagnostics,
+                outputPaths: result.outputPaths,
+                requestSummary: result.request.parameters.requestSummary
+            )
+            appendProducedDatasets(from: result)
+            state.history.append(
+                ProcessingHistoryEvent(
+                    id: "hist-run-\(state.history.count + 1)",
+                    timestamp: currentTimestamp(),
+                    title: "Dirty imaging completed",
+                    reason: result.request.parameters.runReason,
+                    affectedPaths: result.outputPaths,
+                    approval: "user"
+                )
+            )
+
+        case .failed(let failure):
+            activeTaskExecution = nil
+            state.taskRun = TaskRun(
+                runID: runID,
+                state: .failed,
+                progress: 1.0,
+                logLines: ["casars-imager dirty imaging failed.", failure.message],
+                warnings: [],
+                products: [],
+                diagnostics: failure.diagnostics,
+                outputPaths: [failure.requestJSONPath, failure.stdoutPath, failure.stderrPath].compactMap { $0 },
+                requestSummary: state.dirtyImagingTaskParameters?.requestSummary
+            )
+            state.lastErrors.append("Dirty imaging failed: \(failure.message)")
+
+        case .cancelled(let failure):
+            activeTaskExecution = nil
+            if state.taskRun.state != .cancelled {
+                state.taskRun.state = .cancelled
+                state.taskRun.progress = 1.0
+                state.taskRun.logLines.append(failure.message)
+                state.taskRun.outputPaths = [failure.requestJSONPath, failure.stdoutPath, failure.stderrPath].compactMap { $0 }
+                state.history.append(
+                    ProcessingHistoryEvent(
+                        id: "hist-run-\(state.history.count + 1)",
+                        timestamp: currentTimestamp(),
+                        title: "Dirty imaging cancelled",
+                        reason: state.dirtyImagingTaskParameters?.runReason ?? "User cancelled the dirty imaging run.",
+                        affectedPaths: state.taskRun.outputPaths,
+                        approval: "user"
+                    )
+                )
+            }
+        }
+    }
+
+    private func appendProducedDatasets(from result: DirtyImagingTaskResult) {
+        for artifact in result.artifacts where artifact.exists {
+            guard !state.project.datasets.contains(where: { $0.path == artifact.path }) else {
+                continue
+            }
+            state.project.datasets.append(
+                DatasetSummary(
+                    id: artifact.path,
+                    name: URL(fileURLWithPath: artifact.path).lastPathComponent,
+                    path: artifact.path,
+                    kind: .imageCube,
+                    size: artifact.label,
+                    units: "CASA image",
+                    notes: "Produced by \(result.request.runID) from \(result.request.parameters.measurementSetPath).",
+                    diagnostics: artifact.previewPngExists
+                        ? ["preview: \(artifact.previewPngPath ?? "")"]
+                        : []
+                )
+            )
+        }
+    }
+
+    private func currentTimestamp() -> String {
+        ISO8601DateFormatter().string(from: Date())
     }
 
     private func normalizedPickerValue(_ value: String?) -> String? {

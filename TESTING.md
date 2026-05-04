@@ -53,10 +53,13 @@ Verification: just verify
 - GitHub tag CI: PR CI plus smoke, suite-install, and CI-like coverage
 - Native macOS GUI prototype and frontend services:
   `cargo test -p casars-frontend-services`,
+  `cargo test -p casars-imager dirty_imaging_json_request_accepts_gui_selection_fields`,
   `scripts/test-frontend-services-python.sh`, `swift test` from
   `apps/casars-mac`, and
-  `swift run casars-mac --dump-debug-state --simulate-main-flow` for the
-  headless debug-state smoke path.
+  `CASARS_IMAGER_BIN=target/debug/casars-imager swift run casars-mac
+  --dump-debug-state --simulate-main-flow --open-project <fixture-or-project>`
+  for the headless debug-state smoke path that includes the dirty-imaging task
+  run.
 
 ## Coverage / confidence policy
 
