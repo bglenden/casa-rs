@@ -40,6 +40,11 @@ struct CasarsMacApp: App {
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
 
+                Button(store.state.leftDockCollapsed ? "Show Left Dock" : "Hide Left Dock") {
+                    store.toggleLeftDock()
+                }
+                .keyboardShortcut("s", modifiers: [.command, .option])
+
                 Button(store.state.inspectorCollapsed ? "Show Inspector" : "Hide Inspector") {
                     store.toggleInspector()
                 }

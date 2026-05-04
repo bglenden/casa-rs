@@ -9,6 +9,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
         XCTAssertEqual(snapshot.activeProject, "VLA spectral-line demo")
         XCTAssertEqual(snapshot.activeLeftDockMode, .datasets)
+        XCTAssertFalse(snapshot.leftDockCollapsed)
         XCTAssertEqual(snapshot.selectedDataset, "IRC+10216.ms")
         XCTAssertEqual(snapshot.pythonOwner, .user)
         XCTAssertTrue(snapshot.openTabs.contains("AI Chat"))
@@ -23,11 +24,15 @@ final class WorkbenchStoreTests: XCTestCase {
         let store = WorkbenchStore.fixture()
 
         store.selectDockMode(.history)
+        store.setLeftDockCollapsed(true)
         store.setInspectorCollapsed(true)
         store.selectDataset("image-cube")
         store.openDefaultTab(kind: .history)
 
         XCTAssertEqual(store.state.dockMode, .history)
+        XCTAssertTrue(store.debugSnapshot().leftDockCollapsed)
+        store.toggleLeftDock()
+        XCTAssertFalse(store.debugSnapshot().leftDockCollapsed)
         XCTAssertTrue(store.state.inspectorCollapsed)
         store.setInspectorCollapsed(false)
         XCTAssertFalse(store.debugSnapshot().inspectorCollapsed)
@@ -47,9 +52,16 @@ final class WorkbenchStoreTests: XCTestCase {
         store.runCommandQuery()
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .python)
 
+        store.setLeftDockCollapsed(true)
+        store.setCommandQuery("show sidebar")
+        store.runCommandQuery()
+        XCTAssertFalse(store.state.leftDockCollapsed)
+
         store.setCommandQuery("show timeline")
+        store.setLeftDockCollapsed(true)
         store.runCommandQuery()
         XCTAssertEqual(store.state.dockMode, .history)
+        XCTAssertFalse(store.state.leftDockCollapsed)
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .history)
         XCTAssertEqual(store.debugSnapshot().commandQuery, "show timeline")
     }

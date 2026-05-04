@@ -17,6 +17,7 @@ public final class WorkbenchStore: ObservableObject {
 
     public func selectDockMode(_ mode: DockMode) {
         state.dockMode = mode
+        state.leftDockCollapsed = false
     }
 
     public func selectDataset(_ datasetID: String) {
@@ -46,6 +47,14 @@ public final class WorkbenchStore: ObservableObject {
         state.inspectorCollapsed.toggle()
     }
 
+    public func setLeftDockCollapsed(_ collapsed: Bool) {
+        state.leftDockCollapsed = collapsed
+    }
+
+    public func toggleLeftDock() {
+        state.leftDockCollapsed.toggle()
+    }
+
     public func setCommandQuery(_ query: String) {
         state.commandQuery = query
     }
@@ -63,6 +72,8 @@ public final class WorkbenchStore: ObservableObject {
         } else if normalized.contains("history") || normalized.contains("timeline") {
             openDefaultTab(kind: .history)
             selectDockMode(.history)
+        } else if normalized.contains("left dock") || normalized.contains("sidebar") {
+            setLeftDockCollapsed(false)
         } else if normalized.contains("task") || normalized.contains("calibrate") {
             openDefaultTab(kind: .task)
             selectDockMode(.tasks)

@@ -34,8 +34,10 @@ and drift tests.
 
 The primary shell behavior is part of the prototype boundary, not later visual
 polish. The workbench must keep inspector collapse/restore, left-dock mode
-selection, central tab creation, command/search routing, Python/AI ownership,
-and debug-state inspection in `CasarsMacCore` actions where practical. Native
+selection and collapse/restore, central tab creation, command/search routing,
+Python/AI ownership, and debug-state inspection in `CasarsMacCore` actions
+where practical. The main toolbar owns left-dock collapse/restore; the left
+dock header owns inspector collapse/restore while the dock is visible. Native
 macOS window behavior, including full-screen Space support, may use a narrow
 AppKit bridge when SwiftUI does not expose the needed window knob directly.
 Interactive SwiftPM GUI runs should stage a local `.app` bundle rather than

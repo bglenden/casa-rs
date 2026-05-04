@@ -510,8 +510,12 @@ These choices should be made before the first clickable prototype:
   launched as `.app` bundles for interactive inspection rather than run as raw
   executables.
 - Any collapsible shell pane, especially the inspector, must have a persistent
-  restore path through visible toolbar chrome, a menu command, and debug-state
-  coverage; collapsed panes must not reserve split-view content width.
+  restore path through visible chrome, a menu command, and debug-state coverage;
+  collapsed panes must not reserve split-view content width.
+- The left dock/sidebar and the inspector are separate shell regions. The main
+  window toolbar owns the left dock collapse/restore affordance. The left dock
+  header owns the inspector collapse/restore affordance when the dock is
+  visible.
 - Reserve a global command/search surface early so dataset, task, AI, and
   navigation actions do not become disconnected panel-local affordances.
 - Start with fixture providers and static plot/image assets.
@@ -555,6 +559,7 @@ should include:
 
 - active project
 - active left-dock mode
+- left-dock collapsed/expanded state
 - selected dataset
 - inspector collapsed/expanded state
 - open central tabs

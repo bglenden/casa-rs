@@ -6,10 +6,12 @@ struct WorkbenchView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            LeftDockView(store: store)
-                .frame(width: 250)
+            if !store.state.leftDockCollapsed {
+                LeftDockView(store: store)
+                    .frame(width: 250)
 
-            Divider()
+                Divider()
+            }
 
             if !store.state.inspectorCollapsed {
                 InspectorView(store: store)
@@ -22,6 +24,19 @@ struct WorkbenchView: View {
                 .frame(minWidth: 560)
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    store.toggleLeftDock()
+                } label: {
+                    Label(
+                        store.state.leftDockCollapsed ? "Show Left Dock" : "Hide Left Dock",
+                        systemImage: store.state.leftDockCollapsed ? "sidebar.left" : "sidebar.leading"
+                    )
+                }
+                .help(store.state.leftDockCollapsed ? "Show Left Dock" : "Hide Left Dock")
+                .accessibilityIdentifier(store.state.leftDockCollapsed ? "dock.restore" : "dock.collapse")
+            }
+
             ToolbarItem(placement: .principal) {
                 CommandSearchField(store: store)
             }
@@ -41,20 +56,6 @@ struct WorkbenchView: View {
                 }
                 .accessibilityIdentifier("toolbar.openAIChat")
 
-                Button {
-                    store.toggleInspector()
-                } label: {
-                    Label(
-                        store.state.inspectorCollapsed ? "Show Inspector" : "Hide Inspector",
-                        systemImage: store.state.inspectorCollapsed ? "sidebar.right" : "sidebar.right"
-                    )
-                }
-                .help(store.state.inspectorCollapsed ? "Show Inspector" : "Hide Inspector")
-                .accessibilityIdentifier(store.state.inspectorCollapsed ? "inspector.restore" : "inspector.collapse")
-
-                Label("AI Online", systemImage: "circle.fill")
-                    .foregroundStyle(.green)
-                    .accessibilityIdentifier("toolbar.aiOnline")
             }
         }
     }
@@ -94,9 +95,25 @@ struct LeftDockView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(store.state.project.name)
-                    .font(.headline)
-                    .lineLimit(1)
+                HStack {
+                    Text(store.state.project.name)
+                        .font(.headline)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Button {
+                        store.toggleInspector()
+                    } label: {
+                        Label(
+                            store.state.inspectorCollapsed ? "Show Inspector" : "Hide Inspector",
+                            systemImage: store.state.inspectorCollapsed ? "sidebar.right" : "sidebar.trailing"
+                        )
+                    }
+                    .buttonStyle(.borderless)
+                    .help(store.state.inspectorCollapsed ? "Show Inspector" : "Hide Inspector")
+                    .accessibilityIdentifier(store.state.inspectorCollapsed ? "inspector.restore" : "inspector.collapse")
+                }
 
                 Text(store.state.project.rootPath)
                     .font(.caption)

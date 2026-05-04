@@ -62,6 +62,7 @@ public enum FixtureWorkbench {
         return WorkbenchState(
             project: project,
             dockMode: .datasets,
+            leftDockCollapsed: false,
             selectedDatasetID: "ms-irc10216",
             inspectorCollapsed: false,
             tabs: [

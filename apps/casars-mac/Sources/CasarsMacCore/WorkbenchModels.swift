@@ -259,6 +259,7 @@ public struct ProcessingHistoryEvent: Identifiable, Codable, Equatable {
 public struct WorkbenchState: Codable, Equatable {
     public var project: ProjectFixture
     public var dockMode: DockMode
+    public var leftDockCollapsed: Bool
     public var selectedDatasetID: String?
     public var inspectorCollapsed: Bool
     public var tabs: [WorkbenchTab]
@@ -275,6 +276,7 @@ public struct WorkbenchState: Codable, Equatable {
     public init(
         project: ProjectFixture,
         dockMode: DockMode,
+        leftDockCollapsed: Bool,
         selectedDatasetID: String?,
         inspectorCollapsed: Bool,
         tabs: [WorkbenchTab],
@@ -290,6 +292,7 @@ public struct WorkbenchState: Codable, Equatable {
     ) {
         self.project = project
         self.dockMode = dockMode
+        self.leftDockCollapsed = leftDockCollapsed
         self.selectedDatasetID = selectedDatasetID
         self.inspectorCollapsed = inspectorCollapsed
         self.tabs = tabs
@@ -312,6 +315,7 @@ public struct WorkbenchState: Codable, Equatable {
 public struct DebugStateSnapshot: Codable, Equatable {
     public var activeProject: String
     public var activeLeftDockMode: DockMode
+    public var leftDockCollapsed: Bool
     public var selectedDataset: String?
     public var inspectorCollapsed: Bool
     public var openTabs: [String]
@@ -326,6 +330,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public init(state: WorkbenchState) {
         activeProject = state.project.name
         activeLeftDockMode = state.dockMode
+        leftDockCollapsed = state.leftDockCollapsed
         selectedDataset = state.selectedDataset?.name
         inspectorCollapsed = state.inspectorCollapsed
         openTabs = state.tabs.map(\.title)
