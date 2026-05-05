@@ -29,7 +29,7 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 | `PBMosaicFT::getImage` | PB/flat-noise normalization and `pblimit` cutoff | `MosaicGridderConfig::pb_limit`, `casars-imager --pblimit`, `casars-imager --pbcor` | implemented for the homogeneous mosaic MFS proof path; native mask deltas are marginal and recorded in the #53 panels |
 | `tclean(gridder='mosaic')` product writing | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, PB/weight-like products | `casars-imager::write_products` | implemented for mosaic MFS `.weight`, `.pb`, and optional `.image.pbcor`; panel proof landed in #53 |
 | CASA minor-cycle controllers | cleaned mosaic images, masks, thresholds, cycle controls | standard controller plus final visibility-domain mosaic residual refresh path | implemented for the #53 Hogbom/Multiscale MFS proof; source-region tutorial deltas are now sub-percent |
-| CASA cube mosaic path | spectral cube imaging with frequency-dependent PB and common beams | `run_cube` standard gridder only | missing for mosaic; required by #161 line products |
+| CASA cube mosaic path | spectral cube imaging with frequency-dependent PB and common beams | `casars-imager` cube preparation plus `casa-imaging` mosaic dirty path | implemented for the #163 two-channel M100 dirty probe; full 70-channel scale-up remains issue scope |
 | CASA `pbcor` products | PB-corrected restored images with cutoff semantics | `mosaic_pb_product_from_weight`, `pb_correct_image_product`, `--pbcor` | implemented for mosaic MFS products using the current mosaic weight image and explicit `--pblimit` cutoff |
 | CASA `usemask='auto-multithresh'` | automask generation | manual `--mask-box` / `--mask-image` only | missing; #53 follow-up when tutorials require automask products |
 | CASA `startmodel` / `outlierfile` | model seeding and outlier-field orchestration | none | missing; keep out of #161/#169 unless the tutorial product needs it |
@@ -42,8 +42,8 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 | WProject MFS | partial, source-backed dirty gates exist | wproject projector | standard CLEAN controller path | normal image sidecars | not first Wave 6 blocker |
 | Mosaic MFS dirty | source-backed center-pixel contribution rule, phase-gradient projector | homogeneous ALMA/EVLA PB models, beam-frequency buckets, natural/Briggs weighting | dirty path remains available | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, `.weight`, `.pb` | reused by #53 panel harness |
 | Mosaic MFS cleaned | same as dirty path | same as dirty plus final visibility-domain residual refresh | Hogbom/Clark/Multiscale now run for `niter > 0`; #53 tutorial source-region deltas are below 1% of the CASA peak | restored and PB-corrected products now written for MFS mosaic | first ALMA #161 proof generated; VLA #169 proof uses the same panel harness |
-| Mosaic cube | phase/PB must be channel aware | missing from cube runner | missing | missing cube/moment-ready products | #161 line products |
-| Heterogeneous mosaic / AW-style | not yet part of Wave 6 proof | partial or future | missing | missing | defer unless #161/#169 force it |
+| Mosaic cube | phase/PB are channel aware in the dirty multi-MS route | ALMA/ACA HetArray screen sizing and PB normalization now match the #163 CASA probe below 1% max image error | dirty path proven; cleaned cube scale-up remains issue scope | `.psf`, `.residual`, `.image`, `.image.pbcor`, `.sumwt`, `.weight`, `.pb` for the #163 probe | #163 M100 12m+7m combined cube |
+| Heterogeneous mosaic / AW-style | source-backed HetArray phase-gradient projector | ALMA/ACA Airy PBs, support-sized screens, and sky coverage | dirty path proven for #163; cleaned/full-cube proof still open | M100 two-channel probe products and panels | active Wave 6 capability, no longer deferred |
 
 ## Theory / Tutorial Cross-Checks
 

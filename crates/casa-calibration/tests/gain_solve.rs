@@ -5,9 +5,9 @@ mod common;
 use tempfile::TempDir;
 
 use casa_calibration::{
-    ApplyCalibrationTableSpec, ApplyMode, ApplyPlanRequest, GainSolveCombine, GainSolveInterval,
-    GainSolveMode, GainSolveModelSource, GainSolveRequest, GainType, RefAntSelector,
-    execute_apply_from_path, solve_gain_from_path, summarize_table,
+    ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
+    GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
+    GainType, RefAntSelector, execute_apply_from_path, solve_gain_from_path, summarize_table,
 };
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
@@ -299,7 +299,7 @@ fn solve_gain_g_uses_casa_correlation_independent_flags() {
 }
 
 #[test]
-fn solve_gain_t_uses_unflagged_parallel_hand_samples() {
+fn solve_gain_t_uses_casa_correlation_independent_flags() {
     let dir = TempDir::new().expect("tempdir");
     let ms_path =
         common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::T);
@@ -351,7 +351,6 @@ fn solve_gain_t_uses_unflagged_parallel_hand_samples() {
     .expect("solve asymmetric-flag T gains");
 
     let table = Table::open(TableOptions::new(&caltable_path)).expect("open gain table");
-    let mut unflagged_non_ref = 0;
     for row in 0..table.row_count() {
         let antenna_id = match table
             .cell_accessor(row, "ANTENNA1")
@@ -369,14 +368,13 @@ fn solve_gain_t_uses_unflagged_parallel_hand_samples() {
             ArrayValue::Bool(values) => values.iter().copied().collect::<Vec<_>>(),
             other => panic!("unexpected FLAG value: {other:?}"),
         };
-        if antenna_id != 0 && flags.iter().any(|flag| !*flag) {
-            unflagged_non_ref += 1;
+        if antenna_id != 0 {
+            assert!(
+                flags.iter().all(|flag| *flag),
+                "row {row} flags were {flags:?}"
+            );
         }
     }
-    assert!(
-        unflagged_non_ref > 0,
-        "T solve should keep unflagged parallel-hand samples"
-    );
 }
 
 #[test]
@@ -841,7 +839,11 @@ fn solve_gain_phase_g_solint_seconds_groups_nearby_integrations() {
             selection: MsSelection::new(),
             apply_mode: ApplyMode::CalOnly,
             parang: false,
-            calibration_tables: vec![ApplyCalibrationTableSpec::new(&caltable_path)],
+            calibration_tables: vec![{
+                let mut spec = ApplyCalibrationTableSpec::new(&caltable_path);
+                spec.interp = ApplyInterpolationMode::Nearest;
+                spec
+            }],
         },
     )
     .expect("apply solved 30s-bucket table");

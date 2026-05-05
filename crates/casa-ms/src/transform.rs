@@ -60,6 +60,11 @@ pub struct MsTransformRequest {
     pub data_column: TransformDataColumn,
     /// Structured row selection.
     pub selection: MsSelection,
+    /// Preserve fully flagged rows.
+    ///
+    /// CASA `split(keepflags=False)` drops rows whose `FLAG_ROW` is true or
+    /// whose selected `FLAG` cube is fully true.
+    pub keep_flags: bool,
 }
 
 /// Report returned after materializing a transformed MeasurementSet.
@@ -233,7 +238,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     let stage_started_at = Instant::now();
     let channel_selection = resolve_transform_channels(&input, &request.spw)?;
     let ddid_to_spw = data_description_spw_map(&input)?;
-    let selected_ddids = input
+    let raw_ddids = input
         .main_table()
         .column_accessor("DATA_DESC_ID")
         .and_then(|column| column.scalar_cells_owned_for_rows(&selected_rows))
@@ -243,7 +248,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         })?;
     let mut filtered_rows = Vec::with_capacity(selected_rows.len());
     let mut filtered_ddids = Vec::with_capacity(selected_rows.len());
-    for (row_index, ddid) in selected_rows.into_iter().zip(selected_ddids) {
+    for (row_index, ddid) in selected_rows.into_iter().zip(raw_ddids) {
         let ddid = scalar_i32(ddid.as_ref(), "DATA_DESC_ID", row_index)?;
         let Some(spw) = ddid_to_spw.get(&ddid) else {
             continue;
@@ -254,6 +259,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         }
     }
     selected_rows = filtered_rows;
+    let mut selected_ddids = filtered_ddids;
     maybe_log_transform_progress(
         "filter_rows_by_spw",
         stage_started_at.elapsed(),
@@ -263,6 +269,52 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         return Err(MsTransformError::EmptySelection {
             path: request.input_ms.display().to_string(),
         });
+    }
+    if !request.keep_flags {
+        let stage_started_at = Instant::now();
+        let flag_row_values = input
+            .main_table()
+            .column_accessor("FLAG_ROW")
+            .and_then(|column| column.scalar_cells_owned_for_rows(&selected_rows))
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: request.input_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+        let flag_values = input
+            .main_table()
+            .column_accessor("FLAG")
+            .and_then(|column| column.array_cells_owned(&selected_rows))
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: request.input_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+        let mut kept_rows = Vec::with_capacity(selected_rows.len());
+        let mut kept_ddids = Vec::with_capacity(selected_ddids.len());
+        for (((row_index, ddid), flag_row), flags) in selected_rows
+            .into_iter()
+            .zip(selected_ddids.into_iter())
+            .zip(flag_row_values)
+            .zip(flag_values)
+        {
+            let is_flag_row = scalar_bool(flag_row.as_ref(), "FLAG_ROW", row_index)?;
+            let is_fully_flagged = bool_array_all_true(flags.as_ref(), "FLAG", row_index)?;
+            if !is_flag_row && !is_fully_flagged {
+                kept_rows.push(row_index);
+                kept_ddids.push(ddid);
+            }
+        }
+        selected_rows = kept_rows;
+        selected_ddids = kept_ddids;
+        maybe_log_transform_progress(
+            "drop_fully_flagged_rows",
+            stage_started_at.elapsed(),
+            started_at.elapsed(),
+        );
+        if selected_rows.is_empty() {
+            return Err(MsTransformError::EmptySelection {
+                path: request.input_ms.display().to_string(),
+            });
+        }
     }
     let stage_started_at = Instant::now();
     let selected_times = input
@@ -275,7 +327,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         })?;
     let mut row_order = selected_rows
         .into_iter()
-        .zip(filtered_ddids)
+        .zip(selected_ddids)
         .zip(selected_times)
         .enumerate()
         .map(|(original_index, ((row_index, ddid), time))| {
@@ -294,6 +346,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         selected_rows.push(row_index);
         selected_ddids.push(ddid);
     }
+    let selected_ddids_for_metadata = selected_ddids.clone();
     maybe_log_transform_progress(
         "sort_rows_by_time",
         stage_started_at.elapsed(),
@@ -312,6 +365,19 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     copy_subtables(&request.input_ms, &request.output_ms)?;
     maybe_log_transform_progress(
         "copy_subtables",
+        stage_started_at.elapsed(),
+        started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
+    let compact_metadata = compact_spectral_subtables(
+        &request.input_ms,
+        &request.output_ms,
+        &channel_selection,
+        &selected_ddids_for_metadata,
+        &ddid_to_spw,
+    )?;
+    maybe_log_transform_progress(
+        "compact_spectral_subtables",
         stage_started_at.elapsed(),
         started_at.elapsed(),
     );
@@ -411,17 +477,20 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             }
         })?);
         if let Some(values) = weight_spectrum_values.as_mut() {
-            let weight_spectrum = values.next().flatten().ok_or_else(|| {
-                missing_column_error(&request.output_ms, row_index, "WEIGHT_SPECTRUM")
-            })?;
+            let weight_spectrum = values.next().flatten();
             if let Some(transformed) = transformed_weight_spectrum.as_mut() {
                 transformed.push(
-                    select_channels(weight_spectrum, channels).map_err(|source| {
-                        MsTransformError::MutateMeasurementSet {
-                            path: request.output_ms.display().to_string(),
-                            source: Box::new(source),
-                        }
-                    })?,
+                    weight_spectrum
+                        .map(|value| {
+                            select_channels(value, channels).map_err(|source| {
+                                MsTransformError::MutateMeasurementSet {
+                                    path: request.output_ms.display().to_string(),
+                                    source: Box::new(source),
+                                }
+                            })
+                        })
+                        .transpose()?
+                        .map(Value::Array),
                 );
             }
         }
@@ -451,12 +520,28 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     if let Some(transformed_weight_spectrum) = transformed_weight_spectrum {
         output_column_overrides.insert(
             "WEIGHT_SPECTRUM".to_string(),
-            transformed_weight_spectrum
-                .into_iter()
-                .map(|value| Some(Value::Array(value)))
-                .collect(),
+            transformed_weight_spectrum.into_iter().collect(),
         );
     }
+    output_column_overrides.insert(
+        "DATA_DESC_ID".to_string(),
+        selected_ddids_for_metadata
+            .iter()
+            .map(|ddid| {
+                compact_metadata
+                    .ddid_map
+                    .get(ddid)
+                    .copied()
+                    .ok_or_else(|| MsTransformError::SpectralMetadata {
+                        path: request.output_ms.display().to_string(),
+                        reason: format!(
+                            "selected DATA_DESC_ID {ddid} was not present in compacted metadata"
+                        ),
+                    })
+                    .map(|compact| Some(Value::Scalar(ScalarValue::Int32(compact))))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    );
     output_main
         .save_with_bindings_and_column_overrides_assuming_valid(
             measurement_set_table_options(&request.output_ms),
@@ -473,7 +558,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    update_spectral_window_metadata(&channel_selection, &request.output_ms)?;
+    update_spectral_window_metadata(&compact_metadata.channel_selection, &request.output_ms)?;
     maybe_log_transform_progress(
         "update_spectral_window",
         stage_started_at.elapsed(),
@@ -662,6 +747,162 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> 
             std::os::unix::fs::symlink(target, &destination_path)?;
         }
     }
+    Ok(())
+}
+
+struct CompactSpectralMetadata {
+    ddid_map: BTreeMap<i32, i32>,
+    channel_selection: BTreeMap<i32, Vec<usize>>,
+}
+
+fn compact_spectral_subtables(
+    input_ms: &Path,
+    output_ms: &Path,
+    channel_selection: &BTreeMap<i32, Vec<usize>>,
+    selected_ddids: &[i32],
+    ddid_to_spw: &BTreeMap<i32, i32>,
+) -> Result<CompactSpectralMetadata, MsTransformError> {
+    let selected_spws = channel_selection.keys().copied().collect::<Vec<_>>();
+    let spw_map = selected_spws
+        .iter()
+        .enumerate()
+        .map(|(new_id, old_id)| (*old_id, new_id as i32))
+        .collect::<BTreeMap<_, _>>();
+    let compact_channel_selection = selected_spws
+        .iter()
+        .enumerate()
+        .map(|(new_id, old_id)| {
+            (
+                new_id as i32,
+                channel_selection.get(old_id).cloned().unwrap_or_default(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    rewrite_selected_table_rows(
+        &input_ms.join(SubtableId::SpectralWindow.name()),
+        &output_ms.join(SubtableId::SpectralWindow.name()),
+        &selected_spws
+            .iter()
+            .map(|spw| *spw as usize)
+            .collect::<Vec<_>>(),
+        |_, row| Ok(row),
+    )?;
+
+    let mut unique_ddids = selected_ddids.iter().copied().collect::<BTreeSet<_>>();
+    let mut ordered_ddids = unique_ddids.iter().copied().collect::<Vec<_>>();
+    ordered_ddids.sort_by_key(|ddid| ddid_to_spw.get(ddid).copied().unwrap_or(i32::MAX));
+    let ddid_map = ordered_ddids
+        .iter()
+        .enumerate()
+        .map(|(new_id, old_id)| (*old_id, new_id as i32))
+        .collect::<BTreeMap<_, _>>();
+    rewrite_selected_table_rows(
+        &input_ms.join(SubtableId::DataDescription.name()),
+        &output_ms.join(SubtableId::DataDescription.name()),
+        &ordered_ddids
+            .iter()
+            .map(|ddid| *ddid as usize)
+            .collect::<Vec<_>>(),
+        |old_row, mut row| {
+            let old_ddid = old_row as i32;
+            let old_spw = ddid_to_spw.get(&old_ddid).copied().ok_or_else(|| {
+                MsTransformError::SpectralMetadata {
+                    path: input_ms
+                        .join(SubtableId::DataDescription.name())
+                        .display()
+                        .to_string(),
+                    reason: format!("DATA_DESCRIPTION row {old_ddid} has no SPW mapping"),
+                }
+            })?;
+            let new_spw = spw_map.get(&old_spw).copied().ok_or_else(|| {
+                MsTransformError::SpectralMetadata {
+                    path: output_ms
+                        .join(SubtableId::DataDescription.name())
+                        .display()
+                        .to_string(),
+                    reason: format!(
+                        "DATA_DESCRIPTION row {old_ddid} references unselected SPW {old_spw}"
+                    ),
+                }
+            })?;
+            row.upsert(
+                "SPECTRAL_WINDOW_ID",
+                Value::Scalar(ScalarValue::Int32(new_spw)),
+            );
+            Ok(row)
+        },
+    )?;
+
+    unique_ddids.clear();
+    Ok(CompactSpectralMetadata {
+        ddid_map,
+        channel_selection: compact_channel_selection,
+    })
+}
+
+fn rewrite_selected_table_rows<F>(
+    source_path: &Path,
+    destination_path: &Path,
+    selected_rows: &[usize],
+    mut rewrite: F,
+) -> Result<(), MsTransformError>
+where
+    F: FnMut(usize, RecordValue) -> Result<RecordValue, MsTransformError>,
+{
+    let source = Table::open(TableOptions::new(source_path)).map_err(|source| {
+        MsTransformError::MutateMeasurementSet {
+            path: source_path.display().to_string(),
+            source: Box::new(source),
+        }
+    })?;
+    if destination_path.exists() {
+        fs::remove_dir_all(destination_path).map_err(|source| MsTransformError::PrepareOutput {
+            path: destination_path.display().to_string(),
+            reason: source.to_string(),
+        })?;
+    }
+    source
+        .shallow_copy(TableOptions::new(destination_path))
+        .map_err(|source| MsTransformError::MutateMeasurementSet {
+            path: destination_path.display().to_string(),
+            source: Box::new(source),
+        })?;
+    let mut destination = Table::open(TableOptions::new(destination_path)).map_err(|source| {
+        MsTransformError::MutateMeasurementSet {
+            path: destination_path.display().to_string(),
+            source: Box::new(source),
+        }
+    })?;
+    for &row_index in selected_rows {
+        let row = source
+            .rows()
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: source_path.display().to_string(),
+                source: Box::new(source),
+            })?
+            .get(row_index)
+            .cloned()
+            .ok_or_else(|| MsTransformError::SpectralMetadata {
+                path: source_path.display().to_string(),
+                reason: format!(
+                    "requested subtable row {row_index} outside {} rows",
+                    source.row_count()
+                ),
+            })?;
+        destination
+            .add_row_assuming_valid(rewrite(row_index, row)?)
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: destination_path.display().to_string(),
+                source: Box::new(source),
+            })?;
+    }
+    destination
+        .save_assuming_valid(TableOptions::new(destination_path))
+        .map_err(|source| MsTransformError::MutateMeasurementSet {
+            path: destination_path.display().to_string(),
+            source: Box::new(source),
+        })?;
     Ok(())
 }
 
@@ -1025,6 +1266,40 @@ fn scalar_i32(
 ) -> Result<i32, MsTransformError> {
     match value {
         Some(ScalarValue::Int32(value)) => Ok(*value),
+        _ => Err(MsTransformError::MutateMeasurementSet {
+            path: "<measurement-set>".to_string(),
+            source: Box::new(TableError::ColumnNotFound {
+                row_index,
+                column: column.to_string(),
+            }),
+        }),
+    }
+}
+
+fn scalar_bool(
+    value: Option<&ScalarValue>,
+    column: &str,
+    row_index: usize,
+) -> Result<bool, MsTransformError> {
+    match value {
+        Some(ScalarValue::Bool(value)) => Ok(*value),
+        _ => Err(MsTransformError::MutateMeasurementSet {
+            path: "<measurement-set>".to_string(),
+            source: Box::new(TableError::ColumnNotFound {
+                row_index,
+                column: column.to_string(),
+            }),
+        }),
+    }
+}
+
+fn bool_array_all_true(
+    value: Option<&ArrayValue>,
+    column: &str,
+    row_index: usize,
+) -> Result<bool, MsTransformError> {
+    match value {
+        Some(ArrayValue::Bool(values)) => Ok(values.iter().all(|value| *value)),
         _ => Err(MsTransformError::MutateMeasurementSet {
             path: "<measurement-set>".to_string(),
             source: Box::new(TableError::ColumnNotFound {

@@ -32,6 +32,8 @@ functionality.
 - [Breadth expansion issue map](wave-6-breadth-expansion.md)
 - [Issue 53 mosaic panel evidence](wave-6-issue-53-mosaic-panels.md)
 - [Issue 161 Antennae Band 7 evidence](wave-6-issue-161-antennae-band7.md)
+- [Issue 163 M100 Band 3 Combine evidence](wave-6-issue-163-m100-band3-combine.md)
+- [Issue 169 VLA 3C391 evidence](wave-6-issue-169-3c391.md)
 
 ## Source Pages
 

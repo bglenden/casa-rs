@@ -110,6 +110,66 @@ full tutorial line CLEAN or selfcal sequence.
 | North dirty line `.image`, channel 0 | `4096 / 4096` | `4096` | `4096` | `0.007540386763608376` | `0.000010449885420215083` | `0.001385855360980767` | `0.0009621304710746463` | `0.0016088204622905734` |
 | North dirty line `.pb`, channel 0 | `4096 / 4096` | `4096` | `4096` | `0.9160840541070369` | `0.001388818455867956` | `0.0015160382386763867` | `0.0021275877952575684` | `0.0031310319900512695` |
 
+## Current North Line CLEAN Diagnostic
+
+Source-first CASA C++ tracing was added for the North line CLEAN path after the
+initial `casa-rs` restored-image comparison showed source-position differences
+at the tens-of-percent level. The traced CASA path is:
+
+- `_gclean.py` derives `cyclethreshold = max(threshold, peakresidual *
+  clamp(maxpsfsidelobe * cyclefactor, minpsffraction, maxpsffraction))`.
+- `SIImageStore::getPSFSidelobeLevel()` computes `maxpsfsidelobe` from
+  `max(abs(min(psf)), abs(max(psf - fitted_gaussian_psf)))` over all cube
+  planes.
+- `SDAlgorithmBase::deconvolve()` passes the fixed cube `CycleThreshold` into
+  each channel's Hogbom minor cycle.
+- `hclean.f` searches peaks in y-major/x-minor order with strict `GT` and uses
+  an inclusive `do iter=siter,niter` loop, so a `CycleNiter=32` channel can
+  place 33 components while reporting `iterdone=32`.
+
+Fresh run stamp: `20260502-193341`.
+
+| Controller value | CASA C++ | casa-rs |
+|---|---:|---:|
+| dirty cube global peak | `0.823116` | `0.8245545` |
+| max PSF sidelobe | `0.302028` | `0.3022569` |
+| cycle threshold | `0.2486043` | `0.2492273` |
+| cleaned output channels | `37..49` | `37..49` |
+
+The current fresh artifacts are under:
+
+- `target/wave6-issue161-antennae/line-full-20260502-193341/`
+- `fresh-line-clean-metrics-20260502-193341.json`
+- `rust-north-line-clean-20260502-193341.log`
+- `rust-hogbom-components-20260502-193341-trace.jsonl`
+
+Representative fresh panels with labeled colorbars:
+
+- `antennae-north-line-clean-image-ch37-20260502-193341-fresh-panel.png`
+- `antennae-north-line-clean-image-ch42-20260502-193341-fresh-panel.png`
+- `antennae-north-line-clean-image-ch45-20260502-193341-fresh-panel.png`
+- `antennae-north-line-clean-image-ch47-20260502-193341-fresh-panel.png`
+- `antennae-north-line-clean-residual-ch47-20260502-193341-fresh-panel.png`
+- `antennae-north-line-clean-model-ch45-20260502-193341-fresh-panel.png`
+
+Current line CLEAN restored-image source-region metrics:
+
+| Channel | source p90 abs(diff)/peak | source max abs(diff)/peak | RMS/peak |
+|---:|---:|---:|---:|
+| 37 | `0.4665%` | `7.63%` | `4.45%` |
+| 39 | `1.23%` | `4.58%` | `1.12%` |
+| 42 | `0.167%` | `2.47%` | `1.24%` |
+| 45 | `0.294%` | `2.78%` | `1.85%` |
+| 47 | `1.38%` | `5.85%` | `3.50%` |
+| 49 | `0.371%` | `8.23%` | `3.71%` |
+
+This is a major improvement over the earlier source-position differences, but
+it is not yet sufficient to close #161. The remaining mismatch is now localized
+to CLEAN/model/residual evolution, not PB masking, channel selection, or uv
+continuum subtraction. Component traces match CASA through the early and
+dominant Hogbom components; later low-level peak ordering diverges in some
+channels after sub-percent dirty/PSF differences have accumulated.
+
 ## Tutorial Figure Coverage
 
 | CASA Guide visible product | Current #161 status | Evidence / blocker |

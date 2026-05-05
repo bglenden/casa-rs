@@ -62,6 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             outfile: out_dir.join("n2hp.mom0"),
             moments: 0,
             chans: Some("4~12".to_string()),
+            mask: None,
             includepix: Some([0.03, 100.0]),
             overwrite: true,
         })?);
@@ -73,6 +74,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             outfile: out_dir.join("n2hp.mom1"),
             moments: 1,
             chans: Some("4~12".to_string()),
+            mask: None,
             includepix: Some([0.06, 100.0]),
             overwrite: true,
         })?);

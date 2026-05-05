@@ -287,7 +287,8 @@ if want_dataset("alma"):
     originals["alma_residual"] = ("https://casaguides.nrao.edu/images/9/98/Antennae_North.Cont.Clean.residual.tclean.png", outdir / "original-antennae-north-cont-clean-residual.png")
     originals["alma_image"] = ("https://casaguides.nrao.edu/images/4/44/Antennae_North.Cont.Clean.image-Antennae_South.Cont.Clean.image.png", outdir / "original-antennae-north-south-cont-clean-image.png")
 if want_dataset("vla"):
-    originals["vla_image"] = ("https://casaguides.nrao.edu/images/9/9e/3c391-tclean-residuals-CASA6.4.1.png", outdir / "original-3c391-final-restored.png")
+    originals["vla_image"] = ("https://casaguides.nrao.edu/images/c/c8/3c391-tclean-multiscale-500iters_CASA5.4.0.jpeg", outdir / "original-3c391-multiscale-500iters.jpeg")
+    originals["vla_residual"] = ("https://casaguides.nrao.edu/images/9/9e/3c391-tclean-residuals-CASA6.4.1.png", outdir / "original-3c391-final-residual.png")
 for url, path in originals.values():
     if not path.exists():
         urlretrieve(url, path)
@@ -519,6 +520,15 @@ if want_dataset("alma"):
         "alma",
     )
 if want_dataset("vla"):
+    summary["vla_residual"] = write_panel(
+        "vla-3c391-multiscale",
+        "3C391 multiscale continuum mosaic residual with niter=500",
+        originals["vla_residual"][1],
+        outdir / "vla-3c391" / "casa-3c391-ctm-spw0-multiscale",
+        outdir / "vla-3c391" / "rust-3c391-ctm-spw0-multiscale",
+        ".residual",
+        "vla",
+    )
     summary["vla_image"] = write_panel(
         "vla-3c391-multiscale",
         "3C391 multiscale continuum mosaic restored image with niter=500",

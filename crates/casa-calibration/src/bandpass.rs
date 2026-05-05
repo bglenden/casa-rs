@@ -651,8 +651,6 @@ fn solve_bandpass_group(
                     GainSolveMode::AmplitudePhase,
                     SolveGraphOptions {
                         refant_id,
-                        field_id: group.field_id,
-                        spw_id: group.spw_id,
                         min_baselines_per_antenna: 0,
                     },
                 )

@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use casa_ms::ChannelSelection;
 use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
@@ -234,6 +235,7 @@ pub(crate) fn collect_selected_rows(
                 observation_id: get_i32(ms.main_table(), row_index, "OBSERVATION_ID")?,
                 data_desc_id,
                 data_spw_id,
+                channel_selection: selection.channel_selection_for_spw(data_spw_id).cloned(),
                 antenna1: get_i32(ms.main_table(), row_index, "ANTENNA1")?,
                 antenna2: get_i32(ms.main_table(), row_index, "ANTENNA2")?,
                 time_seconds: get_f64(ms.main_table(), row_index, "TIME")?,
@@ -308,6 +310,7 @@ pub(crate) struct SelectedSolveRow {
     pub(crate) observation_id: i32,
     pub(crate) data_desc_id: i32,
     pub(crate) data_spw_id: i32,
+    pub(crate) channel_selection: Option<ChannelSelection>,
     pub(crate) antenna1: i32,
     pub(crate) antenna2: i32,
     pub(crate) time_seconds: f64,
@@ -551,6 +554,7 @@ impl SolveAccumulator {
                 shape: weight_spectrum.shape().to_vec(),
             });
         }
+        let selected_channels = selected_channels(row, data.shape()[1])?;
 
         let graph_count = match gain_type {
             GainType::G => 2,
@@ -578,7 +582,7 @@ impl SolveAccumulator {
 
         let mut time_centroid_weight = 0.0_f64;
         for corr_index in 0..data.shape()[0] {
-            for chan_index in 0..data.shape()[1] {
+            for &chan_index in &selected_channels {
                 let weight = channel_weight(weights, weight_spectrum, corr_index, chan_index);
                 if weight > 0.0 && !solve_sample_flagged(flags, gain_type, corr_index, chan_index) {
                     time_centroid_weight += f64::from(weight);
@@ -607,7 +611,7 @@ impl SolveAccumulator {
                 GainType::G => receptors.0,
                 GainType::T => 0,
             };
-            for chan_index in 0..data.shape()[1] {
+            for &chan_index in &selected_channels {
                 if solve_sample_flagged(flags, gain_type, corr_index, chan_index) {
                     continue;
                 }
@@ -703,6 +707,23 @@ impl SolveAccumulator {
     }
 }
 
+fn selected_channels(
+    row: &SelectedSolveRow,
+    channel_count: usize,
+) -> Result<Vec<usize>, GainSolveError> {
+    match &row.channel_selection {
+        Some(selection) => {
+            selection
+                .indices(channel_count)
+                .map_err(|source| GainSolveError::OpenMeasurementSet {
+                    path: "<measurement-set channel selection>".to_string(),
+                    source,
+                })
+        }
+        None => Ok((0..channel_count).collect()),
+    }
+}
+
 fn channel_has_any_correlation_flagged(flags: &ArrayD<bool>, chan_index: usize) -> bool {
     (0..flags.shape()[0]).any(|corr_index| flags[[corr_index, chan_index]])
 }
@@ -710,12 +731,12 @@ fn channel_has_any_correlation_flagged(flags: &ArrayD<bool>, chan_index: usize) 
 fn solve_sample_flagged(
     flags: &ArrayD<bool>,
     gain_type: GainType,
-    corr_index: usize,
+    _corr_index: usize,
     chan_index: usize,
 ) -> bool {
     match gain_type {
         GainType::G => channel_has_any_correlation_flagged(flags, chan_index),
-        GainType::T => flags[[corr_index, chan_index]],
+        GainType::T => channel_has_any_correlation_flagged(flags, chan_index),
     }
 }
 

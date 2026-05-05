@@ -162,6 +162,18 @@ impl MsCalEngine {
         Ok(frame.with_direction(self.field_dir(field_id)?.clone()))
     }
 
+    /// Build a spectral-conversion frame using the observatory position and an
+    /// explicit source direction.
+    pub fn spectral_frame_observatory_direction(
+        &self,
+        time_mjd_sec: f64,
+        direction: MDirection,
+    ) -> MsResult<MeasFrame> {
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        Ok(frame.with_direction(direction))
+    }
+
     /// Get the field direction for the given field_id.
     fn field_dir(&self, field_id: usize) -> MsResult<&MDirection> {
         self.field_directions

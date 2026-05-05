@@ -20,6 +20,7 @@ pub(crate) struct SolutionRow {
     pub(crate) antenna_id: i32,
     pub(crate) scan_number: i32,
     pub(crate) observation_id: i32,
+    pub(crate) refant_id: i32,
     pub(crate) gains: Vec<Complex32>,
     pub(crate) flags: Vec<bool>,
     pub(crate) param_errors: Vec<f32>,
@@ -43,8 +44,6 @@ pub(crate) struct SolvedPhaseGraph {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SolveGraphOptions {
     pub(crate) refant_id: i32,
-    pub(crate) field_id: i32,
-    pub(crate) spw_id: i32,
     pub(crate) min_baselines_per_antenna: usize,
 }
 
@@ -93,10 +92,11 @@ pub(crate) fn solve_group(
     let averaged_time = group.aggregate_time_centroid();
     let averaged_interval = group.total_interval / group.sample_rows.max(1) as f64;
     let scan_number = *group.scan_numbers.iter().next().unwrap_or(&0);
+    let solve_refant_id =
+        choose_effective_refant(&group.receptor_graphs, &group.receptor_weights, refant_id)
+            .unwrap_or(refant_id);
     let options = SolveGraphOptions {
-        refant_id,
-        field_id: group.field_id,
-        spw_id: group.spw_id,
+        refant_id: solve_refant_id,
         min_baselines_per_antenna,
     };
     let mut solved = if matches!((gain_type, solve_mode), (GainType::G, GainSolveMode::Phase)) {
@@ -122,6 +122,7 @@ pub(crate) fn solve_group(
     let mut antenna_ids = available_antennas.clone();
     antenna_ids.extend(group.antenna_ids);
     antenna_ids.insert(refant_id);
+    antenna_ids.insert(solve_refant_id);
 
     let solution_rows = antenna_ids
         .into_iter()
@@ -147,8 +148,8 @@ pub(crate) fn solve_group(
                 GainType::G => solved
                     .iter()
                     .map(|per_receptor| {
-                        let connected =
-                            antenna_id == refant_id || per_receptor.reachable.contains(&antenna_id);
+                        let connected = antenna_id == solve_refant_id
+                            || per_receptor.reachable.contains(&antenna_id);
                         let snr = per_receptor
                             .snr
                             .get(&antenna_id)
@@ -164,7 +165,7 @@ pub(crate) fn solve_group(
                     .collect(),
                 GainType::T => {
                     let connected =
-                        antenna_id == refant_id || solved[0].reachable.contains(&antenna_id);
+                        antenna_id == solve_refant_id || solved[0].reachable.contains(&antenna_id);
                     let snr = solved[0].snr.get(&antenna_id).copied().unwrap_or_default();
                     let param_error = solved[0]
                         .param_error
@@ -244,6 +245,7 @@ pub(crate) fn solve_group(
                 antenna_id,
                 scan_number,
                 observation_id: group.observation_id,
+                refant_id: solve_refant_id,
                 gains,
                 flags,
                 param_errors,
@@ -258,6 +260,40 @@ pub(crate) fn solve_group(
 
 fn below_min_snr(snr: f32, min_snr: f32) -> bool {
     snr <= min_snr
+}
+
+fn choose_effective_refant(
+    graphs: &[HashMap<(i32, i32), Complex32>],
+    weights: &[HashMap<(i32, i32), f32>],
+    preferred_refant_id: i32,
+) -> Option<i32> {
+    let mut connected = BTreeSet::new();
+    let mut antenna_ids = BTreeSet::new();
+    for (graph, weights) in graphs.iter().zip(weights.iter()) {
+        for (&(antenna1, antenna2), weight) in weights {
+            if *weight <= f32::EPSILON {
+                continue;
+            }
+            if !graph.contains_key(&(antenna1, antenna2)) {
+                continue;
+            }
+            antenna_ids.insert(antenna1);
+            antenna_ids.insert(antenna2);
+            if antenna1 == preferred_refant_id {
+                connected.insert(antenna2);
+            }
+            if antenna2 == preferred_refant_id {
+                connected.insert(antenna1);
+            }
+        }
+    }
+    if connected
+        .iter()
+        .any(|antenna_id| *antenna_id != preferred_refant_id)
+    {
+        return Some(preferred_refant_id);
+    }
+    antenna_ids.into_iter().next()
 }
 
 struct PreparedPhaseGraph {
@@ -306,16 +342,6 @@ fn prepare_phase_graph(
         })
         .collect::<HashMap<_, _>>();
     let reachable = reachable_antennas(&active_graph, refant_id);
-
-    for antenna_id in &antenna_ids {
-        if *antenna_id != refant_id && !reachable.contains(antenna_id) {
-            return Err(GainSolveError::UnsolvableAntenna {
-                antenna_id: *antenna_id,
-                field_id: options.field_id,
-                spw_id: options.spw_id,
-            });
-        }
-    }
 
     let active_antenna_ids = antenna_ids
         .iter()
@@ -448,16 +474,6 @@ pub(crate) fn solve_graph(
         })
         .collect::<HashMap<_, _>>();
     let reachable = reachable_antennas(&active_graph, refant_id);
-
-    for antenna_id in &antenna_ids {
-        if *antenna_id != refant_id && !reachable.contains(antenna_id) {
-            return Err(GainSolveError::UnsolvableAntenna {
-                antenna_id: *antenna_id,
-                field_id: options.field_id,
-                spw_id: options.spw_id,
-            });
-        }
-    }
 
     let active_antenna_ids = antenna_ids
         .iter()
@@ -1648,8 +1664,6 @@ mod tests {
             GainSolveMode::Phase,
             SolveGraphOptions {
                 refant_id: 0,
-                field_id: 0,
-                spw_id: 0,
                 min_baselines_per_antenna: 0,
             },
         )
@@ -1663,5 +1677,67 @@ mod tests {
             "phase-only diagnostics should use pre-normalization amplitudes, not unit gains"
         );
         assert!(solved.param_error.values().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn solve_group_flags_disconnected_antennas_instead_of_failing() {
+        let mut graph = HashMap::new();
+        let mut weights = HashMap::new();
+        let mut stats = HashMap::new();
+
+        add_edge(
+            &mut graph,
+            &mut weights,
+            &mut stats,
+            0,
+            1,
+            1.0,
+            Complex32::new(1.0, 0.0),
+        );
+        add_edge(
+            &mut graph,
+            &mut weights,
+            &mut stats,
+            2,
+            3,
+            1.0,
+            Complex32::new(1.0, 0.0),
+        );
+
+        let mut group = SolveAccumulator::new(12, 0, 0);
+        group.min_time = 1.0;
+        group.max_time = 1.0;
+        group.unique_time_sum = 1.0;
+        group.unique_time_count = 1;
+        group.time_centroid_weighted_sum = 1.0;
+        group.time_centroid_weight = 1.0;
+        group.total_interval = 1.0;
+        group.sample_rows = 1;
+        group.scan_numbers.insert(9);
+        group.antenna_ids.extend([0, 1, 2, 3]);
+        group.receptor_graphs = vec![graph];
+        group.receptor_weights = vec![weights];
+        group.receptor_stats = vec![stats];
+
+        let rows = solve_group(
+            group,
+            &BTreeSet::from([0, 1, 2, 3]),
+            GainType::T,
+            GainSolveMode::Phase,
+            0,
+            0.0,
+            0,
+        )
+        .expect("solve should emit flagged rows for the disconnected component");
+
+        let row_for = |antenna_id| {
+            rows.iter()
+                .find(|row| row.antenna_id == antenna_id)
+                .expect("solution row")
+        };
+        assert!(!row_for(0).flags[0]);
+        assert!(!row_for(1).flags[0]);
+        assert!(row_for(2).flags[0]);
+        assert!(row_for(3).flags[0]);
     }
 }

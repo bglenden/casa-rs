@@ -20,6 +20,7 @@ fn mstransform_selects_channels_updates_metadata_and_weight_spectrum() {
         spw: "0:2~5".to_string(),
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new(),
+        keep_flags: true,
     })
     .expect("mstransform");
 
@@ -103,6 +104,7 @@ fn mstransform_filters_rows_by_selected_spw_and_preserves_time_order() {
         spw: "1:0~5".to_string(),
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new().field(&[0]),
+        keep_flags: true,
     })
     .expect("mstransform spw 1");
 
@@ -122,9 +124,20 @@ fn mstransform_filters_rows_by_selected_spw_and_preserves_time_order() {
                 .cell_accessor(row_index, "DATA_DESC_ID")
                 .and_then(|cell| cell.scalar())
                 .expect("DATA_DESC_ID"),
-            &ScalarValue::Int32(1)
+            &ScalarValue::Int32(0)
         );
     }
+    let spw = output.spectral_window().expect("SPECTRAL_WINDOW");
+    assert_eq!(spw.row_count(), 1);
+    assert_eq!(spw.num_chan(0).expect("NUM_CHAN"), 6);
+    let data_description = output.data_description().expect("DATA_DESCRIPTION");
+    assert_eq!(data_description.row_count(), 1);
+    assert_eq!(
+        data_description
+            .spectral_window_id(0)
+            .expect("compact DATA_DESCRIPTION SPW"),
+        0
+    );
     assert_eq!(
         output
             .main_table()
@@ -152,6 +165,43 @@ fn mstransform_filters_rows_by_selected_spw_and_preserves_time_order() {
 }
 
 #[test]
+fn mstransform_no_keepflags_drops_flag_row_samples() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input_ms = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[1, 3]);
+    let output_ms = dir.path().join("unflagged.ms");
+
+    let report = mstransform(&MsTransformRequest {
+        input_ms: input_ms.clone(),
+        output_ms: output_ms.clone(),
+        spw: "0:0~3".to_string(),
+        data_column: TransformDataColumn::Data,
+        selection: MsSelection::new(),
+        keep_flags: false,
+    })
+    .expect("mstransform keepflags false");
+
+    assert_eq!(report.row_count, 2);
+    let output = MeasurementSet::open(&output_ms).expect("open transformed MS");
+    assert_eq!(output.row_count(), 2);
+    assert_eq!(
+        output
+            .main_table()
+            .cell_accessor(0, "SCAN_NUMBER")
+            .and_then(|cell| cell.scalar())
+            .expect("first scan"),
+        &ScalarValue::Int32(1)
+    );
+    assert_eq!(
+        output
+            .main_table()
+            .cell_accessor(1, "SCAN_NUMBER")
+            .and_then(|cell| cell.scalar())
+            .expect("second scan"),
+        &ScalarValue::Int32(3)
+    );
+}
+
+#[test]
 fn mstransform_reports_contract_errors_before_mutating_outputs() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input_ms = common::create_msexplore_fixture_ms(dir.path());
@@ -163,6 +213,7 @@ fn mstransform_reports_contract_errors_before_mutating_outputs() {
         spw: "0".to_string(),
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new(),
+        keep_flags: true,
     })
     .unwrap_err();
     assert!(same_path.to_string().contains("must differ"));
@@ -173,6 +224,7 @@ fn mstransform_reports_contract_errors_before_mutating_outputs() {
         spw: "9".to_string(),
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new(),
+        keep_flags: true,
     })
     .unwrap_err();
     assert!(invalid_spw.to_string().contains("outside SPECTRAL_WINDOW"));
@@ -184,6 +236,7 @@ fn mstransform_reports_contract_errors_before_mutating_outputs() {
         spw: "0".to_string(),
         data_column: TransformDataColumn::CorrectedData,
         selection: MsSelection::new(),
+        keep_flags: true,
     })
     .unwrap_err();
     assert!(missing_column.to_string().contains("CORRECTED_DATA"));
