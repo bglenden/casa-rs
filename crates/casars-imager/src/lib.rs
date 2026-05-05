@@ -2312,7 +2312,7 @@ fn merge_two_prepared_inputs(
             for (gridder_index, (left_mode, right_mode)) in left
                 .gridder_modes
                 .iter_mut()
-                .zip(right.gridder_modes.into_iter())
+                .zip(right.gridder_modes)
                 .enumerate()
             {
                 *left_mode = merge_gridder_modes(
@@ -2322,11 +2322,8 @@ fn merge_two_prepared_inputs(
                     right_visibility_batch_counts[gridder_index],
                 )?;
             }
-            for (channel_index, (left_channel, right_channel)) in left
-                .channels
-                .iter_mut()
-                .zip(right.channels.into_iter())
-                .enumerate()
+            for (channel_index, (left_channel, right_channel)) in
+                left.channels.iter_mut().zip(right.channels).enumerate()
             {
                 if !frequencies_close(
                     left_channel.channel_frequency_hz,
@@ -2454,7 +2451,7 @@ fn merge_casa_cube_briggs_preweighting(
             for (left_indices, right_indices) in left
                 .channel_density_plane_indices
                 .iter_mut()
-                .zip(right.channel_density_plane_indices.into_iter())
+                .zip(right.channel_density_plane_indices)
             {
                 left_indices.extend(right_indices.into_iter().map(|index| {
                     index.and_then(|index| right_density_index_remap.get(index).copied().flatten())
@@ -2463,14 +2460,14 @@ fn merge_casa_cube_briggs_preweighting(
             for (left_rows, right_rows) in left
                 .channel_sample_rows
                 .iter_mut()
-                .zip(right.channel_sample_rows.into_iter())
+                .zip(right.channel_sample_rows)
             {
                 left_rows.extend(right_rows);
             }
             for (left_channels, right_channels) in left
                 .channel_sample_source_channels
                 .iter_mut()
-                .zip(right.channel_sample_source_channels.into_iter())
+                .zip(right.channel_sample_source_channels)
             {
                 left_channels.extend(right_channels);
             }
@@ -3174,10 +3171,8 @@ fn run_frontend_cube(
     };
 
     let mut clean_threshold_override = clean_threshold_override;
-    for (channel_index, (channel, gridder_mode)) in channels
-        .into_iter()
-        .zip(gridder_modes.into_iter())
-        .enumerate()
+    for (channel_index, (channel, gridder_mode)) in
+        channels.into_iter().zip(gridder_modes).enumerate()
     {
         let dirty_seed = clean_threshold_override.as_mut().map(|(_, seeds)| {
             std::mem::replace(
@@ -9239,9 +9234,8 @@ fn infer_mosaic_beam_frequencies_hz(
             &spw_frequencies_hz,
             &spw_widths_hz,
         );
-        for (sample_index, beam_frequency_hz) in sample_indices
-            .into_iter()
-            .zip(spw_beam_frequencies_hz.into_iter())
+        for (sample_index, beam_frequency_hz) in
+            sample_indices.into_iter().zip(spw_beam_frequencies_hz)
         {
             beam_frequencies_hz[sample_index] = beam_frequency_hz;
         }
