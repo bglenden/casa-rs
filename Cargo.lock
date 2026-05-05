@@ -799,6 +799,7 @@ dependencies = [
  "anyhow",
  "camino",
  "cargo_metadata",
+ "casa-coordinates",
  "casa-images",
  "casa-ms",
  "casa-tables",
