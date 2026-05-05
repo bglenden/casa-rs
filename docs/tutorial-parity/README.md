@@ -38,6 +38,7 @@ functionality.
 ## Wave 7 Artifacts
 
 - [Performance closeout](wave-7-performance-closeout.md)
+- [Ticket-level performance closeout](wave-7-ticket-closeout.md)
 
 ## Source Pages
 

@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-05
-Verification: `bash -n scripts/run-wave7-performance-closeout.sh`; `just docs-check`
+Verification: `bash -n scripts/run-wave7-performance-closeout.sh`; `bash -n scripts/run-wave7-ticket-closeout.sh`; `just docs-check`; `just quick`; `just verify`
 
 Wave issue: #144
 Child issue: #130
@@ -83,3 +83,9 @@ Wave 7 closeout created #197, #198, and #199 as follow-up tickets. The wave
 should not attempt to fix imaging throughput directly; any algorithm,
 concurrency, or runtime-model change must happen under the shaped follow-up
 issue and the stop-and-ask rules in `AGENTS.md`.
+
+The ticket-level closeout is recorded in
+`docs/tutorial-parity/wave-7-ticket-closeout.md`. It created #204 for serial
+mosaic grid/degrid optimization and #205 for TW Hydra applycal persistence
+overhead; the direct #199 `plotms` run did not confirm a Rust plotting
+regression.
