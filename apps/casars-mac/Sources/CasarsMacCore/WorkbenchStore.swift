@@ -99,7 +99,8 @@ public final class WorkbenchStore: ObservableObject {
     private let probeClient: ProjectProbeClient
     private let plotClient: MeasurementSetPlotClient
     private let dirtyImagingClient: DirtyImagingTaskClient
-    private var activeTaskExecution: DirtyImagingTaskExecution?
+    private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated)
+    private var activeTaskExecutions: [String: DirtyImagingTaskExecution] = [:]
 
     public init(
         state: WorkbenchState = EmptyWorkbench.makeState(),
@@ -268,30 +269,58 @@ public final class WorkbenchStore: ObservableObject {
             state.measurementSetPlots[datasetID] = plotState
             return
         }
+
+        let request = MeasurementSetPlotBuildRequest(
+            datasetPath: dataset.path,
+            preset: plotState.preset,
+            field: selectorToken(plotState.selectedField),
+            spectralWindow: selectorToken(plotState.selectedSpectralWindow),
+            correlation: selectorToken(plotState.selectedCorrelation),
+            dataColumn: plotState.dataColumn
+        )
+        let tabID = dataset.explorerTabID
+        let jobID = nextJobID(prefix: "ms-plot")
+        startJob(
+            WorkbenchJob(
+                id: jobID,
+                tabID: tabID,
+                kind: .measurementSetPlot,
+                owner: .user,
+                status: .running,
+                progress: 0.05,
+                title: "Generate \(plotState.preset.title)",
+                detail: dataset.name,
+                logLines: ["Queued MeasurementSet plot render.", request.preset.title],
+                lastEvent: "started"
+            )
+        )
+
         plotState.status = .running
         plotState.lastError = nil
         state.measurementSetPlots[datasetID] = plotState
 
-        do {
-            let result = try plotClient.buildPlot(
-                request: MeasurementSetPlotBuildRequest(
-                    datasetPath: dataset.path,
-                    preset: plotState.preset,
-                    field: selectorToken(plotState.selectedField),
-                    spectralWindow: selectorToken(plotState.selectedSpectralWindow),
-                    correlation: selectorToken(plotState.selectedCorrelation),
-                    dataColumn: plotState.dataColumn
-                )
-            )
-            plotState.result = result
-            plotState.status = .ready
-            cacheMeasurementSetPlotResult(result, for: dataset, plotState: plotState)
-            state.measurementSetPlots[datasetID] = plotState
-        } catch {
-            plotState.status = .failed
-            plotState.lastError = "\(error)"
-            state.measurementSetPlots[datasetID] = plotState
-            state.lastErrors.append("Render plot for \(dataset.name): \(error)")
+        let requestedPlotState = plotState
+        plotQueue.async { [plotClient] in
+            do {
+                let result = try plotClient.buildPlot(request: request)
+                DispatchQueue.main.async { [weak self] in
+                    self?.finishMeasurementSetPlotJob(
+                        jobID: jobID,
+                        dataset: dataset,
+                        plotState: requestedPlotState,
+                        result: result
+                    )
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.failMeasurementSetPlotJob(
+                        jobID: jobID,
+                        datasetID: datasetID,
+                        datasetName: dataset.name,
+                        error: "\(error)"
+                    )
+                }
+            }
         }
     }
 
@@ -701,8 +730,23 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
 
-        let runID = "dirty-imaging-\(nextDirtyImagingRunIndex())"
+        let runID = nextJobID(prefix: "dirty-imaging")
         let request = DirtyImagingTaskRequest(runID: runID, parameters: parameters)
+        let tabID = activeTaskTabID(parameters: parameters)
+        startJob(
+            WorkbenchJob(
+                id: runID,
+                tabID: tabID,
+                kind: .dirtyImagingTask,
+                owner: .user,
+                status: .running,
+                progress: 0.05,
+                title: "Dirty imaging",
+                detail: parameters.measurementSetPath,
+                logLines: ["Starting casars-imager dirty imaging task.", parameters.requestSummary],
+                lastEvent: "started"
+            )
+        )
         state.taskRun = TaskRun(
             runID: runID,
             state: .running,
@@ -719,22 +763,13 @@ public final class WorkbenchStore: ObservableObject {
 
         do {
             let execution = try dirtyImagingClient.startDirtyImaging(request: request) { [weak self] event in
-                self?.handleDirtyImagingEvent(event, runID: runID)
+                self?.handleDirtyImagingEvent(event, runID: runID, jobID: runID)
             }
-            if state.taskRun.runID == runID && state.taskRun.state == .running {
-                activeTaskExecution = execution
+            if state.jobs[runID]?.status == .running {
+                activeTaskExecutions[runID] = execution
             }
         } catch {
-            state.taskRun = TaskRun(
-                runID: runID,
-                state: .failed,
-                progress: 1.0,
-                logLines: ["Failed to start casars-imager."],
-                warnings: [],
-                products: [],
-                diagnostics: ["\(error)"],
-                requestSummary: parameters.requestSummary
-            )
+            failDirtyImagingJob(runID: runID, message: "Failed to start casars-imager.", diagnostics: ["\(error)"])
             state.lastErrors.append("Start dirty imaging: \(error)")
         }
     }
@@ -746,15 +781,11 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
 
-        guard state.taskRun.state == .running else {
+        guard state.taskRun.state == .running, let runID = state.taskRun.runID else {
             state.lastErrors.append("No dirty imaging task is running")
             return
         }
-        activeTaskExecution?.cancel()
-        activeTaskExecution = nil
-        state.taskRun.state = .cancelled
-        state.taskRun.progress = 1.0
-        state.taskRun.logLines.append("Cancellation requested for dirty imaging task.")
+        cancelJob(runID, recordError: false)
         state.history.append(
             ProcessingHistoryEvent(
                 id: "hist-run-\(state.history.count + 1)",
@@ -798,6 +829,123 @@ public final class WorkbenchStore: ObservableObject {
         }
         let data = try encoder.encode(debugSnapshot())
         return String(decoding: data, as: UTF8.self)
+    }
+
+    public func cancelJob(_ jobID: String) {
+        cancelJob(jobID, recordError: true)
+    }
+
+    private func startJob(_ job: WorkbenchJob) {
+        if let existingJobID = state.activeJobIDsByTab[job.tabID] {
+            cancelJob(existingJobID, recordError: false)
+        }
+        state.jobs[job.id] = job
+        state.activeJobIDsByTab[job.tabID] = job.id
+    }
+
+    private func cancelJob(_ jobID: String, recordError: Bool) {
+        guard var job = state.jobs[jobID] else {
+            if recordError {
+                state.lastErrors.append("Unknown job \(jobID)")
+            }
+            return
+        }
+        guard job.status == .pending || job.status == .running else {
+            return
+        }
+
+        job.status = .cancelled
+        job.progress = 1.0
+        job.cancellationRequested = true
+        job.lastEvent = "cancelled"
+        job.logLines.append("Cancellation requested.")
+        state.jobs[jobID] = job
+        if state.activeJobIDsByTab[job.tabID] == jobID {
+            state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+        }
+
+        switch job.kind {
+        case .measurementSetPlot:
+            if let datasetID = datasetIDForExplorerTabID(job.tabID),
+               var plotState = state.measurementSetPlots[datasetID] {
+                plotState.status = .idle
+                plotState.lastError = "Cancelled"
+                state.measurementSetPlots[datasetID] = plotState
+            }
+        case .dirtyImagingTask:
+            activeTaskExecutions[jobID]?.cancel()
+            activeTaskExecutions.removeValue(forKey: jobID)
+            if state.taskRun.runID == jobID || state.taskRun.state == .running {
+                state.taskRun.state = .cancelled
+                state.taskRun.progress = 1.0
+                state.taskRun.logLines.append("Cancellation requested for dirty imaging task.")
+            }
+        }
+    }
+
+    private func nextJobID(prefix: String) -> String {
+        "\(prefix)-\(state.jobs.count + 1)"
+    }
+
+    private func datasetIDForExplorerTabID(_ tabID: String) -> String? {
+        let prefix = "tab-explorer-"
+        guard tabID.hasPrefix(prefix) else { return nil }
+        return String(tabID.dropFirst(prefix.count))
+    }
+
+    private func finishMeasurementSetPlotJob(
+        jobID: String,
+        dataset: DatasetSummary,
+        plotState requestedPlotState: MeasurementSetExplorerPlotState,
+        result: MeasurementSetPlotResultSummary
+    ) {
+        guard var job = state.jobs[jobID], job.status != .cancelled else {
+            return
+        }
+        guard state.activeJobIDsByTab[job.tabID] == jobID else {
+            return
+        }
+
+        cacheMeasurementSetPlotResult(result, for: dataset, plotState: requestedPlotState)
+        var currentPlotState = measurementSetPlotState(for: dataset.id)
+        refreshMeasurementSetPlotStateFromCache(&currentPlotState, datasetID: dataset.id)
+        state.measurementSetPlots[dataset.id] = currentPlotState
+
+        job.status = .succeeded
+        job.progress = 1.0
+        job.resultSummary = result.summary
+        job.lastEvent = "succeeded"
+        job.logLines.append("Rendered \(result.renderedPointCount) points.")
+        state.jobs[jobID] = job
+        state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+    }
+
+    private func failMeasurementSetPlotJob(
+        jobID: String,
+        datasetID: String,
+        datasetName: String,
+        error: String
+    ) {
+        guard var job = state.jobs[jobID], job.status != .cancelled else {
+            return
+        }
+        guard state.activeJobIDsByTab[job.tabID] == jobID else {
+            return
+        }
+
+        var plotState = measurementSetPlotState(for: datasetID)
+        plotState.status = .failed
+        plotState.lastError = error
+        state.measurementSetPlots[datasetID] = plotState
+
+        job.status = .failed
+        job.progress = 1.0
+        job.error = error
+        job.lastEvent = "failed"
+        job.logLines.append(error)
+        state.jobs[jobID] = job
+        state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+        state.lastErrors.append("Render plot for \(datasetName): \(error)")
     }
 
     private func openExplorer(for dataset: DatasetSummary) {
