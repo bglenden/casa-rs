@@ -139,6 +139,7 @@ struct CasarsMacApp: App {
                 store.applyAIProposal("proposal-spw")
                 store.setPythonOwner(.ai)
                 store.runTask()
+                store.openDefaultTab(kind: .plotSamples)
                 store.openDefaultTab(kind: .history)
             } else if let dataset = store.state.selectedDataset, dataset.kind == .measurementSet {
                 store.runMeasurementSetPlot(datasetID: dataset.id)

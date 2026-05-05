@@ -112,6 +112,10 @@ final class WorkbenchStoreTests: XCTestCase {
     func testCommandQueryRoutesWorkbenchShellSurfaces() {
         let store = WorkbenchStore.fixture()
 
+        store.setCommandQuery("open plot samples")
+        store.runCommandQuery()
+        XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .plotSamples)
+
         store.setCommandQuery("show inspector")
         store.setInspectorCollapsed(true)
         store.runCommandQuery()
@@ -133,6 +137,84 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertFalse(store.state.leftDockCollapsed)
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .history)
         XCTAssertEqual(store.debugSnapshot().commandQuery, "show timeline")
+    }
+
+    func testFixturePlotSamplesAreInspectable() throws {
+        let store = WorkbenchStore.fixture()
+
+        let snapshot = store.debugSnapshot()
+
+        XCTAssertEqual(snapshot.workbenchPlots.map(\.id), [
+            "sample-plotms-visibility",
+            "sample-uv-coverage",
+            "sample-image-display"
+        ])
+        XCTAssertEqual(snapshot.workbenchPlots[0].layerCount, 3)
+        XCTAssertGreaterThan(snapshot.workbenchPlots[0].pointCount, 250)
+        XCTAssertEqual(snapshot.workbenchPlots[2].rasterLayerCount, 1)
+        XCTAssertFalse(snapshot.workbenchPlots[2].dataFingerprint.isEmpty)
+        XCTAssertNoThrow(try store.debugJSON())
+    }
+
+    func testWorkbenchPlotDisplayEditsDoNotRegeneratePayload() throws {
+        let store = WorkbenchStore.fixture()
+        let plotID = "sample-plotms-visibility"
+        let original = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        let originalFingerprint = original.dataFingerprint
+        let layerID = try XCTUnwrap(original.layers.first?.id)
+
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setLayerSymbolSize(layerID: layerID, size: 9.5)
+        )
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setLayerOpacity(layerID: layerID, opacity: 0.35)
+        )
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .addAnnotation(id: "fit-note", x: 60, y: 4.4, text: "fit candidate")
+        )
+
+        let edited = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        XCTAssertEqual(edited.dataFingerprint, originalFingerprint)
+        XCTAssertEqual(edited.styleRevision, 3)
+        XCTAssertEqual(edited.layers.first?.style.symbolSize, 9.5)
+        XCTAssertEqual(edited.layers.first?.style.opacity, 0.35)
+        XCTAssertTrue(edited.annotations.contains { $0.id == "fit-note" })
+
+        let encodedAction = try JSONEncoder().encode(
+            WorkbenchPlotEditAction.setLayerLineWidth(layerID: "gaussian-fit", width: 3.0)
+        )
+        XCTAssertFalse(encodedAction.isEmpty)
+    }
+
+    func testWorkbenchImageSampleStretchAndColorMapAreDisplayOnly() throws {
+        let store = WorkbenchStore.fixture()
+        let plotID = "sample-image-display"
+        let original = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        let originalFingerprint = original.dataFingerprint
+        let layerID = try XCTUnwrap(original.layers.first?.id)
+
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setRasterStretch(layerID: layerID, stretch: .logarithmic)
+        )
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setRasterColorMap(layerID: layerID, colorMap: .magma)
+        )
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setAxisLabelsVisible(axisID: "ra", visible: false)
+        )
+
+        let edited = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        XCTAssertEqual(edited.dataFingerprint, originalFingerprint)
+        XCTAssertEqual(edited.styleRevision, 3)
+        XCTAssertEqual(edited.layers.first?.raster?.stretch, .logarithmic)
+        XCTAssertEqual(edited.layers.first?.raster?.colorMap, .magma)
+        XCTAssertEqual(edited.axes.first?.labelsVisible, false)
     }
 
     func testAIProposalMustBeAppliedBeforeItMutatesTaskParameters() {

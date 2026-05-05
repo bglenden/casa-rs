@@ -64,6 +64,9 @@ struct CentralWorkspaceView: View {
                     store.openDefaultTab(kind: .task)
                 }
                 .disabled(store.state.selectedDataset == nil)
+                Button("Plot Samples") {
+                    store.openDefaultTab(kind: .plotSamples)
+                }
                 Button("AI Chat") {
                     store.openDefaultTab(kind: .aiChat)
                 }
@@ -98,6 +101,8 @@ struct CentralWorkspaceView: View {
                 DatasetExplorerPanel(store: store, datasetID: tab.datasetID)
             case .task:
                 TaskPanel(store: store)
+            case .plotSamples:
+                PlotSamplesPanel(store: store)
             case .aiChat:
                 AIChatPanel(store: store)
             case .python:
@@ -114,6 +119,7 @@ struct CentralWorkspaceView: View {
         switch kind {
         case .datasetExplorer: "chart.xyaxis.line"
         case .task: "slider.horizontal.3"
+        case .plotSamples: "chart.xyaxis.line"
         case .aiChat: "sparkles"
         case .python: "terminal"
         case .history: "clock"

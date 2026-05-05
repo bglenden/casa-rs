@@ -369,7 +369,9 @@ public final class WorkbenchStore: ObservableObject {
         }
 
         let normalized = query.lowercased()
-        if normalized.contains("python") {
+        if normalized.contains("plot") || normalized.contains("chart") {
+            openDefaultTab(kind: .plotSamples)
+        } else if normalized.contains("python") {
             openDefaultTab(kind: .python)
         } else if normalized.contains("history") || normalized.contains("timeline") {
             openDefaultTab(kind: .history)
@@ -443,6 +445,11 @@ public final class WorkbenchStore: ObservableObject {
             } else {
                 openDirtyImagingTaskForSelectedDataset()
             }
+        case .plotSamples:
+            if state.plotDocuments.isEmpty {
+                state.plotDocuments = WorkbenchPlotSamples.all()
+            }
+            openTab(WorkbenchTab(id: "tab-plot-samples", title: "Plot Samples", kind: .plotSamples))
         case .aiChat:
             guard state.isDemoProject else {
                 state.lastErrors.append("AI chat is not connected yet")
@@ -458,6 +465,18 @@ public final class WorkbenchStore: ObservableObject {
         case .history:
             openTab(WorkbenchTab(id: "tab-history", title: "History", kind: .history))
         }
+    }
+
+    public func applyWorkbenchPlotEdit(plotID: String, action: WorkbenchPlotEditAction) {
+        guard let index = state.plotDocuments.firstIndex(where: { $0.id == plotID }) else {
+            state.lastErrors.append("Unknown workbench plot \(plotID)")
+            return
+        }
+        state.plotDocuments[index].apply(action)
+    }
+
+    public func resetWorkbenchPlotSamples() {
+        state.plotDocuments = WorkbenchPlotSamples.all()
     }
 
     public func openDirtyImagingTaskForSelectedDataset() {

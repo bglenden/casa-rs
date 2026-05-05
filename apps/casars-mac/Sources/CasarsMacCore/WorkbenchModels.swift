@@ -171,6 +171,7 @@ public extension ProjectSource {
 public enum WorkbenchTabKind: String, Codable, Equatable {
     case datasetExplorer
     case task
+    case plotSamples
     case aiChat
     case python
     case history
@@ -694,6 +695,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var python: PythonPanelState
     public var measurementSetPlots: [String: MeasurementSetExplorerPlotState]
     public var measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary]
+    public var plotDocuments: [WorkbenchPlotDocument]
     public var jobs: [String: WorkbenchJob]
     public var activeJobIDsByTab: [String: String]
     public var runProductGroups: [RunProductGroup]
@@ -719,6 +721,7 @@ public struct WorkbenchState: Codable, Equatable {
         python: PythonPanelState,
         measurementSetPlots: [String: MeasurementSetExplorerPlotState] = [:],
         measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary] = [:],
+        plotDocuments: [WorkbenchPlotDocument] = [],
         jobs: [String: WorkbenchJob] = [:],
         activeJobIDsByTab: [String: String] = [:],
         runProductGroups: [RunProductGroup] = [],
@@ -743,6 +746,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.python = python
         self.measurementSetPlots = measurementSetPlots
         self.measurementSetPlotResultCache = measurementSetPlotResultCache
+        self.plotDocuments = plotDocuments
         self.jobs = jobs
         self.activeJobIDsByTab = activeJobIDsByTab
         self.runProductGroups = runProductGroups
@@ -829,6 +833,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var aiProposalStates: [String: AIProposalState]
     public var pythonOwner: PythonOwner
     public var measurementSetPlots: [String: DebugMeasurementSetPlotSnapshot]
+    public var workbenchPlots: [DebugWorkbenchPlotSnapshot]
     public var jobs: [DebugWorkbenchJobSnapshot]
     public var activeJobIDsByTab: [String: String]
     public var runningJobCount: Int
@@ -867,6 +872,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
                 (datasetID, DebugMeasurementSetPlotSnapshot(plotState: plotState))
             }
         )
+        workbenchPlots = state.plotDocuments.map(DebugWorkbenchPlotSnapshot.init(plot:))
         jobs = state.jobs.values
             .sorted { $0.id < $1.id }
             .map(DebugWorkbenchJobSnapshot.init(job:))
