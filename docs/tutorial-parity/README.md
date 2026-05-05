@@ -35,6 +35,10 @@ functionality.
 - [Issue 163 M100 Band 3 Combine evidence](wave-6-issue-163-m100-band3-combine.md)
 - [Issue 169 VLA 3C391 evidence](wave-6-issue-169-3c391.md)
 
+## Wave 7 Artifacts
+
+- [Performance closeout](wave-7-performance-closeout.md)
+
 ## Source Pages
 
 - CASA Guides main page:
