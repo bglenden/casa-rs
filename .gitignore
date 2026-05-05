@@ -3,6 +3,7 @@ target-clippy/
 dist/
 site/
 .DS_Store
+.obsidian/
 crates/casa-test-support/tAipsIO_tmp.*
 tarpaulin-ci/
 casa-*.log
