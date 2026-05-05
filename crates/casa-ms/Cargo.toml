@@ -45,6 +45,14 @@ name = "mstransform"
 path = "src/bin/mstransform.rs"
 
 [[bin]]
+name = "flagdata"
+path = "src/bin/flagdata.rs"
+
+[[bin]]
+name = "flagmanager"
+path = "src/bin/flagmanager.rs"
+
+[[bin]]
 name = "simobserve"
 path = "src/bin/simobserve.rs"
 
@@ -100,6 +108,10 @@ path = "tests/source_subtable_regression.rs"
 [[test]]
 name = "transform"
 path = "tests/transform.rs"
+
+[[test]]
+name = "flagging"
+path = "tests/flagging.rs"
 
 [[test]]
 name = "spectral_frame_parity"
