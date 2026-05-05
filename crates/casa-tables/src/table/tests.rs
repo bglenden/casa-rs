@@ -3684,6 +3684,111 @@ fn add_variable_shape_tiled_column_in_place_persists_defined_rows_only() {
 }
 
 #[test]
+fn clone_tiled_array_column_in_place_preserves_source_values_and_allows_sparse_patch() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "DATA",
+        PrimitiveType::Complex32,
+        Some(2),
+    )])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    for row_idx in 0..4 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "DATA",
+                Value::Array(ArrayValue::Complex32(
+                    ArrayD::from_shape_vec(
+                        vec![2, 2],
+                        vec![
+                            casa_types::Complex32::new(row_idx as f32, 0.0),
+                            casa_types::Complex32::new(row_idx as f32, 1.0),
+                            casa_types::Complex32::new(row_idx as f32, 2.0),
+                            casa_types::Complex32::new(row_idx as f32, 3.0),
+                        ],
+                    )
+                    .expect("shape DATA"),
+                )),
+            )]))
+            .expect("add row");
+    }
+
+    let root = unique_test_dir("clone_tiled_array_column");
+    std::fs::create_dir_all(&root).expect("mkdir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::TiledShapeStMan))
+        .expect("save source table");
+
+    let mut reopened = Table::open(TableOptions::new(&root)).expect("open source table");
+    reopened
+        .add_column(
+            ColumnSchema::array_variable("CORRECTED_DATA", PrimitiveType::Complex32, Some(2)),
+            None,
+        )
+        .expect("add corrected column");
+    reopened
+        .save_added_tiled_column_clone_in_place_assuming_valid(
+            "DATA",
+            "CORRECTED_DATA",
+            "TiledCorrected",
+        )
+        .expect("clone DATA to CORRECTED_DATA");
+    table_set_cell(
+        &mut reopened,
+        2,
+        "CORRECTED_DATA",
+        Value::Array(ArrayValue::Complex32(
+            ArrayD::from_shape_vec(
+                vec![2, 2],
+                vec![
+                    casa_types::Complex32::new(20.0, 0.0),
+                    casa_types::Complex32::new(20.0, 1.0),
+                    casa_types::Complex32::new(20.0, 2.0),
+                    casa_types::Complex32::new(20.0, 3.0),
+                ],
+            )
+            .expect("shape corrected"),
+        )),
+    )
+    .expect("patch row");
+    reopened
+        .save_selected_rows_in_place_assuming_valid(&["CORRECTED_DATA"], &[2])
+        .expect("sparse patch corrected");
+
+    let patched = Table::open(TableOptions::new(&root)).expect("reopen patched table");
+    assert_eq!(
+        table_array(&patched, 1, "CORRECTED_DATA"),
+        table_array(&patched, 1, "DATA")
+    );
+    assert_ne!(
+        table_array(&patched, 2, "CORRECTED_DATA"),
+        table_array(&patched, 2, "DATA")
+    );
+    assert_eq!(
+        table_array(&patched, 2, "CORRECTED_DATA"),
+        Ok(&ArrayValue::Complex32(
+            ArrayD::from_shape_vec(
+                vec![2, 2],
+                vec![
+                    casa_types::Complex32::new(20.0, 0.0),
+                    casa_types::Complex32::new(20.0, 1.0),
+                    casa_types::Complex32::new(20.0, 2.0),
+                    casa_types::Complex32::new(20.0, 3.0),
+                ],
+            )
+            .unwrap()
+        ))
+    );
+    assert!(
+        patched
+            .data_manager_info()
+            .iter()
+            .any(|dm| dm.dm_type == "TiledShapeStMan" && dm.columns == ["CORRECTED_DATA"])
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup");
+}
+
+#[test]
 fn from_rows_with_schema_persists_missing_undefined_scalar_cells() {
     use crate::schema::ColumnOptions;
 

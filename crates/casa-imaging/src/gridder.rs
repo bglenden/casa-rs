@@ -981,6 +981,28 @@ impl ScreenProjector {
         plan: &ScreenProjectSamplePlan,
         value: Complex64,
     ) {
+        if let Some(storage) = grid.as_slice_memory_order_mut() {
+            let grid_stride = self.grid_shape[1];
+            for iy in plan.min_iy..=plan.max_iy {
+                let kernel_y = (self.kernel_center as isize
+                    + iy * self.sampling as isize
+                    + plan.off_y) as usize;
+                let grid_y = (plan.loc_y + iy) as usize;
+                for ix in plan.min_ix..=plan.max_ix {
+                    let signed_x = ix * self.sampling as isize + plan.off_x;
+                    let signed_y = iy * self.sampling as isize + plan.off_y;
+                    let kernel_x = (self.kernel_center as isize + signed_x) as usize;
+                    let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
+                        + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
+                    let phasor = Complex64::new(phase.cos(), phase.sin());
+                    let kernel = self.kernel_weights[(kernel_x, kernel_y)];
+                    let cwt = Complex64::new(kernel.re as f64, kernel.im as f64) * phasor;
+                    let grid_x = (plan.loc_x + ix) as usize;
+                    storage[grid_x * grid_stride + grid_y] += value * cwt;
+                }
+            }
+            return;
+        }
         for iy in plan.min_iy..=plan.max_iy {
             let kernel_y =
                 (self.kernel_center as isize + iy * self.sampling as isize + plan.off_y) as usize;
@@ -1003,6 +1025,28 @@ impl ScreenProjector {
         grid: &Array2<Complex32>,
         plan: &ScreenProjectSamplePlan,
     ) -> Complex32 {
+        if let Some(storage) = grid.as_slice_memory_order() {
+            let grid_stride = self.grid_shape[1];
+            let mut value = Complex32::new(0.0, 0.0);
+            for iy in plan.min_iy..=plan.max_iy {
+                let kernel_y = (self.kernel_center as isize
+                    + iy * self.sampling as isize
+                    + plan.off_y) as usize;
+                let grid_y = (plan.loc_y + iy) as usize;
+                for ix in plan.min_ix..=plan.max_ix {
+                    let signed_x = ix * self.sampling as isize + plan.off_x;
+                    let signed_y = iy * self.sampling as isize + plan.off_y;
+                    let kernel_x = (self.kernel_center as isize + signed_x) as usize;
+                    let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
+                        + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
+                    let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+                    let cwt = self.kernel_weights[(kernel_x, kernel_y)] * phasor;
+                    let grid_x = (plan.loc_x + ix) as usize;
+                    value += storage[grid_x * grid_stride + grid_y] * cwt;
+                }
+            }
+            return value;
+        }
         let mut value = Complex32::new(0.0, 0.0);
         for iy in plan.min_iy..=plan.max_iy {
             let kernel_y =

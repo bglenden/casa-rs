@@ -10,9 +10,8 @@ Ticket closeouts: #197, #198, #199
 Follow-up implementation tickets: #204, #205
 
 This document records the Wave 7 ticket-level performance triage after the
-initial closeout split. The ticket work stayed inside measurement, evidence,
-and follow-up shaping; it did not change imaging, calibration, plotting, table,
-or runtime algorithms.
+initial closeout split plus the first implementation repairs for the confirmed
+imaging and calibration hotspots.
 
 The current rerun artifacts are under:
 
@@ -46,9 +45,24 @@ bottleneck to serial gridding/degridding:
 | Antennae North continuum clean | `134.19 s` | `132.804 s` | `7.299 s` | `125.471 s` | `psf_grid=80.775 s`, `residual_degrid_grid=43.334 s` |
 | VLA 3C391 multiscale mosaic | `547.93 s` | `547.390 s` | `46.314 s` | `501.041 s` | `psf_grid=184.120 s`, `residual_degrid_grid=307.836 s`, `weighting=6.465 s` |
 
-The first implementation follow-up is #204. It targets the serial mosaic
-PSF/residual grid-degrid hot path and explicitly excludes parallel/chanchunks
-work, which remains owned by #56.
+#204 now has two local mosaic hot-path fixes:
+
+- the centered per-group mosaic weight kernel is gridded once from the group
+  weight sum instead of once per accepted visibility sample;
+- mosaic screen-projector grid/degrid loops use contiguous grid slices instead
+  of per-tap `ndarray` indexing.
+
+Updated same-input casa-rs evidence:
+
+| Current profile after #204 fixes | Wall | Frontend total | prepare | run_imaging | Dominant core stages |
+|---|---:|---:|---:|---:|---|
+| Antennae North continuum clean | `51.92 s` | `51.916 s` | `2.750 s` | `49.138 s` | `psf_grid=22.991 s`, `residual_degrid_grid=25.598 s` |
+| VLA 3C391 multiscale mosaic | `309.84 s` | `309.843 s` | `36.460 s` | `273.356 s` | `psf_grid=102.227 s`, `residual_degrid_grid=163.906 s`, `weighting=4.808 s` |
+
+This moves the Antennae tutorial case from `3.19x` the current CASA C++ run
+to `1.24x`, and the 3C391 tutorial case from `7.26x` to `4.10x`, using the
+current CASA C++ timings above. The remaining #204 work is the serial mosaic
+residual-refresh path; parallel/chanchunks work remains owned by #56.
 
 ## #198 Calibration Apply/Export
 
@@ -75,8 +89,39 @@ casa-rs internal timing:
 | planning | `0.064 s` |
 | calibration load | `0.001 s` |
 
-The dominant bottleneck is save/persistence after apply, not caltable loading
-or calibration row math. The implementation follow-up is #205.
+The dominant bottleneck was save/persistence after apply, not caltable loading
+or calibration row math. #205 now has the CASA/C++ source finding: uncompressed
+`CORRECTED_DATA` creation uses `TableCopy::cloneColumnTyped<Complex>` plus
+`TableCopy::copyColumnData(..., preserveTileShape=true)` from `DATA` or
+`FLOAT_DATA`, then sparse apply writes patch selected rows.
+
+The Rust fix added the same storage-layout path for single-column tiled
+MeasurementSet data columns, then retained the existing selected-row patch
+save. One-repeat local evidence on the same TW Hydra slice:
+
+| Runtime | Wall / total |
+|---|---:|
+| CASA `applycal` | `0.808 s` |
+| casa-rs `calibrate apply` | `0.937 s` |
+| Ratio | `1.16x CASA` |
+
+Updated casa-rs internal timing:
+
+| Stage | Time |
+|---|---:|
+| report total | `0.937 s` |
+| execute apply plan | `0.871 s` |
+| save | `0.573 s` |
+| ensure corrected data | `0.001 s` |
+| row loop | `0.295 s` |
+| row read/fetch | `0.193 s` |
+| row compute | `0.093 s` |
+| row writeback | `0.005 s` |
+| planning | `0.048 s` |
+
+CASA/casatools reopened the Rust output: a selected field-5 row had
+`DATA != CORRECTED_DATA`, while an unselected row had
+`DATA == CORRECTED_DATA`, preserving CASA scratch-column semantics.
 
 ## #199 Plot Export
 

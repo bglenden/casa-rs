@@ -2169,6 +2169,43 @@ fn tsm_data_path(table_path: &Path, dm_seq_nr: u32, file_seq_nr: u32) -> std::pa
     table_path.join(format!("table.f{dm_seq_nr}_TSM{file_seq_nr}"))
 }
 
+/// Clone an existing tiled storage manager's header and payload files to a new
+/// data-manager sequence number.
+///
+/// This mirrors the storage-side part of casacore `TableCopy::cloneColumn*`
+/// for the common single-column tiled MeasurementSet data-column case. The
+/// caller is responsible for updating `table.dat` to bind the new column to
+/// `target_dm_seq_nr`.
+pub(crate) fn clone_tiled_manager_files(
+    table_path: &Path,
+    source_dm_seq_nr: u32,
+    target_dm_seq_nr: u32,
+    target_dm_name: &str,
+) -> Result<(), StorageError> {
+    let source_header_path = table_path.join(format!("table.f{source_dm_seq_nr}"));
+    let target_header_path = table_path.join(format!("table.f{target_dm_seq_nr}"));
+    let (variant, mut header) = read_tiled_header(&source_header_path)?;
+
+    if header.col_data_types.len() != 1 {
+        return Err(StorageError::UnsupportedDataManager(format!(
+            "tiled data manager {source_dm_seq_nr} has {} columns; clone_tiled_manager_files supports single-column managers",
+            header.col_data_types.len()
+        )));
+    }
+
+    for file_info in header.files.iter().flatten() {
+        let source_data_path = tsm_data_path(table_path, source_dm_seq_nr, file_info.seq_nr);
+        let target_data_path = tsm_data_path(table_path, target_dm_seq_nr, file_info.seq_nr);
+        std::fs::copy(&source_data_path, &target_data_path)?;
+    }
+
+    header.seq_nr = target_dm_seq_nr;
+    header.hypercolumn_name = target_dm_name.to_string();
+    write_tiled_header(&target_header_path, &variant, &header)?;
+    invalidate_shared_tile_cache_for_table(table_path);
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Save interface (write columns with tiled DM)
 // ---------------------------------------------------------------------------
