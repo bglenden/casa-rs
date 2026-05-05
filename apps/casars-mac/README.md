@@ -7,8 +7,8 @@ Verification: swift test; swift run casars-mac --dump-debug-state --simulate-mai
 `casars-mac` is the SwiftUI prototype for the native macOS `casa-rs`
 workbench. The app keeps a synthetic demo fixture for layout and dry-run
 coverage, but the normal interactive launcher opens a fresh temporary project
-from a bundled real MeasurementSet fixture so plot and imaging paths exercise
-real dataset discovery.
+from the local TW Hya tutorial MeasurementSet when available so plot and
+imaging paths exercise real dataset discovery with known tutorial parameters.
 
 ## Commands
 
@@ -33,14 +33,18 @@ actions in the testable core state. The runnable app also configures the
 primary macOS window for normal resizable and full-screen Space behavior.
 
 Use `./script/build_and_run.sh` for interactive GUI inspection. It stages a
-local `.app` bundle under `dist/`, unpacks
-`crates/casa-ms/tests/fixtures/mssel_test_small_multifield_spw.ms.tgz` into a
-temporary project, and launches that project with `/usr/bin/open` so Dock
+local `.app` bundle under `dist/`, unpacks the tutorial-registry
+`alma/first-look/twhya/calibrated-ms` archive from
+`${CASA_RS_TUTORIAL_DATA_ROOT}` or `~/SoftwareProjects/casa-tutorial-data` into
+a temporary project, and launches that project with `/usr/bin/open` so Dock
 activation, menus, and native full-screen Spaces behave like a normal macOS app.
-Dirty Imaging defaults for the bundled sample pick the NGC4826-F3 field, SPW 5
-(a 64-channel line window near the NGC4826 rest frequency), and raw YY because
-the sample has only one correlation plane. The temporary project is removed
-after the launched app exits. Pass `--project` to inspect an existing project
-directory, or `--empty` to start without opening a project. `swift run
+Dirty Imaging defaults for the TW Hya tutorial sample pick field 5, SPW 0,
+250 px, and 0.1 arcsec cells, matching the documented ALMA First Look MFS
+imaging slice. If the local tutorial archive is not staged, the launcher falls
+back to the bundled `mssel_test_small_multifield_spw.ms.tgz` fixture and its
+NGC4826-F3/SPW 5/raw YY defaults. Demo-mode temporary projects are removed
+after the launched app exits; the default launcher stays attached until that
+exit so cleanup is deterministic. Pass `--project` to inspect an existing
+project directory, or `--empty` to start without opening a project. `swift run
 casars-mac` is reserved for non-interactive debug-state commands and low-level
 executable diagnosis.

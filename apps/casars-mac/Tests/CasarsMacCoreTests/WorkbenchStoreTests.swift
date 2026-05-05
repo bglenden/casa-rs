@@ -534,6 +534,64 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(requestJSON).contains("\"correlation\" : \"YY\""))
     }
 
+    func testTWHyaTutorialDirtyImagingDefaultsUseKnownMFSParameters() throws {
+        let tutorial = DatasetSummary(
+            id: "/data/twhya_calibrated.ms",
+            name: "twhya_calibrated.ms",
+            path: "/data/twhya_calibrated.ms",
+            kind: .measurementSet,
+            size: "44772 selected rows, 1 spw",
+            units: "Jy, Hz, seconds",
+            fields: [
+                "0: J1037-295",
+                "1: Ceres",
+                "2: J1058+0133",
+                "3: J1107-4449",
+                "4: J1132-5606",
+                "5: TW Hya"
+            ],
+            spectralWindows: [
+                "spw 0: 384 chan, 372.533086 GHz center"
+            ],
+            correlations: ["XX", "YY"],
+            dataColumns: ["DATA"],
+            notes: "ALMA First Look TW Hya tutorial MeasurementSet."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "TW Hya Tutorial",
+                        rootPath: "/data",
+                        datasets: [tutorial],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .task)
+
+        let parameters = try XCTUnwrap(store.state.dirtyImagingTaskParameters)
+        XCTAssertEqual(parameters.selectedField, "5: TW Hya")
+        XCTAssertEqual(parameters.phaseCenterField, "5: TW Hya")
+        XCTAssertEqual(parameters.selectedSpectralWindow, "spw 0: 384 chan, 372.533086 GHz center")
+        XCTAssertNil(parameters.correlation)
+        XCTAssertEqual(parameters.imageSize, 250)
+        XCTAssertEqual(parameters.imageHeight, 250)
+        XCTAssertEqual(parameters.cellArcsec, 0.1)
+
+        let request = DirtyImagingTaskRequest(runID: "run-twhya", parameters: parameters)
+        let requestJSON = try XCTUnwrap(String(data: try request.encodedImagerJSON(), encoding: .utf8))
+        XCTAssertTrue(requestJSON.contains("\"field_ids\" : [\n      5\n    ]"))
+        XCTAssertTrue(requestJSON.contains("\"spw_selector\" : \"0\""))
+        XCTAssertTrue(requestJSON.contains("\"image_size\" : 250"))
+        XCTAssertTrue(requestJSON.contains("\"cell_arcsec\" : 0.1"))
+        XCTAssertFalse(requestJSON.contains("\"correlation\""))
+    }
+
     func testDirtyImagingValidationFailuresAreDebugVisible() {
         let probedDataset = DatasetSummary(
             id: "/data/probed.ms",

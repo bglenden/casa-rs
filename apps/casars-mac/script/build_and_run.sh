@@ -22,8 +22,11 @@ INFO_PLIST="$APP_CONTENTS/Info.plist"
 FRONTEND_DYLIB_NAME="libcasars_frontend_services.dylib"
 FRONTEND_DYLIB="$REPO_ROOT/target/debug/$FRONTEND_DYLIB_NAME"
 IMAGER_BINARY="$REPO_ROOT/target/debug/casars-imager"
-REAL_PROJECT_FIXTURE="$REPO_ROOT/crates/casa-ms/tests/fixtures/mssel_test_small_multifield_spw.ms.tgz"
+TUTORIAL_DATA_ROOT="${CASA_RS_TUTORIAL_DATA_ROOT:-$HOME/SoftwareProjects/casa-tutorial-data}"
+TUTORIAL_DEMO_ARCHIVE="$TUTORIAL_DATA_ROOT/tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar"
+FALLBACK_REAL_PROJECT_FIXTURE="$REPO_ROOT/crates/casa-ms/tests/fixtures/mssel_test_small_multifield_spw.ms.tgz"
 TEMP_REAL_PROJECT=""
+TEMP_REAL_PROJECT_SOURCE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -56,16 +59,37 @@ stage_temp_real_project() {
   if [[ "$USE_TEMP_REAL_PROJECT" != "1" || -n "$OPEN_PROJECT" ]]; then
     return
   fi
-  if [[ ! -f "$REAL_PROJECT_FIXTURE" ]]; then
-    echo "warning: real demo fixture not found; opening empty workbench: $REAL_PROJECT_FIXTURE" >&2
+
+  local archive=""
+  local archive_kind=""
+  if [[ -f "$TUTORIAL_DEMO_ARCHIVE" ]]; then
+    archive="$TUTORIAL_DEMO_ARCHIVE"
+    archive_kind="tutorial TW Hya MeasurementSet"
+  elif [[ -f "$FALLBACK_REAL_PROJECT_FIXTURE" ]]; then
+    archive="$FALLBACK_REAL_PROJECT_FIXTURE"
+    archive_kind="bundled fallback MeasurementSet"
+  else
+    echo "warning: no real demo MeasurementSet found; opening empty workbench" >&2
+    echo "warning: checked $TUTORIAL_DEMO_ARCHIVE" >&2
+    echo "warning: checked $FALLBACK_REAL_PROJECT_FIXTURE" >&2
     return
   fi
 
   TEMP_REAL_PROJECT="$(mktemp -d "${TMPDIR:-/tmp}/casars-mac-real-project.XXXXXX")"
-  tar -xzf "$REAL_PROJECT_FIXTURE" -C "$TEMP_REAL_PROJECT"
+  TEMP_REAL_PROJECT_SOURCE="$archive"
+  case "$archive" in
+    *.tgz|*.tar.gz)
+      tar -xzf "$archive" -C "$TEMP_REAL_PROJECT"
+      ;;
+    *)
+      tar -xf "$archive" -C "$TEMP_REAL_PROJECT"
+      ;;
+  esac
   OPEN_PROJECT="$TEMP_REAL_PROJECT"
   echo "==> Opening temporary real-data project: $OPEN_PROJECT"
+  echo "==> Source: $archive_kind ($TEMP_REAL_PROJECT_SOURCE)"
   echo "==> Project will be removed after $APP_NAME exits."
+  trap cleanup_temp_real_project_now EXIT
 }
 
 cleanup_temp_real_project_now() {
@@ -84,12 +108,15 @@ schedule_temp_real_project_cleanup() {
     return
   fi
 
-  (
-    while ps -p "$app_pid" >/dev/null 2>&1; do
+  nohup /bin/sh -c '
+    app_pid="$1"
+    project="$2"
+    while kill -0 "$app_pid" 2>/dev/null; do
       sleep 2
     done
-    rm -rf "$TEMP_REAL_PROJECT"
-  ) >/dev/null 2>&1 &
+    rm -rf "$project"
+  ' sh "$app_pid" "$TEMP_REAL_PROJECT" >/dev/null 2>&1 &
+  trap - EXIT
 }
 
 cd "$REPO_ROOT"
@@ -148,10 +175,16 @@ codesign --force --sign - "$APP_BINARY" >/dev/null
 codesign --force --sign - "$APP_BUNDLE" >/dev/null
 
 open_app() {
+  local wait_for_exit="${1:-0}"
+  local open_flags=(-n)
+  if [[ "$wait_for_exit" == "1" ]]; then
+    open_flags=(-W -n)
+  fi
+
   if [[ -n "$OPEN_PROJECT" ]]; then
-    /usr/bin/open -n "$APP_BUNDLE" --args --open-project "$OPEN_PROJECT"
+    /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args --open-project "$OPEN_PROJECT"
   else
-    /usr/bin/open -n "$APP_BUNDLE"
+    /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE"
   fi
 }
 
@@ -169,11 +202,8 @@ debug_app() {
 
 case "$MODE" in
   run)
-    open_app
-    sleep 1
-    if app_pid="$(launched_app_pid)"; then
-      schedule_temp_real_project_cleanup "$app_pid"
-    fi
+    open_app 1
+    cleanup_temp_real_project_now
     ;;
   --debug|debug)
     debug_app
@@ -192,7 +222,13 @@ case "$MODE" in
     sleep 1
     app_pid="$(launched_app_pid)"
     [[ -n "$app_pid" ]]
-    schedule_temp_real_project_cleanup "$app_pid"
+    if [[ -n "$TEMP_REAL_PROJECT" ]]; then
+      kill "$app_pid" >/dev/null 2>&1 || true
+      sleep 2
+      cleanup_temp_real_project_now
+    else
+      schedule_temp_real_project_cleanup "$app_pid"
+    fi
     ;;
   *)
     echo "usage: $0 [run|--debug|--logs|--verify] [--project PATH|--empty]" >&2

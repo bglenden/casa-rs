@@ -894,6 +894,9 @@ struct DirtyImagingTaskPanel: View {
         guard let dataset = taskDataset(for: parameters) else {
             return "Pick a MeasurementSet before running dirty imaging."
         }
+        if dataset.name.lowercased().contains("twhya_calibrated.ms") {
+            return "Tutorial defaults pick TW Hya, spw 0, 250 px, and 0.1 arcsec cells from the ALMA First Look imaging guide."
+        }
         if dataset.name == "mssel_test_small_multifield_spw.ms" {
             return "Sample defaults pick NGC4826-F3, spw 5, and raw YY: a target field with a 64-channel line window near the NGC4826 rest frequency."
         }

@@ -1061,6 +1061,7 @@ public final class WorkbenchStore: ObservableObject {
     private func defaultDirtyImagingParameters(for dataset: DatasetSummary) -> DirtyImagingTaskParameters {
         let firstField = defaultDirtyImagingField(for: dataset)
         let outputPrefix = defaultDirtyImagingOutputPrefix(for: dataset)
+        let isTutorialTWHya = isTWHyaTutorialDataset(dataset)
         return DirtyImagingTaskParameters(
             datasetID: dataset.id,
             measurementSetPath: dataset.path,
@@ -1069,11 +1070,17 @@ public final class WorkbenchStore: ObservableObject {
             phaseCenterField: firstField,
             selectedSpectralWindow: defaultDirtyImagingSpectralWindow(for: dataset),
             dataColumn: dataset.dataColumns.first ?? "DATA",
-            correlation: defaultDirtyImagingCorrelation(for: dataset)
+            correlation: defaultDirtyImagingCorrelation(for: dataset),
+            imageSize: isTutorialTWHya ? 250 : 512,
+            cellArcsec: isTutorialTWHya ? 0.1 : 1.0
         )
     }
 
     private func defaultDirtyImagingField(for dataset: DatasetSummary) -> String? {
+        if isTWHyaTutorialDataset(dataset),
+           let tutorialField = dataset.fields.first(where: { selectorToken($0) == "5" }) {
+            return tutorialField
+        }
         if dataset.name == "mssel_test_small_multifield_spw.ms",
            let sampleField = dataset.fields.first(where: { selectorToken($0) == "5" }) {
             return sampleField
@@ -1088,11 +1095,19 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func defaultDirtyImagingSpectralWindow(for dataset: DatasetSummary) -> String? {
+        if isTWHyaTutorialDataset(dataset),
+           let tutorialSpectralWindow = dataset.spectralWindows.first(where: { selectorToken($0) == "0" }) {
+            return tutorialSpectralWindow
+        }
         if dataset.name == "mssel_test_small_multifield_spw.ms",
            let sampleSpectralWindow = dataset.spectralWindows.first(where: { selectorToken($0) == "5" }) {
             return sampleSpectralWindow
         }
         return dataset.spectralWindows.first(where: spectralWindowHasMultipleChannels) ?? dataset.spectralWindows.first
+    }
+
+    private func isTWHyaTutorialDataset(_ dataset: DatasetSummary) -> Bool {
+        dataset.name.lowercased().contains("twhya_calibrated.ms")
     }
 
     private func defaultDirtyImagingCorrelation(for dataset: DatasetSummary) -> String? {
