@@ -60,10 +60,10 @@ struct CentralWorkspaceView: View {
                     store.openDefaultTab(kind: .datasetExplorer)
                 }
                 .disabled(store.state.selectedDataset == nil)
-                Button("Calibrate Task") {
+                Button(store.state.isDemoProject ? "Calibrate Task" : "Dirty Imaging Task") {
                     store.openDefaultTab(kind: .task)
                 }
-                .disabled(!store.state.isDemoProject)
+                .disabled(store.state.selectedDataset == nil)
                 Button("AI Chat") {
                     store.openDefaultTab(kind: .aiChat)
                 }
@@ -364,6 +364,13 @@ struct MeasurementSetPlotPanel: View {
         store.state.measurementSetPlots[dataset.id] ?? MeasurementSetExplorerPlotState.defaultState(for: dataset)
     }
 
+    private var visiblePlotResult: MeasurementSetPlotResultSummary? {
+        guard let result = plotState.result, result.matches(plotState: plotState) else {
+            return nil
+        }
+        return result
+    }
+
     private var plotCommandBar: some View {
         HStack(spacing: 10) {
             Picker("Plot", selection: Binding(
@@ -468,7 +475,7 @@ struct MeasurementSetPlotPanel: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text(dataset.name)
                     .workbenchFont(.caption, weight: .semibold)
-                Text(plotState.result?.selectionSummary ?? "Select a plot and generate it")
+                Text(visiblePlotResult?.selectionSummary ?? "Select a plot and generate it")
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -482,7 +489,7 @@ struct MeasurementSetPlotPanel: View {
 
     @ViewBuilder
     private var plotMetadata: some View {
-        if let result = plotState.result {
+        if let result = visiblePlotResult {
             VStack(alignment: .leading, spacing: 5) {
                 Text(result.presetLabel)
                     .workbenchFont(.subheadline, weight: .semibold)
@@ -509,16 +516,12 @@ struct MeasurementSetPlotPanel: View {
 
     @ViewBuilder
     private var plotImage: some View {
-        if let result = plotState.result, let image = NSImage(data: result.imageBytes) {
+        if let result = visiblePlotResult {
             VStack(alignment: .leading, spacing: 8) {
                 Text(result.title)
                     .workbenchFont(.subheadline, weight: .semibold)
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                CachedPlotImage(result: result)
+                    .id(result.imageCacheID)
                 Text(result.summary)
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
@@ -547,10 +550,56 @@ struct MeasurementSetPlotPanel: View {
     }
 }
 
+private struct CachedPlotImage: View {
+    let result: MeasurementSetPlotResultSummary
+    @State private var image: NSImage?
+    @State private var imageCacheID: String?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                ZStack {
+                    Color(nsColor: .windowBackgroundColor)
+                    Text("Unable to decode plot image")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .onAppear(perform: refreshImageIfNeeded)
+        .onChange(of: result.imageCacheID) { _ in
+            refreshImageIfNeeded()
+        }
+    }
+
+    private func refreshImageIfNeeded() {
+        guard imageCacheID != result.imageCacheID else {
+            return
+        }
+        image = NSImage(data: result.imageBytes)
+        imageCacheID = result.imageCacheID
+    }
+}
+
 struct TaskPanel: View {
     @ObservedObject var store: WorkbenchStore
 
     var body: some View {
+        if store.state.isDemoProject {
+            fixtureTaskBody
+        } else {
+            DirtyImagingTaskPanel(store: store)
+        }
+    }
+
+    private var fixtureTaskBody: some View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -680,6 +729,360 @@ struct TaskPanel: View {
         .padding()
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct DirtyImagingTaskPanel: View {
+    @ObservedObject var store: WorkbenchStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if let parameters = store.state.dirtyImagingTaskParameters {
+                        selectionBlock(parameters: parameters)
+                        imagingBlock(parameters: parameters)
+                        outputBlock(parameters: parameters)
+                        runBlock
+                    } else {
+                        PanelHeader(title: "Dirty Imaging", subtitle: "Select a MeasurementSet before opening this task")
+                    }
+                }
+                .padding(20)
+            }
+        }
+        .accessibilityIdentifier("panel.task.dirtyImaging")
+    }
+
+    private var header: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Dirty Imaging")
+                    .workbenchFont(.title3, weight: .semibold)
+                Text(selectedDatasetSubtitle)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                store.runTask()
+            } label: {
+                Label(store.state.taskRun.state == .running ? "Running" : "Run", systemImage: "play.fill")
+            }
+            .disabled(store.state.taskRun.state == .running || store.state.dirtyImagingTaskParameters == nil)
+            .accessibilityIdentifier("task.run")
+
+            Button {
+                store.stopTask()
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .disabled(store.state.taskRun.state != .running)
+            .accessibilityIdentifier("task.stop")
+        }
+        .padding()
+        .background(.bar)
+    }
+
+    private var selectedDatasetSubtitle: String {
+        guard let parameters = store.state.dirtyImagingTaskParameters,
+              let dataset = taskDataset(for: parameters)
+        else {
+            return "No MeasurementSet selected"
+        }
+        return "\(dataset.name) - \(dataset.size)"
+    }
+
+    private func selectionBlock(parameters: DirtyImagingTaskParameters) -> some View {
+        let dataset = taskDataset(for: parameters)
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Selections")
+                .workbenchFont(.headline)
+
+            Picker("MeasurementSet", selection: Binding(
+                get: { parameters.datasetID },
+                set: { store.setDirtyImagingDataset($0) }
+            )) {
+                Text("Select MeasurementSet").tag("")
+                ForEach(measurementSetDatasets) { dataset in
+                    Text(dataset.name).tag(dataset.id)
+                }
+            }
+            .accessibilityIdentifier("task.parameter.measurementSet")
+
+            Picker("Source / field", selection: Binding(
+                get: { parameters.selectedField ?? "all" },
+                set: { store.setDirtyImagingField($0) }
+            )) {
+                Text("all").tag("all")
+                ForEach(dataset?.fields ?? [], id: \.self) { field in
+                    Text(field).tag(field)
+                }
+            }
+            .accessibilityIdentifier("task.parameter.field")
+
+            LabeledContent("Phase center", value: parameters.phaseCenterField ?? "auto")
+
+            Picker("Spectral window", selection: Binding(
+                get: { parameters.selectedSpectralWindow ?? "all" },
+                set: { store.setDirtyImagingSpectralWindow($0) }
+            )) {
+                Text("all").tag("all")
+                ForEach(dataset?.spectralWindows ?? [], id: \.self) { spw in
+                    Text(spw).tag(spw)
+                }
+            }
+            .accessibilityIdentifier("task.parameter.spw")
+
+            HStack {
+                TextField("Channel start", text: Binding(
+                    get: { parameters.channelStart },
+                    set: { store.setDirtyImagingChannelStart($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("task.parameter.channelStart")
+
+                TextField("Channel count", text: Binding(
+                    get: { parameters.channelCount },
+                    set: { store.setDirtyImagingChannelCount($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("task.parameter.channelCount")
+            }
+
+            Picker("Data column", selection: Binding(
+                get: { parameters.dataColumn },
+                set: { store.setDirtyImagingDataColumn($0) }
+            )) {
+                ForEach(dataset?.dataColumns.isEmpty == false ? dataset?.dataColumns ?? [] : ["DATA"], id: \.self) { column in
+                    Text(column).tag(column)
+                }
+            }
+            .accessibilityIdentifier("task.parameter.dataColumn")
+        }
+        .taskCard()
+    }
+
+    private var measurementSetDatasets: [DatasetSummary] {
+        store.state.project.datasets.filter { $0.kind == .measurementSet }
+    }
+
+    private func taskDataset(for parameters: DirtyImagingTaskParameters) -> DatasetSummary? {
+        store.state.project.datasets.first { $0.id == parameters.datasetID }
+    }
+
+    private func imagingBlock(parameters: DirtyImagingTaskParameters) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Image")
+                .workbenchFont(.headline)
+
+            imageDimensionRow(
+                label: "Image width",
+                value: parameters.imageSize,
+                setValue: store.setDirtyImagingImageSize,
+                adjust: store.adjustDirtyImagingImageWidthToNiceSize,
+                accessibilityID: "task.parameter.imageWidth"
+            )
+
+            imageDimensionRow(
+                label: "Image height",
+                value: parameters.imageHeight,
+                setValue: store.setDirtyImagingImageHeight,
+                adjust: store.adjustDirtyImagingImageHeightToNiceSize,
+                accessibilityID: "task.parameter.imageHeight"
+            )
+
+            HStack(spacing: 8) {
+                TextField("Cell size", text: Binding(
+                    get: { String(format: "%.3f", parameters.cellArcsec) },
+                    set: { value in
+                        if let parsed = Double(value) {
+                            store.setDirtyImagingCellArcsec(parsed)
+                        }
+                    }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("task.parameter.cellArcsec")
+
+                Text("arcsec")
+                    .foregroundStyle(.secondary)
+                    .workbenchFont(.caption)
+                    .accessibilityIdentifier("task.parameter.cellArcsec.unit")
+            }
+
+            if parameters.imageSize != parameters.imageHeight {
+                Label("Rectangular image sizes are not runnable yet.", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
+                    .workbenchFont(.caption)
+                    .accessibilityIdentifier("task.parameter.imageShape.warning")
+            }
+
+            Picker("Weighting", selection: Binding(
+                get: { parameters.weighting },
+                set: { store.setDirtyImagingWeighting($0) }
+            )) {
+                ForEach(DirtyImagingWeighting.allCases) { weighting in
+                    Text(weighting.title).tag(weighting)
+                }
+            }
+            .accessibilityIdentifier("task.parameter.weighting")
+
+            Toggle("Dirty only", isOn: .constant(parameters.dirtyOnly))
+                .disabled(true)
+                .accessibilityIdentifier("task.parameter.dirtyOnly")
+        }
+        .taskCard()
+    }
+
+    private func imageDimensionRow(
+        label: String,
+        value: Int,
+        setValue: @escaping (Int) -> Void,
+        adjust: @escaping () -> Void,
+        accessibilityID: String
+    ) -> some View {
+        let assessment = DirtyImagingTaskParameters.imageDimensionAssessment(value)
+        return HStack(spacing: 8) {
+            Text(label)
+                .frame(width: 96, alignment: .leading)
+
+            TextField(label, text: Binding(
+                get: { "\(value)" },
+                set: { text in
+                    if let parsed = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                        setValue(parsed)
+                    }
+                }
+            ))
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .frame(width: 82)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(dimensionFill(for: assessment.severity))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(dimensionStroke(for: assessment.severity), lineWidth: assessment.severity == .good ? 1 : 1.5)
+            )
+            .help(assessment.message)
+            .accessibilityIdentifier(accessibilityID)
+
+            Text("px")
+                .foregroundStyle(.secondary)
+                .workbenchFont(.caption)
+
+            Button {
+                adjust()
+            } label: {
+                Label("Adjust", systemImage: "wand.and.stars")
+            }
+            .disabled(!assessment.needsAdjustment)
+            .help("Adjust to \(assessment.adjustedValue) px")
+            .accessibilityIdentifier("\(accessibilityID).adjust")
+        }
+    }
+
+    private func dimensionFill(for severity: DirtyImagingDimensionSeverity) -> Color {
+        switch severity {
+        case .good:
+            Color(nsColor: .textBackgroundColor).opacity(0.25)
+        case .warning:
+            .yellow.opacity(0.40)
+        case .terrible:
+            .red.opacity(0.40)
+        }
+    }
+
+    private func dimensionStroke(for severity: DirtyImagingDimensionSeverity) -> Color {
+        switch severity {
+        case .good:
+            .secondary.opacity(0.35)
+        case .warning:
+            .yellow.opacity(0.85)
+        case .terrible:
+            .red.opacity(0.85)
+        }
+    }
+
+    private func outputBlock(parameters: DirtyImagingTaskParameters) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Output")
+                .workbenchFont(.headline)
+
+            TextField("Image prefix", text: Binding(
+                get: { parameters.outputPrefix },
+                set: { store.setDirtyImagingOutputPrefix($0) }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("task.parameter.outputPrefix")
+
+            TextField("Run reason", text: Binding(
+                get: { parameters.runReason },
+                set: { store.setDirtyImagingRunReason($0) }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier("task.parameter.runReason")
+
+            Text(parameters.requestSummary)
+                .workbenchFont(.caption, design: .monospaced)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("task.parameter.requestSummary")
+        }
+        .taskCard()
+    }
+
+    private var runBlock: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Run")
+                .workbenchFont(.headline)
+            ProgressView(value: store.state.taskRun.progress)
+            Text(store.state.taskRun.state.rawValue)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+
+            valueList("Log", values: store.state.taskRun.logLines)
+            valueList("Warnings", values: store.state.taskRun.warnings)
+            valueList("Diagnostics", values: store.state.taskRun.diagnostics)
+            valueList("Products", values: store.state.taskRun.products)
+            valueList("Artifacts", values: store.state.taskRun.outputPaths)
+        }
+        .taskCard()
+        .accessibilityIdentifier("task.runState")
+    }
+
+    private func valueList(_ title: String, values: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .workbenchFont(.subheadline, weight: .semibold)
+            if values.isEmpty {
+                Text("None")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(values, id: \.self) { value in
+                    Text(value)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+
+private extension View {
+    func taskCard() -> some View {
+        self
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 

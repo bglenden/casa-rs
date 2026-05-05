@@ -142,6 +142,9 @@ struct CasarsMacApp: App {
                 store.openDefaultTab(kind: .history)
             } else if let dataset = store.state.selectedDataset, dataset.kind == .measurementSet {
                 store.runMeasurementSetPlot(datasetID: dataset.id)
+                store.openDefaultTab(kind: .task)
+                store.runTask()
+                Self.waitForTaskToFinish(store: store, timeoutSeconds: 120)
             }
         }
 
@@ -159,6 +162,13 @@ struct CasarsMacApp: App {
             return nil
         }
         return arguments[index + 1]
+    }
+
+    private static func waitForTaskToFinish(store: WorkbenchStore, timeoutSeconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while store.state.taskRun.state == .running && Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
     }
 
     private func openStartupProjectIfNeeded() {

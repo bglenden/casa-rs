@@ -194,7 +194,10 @@ public enum TaskRunState: String, Codable, Equatable {
     case idle
     case running
     case completed
+    case succeeded
+    case failed
     case stopped
+    case cancelled
 }
 
 public struct TaskParameters: Codable, Equatable {
@@ -220,24 +223,36 @@ public struct TaskParameters: Codable, Equatable {
 }
 
 public struct TaskRun: Codable, Equatable {
+    public var runID: String?
     public var state: TaskRunState
     public var progress: Double
     public var logLines: [String]
     public var warnings: [String]
     public var products: [String]
+    public var diagnostics: [String]
+    public var outputPaths: [String]
+    public var requestSummary: String?
 
     public init(
+        runID: String? = nil,
         state: TaskRunState,
         progress: Double,
         logLines: [String],
         warnings: [String],
-        products: [String]
+        products: [String],
+        diagnostics: [String] = [],
+        outputPaths: [String] = [],
+        requestSummary: String? = nil
     ) {
+        self.runID = runID
         self.state = state
         self.progress = progress
         self.logLines = logLines
         self.warnings = warnings
         self.products = products
+        self.diagnostics = diagnostics
+        self.outputPaths = outputPaths
+        self.requestSummary = requestSummary
     }
 }
 
@@ -371,6 +386,7 @@ public struct PlotSeriesSummary: Codable, Equatable {
 }
 
 public struct MeasurementSetPlotResultSummary: Codable, Equatable {
+    public var preset: MeasurementSetExplorerPlotPreset
     public var presetLabel: String
     public var title: String
     public var summary: String
@@ -388,8 +404,10 @@ public struct MeasurementSetPlotResultSummary: Codable, Equatable {
     public var imageWidth: UInt32
     public var imageHeight: UInt32
     public var imageBytes: Data
+    public var imageCacheID: String
 
     public init(
+        preset: MeasurementSetExplorerPlotPreset,
         presetLabel: String,
         title: String,
         summary: String,
@@ -408,6 +426,7 @@ public struct MeasurementSetPlotResultSummary: Codable, Equatable {
         imageHeight: UInt32,
         imageBytes: Data
     ) {
+        self.preset = preset
         self.presetLabel = presetLabel
         self.title = title
         self.summary = summary
@@ -425,6 +444,26 @@ public struct MeasurementSetPlotResultSummary: Codable, Equatable {
         self.imageWidth = imageWidth
         self.imageHeight = imageHeight
         self.imageBytes = imageBytes
+        self.imageCacheID = Self.makeImageCacheID(
+            imageFormat: imageFormat,
+            imageWidth: imageWidth,
+            imageHeight: imageHeight,
+            imageBytes: imageBytes
+        )
+    }
+
+    private static func makeImageCacheID(
+        imageFormat: String,
+        imageWidth: UInt32,
+        imageHeight: UInt32,
+        imageBytes: Data
+    ) -> String {
+        var hash: UInt64 = 1_469_598_103_934_665_603
+        for byte in imageBytes {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return "\(imageFormat):\(imageWidth)x\(imageHeight):\(imageBytes.count):\(hash)"
     }
 }
 
@@ -476,6 +515,17 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
     }
 }
 
+public extension MeasurementSetPlotResultSummary {
+    func matches(plotState: MeasurementSetExplorerPlotState) -> Bool {
+        preset == plotState.preset
+            && Self.canonicalDataColumn(dataColumn) == Self.canonicalDataColumn(plotState.dataColumn)
+    }
+
+    private static func canonicalDataColumn(_ dataColumn: String) -> String {
+        dataColumn.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
 public struct ProcessingHistoryEvent: Identifiable, Codable, Equatable {
     public let id: String
     public var timestamp: String
@@ -514,11 +564,13 @@ public struct WorkbenchState: Codable, Equatable {
     public var tabs: [WorkbenchTab]
     public var activeTabID: String
     public var taskParameters: TaskParameters
+    public var dirtyImagingTaskParameters: DirtyImagingTaskParameters?
     public var taskRun: TaskRun
     public var aiMessages: [AIChatMessage]
     public var aiProposals: [AIProposal]
     public var python: PythonPanelState
     public var measurementSetPlots: [String: MeasurementSetExplorerPlotState]
+    public var measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary]
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -534,11 +586,13 @@ public struct WorkbenchState: Codable, Equatable {
         tabs: [WorkbenchTab],
         activeTabID: String,
         taskParameters: TaskParameters,
+        dirtyImagingTaskParameters: DirtyImagingTaskParameters? = nil,
         taskRun: TaskRun,
         aiMessages: [AIChatMessage],
         aiProposals: [AIProposal],
         python: PythonPanelState,
         measurementSetPlots: [String: MeasurementSetExplorerPlotState] = [:],
+        measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary] = [:],
         history: [ProcessingHistoryEvent],
         commandQuery: String,
         lastErrors: [String],
@@ -553,11 +607,13 @@ public struct WorkbenchState: Codable, Equatable {
         self.tabs = tabs
         self.activeTabID = activeTabID
         self.taskParameters = taskParameters
+        self.dirtyImagingTaskParameters = dirtyImagingTaskParameters
         self.taskRun = taskRun
         self.aiMessages = aiMessages
         self.aiProposals = aiProposals
         self.python = python
         self.measurementSetPlots = measurementSetPlots
+        self.measurementSetPlotResultCache = measurementSetPlotResultCache
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors
@@ -634,6 +690,9 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var openTabs: [String]
     public var activeTab: String
     public var taskState: TaskRunState
+    public var taskRequest: DirtyImagingTaskParameters?
+    public var taskDiagnostics: [String]
+    public var taskOutputPaths: [String]
     public var aiProposalStates: [String: AIProposalState]
     public var pythonOwner: PythonOwner
     public var measurementSetPlots: [String: DebugMeasurementSetPlotSnapshot]
@@ -656,6 +715,9 @@ public struct DebugStateSnapshot: Codable, Equatable {
         openTabs = state.tabs.map(\.title)
         activeTab = state.tabs.first { $0.id == state.activeTabID }?.title ?? state.activeTabID
         taskState = state.taskRun.state
+        taskRequest = state.dirtyImagingTaskParameters
+        taskDiagnostics = state.taskRun.diagnostics
+        taskOutputPaths = state.taskRun.outputPaths
         aiProposalStates = Dictionary(
             uniqueKeysWithValues: state.aiProposals.map { ($0.id, $0.state) }
         )
@@ -680,6 +742,7 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
     public var selectedCorrelation: String?
     public var dataColumn: String
     public var lastError: String?
+    public var resultPreset: MeasurementSetExplorerPlotPreset?
     public var title: String?
     public var xAxis: PlotAxisSummary?
     public var yAxis: PlotAxisSummary?
@@ -697,13 +760,15 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
         selectedCorrelation = plotState.selectedCorrelation
         dataColumn = plotState.dataColumn
         lastError = plotState.lastError
-        title = plotState.result?.title
-        xAxis = plotState.result?.xAxis
-        yAxis = plotState.result?.yAxis
-        renderedPointCount = plotState.result?.renderedPointCount
-        seriesCount = plotState.result?.series.count
-        imageByteCount = plotState.result?.imageBytes.count
-        renderer = plotState.result?.renderer
-        diagnostics = plotState.result?.diagnostics ?? []
+        let visibleResult = plotState.result?.matches(plotState: plotState) == true ? plotState.result : nil
+        resultPreset = visibleResult?.preset
+        title = visibleResult?.title
+        xAxis = visibleResult?.xAxis
+        yAxis = visibleResult?.yAxis
+        renderedPointCount = visibleResult?.renderedPointCount
+        seriesCount = visibleResult?.series.count
+        imageByteCount = visibleResult?.imageBytes.count
+        renderer = visibleResult?.renderer
+        diagnostics = visibleResult?.diagnostics ?? []
     }
 }

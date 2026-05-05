@@ -129,7 +129,7 @@ impl ListObsPlotKind {
         let mut options = BTreeMap::new();
         match self {
             Self::UvCoverage => {
-                options.insert("draw_mode".to_string(), "tracks".to_string());
+                options.insert("draw_mode".to_string(), "points".to_string());
                 options.insert("mirror".to_string(), "on".to_string());
                 options.insert("axis_extent".to_string(), "auto".to_string());
             }
@@ -574,7 +574,7 @@ pub fn build_listobs_uv_plot_payload(
             spec.kind
         ));
     }
-    let draw_points = match spec.option("draw_mode").unwrap_or("tracks") {
+    let draw_points = match spec.option("draw_mode").unwrap_or("points") {
         "tracks" => false,
         "points" => true,
         value => return Err(format!("invalid draw_mode {value:?} for uv_coverage")),
@@ -1829,6 +1829,10 @@ mod tests {
         let coverage = synthetic_uv_coverage();
         let spec = ListObsPlotKind::UvCoverage.default_spec();
         let payload = build_listobs_uv_plot_payload(&coverage, &spec).unwrap();
+        let ListObsPlotPayload::UvCoverage(uv_payload) = &payload else {
+            panic!("expected uv payload");
+        };
+        assert!(uv_payload.draw_points);
         let image =
             render_listobs_plot_image(&payload, ListObsPlotTheme::dark(), 640, 640).unwrap();
         assert_eq!(image.width(), 640);
@@ -1849,6 +1853,21 @@ mod tests {
             render_listobs_plot_image(&payload, ListObsPlotTheme::dark(), 512, 512).unwrap();
         assert_eq!(image.width(), 512);
         assert_eq!(image.height(), 512);
+    }
+
+    #[test]
+    fn uv_tracks_mode_remains_explicitly_available() {
+        let coverage = synthetic_uv_coverage();
+        let spec = ListObsPlotSpec::from_cli_assignments(
+            ListObsPlotKind::UvCoverage,
+            &["draw_mode=tracks".to_string()],
+        )
+        .unwrap();
+        let payload = build_listobs_uv_plot_payload(&coverage, &spec).unwrap();
+        let ListObsPlotPayload::UvCoverage(payload) = payload else {
+            panic!("expected uv payload");
+        };
+        assert!(!payload.draw_points);
     }
 
     #[test]

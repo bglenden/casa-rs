@@ -238,9 +238,14 @@ why, and what changed?"
 
 Task panels configure and execute casa-rs processing tasks.
 
-The first real task family is a pre-implementation decision, not a detail to
-defer until after the task-panel framework exists. Choose it with a small
-decision matrix:
+The first real task family is dirty imaging through `casars-imager --json-run`,
+the casa-rs equivalent of a common `tclean(..., niter=0)` pass. This was chosen
+because imaging is one of the two dominant radio astronomy workflows, the task
+takes a selected MeasurementSet as input, it produces visible image products,
+and it can exercise the run/provenance/debug spine without mutating the input
+science data.
+
+Future task families should still be chosen with a small decision matrix:
 
 - provider maturity
 - dataset-aware parameter richness
@@ -250,8 +255,9 @@ decision matrix:
 - validation needs
 - provenance and run-manifest needs
 
-Likely candidates are `calibrate` and `casars-imager`. The UI-first prototype
-may use a mocked task contract while this decision is still open.
+Calibration is the next primary task family to expose, but it should enter as a
+real `gaincal`/`bandpass`-class vertical rather than a rare prior-calibration
+task used only because it is easy to wire.
 
 Task panels are projected from provider schema bundles. The GUI may add native
 layout and interaction, but it must not invent a separate semantic schema.
@@ -262,8 +268,9 @@ work around it locally in the app.
 Task parameters should be context-sensitive:
 
 - dataset picker constrained to compatible inputs
-- field/spw/scan/antenna/correlation choices populated from the selected
+- source/field and phase-center defaults populated from the selected
   MeasurementSet
+- spw/channel/correlation choices populated from the selected MeasurementSet
 - output paths defaulted relative to the project
 - advanced parameters hidden until requested
 - validation errors tied to both schema rules and dataset-specific facts
@@ -273,7 +280,7 @@ Execution should produce a durable run record:
 
 - canonical JSON request
 - resolved dataset context
-- command or provider version
+- command or provider protocol/version
 - stdout/stderr
 - generated products
 - diagnostics
@@ -550,8 +557,11 @@ GUI-Wave-0 implements this in `apps/casars-mac` as a SwiftPM package with a
 `CasarsMacCore` library and `casars-mac` SwiftUI executable. GUI-Wave-1 adds
 `casars-frontend-services` for read-only real project/dataset probing. GUI-Wave-3
 adds a first real MeasurementSet plot API through the same frontend-service
-boundary while keeping task execution, image exploration, Python execution, and
-AI behavior stubbed unless separately approved.
+boundary. GUI-Wave-4 adds the first real task run by supervising a short-lived
+`casars-imager --json-run` dirty-imaging process from the Swift workbench,
+recording request/result/log artifacts in processing history, and surfacing run
+state through debug JSON. Image exploration, Python execution, and AI behavior
+remain stubbed unless separately approved.
 
 ## Testability And Debuggability
 
@@ -588,6 +598,7 @@ should include:
 - active central tab
 - command/search query state when present
 - task run states
+- current task request, diagnostics, logs, and output paths
 - AI chat messages and proposal states
 - Python terminal ownership state
 - processing-history events

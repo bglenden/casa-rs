@@ -1,5 +1,17 @@
 import CasarsMacCore
+import AppKit
+import OSLog
 import SwiftUI
+
+private let inspectorLogger = Logger(
+    subsystem: "org.casa-rs.casars-mac",
+    category: "Inspector"
+)
+
+private let datasetClickLogger = Logger(
+    subsystem: "org.casa-rs.casars-mac",
+    category: "DatasetClick"
+)
 
 struct WorkbenchView: View {
     @ObservedObject var store: WorkbenchStore
@@ -175,9 +187,19 @@ struct LeftDockView: View {
                 )) {
                     ForEach(store.state.project.datasets) { dataset in
                         DatasetRow(dataset: dataset)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                             .tag(Optional(dataset.id))
-                            .onTapGesture(count: 2) {
-                                store.openDatasetExplorer(dataset.id)
+                            .overlay {
+                                DatasetRowClickTarget(
+                                    datasetID: dataset.id,
+                                    onSingleClick: {
+                                        store.selectDataset(dataset.id)
+                                    },
+                                    onDoubleClick: {
+                                        store.openDatasetExplorer(dataset.id)
+                                    }
+                                )
                             }
                             .accessibilityIdentifier("dataset.row.\(dataset.id)")
                     }
@@ -293,6 +315,45 @@ struct LeftDockView: View {
     }
 }
 
+private struct DatasetRowClickTarget: NSViewRepresentable {
+    let datasetID: String
+    let onSingleClick: () -> Void
+    let onDoubleClick: () -> Void
+
+    func makeNSView(context: Context) -> DatasetRowClickView {
+        let view = DatasetRowClickView()
+        view.datasetID = datasetID
+        view.onSingleClick = onSingleClick
+        view.onDoubleClick = onDoubleClick
+        return view
+    }
+
+    func updateNSView(_ nsView: DatasetRowClickView, context: Context) {
+        nsView.datasetID = datasetID
+        nsView.onSingleClick = onSingleClick
+        nsView.onDoubleClick = onDoubleClick
+    }
+}
+
+private final class DatasetRowClickView: NSView {
+    var datasetID = ""
+    var onSingleClick: (() -> Void)?
+    var onDoubleClick: (() -> Void)?
+
+    override var acceptsFirstResponder: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        let clickedDatasetID = datasetID
+        if event.clickCount >= 2 {
+            datasetClickLogger.debug("row_mouse_down double id=\(clickedDatasetID, privacy: .public)")
+            onDoubleClick?()
+        } else {
+            datasetClickLogger.debug("row_mouse_down single id=\(clickedDatasetID, privacy: .public)")
+            onSingleClick?()
+        }
+    }
+}
+
 struct EmptyDockState: View {
     let title: String
     let message: String
@@ -395,36 +456,7 @@ struct InspectorView: View {
 
                 Divider()
 
-                compactSection(
-                    title: "Fields",
-                    count: dataset.fields.count,
-                    values: dataset.fields,
-                    isExpanded: $showFields
-                )
-                compactSection(
-                    title: "SPWs",
-                    count: dataset.spectralWindows.count,
-                    values: dataset.spectralWindows,
-                    isExpanded: $showSpectralWindows
-                )
-                compactSection(
-                    title: "Antennas",
-                    count: dataset.antennas.count,
-                    values: dataset.antennas,
-                    isExpanded: $showAntennas
-                )
-                InfoRow(label: "Correlations", value: compactList(dataset.correlations))
-                InfoRow(label: "Data", value: compactList(dataset.dataColumns))
-
-                DisclosureGroup("Columns (\(dataset.columns.count))", isExpanded: $showColumns) {
-                    valueList(dataset.columns)
-                }
-                .workbenchFont(.caption)
-
-                DisclosureGroup("Subtables (\(dataset.subtables.count))", isExpanded: $showSubtables) {
-                    valueList(dataset.subtables)
-                }
-                .workbenchFont(.caption)
+                inspectorDetails(for: dataset)
 
                 Divider()
 
@@ -446,6 +478,9 @@ struct InspectorView: View {
         }
         .padding()
         .accessibilityIdentifier("inspector.panel")
+        .background {
+            InspectorUpdateTelemetry(dataset: store.state.selectedDataset)
+        }
     }
 
     private var inspectorSourceLabel: String {
@@ -453,6 +488,70 @@ struct InspectorView: View {
         case .none: "No project"
         case .fixture: "Demo metadata"
         case .probed: "Real probe metadata"
+        }
+    }
+
+    @ViewBuilder
+    private func inspectorDetails(for dataset: DatasetSummary) -> some View {
+        switch dataset.kind {
+        case .measurementSet:
+            compactSection(
+                title: "Fields",
+                count: dataset.fields.count,
+                values: dataset.fields,
+                isExpanded: $showFields
+            )
+            compactSection(
+                title: "SPWs",
+                count: dataset.spectralWindows.count,
+                values: dataset.spectralWindows,
+                isExpanded: $showSpectralWindows
+            )
+            compactSection(
+                title: "Antennas",
+                count: dataset.antennas.count,
+                values: dataset.antennas,
+                isExpanded: $showAntennas
+            )
+            InfoRow(label: "Correlations", value: compactList(dataset.correlations))
+            InfoRow(label: "Data", value: compactList(dataset.dataColumns))
+
+            DisclosureGroup("Columns (\(dataset.columns.count))", isExpanded: $showColumns) {
+                valueList(dataset.columns)
+            }
+            .workbenchFont(.caption)
+
+            DisclosureGroup("Subtables (\(dataset.subtables.count))", isExpanded: $showSubtables) {
+                valueList(dataset.subtables)
+            }
+            .workbenchFont(.caption)
+
+        case .imageCube:
+            InfoRow(label: "Shape", value: formatShape(dataset.shape))
+            InfoRow(label: "Pixel type", value: dataset.units)
+            if !dataset.diagnostics.isEmpty {
+                DisclosureGroup("Image details (\(dataset.diagnostics.count))", isExpanded: $showColumns) {
+                    valueList(dataset.diagnostics)
+                }
+                .workbenchFont(.caption)
+            }
+
+        case .calibrationTable, .table, .runProduct:
+            if !dataset.shape.isEmpty {
+                InfoRow(label: "Shape", value: formatShape(dataset.shape))
+            }
+            if !dataset.columns.isEmpty {
+                DisclosureGroup("Columns (\(dataset.columns.count))", isExpanded: $showColumns) {
+                    valueList(dataset.columns)
+                }
+                .workbenchFont(.caption)
+            }
+            if !dataset.subtables.isEmpty {
+                DisclosureGroup("Subtables (\(dataset.subtables.count))", isExpanded: $showSubtables) {
+                    valueList(dataset.subtables)
+                }
+                .workbenchFont(.caption)
+            }
         }
     }
 
@@ -495,6 +594,24 @@ struct InspectorView: View {
     }
 }
 
+private struct InspectorUpdateTelemetry: NSViewRepresentable {
+    let dataset: DatasetSummary?
+
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let dataset else {
+            inspectorLogger.debug("inspector_update empty")
+            return
+        }
+        inspectorLogger.debug(
+            "inspector_update dataset=\(dataset.id, privacy: .public) fields=\(dataset.fields.count, privacy: .public) spws=\(dataset.spectralWindows.count, privacy: .public) antennas=\(dataset.antennas.count, privacy: .public) columns=\(dataset.columns.count, privacy: .public) subtables=\(dataset.subtables.count, privacy: .public)"
+        )
+    }
+}
+
 struct InfoRow: View {
     let label: String
     let value: String
@@ -514,4 +631,8 @@ struct InfoRow: View {
 
 private func byteCount(_ bytes: UInt64) -> String {
     ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+}
+
+private func formatShape(_ shape: [UInt64]) -> String {
+    shape.isEmpty ? "Unknown" : shape.map(String.init).joined(separator: " x ")
 }
