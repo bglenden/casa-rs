@@ -45,24 +45,26 @@ bottleneck to serial gridding/degridding:
 | Antennae North continuum clean | `134.19 s` | `132.804 s` | `7.299 s` | `125.471 s` | `psf_grid=80.775 s`, `residual_degrid_grid=43.334 s` |
 | VLA 3C391 multiscale mosaic | `547.93 s` | `547.390 s` | `46.314 s` | `501.041 s` | `psf_grid=184.120 s`, `residual_degrid_grid=307.836 s`, `weighting=6.465 s` |
 
-#204 now has two local mosaic hot-path fixes:
+#204 now has three local mosaic hot-path fixes:
 
 - the centered per-group mosaic weight kernel is gridded once from the group
   weight sum instead of once per accepted visibility sample;
 - mosaic screen-projector grid/degrid loops use contiguous grid slices instead
-  of per-tap `ndarray` indexing.
+  of per-tap `ndarray` indexing;
+- mosaic screen-projector phase-gradient kernels are precomputed once per
+  pointing instead of recomputing trigonometric phasors for every tap of every
+  visibility sample.
 
 Updated same-input casa-rs evidence:
 
 | Current profile after #204 fixes | Wall | Frontend total | prepare | run_imaging | Dominant core stages |
 |---|---:|---:|---:|---:|---|
-| Antennae North continuum clean | `51.92 s` | `51.916 s` | `2.750 s` | `49.138 s` | `psf_grid=22.991 s`, `residual_degrid_grid=25.598 s` |
-| VLA 3C391 multiscale mosaic | `309.84 s` | `309.843 s` | `36.460 s` | `273.356 s` | `psf_grid=102.227 s`, `residual_degrid_grid=163.906 s`, `weighting=4.808 s` |
+| Antennae North continuum clean | `11.53 s` | `11.529 s` | `2.662 s` | `8.844 s` | `psf_grid=4.162 s`, `residual_degrid_grid=4.147 s` |
+| VLA 3C391 multiscale mosaic | `69.06 s` | `69.057 s` | `24.503 s` | `44.524 s` | `psf_grid=12.842 s`, `residual_degrid_grid=27.205 s`, `weighting=2.861 s` |
 
 This moves the Antennae tutorial case from `3.19x` the current CASA C++ run
-to `1.24x`, and the 3C391 tutorial case from `7.26x` to `4.10x`, using the
-current CASA C++ timings above. The remaining #204 work is the serial mosaic
-residual-refresh path; parallel/chanchunks work remains owned by #56.
+to `0.27x`, and the 3C391 tutorial case from `7.26x` to `0.91x`, using the
+current CASA C++ timings above.
 
 ## #198 Calibration Apply/Export
 
