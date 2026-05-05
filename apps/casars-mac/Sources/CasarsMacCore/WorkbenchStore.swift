@@ -510,6 +510,12 @@ public final class WorkbenchStore: ObservableObject {
         updateDirtyImagingParameters(parameters)
     }
 
+    public func setDirtyImagingCorrelation(_ correlation: String?) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.correlation = normalizedPickerValue(correlation)
+        updateDirtyImagingParameters(parameters)
+    }
+
     public func setDirtyImagingOutputPrefix(_ outputPrefix: String) {
         guard var parameters = state.dirtyImagingTaskParameters else { return }
         parameters.outputPrefix = outputPrefix
@@ -1053,7 +1059,7 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func defaultDirtyImagingParameters(for dataset: DatasetSummary) -> DirtyImagingTaskParameters {
-        let firstField = dataset.fields.first
+        let firstField = defaultDirtyImagingField(for: dataset)
         let outputPrefix = defaultDirtyImagingOutputPrefix(for: dataset)
         return DirtyImagingTaskParameters(
             datasetID: dataset.id,
@@ -1061,9 +1067,56 @@ public final class WorkbenchStore: ObservableObject {
             outputPrefix: outputPrefix,
             selectedField: firstField,
             phaseCenterField: firstField,
-            selectedSpectralWindow: dataset.spectralWindows.first,
-            dataColumn: dataset.dataColumns.first ?? "DATA"
+            selectedSpectralWindow: defaultDirtyImagingSpectralWindow(for: dataset),
+            dataColumn: dataset.dataColumns.first ?? "DATA",
+            correlation: defaultDirtyImagingCorrelation(for: dataset)
         )
+    }
+
+    private func defaultDirtyImagingField(for dataset: DatasetSummary) -> String? {
+        if dataset.name == "mssel_test_small_multifield_spw.ms",
+           let sampleField = dataset.fields.first(where: { selectorToken($0) == "5" }) {
+            return sampleField
+        }
+        if let scienceLikeField = dataset.fields.first(where: { field in
+            let normalized = field.lowercased()
+            return normalized.contains("ngc") || normalized.contains("target")
+        }) {
+            return scienceLikeField
+        }
+        return dataset.fields.first
+    }
+
+    private func defaultDirtyImagingSpectralWindow(for dataset: DatasetSummary) -> String? {
+        if dataset.name == "mssel_test_small_multifield_spw.ms",
+           let sampleSpectralWindow = dataset.spectralWindows.first(where: { selectorToken($0) == "5" }) {
+            return sampleSpectralWindow
+        }
+        return dataset.spectralWindows.first(where: spectralWindowHasMultipleChannels) ?? dataset.spectralWindows.first
+    }
+
+    private func defaultDirtyImagingCorrelation(for dataset: DatasetSummary) -> String? {
+        let rawCorrelations = dataset.correlations.map { $0.uppercased() }
+        if rawCorrelations.count == 1,
+           ["XX", "YY", "RR", "LL"].contains(rawCorrelations[0]) {
+            return rawCorrelations[0]
+        }
+        return nil
+    }
+
+    private func spectralWindowHasMultipleChannels(_ spectralWindow: String) -> Bool {
+        guard let channelCount = spectralWindowChannelCount(spectralWindow) else {
+            return false
+        }
+        return channelCount > 1
+    }
+
+    private func spectralWindowChannelCount(_ spectralWindow: String) -> Int? {
+        guard let channelRange = spectralWindow.range(of: #"(\d+)\s+chan"#, options: .regularExpression) else {
+            return nil
+        }
+        let token = spectralWindow[channelRange].split(separator: " ").first
+        return token.flatMap { Int($0) }
     }
 
     private func blankDirtyImagingParameters() -> DirtyImagingTaskParameters {

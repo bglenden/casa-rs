@@ -862,6 +862,22 @@ struct DirtyImagingTaskPanel: View {
                 }
             }
             .accessibilityIdentifier("task.parameter.dataColumn")
+
+            Picker("Image plane", selection: Binding(
+                get: { parameters.correlation ?? "I" },
+                set: { store.setDirtyImagingCorrelation($0) }
+            )) {
+                Text("Stokes I").tag("I")
+                ForEach(dataset?.correlations ?? [], id: \.self) { correlation in
+                    Text("Raw \(correlation)").tag(correlation)
+                }
+            }
+            .accessibilityIdentifier("task.parameter.correlation")
+
+            Text(selectionHint(for: parameters))
+                .foregroundStyle(.secondary)
+                .workbenchFont(.caption)
+                .accessibilityIdentifier("task.parameter.selectionHint")
         }
         .taskCard()
     }
@@ -872,6 +888,16 @@ struct DirtyImagingTaskPanel: View {
 
     private func taskDataset(for parameters: DirtyImagingTaskParameters) -> DatasetSummary? {
         store.state.project.datasets.first { $0.id == parameters.datasetID }
+    }
+
+    private func selectionHint(for parameters: DirtyImagingTaskParameters) -> String {
+        guard let dataset = taskDataset(for: parameters) else {
+            return "Pick a MeasurementSet before running dirty imaging."
+        }
+        if dataset.name == "mssel_test_small_multifield_spw.ms" {
+            return "Sample defaults pick NGC4826-F3, spw 5, and raw YY: a target field with a 64-channel line window near the NGC4826 rest frequency."
+        }
+        return "Defaults prefer a science-like field, a multi-channel spectral window, and Stokes I when the MeasurementSet supports paired correlations."
     }
 
     private func imagingBlock(parameters: DirtyImagingTaskParameters) -> some View {

@@ -473,6 +473,67 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.tabs.first(where: { $0.kind == .task })?.title, "Dirty Image: second.ms")
     }
 
+    func testBundledSampleDirtyImagingDefaultsChooseLineTarget() throws {
+        let sample = DatasetSummary(
+            id: "/data/mssel_test_small_multifield_spw.ms",
+            name: "mssel_test_small_multifield_spw.ms",
+            path: "/data/mssel_test_small_multifield_spw.ms",
+            kind: .measurementSet,
+            size: "14985 rows, 9 fields, 6 spw, 10 antennas",
+            units: "Jy, Hz, seconds",
+            fields: [
+                "0: 3C273-F0",
+                "1: 2",
+                "2: NGC4826-F0",
+                "3: NGC4826-F1",
+                "4: 2000",
+                "5: NGC4826-F3",
+                "6: NGC4826-F4",
+                "7: NGC4826-F5",
+                "8: NGC4826-F6"
+            ],
+            spectralWindows: [
+                "spw 0: 1 chan, 115.138579 GHz center",
+                "spw 1: 1 chan, 115.217017 GHz center",
+                "spw 2: 64 chan, 114.999607 GHz center",
+                "spw 3: 64 chan, 115.089621 GHz center",
+                "spw 4: 64 chan, 115.179362 GHz center",
+                "spw 5: 64 chan, 115.269376 GHz center"
+            ],
+            correlations: ["YY"],
+            dataColumns: ["DATA"],
+            notes: "Bundled real sample MS."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Sample Project",
+                        rootPath: "/data",
+                        datasets: [sample],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .task)
+
+        let parameters = try XCTUnwrap(store.state.dirtyImagingTaskParameters)
+        XCTAssertEqual(parameters.selectedField, "5: NGC4826-F3")
+        XCTAssertEqual(parameters.phaseCenterField, "5: NGC4826-F3")
+        XCTAssertEqual(parameters.selectedSpectralWindow, "spw 5: 64 chan, 115.269376 GHz center")
+        XCTAssertEqual(parameters.correlation, "YY")
+
+        let request = DirtyImagingTaskRequest(runID: "run-sample", parameters: parameters)
+        let requestJSON = String(data: try request.encodedImagerJSON(), encoding: .utf8)
+        XCTAssertTrue(try XCTUnwrap(requestJSON).contains("\"field_ids\" : [\n      5\n    ]"))
+        XCTAssertTrue(try XCTUnwrap(requestJSON).contains("\"spw_selector\" : \"5\""))
+        XCTAssertTrue(try XCTUnwrap(requestJSON).contains("\"correlation\" : \"YY\""))
+    }
+
     func testDirtyImagingValidationFailuresAreDebugVisible() {
         let probedDataset = DatasetSummary(
             id: "/data/probed.ms",
