@@ -25,6 +25,7 @@ struct PlotSamplesPanel: View {
 private struct PlotSampleCard: View {
     @ObservedObject var store: WorkbenchStore
     let plot: WorkbenchPlotDocument
+    @State private var controlsExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -37,7 +38,7 @@ private struct PlotSampleCard: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("\(pointCount) pts")
+                Text(sampleCountSummary)
                     .workbenchFont(.caption, design: .monospaced)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("plotSamples.\(plot.id).pointCount")
@@ -51,7 +52,11 @@ private struct PlotSampleCard: View {
                 )
                 .accessibilityIdentifier("plotSamples.\(plot.id).canvas")
 
-            controls
+            DisclosureGroup("Display controls", isExpanded: $controlsExpanded) {
+                controls
+                    .padding(.top, 8)
+            }
+            .workbenchFont(.caption)
         }
         .padding()
         .background(.regularMaterial)
@@ -63,7 +68,7 @@ private struct PlotSampleCard: View {
         VStack(alignment: .leading, spacing: 10) {
             if let layer = plot.layers.first(where: { $0.kind == .scatter }) {
                 SliderRow(
-                    title: "Symbol",
+                    title: "Marker: \(layer.title)",
                     value: layer.style.symbolSize,
                     range: 1...12,
                     format: "%.1f"
@@ -78,7 +83,7 @@ private struct PlotSampleCard: View {
 
             if let layer = plot.layers.first(where: { $0.kind == .line }) {
                 SliderRow(
-                    title: "Line",
+                    title: "Fit line",
                     value: layer.style.lineWidth,
                     range: 0.5...8,
                     format: "%.1f"
@@ -145,8 +150,27 @@ private struct PlotSampleCard: View {
         }
     }
 
-    private var pointCount: Int {
-        plot.layers.reduce(0) { total, layer in total + layer.points.count }
+    private var sampleCountSummary: String {
+        let display = plot.layers.reduce(0) { total, layer in total + layer.dataProfile.displaySampleCount }
+        let source = plot.layers.reduce(UInt64(0)) { total, layer in total + layer.dataProfile.sourceSampleCount }
+        if source > UInt64(display) {
+            return "\(formattedCount(display)) / \(formattedCount(source)) src"
+        }
+        return "\(formattedCount(display)) pts"
+    }
+
+    private func formattedCount(_ count: Int) -> String {
+        formattedCount(UInt64(count))
+    }
+
+    private func formattedCount(_ count: UInt64) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        }
+        if count >= 1_000 {
+            return String(format: "%.1fk", Double(count) / 1_000)
+        }
+        return "\(count)"
     }
 }
 
@@ -160,7 +184,7 @@ private struct SliderRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Text(title)
-                .frame(width: 58, alignment: .leading)
+                .frame(width: 122, alignment: .leading)
                 .workbenchFont(.caption)
             Slider(
                 value: Binding(
@@ -261,7 +285,7 @@ struct WorkbenchPlotView: View {
             switch layer.kind {
             case .scatter:
                 let color = color(hex: layer.style.colorHex).opacity(layer.style.opacity)
-                for point in layer.points {
+                for point in renderPoints(for: layer) {
                     guard let position = screenPoint(point, plotRect: plotRect) else { continue }
                     let radius = max(0.5, layer.style.symbolSize / 2)
                     context.fill(
@@ -275,7 +299,7 @@ struct WorkbenchPlotView: View {
                     )
                 }
             case .line:
-                let points = layer.points.compactMap { screenPoint($0, plotRect: plotRect) }
+                let points = renderPoints(for: layer).compactMap { screenPoint($0, plotRect: plotRect) }
                 guard points.count > 1 else { continue }
                 var path = Path()
                 path.move(to: points[0])
@@ -362,6 +386,20 @@ struct WorkbenchPlotView: View {
             x: plotRect.minX + plotRect.width * x,
             y: plotRect.maxY - plotRect.height * y
         )
+    }
+
+    private func renderPoints(for layer: WorkbenchPlotLayer) -> [WorkbenchPlotPoint] {
+        let pointLimit = max(1, min(layer.dataProfile.pointBudget, 50_000))
+        guard layer.points.count > pointLimit else {
+            return layer.points
+        }
+        guard pointLimit > 1 else {
+            return Array(layer.points.prefix(1))
+        }
+        let step = Double(layer.points.count - 1) / Double(pointLimit - 1)
+        return (0..<pointLimit).map { index in
+            layer.points[Int((Double(index) * step).rounded())]
+        }
     }
 
     private func axisLabel(_ axis: WorkbenchPlotAxis) -> String {

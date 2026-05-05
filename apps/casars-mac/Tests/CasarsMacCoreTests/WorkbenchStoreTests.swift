@@ -151,9 +151,26 @@ final class WorkbenchStoreTests: XCTestCase {
         ])
         XCTAssertEqual(snapshot.workbenchPlots[0].layerCount, 3)
         XCTAssertGreaterThan(snapshot.workbenchPlots[0].pointCount, 250)
+        XCTAssertGreaterThan(snapshot.workbenchPlots[0].sourceSampleCount, UInt64(snapshot.workbenchPlots[0].displaySampleCount))
+        XCTAssertEqual(snapshot.workbenchPlots[0].boundedLayerCount, 3)
+        XCTAssertTrue(snapshot.workbenchPlots[0].payloadStrategies.contains("viewportLevelOfDetail"))
         XCTAssertEqual(snapshot.workbenchPlots[2].rasterLayerCount, 1)
+        XCTAssertEqual(snapshot.workbenchPlots[2].payloadStrategies, ["rasterOverview"])
         XCTAssertFalse(snapshot.workbenchPlots[2].dataFingerprint.isEmpty)
         XCTAssertNoThrow(try store.debugJSON())
+    }
+
+    func testWorkbenchPlotLargeSourceProfilesStayBoundedForRendering() throws {
+        let store = WorkbenchStore.fixture()
+        let plot = try XCTUnwrap(store.state.plotDocuments.first { $0.id == "sample-uv-coverage" })
+
+        XCTAssertGreaterThan(plot.layers.reduce(0) { $0 + $1.dataProfile.sourceSampleCount }, 10_000_000)
+        for layer in plot.layers {
+            XCTAssertEqual(layer.dataProfile.strategy, .viewportLevelOfDetail)
+            XCTAssertLessThanOrEqual(layer.dataProfile.displaySampleCount, layer.dataProfile.pointBudget)
+            XCTAssertEqual(layer.dataProfile.displaySampleCount, layer.points.count)
+            XCTAssertTrue(layer.dataProfile.isDisplayPayloadBounded)
+        }
     }
 
     func testWorkbenchPlotDisplayEditsDoNotRegeneratePayload() throws {

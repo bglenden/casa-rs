@@ -6,6 +6,42 @@ public enum WorkbenchPlotLayerKind: String, Codable, Equatable {
     case raster
 }
 
+public enum WorkbenchPlotPayloadStrategy: String, Codable, Equatable {
+    case inlineDisplayPoints
+    case viewportLevelOfDetail
+    case densityGrid
+    case rasterOverview
+}
+
+public struct WorkbenchPlotLayerDataProfile: Codable, Equatable {
+    public var sourceSampleCount: UInt64
+    public var displaySampleCount: Int
+    public var pointBudget: Int
+    public var strategy: WorkbenchPlotPayloadStrategy
+    public var sourceDescription: String
+    public var provenanceKey: String?
+
+    public init(
+        sourceSampleCount: UInt64,
+        displaySampleCount: Int,
+        pointBudget: Int = 50_000,
+        strategy: WorkbenchPlotPayloadStrategy,
+        sourceDescription: String,
+        provenanceKey: String? = nil
+    ) {
+        self.sourceSampleCount = sourceSampleCount
+        self.displaySampleCount = displaySampleCount
+        self.pointBudget = pointBudget
+        self.strategy = strategy
+        self.sourceDescription = sourceDescription
+        self.provenanceKey = provenanceKey
+    }
+
+    public var isDisplayPayloadBounded: Bool {
+        displaySampleCount <= pointBudget && UInt64(displaySampleCount) <= sourceSampleCount
+    }
+}
+
 public enum WorkbenchPlotImageStretch: String, CaseIterable, Codable, Equatable, Identifiable {
     case linear
     case squareRoot
@@ -163,6 +199,7 @@ public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
     public var raster: WorkbenchPlotRaster?
     public var style: WorkbenchPlotLayerStyle
     public var provenanceSummary: String
+    public var dataProfile: WorkbenchPlotLayerDataProfile
 
     public init(
         id: String,
@@ -173,7 +210,8 @@ public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
         points: [WorkbenchPlotPoint] = [],
         raster: WorkbenchPlotRaster? = nil,
         style: WorkbenchPlotLayerStyle,
-        provenanceSummary: String
+        provenanceSummary: String,
+        dataProfile: WorkbenchPlotLayerDataProfile? = nil
     ) {
         self.id = id
         self.title = title
@@ -184,6 +222,13 @@ public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
         self.raster = raster
         self.style = style
         self.provenanceSummary = provenanceSummary
+        self.dataProfile = dataProfile ?? WorkbenchPlotLayerDataProfile(
+            sourceSampleCount: UInt64(max(points.count, raster?.values.count ?? 0)),
+            displaySampleCount: max(points.count, raster?.values.count ?? 0),
+            pointBudget: kind == .line ? 100_000 : 50_000,
+            strategy: kind == .raster ? .rasterOverview : .inlineDisplayPoints,
+            sourceDescription: provenanceSummary
+        )
     }
 }
 
@@ -251,6 +296,9 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
         ]
         for layer in layers {
             parts.append("\(layer.id):\(layer.kind.rawValue):\(layer.points.count)")
+            parts.append(
+                "profile:\(layer.dataProfile.sourceSampleCount):\(layer.dataProfile.displaySampleCount):\(layer.dataProfile.strategy.rawValue)"
+            )
             if let first = layer.points.first {
                 parts.append("first:\(first.x.bitPattern):\(first.y.bitPattern)")
             }
@@ -322,6 +370,10 @@ public struct DebugWorkbenchPlotSnapshot: Codable, Equatable {
     public var title: String
     public var layerCount: Int
     public var pointCount: Int
+    public var sourceSampleCount: UInt64
+    public var displaySampleCount: Int
+    public var boundedLayerCount: Int
+    public var payloadStrategies: [String]
     public var rasterLayerCount: Int
     public var annotationCount: Int
     public var styleRevision: UInt64
@@ -332,6 +384,10 @@ public struct DebugWorkbenchPlotSnapshot: Codable, Equatable {
         title = plot.title
         layerCount = plot.layers.count
         pointCount = plot.layers.reduce(0) { total, layer in total + layer.points.count }
+        sourceSampleCount = plot.layers.reduce(0) { total, layer in total + layer.dataProfile.sourceSampleCount }
+        displaySampleCount = plot.layers.reduce(0) { total, layer in total + layer.dataProfile.displaySampleCount }
+        boundedLayerCount = plot.layers.filter(\.dataProfile.isDisplayPayloadBounded).count
+        payloadStrategies = plot.layers.map(\.dataProfile.strategy.rawValue)
         rasterLayerCount = plot.layers.filter { $0.kind == .raster }.count
         annotationCount = plot.annotations.count
         styleRevision = plot.styleRevision
@@ -405,7 +461,15 @@ public enum WorkbenchPlotSamples {
                     yAxisID: "amplitude",
                     points: target,
                     style: WorkbenchPlotLayerStyle(colorHex: "#2563eb", symbolSize: 3.8, opacity: 0.82),
-                    provenanceSummary: "Display-ready points from a MeasurementSet-style payload with row provenance."
+                    provenanceSummary: "Display-ready points from a MeasurementSet-style payload with row provenance.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: 1_800_000,
+                        displaySampleCount: target.count,
+                        pointBudget: 8_000,
+                        strategy: .viewportLevelOfDetail,
+                        sourceDescription: "Visibility samples selected from MS rows, channels, and correlations.",
+                        provenanceKey: "ms-row-channel-correlation"
+                    )
                 ),
                 WorkbenchPlotLayer(
                     id: "phasecal-ll",
@@ -415,7 +479,15 @@ public enum WorkbenchPlotSamples {
                     yAxisID: "amplitude",
                     points: calibrator,
                     style: WorkbenchPlotLayerStyle(colorHex: "#dc2626", symbolSize: 3.2, opacity: 0.62),
-                    provenanceSummary: "Second field/correlation series for plot widget styling and legend behavior."
+                    provenanceSummary: "Second field/correlation series for plot widget styling and legend behavior.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: 1_800_000,
+                        displaySampleCount: calibrator.count,
+                        pointBudget: 8_000,
+                        strategy: .viewportLevelOfDetail,
+                        sourceDescription: "Second visibility selection represented as a viewport-level display payload.",
+                        provenanceKey: "ms-row-channel-correlation"
+                    )
                 ),
                 WorkbenchPlotLayer(
                     id: "gaussian-fit",
@@ -425,7 +497,15 @@ public enum WorkbenchPlotSamples {
                     yAxisID: "amplitude",
                     points: fit,
                     style: WorkbenchPlotLayerStyle(colorHex: "#111827", symbolSize: 0, lineWidth: 2.2, opacity: 0.9),
-                    provenanceSummary: "Future Python layer: fitted curve over plotted points."
+                    provenanceSummary: "Future Python layer: fitted curve over plotted points.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(fit.count),
+                        displaySampleCount: fit.count,
+                        pointBudget: 4_000,
+                        strategy: .inlineDisplayPoints,
+                        sourceDescription: "Small analytical overlay generated from displayed or selected points.",
+                        provenanceKey: "fit-overlay"
+                    )
                 )
             ],
             annotations: [
@@ -486,7 +566,15 @@ public enum WorkbenchPlotSamples {
                     symbolSize: 2.2,
                     opacity: 0.72
                 ),
-                provenanceSummary: "Mirrored uv points with row provenance."
+                provenanceSummary: "Mirrored uv points with row provenance.",
+                dataProfile: WorkbenchPlotLayerDataProfile(
+                    sourceSampleCount: 4_000_000,
+                    displaySampleCount: points.count,
+                    pointBudget: 12_000,
+                    strategy: .viewportLevelOfDetail,
+                    sourceDescription: "Large uv track reduced to display points for the current viewport.",
+                    provenanceKey: "ms-row-uvw"
+                )
             )
         }
         return WorkbenchPlotDocument(
@@ -558,7 +646,15 @@ public enum WorkbenchPlotSamples {
                     yAxisID: "dec",
                     raster: raster,
                     style: WorkbenchPlotLayerStyle(colorHex: "#ffffff", opacity: 1),
-                    provenanceSummary: "Display-ready CASA image plane sample with WCS-like axes."
+                    provenanceSummary: "Display-ready CASA image plane sample with WCS-like axes.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: 2048 * 2048,
+                        displaySampleCount: values.count,
+                        pointBudget: 256 * 256,
+                        strategy: .rasterOverview,
+                        sourceDescription: "Image plane overview resampled from a larger source plane.",
+                        provenanceKey: "image-plane-wcs"
+                    )
                 )
             ],
             annotations: [
