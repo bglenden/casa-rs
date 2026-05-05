@@ -102,6 +102,26 @@ The app should support multiple tabs or editor panes because users naturally
 compare an MS summary, a visibility plot, a task request, an image plane, and a
 Python plot while reducing data.
 
+### Workbench Job Runtime
+
+Slow work in a tab is represented as workbench jobs owned by the originating
+tab. Jobs expose a durable in-memory lifecycle for pending, running, succeeded,
+failed, and cancelled work, plus owner, progress, log lines, result summaries,
+errors, cancellation-request state, and last event text.
+
+The first implemented job kinds are MeasurementSet plot rendering and dirty
+imaging task execution. Plot rendering runs off the main thread through the
+Swift workbench and updates the visible plot state only if the originating job
+is still current for its tab. Dirty imaging remains a supervised short-lived
+`casars-imager --json-run` process, but its run state is now also keyed by job
+ID so cancellation and completion do not clear unrelated work.
+
+The first coordinator rule is one active job per tab: starting a new job for the
+same tab cancels or supersedes the previous active job for that tab, while other
+tabs keep their own active jobs. The coordinator is deliberately Swift-side and
+in-memory for this product slice. It is not a provider daemon, project-history
+storage format, or broad task scheduler.
+
 ## Core Panels
 
 ### Project Explorer

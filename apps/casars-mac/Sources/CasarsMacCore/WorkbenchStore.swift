@@ -99,7 +99,7 @@ public final class WorkbenchStore: ObservableObject {
     private let probeClient: ProjectProbeClient
     private let plotClient: MeasurementSetPlotClient
     private let dirtyImagingClient: DirtyImagingTaskClient
-    private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated)
+    private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private var activeTaskExecutions: [String: DirtyImagingTaskExecution] = [:]
 
     public init(
@@ -875,7 +875,7 @@ public final class WorkbenchStore: ObservableObject {
         case .dirtyImagingTask:
             activeTaskExecutions[jobID]?.cancel()
             activeTaskExecutions.removeValue(forKey: jobID)
-            if state.taskRun.runID == jobID || state.taskRun.state == .running {
+            if state.taskRun.runID == jobID {
                 state.taskRun.state = .cancelled
                 state.taskRun.progress = 1.0
                 state.taskRun.logLines.append("Cancellation requested for dirty imaging task.")
@@ -891,6 +891,16 @@ public final class WorkbenchStore: ObservableObject {
         let prefix = "tab-explorer-"
         guard tabID.hasPrefix(prefix) else { return nil }
         return String(tabID.dropFirst(prefix.count))
+    }
+
+    private func activeTaskTabID(parameters: DirtyImagingTaskParameters) -> String {
+        if let activeTab = state.tabs.first(where: { $0.id == state.activeTabID && $0.kind == .task }) {
+            return activeTab.id
+        }
+        if !parameters.datasetID.isEmpty {
+            return "tab-dirty-imaging-\(parameters.datasetID)"
+        }
+        return "tab-dirty-imaging-unbound"
     }
 
     private func finishMeasurementSetPlotJob(
@@ -1099,39 +1109,99 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
-    private func handleDirtyImagingEvent(_ event: DirtyImagingTaskEvent, runID: String) {
+    private func failDirtyImagingJob(runID: String, message: String, diagnostics: [String]) {
+        activeTaskExecutions.removeValue(forKey: runID)
+        if var job = state.jobs[runID], job.status != .cancelled {
+            job.status = .failed
+            job.progress = 1.0
+            job.error = message
+            job.lastEvent = "failed"
+            job.logLines.append(message)
+            job.logLines.append(contentsOf: diagnostics)
+            state.jobs[runID] = job
+            if state.activeJobIDsByTab[job.tabID] == runID {
+                state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+            }
+        }
+
+        if state.taskRun.runID == runID {
+            state.taskRun = TaskRun(
+                runID: runID,
+                state: .failed,
+                progress: 1.0,
+                logLines: ["casars-imager dirty imaging failed.", message],
+                warnings: [],
+                products: [],
+                diagnostics: diagnostics,
+                requestSummary: state.dirtyImagingTaskParameters?.requestSummary
+            )
+        }
+    }
+
+    private func finishDirtyImagingJob(runID: String, result: DirtyImagingTaskResult) {
+        activeTaskExecutions.removeValue(forKey: runID)
+        if var job = state.jobs[runID], job.status != .cancelled {
+            job.status = .succeeded
+            job.progress = 1.0
+            job.resultSummary = result.report.summary
+            job.lastEvent = "succeeded"
+            job.logLines.append(result.report.summary)
+            job.logLines.append("Protocol: \(result.protocolSummary)")
+            state.jobs[runID] = job
+            if state.activeJobIDsByTab[job.tabID] == runID {
+                state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+            }
+        }
+    }
+
+    private func cancelDirtyImagingJob(runID: String, failure: DirtyImagingTaskFailure) {
+        activeTaskExecutions.removeValue(forKey: runID)
+        if var job = state.jobs[runID] {
+            job.status = .cancelled
+            job.progress = 1.0
+            job.cancellationRequested = true
+            job.error = failure.message
+            job.lastEvent = "cancelled"
+            job.logLines.append(failure.message)
+            state.jobs[runID] = job
+            if state.activeJobIDsByTab[job.tabID] == runID {
+                state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+            }
+        }
+    }
+
+    private func handleDirtyImagingEvent(_ event: DirtyImagingTaskEvent, runID: String, jobID: String) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in
-                self?.handleDirtyImagingEvent(event, runID: runID)
+                self?.handleDirtyImagingEvent(event, runID: runID, jobID: jobID)
             }
             return
         }
 
-        guard state.taskRun.runID == runID else {
+        guard state.jobs[jobID]?.status != .cancelled else {
             return
         }
 
         switch event {
         case .succeeded(let result):
-            guard state.taskRun.state != .cancelled else {
-                return
+            finishDirtyImagingJob(runID: jobID, result: result)
+            if state.taskRun.runID == runID {
+                state.taskRun = TaskRun(
+                    runID: runID,
+                    state: .succeeded,
+                    progress: 1.0,
+                    logLines: [
+                        "casars-imager completed dirty imaging.",
+                        result.report.summary,
+                        "Protocol: \(result.protocolSummary)"
+                    ],
+                    warnings: result.report.warnings,
+                    products: result.artifacts.map(\.path),
+                    diagnostics: result.diagnostics,
+                    outputPaths: result.outputPaths,
+                    requestSummary: result.request.parameters.requestSummary
+                )
             }
-            activeTaskExecution = nil
-            state.taskRun = TaskRun(
-                runID: runID,
-                state: .succeeded,
-                progress: 1.0,
-                logLines: [
-                    "casars-imager completed dirty imaging.",
-                    result.report.summary,
-                    "Protocol: \(result.protocolSummary)"
-                ],
-                warnings: result.report.warnings,
-                products: result.artifacts.map(\.path),
-                diagnostics: result.diagnostics,
-                outputPaths: result.outputPaths,
-                requestSummary: result.request.parameters.requestSummary
-            )
             appendProducedDatasets(from: result)
             state.history.append(
                 ProcessingHistoryEvent(
@@ -1145,23 +1215,15 @@ public final class WorkbenchStore: ObservableObject {
             )
 
         case .failed(let failure):
-            activeTaskExecution = nil
-            state.taskRun = TaskRun(
-                runID: runID,
-                state: .failed,
-                progress: 1.0,
-                logLines: ["casars-imager dirty imaging failed.", failure.message],
-                warnings: [],
-                products: [],
-                diagnostics: failure.diagnostics,
-                outputPaths: [failure.requestJSONPath, failure.stdoutPath, failure.stderrPath].compactMap { $0 },
-                requestSummary: state.dirtyImagingTaskParameters?.requestSummary
-            )
+            failDirtyImagingJob(runID: jobID, message: failure.message, diagnostics: failure.diagnostics)
+            if state.taskRun.runID == runID {
+                state.taskRun.outputPaths = [failure.requestJSONPath, failure.stdoutPath, failure.stderrPath].compactMap { $0 }
+            }
             state.lastErrors.append("Dirty imaging failed: \(failure.message)")
 
         case .cancelled(let failure):
-            activeTaskExecution = nil
-            if state.taskRun.state != .cancelled {
+            cancelDirtyImagingJob(runID: jobID, failure: failure)
+            if state.taskRun.runID == runID && state.taskRun.state != .cancelled {
                 state.taskRun.state = .cancelled
                 state.taskRun.progress = 1.0
                 state.taskRun.logLines.append(failure.message)

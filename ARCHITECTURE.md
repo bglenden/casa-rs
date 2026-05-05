@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-05-04
+Last reality check: 2026-05-05
 Verification: just docs-check
 
 ## System purpose
@@ -66,7 +66,13 @@ the Swift workbench supervises a short-lived `casars-imager --json-run`
 process for dirty imaging, records logs/results/products in processing history,
 and exposes the request/run state through the debug snapshot. This remains a
 narrow process-supervision path, not a shared background service, provider
-daemon, or repo-wide async runtime contract.
+daemon, or repo-wide async runtime contract. Issue #194 adds the first durable
+Swift-side workbench job coordinator for independent tab work: MeasurementSet
+plot rendering and dirty-imaging subprocess runs register per-tab jobs with
+pending/running/succeeded/failed/cancelled state, cancellation projection, logs,
+results/errors, and debug-snapshot visibility. The coordinator is intentionally
+local to `apps/casars-mac`; it does not introduce a provider daemon, durable
+project-history format, or repo-wide async runtime contract.
 
 ## Persistence / external systems
 
