@@ -122,6 +122,13 @@ tabs keep their own active jobs. The coordinator is deliberately Swift-side and
 in-memory for this product slice. It is not a provider daemon, project-history
 storage format, or broad task scheduler.
 
+GUI-Wave-5 keeps generated-product relationships in the same in-memory
+workbench state. A dirty-imaging completion creates a run-product group keyed by
+the run ID, links each recognized artifact to the probed `DatasetSummary`, and
+routes product opens through the normal type-aware explorer tab path. This is a
+debuggable GUI state model, not a persisted run manifest; a durable project
+history/cache remains future work.
+
 ## Core Panels
 
 ### Project Explorer
@@ -580,8 +587,12 @@ adds a first real MeasurementSet plot API through the same frontend-service
 boundary. GUI-Wave-4 adds the first real task run by supervising a short-lived
 `casars-imager --json-run` dirty-imaging process from the Swift workbench,
 recording request/result/log artifacts in processing history, and surfacing run
-state through debug JSON. Image exploration, Python execution, and AI behavior
-remain stubbed unless separately approved.
+state through debug JSON. GUI-Wave-5 adds the first native explorer spine for
+real MeasurementSets, CASA images, and CASA tables: Rust/frontend-service probes
+remain the source of scientific metadata, while Swift routes datasets and
+generated products into typed tabs and projects shallow summaries. Deep image
+viewing, table cell browsing, Python execution, and AI behavior remain future
+work unless separately approved.
 
 ## Testability And Debuggability
 
@@ -615,10 +626,12 @@ should include:
 - selected dataset
 - inspector collapsed/expanded state
 - open central tabs
+- typed explorer tabs and their dataset paths
 - active central tab
 - command/search query state when present
 - task run states
 - current task request, diagnostics, logs, and output paths
+- generated product groups keyed by task run
 - AI chat messages and proposal states
 - Python terminal ownership state
 - processing-history events

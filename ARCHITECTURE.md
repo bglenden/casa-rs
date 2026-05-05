@@ -73,6 +73,11 @@ pending/running/succeeded/failed/cancelled state, cancellation projection, logs,
 results/errors, and debug-snapshot visibility. The coordinator is intentionally
 local to `apps/casars-mac`; it does not introduce a provider daemon, durable
 project-history format, or repo-wide async runtime contract.
+GUI-Wave-5 keeps that runtime shape and adds the native explorer spine: real
+MeasurementSet, CASA image, and table probes are routed into typed Swift
+explorer tabs, and dirty-imaging artifacts are grouped under their originating
+in-memory run state so generated products can be reopened without adding a
+project-history persistence format or background service.
 
 ## Persistence / external systems
 

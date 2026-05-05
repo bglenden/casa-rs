@@ -230,29 +230,90 @@ struct DatasetExplorerPanel: View {
 
     @ViewBuilder
     private func realExplorerContent(for dataset: DatasetSummary) -> some View {
-        if dataset.kind == .measurementSet {
+        switch dataset.kind {
+        case .measurementSet:
             MeasurementSetPlotPanel(store: store, dataset: dataset)
-        } else {
+        case .imageCube:
+            imageExplorerContent(for: dataset)
+        case .calibrationTable, .table:
+            tableExplorerContent(for: dataset)
+        case .runProduct:
+            productExplorerContent(for: dataset)
+        }
+    }
+
+    private func imageExplorerContent(for dataset: DatasetSummary) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 16) {
                 SummaryBox(
-                    title: "Overview",
+                    title: "Image",
                     values: [
                         dataset.size,
+                        "Units: \(dataset.units.isEmpty ? "Unknown" : dataset.units)",
                         "Bytes: \(byteCount(dataset.sizeBytes))",
                         "Shape: \(formatShape(dataset.shape))"
                     ]
                 )
-                SummaryBox(title: "Fields", values: dataset.fields)
-                SummaryBox(title: "Spectral Windows", values: dataset.spectralWindows)
+                SummaryBox(title: "WCS and Beam", values: dataset.diagnostics.filter(isImageGeometryDiagnostic))
+                SummaryBox(title: "Masks and Regions", values: imageMaskRegionValues(for: dataset))
             }
 
-            SummaryBox(
-                title: "Explorer Status",
-                values: ["A real summary is available. A specialized \(dataset.kind.explorerName) is not implemented yet."]
-            )
+            ImagePreviewPlaceholder(dataset: dataset)
 
             SummaryBox(title: "Probe Notes", values: [dataset.notes] + dataset.diagnostics)
         }
+    }
+
+    private func tableExplorerContent(for dataset: DatasetSummary) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 16) {
+                SummaryBox(
+                    title: "Table",
+                    values: [
+                        dataset.size,
+                        "Type: \(dataset.units.isEmpty ? "casacore table" : dataset.units)",
+                        "Rows: \(dataset.shape.first.map(String.init) ?? "Unknown")",
+                        "Bytes: \(byteCount(dataset.sizeBytes))"
+                    ]
+                )
+                SummaryBox(title: "Columns", values: dataset.columns)
+                SummaryBox(title: "Subtables", values: dataset.subtables)
+            }
+
+            TablePreviewSummary(dataset: dataset)
+            SummaryBox(title: "Probe Notes", values: [dataset.notes] + dataset.diagnostics)
+        }
+    }
+
+    private func productExplorerContent(for dataset: DatasetSummary) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            SummaryBox(
+                title: "Product",
+                values: [
+                    dataset.size,
+                    dataset.units,
+                    dataset.path
+                ]
+            )
+            SummaryBox(title: "Product Metadata", values: [dataset.notes] + dataset.diagnostics)
+        }
+    }
+
+    private func isImageGeometryDiagnostic(_ value: String) -> Bool {
+        value.hasPrefix("Cell size:")
+            || value.hasPrefix("Center:")
+            || value.hasPrefix("Cube center frequency:")
+            || value.hasPrefix("Total bandwidth:")
+            || value.hasPrefix("Channel separation:")
+            || value.hasPrefix("Beam:")
+            || value.hasPrefix("Median beam:")
+    }
+
+    private func imageMaskRegionValues(for dataset: DatasetSummary) -> [String] {
+        let values = dataset.diagnostics.filter {
+            $0.hasPrefix("Default mask:") || $0.lowercased().contains("mask") || $0.lowercased().contains("region")
+        }
+        return values.isEmpty ? ["No mask or region metadata reported"] : values
     }
 
     private func primarySummaryTitle(for dataset: DatasetSummary) -> String {
@@ -746,6 +807,7 @@ struct DirtyImagingTaskPanel: View {
                         imagingBlock(parameters: parameters)
                         outputBlock(parameters: parameters)
                         runBlock
+                        runProductsBlock
                     } else {
                         PanelHeader(title: "Dirty Imaging", subtitle: "Select a MeasurementSet before opening this task")
                     }
@@ -1085,6 +1147,58 @@ struct DirtyImagingTaskPanel: View {
         .accessibilityIdentifier("task.runState")
     }
 
+    @ViewBuilder
+    private var runProductsBlock: some View {
+        if let group = activeRunProductGroup {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Generated Products")
+                    .workbenchFont(.headline)
+                Text(group.runID)
+                    .workbenchFont(.caption, design: .monospaced)
+                    .foregroundStyle(.secondary)
+
+                ForEach(group.products) { product in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(product.label)
+                                .workbenchFont(.subheadline, weight: .semibold)
+                            Text(product.path)
+                                .workbenchFont(.caption, design: .monospaced)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                            if product.previewPngExists, let preview = product.previewPngPath {
+                                Text("Preview: \(preview)")
+                                    .workbenchFont(.caption, design: .monospaced)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+
+                        Spacer()
+
+                        Button {
+                            store.openRunProduct(runID: group.runID, productID: product.id)
+                        } label: {
+                            Label("Open", systemImage: "arrow.up.right.square")
+                        }
+                        .disabled(product.datasetID == nil)
+                        .accessibilityIdentifier("task.product.open.\(product.id)")
+                    }
+                    .padding(.vertical, 3)
+                }
+            }
+            .taskCard()
+            .accessibilityIdentifier("task.generatedProducts")
+        }
+    }
+
+    private var activeRunProductGroup: RunProductGroup? {
+        guard let runID = store.state.taskRun.runID else {
+            return nil
+        }
+        return store.state.runProductGroups.first { $0.runID == runID }
+    }
+
     private func valueList(_ title: String, values: [String]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
@@ -1263,6 +1377,72 @@ struct SummaryBox: View {
         }
         .frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
         .padding()
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct ImagePreviewPlaceholder: View {
+    let dataset: DatasetSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Preview")
+                .workbenchFont(.headline)
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.20)))
+                VStack(spacing: 8) {
+                    Image(systemName: "photo")
+                        .workbenchFont(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text(previewText)
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding()
+            }
+            .frame(minHeight: 180)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var previewText: String {
+        if let preview = dataset.diagnostics.first(where: { $0.hasPrefix("preview:") }) {
+            return preview
+        }
+        return "Image metadata is loaded. Raster plane preview is deferred to GUI-Wave-6."
+    }
+}
+
+struct TablePreviewSummary: View {
+    let dataset: DatasetSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Column Preview")
+                .workbenchFont(.headline)
+            if dataset.columns.isEmpty {
+                Text("No columns reported by the table schema.")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 8)], alignment: .leading, spacing: 8) {
+                    ForEach(dataset.columns, id: \.self) { column in
+                        Label(column, systemImage: "tablecells")
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color(nsColor: .controlBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
