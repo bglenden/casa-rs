@@ -705,6 +705,7 @@ pub(crate) struct ScreenProjector {
     support: usize,
     kernel_center: usize,
     kernel_weights: Array2<Complex32>,
+    phased_kernel_weights: Array2<Complex32>,
     normalization_sum: Complex32,
     phase_gradient_rad_per_sample: [f64; 2],
 }
@@ -828,6 +829,7 @@ impl ScreenProjector {
             sampling,
             support,
             kernel_center,
+            phased_kernel_weights: kernel_weights.clone(),
             kernel_weights,
             normalization_sum: kernel_sum,
             phase_gradient_rad_per_sample: [0.0, 0.0],
@@ -897,6 +899,7 @@ impl ScreenProjector {
             support,
             kernel_center,
             normalization_sum: Complex32::new(imaging_norm, 0.0),
+            phased_kernel_weights: kernel_weights.clone(),
             kernel_weights,
             phase_gradient_rad_per_sample: [0.0, 0.0],
         })
@@ -904,6 +907,15 @@ impl ScreenProjector {
 
     pub(crate) fn with_phase_gradient(mut self, phase_gradient_rad_per_sample: [f64; 2]) -> Self {
         self.phase_gradient_rad_per_sample = phase_gradient_rad_per_sample;
+        self.phased_kernel_weights = self.kernel_weights.clone();
+        let center = self.kernel_center as isize;
+        for ((kernel_x, kernel_y), weight) in self.phased_kernel_weights.indexed_iter_mut() {
+            let signed_x = kernel_x as isize - center;
+            let signed_y = kernel_y as isize - center;
+            let phase = signed_x as f64 * phase_gradient_rad_per_sample[0]
+                + signed_y as f64 * phase_gradient_rad_per_sample[1];
+            *weight *= Complex32::new(phase.cos() as f32, phase.sin() as f32);
+        }
         self
     }
 
@@ -964,12 +976,8 @@ impl ScreenProjector {
                 (self.kernel_center as isize + iy * self.sampling as isize + plan.off_y) as usize;
             for ix in plan.min_ix..=plan.max_ix {
                 let signed_x = ix * self.sampling as isize + plan.off_x;
-                let signed_y = iy * self.sampling as isize + plan.off_y;
                 let kernel_x = (self.kernel_center as isize + signed_x) as usize;
-                let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
-                    + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
-                let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
-                let cwt = self.kernel_weights[(kernel_x, kernel_y)] * phasor;
+                let cwt = self.phased_kernel_weights[(kernel_x, kernel_y)];
                 grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] += value * cwt;
             }
         }
@@ -981,18 +989,32 @@ impl ScreenProjector {
         plan: &ScreenProjectSamplePlan,
         value: Complex64,
     ) {
+        if let Some(storage) = grid.as_slice_memory_order_mut() {
+            let grid_stride = self.grid_shape[1];
+            for iy in plan.min_iy..=plan.max_iy {
+                let kernel_y = (self.kernel_center as isize
+                    + iy * self.sampling as isize
+                    + plan.off_y) as usize;
+                let grid_y = (plan.loc_y + iy) as usize;
+                for ix in plan.min_ix..=plan.max_ix {
+                    let signed_x = ix * self.sampling as isize + plan.off_x;
+                    let kernel_x = (self.kernel_center as isize + signed_x) as usize;
+                    let kernel = self.phased_kernel_weights[(kernel_x, kernel_y)];
+                    let cwt = Complex64::new(kernel.re as f64, kernel.im as f64);
+                    let grid_x = (plan.loc_x + ix) as usize;
+                    storage[grid_x * grid_stride + grid_y] += value * cwt;
+                }
+            }
+            return;
+        }
         for iy in plan.min_iy..=plan.max_iy {
             let kernel_y =
                 (self.kernel_center as isize + iy * self.sampling as isize + plan.off_y) as usize;
             for ix in plan.min_ix..=plan.max_ix {
                 let signed_x = ix * self.sampling as isize + plan.off_x;
-                let signed_y = iy * self.sampling as isize + plan.off_y;
                 let kernel_x = (self.kernel_center as isize + signed_x) as usize;
-                let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
-                    + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
-                let phasor = Complex64::new(phase.cos(), phase.sin());
-                let kernel = self.kernel_weights[(kernel_x, kernel_y)];
-                let cwt = Complex64::new(kernel.re as f64, kernel.im as f64) * phasor;
+                let kernel = self.phased_kernel_weights[(kernel_x, kernel_y)];
+                let cwt = Complex64::new(kernel.re as f64, kernel.im as f64);
                 grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)] += value * cwt;
             }
         }
@@ -1003,18 +1025,32 @@ impl ScreenProjector {
         grid: &Array2<Complex32>,
         plan: &ScreenProjectSamplePlan,
     ) -> Complex32 {
+        if let Some(storage) = grid.as_slice_memory_order() {
+            let grid_stride = self.grid_shape[1];
+            let mut value = Complex32::new(0.0, 0.0);
+            for iy in plan.min_iy..=plan.max_iy {
+                let kernel_y = (self.kernel_center as isize
+                    + iy * self.sampling as isize
+                    + plan.off_y) as usize;
+                let grid_y = (plan.loc_y + iy) as usize;
+                for ix in plan.min_ix..=plan.max_ix {
+                    let signed_x = ix * self.sampling as isize + plan.off_x;
+                    let kernel_x = (self.kernel_center as isize + signed_x) as usize;
+                    let cwt = self.phased_kernel_weights[(kernel_x, kernel_y)];
+                    let grid_x = (plan.loc_x + ix) as usize;
+                    value += cwt.conj() * storage[grid_x * grid_stride + grid_y];
+                }
+            }
+            return value;
+        }
         let mut value = Complex32::new(0.0, 0.0);
         for iy in plan.min_iy..=plan.max_iy {
             let kernel_y =
                 (self.kernel_center as isize + iy * self.sampling as isize + plan.off_y) as usize;
             for ix in plan.min_ix..=plan.max_ix {
                 let signed_x = ix * self.sampling as isize + plan.off_x;
-                let signed_y = iy * self.sampling as isize + plan.off_y;
                 let kernel_x = (self.kernel_center as isize + signed_x) as usize;
-                let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
-                    + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
-                let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
-                let cwt = self.kernel_weights[(kernel_x, kernel_y)] * phasor;
+                let cwt = self.phased_kernel_weights[(kernel_x, kernel_y)];
                 value +=
                     cwt.conj() * grid[((plan.loc_x + ix) as usize, (plan.loc_y + iy) as usize)];
             }
@@ -1037,12 +1073,8 @@ impl ScreenProjector {
             .ok()?;
             for ix in plan.min_ix..=plan.max_ix {
                 let signed_x = ix * self.sampling as isize + plan.off_x;
-                let signed_y = iy * self.sampling as isize + plan.off_y;
                 let kernel_x = usize::try_from(self.kernel_center as isize + signed_x).ok()?;
-                let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
-                    + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
-                let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
-                let tap = *self.kernel_weights.get((kernel_x, kernel_y))? * phasor;
+                let tap = *self.phased_kernel_weights.get((kernel_x, kernel_y))?;
                 sum += tap;
                 if ix == 0 && iy == 0 {
                     center = tap;
@@ -1068,15 +1100,11 @@ impl ScreenProjector {
             .ok()?;
             for ix in plan.min_ix..=plan.max_ix {
                 let signed_x = ix * self.sampling as isize + plan.off_x;
-                let signed_y = iy * self.sampling as isize + plan.off_y;
                 let kernel_x = usize::try_from(self.kernel_center as isize + signed_x).ok()?;
-                let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
-                    + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
-                let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
                 taps.push((
                     ix,
                     iy,
-                    *self.kernel_weights.get((kernel_x, kernel_y))? * phasor,
+                    *self.phased_kernel_weights.get((kernel_x, kernel_y))?,
                 ));
             }
         }
@@ -1096,14 +1124,10 @@ impl ScreenProjector {
             usize::try_from(self.kernel_center as isize + iy * self.sampling as isize + plan.off_y)
                 .ok()?;
         let signed_x = ix * self.sampling as isize + plan.off_x;
-        let signed_y = iy * self.sampling as isize + plan.off_y;
         let kernel_x = usize::try_from(self.kernel_center as isize + signed_x).ok()?;
-        let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
-            + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
-        let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
-        self.kernel_weights
+        self.phased_kernel_weights
             .get((kernel_x, kernel_y))
-            .map(|kernel| *kernel * phasor)
+            .copied()
     }
 
     fn sample_normalization(
@@ -1122,12 +1146,8 @@ impl ScreenProjector {
                     .ok()?;
             for ix in min_ix..=max_ix {
                 let signed_x = ix * self.sampling as isize + off_x;
-                let signed_y = iy * self.sampling as isize + off_y;
                 let kernel_x = usize::try_from(self.kernel_center as isize + signed_x).ok()?;
-                let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
-                    + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
-                let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
-                let value = *self.kernel_weights.get((kernel_x, kernel_y))? * phasor;
+                let value = *self.phased_kernel_weights.get((kernel_x, kernel_y))?;
                 normalization += value;
             }
         }

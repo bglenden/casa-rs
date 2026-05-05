@@ -763,6 +763,7 @@ fn run_mosaic_dirty_imaging(
         let mut trace_group_weight_sum = 0.0f64;
         let mut trace_group_sample_count = 0usize;
         let mut trace_group_center_count = 0usize;
+        let mut group_weight_grid_sum = 0.0f64;
         for sample_index in 0..group.batch.len() {
             if !group.batch.gridable[sample_index] {
                 skipped_samples += 1;
@@ -899,11 +900,7 @@ fn run_mosaic_dirty_imaging(
                 &plan,
                 Complex64::new(visibility.re as f64, visibility.im as f64) * grid_weight64,
             );
-            weight_projector.grid_sample_planned_f64(
-                &mut group_weight_grid,
-                &weight_plan,
-                Complex64::new(grid_weight64, 0.0),
-            );
+            group_weight_grid_sum += grid_weight64;
             let reported = f64::from(grid_weight);
             if plan.center_in_bounds {
                 normalization_sumwt += reported;
@@ -911,6 +908,13 @@ fn run_mosaic_dirty_imaging(
                 trace_group_center_count += 1;
             }
             gridded_samples += 1;
+        }
+        if group_weight_grid_sum > 0.0 {
+            weight_projector.grid_sample_planned_f64(
+                &mut group_weight_grid,
+                &weight_plan,
+                Complex64::new(group_weight_grid_sum, 0.0),
+            );
         }
         if let Some(residual_grid) = accumulated_residual_grid.as_mut() {
             Zip::from(residual_grid)

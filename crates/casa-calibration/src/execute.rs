@@ -727,13 +727,12 @@ fn execute_apply_plan(
         .iter()
         .map(|row| row.row_index)
         .collect::<BTreeSet<_>>();
-    let created_corrected_data_column =
-        ensure_corrected_data_column(ms, Some(&selected_row_indices)).map_err(|source| {
-            ApplyExecutionError::CreateCorrectedData {
-                path: ms_path.clone(),
-                source,
-            }
+    let corrected_data_creation = ensure_corrected_data_column(ms, Some(&selected_row_indices))
+        .map_err(|source| ApplyExecutionError::CreateCorrectedData {
+            path: ms_path.clone(),
+            source,
         })?;
+    let created_corrected_data_column = corrected_data_creation.created;
     let ensure_corrected_data_ns = ensure_corrected_data_started_at.elapsed().as_nanos() as u64;
 
     let correlation_lookup_started_at = Instant::now();
@@ -1116,7 +1115,14 @@ fn execute_apply_plan(
     if use_partial_main_save {
         let changed_row_indices: Vec<usize> =
             plan.selected_rows.iter().map(|row| row.row_index).collect();
-        if created_corrected_data_column {
+        if corrected_data_creation.cloned_from_data {
+            ms.main_table()
+                .save_selected_rows_in_place_assuming_valid(&changed_columns, &changed_row_indices)
+                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                    path: ms_path.clone(),
+                    source: MsError::from(source),
+                })?;
+        } else if created_corrected_data_column {
             ms.main_table_mut()
                 .save_added_tiled_shape_column_in_place_assuming_valid(
                     VisibilityDataColumn::CorrectedData.name(),
@@ -4459,16 +4465,25 @@ fn cal_spw_reference_frequency_hz(cal_spw: &crate::plan::SpectralWindowPlan) -> 
         .unwrap_or(cal_spw.ref_frequency_hz)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CorrectedDataCreation {
+    created: bool,
+    cloned_from_data: bool,
+}
+
 fn ensure_corrected_data_column(
     ms: &mut MeasurementSet,
     _rows_overwritten_by_apply: Option<&BTreeSet<usize>>,
-) -> Result<bool, TableError> {
+) -> Result<CorrectedDataCreation, TableError> {
     if ms
         .main_table()
         .schema()
         .is_some_and(|schema| schema.contains_column(VisibilityDataColumn::CorrectedData.name()))
     {
-        return Ok(false);
+        return Ok(CorrectedDataCreation {
+            created: false,
+            cloned_from_data: false,
+        });
     }
 
     let column_def = *VisibilityDataColumn::CorrectedData
@@ -4480,6 +4495,30 @@ fn ensure_corrected_data_column(
         .expect("corrected data column present")
         .clone();
     ms.main_table_mut().add_column(column, None)?;
+    if let Some(data_keywords) = ms
+        .main_table()
+        .column_keywords(VisibilityDataColumn::Data.name())
+        .cloned()
+    {
+        ms.main_table_mut()
+            .set_column_keywords(VisibilityDataColumn::CorrectedData.name(), data_keywords);
+    }
+
+    if ms
+        .main_table_mut()
+        .save_added_tiled_column_clone_in_place_assuming_valid(
+            VisibilityDataColumn::Data.name(),
+            VisibilityDataColumn::CorrectedData.name(),
+            "TiledCorrected",
+        )
+        .is_ok()
+    {
+        return Ok(CorrectedDataCreation {
+            created: true,
+            cloned_from_data: true,
+        });
+    }
+
     let row_indices = (0..ms.main_table().row_count()).collect::<Vec<_>>();
     let data_values = ms
         .main_table()
@@ -4495,7 +4534,10 @@ fn ensure_corrected_data_column(
         )?;
     }
 
-    Ok(true)
+    Ok(CorrectedDataCreation {
+        created: true,
+        cloned_from_data: false,
+    })
 }
 
 #[derive(Clone, Copy, Default)]
@@ -5806,7 +5848,13 @@ mod tests {
             .add_row(RecordValue::new(fields))
             .unwrap();
 
-        assert!(ensure_corrected_data_column(&mut ms, None).unwrap());
+        assert_eq!(
+            ensure_corrected_data_column(&mut ms, None).unwrap(),
+            CorrectedDataCreation {
+                created: true,
+                cloned_from_data: false
+            }
+        );
         assert!(
             ms.main_table()
                 .schema()
@@ -5821,7 +5869,13 @@ mod tests {
                 .get(VisibilityDataColumn::CorrectedData.name())
                 .is_some()
         );
-        assert!(!ensure_corrected_data_column(&mut ms, None).unwrap());
+        assert_eq!(
+            ensure_corrected_data_column(&mut ms, None).unwrap(),
+            CorrectedDataCreation {
+                created: false,
+                cloned_from_data: false
+            }
+        );
         assert_eq!(display_ms_path(&ms), "<in-memory>");
     }
 }

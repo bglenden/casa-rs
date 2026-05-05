@@ -742,6 +742,193 @@ impl Table {
         Ok(())
     }
 
+    /// Persists a newly-added array column by cloning an existing single-column
+    /// tiled data manager and binding the clone to `target_column`.
+    ///
+    /// This is the storage-layout clone used by casacore
+    /// `TableCopy::cloneColumnTyped` + `TableCopy::copyColumnData` for
+    /// MeasurementSet scratch columns: the target starts as a byte-for-byte copy
+    /// of the source tiled payload, then callers can sparsely patch rows.
+    ///
+    /// Callers must ensure that `target_column` already exists in the in-memory
+    /// schema, is not yet present on disk, and has the same primitive array
+    /// type as `source_column`.
+    pub fn save_added_tiled_column_clone_in_place_assuming_valid(
+        &mut self,
+        source_column: &str,
+        target_column: &str,
+        target_data_manager_name: &str,
+    ) -> Result<(), TableError> {
+        if self.kind != TableKind::Plain {
+            return Err(TableError::Storage(
+                "cloning a tiled column in place requires a plain disk-backed table".to_string(),
+            ));
+        }
+        if !self.virtual_columns.is_empty() || !self.virtual_bindings.is_empty() {
+            return Err(TableError::Storage(
+                "cloning a tiled column in place does not support virtual columns".to_string(),
+            ));
+        }
+
+        let source_path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| TableError::Storage("table has no source path".to_string()))?
+            .clone();
+        let target_schema_column = self
+            .inner
+            .schema()
+            .and_then(|schema| schema.column(target_column))
+            .cloned()
+            .ok_or_else(|| TableError::SchemaColumnUnknown {
+                column: target_column.to_string(),
+            })?;
+
+        let auto_unlock = self.begin_write_operation("save_added_tiled_column_clone")?;
+        let result = (|| {
+            let control_path = source_path.join(crate::storage::TABLE_CONTROL_FILE);
+            let mut table_dat =
+                match crate::storage::table_control::read_table_dat_dispatch(&control_path)? {
+                    crate::storage::table_control::TableDatResult::Plain(table_dat) => table_dat,
+                    _ => {
+                        return Err(TableError::Storage(
+                            "cloning a tiled column in place only supports plain tables"
+                                .to_string(),
+                        ));
+                    }
+                };
+
+            if table_dat
+                .table_desc
+                .columns
+                .iter()
+                .any(|desc| desc.col_name == target_column)
+            {
+                return Err(TableError::Storage(format!(
+                    "column \"{target_column}\" already exists on disk"
+                )));
+            }
+
+            let source_desc = table_dat
+                .table_desc
+                .columns
+                .iter()
+                .find(|desc| desc.col_name == source_column)
+                .cloned()
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: source_column.to_string(),
+                })?;
+            let source_plain_column = table_dat
+                .column_set
+                .columns
+                .iter()
+                .find(|entry| entry.original_name == source_column)
+                .cloned()
+                .ok_or_else(|| {
+                    TableError::Storage(format!(
+                        "column \"{source_column}\" is not bound to an on-disk data manager"
+                    ))
+                })?;
+            let source_dm = table_dat
+                .column_set
+                .data_managers
+                .iter()
+                .find(|entry| entry.seq_nr == source_plain_column.dm_seq_nr)
+                .cloned()
+                .ok_or_else(|| {
+                    TableError::Storage(format!(
+                        "data manager {} for column \"{source_column}\" is missing",
+                        source_plain_column.dm_seq_nr
+                    ))
+                })?;
+            if !matches!(
+                source_dm.type_name.as_str(),
+                "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan"
+            ) {
+                return Err(TableError::Storage(format!(
+                    "column \"{source_column}\" is stored in {}, not a tiled data manager",
+                    source_dm.type_name
+                )));
+            }
+            let source_group_columns = table_dat
+                .column_set
+                .columns
+                .iter()
+                .filter(|entry| entry.dm_seq_nr == source_plain_column.dm_seq_nr)
+                .count();
+            if source_group_columns != 1 {
+                return Err(TableError::Storage(format!(
+                    "column \"{source_column}\" shares data manager {} with {source_group_columns} columns; clone currently supports single-column tiled managers",
+                    source_plain_column.dm_seq_nr
+                )));
+            }
+
+            let mut target_desc =
+                crate::storage::table_control::ColumnDescContents::from_column_schema(
+                    &target_schema_column,
+                );
+            if source_desc.require_primitive_type()? != target_desc.require_primitive_type()? {
+                return Err(TableError::Storage(format!(
+                    "cannot clone \"{source_column}\" into \"{target_column}\" with a different primitive type"
+                )));
+            }
+            target_desc.data_manager_type = source_dm.type_name.clone();
+            target_desc.data_manager_group = target_data_manager_name.to_string();
+            if let Some(keywords) = self.inner.column_keywords(target_column) {
+                target_desc.keywords = keywords.clone();
+            } else {
+                target_desc.keywords = source_desc.keywords.clone();
+            }
+
+            let target_seq_nr = table_dat
+                .column_set
+                .data_managers
+                .iter()
+                .map(|dm| dm.seq_nr)
+                .max()
+                .map_or(0, |seq| seq + 1);
+            crate::storage::tiled_stman::clone_tiled_manager_files(
+                &source_path,
+                source_plain_column.dm_seq_nr,
+                target_seq_nr,
+                target_data_manager_name,
+            )?;
+
+            table_dat.table_desc.columns.push(target_desc);
+            table_dat
+                .column_set
+                .columns
+                .push(crate::storage::table_control::PlainColumnEntry {
+                    original_name: target_column.to_string(),
+                    dm_seq_nr: target_seq_nr,
+                    is_array: true,
+                });
+            table_dat.column_set.data_managers.push(
+                crate::storage::table_control::DataManagerEntry {
+                    type_name: source_dm.type_name.clone(),
+                    seq_nr: target_seq_nr,
+                    data: source_dm.data.clone(),
+                },
+            );
+            table_dat.column_set.seq_count = table_dat
+                .column_set
+                .data_managers
+                .iter()
+                .map(|dm| dm.seq_nr + 1)
+                .max()
+                .unwrap_or(1);
+            crate::storage::table_control::write_table_dat(&control_path, &table_dat)?;
+            crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&source_path);
+            self.dm_info.push(crate::storage::DataManagerInfo {
+                dm_type: source_dm.type_name,
+                seq_nr: target_seq_nr,
+                columns: vec![target_column.to_string()],
+            });
+            Ok(())
+        })();
+        self.finish_write_operation(auto_unlock, result)
+    }
+
     /// Persists a newly-added variable-shape array column as a standalone
     /// `TiledShapeStMan` data manager without rewriting existing managers.
     ///
