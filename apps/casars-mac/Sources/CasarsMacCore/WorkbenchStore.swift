@@ -99,7 +99,8 @@ public final class WorkbenchStore: ObservableObject {
     private let probeClient: ProjectProbeClient
     private let plotClient: MeasurementSetPlotClient
     private let dirtyImagingClient: DirtyImagingTaskClient
-    private var activeTaskExecution: DirtyImagingTaskExecution?
+    private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
+    private var activeTaskExecutions: [String: DirtyImagingTaskExecution] = [:]
 
     public init(
         state: WorkbenchState = EmptyWorkbench.makeState(),
@@ -268,30 +269,58 @@ public final class WorkbenchStore: ObservableObject {
             state.measurementSetPlots[datasetID] = plotState
             return
         }
+
+        let request = MeasurementSetPlotBuildRequest(
+            datasetPath: dataset.path,
+            preset: plotState.preset,
+            field: selectorToken(plotState.selectedField),
+            spectralWindow: selectorToken(plotState.selectedSpectralWindow),
+            correlation: selectorToken(plotState.selectedCorrelation),
+            dataColumn: plotState.dataColumn
+        )
+        let tabID = dataset.explorerTabID
+        let jobID = nextJobID(prefix: "ms-plot")
+        startJob(
+            WorkbenchJob(
+                id: jobID,
+                tabID: tabID,
+                kind: .measurementSetPlot,
+                owner: .user,
+                status: .running,
+                progress: 0.05,
+                title: "Generate \(plotState.preset.title)",
+                detail: dataset.name,
+                logLines: ["Queued MeasurementSet plot render.", request.preset.title],
+                lastEvent: "started"
+            )
+        )
+
         plotState.status = .running
         plotState.lastError = nil
         state.measurementSetPlots[datasetID] = plotState
 
-        do {
-            let result = try plotClient.buildPlot(
-                request: MeasurementSetPlotBuildRequest(
-                    datasetPath: dataset.path,
-                    preset: plotState.preset,
-                    field: selectorToken(plotState.selectedField),
-                    spectralWindow: selectorToken(plotState.selectedSpectralWindow),
-                    correlation: selectorToken(plotState.selectedCorrelation),
-                    dataColumn: plotState.dataColumn
-                )
-            )
-            plotState.result = result
-            plotState.status = .ready
-            cacheMeasurementSetPlotResult(result, for: dataset, plotState: plotState)
-            state.measurementSetPlots[datasetID] = plotState
-        } catch {
-            plotState.status = .failed
-            plotState.lastError = "\(error)"
-            state.measurementSetPlots[datasetID] = plotState
-            state.lastErrors.append("Render plot for \(dataset.name): \(error)")
+        let requestedPlotState = plotState
+        plotQueue.async { [plotClient] in
+            do {
+                let result = try plotClient.buildPlot(request: request)
+                DispatchQueue.main.async { [weak self] in
+                    self?.finishMeasurementSetPlotJob(
+                        jobID: jobID,
+                        dataset: dataset,
+                        plotState: requestedPlotState,
+                        result: result
+                    )
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.failMeasurementSetPlotJob(
+                        jobID: jobID,
+                        datasetID: datasetID,
+                        datasetName: dataset.name,
+                        error: "\(error)"
+                    )
+                }
+            }
         }
     }
 
@@ -478,6 +507,12 @@ public final class WorkbenchStore: ObservableObject {
     public func setDirtyImagingDataColumn(_ dataColumn: String) {
         guard var parameters = state.dirtyImagingTaskParameters else { return }
         parameters.dataColumn = dataColumn
+        updateDirtyImagingParameters(parameters)
+    }
+
+    public func setDirtyImagingCorrelation(_ correlation: String?) {
+        guard var parameters = state.dirtyImagingTaskParameters else { return }
+        parameters.correlation = normalizedPickerValue(correlation)
         updateDirtyImagingParameters(parameters)
     }
 
@@ -701,8 +736,23 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
 
-        let runID = "dirty-imaging-\(nextDirtyImagingRunIndex())"
+        let runID = nextJobID(prefix: "dirty-imaging")
         let request = DirtyImagingTaskRequest(runID: runID, parameters: parameters)
+        let tabID = activeTaskTabID(parameters: parameters)
+        startJob(
+            WorkbenchJob(
+                id: runID,
+                tabID: tabID,
+                kind: .dirtyImagingTask,
+                owner: .user,
+                status: .running,
+                progress: 0.05,
+                title: "Dirty imaging",
+                detail: parameters.measurementSetPath,
+                logLines: ["Starting casars-imager dirty imaging task.", parameters.requestSummary],
+                lastEvent: "started"
+            )
+        )
         state.taskRun = TaskRun(
             runID: runID,
             state: .running,
@@ -719,22 +769,13 @@ public final class WorkbenchStore: ObservableObject {
 
         do {
             let execution = try dirtyImagingClient.startDirtyImaging(request: request) { [weak self] event in
-                self?.handleDirtyImagingEvent(event, runID: runID)
+                self?.handleDirtyImagingEvent(event, runID: runID, jobID: runID)
             }
-            if state.taskRun.runID == runID && state.taskRun.state == .running {
-                activeTaskExecution = execution
+            if state.jobs[runID]?.status == .running {
+                activeTaskExecutions[runID] = execution
             }
         } catch {
-            state.taskRun = TaskRun(
-                runID: runID,
-                state: .failed,
-                progress: 1.0,
-                logLines: ["Failed to start casars-imager."],
-                warnings: [],
-                products: [],
-                diagnostics: ["\(error)"],
-                requestSummary: parameters.requestSummary
-            )
+            failDirtyImagingJob(runID: runID, message: "Failed to start casars-imager.", diagnostics: ["\(error)"])
             state.lastErrors.append("Start dirty imaging: \(error)")
         }
     }
@@ -746,15 +787,11 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
 
-        guard state.taskRun.state == .running else {
+        guard state.taskRun.state == .running, let runID = state.taskRun.runID else {
             state.lastErrors.append("No dirty imaging task is running")
             return
         }
-        activeTaskExecution?.cancel()
-        activeTaskExecution = nil
-        state.taskRun.state = .cancelled
-        state.taskRun.progress = 1.0
-        state.taskRun.logLines.append("Cancellation requested for dirty imaging task.")
+        cancelJob(runID, recordError: false)
         state.history.append(
             ProcessingHistoryEvent(
                 id: "hist-run-\(state.history.count + 1)",
@@ -798,6 +835,133 @@ public final class WorkbenchStore: ObservableObject {
         }
         let data = try encoder.encode(debugSnapshot())
         return String(decoding: data, as: UTF8.self)
+    }
+
+    public func cancelJob(_ jobID: String) {
+        cancelJob(jobID, recordError: true)
+    }
+
+    private func startJob(_ job: WorkbenchJob) {
+        if let existingJobID = state.activeJobIDsByTab[job.tabID] {
+            cancelJob(existingJobID, recordError: false)
+        }
+        state.jobs[job.id] = job
+        state.activeJobIDsByTab[job.tabID] = job.id
+    }
+
+    private func cancelJob(_ jobID: String, recordError: Bool) {
+        guard var job = state.jobs[jobID] else {
+            if recordError {
+                state.lastErrors.append("Unknown job \(jobID)")
+            }
+            return
+        }
+        guard job.status == .pending || job.status == .running else {
+            return
+        }
+
+        job.status = .cancelled
+        job.progress = 1.0
+        job.cancellationRequested = true
+        job.lastEvent = "cancelled"
+        job.logLines.append("Cancellation requested.")
+        state.jobs[jobID] = job
+        if state.activeJobIDsByTab[job.tabID] == jobID {
+            state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+        }
+
+        switch job.kind {
+        case .measurementSetPlot:
+            if let datasetID = datasetIDForExplorerTabID(job.tabID),
+               var plotState = state.measurementSetPlots[datasetID] {
+                plotState.status = .idle
+                plotState.lastError = "Cancelled"
+                state.measurementSetPlots[datasetID] = plotState
+            }
+        case .dirtyImagingTask:
+            activeTaskExecutions[jobID]?.cancel()
+            activeTaskExecutions.removeValue(forKey: jobID)
+            if state.taskRun.runID == jobID {
+                state.taskRun.state = .cancelled
+                state.taskRun.progress = 1.0
+                state.taskRun.logLines.append("Cancellation requested for dirty imaging task.")
+            }
+        }
+    }
+
+    private func nextJobID(prefix: String) -> String {
+        "\(prefix)-\(state.jobs.count + 1)"
+    }
+
+    private func datasetIDForExplorerTabID(_ tabID: String) -> String? {
+        let prefix = "tab-explorer-"
+        guard tabID.hasPrefix(prefix) else { return nil }
+        return String(tabID.dropFirst(prefix.count))
+    }
+
+    private func activeTaskTabID(parameters: DirtyImagingTaskParameters) -> String {
+        if let activeTab = state.tabs.first(where: { $0.id == state.activeTabID && $0.kind == .task }) {
+            return activeTab.id
+        }
+        if !parameters.datasetID.isEmpty {
+            return "tab-dirty-imaging-\(parameters.datasetID)"
+        }
+        return "tab-dirty-imaging-unbound"
+    }
+
+    private func finishMeasurementSetPlotJob(
+        jobID: String,
+        dataset: DatasetSummary,
+        plotState requestedPlotState: MeasurementSetExplorerPlotState,
+        result: MeasurementSetPlotResultSummary
+    ) {
+        guard var job = state.jobs[jobID], job.status != .cancelled else {
+            return
+        }
+        guard state.activeJobIDsByTab[job.tabID] == jobID else {
+            return
+        }
+
+        cacheMeasurementSetPlotResult(result, for: dataset, plotState: requestedPlotState)
+        var currentPlotState = measurementSetPlotState(for: dataset.id)
+        refreshMeasurementSetPlotStateFromCache(&currentPlotState, datasetID: dataset.id)
+        state.measurementSetPlots[dataset.id] = currentPlotState
+
+        job.status = .succeeded
+        job.progress = 1.0
+        job.resultSummary = result.summary
+        job.lastEvent = "succeeded"
+        job.logLines.append("Rendered \(result.renderedPointCount) points.")
+        state.jobs[jobID] = job
+        state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+    }
+
+    private func failMeasurementSetPlotJob(
+        jobID: String,
+        datasetID: String,
+        datasetName: String,
+        error: String
+    ) {
+        guard var job = state.jobs[jobID], job.status != .cancelled else {
+            return
+        }
+        guard state.activeJobIDsByTab[job.tabID] == jobID else {
+            return
+        }
+
+        var plotState = measurementSetPlotState(for: datasetID)
+        plotState.status = .failed
+        plotState.lastError = error
+        state.measurementSetPlots[datasetID] = plotState
+
+        job.status = .failed
+        job.progress = 1.0
+        job.error = error
+        job.lastEvent = "failed"
+        job.logLines.append(error)
+        state.jobs[jobID] = job
+        state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+        state.lastErrors.append("Render plot for \(datasetName): \(error)")
     }
 
     private func openExplorer(for dataset: DatasetSummary) {
@@ -895,17 +1059,79 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func defaultDirtyImagingParameters(for dataset: DatasetSummary) -> DirtyImagingTaskParameters {
-        let firstField = dataset.fields.first
+        let firstField = defaultDirtyImagingField(for: dataset)
         let outputPrefix = defaultDirtyImagingOutputPrefix(for: dataset)
+        let isTutorialTWHya = isTWHyaTutorialDataset(dataset)
         return DirtyImagingTaskParameters(
             datasetID: dataset.id,
             measurementSetPath: dataset.path,
             outputPrefix: outputPrefix,
             selectedField: firstField,
             phaseCenterField: firstField,
-            selectedSpectralWindow: dataset.spectralWindows.first,
-            dataColumn: dataset.dataColumns.first ?? "DATA"
+            selectedSpectralWindow: defaultDirtyImagingSpectralWindow(for: dataset),
+            dataColumn: dataset.dataColumns.first ?? "DATA",
+            correlation: defaultDirtyImagingCorrelation(for: dataset),
+            imageSize: isTutorialTWHya ? 250 : 512,
+            cellArcsec: isTutorialTWHya ? 0.1 : 1.0
         )
+    }
+
+    private func defaultDirtyImagingField(for dataset: DatasetSummary) -> String? {
+        if isTWHyaTutorialDataset(dataset),
+           let tutorialField = dataset.fields.first(where: { selectorToken($0) == "5" }) {
+            return tutorialField
+        }
+        if dataset.name == "mssel_test_small_multifield_spw.ms",
+           let sampleField = dataset.fields.first(where: { selectorToken($0) == "5" }) {
+            return sampleField
+        }
+        if let scienceLikeField = dataset.fields.first(where: { field in
+            let normalized = field.lowercased()
+            return normalized.contains("ngc") || normalized.contains("target")
+        }) {
+            return scienceLikeField
+        }
+        return dataset.fields.first
+    }
+
+    private func defaultDirtyImagingSpectralWindow(for dataset: DatasetSummary) -> String? {
+        if isTWHyaTutorialDataset(dataset),
+           let tutorialSpectralWindow = dataset.spectralWindows.first(where: { selectorToken($0) == "0" }) {
+            return tutorialSpectralWindow
+        }
+        if dataset.name == "mssel_test_small_multifield_spw.ms",
+           let sampleSpectralWindow = dataset.spectralWindows.first(where: { selectorToken($0) == "5" }) {
+            return sampleSpectralWindow
+        }
+        return dataset.spectralWindows.first(where: spectralWindowHasMultipleChannels) ?? dataset.spectralWindows.first
+    }
+
+    private func isTWHyaTutorialDataset(_ dataset: DatasetSummary) -> Bool {
+        dataset.name.lowercased().contains("twhya_calibrated.ms")
+    }
+
+    private func defaultDirtyImagingCorrelation(for dataset: DatasetSummary) -> String? {
+        let rawCorrelations = dataset.correlations.map { $0.uppercased() }
+        if rawCorrelations.count == 1,
+           ["XX", "YY", "RR", "LL"].contains(rawCorrelations[0]) {
+            return rawCorrelations[0]
+        }
+        return nil
+    }
+
+    private func spectralWindowHasMultipleChannels(_ spectralWindow: String) -> Bool {
+        guard let channelCount = spectralWindowChannelCount(spectralWindow) else {
+            return false
+        }
+        return channelCount > 1
+    }
+
+    private func spectralWindowChannelCount(_ spectralWindow: String) -> Int? {
+        guard let channelRange = spectralWindow.range(of: #"(\d+)\s+chan"#, options: .regularExpression) else {
+            return nil
+        }
+        let token = spectralWindow[channelRange].split(separator: " ").first
+        return token.flatMap { Int($0) }
     }
 
     private func blankDirtyImagingParameters() -> DirtyImagingTaskParameters {
@@ -951,39 +1177,99 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
-    private func handleDirtyImagingEvent(_ event: DirtyImagingTaskEvent, runID: String) {
+    private func failDirtyImagingJob(runID: String, message: String, diagnostics: [String]) {
+        activeTaskExecutions.removeValue(forKey: runID)
+        if var job = state.jobs[runID], job.status != .cancelled {
+            job.status = .failed
+            job.progress = 1.0
+            job.error = message
+            job.lastEvent = "failed"
+            job.logLines.append(message)
+            job.logLines.append(contentsOf: diagnostics)
+            state.jobs[runID] = job
+            if state.activeJobIDsByTab[job.tabID] == runID {
+                state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+            }
+        }
+
+        if state.taskRun.runID == runID {
+            state.taskRun = TaskRun(
+                runID: runID,
+                state: .failed,
+                progress: 1.0,
+                logLines: ["casars-imager dirty imaging failed.", message],
+                warnings: [],
+                products: [],
+                diagnostics: diagnostics,
+                requestSummary: state.dirtyImagingTaskParameters?.requestSummary
+            )
+        }
+    }
+
+    private func finishDirtyImagingJob(runID: String, result: DirtyImagingTaskResult) {
+        activeTaskExecutions.removeValue(forKey: runID)
+        if var job = state.jobs[runID], job.status != .cancelled {
+            job.status = .succeeded
+            job.progress = 1.0
+            job.resultSummary = result.report.summary
+            job.lastEvent = "succeeded"
+            job.logLines.append(result.report.summary)
+            job.logLines.append("Protocol: \(result.protocolSummary)")
+            state.jobs[runID] = job
+            if state.activeJobIDsByTab[job.tabID] == runID {
+                state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+            }
+        }
+    }
+
+    private func cancelDirtyImagingJob(runID: String, failure: DirtyImagingTaskFailure) {
+        activeTaskExecutions.removeValue(forKey: runID)
+        if var job = state.jobs[runID] {
+            job.status = .cancelled
+            job.progress = 1.0
+            job.cancellationRequested = true
+            job.error = failure.message
+            job.lastEvent = "cancelled"
+            job.logLines.append(failure.message)
+            state.jobs[runID] = job
+            if state.activeJobIDsByTab[job.tabID] == runID {
+                state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+            }
+        }
+    }
+
+    private func handleDirtyImagingEvent(_ event: DirtyImagingTaskEvent, runID: String, jobID: String) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in
-                self?.handleDirtyImagingEvent(event, runID: runID)
+                self?.handleDirtyImagingEvent(event, runID: runID, jobID: jobID)
             }
             return
         }
 
-        guard state.taskRun.runID == runID else {
+        guard state.jobs[jobID]?.status != .cancelled else {
             return
         }
 
         switch event {
         case .succeeded(let result):
-            guard state.taskRun.state != .cancelled else {
-                return
+            finishDirtyImagingJob(runID: jobID, result: result)
+            if state.taskRun.runID == runID {
+                state.taskRun = TaskRun(
+                    runID: runID,
+                    state: .succeeded,
+                    progress: 1.0,
+                    logLines: [
+                        "casars-imager completed dirty imaging.",
+                        result.report.summary,
+                        "Protocol: \(result.protocolSummary)"
+                    ],
+                    warnings: result.report.warnings,
+                    products: result.artifacts.map(\.path),
+                    diagnostics: result.diagnostics,
+                    outputPaths: result.outputPaths,
+                    requestSummary: result.request.parameters.requestSummary
+                )
             }
-            activeTaskExecution = nil
-            state.taskRun = TaskRun(
-                runID: runID,
-                state: .succeeded,
-                progress: 1.0,
-                logLines: [
-                    "casars-imager completed dirty imaging.",
-                    result.report.summary,
-                    "Protocol: \(result.protocolSummary)"
-                ],
-                warnings: result.report.warnings,
-                products: result.artifacts.map(\.path),
-                diagnostics: result.diagnostics,
-                outputPaths: result.outputPaths,
-                requestSummary: result.request.parameters.requestSummary
-            )
             appendProducedDatasets(from: result)
             state.history.append(
                 ProcessingHistoryEvent(
@@ -997,23 +1283,15 @@ public final class WorkbenchStore: ObservableObject {
             )
 
         case .failed(let failure):
-            activeTaskExecution = nil
-            state.taskRun = TaskRun(
-                runID: runID,
-                state: .failed,
-                progress: 1.0,
-                logLines: ["casars-imager dirty imaging failed.", failure.message],
-                warnings: [],
-                products: [],
-                diagnostics: failure.diagnostics,
-                outputPaths: [failure.requestJSONPath, failure.stdoutPath, failure.stderrPath].compactMap { $0 },
-                requestSummary: state.dirtyImagingTaskParameters?.requestSummary
-            )
+            failDirtyImagingJob(runID: jobID, message: failure.message, diagnostics: failure.diagnostics)
+            if state.taskRun.runID == runID {
+                state.taskRun.outputPaths = [failure.requestJSONPath, failure.stdoutPath, failure.stderrPath].compactMap { $0 }
+            }
             state.lastErrors.append("Dirty imaging failed: \(failure.message)")
 
         case .cancelled(let failure):
-            activeTaskExecution = nil
-            if state.taskRun.state != .cancelled {
+            cancelDirtyImagingJob(runID: jobID, failure: failure)
+            if state.taskRun.runID == runID && state.taskRun.state != .cancelled {
                 state.taskRun.state = .cancelled
                 state.taskRun.progress = 1.0
                 state.taskRun.logLines.append(failure.message)

@@ -7,7 +7,8 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use casa_images::{AnyPagedImage, ImagePixelType};
+use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_images::{AnyPagedImage, ImageInfo, ImagePixelType};
 use casa_ms::{
     MeasurementSet, MeasurementSetPlotPayload, MeasurementSetPlotTheme,
     MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPayload,
@@ -16,6 +17,10 @@ use casa_ms::{
     render_msexplore_plot_image,
 };
 use casa_tables::{Table, TableOptions};
+use casa_types::measures::direction::{
+    angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
+    format_right_ascension_labeled,
+};
 use image::ImageFormat;
 use thiserror::Error;
 
@@ -773,8 +778,11 @@ fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
     let shape: Vec<u64> = image.shape().iter().map(|value| *value as u64).collect();
     let mask_names = image.mask_names();
     let region_names = image.region_names();
+    let brightness_unit = image_units(&image).to_string();
+    diagnostics.push(format!("Pixel type: {pixel_type}"));
+    diagnostics.extend(image_coordinate_diagnostics(&image));
     if let Some(default_mask) = image.default_mask_name() {
-        diagnostics.push(format!("default mask: {default_mask}"));
+        diagnostics.push(format!("Default mask: {default_mask}"));
     }
 
     Ok(Some(DatasetProbe {
@@ -786,7 +794,7 @@ fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
         modified_unix_seconds: modified_unix_seconds(metadata),
         probed_unix_seconds: now_unix_seconds(),
         logical_size: format_shape(&shape),
-        units: pixel_type.to_string(),
+        units: brightness_unit,
         fields: vec![],
         spectral_windows: vec![],
         scans: vec![],
@@ -803,6 +811,226 @@ fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
         ),
         diagnostics,
     }))
+}
+
+fn image_units(image: &AnyPagedImage) -> &str {
+    match image {
+        AnyPagedImage::Float32(image) => image.units(),
+        AnyPagedImage::Float64(image) => image.units(),
+        AnyPagedImage::Complex32(image) => image.units(),
+        AnyPagedImage::Complex64(image) => image.units(),
+    }
+}
+
+fn image_coordinates(image: &AnyPagedImage) -> &CoordinateSystem {
+    match image {
+        AnyPagedImage::Float32(image) => image.coordinates(),
+        AnyPagedImage::Float64(image) => image.coordinates(),
+        AnyPagedImage::Complex32(image) => image.coordinates(),
+        AnyPagedImage::Complex64(image) => image.coordinates(),
+    }
+}
+
+fn image_info(image: &AnyPagedImage) -> Result<ImageInfo, String> {
+    match image {
+        AnyPagedImage::Float32(image) => image.image_info(),
+        AnyPagedImage::Float64(image) => image.image_info(),
+        AnyPagedImage::Complex32(image) => image.image_info(),
+        AnyPagedImage::Complex64(image) => image.image_info(),
+    }
+    .map_err(|error| error.to_string())
+}
+
+fn image_coordinate_diagnostics(image: &AnyPagedImage) -> Vec<String> {
+    let coords = image_coordinates(image);
+    let shape = image.shape();
+    let mut diagnostics = Vec::new();
+    diagnostics.extend(image_direction_diagnostics(coords, shape));
+    diagnostics.extend(image_spectral_diagnostics(coords, shape));
+    match image_info(image) {
+        Ok(info) => diagnostics.extend(image_beam_diagnostics(&info)),
+        Err(error) => diagnostics.push(format!("Image info unavailable: {error}")),
+    }
+    diagnostics
+}
+
+fn image_direction_diagnostics(coords: &CoordinateSystem, shape: &[usize]) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+    let mut pixel_offset = 0usize;
+    for index in 0..coords.n_coordinates() {
+        let coord = coords.coordinate(index);
+        let n_pixel_axes = coord.n_pixel_axes();
+        if coord.coordinate_type() == CoordinateType::Direction && n_pixel_axes >= 2 {
+            let increments = coord.increment();
+            if increments.len() >= 2 {
+                let ra_cell = angular_increment_arcseconds(increments[0]).value().abs();
+                let dec_cell = declination_increment_arcseconds(increments[1])
+                    .value()
+                    .abs();
+                diagnostics.push(format!(
+                    "Cell size: {} x {} arcsec",
+                    format_compact_float(ra_cell),
+                    format_compact_float(dec_cell)
+                ));
+            }
+
+            let Some(x_len) = shape.get(pixel_offset).copied() else {
+                break;
+            };
+            let Some(y_len) = shape.get(pixel_offset + 1).copied() else {
+                break;
+            };
+            let center_pixel = [
+                center_pixel_coordinate(x_len),
+                center_pixel_coordinate(y_len),
+            ];
+            if let Ok(world) = coord.to_world(&center_pixel) {
+                if world.len() >= 2 {
+                    diagnostics.push(format!(
+                        "Center: RA {} Dec {}",
+                        format_right_ascension_labeled(world[0], 3),
+                        format_declination_labeled(world[1], 2)
+                    ));
+                }
+            }
+            break;
+        }
+        pixel_offset += n_pixel_axes;
+    }
+    diagnostics
+}
+
+fn image_spectral_diagnostics(coords: &CoordinateSystem, shape: &[usize]) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+    let mut pixel_offset = 0usize;
+    for index in 0..coords.n_coordinates() {
+        let coord = coords.coordinate(index);
+        let n_pixel_axes = coord.n_pixel_axes();
+        if coord.coordinate_type() == CoordinateType::Spectral && n_pixel_axes >= 1 {
+            let Some(channel_count) = shape.get(pixel_offset).copied() else {
+                break;
+            };
+            if channel_count == 0 {
+                break;
+            }
+            let center_pixel = [center_pixel_coordinate(channel_count)];
+            let unit = coord
+                .axis_units()
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "Hz".to_string());
+            if let Ok(world) = coord.to_world(&center_pixel) {
+                if let Some(center) = world.first().copied() {
+                    diagnostics.push(format!(
+                        "Cube center frequency: {}",
+                        format_frequency_like_value(center, &unit)
+                    ));
+                }
+            }
+            let channel_separation = coord
+                .increment()
+                .first()
+                .copied()
+                .map(f64::abs)
+                .unwrap_or_default();
+            if channel_separation.is_finite() && channel_separation > 0.0 {
+                diagnostics.push(format!(
+                    "Total bandwidth: {}",
+                    format_frequency_like_value(channel_separation * channel_count as f64, &unit)
+                ));
+                diagnostics.push(format!(
+                    "Channel separation: {}",
+                    format_frequency_like_value(channel_separation, &unit)
+                ));
+            }
+            break;
+        }
+        pixel_offset += n_pixel_axes;
+    }
+    diagnostics
+}
+
+fn image_beam_diagnostics(info: &ImageInfo) -> Vec<String> {
+    let beam_set = &info.beam_set;
+    if let Some(beam) = beam_set.single_beam() {
+        if beam.is_null() {
+            return Vec::new();
+        }
+        return match (
+            beam.major_in("arcsec"),
+            beam.minor_in("arcsec"),
+            beam.position_angle_in("deg"),
+        ) {
+            (Ok(major), Ok(minor), Ok(pa)) => vec![format!(
+                "Beam: {} x {} arcsec, PA {} deg",
+                format_compact_float(major),
+                format_compact_float(minor),
+                format_compact_float(pa)
+            )],
+            _ => Vec::new(),
+        };
+    }
+    if beam_set.is_empty() {
+        return Vec::new();
+    }
+    let (channels, stokes) = beam_set.shape();
+    let mut diagnostics = vec![format!(
+        "Beam: {} per-plane beams ({} chan x {} stokes)",
+        beam_set.size(),
+        channels,
+        stokes
+    )];
+    if let Some(beam) = beam_set.median_area_beam() {
+        if !beam.is_null() {
+            if let (Ok(major), Ok(minor), Ok(pa)) = (
+                beam.major_in("arcsec"),
+                beam.minor_in("arcsec"),
+                beam.position_angle_in("deg"),
+            ) {
+                diagnostics.push(format!(
+                    "Median beam: {} x {} arcsec, PA {} deg",
+                    format_compact_float(major),
+                    format_compact_float(minor),
+                    format_compact_float(pa)
+                ));
+            }
+        }
+    }
+    diagnostics
+}
+
+fn center_pixel_coordinate(axis_len: usize) -> f64 {
+    axis_len.saturating_sub(1) as f64 / 2.0
+}
+
+fn format_frequency_like_value(value: f64, unit: &str) -> String {
+    if unit.eq_ignore_ascii_case("Hz") {
+        let abs_value = value.abs();
+        if abs_value >= 1.0e9 {
+            format!("{} GHz", format_compact_float(value / 1.0e9))
+        } else if abs_value >= 1.0e6 {
+            format!("{} MHz", format_compact_float(value / 1.0e6))
+        } else if abs_value >= 1.0e3 {
+            format!("{} kHz", format_compact_float(value / 1.0e3))
+        } else {
+            format!("{} Hz", format_compact_float(value))
+        }
+    } else if unit.is_empty() {
+        format_compact_float(value)
+    } else {
+        format!("{} {unit}", format_compact_float(value))
+    }
+}
+
+fn format_compact_float(value: f64) -> String {
+    let mut text = format!("{value:.6}");
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    if text == "-0" { "0".to_string() } else { text }
 }
 
 fn probe_table(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetProbe>, String> {
@@ -997,7 +1225,14 @@ mod tests {
 
     use std::fs::File;
 
+    use casa_coordinates::{
+        CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
+    };
+    use casa_images::beam::{GaussianBeam, ImageBeamSet};
+    use casa_images::{ImageInfo, ImageType, PagedImage};
     use casa_tables::{ColumnSchema, TableInfo, TableSchema};
+    use casa_types::measures::direction::DirectionRef;
+    use casa_types::measures::frequency::FrequencyRef;
     use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use flate2::read::GzDecoder;
     use tempfile::TempDir;
@@ -1126,6 +1361,92 @@ mod tests {
                 .datasets
                 .iter()
                 .any(|dataset| dataset.name == "notes.txt")
+        );
+    }
+
+    #[test]
+    fn probe_image_reports_science_units_and_observing_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("restored.image");
+        let mut coords = CoordinateSystem::new();
+        let cell_rad = (0.1_f64 / 3600.0).to_radians();
+        coords.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, -0.5],
+            [-cell_rad, cell_rad],
+            [1.5, 1.5],
+        )));
+        coords.add_coordinate(Box::new(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            100.0e9,
+            2.0e6,
+            2.0,
+            100.0e9,
+        )));
+        let mut image =
+            PagedImage::<f32>::create(vec![4, 4, 5], coords, &path).expect("create image");
+        image.set_units("Jy/beam").expect("set units");
+        image
+            .set_image_info(&ImageInfo {
+                image_type: ImageType::Intensity,
+                object_name: "TW Hya".to_string(),
+                beam_set: ImageBeamSet::new(GaussianBeam::new(
+                    (0.42_f64 / 3600.0).to_radians(),
+                    (0.31_f64 / 3600.0).to_radians(),
+                    12.0_f64.to_radians(),
+                )),
+            })
+            .expect("set image info");
+        image.save().expect("save image");
+
+        let probe = probe_path(path.display().to_string())
+            .expect("probe")
+            .expect("recognized");
+
+        assert_eq!(probe.kind, DatasetKind::Image);
+        assert_eq!(probe.units, "Jy/beam");
+        assert!(
+            probe
+                .diagnostics
+                .iter()
+                .any(|line| line == "Pixel type: float32")
+        );
+        assert!(
+            probe
+                .diagnostics
+                .iter()
+                .any(|line| line == "Cell size: 0.1 x 0.1 arcsec")
+        );
+        assert!(
+            probe
+                .diagnostics
+                .iter()
+                .any(|line| line.starts_with("Center: RA ") && line.contains(" Dec "))
+        );
+        assert!(
+            probe
+                .diagnostics
+                .iter()
+                .any(|line| line == "Cube center frequency: 100 GHz")
+        );
+        assert!(
+            probe
+                .diagnostics
+                .iter()
+                .any(|line| line == "Total bandwidth: 10 MHz")
+        );
+        assert!(
+            probe
+                .diagnostics
+                .iter()
+                .any(|line| line == "Channel separation: 2 MHz")
+        );
+        assert!(
+            probe
+                .diagnostics
+                .iter()
+                .any(|line| line == "Beam: 0.42 x 0.31 arcsec, PA 12 deg")
         );
     }
 

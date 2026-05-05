@@ -528,7 +528,6 @@ struct InspectorView: View {
 
         case .imageCube:
             InfoRow(label: "Shape", value: formatShape(dataset.shape))
-            InfoRow(label: "Pixel type", value: dataset.units)
             if !dataset.diagnostics.isEmpty {
                 DisclosureGroup("Image details (\(dataset.diagnostics.count))", isExpanded: $showColumns) {
                     valueList(dataset.diagnostics)

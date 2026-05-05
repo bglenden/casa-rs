@@ -473,6 +473,125 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.tabs.first(where: { $0.kind == .task })?.title, "Dirty Image: second.ms")
     }
 
+    func testBundledSampleDirtyImagingDefaultsChooseLineTarget() throws {
+        let sample = DatasetSummary(
+            id: "/data/mssel_test_small_multifield_spw.ms",
+            name: "mssel_test_small_multifield_spw.ms",
+            path: "/data/mssel_test_small_multifield_spw.ms",
+            kind: .measurementSet,
+            size: "14985 rows, 9 fields, 6 spw, 10 antennas",
+            units: "Jy, Hz, seconds",
+            fields: [
+                "0: 3C273-F0",
+                "1: 2",
+                "2: NGC4826-F0",
+                "3: NGC4826-F1",
+                "4: 2000",
+                "5: NGC4826-F3",
+                "6: NGC4826-F4",
+                "7: NGC4826-F5",
+                "8: NGC4826-F6"
+            ],
+            spectralWindows: [
+                "spw 0: 1 chan, 115.138579 GHz center",
+                "spw 1: 1 chan, 115.217017 GHz center",
+                "spw 2: 64 chan, 114.999607 GHz center",
+                "spw 3: 64 chan, 115.089621 GHz center",
+                "spw 4: 64 chan, 115.179362 GHz center",
+                "spw 5: 64 chan, 115.269376 GHz center"
+            ],
+            correlations: ["YY"],
+            dataColumns: ["DATA"],
+            notes: "Bundled real sample MS."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Sample Project",
+                        rootPath: "/data",
+                        datasets: [sample],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .task)
+
+        let parameters = try XCTUnwrap(store.state.dirtyImagingTaskParameters)
+        XCTAssertEqual(parameters.selectedField, "5: NGC4826-F3")
+        XCTAssertEqual(parameters.phaseCenterField, "5: NGC4826-F3")
+        XCTAssertEqual(parameters.selectedSpectralWindow, "spw 5: 64 chan, 115.269376 GHz center")
+        XCTAssertEqual(parameters.correlation, "YY")
+
+        let request = DirtyImagingTaskRequest(runID: "run-sample", parameters: parameters)
+        let requestJSON = String(data: try request.encodedImagerJSON(), encoding: .utf8)
+        XCTAssertTrue(try XCTUnwrap(requestJSON).contains("\"field_ids\" : [\n      5\n    ]"))
+        XCTAssertTrue(try XCTUnwrap(requestJSON).contains("\"spw_selector\" : \"5\""))
+        XCTAssertTrue(try XCTUnwrap(requestJSON).contains("\"correlation\" : \"YY\""))
+    }
+
+    func testTWHyaTutorialDirtyImagingDefaultsUseKnownMFSParameters() throws {
+        let tutorial = DatasetSummary(
+            id: "/data/twhya_calibrated.ms",
+            name: "twhya_calibrated.ms",
+            path: "/data/twhya_calibrated.ms",
+            kind: .measurementSet,
+            size: "44772 selected rows, 1 spw",
+            units: "Jy, Hz, seconds",
+            fields: [
+                "0: J1037-295",
+                "1: Ceres",
+                "2: J1058+0133",
+                "3: J1107-4449",
+                "4: J1132-5606",
+                "5: TW Hya"
+            ],
+            spectralWindows: [
+                "spw 0: 384 chan, 372.533086 GHz center"
+            ],
+            correlations: ["XX", "YY"],
+            dataColumns: ["DATA"],
+            notes: "ALMA First Look TW Hya tutorial MeasurementSet."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "TW Hya Tutorial",
+                        rootPath: "/data",
+                        datasets: [tutorial],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .task)
+
+        let parameters = try XCTUnwrap(store.state.dirtyImagingTaskParameters)
+        XCTAssertEqual(parameters.selectedField, "5: TW Hya")
+        XCTAssertEqual(parameters.phaseCenterField, "5: TW Hya")
+        XCTAssertEqual(parameters.selectedSpectralWindow, "spw 0: 384 chan, 372.533086 GHz center")
+        XCTAssertNil(parameters.correlation)
+        XCTAssertEqual(parameters.imageSize, 250)
+        XCTAssertEqual(parameters.imageHeight, 250)
+        XCTAssertEqual(parameters.cellArcsec, 0.1)
+
+        let request = DirtyImagingTaskRequest(runID: "run-twhya", parameters: parameters)
+        let requestJSON = try XCTUnwrap(String(data: try request.encodedImagerJSON(), encoding: .utf8))
+        XCTAssertTrue(requestJSON.contains("\"field_ids\" : [\n      5\n    ]"))
+        XCTAssertTrue(requestJSON.contains("\"spw_selector\" : \"0\""))
+        XCTAssertTrue(requestJSON.contains("\"image_size\" : 250"))
+        XCTAssertTrue(requestJSON.contains("\"cell_arcsec\" : 0.1"))
+        XCTAssertFalse(requestJSON.contains("\"correlation\""))
+    }
+
     func testDirtyImagingValidationFailuresAreDebugVisible() {
         let probedDataset = DatasetSummary(
             id: "/data/probed.ms",
@@ -632,6 +751,9 @@ final class WorkbenchStoreTests: XCTestCase {
 
         store.openProject(path: "/data")
         store.runMeasurementSetPlot(datasetID: probedDataset.id)
+        waitFor("plot job to finish") {
+            store.debugSnapshot().measurementSetPlots[probedDataset.id]?.status == .ready
+        }
 
         var snapshot = store.debugSnapshot()
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.status, .ready)
@@ -653,6 +775,9 @@ final class WorkbenchStoreTests: XCTestCase {
         store.setMeasurementSetPlotField("0: Target", datasetID: probedDataset.id)
         store.setMeasurementSetPlotSpectralWindow("spw 0: 4 chan, 1.420000 GHz center", datasetID: probedDataset.id)
         store.runMeasurementSetPlot(datasetID: probedDataset.id)
+        waitFor("filtered plot job to finish") {
+            store.debugSnapshot().measurementSetPlots[probedDataset.id]?.resultPreset == .amplitudeVsUvDistance
+        }
 
         snapshot = store.debugSnapshot()
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.preset, .amplitudeVsUvDistance)
@@ -675,6 +800,187 @@ final class WorkbenchStoreTests: XCTestCase {
         store.runMeasurementSetPlot(datasetID: probedDataset.id)
 
         XCTAssertEqual(plotClient.requests.count, 2)
+    }
+
+    func testMeasurementSetPlotJobDoesNotBlockUnrelatedWorkbenchActions() {
+        let msDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            dataColumns: ["DATA"],
+            notes: "Recognized by Rust probe."
+        )
+        let imageDataset = DatasetSummary(
+            id: "/data/output.image",
+            name: "output.image",
+            path: "/data/output.image",
+            kind: .imageCube,
+            size: "256 x 256",
+            units: "float32",
+            shape: [256, 256],
+            notes: "Produced image."
+        )
+        let plotClient = BlockingMeasurementSetPlotClient()
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Real Project",
+                        rootPath: "/data",
+                        datasets: [msDataset, imageDataset],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            ),
+            plotClient: plotClient
+        )
+
+        store.openProject(path: "/data")
+        store.runMeasurementSetPlot(datasetID: msDataset.id)
+        XCTAssertEqual(plotClient.waitForStartedCount(1), .success)
+        XCTAssertEqual(store.debugSnapshot().measurementSetPlots[msDataset.id]?.status, .running)
+        XCTAssertEqual(store.debugSnapshot().runningJobCount, 1)
+
+        store.selectDataset(imageDataset.id)
+        store.openDatasetExplorer(imageDataset.id)
+        store.setInspectorCollapsed(true)
+        store.setCommandQuery("show inspector")
+        store.runCommandQuery()
+        store.activateTab(msDataset.explorerTabID)
+
+        XCTAssertEqual(store.state.selectedDatasetID, imageDataset.id)
+        XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.id, msDataset.explorerTabID)
+        XCTAssertFalse(store.debugSnapshot().inspectorCollapsed)
+        XCTAssertEqual(store.debugSnapshot().measurementSetPlots[msDataset.id]?.status, .running)
+
+        plotClient.releaseAll()
+        waitFor("blocked plot job to finish") {
+            store.debugSnapshot().measurementSetPlots[msDataset.id]?.status == .ready
+        }
+        XCTAssertEqual(store.debugSnapshot().jobs.first?.status, .succeeded)
+    }
+
+    func testTwoMeasurementSetTabsHoldIndependentPlotJobs() {
+        let first = DatasetSummary(
+            id: "/data/first.ms",
+            name: "first.ms",
+            path: "/data/first.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: First"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            dataColumns: ["DATA"],
+            notes: "First MS."
+        )
+        let second = DatasetSummary(
+            id: "/data/second.ms",
+            name: "second.ms",
+            path: "/data/second.ms",
+            kind: .measurementSet,
+            size: "24 rows, 1 fields, 2 spw, 3 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["1: Second"],
+            spectralWindows: ["spw 1: 8 chan, 1.500000 GHz center"],
+            dataColumns: ["DATA"],
+            notes: "Second MS."
+        )
+        let plotClient = BlockingMeasurementSetPlotClient()
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Real Project",
+                        rootPath: "/data",
+                        datasets: [first, second],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            ),
+            plotClient: plotClient
+        )
+
+        store.openProject(path: "/data")
+        store.runMeasurementSetPlot(datasetID: first.id)
+        XCTAssertEqual(plotClient.waitForStartedCount(1), .success)
+        store.openDatasetExplorer(second.id)
+        store.runMeasurementSetPlot(datasetID: second.id)
+        XCTAssertEqual(plotClient.waitForStartedCount(2), .success)
+
+        let snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.runningJobCount, 2)
+        XCTAssertEqual(snapshot.activeJobIDsByTab.keys.sorted(), [first.explorerTabID, second.explorerTabID])
+        XCTAssertEqual(snapshot.jobs.map(\.status), [.running, .running])
+
+        plotClient.releaseAll()
+        waitFor("both plot jobs to finish") {
+            let latest = store.debugSnapshot()
+            return latest.measurementSetPlots[first.id]?.status == .ready
+                && latest.measurementSetPlots[second.id]?.status == .ready
+        }
+        XCTAssertEqual(store.debugSnapshot().runningJobCount, 0)
+        XCTAssertEqual(store.debugSnapshot().jobs.map(\.status), [.succeeded, .succeeded])
+    }
+
+    func testCancellingDirtyImagingJobIsScopedToThatJob() {
+        let probedDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            dataColumns: ["DATA"],
+            notes: "Recognized by Rust probe."
+        )
+        let taskClient = HoldingDirtyImagingTaskClient()
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Real Project",
+                        rootPath: "/data",
+                        datasets: [probedDataset],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            ),
+            dirtyImagingClient: taskClient
+        )
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .task)
+        store.runTask()
+
+        let runID = tryUnwrap(store.state.taskRun.runID)
+        XCTAssertEqual(store.debugSnapshot().runningJobCount, 1)
+        XCTAssertEqual(store.debugSnapshot().jobs.first?.kind, .dirtyImagingTask)
+        XCTAssertEqual(store.debugSnapshot().jobs.first?.status, .running)
+
+        store.stopTask()
+
+        let snapshot = store.debugSnapshot()
+        XCTAssertEqual(taskClient.execution.didCancel, true)
+        XCTAssertEqual(snapshot.runningJobCount, 0)
+        XCTAssertEqual(snapshot.jobs.first?.id, runID)
+        XCTAssertEqual(snapshot.jobs.first?.status, .cancelled)
+        XCTAssertEqual(snapshot.jobs.first?.cancellationRequested, true)
+        XCTAssertEqual(snapshot.taskState, .cancelled)
+        XCTAssertTrue(snapshot.activeJobIDsByTab.isEmpty)
+
+        taskClient.emitSucceeded()
+        XCTAssertEqual(store.debugSnapshot().jobs.first?.status, .cancelled)
+        XCTAssertEqual(store.debugSnapshot().taskState, .cancelled)
     }
 
     func testInterfaceFontSizeIsAdjustableClampedAndPreservedAcrossFixtureOpen() {
@@ -747,10 +1053,19 @@ private struct StubProjectProbeClient: ProjectProbeClient {
 }
 
 private final class StubMeasurementSetPlotClient: MeasurementSetPlotClient {
-    var requests: [MeasurementSetPlotBuildRequest] = []
+    private let lock = NSLock()
+    private var recordedRequests: [MeasurementSetPlotBuildRequest] = []
+
+    var requests: [MeasurementSetPlotBuildRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedRequests
+    }
 
     func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary {
-        requests.append(request)
+        lock.lock()
+        recordedRequests.append(request)
+        lock.unlock()
         return makePlotResult(
             preset: request.preset,
             presetLabel: request.preset.title,
@@ -761,6 +1076,54 @@ private final class StubMeasurementSetPlotClient: MeasurementSetPlotClient {
             imageWidth: request.width,
             imageHeight: request.height
         )
+    }
+}
+
+private final class BlockingMeasurementSetPlotClient: MeasurementSetPlotClient {
+    private let lock = NSLock()
+    private let startedSemaphore = DispatchSemaphore(value: 0)
+    private let releaseSemaphore = DispatchSemaphore(value: 0)
+    private var startedCount = 0
+
+    func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary {
+        lock.lock()
+        startedCount += 1
+        lock.unlock()
+        startedSemaphore.signal()
+        releaseSemaphore.wait()
+        return makePlotResult(
+            preset: request.preset,
+            presetLabel: request.preset.title,
+            title: request.preset.title,
+            datasetPath: request.datasetPath,
+            dataColumn: request.dataColumn,
+            requestedMaxPoints: request.maxPlotPoints,
+            imageWidth: request.width,
+            imageHeight: request.height
+        )
+    }
+
+    func waitForStartedCount(_ count: Int) -> DispatchTimeoutResult {
+        while true {
+            lock.lock()
+            let current = startedCount
+            lock.unlock()
+            if current >= count {
+                return .success
+            }
+            if startedSemaphore.wait(timeout: .now() + 1) == .timedOut {
+                return .timedOut
+            }
+        }
+    }
+
+    func releaseAll() {
+        lock.lock()
+        let count = max(startedCount, 1)
+        lock.unlock()
+        for _ in 0..<count {
+            releaseSemaphore.signal()
+        }
     }
 }
 
@@ -837,6 +1200,64 @@ private final class StubDirtyImagingTaskClient: DirtyImagingTaskClient {
         eventHandler(event ?? .succeeded(result))
         return StubDirtyImagingExecution()
     }
+}
+
+private final class HoldingDirtyImagingTaskClient: DirtyImagingTaskClient {
+    var requests: [DirtyImagingTaskRequest] = []
+    var handler: ((DirtyImagingTaskEvent) -> Void)?
+    let execution = StubDirtyImagingExecution()
+
+    func startDirtyImaging(
+        request: DirtyImagingTaskRequest,
+        eventHandler: @escaping (DirtyImagingTaskEvent) -> Void
+    ) throws -> DirtyImagingTaskExecution {
+        requests.append(request)
+        handler = eventHandler
+        return execution
+    }
+
+    func emitSucceeded() {
+        guard let request = requests.last else { return }
+        handler?(.succeeded(DirtyImagingTaskResult(
+            request: request,
+            report: DirtyImagingRunReport(
+                warnings: [],
+                griddedSamples: 128,
+                majorCycles: 1,
+                minorIterations: 0,
+                channelCount: 1
+            ),
+            artifacts: [],
+            requestJSONPath: "/data/casa-rs-runs/output.casars-request.json",
+            stdoutPath: "/data/casa-rs-runs/output.casars-result.json",
+            stderrPath: "/data/casa-rs-runs/output.casars-stderr.log",
+            protocolSummary: #"{"protocol_name":"casars_imager_task"}"#,
+            diagnostics: []
+        )))
+    }
+}
+
+private func waitFor(
+    _ description: String,
+    timeout: TimeInterval = 2,
+    condition: () -> Bool
+) {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() {
+            return
+        }
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+    }
+    XCTFail("Timed out waiting for \(description)")
+}
+
+private func tryUnwrap<T>(_ value: T?, file: StaticString = #filePath, line: UInt = #line) -> T {
+    guard let value else {
+        XCTFail("Expected non-nil value", file: file, line: line)
+        fatalError("Expected non-nil value")
+    }
+    return value
 }
 
 private final class StubDirtyImagingExecution: DirtyImagingTaskExecution {

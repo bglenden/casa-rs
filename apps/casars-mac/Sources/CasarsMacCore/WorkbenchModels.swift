@@ -190,6 +190,70 @@ public struct WorkbenchTab: Identifiable, Codable, Equatable {
     }
 }
 
+public enum WorkbenchJobKind: String, Codable, Equatable {
+    case measurementSetPlot
+    case dirtyImagingTask
+}
+
+public enum WorkbenchJobOwner: String, Codable, Equatable {
+    case user
+    case ai
+}
+
+public enum WorkbenchJobStatus: String, Codable, Equatable {
+    case pending
+    case running
+    case succeeded
+    case failed
+    case cancelled
+}
+
+public struct WorkbenchJob: Identifiable, Codable, Equatable {
+    public let id: String
+    public var tabID: String
+    public var kind: WorkbenchJobKind
+    public var owner: WorkbenchJobOwner
+    public var status: WorkbenchJobStatus
+    public var progress: Double
+    public var title: String
+    public var detail: String
+    public var logLines: [String]
+    public var resultSummary: String?
+    public var error: String?
+    public var cancellationRequested: Bool
+    public var lastEvent: String
+
+    public init(
+        id: String,
+        tabID: String,
+        kind: WorkbenchJobKind,
+        owner: WorkbenchJobOwner,
+        status: WorkbenchJobStatus = .pending,
+        progress: Double = 0,
+        title: String,
+        detail: String,
+        logLines: [String] = [],
+        resultSummary: String? = nil,
+        error: String? = nil,
+        cancellationRequested: Bool = false,
+        lastEvent: String = "created"
+    ) {
+        self.id = id
+        self.tabID = tabID
+        self.kind = kind
+        self.owner = owner
+        self.status = status
+        self.progress = progress
+        self.title = title
+        self.detail = detail
+        self.logLines = logLines
+        self.resultSummary = resultSummary
+        self.error = error
+        self.cancellationRequested = cancellationRequested
+        self.lastEvent = lastEvent
+    }
+}
+
 public enum TaskRunState: String, Codable, Equatable {
     case idle
     case running
@@ -571,6 +635,8 @@ public struct WorkbenchState: Codable, Equatable {
     public var python: PythonPanelState
     public var measurementSetPlots: [String: MeasurementSetExplorerPlotState]
     public var measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary]
+    public var jobs: [String: WorkbenchJob]
+    public var activeJobIDsByTab: [String: String]
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -593,6 +659,8 @@ public struct WorkbenchState: Codable, Equatable {
         python: PythonPanelState,
         measurementSetPlots: [String: MeasurementSetExplorerPlotState] = [:],
         measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary] = [:],
+        jobs: [String: WorkbenchJob] = [:],
+        activeJobIDsByTab: [String: String] = [:],
         history: [ProcessingHistoryEvent],
         commandQuery: String,
         lastErrors: [String],
@@ -614,6 +682,8 @@ public struct WorkbenchState: Codable, Equatable {
         self.python = python
         self.measurementSetPlots = measurementSetPlots
         self.measurementSetPlotResultCache = measurementSetPlotResultCache
+        self.jobs = jobs
+        self.activeJobIDsByTab = activeJobIDsByTab
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors
@@ -696,6 +766,9 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var aiProposalStates: [String: AIProposalState]
     public var pythonOwner: PythonOwner
     public var measurementSetPlots: [String: DebugMeasurementSetPlotSnapshot]
+    public var jobs: [DebugWorkbenchJobSnapshot]
+    public var activeJobIDsByTab: [String: String]
+    public var runningJobCount: Int
     public var processingHistoryEvents: [String]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -727,10 +800,47 @@ public struct DebugStateSnapshot: Codable, Equatable {
                 (datasetID, DebugMeasurementSetPlotSnapshot(plotState: plotState))
             }
         )
+        jobs = state.jobs.values
+            .sorted { $0.id < $1.id }
+            .map(DebugWorkbenchJobSnapshot.init(job:))
+        activeJobIDsByTab = state.activeJobIDsByTab
+        runningJobCount = state.jobs.values.filter { $0.status == .running || $0.status == .pending }.count
         processingHistoryEvents = state.history.map(\.title)
         commandQuery = state.commandQuery
         lastErrors = state.lastErrors
         interfaceFontSize = state.interfaceFontSize
+    }
+}
+
+public struct DebugWorkbenchJobSnapshot: Codable, Equatable {
+    public var id: String
+    public var tabID: String
+    public var kind: WorkbenchJobKind
+    public var owner: WorkbenchJobOwner
+    public var status: WorkbenchJobStatus
+    public var progress: Double
+    public var title: String
+    public var detail: String
+    public var logLines: [String]
+    public var resultSummary: String?
+    public var error: String?
+    public var cancellationRequested: Bool
+    public var lastEvent: String
+
+    public init(job: WorkbenchJob) {
+        id = job.id
+        tabID = job.tabID
+        kind = job.kind
+        owner = job.owner
+        status = job.status
+        progress = job.progress
+        title = job.title
+        detail = job.detail
+        logLines = job.logLines
+        resultSummary = job.resultSummary
+        error = job.error
+        cancellationRequested = job.cancellationRequested
+        lastEvent = job.lastEvent
     }
 }
 

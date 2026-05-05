@@ -46,6 +46,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
     public var channelStart: String
     public var channelCount: String
     public var dataColumn: String
+    public var correlation: String?
     public var imageSize: Int
     public var imageHeight: Int
     public var cellArcsec: Double
@@ -63,6 +64,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
         channelStart: String = "",
         channelCount: String = "",
         dataColumn: String,
+        correlation: String? = nil,
         imageSize: Int = 512,
         imageHeight: Int? = nil,
         cellArcsec: Double = 1.0,
@@ -79,6 +81,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
         self.channelStart = channelStart
         self.channelCount = channelCount
         self.dataColumn = dataColumn
+        self.correlation = correlation
         self.imageSize = imageSize
         self.imageHeight = imageHeight ?? imageSize
         self.cellArcsec = cellArcsec
@@ -95,6 +98,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
             "phasecenter=\(phaseCenterField ?? "auto")",
             "spw=\(selectedSpectralWindow ?? "all")",
             "data=\(dataColumn)",
+            "plane=\(correlation ?? "Stokes I")",
             "image=\(imageSize)x\(imageHeight) px",
             "cell=\(cellArcsec) arcsec",
             "weighting=\(weighting.rawValue)",
@@ -238,6 +242,7 @@ public struct DirtyImagingTaskRequest: Codable, Equatable {
                 dataColumn: parameters.dataColumn.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? nil
                     : parameters.dataColumn,
+                correlation: selectorToken(parameters.correlation),
                 weighting: ImagerWeightingPayload(weighting: parameters.weighting),
                 niter: 0,
                 dirtyOnly: parameters.dirtyOnly,
@@ -603,6 +608,7 @@ private struct ImagerRunRequestPayload: Encodable {
     var channelStart: Int?
     var channelCount: Int?
     var dataColumn: String?
+    var correlation: String?
     var weighting: ImagerWeightingPayload
     var niter: Int
     var dirtyOnly: Bool
@@ -619,6 +625,7 @@ private struct ImagerRunRequestPayload: Encodable {
         case channelStart = "channel_start"
         case channelCount = "channel_count"
         case dataColumn = "data_column"
+        case correlation
         case weighting
         case niter
         case dirtyOnly = "dirty_only"
