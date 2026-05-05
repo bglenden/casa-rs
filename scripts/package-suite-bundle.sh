@@ -21,6 +21,10 @@ The suite bundle contains:
   - bin/imexplore
   - bin/immoments
   - bin/impv
+  - bin/imsubimage
+  - bin/immath
+  - bin/imregrid
+  - bin/feather
   - bin/exportfits
   - bin/importfits
   - wheels/*.whl
@@ -36,6 +40,10 @@ The binaries bundle contains:
   - bin/imexplore
   - bin/immoments
   - bin/impv
+  - bin/imsubimage
+  - bin/immath
+  - bin/imregrid
+  - bin/feather
   - bin/exportfits
   - bin/importfits
 EOF
@@ -103,6 +111,10 @@ binaries=(
   imexplore
   immoments
   impv
+  imsubimage
+  immath
+  imregrid
+  feather
   exportfits
   importfits
 )
@@ -158,7 +170,7 @@ cat >"$manifest_path" <<EOF
   "version": "$version",
   "platform": "$platform",
   "channel": "$channel",
-  "binaries": ["casars", "calibrate", "casars-importvla", "msexplore", "mstransform", "casars-imager", "imexplore", "immoments", "impv", "exportfits", "importfits"],
+  "binaries": ["casars", "calibrate", "casars-importvla", "msexplore", "mstransform", "casars-imager", "imexplore", "immoments", "impv", "imsubimage", "immath", "imregrid", "feather", "exportfits", "importfits"],
   "wheel_files": [${wheel_json}]
 }
 EOF

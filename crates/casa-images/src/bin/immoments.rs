@@ -59,6 +59,7 @@ fn parse_request(args: &[String]) -> Result<ImmomentsRequest, String> {
     let mut moments = 0;
     let mut chans = None;
     let mut includepix = None;
+    let mut mask = None;
     let mut overwrite = false;
     let mut idx = 1;
     while idx < args.len() {
@@ -83,6 +84,10 @@ fn parse_request(args: &[String]) -> Result<ImmomentsRequest, String> {
                 idx += 1;
                 includepix = Some(parse_range(args.get(idx).ok_or_else(usage)?)?);
             }
+            "--mask" => {
+                idx += 1;
+                mask = Some(args.get(idx).ok_or_else(usage)?.clone());
+            }
             "--overwrite" => overwrite = true,
             other => return Err(format!("unknown argument {other:?}\n{}", usage())),
         }
@@ -94,6 +99,7 @@ fn parse_request(args: &[String]) -> Result<ImmomentsRequest, String> {
         moments,
         chans,
         includepix,
+        mask,
         overwrite,
     })
 }
@@ -122,5 +128,5 @@ fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: immoments <imagename> --outfile <path> [--moments 0|1] [--chans 4~12] [--includepix min,max] [--overwrite] | immoments --json-run <SOURCE>".to_string()
+    "usage: immoments <imagename> --outfile <path> [--moments 0|1] [--chans 4~12] [--mask image>threshold] [--includepix min,max] [--overwrite] | immoments --json-run <SOURCE>".to_string()
 }

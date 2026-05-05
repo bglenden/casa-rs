@@ -79,11 +79,13 @@ pub mod temp_image;
 mod mask;
 
 pub use analysis::{
-    ExportFitsRequest, FitsExportSummary, FitsImportSummary, ImageAnalysisProtocolInfo,
-    ImageAnalysisTaskRequest, ImageAnalysisTaskResult, ImageAnalysisTaskSchemaBundle,
-    ImageHeaderSummary, ImageStatisticsSummary, ImheadRequest, ImmomentsRequest, ImportFitsRequest,
-    ImpvRequest, ImstatRequest, MomentMapSummary, PvImageSummary, export_fits,
-    image_analysis_ui_schema_json, imhead, immoments, import_fits, impv, imstat,
+    ExportFitsRequest, FeatherRequest, FeatherSummary, FitsExportSummary, FitsImportSummary,
+    ImageAnalysisProtocolInfo, ImageAnalysisTaskRequest, ImageAnalysisTaskResult,
+    ImageAnalysisTaskSchemaBundle, ImageHeaderSummary, ImageMathSummary, ImageRegridSummary,
+    ImageStatisticsSummary, ImageSubimageSummary, ImheadRequest, ImmathRequest, ImmomentsRequest,
+    ImportFitsRequest, ImpvRequest, ImregridRequest, ImstatRequest, ImsubimageRequest,
+    MomentMapSummary, PvImageSummary, export_fits, feather, image_analysis_ui_schema_json, imhead,
+    immath, immoments, import_fits, impv, imregrid, imstat, imsubimage,
     read_image_analysis_request_source, run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};

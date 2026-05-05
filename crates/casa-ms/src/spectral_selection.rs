@@ -9,6 +9,7 @@
 
 use std::str::FromStr;
 
+use casa_types::measures::direction::MDirection;
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::doppler::MDoppler;
 use casa_types::measures::frame::MeasFrame;
@@ -262,10 +263,13 @@ pub struct CubeRowSpectralContributions {
     /// Source-channel map through CASA's padded Briggs-cube weight grid.
     ///
     /// `BriggsCubeWeightor` expands the spectral density cube by two channels
-    /// and shifts its reference pixel by one channel. Final output plane `n`
-    /// therefore uses density-plane `n + 1`; source channels that map only to
-    /// the padding planes do not feed any final image plane.
+    /// on either side and shifts its reference pixel by two channels. This map
+    /// keeps CASA's padded density-plane index rather than collapsing back to
+    /// the final image-plane index.
     pub padded_source_channel_output_map: Vec<Option<usize>>,
+    /// CASA `BriggsCubeWeightor` density-grid spectral samples and their
+    /// padded density-plane map.
+    pub padded_grid_channel_contributions: Vec<CubeGridChannelContributions>,
     /// CASA `FTMachine::interpolateFrequencyTogrid`-style grid samples and
     /// their output channel map.
     pub grid_channel_contributions: Vec<CubeGridChannelContributions>,
@@ -658,6 +662,7 @@ impl CubeSpectralSetup {
         axis_config: &CubeAxisConfig,
         reference_row_time_mjd_sec: f64,
         field_id: usize,
+        phase_center_direction: Option<MDirection>,
         time_bounds_mjd_sec: [f64; 2],
         derived_engine: &MsCalEngine,
     ) -> MsResult<(Self, ResolvedChannelSelection)> {
@@ -681,6 +686,7 @@ impl CubeSpectralSetup {
                 axis_config,
                 reference_row_time_mjd_sec,
                 field_id,
+                phase_center_direction,
                 time_bounds_mjd_sec,
                 derived_engine,
             );
@@ -699,13 +705,17 @@ impl CubeSpectralSetup {
             None
         } else {
             Some(
-                derived_engine
-                    .spectral_frame_observatory(reference_row_time_mjd_sec, field_id)
-                    .map_err(|error| {
-                        MsError::VersionError(format!(
-                            "build spectral frame for field {field_id}: {error}"
-                        ))
-                    })?,
+                spectral_frame_observatory(
+                    derived_engine,
+                    reference_row_time_mjd_sec,
+                    field_id,
+                    phase_center_direction.clone(),
+                )
+                .map_err(|error| {
+                    MsError::VersionError(format!(
+                        "build spectral frame for field {field_id}: {error}"
+                    ))
+                })?,
             )
         };
         let source_frequencies_in_output_frame =
@@ -840,6 +850,7 @@ impl CubeSpectralSetup {
         axis_config: &CubeAxisConfig,
         reference_row_time_mjd_sec: f64,
         field_id: usize,
+        phase_center_direction: Option<MDirection>,
         time_bounds_mjd_sec: [f64; 2],
         derived_engine: &MsCalEngine,
     ) -> MsResult<(Self, ResolvedChannelSelection)> {
@@ -886,13 +897,17 @@ impl CubeSpectralSetup {
                     nchan,
                 )?
             } else {
-                let frame = derived_engine
-                    .spectral_frame_observatory(reference_row_time_mjd_sec, field_id)
-                    .map_err(|error| {
-                        MsError::VersionError(format!(
-                            "build spectral frame for field {field_id}: {error}"
-                        ))
-                    })?;
+                let frame = spectral_frame_observatory(
+                    derived_engine,
+                    reference_row_time_mjd_sec,
+                    field_id,
+                    phase_center_direction,
+                )
+                .map_err(|error| {
+                    MsError::VersionError(format!(
+                        "build spectral frame for field {field_id}: {error}"
+                    ))
+                })?;
                 let source_frequencies_in_output_frame = all_source_frequencies_hz
                     .iter()
                     .copied()
@@ -1067,15 +1082,24 @@ impl CubeSpectralSetup {
             &source_frequencies_for_interpolation,
             &output_frequencies_for_interpolation,
         );
-        let padded_source_channel_output_map = build_padded_source_channel_output_map(
+        let padded_output_frequencies_for_interpolation =
+            build_briggs_cube_weight_output_frequencies(&output_frequencies_for_interpolation);
+        let padded_source_channel_output_map = build_source_channel_output_map(
             &source_frequencies_for_interpolation,
-            &output_frequencies_for_interpolation,
+            &padded_output_frequencies_for_interpolation,
         );
         let grid_channel_contributions = build_grid_channel_contributions(
             source_frequencies_hz,
             &source_frequencies_for_interpolation,
             &source_channel_widths_for_interpolation,
             &output_frequencies_for_interpolation,
+            self.interpolation,
+        );
+        let padded_grid_channel_contributions = build_grid_channel_contributions(
+            source_frequencies_hz,
+            &source_frequencies_for_interpolation,
+            &source_channel_widths_for_interpolation,
+            &padded_output_frequencies_for_interpolation,
             self.interpolation,
         );
         let source_channel_model_contributions = source_frequencies_for_interpolation
@@ -1107,9 +1131,39 @@ impl CubeSpectralSetup {
             output_channel_contributions,
             source_channel_output_map,
             padded_source_channel_output_map,
+            padded_grid_channel_contributions,
             grid_channel_contributions,
             source_channel_model_contributions,
         })
+    }
+
+    /// Convert selected source-channel frequencies into the frame used for
+    /// row-local spectral interpolation.
+    pub fn row_source_frequencies_for_interpolation(
+        &self,
+        source_frequencies_hz: &[f64],
+        row_time_mjd_sec: f64,
+        row_field_id: usize,
+        derived_engine: &MsCalEngine,
+    ) -> MsResult<Vec<f64>> {
+        if self.interpolation_uses_native_source_frequencies {
+            return Ok(source_frequencies_hz.to_vec());
+        }
+        let (source_spectral_frame, output_spectral_frame) =
+            self.row_and_output_spectral_frames(row_time_mjd_sec, row_field_id, derived_engine)?;
+        source_frequencies_hz
+            .iter()
+            .copied()
+            .map(|source_frequency_hz| {
+                convert_frequency_to_frame_with_frames(
+                    self.source_freq_ref,
+                    self.output_freq_ref,
+                    source_frequency_hz,
+                    source_spectral_frame.as_ref(),
+                    output_spectral_frame.as_ref(),
+                )
+            })
+            .collect()
     }
 
     /// Build output-channel interpolation contributions for one row, reusing
@@ -1209,6 +1263,19 @@ fn uses_native_source_interpolation(axis_config: &CubeAxisConfig) -> bool {
                 axis_config.width,
                 Some(CubeAxisValue::Doppler { value, .. }) if value < 0.0
             )
+}
+
+fn spectral_frame_observatory(
+    derived_engine: &MsCalEngine,
+    time_mjd_sec: f64,
+    fallback_field_id: usize,
+    phase_center_direction: Option<MDirection>,
+) -> MsResult<MeasFrame> {
+    if let Some(direction) = phase_center_direction {
+        derived_engine.spectral_frame_observatory_direction(time_mjd_sec, direction)
+    } else {
+        derived_engine.spectral_frame_observatory(time_mjd_sec, fallback_field_id)
+    }
 }
 
 fn effective_output_frequency_ref(
@@ -2024,37 +2091,25 @@ fn build_source_channel_output_map(
         .collect()
 }
 
-fn build_padded_source_channel_output_map(
-    source_channel_frequencies_hz: &[f64],
-    output_channel_frequencies_hz: &[f64],
-) -> Vec<Option<usize>> {
+fn build_briggs_cube_weight_output_frequencies(output_channel_frequencies_hz: &[f64]) -> Vec<f64> {
     if output_channel_frequencies_hz.len() < 2 {
-        return build_source_channel_output_map(
-            source_channel_frequencies_hz,
-            output_channel_frequencies_hz,
-        );
+        return output_channel_frequencies_hz.to_vec();
     }
     let increment_hz = output_channel_frequencies_hz[1] - output_channel_frequencies_hz[0];
     if !(increment_hz.is_finite() && increment_hz != 0.0) {
-        return source_channel_frequencies_hz.iter().map(|_| None).collect();
+        return output_channel_frequencies_hz.to_vec();
     }
-    let mut padded_frequencies_hz = Vec::with_capacity(output_channel_frequencies_hz.len() + 2);
+    let mut padded_frequencies_hz = Vec::with_capacity(output_channel_frequencies_hz.len() + 4);
+    padded_frequencies_hz.push(output_channel_frequencies_hz[0] - 2.0 * increment_hz);
     padded_frequencies_hz.push(output_channel_frequencies_hz[0] - increment_hz);
     padded_frequencies_hz.extend_from_slice(output_channel_frequencies_hz);
     padded_frequencies_hz.push(
         output_channel_frequencies_hz[output_channel_frequencies_hz.len() - 1] + increment_hz,
     );
-    build_source_channel_output_map(source_channel_frequencies_hz, &padded_frequencies_hz)
-        .into_iter()
-        .map(|padded_channel| {
-            let padded_channel = padded_channel?;
-            if padded_channel > 0 && padded_channel <= output_channel_frequencies_hz.len() {
-                Some(padded_channel - 1)
-            } else {
-                None
-            }
-        })
-        .collect()
+    padded_frequencies_hz.push(
+        output_channel_frequencies_hz[output_channel_frequencies_hz.len() - 1] + 2.0 * increment_hz,
+    );
+    padded_frequencies_hz
 }
 
 fn build_grid_channel_contributions(
@@ -2123,7 +2178,12 @@ fn casa_grid_frequency_channel_map(
     }
 
     let width = image_increment_hz.abs() / source_increment_hz.abs();
-    if width <= 1.0 {
+    let direct_width_limit = match interpolation {
+        CubeInterpolation::Linear => 2.0,
+        CubeInterpolation::Cubic => 4.0,
+        CubeInterpolation::Nearest => 1.0,
+    };
+    if width <= direct_width_limit {
         return (
             output_channel_frequencies_hz.to_vec(),
             (0..output_channel_frequencies_hz.len()).map(Some).collect(),
@@ -2428,6 +2488,12 @@ fn cube_source_channel_support(
                     .into_iter()
                     .flat_map(|grid| grid.contributions),
             )
+            .chain(
+                contributions
+                    .padded_grid_channel_contributions
+                    .into_iter()
+                    .flat_map(|grid| grid.contributions),
+            )
             .map(|contribution| contribution.source_channel)
         {
             first_index =
@@ -2640,6 +2706,35 @@ mod tests {
 
         let single = linear_channel_contributions(&[10.0], &[10.0], &[4.0], 11.0);
         assert_eq!(single.len(), 1);
+    }
+
+    #[test]
+    fn casa_grid_frequency_channel_map_uses_casa_intermediate_grid_thresholds() {
+        let source = (0..12).map(|index| index as f64 * 10.0).collect::<Vec<_>>();
+        let linear_direct = vec![5.0, 20.0, 35.0];
+        let (grid, channel_map) =
+            casa_grid_frequency_channel_map(&source, &linear_direct, CubeInterpolation::Linear);
+        assert_eq!(grid, linear_direct);
+        assert_eq!(channel_map, vec![Some(0), Some(1), Some(2)]);
+
+        let linear_threshold = vec![0.0, 20.0, 40.0];
+        let (grid, channel_map) =
+            casa_grid_frequency_channel_map(&source, &linear_threshold, CubeInterpolation::Linear);
+        assert_eq!(grid, linear_threshold);
+        assert_eq!(channel_map, vec![Some(0), Some(1), Some(2)]);
+
+        let linear_wide = vec![0.0, 25.0, 50.0];
+        let (grid, channel_map) =
+            casa_grid_frequency_channel_map(&source, &linear_wide, CubeInterpolation::Linear);
+        assert_ne!(grid, linear_wide);
+        assert!(grid.len() > linear_wide.len());
+        assert!(channel_map.iter().any(Option::is_some));
+
+        let cubic_direct = vec![0.0, 40.0, 80.0];
+        let (grid, channel_map) =
+            casa_grid_frequency_channel_map(&source, &cubic_direct, CubeInterpolation::Cubic);
+        assert_eq!(grid, cubic_direct);
+        assert_eq!(channel_map, vec![Some(0), Some(1), Some(2)]);
     }
 
     #[test]
@@ -3216,6 +3311,7 @@ mod tests {
             &CubeAxisConfig::default(),
             59_000.0 * 86_400.0,
             0,
+            None,
             [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
             &engine,
         )
@@ -3241,6 +3337,7 @@ mod tests {
             &axis_config,
             59_000.0 * 86_400.0,
             0,
+            None,
             [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
             &engine,
         )

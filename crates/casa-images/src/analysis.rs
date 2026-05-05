@@ -15,13 +15,16 @@ use casa_provider_contracts::{
     ProviderProjectionMetadata, ProviderSurfaceKind, TaskOperationDescriptor, TaskSemanticContract,
     derived_ui_schema_annotations, merged_components,
 };
-use casa_types::{ArrayD, ScalarValue, Value};
+use casa_tables::{Table, TableOptions};
+use casa_types::{ArrayD, ArrayValue, ScalarValue, Value};
 use fitsio::{
     FitsFile,
     hdu::HduInfo,
     images::{ImageDescription, ImageType as FitsImageType},
 };
-use ndarray::{Axis, IxDyn, ShapeBuilder, Zip};
+use ndarray::{Array2, Axis, IxDyn, ShapeBuilder, Zip};
+use num_complex::Complex32;
+use rustfft::FftPlanner;
 use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -37,6 +40,7 @@ pub const IMAGE_ANALYSIS_TASK_PROTOCOL_NAME: &str = "casa_image_analysis_task";
 pub const IMAGE_ANALYSIS_TASK_PROTOCOL_VERSION: u32 = 1;
 
 const SPEED_OF_LIGHT_KM_S: f64 = 299_792.458;
+const LINEAR_REGRID_VALID_WEIGHT_MIN: f64 = f64::MIN_POSITIVE;
 
 /// Version/compatibility information for the JSON image-analysis task protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -114,6 +118,26 @@ impl ImageAnalysisTaskSchemaBundle {
                         result_kind: Some("impv".to_string()),
                     },
                     TaskOperationDescriptor {
+                        name: "imsubimage".to_string(),
+                        request_kind: "imsubimage".to_string(),
+                        result_kind: Some("imsubimage".to_string()),
+                    },
+                    TaskOperationDescriptor {
+                        name: "immath".to_string(),
+                        request_kind: "immath".to_string(),
+                        result_kind: Some("immath".to_string()),
+                    },
+                    TaskOperationDescriptor {
+                        name: "imregrid".to_string(),
+                        request_kind: "imregrid".to_string(),
+                        result_kind: Some("imregrid".to_string()),
+                    },
+                    TaskOperationDescriptor {
+                        name: "feather".to_string(),
+                        request_kind: "feather".to_string(),
+                        result_kind: Some("feather".to_string()),
+                    },
+                    TaskOperationDescriptor {
                         name: "exportfits".to_string(),
                         request_kind: "exportfits".to_string(),
                         result_kind: Some("exportfits".to_string()),
@@ -140,7 +164,18 @@ impl ImageAnalysisTaskSchemaBundle {
                 ui_schema: None,
                 python: Some(serde_json::json!({
                     "module": "casars.tasks.image_analysis",
-                    "functions": ["imhead", "imstat", "immoments", "impv", "exportfits", "importfits"],
+                    "functions": [
+                        "imhead",
+                        "imstat",
+                        "immoments",
+                        "impv",
+                        "imsubimage",
+                        "immath",
+                        "imregrid",
+                        "feather",
+                        "exportfits",
+                        "importfits"
+                    ],
                 })),
             },
             request_schema,
@@ -156,7 +191,7 @@ pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError>
             "immoments",
             "Image Moments",
             "Create CASA-style image moment maps",
-            "immoments <imagename> --outfile <path> [--moments 0|1] [--chans 4~12] [--includepix min,max] [--overwrite]",
+            "immoments <imagename> --outfile <path> [--moments 0|1] [--chans 4~12] [--mask image>threshold] [--includepix min,max] [--overwrite]",
             serde_json::json!([
                 arg(UiArgument {
                     id: "imagename",
@@ -214,9 +249,20 @@ pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError>
                     group: "Selection",
                 }),
                 arg(UiArgument {
+                    id: "mask",
+                    label: "Mask Expression",
+                    order: 5,
+                    parser: option(["--mask"], "image>threshold", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "CASA image mask expression, for example pb.image>0.3",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
                     id: "overwrite",
                     label: "Overwrite",
-                    order: 5,
+                    order: 6,
                     parser: toggle(["--overwrite"], []),
                     value_kind: "bool",
                     required: false,
@@ -311,6 +357,121 @@ pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError>
                 })
             ]),
         ),
+        "imsubimage" => (
+            "imsubimage",
+            "Subimage",
+            "Extract a CASA-style image section",
+            "imsubimage <imagename> <outfile> [--box x0,y0,x1,y1] [--chans 4~12] [--overwrite]",
+            serde_json::json!([
+                arg(UiArgument {
+                    id: "imagename",
+                    label: "Image",
+                    order: 0,
+                    parser: positional("imagename"),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Input CASA image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "outfile",
+                    label: "Output",
+                    order: 1,
+                    parser: positional("outfile"),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Output CASA image path",
+                    group: "Output",
+                }),
+                arg(UiArgument {
+                    id: "box",
+                    label: "Box",
+                    order: 2,
+                    parser: option(["--box"], "x0,y0,x1,y1", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Inclusive pixel box",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "chans",
+                    label: "Channels",
+                    order: 3,
+                    parser: option(["--chans"], "range", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "CASA channel range",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "overwrite",
+                    label: "Overwrite",
+                    order: 4,
+                    parser: toggle(["--overwrite"], []),
+                    value_kind: "bool",
+                    required: false,
+                    default: serde_json::json!("false"),
+                    help: "Replace existing output image",
+                    group: "Output",
+                })
+            ]),
+        ),
+        "immath" => (
+            "immath",
+            "Image Math",
+            "Evaluate tutorial image arithmetic expressions",
+            "immath --imagename <image0> --imagename <image1> --expr 'IM0 * IM1|IM0 / IM1' --outfile <path> [--overwrite]",
+            serde_json::json!([
+                arg(UiArgument {
+                    id: "imagename",
+                    label: "Images",
+                    order: 0,
+                    parser: option(["--imagename", "--input"], "path", []),
+                    value_kind: "path-list",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Input CASA image paths",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "expr",
+                    label: "Expression",
+                    order: 1,
+                    parser: option(["--expr"], "expression", []),
+                    value_kind: "string",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Expression such as IM0 * IM1 or IM0 / IM1",
+                    group: "Math",
+                }),
+                arg(UiArgument {
+                    id: "outfile",
+                    label: "Output",
+                    order: 2,
+                    parser: option(["--outfile"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Output CASA image path",
+                    group: "Output",
+                }),
+                arg(UiArgument {
+                    id: "overwrite",
+                    label: "Overwrite",
+                    order: 3,
+                    parser: toggle(["--overwrite"], []),
+                    value_kind: "bool",
+                    required: false,
+                    default: serde_json::json!("false"),
+                    help: "Replace existing output image",
+                    group: "Output",
+                })
+            ]),
+        ),
         "exportfits" => (
             "exportfits",
             "Export FITS",
@@ -359,6 +520,132 @@ pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError>
                     required: false,
                     default: serde_json::json!("false"),
                     help: "Replace existing FITS output",
+                    group: "Output",
+                })
+            ]),
+        ),
+        "imregrid" => (
+            "imregrid",
+            "Image Regrid",
+            "Regrid a CASA image onto a template image",
+            "imregrid --imagename <image> --template <image> --output <path> [--interpolation linear|nearest] [--overwrite]",
+            serde_json::json!([
+                arg(UiArgument {
+                    id: "imagename",
+                    label: "Image",
+                    order: 0,
+                    parser: option(["--imagename", "--input"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Input CASA image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "template",
+                    label: "Template",
+                    order: 1,
+                    parser: option(["--template"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Template CASA image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "output",
+                    label: "Output",
+                    order: 2,
+                    parser: option(["--output", "--outfile"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Output CASA image path",
+                    group: "Output",
+                }),
+                arg(UiArgument {
+                    id: "interpolation",
+                    label: "Interpolation",
+                    order: 3,
+                    parser: option(["--interpolation"], "linear|nearest", ["linear", "nearest"]),
+                    value_kind: "choice",
+                    required: false,
+                    default: serde_json::json!("linear"),
+                    help: "Interpolation method",
+                    group: "Regrid",
+                }),
+                arg(UiArgument {
+                    id: "overwrite",
+                    label: "Overwrite",
+                    order: 4,
+                    parser: toggle(["--overwrite"], []),
+                    value_kind: "bool",
+                    required: false,
+                    default: serde_json::json!("false"),
+                    help: "Replace existing output image",
+                    group: "Output",
+                })
+            ]),
+        ),
+        "feather" => (
+            "feather",
+            "Feather Images",
+            "Combine high-resolution and low-resolution images in the Fourier domain",
+            "feather --imagename <output> --highres <image> --lowres <image> [--sdfactor N] [--overwrite]",
+            serde_json::json!([
+                arg(UiArgument {
+                    id: "imagename",
+                    label: "Output",
+                    order: 0,
+                    parser: option(["--imagename", "--output"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Output CASA image path",
+                    group: "Output",
+                }),
+                arg(UiArgument {
+                    id: "highres",
+                    label: "High Resolution",
+                    order: 1,
+                    parser: option(["--highres"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "High-resolution CASA image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "lowres",
+                    label: "Low Resolution",
+                    order: 2,
+                    parser: option(["--lowres"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Low-resolution CASA image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "sdfactor",
+                    label: "SD Factor",
+                    order: 3,
+                    parser: option(["--sdfactor"], "scale", []),
+                    value_kind: "number",
+                    required: false,
+                    default: serde_json::json!("1.0"),
+                    help: "Single-dish scaling factor",
+                    group: "Feather",
+                }),
+                arg(UiArgument {
+                    id: "overwrite",
+                    label: "Overwrite",
+                    order: 4,
+                    parser: toggle(["--overwrite"], []),
+                    value_kind: "bool",
+                    required: false,
+                    default: serde_json::json!("false"),
+                    help: "Replace existing output image",
                     group: "Output",
                 })
             ]),
@@ -495,6 +782,14 @@ pub enum ImageAnalysisTaskRequest {
     Immoments(ImmomentsRequest),
     /// CASA `impv` style position-velocity extraction.
     Impv(ImpvRequest),
+    /// CASA `imsubimage` style pixel-box/channel extraction.
+    Imsubimage(ImsubimageRequest),
+    /// CASA `immath(..., mode="evalexpr")` style image arithmetic.
+    Immath(ImmathRequest),
+    /// CASA `imregrid` style template-image regridding.
+    Imregrid(ImregridRequest),
+    /// CASA `feather` style Fourier-domain image combination.
+    Feather(FeatherRequest),
     /// CASA `exportfits` style FITS image export.
     Exportfits(ExportFitsRequest),
     /// CASA `importfits` style FITS image import.
@@ -513,6 +808,14 @@ pub enum ImageAnalysisTaskResult {
     Immoments(MomentMapSummary),
     /// Result for [`ImageAnalysisTaskRequest::Impv`].
     Impv(PvImageSummary),
+    /// Result for [`ImageAnalysisTaskRequest::Imsubimage`].
+    Imsubimage(ImageSubimageSummary),
+    /// Result for [`ImageAnalysisTaskRequest::Immath`].
+    Immath(ImageMathSummary),
+    /// Result for [`ImageAnalysisTaskRequest::Imregrid`].
+    Imregrid(ImageRegridSummary),
+    /// Result for [`ImageAnalysisTaskRequest::Feather`].
+    Feather(FeatherSummary),
     /// Result for [`ImageAnalysisTaskRequest::Exportfits`].
     Exportfits(FitsExportSummary),
     /// Result for [`ImageAnalysisTaskRequest::Importfits`].
@@ -557,6 +860,10 @@ pub struct ImmomentsRequest {
     /// Inclusive pixel-value range to include.
     #[serde(default)]
     pub includepix: Option<[f64; 2]>,
+    /// CASA image mask expression, supporting tutorial forms like
+    /// `pb.image>0.3`.
+    #[serde(default)]
+    pub mask: Option<String>,
     /// Replace an existing output image.
     #[serde(default)]
     pub overwrite: bool,
@@ -587,12 +894,88 @@ pub struct ImpvRequest {
     pub overwrite: bool,
 }
 
+/// CASA `imsubimage` request for tutorial pixel-box/channel extraction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImsubimageRequest {
+    /// Input CASA image path.
+    pub imagename: PathBuf,
+    /// Output CASA image path.
+    pub outfile: PathBuf,
+    /// CASA inclusive pixel box, formatted as `x0,y0,x1,y1`.
+    #[serde(default)]
+    pub box_pixels: Option<String>,
+    /// CASA channel expression, supporting tutorial forms like `4~12`.
+    #[serde(default)]
+    pub chans: Option<String>,
+    /// Replace an existing output image.
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+/// CASA `immath(..., mode="evalexpr")` request for tutorial image arithmetic.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImmathRequest {
+    /// Input CASA image paths. Tutorial expressions reference them as `IM0`,
+    /// `IM1`, and so on.
+    pub imagename: Vec<PathBuf>,
+    /// Output CASA image path.
+    pub outfile: PathBuf,
+    /// Expression to evaluate. This implementation supports the M100 tutorial
+    /// forms `IM0 * IM1` and `IM0 / IM1`.
+    pub expr: String,
+    /// Replace an existing output image.
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+/// CASA `imregrid` request for template-image regridding.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImregridRequest {
+    /// Input CASA image path.
+    pub imagename: PathBuf,
+    /// Template CASA image path whose shape/coordinates define the output.
+    pub template: PathBuf,
+    /// Output CASA image path.
+    pub output: PathBuf,
+    /// Interpolation method. Tutorial support accepts `linear` and `nearest`.
+    #[serde(default = "default_regrid_interpolation")]
+    pub interpolation: String,
+    /// Replace an existing output image.
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+/// CASA `feather` request for Fourier-domain high/low image combination.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FeatherRequest {
+    /// Output CASA image path.
+    pub imagename: PathBuf,
+    /// High-resolution interferometric image on the desired output grid.
+    pub highres: PathBuf,
+    /// Low-resolution single-dish or total-power image.
+    pub lowres: PathBuf,
+    /// Single-dish scale factor.
+    #[serde(default = "default_sdfactor")]
+    pub sdfactor: f32,
+    /// Replace an existing output image.
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
 fn default_impv_mode() -> String {
     "coords".to_string()
 }
 
 fn default_impv_width() -> usize {
     1
+}
+
+fn default_regrid_interpolation() -> String {
+    "linear".to_string()
+}
+
+fn default_sdfactor() -> f32 {
+    1.0
 }
 
 /// Summary returned after writing a PV image.
@@ -610,6 +993,72 @@ pub struct PvImageSummary {
     pub width: usize,
     /// Pixel units copied from the input image.
     pub units: String,
+}
+
+/// Summary returned after writing an `imsubimage` product.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImageSubimageSummary {
+    /// Input CASA image path.
+    pub imagename: String,
+    /// Output CASA image path.
+    pub outfile: String,
+    /// Inclusive lower-left corner in input pixel coordinates.
+    pub blc: Vec<usize>,
+    /// Inclusive upper-right corner in input pixel coordinates.
+    pub trc: Vec<usize>,
+    /// Output image shape.
+    pub shape: Vec<usize>,
+    /// Pixel units copied from the input image.
+    pub units: String,
+}
+
+/// Summary returned after writing an `immath` product.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImageMathSummary {
+    /// Input CASA image paths.
+    pub imagename: Vec<String>,
+    /// Output CASA image path.
+    pub outfile: String,
+    /// Expression that was evaluated.
+    pub expr: String,
+    /// Output image shape.
+    pub shape: Vec<usize>,
+    /// Pixel units copied from the first input image.
+    pub units: String,
+    /// Valid output pixels after intersecting input masks and finite results.
+    pub valid_pixels: usize,
+}
+
+/// Summary returned after writing an `imregrid` product.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImageRegridSummary {
+    /// Input CASA image path.
+    pub imagename: String,
+    /// Template CASA image path.
+    pub template: String,
+    /// Output CASA image path.
+    pub output: String,
+    /// Output image shape.
+    pub shape: Vec<usize>,
+    /// Valid output pixels.
+    pub valid_pixels: usize,
+}
+
+/// Summary returned after writing a `feather` product.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FeatherSummary {
+    /// High-resolution CASA image path.
+    pub highres: String,
+    /// Low-resolution CASA image path.
+    pub lowres: String,
+    /// Output CASA image path.
+    pub imagename: String,
+    /// Output image shape.
+    pub shape: Vec<usize>,
+    /// Single-dish scale factor.
+    pub sdfactor: f32,
+    /// Valid output pixels.
+    pub valid_pixels: usize,
 }
 
 /// CASA `exportfits` request.
@@ -804,6 +1253,18 @@ pub fn run_image_analysis_task(
         ImageAnalysisTaskRequest::Impv(request) => {
             Ok(ImageAnalysisTaskResult::Impv(impv(&request)?))
         }
+        ImageAnalysisTaskRequest::Imsubimage(request) => {
+            Ok(ImageAnalysisTaskResult::Imsubimage(imsubimage(&request)?))
+        }
+        ImageAnalysisTaskRequest::Immath(request) => {
+            Ok(ImageAnalysisTaskResult::Immath(immath(&request)?))
+        }
+        ImageAnalysisTaskRequest::Imregrid(request) => {
+            Ok(ImageAnalysisTaskResult::Imregrid(imregrid(&request)?))
+        }
+        ImageAnalysisTaskRequest::Feather(request) => {
+            Ok(ImageAnalysisTaskResult::Feather(feather(&request)?))
+        }
         ImageAnalysisTaskRequest::Exportfits(request) => {
             Ok(ImageAnalysisTaskResult::Exportfits(export_fits(
                 &request.imagename,
@@ -912,6 +1373,75 @@ pub fn impv(request: &ImpvRequest) -> Result<PvImageSummary, ImageError> {
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => Err(
             ImageError::InvalidMetadata("impv currently supports real-valued images".to_string()),
         ),
+    }
+}
+
+/// Extract a CASA `imsubimage`-style image section for tutorial pixel boxes.
+pub fn imsubimage(request: &ImsubimageRequest) -> Result<ImageSubimageSummary, ImageError> {
+    let image = AnyPagedImage::open(&request.imagename)?;
+    match &image {
+        AnyPagedImage::Float32(image) => imsubimage_typed(image, request),
+        AnyPagedImage::Float64(image) => imsubimage_typed(image, request),
+        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
+            Err(ImageError::InvalidMetadata(
+                "imsubimage currently supports real-valued images".to_string(),
+            ))
+        }
+    }
+}
+
+/// Evaluate a tutorial-scoped CASA `immath(..., mode="evalexpr")` expression.
+pub fn immath(request: &ImmathRequest) -> Result<ImageMathSummary, ImageError> {
+    if request.imagename.len() != 2 {
+        return Err(ImageError::InvalidMetadata(
+            "immath tutorial support currently requires exactly two input images".to_string(),
+        ));
+    }
+    let lhs = AnyPagedImage::open(&request.imagename[0])?;
+    let rhs = AnyPagedImage::open(&request.imagename[1])?;
+    match (&lhs, &rhs) {
+        (AnyPagedImage::Float32(lhs), AnyPagedImage::Float32(rhs)) => {
+            immath_typed(lhs, rhs, request)
+        }
+        (AnyPagedImage::Float64(lhs), AnyPagedImage::Float64(rhs)) => {
+            immath_typed(lhs, rhs, request)
+        }
+        _ => Err(ImageError::InvalidMetadata(
+            "immath tutorial support currently requires matching real-valued pixel types"
+                .to_string(),
+        )),
+    }
+}
+
+/// Regrid an image onto a template image's shape and coordinates.
+pub fn imregrid(request: &ImregridRequest) -> Result<ImageRegridSummary, ImageError> {
+    let input = AnyPagedImage::open(&request.imagename)?;
+    let template = AnyPagedImage::open(&request.template)?;
+    match (&input, &template) {
+        (AnyPagedImage::Float32(input), AnyPagedImage::Float32(template)) => {
+            imregrid_typed(input, template, request)
+        }
+        (AnyPagedImage::Float64(input), AnyPagedImage::Float64(template)) => {
+            imregrid_typed(input, template, request)
+        }
+        _ => Err(ImageError::InvalidMetadata(
+            "imregrid tutorial support currently requires matching real-valued pixel types"
+                .to_string(),
+        )),
+    }
+}
+
+/// Feather high- and low-resolution images on the high-resolution grid.
+pub fn feather(request: &FeatherRequest) -> Result<FeatherSummary, ImageError> {
+    let high = AnyPagedImage::open(&request.highres)?;
+    let low = AnyPagedImage::open(&request.lowres)?;
+    match (&high, &low) {
+        (AnyPagedImage::Float32(high), AnyPagedImage::Float32(low)) => {
+            feather_typed(high, low, request)
+        }
+        _ => Err(ImageError::InvalidMetadata(
+            "feather tutorial support currently requires f32 high/low images".to_string(),
+        )),
     }
 }
 
@@ -1333,6 +1863,7 @@ fn offset_pos(start: &[usize], pos: Vec<usize>) -> Vec<usize> {
 
 #[derive(Debug, Clone)]
 struct Selection {
+    full_shape: Vec<usize>,
     start: Vec<usize>,
     shape: Vec<usize>,
     channel_indices: Option<Vec<usize>>,
@@ -1373,6 +1904,7 @@ impl Selection {
             None
         };
         Ok(Self {
+            full_shape: image.shape().to_vec(),
             start,
             shape,
             channel_indices,
@@ -1491,7 +2023,7 @@ where
     })?;
     let selection = Selection::new(image, None, request.chans.as_deref())?;
     let input = image.get_slice(&selection.start, &selection.shape)?;
-    let mask = image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
+    let mask = combined_moment_mask(image, &selection, request.mask.as_deref())?;
     let local_axis = spectral_axis;
     let coords = spectral_velocity_values(image, local_axis, &selection)?;
     let scale = integrated_scale_factor(image, local_axis)?;
@@ -1505,6 +2037,7 @@ where
         request.moments,
     )?;
     let out_shape = output_data.shape().to_vec();
+    let legacy_coordinates = image.table().keywords().get("coords").cloned();
     let mut output = TempImage::<f32>::new(out_shape.clone(), image.coordinates().clone())?;
     output.set_units(moment_units(image.units(), request.moments))?;
     output.set_image_info(&collapsed_image_info(image)?)?;
@@ -1515,6 +2048,9 @@ where
         output.set_default_mask("mask0")?;
     }
     output.save_as(&request.outfile)?;
+    if let Some(Value::Record(coords)) = legacy_coordinates {
+        patch_saved_coords_keyword(&request.outfile, coords)?;
+    }
     let valid_profiles = output_mask.iter().filter(|value| **value).count();
     Ok(MomentMapSummary {
         imagename: request.imagename.display().to_string(),
@@ -1524,6 +2060,1155 @@ where
         units: output.units().to_string(),
         valid_profiles,
     })
+}
+
+fn combined_moment_mask<T>(
+    image: &PagedImage<T>,
+    selection: &Selection,
+    mask_expr: Option<&str>,
+) -> Result<Option<ArrayD<bool>>, ImageError>
+where
+    T: ImagePixel,
+{
+    let base_mask =
+        image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
+    let Some(mask_expr) = mask_expr else {
+        return Ok(base_mask);
+    };
+    let expr_mask = image_threshold_mask(mask_expr, selection)?;
+    let combined = match base_mask {
+        Some(mut base) => {
+            Zip::from(&mut base).and(&expr_mask).for_each(|base, expr| {
+                *base = *base && *expr;
+            });
+            base
+        }
+        None => expr_mask,
+    };
+    Ok(Some(combined))
+}
+
+fn image_threshold_mask(expr: &str, selection: &Selection) -> Result<ArrayD<bool>, ImageError> {
+    let parsed = parse_image_threshold_mask(expr)?;
+    let mask_image = AnyPagedImage::open(&parsed.imagename)?;
+    match &mask_image {
+        AnyPagedImage::Float32(image) => image_threshold_mask_typed(image, &parsed, selection),
+        AnyPagedImage::Float64(image) => image_threshold_mask_typed(image, &parsed, selection),
+        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => Err(
+            ImageError::InvalidMetadata("mask expressions require real-valued images".to_string()),
+        ),
+    }
+}
+
+fn image_threshold_mask_typed<T>(
+    image: &PagedImage<T>,
+    parsed: &ParsedThresholdMask,
+    selection: &Selection,
+) -> Result<ArrayD<bool>, ImageError>
+where
+    T: ImagePixel + Into<f64> + Copy,
+{
+    if image.shape() != selection.full_shape.as_slice() {
+        return Err(ImageError::InvalidMetadata(format!(
+            "mask image shape {:?} does not match input image shape {:?}",
+            image.shape(),
+            selection.full_shape
+        )));
+    }
+    let data = image.get_slice(&selection.start, &selection.shape)?;
+    let image_mask =
+        image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
+    let mut out = data.mapv(|value| parsed.op.compare(value.into(), parsed.threshold));
+    if let Some(image_mask) = image_mask {
+        Zip::from(&mut out).and(&image_mask).for_each(|out, valid| {
+            *out = *out && *valid;
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ParsedThresholdMask {
+    imagename: PathBuf,
+    op: ThresholdOp,
+    threshold: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThresholdOp {
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
+}
+
+impl ThresholdOp {
+    fn compare(self, value: f64, threshold: f64) -> bool {
+        match self {
+            Self::Greater => value > threshold,
+            Self::GreaterEqual => value >= threshold,
+            Self::Less => value < threshold,
+            Self::LessEqual => value <= threshold,
+        }
+    }
+}
+
+fn parse_image_threshold_mask(expr: &str) -> Result<ParsedThresholdMask, ImageError> {
+    let expr = expr.trim();
+    for (token, op) in [
+        (">=", ThresholdOp::GreaterEqual),
+        ("<=", ThresholdOp::LessEqual),
+        (">", ThresholdOp::Greater),
+        ("<", ThresholdOp::Less),
+    ] {
+        if let Some((lhs, rhs)) = expr.split_once(token) {
+            let imagename = strip_optional_quotes(lhs.trim());
+            if imagename.is_empty() {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "invalid mask expression {expr:?}: missing image name"
+                )));
+            }
+            let threshold = rhs.trim().parse::<f64>().map_err(|error| {
+                ImageError::InvalidMetadata(format!(
+                    "invalid mask expression {expr:?}: invalid threshold: {error}"
+                ))
+            })?;
+            return Ok(ParsedThresholdMask {
+                imagename: PathBuf::from(imagename),
+                op,
+                threshold,
+            });
+        }
+    }
+    Err(ImageError::InvalidMetadata(format!(
+        "unsupported mask expression {expr:?}; expected image>threshold"
+    )))
+}
+
+fn strip_optional_quotes(text: &str) -> &str {
+    text.strip_prefix('\'')
+        .and_then(|text| text.strip_suffix('\''))
+        .or_else(|| {
+            text.strip_prefix('"')
+                .and_then(|text| text.strip_suffix('"'))
+        })
+        .unwrap_or(text)
+}
+
+fn imsubimage_typed<T>(
+    image: &PagedImage<T>,
+    request: &ImsubimageRequest,
+) -> Result<ImageSubimageSummary, ImageError>
+where
+    T: ImagePixel + Into<f64> + Copy,
+{
+    if request.outfile.exists() {
+        if request.overwrite {
+            fs::remove_dir_all(&request.outfile)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+        } else {
+            return Err(ImageError::Io(format!(
+                "subimage output already exists: {}",
+                request.outfile.display()
+            )));
+        }
+    }
+    let selection = Selection::new(
+        image,
+        request.box_pixels.as_deref(),
+        request.chans.as_deref(),
+    )?;
+    let data = image.get_slice(&selection.start, &selection.shape)?;
+    let mask = image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
+    let output_coordinates = subimage_coordinates(image.coordinates(), &selection.start)?;
+    let legacy_coordinates = legacy_subimage_coordinates(image, &selection.start);
+    let mut output = TempImage::<T>::new(selection.shape.clone(), output_coordinates)?;
+    output.set_units(image.units())?;
+    output.set_image_info(&image.image_info()?)?;
+    output.set_misc_info(image.misc_info())?;
+    output.put_slice(&data, &vec![0; output.ndim()])?;
+    if let Some(mask) = mask {
+        output.put_mask("mask0", &mask)?;
+        output.set_default_mask("mask0")?;
+    }
+    output.save_as(&request.outfile)?;
+    if let Some(coords) = legacy_coordinates {
+        patch_saved_coords_keyword(&request.outfile, coords)?;
+    }
+    Ok(ImageSubimageSummary {
+        imagename: request.imagename.display().to_string(),
+        outfile: request.outfile.display().to_string(),
+        blc: selection.start.clone(),
+        trc: selection
+            .start
+            .iter()
+            .zip(&selection.shape)
+            .map(|(start, shape)| start + shape - 1)
+            .collect(),
+        shape: selection.shape,
+        units: image.units().to_string(),
+    })
+}
+
+fn subimage_coordinates(
+    coordinates: &CoordinateSystem,
+    start: &[usize],
+) -> Result<CoordinateSystem, ImageError> {
+    let mut record = coordinates.to_record();
+    let mut axis_offset = 0usize;
+    for coordinate_index in 0..coordinates.n_coordinates() {
+        let coordinate = coordinates.coordinate(coordinate_index);
+        let axis_count = coordinate.n_pixel_axes();
+        let key = format!("coordinate{coordinate_index}");
+        let Some(Value::Record(coordinate_record)) = record.get_mut(&key) else {
+            axis_offset += axis_count;
+            continue;
+        };
+        shift_coordinate_reference_pixel(
+            coordinate_record,
+            &start[axis_offset..axis_offset + axis_count],
+        );
+        axis_offset += axis_count;
+    }
+    CoordinateSystem::from_record(&record).map_err(|error| {
+        ImageError::InvalidMetadata(format!(
+            "failed to build subimage coordinate system: {error}"
+        ))
+    })
+}
+
+fn shift_coordinate_reference_pixel(record: &mut casa_types::RecordValue, start: &[usize]) {
+    let Some(Value::Array(array)) = record.get_mut("crpix") else {
+        return;
+    };
+    let values = match array {
+        ArrayValue::Float64(values) => values
+            .iter()
+            .enumerate()
+            .map(|(axis, value)| *value - start.get(axis).copied().unwrap_or(0) as f64)
+            .collect::<Vec<_>>(),
+        ArrayValue::Float32(values) => values
+            .iter()
+            .enumerate()
+            .map(|(axis, value)| *value as f64 - start.get(axis).copied().unwrap_or(0) as f64)
+            .collect::<Vec<_>>(),
+        _ => return,
+    };
+    *array = ArrayValue::from_f64_vec(values);
+}
+
+fn legacy_subimage_coordinates<T: ImagePixel>(
+    image: &PagedImage<T>,
+    start: &[usize],
+) -> Option<casa_types::RecordValue> {
+    let Some(Value::Record(mut coords)) = image.table().keywords().get("coords").cloned() else {
+        return None;
+    };
+    let mut axis_offset = 0usize;
+    for coordinate_index in 0..image.coordinates().n_coordinates() {
+        let coordinate = image.coordinates().coordinate(coordinate_index);
+        let axis_count = coordinate.n_pixel_axes();
+        let key = legacy_coordinate_key(coordinate.coordinate_type(), coordinate_index);
+        if let Some(Value::Record(coordinate_record)) = coords.get_mut(&key) {
+            shift_coordinate_reference_pixel(
+                coordinate_record,
+                &start[axis_offset..axis_offset + axis_count],
+            );
+            shift_legacy_spectral_wcs_reference_pixel(
+                coordinate_record,
+                &start[axis_offset..axis_offset + axis_count],
+            );
+        }
+        axis_offset += axis_count;
+    }
+    Some(coords)
+}
+
+fn legacy_coordinate_key(coordinate_type: CoordinateType, coordinate_index: usize) -> String {
+    let prefix = match coordinate_type {
+        CoordinateType::Direction => "direction",
+        CoordinateType::Spectral => "spectral",
+        CoordinateType::Stokes => "stokes",
+        CoordinateType::Linear => "linear",
+        CoordinateType::Tabular => "tabular",
+    };
+    format!("{prefix}{coordinate_index}")
+}
+
+fn shift_legacy_spectral_wcs_reference_pixel(
+    record: &mut casa_types::RecordValue,
+    start: &[usize],
+) {
+    let Some(Value::Record(wcs)) = record.get_mut("wcs") else {
+        return;
+    };
+    let Some(Value::Scalar(ScalarValue::Float64(crpix))) = wcs.get_mut("crpix") else {
+        return;
+    };
+    *crpix -= start.first().copied().unwrap_or(0) as f64;
+}
+
+fn patch_saved_coords_keyword(
+    path: &Path,
+    coords: casa_types::RecordValue,
+) -> Result<(), ImageError> {
+    let mut table = Table::open(TableOptions::new(path))?;
+    table.keywords_mut().upsert("coords", Value::Record(coords));
+    table.save_metadata_only(TableOptions::new(path))?;
+    Ok(())
+}
+
+fn immath_typed<T>(
+    lhs: &PagedImage<T>,
+    rhs: &PagedImage<T>,
+    request: &ImmathRequest,
+) -> Result<ImageMathSummary, ImageError>
+where
+    T: ImagePixel + Into<f64> + From<f32> + Copy,
+{
+    if lhs.shape() != rhs.shape() {
+        return Err(ImageError::ShapeMismatch {
+            expected: lhs.shape().to_vec(),
+            got: rhs.shape().to_vec(),
+        });
+    }
+    if request.outfile.exists() {
+        if request.overwrite {
+            fs::remove_dir_all(&request.outfile)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+        } else {
+            return Err(ImageError::Io(format!(
+                "immath output already exists: {}",
+                request.outfile.display()
+            )));
+        }
+    }
+    let op = parse_tutorial_immath_expr(&request.expr)?;
+    let shape = lhs.shape().to_vec();
+    let origin = vec![0; lhs.ndim()];
+    let left = lhs.get_slice(&origin, &shape)?;
+    let right = rhs.get_slice(&origin, &shape)?;
+    let lhs_mask = lhs.get_mask_slice(&origin, &shape, &vec![1; lhs.ndim()])?;
+    let rhs_mask = rhs.get_mask_slice(&origin, &shape, &vec![1; rhs.ndim()])?;
+    let mut data = ArrayD::from_elem(IxDyn(&shape), T::from(0.0));
+    let mut valid = ndarray::ArrayD::from_elem(IxDyn(&shape), true);
+    Zip::from(&mut data)
+        .and(&mut valid)
+        .and(&left)
+        .and(&right)
+        .for_each(|out, valid, lhs, rhs| {
+            let lhs = (*lhs).into();
+            let rhs = (*rhs).into();
+            let value = match op {
+                TutorialMathOp::Multiply => lhs * rhs,
+                TutorialMathOp::Divide => {
+                    if rhs == 0.0 {
+                        f64::NAN
+                    } else {
+                        lhs / rhs
+                    }
+                }
+            };
+            *valid = value.is_finite();
+            *out = T::from(value as f32);
+        });
+    if let Some(mask) = lhs_mask {
+        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
+            *valid = *valid && *mask;
+        });
+    }
+    if let Some(mask) = rhs_mask {
+        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
+            *valid = *valid && *mask;
+        });
+    }
+    let mut output = TempImage::<T>::new(shape.clone(), lhs.coordinates().clone())?;
+    let legacy_coordinates = lhs.table().keywords().get("coords").cloned();
+    output.set_units(lhs.units())?;
+    output.set_image_info(&lhs.image_info()?)?;
+    output.set_misc_info(lhs.misc_info())?;
+    output.put_slice(&data, &vec![0; output.ndim()])?;
+    if valid.iter().any(|pixel| !*pixel) {
+        output.put_mask("mask0", &valid)?;
+        output.set_default_mask("mask0")?;
+    }
+    output.save_as(&request.outfile)?;
+    if let Some(Value::Record(coords)) = legacy_coordinates {
+        patch_saved_coords_keyword(&request.outfile, coords)?;
+    }
+    Ok(ImageMathSummary {
+        imagename: request
+            .imagename
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        outfile: request.outfile.display().to_string(),
+        expr: request.expr.clone(),
+        shape,
+        units: lhs.units().to_string(),
+        valid_pixels: valid.iter().filter(|pixel| **pixel).count(),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TutorialMathOp {
+    Multiply,
+    Divide,
+}
+
+fn parse_tutorial_immath_expr(expr: &str) -> Result<TutorialMathOp, ImageError> {
+    let normalized = expr
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    match normalized.as_str() {
+        "IM0*IM1" => Ok(TutorialMathOp::Multiply),
+        "IM0/IM1" => Ok(TutorialMathOp::Divide),
+        _ => Err(ImageError::InvalidMetadata(format!(
+            "unsupported tutorial immath expression {expr:?}; supported forms are IM0 * IM1 and IM0 / IM1"
+        ))),
+    }
+}
+
+fn imregrid_typed<T>(
+    input: &PagedImage<T>,
+    template: &PagedImage<T>,
+    request: &ImregridRequest,
+) -> Result<ImageRegridSummary, ImageError>
+where
+    T: ImagePixel + Into<f64> + From<f32> + Copy,
+{
+    if request.output.exists() {
+        if request.overwrite {
+            fs::remove_dir_all(&request.output)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+        } else {
+            return Err(ImageError::Io(format!(
+                "imregrid output already exists: {}",
+                request.output.display()
+            )));
+        }
+    }
+    let method = request.interpolation.to_ascii_lowercase();
+    if method != "linear" && method != "nearest" {
+        return Err(ImageError::InvalidMetadata(format!(
+            "unsupported imregrid interpolation {:?}; expected linear or nearest",
+            request.interpolation
+        )));
+    }
+    if input.ndim() != template.ndim() {
+        return Err(ImageError::ShapeMismatch {
+            expected: input.shape().to_vec(),
+            got: template.shape().to_vec(),
+        });
+    }
+    let output_shape = template.shape().to_vec();
+    let origin = vec![0; input.ndim()];
+    let input_data = input.get_slice(&origin, input.shape())?;
+    let input_mask = input.get_mask_slice(&origin, input.shape(), &vec![1; input.ndim()])?;
+    if method == "linear"
+        && let Some((output_data, output_mask)) =
+            regrid_four_axis_fast(input, template, &input_data, input_mask.as_ref())?
+    {
+        return save_regridded_image(
+            input,
+            template,
+            request,
+            output_shape,
+            output_data,
+            output_mask,
+        );
+    }
+    let mut output_data = ArrayD::<T>::from_elem(IxDyn(&output_shape).f(), T::from(0.0));
+    let mut output_mask = ArrayD::<bool>::from_elem(IxDyn(&output_shape).f(), false);
+    for_each_index(&output_shape, |out_index| -> Result<(), ImageError> {
+        let output_pixel = out_index
+            .iter()
+            .map(|value| *value as f64)
+            .collect::<Vec<_>>();
+        let world = template
+            .coordinates()
+            .to_world(&output_pixel)
+            .map_err(|error| {
+                ImageError::InvalidMetadata(format!(
+                    "template pixel/world conversion failed: {error}"
+                ))
+            })?;
+        let input_pixel = input.coordinates().to_pixel(&world).map_err(|error| {
+            ImageError::InvalidMetadata(format!("input world/pixel conversion failed: {error}"))
+        })?;
+        let sampled = if method == "nearest" {
+            sample_nearest(&input_data, input_mask.as_ref(), &input_pixel)
+                .map(|value| (value, true))
+        } else {
+            sample_linear_weighted(&input_data, input_mask.as_ref(), &input_pixel).map(
+                |(sum, weight_sum)| {
+                    (
+                        sum / weight_sum,
+                        weight_sum >= LINEAR_REGRID_VALID_WEIGHT_MIN,
+                    )
+                },
+            )
+        };
+        if let Some((value, valid)) = sampled {
+            output_data[IxDyn(out_index)] = T::from(value as f32);
+            output_mask[IxDyn(out_index)] = valid;
+        }
+        Ok(())
+    })?;
+    save_regridded_image(
+        input,
+        template,
+        request,
+        output_shape,
+        output_data,
+        output_mask,
+    )
+}
+
+fn save_regridded_image<T>(
+    input: &PagedImage<T>,
+    template: &PagedImage<T>,
+    request: &ImregridRequest,
+    output_shape: Vec<usize>,
+    output_data: ArrayD<T>,
+    output_mask: ArrayD<bool>,
+) -> Result<ImageRegridSummary, ImageError>
+where
+    T: ImagePixel + Into<f64> + From<f32> + Copy,
+{
+    let mut output = TempImage::<T>::new(output_shape.clone(), template.coordinates().clone())?;
+    let legacy_coordinates = template.table().keywords().get("coords").cloned();
+    output.set_units(input.units())?;
+    output.set_image_info(&input.image_info()?)?;
+    output.set_misc_info(input.misc_info())?;
+    output.put_slice(&output_data, &vec![0; output.ndim()])?;
+    if output_mask.iter().any(|valid| !*valid) {
+        output.put_mask("mask0", &output_mask)?;
+        output.set_default_mask("mask0")?;
+    }
+    output.save_as(&request.output)?;
+    if let Some(Value::Record(coords)) = legacy_coordinates {
+        patch_saved_coords_keyword(&request.output, coords)?;
+    }
+    Ok(ImageRegridSummary {
+        imagename: request.imagename.display().to_string(),
+        template: request.template.display().to_string(),
+        output: request.output.display().to_string(),
+        shape: output_shape,
+        valid_pixels: output_mask.iter().filter(|value| **value).count(),
+    })
+}
+
+fn feather_typed(
+    high: &PagedImage<f32>,
+    low: &PagedImage<f32>,
+    request: &FeatherRequest,
+) -> Result<FeatherSummary, ImageError> {
+    if request.imagename.exists() {
+        if request.overwrite {
+            fs::remove_dir_all(&request.imagename)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+        } else {
+            return Err(ImageError::Io(format!(
+                "feather output already exists: {}",
+                request.imagename.display()
+            )));
+        }
+    }
+    let high_shape = high.shape().to_vec();
+    let (low_data, low_mask) = regrid_image_to_template_f32(low, high)?;
+    let origin = vec![0; high.ndim()];
+    let high_data = high.get_slice(&origin, &high_shape)?;
+    let high_mask = high.get_mask_slice(&origin, &high_shape, &vec![1; high.ndim()])?;
+    let high_beam = high.image_info()?.beam_set.single_beam().ok_or_else(|| {
+        ImageError::InvalidMetadata(
+            "high-resolution image requires a single restoring beam".to_string(),
+        )
+    })?;
+    let low_beam = low.image_info()?.beam_set.single_beam().ok_or_else(|| {
+        ImageError::InvalidMetadata(
+            "low-resolution image requires a single restoring beam".to_string(),
+        )
+    })?;
+    if high_shape.len() < 2 {
+        return Err(ImageError::InvalidMetadata(
+            "feather requires at least two direction axes".to_string(),
+        ));
+    }
+    let nx = high_shape[0];
+    let ny = high_shape[1];
+    let trailing = if high_shape.len() > 2 {
+        high_shape[2..].iter().product()
+    } else {
+        1
+    };
+    let crossover = feather_crossover_weight(nx, ny, low_beam, high.coordinates())?;
+    let low_scale = request.sdfactor * (high_beam.area() / low_beam.area()) as f32;
+    let mut output_data = ArrayD::<f32>::zeros(IxDyn(&high_shape).f());
+    let mut output_mask = ArrayD::<bool>::from_elem(IxDyn(&high_shape).f(), true);
+    for plane in 0..trailing {
+        let trailing_index = unravel_index(plane, &high_shape[2..]);
+        let high_plane = extract_plane2(&high_data, &trailing_index);
+        let low_plane = extract_plane2(&low_data, &trailing_index);
+        let high_fft = centered_fft2(&high_plane.mapv(|value| Complex32::new(value, 0.0)));
+        let low_fft = centered_fft2(&low_plane.mapv(|value| Complex32::new(value, 0.0)));
+        let mut combined = Array2::<Complex32>::zeros((nx, ny));
+        for x in 0..nx {
+            for y in 0..ny {
+                let high_weight = crossover[(x, y)];
+                combined[(x, y)] = high_fft[(x, y)] * high_weight + low_fft[(x, y)] * low_scale;
+            }
+        }
+        let image_plane = centered_ifft2(&combined).mapv(|value| value.re);
+        put_plane2(&mut output_data, &trailing_index, &image_plane);
+    }
+    if let Some(mask) = high_mask {
+        Zip::from(&mut output_mask)
+            .and(&mask)
+            .for_each(|out, valid| {
+                *out = *out && *valid;
+            });
+    }
+    Zip::from(&mut output_mask)
+        .and(&low_mask)
+        .for_each(|out, valid| {
+            *out = *out && *valid;
+        });
+    let mut output = TempImage::<f32>::new(high_shape.clone(), high.coordinates().clone())?;
+    let legacy_coordinates = high.table().keywords().get("coords").cloned();
+    output.set_units(high.units())?;
+    output.set_image_info(&high.image_info()?)?;
+    output.set_misc_info(high.misc_info())?;
+    output.put_slice(&output_data, &vec![0; output.ndim()])?;
+    if output_mask.iter().any(|valid| !*valid) {
+        output.put_mask("mask0", &output_mask)?;
+        output.set_default_mask("mask0")?;
+    }
+    output.save_as(&request.imagename)?;
+    if let Some(Value::Record(coords)) = legacy_coordinates {
+        patch_saved_coords_keyword(&request.imagename, coords)?;
+    }
+    Ok(FeatherSummary {
+        highres: request.highres.display().to_string(),
+        lowres: request.lowres.display().to_string(),
+        imagename: request.imagename.display().to_string(),
+        shape: high_shape,
+        sdfactor: request.sdfactor,
+        valid_pixels: output_mask.iter().filter(|value| **value).count(),
+    })
+}
+
+fn regrid_image_to_template_f32(
+    input: &PagedImage<f32>,
+    template: &PagedImage<f32>,
+) -> Result<(ArrayD<f32>, ArrayD<bool>), ImageError> {
+    if input.ndim() != template.ndim() {
+        return Err(ImageError::ShapeMismatch {
+            expected: input.shape().to_vec(),
+            got: template.shape().to_vec(),
+        });
+    }
+    let output_shape = template.shape().to_vec();
+    let origin = vec![0; input.ndim()];
+    let input_data = input.get_slice(&origin, input.shape())?;
+    let input_mask = input.get_mask_slice(&origin, input.shape(), &vec![1; input.ndim()])?;
+    if let Some(result) = regrid_four_axis_fast(input, template, &input_data, input_mask.as_ref())?
+    {
+        return Ok(result);
+    }
+    let mut output_data = ArrayD::<f32>::zeros(IxDyn(&output_shape).f());
+    let mut output_mask = ArrayD::<bool>::from_elem(IxDyn(&output_shape).f(), false);
+    for_each_index(&output_shape, |out_index| -> Result<(), ImageError> {
+        let output_pixel = out_index
+            .iter()
+            .map(|value| *value as f64)
+            .collect::<Vec<_>>();
+        let world = template
+            .coordinates()
+            .to_world(&output_pixel)
+            .map_err(|error| {
+                ImageError::InvalidMetadata(format!(
+                    "template pixel/world conversion failed: {error}"
+                ))
+            })?;
+        let input_pixel = input.coordinates().to_pixel(&world).map_err(|error| {
+            ImageError::InvalidMetadata(format!("input world/pixel conversion failed: {error}"))
+        })?;
+        if let Some((sum, weight_sum)) =
+            sample_linear_weighted(&input_data, input_mask.as_ref(), &input_pixel)
+        {
+            output_data[IxDyn(out_index)] = (sum / weight_sum) as f32;
+            output_mask[IxDyn(out_index)] = weight_sum >= LINEAR_REGRID_VALID_WEIGHT_MIN;
+        }
+        Ok(())
+    })?;
+    Ok((output_data, output_mask))
+}
+
+type AxisLinearMap = Option<(usize, usize, f64)>;
+type RegridArrayPair<T> = (ArrayD<T>, ArrayD<bool>);
+type RegridFastResult<T> = Result<Option<RegridArrayPair<T>>, ImageError>;
+
+fn regrid_four_axis_fast<T>(
+    input: &PagedImage<T>,
+    template: &PagedImage<T>,
+    input_data: &ArrayD<T>,
+    input_mask: Option<&ArrayD<bool>>,
+) -> RegridFastResult<T>
+where
+    T: ImagePixel + Into<f64> + From<f32> + Copy,
+{
+    if input.ndim() != 4 || template.ndim() != 4 {
+        return Ok(None);
+    }
+    let output_shape = template.shape().to_vec();
+    let mut x_map = Vec::with_capacity(output_shape[0]);
+    for x in 0..output_shape[0] {
+        let world = template
+            .coordinates()
+            .to_world(&[x as f64, 0.0, 0.0, 0.0])
+            .map_err(|error| {
+                ImageError::InvalidMetadata(format!(
+                    "template pixel/world conversion failed: {error}"
+                ))
+            })?;
+        let input_pixel = input.coordinates().to_pixel(&world).map_err(|error| {
+            ImageError::InvalidMetadata(format!("input world/pixel conversion failed: {error}"))
+        })?;
+        x_map.push(axis_linear_map(input_pixel[0], input.shape()[0]));
+    }
+    let mut y_map = Vec::with_capacity(output_shape[1]);
+    for y in 0..output_shape[1] {
+        let world = template
+            .coordinates()
+            .to_world(&[0.0, y as f64, 0.0, 0.0])
+            .map_err(|error| {
+                ImageError::InvalidMetadata(format!(
+                    "template pixel/world conversion failed: {error}"
+                ))
+            })?;
+        let input_pixel = input.coordinates().to_pixel(&world).map_err(|error| {
+            ImageError::InvalidMetadata(format!("input world/pixel conversion failed: {error}"))
+        })?;
+        y_map.push(axis_linear_map(input_pixel[1], input.shape()[1]));
+    }
+    let mut chan_map = Vec::with_capacity(output_shape[3]);
+    for chan in 0..output_shape[3] {
+        let world = template
+            .coordinates()
+            .to_world(&[0.0, 0.0, 0.0, chan as f64])
+            .map_err(|error| {
+                ImageError::InvalidMetadata(format!(
+                    "template pixel/world conversion failed: {error}"
+                ))
+            })?;
+        let input_pixel = input.coordinates().to_pixel(&world).map_err(|error| {
+            ImageError::InvalidMetadata(format!("input world/pixel conversion failed: {error}"))
+        })?;
+        chan_map.push(axis_linear_map(input_pixel[3], input.shape()[3]));
+    }
+    let mut output_data = ArrayD::<T>::from_elem(IxDyn(&output_shape).f(), T::from(0.0));
+    let mut output_mask = ArrayD::<bool>::from_elem(IxDyn(&output_shape).f(), false);
+    for x in 0..output_shape[0] {
+        let Some(x_axis) = x_map[x] else { continue };
+        for y in 0..output_shape[1] {
+            let Some(y_axis) = y_map[y] else { continue };
+            for stokes in 0..output_shape[2] {
+                if stokes >= input.shape()[2] {
+                    continue;
+                }
+                for chan in 0..output_shape[3] {
+                    let Some(chan_axis) = chan_map[chan] else {
+                        continue;
+                    };
+                    if let Some((sum, weight_sum)) = sample_four_axis_linear_weighted(
+                        input_data, input_mask, x_axis, y_axis, stokes, chan_axis,
+                    ) {
+                        let value = sum / weight_sum;
+                        output_data[IxDyn(&[x, y, stokes, chan])] = T::from(value as f32);
+                        output_mask[IxDyn(&[x, y, stokes, chan])] =
+                            weight_sum >= LINEAR_REGRID_VALID_WEIGHT_MIN;
+                    }
+                }
+            }
+        }
+    }
+    Ok(Some((output_data, output_mask)))
+}
+
+fn axis_linear_map(coordinate: f64, len: usize) -> AxisLinearMap {
+    if !coordinate.is_finite() {
+        return None;
+    }
+    if len == 1 {
+        return (coordinate.abs() <= 0.5).then_some((0, 0, 0.0));
+    }
+    if coordinate < -0.5 || coordinate > (len as f64 - 0.5) {
+        return None;
+    }
+    let coordinate = coordinate.clamp(0.0, (len - 1) as f64);
+    let lo = coordinate.floor() as usize;
+    let hi = (lo + 1).min(len - 1);
+    Some((lo, hi, coordinate - lo as f64))
+}
+
+fn sample_four_axis_linear_weighted<T>(
+    data: &ArrayD<T>,
+    mask: Option<&ArrayD<bool>>,
+    x_axis: (usize, usize, f64),
+    y_axis: (usize, usize, f64),
+    stokes: usize,
+    chan_axis: (usize, usize, f64),
+) -> Option<(f64, f64)>
+where
+    T: Into<f64> + Copy,
+{
+    let axes = [
+        [(x_axis.0, 1.0 - x_axis.2), (x_axis.1, x_axis.2)],
+        [(y_axis.0, 1.0 - y_axis.2), (y_axis.1, y_axis.2)],
+        [(stokes, 1.0), (stokes, 0.0)],
+        [(chan_axis.0, 1.0 - chan_axis.2), (chan_axis.1, chan_axis.2)],
+    ];
+    let mut index = [0usize; 4];
+    let mut sum = 0.0;
+    let mut weight_sum = 0.0;
+    let mut state = LinearSampleState {
+        index: &mut index,
+        sum: &mut sum,
+        weight_sum: &mut weight_sum,
+    };
+    sample_four_axis_recursive(data, mask, &axes, 0, 1.0, &mut state);
+    (weight_sum > 0.0).then_some((sum, weight_sum))
+}
+
+struct LinearSampleState<'a> {
+    index: &'a mut [usize],
+    sum: &'a mut f64,
+    weight_sum: &'a mut f64,
+}
+
+fn sample_four_axis_recursive<T>(
+    data: &ArrayD<T>,
+    mask: Option<&ArrayD<bool>>,
+    axes: &[[(usize, f64); 2]; 4],
+    axis: usize,
+    weight: f64,
+    state: &mut LinearSampleState<'_>,
+) where
+    T: Into<f64> + Copy,
+{
+    if axis == 4 {
+        if let Some(mask) = mask
+            && !mask[IxDyn(state.index)]
+        {
+            return;
+        }
+        let value = data[IxDyn(state.index)].into();
+        if value.is_finite() {
+            *state.sum += value * weight;
+            *state.weight_sum += weight;
+        }
+        return;
+    }
+    for (coordinate, axis_weight) in axes[axis] {
+        if axis_weight == 0.0 {
+            continue;
+        }
+        state.index[axis] = coordinate;
+        sample_four_axis_recursive(data, mask, axes, axis + 1, weight * axis_weight, state);
+    }
+}
+
+fn sample_nearest<T>(data: &ArrayD<T>, mask: Option<&ArrayD<bool>>, pixel: &[f64]) -> Option<f64>
+where
+    T: Into<f64> + Copy,
+{
+    let mut index = Vec::with_capacity(pixel.len());
+    for (axis, coordinate) in pixel.iter().copied().enumerate() {
+        let rounded = coordinate.round();
+        if !(rounded.is_finite() && rounded >= 0.0 && rounded < data.shape()[axis] as f64) {
+            return None;
+        }
+        index.push(rounded as usize);
+    }
+    if let Some(mask) = mask
+        && !mask[IxDyn(&index)]
+    {
+        return None;
+    }
+    Some(data[IxDyn(&index)].into())
+}
+
+fn sample_linear_weighted<T>(
+    data: &ArrayD<T>,
+    mask: Option<&ArrayD<bool>>,
+    pixel: &[f64],
+) -> Option<(f64, f64)>
+where
+    T: Into<f64> + Copy,
+{
+    let mut axes = Vec::<[(usize, f64); 2]>::with_capacity(pixel.len());
+    for (axis, coordinate) in pixel.iter().copied().enumerate() {
+        if !coordinate.is_finite() {
+            return None;
+        }
+        let len = data.shape()[axis];
+        if len == 1 {
+            if coordinate.abs() > 0.5 {
+                return None;
+            }
+            axes.push([(0, 1.0), (0, 0.0)]);
+            continue;
+        }
+        if coordinate < -0.5 || coordinate > (len as f64 - 0.5) {
+            return None;
+        }
+        let coordinate = coordinate.clamp(0.0, (len - 1) as f64);
+        let lo = coordinate.floor() as usize;
+        let hi = (lo + 1).min(len - 1);
+        let frac = coordinate - lo as f64;
+        axes.push([(lo, 1.0 - frac), (hi, frac)]);
+    }
+    let mut index = vec![0usize; pixel.len()];
+    let mut sum = 0.0;
+    let mut weight_sum = 0.0;
+    let mut state = LinearSampleState {
+        index: &mut index,
+        sum: &mut sum,
+        weight_sum: &mut weight_sum,
+    };
+    sample_linear_recursive(data, mask, &axes, 0, 1.0, &mut state);
+    (weight_sum > 0.0).then_some((sum, weight_sum))
+}
+
+fn sample_linear_recursive<T>(
+    data: &ArrayD<T>,
+    mask: Option<&ArrayD<bool>>,
+    axes: &[[(usize, f64); 2]],
+    axis: usize,
+    weight: f64,
+    state: &mut LinearSampleState<'_>,
+) where
+    T: Into<f64> + Copy,
+{
+    if axis == axes.len() {
+        if let Some(mask) = mask
+            && !mask[IxDyn(state.index)]
+        {
+            return;
+        }
+        let value = data[IxDyn(state.index)].into();
+        if value.is_finite() {
+            *state.sum += value * weight;
+            *state.weight_sum += weight;
+        }
+        return;
+    }
+    for (coordinate, axis_weight) in axes[axis] {
+        if axis_weight == 0.0 {
+            continue;
+        }
+        state.index[axis] = coordinate;
+        sample_linear_recursive(data, mask, axes, axis + 1, weight * axis_weight, state);
+    }
+}
+
+fn for_each_index<F>(shape: &[usize], mut f: F) -> Result<(), ImageError>
+where
+    F: FnMut(&[usize]) -> Result<(), ImageError>,
+{
+    if shape.is_empty() {
+        return f(&[]);
+    }
+    let mut index = vec![0usize; shape.len()];
+    loop {
+        f(&index)?;
+        let mut axis = shape.len();
+        loop {
+            if axis == 0 {
+                return Ok(());
+            }
+            axis -= 1;
+            index[axis] += 1;
+            if index[axis] < shape[axis] {
+                break;
+            }
+            index[axis] = 0;
+        }
+    }
+}
+
+fn feather_crossover_weight(
+    nx: usize,
+    ny: usize,
+    low_beam: GaussianBeam,
+    coordinates: &CoordinateSystem,
+) -> Result<Array2<Complex32>, ImageError> {
+    let mut psf = Array2::<Complex32>::zeros((nx, ny));
+    let (x_inc, y_inc, x_ref, y_ref) = direction_axis_geometry(coordinates)?;
+    let major_width = low_beam.major.abs().max(1.0e-12);
+    let minor_width = low_beam.minor.abs().max(1.0e-12);
+    let major_scale = 4.0 * std::f64::consts::LN_2 / major_width.powi(2);
+    let minor_scale = 4.0 * std::f64::consts::LN_2 / minor_width.powi(2);
+    let pa = low_beam.position_angle + std::f64::consts::FRAC_PI_2;
+    let cos_pa = pa.cos();
+    let sin_pa = pa.sin();
+    for x in 0..nx {
+        for y in 0..ny {
+            let dx = (x as f64 - x_ref) * x_inc.abs();
+            let dy = (y as f64 - y_ref) * y_inc.abs();
+            let major = dx * cos_pa + dy * sin_pa;
+            let minor = -dx * sin_pa + dy * cos_pa;
+            let radius = major_scale * major.powi(2) + minor_scale * minor.powi(2);
+            let value = if radius < 20.0 {
+                (-radius).exp() as f32
+            } else {
+                0.0
+            };
+            psf[(x, y)] = Complex32::new(value, 0.0);
+        }
+    }
+    let transformed = centered_fft2(&psf);
+    let peak = transformed
+        .iter()
+        .map(|value| value.norm())
+        .fold(0.0_f32, f32::max)
+        .max(1.0e-20);
+    Ok(transformed.mapv(|value| Complex32::new(1.0, 0.0) - value / peak))
+}
+
+fn direction_axis_geometry(
+    coordinates: &CoordinateSystem,
+) -> Result<(f64, f64, f64, f64), ImageError> {
+    let direction_index = coordinates
+        .find_coordinate(CoordinateType::Direction)
+        .ok_or_else(|| ImageError::InvalidMetadata("missing direction coordinate".to_string()))?;
+    let coordinate = coordinates.coordinate(direction_index);
+    let increments = coordinate.increment();
+    let reference_pixel = coordinate.reference_pixel();
+    if increments.len() < 2 {
+        return Err(ImageError::InvalidMetadata(
+            "direction coordinate has fewer than two axes".to_string(),
+        ));
+    }
+    if reference_pixel.len() < 2 {
+        return Err(ImageError::InvalidMetadata(
+            "direction coordinate has fewer than two reference pixels".to_string(),
+        ));
+    }
+    Ok((
+        increments[0],
+        increments[1],
+        reference_pixel[0],
+        reference_pixel[1],
+    ))
+}
+
+fn extract_plane2(data: &ArrayD<f32>, trailing_index: &[usize]) -> Array2<f32> {
+    let nx = data.shape()[0];
+    let ny = data.shape()[1];
+    let mut plane = Array2::<f32>::zeros((nx, ny));
+    for x in 0..nx {
+        for y in 0..ny {
+            let mut index = vec![x, y];
+            index.extend_from_slice(trailing_index);
+            plane[(x, y)] = data[IxDyn(&index)];
+        }
+    }
+    plane
+}
+
+fn put_plane2(data: &mut ArrayD<f32>, trailing_index: &[usize], plane: &Array2<f32>) {
+    let nx = data.shape()[0];
+    let ny = data.shape()[1];
+    for x in 0..nx {
+        for y in 0..ny {
+            let mut index = vec![x, y];
+            index.extend_from_slice(trailing_index);
+            data[IxDyn(&index)] = plane[(x, y)];
+        }
+    }
+}
+
+fn unravel_index(mut value: usize, shape: &[usize]) -> Vec<usize> {
+    if shape.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![0usize; shape.len()];
+    for axis in (0..shape.len()).rev() {
+        out[axis] = value % shape[axis];
+        value /= shape[axis];
+    }
+    out
+}
+
+fn centered_fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
+    let mut shifted = ifftshift2(input);
+    transform_axis(&mut shifted, Axis(0), false);
+    transform_axis(&mut shifted, Axis(1), false);
+    fftshift2(&shifted)
+}
+
+fn centered_ifft2(input: &Array2<Complex32>) -> Array2<Complex32> {
+    let mut shifted = ifftshift2(input);
+    transform_axis(&mut shifted, Axis(0), true);
+    transform_axis(&mut shifted, Axis(1), true);
+    let scale = 1.0 / (input.shape()[0] * input.shape()[1]) as f32;
+    shifted.mapv_inplace(|value| value * scale);
+    fftshift2(&shifted)
+}
+
+fn transform_axis(data: &mut Array2<Complex32>, axis: Axis, inverse: bool) {
+    let len = data.len_of(axis);
+    let mut planner = FftPlanner::<f32>::new();
+    let fft = if inverse {
+        planner.plan_fft_inverse(len)
+    } else {
+        planner.plan_fft_forward(len)
+    };
+    if axis.index() == 0 {
+        for column_index in 0..data.shape()[1] {
+            let mut lane = data.column(column_index).to_vec();
+            fft.process(&mut lane);
+            for (row_index, value) in lane.into_iter().enumerate() {
+                data[(row_index, column_index)] = value;
+            }
+        }
+    } else {
+        for row_index in 0..data.shape()[0] {
+            let mut lane = data.row(row_index).to_vec();
+            fft.process(&mut lane);
+            for (column_index, value) in lane.into_iter().enumerate() {
+                data[(row_index, column_index)] = value;
+            }
+        }
+    }
+}
+
+fn fftshift2(input: &Array2<Complex32>) -> Array2<Complex32> {
+    shift2(input, false)
+}
+
+fn ifftshift2(input: &Array2<Complex32>) -> Array2<Complex32> {
+    shift2(input, true)
+}
+
+fn shift2(input: &Array2<Complex32>, inverse: bool) -> Array2<Complex32> {
+    let nx = input.shape()[0];
+    let ny = input.shape()[1];
+    let mut output = Array2::<Complex32>::zeros((nx, ny));
+    let x_shift = if inverse { nx / 2 } else { nx.div_ceil(2) };
+    let y_shift = if inverse { ny / 2 } else { ny.div_ceil(2) };
+    for x in 0..nx {
+        for y in 0..ny {
+            let new_x = (x + x_shift) % nx;
+            let new_y = (y + y_shift) % ny;
+            output[(x, y)] = input[(new_x, new_y)];
+        }
+    }
+    output
 }
 
 fn impv_typed<T>(image: &PagedImage<T>, request: &ImpvRequest) -> Result<PvImageSummary, ImageError>
@@ -2240,7 +3925,7 @@ mod tests {
             bundle.protocol.protocol_name,
             IMAGE_ANALYSIS_TASK_PROTOCOL_NAME
         );
-        assert_eq!(bundle.semantic.operations.len(), 6);
+        assert_eq!(bundle.semantic.operations.len(), 10);
         assert_eq!(
             bundle
                 .projections
@@ -2260,6 +3945,16 @@ mod tests {
         for (binary, expected_args) in [
             ("immoments", ["imagename", "outfile", "moments"].as_slice()),
             ("impv", ["imagename", "outfile", "start", "end"].as_slice()),
+            ("imsubimage", ["imagename", "outfile", "box"].as_slice()),
+            ("immath", ["imagename", "expr", "outfile"].as_slice()),
+            (
+                "imregrid",
+                ["imagename", "template", "output", "interpolation"].as_slice(),
+            ),
+            (
+                "feather",
+                ["imagename", "highres", "lowres", "sdfactor"].as_slice(),
+            ),
             (
                 "exportfits",
                 ["imagename", "fitsimage", "velocity"].as_slice(),
@@ -2338,6 +4033,7 @@ mod tests {
                 moments: 0,
                 chans: Some("0~2".to_string()),
                 includepix: Some([2.0, 12.0]),
+                mask: None,
                 overwrite: false,
             }))
             .unwrap();
@@ -2349,6 +4045,21 @@ mod tests {
         assert_eq!(moment.valid_profiles, 4);
         let moment_image = PagedImage::<f32>::open(&moment_path).unwrap();
         assert_eq!(moment_image.default_mask_name(), None);
+
+        let mask_path = temp.path().join("source.pb");
+        create_spectral_mask_image(&mask_path);
+        let masked_moment_path = temp.path().join("masked-moment.image");
+        let masked_moment = immoments(&ImmomentsRequest {
+            imagename: source_path.clone(),
+            outfile: masked_moment_path,
+            moments: 0,
+            chans: Some("0~2".to_string()),
+            includepix: None,
+            mask: Some(format!("{}>0.3", mask_path.display())),
+            overwrite: false,
+        })
+        .unwrap();
+        assert_eq!(masked_moment.valid_profiles, 3);
 
         let pv_path = temp.path().join("pv.image");
         let pv_result = run_image_analysis_task(ImageAnalysisTaskRequest::Impv(ImpvRequest {
@@ -2369,6 +4080,40 @@ mod tests {
         assert_eq!(pv.path_pixels, 2);
         let pv_image = PagedImage::<f32>::open(&pv_path).unwrap();
         assert_eq!(pv_image.shape(), &[2, 1, 2]);
+
+        let subimage_path = temp.path().join("sub.image");
+        let subimage_result =
+            run_image_analysis_task(ImageAnalysisTaskRequest::Imsubimage(ImsubimageRequest {
+                imagename: source_path.clone(),
+                outfile: subimage_path.clone(),
+                box_pixels: Some("0,0,0,1".to_string()),
+                chans: Some("1~2".to_string()),
+                overwrite: false,
+            }))
+            .unwrap();
+        let ImageAnalysisTaskResult::Imsubimage(subimage) = subimage_result else {
+            panic!("expected imsubimage result");
+        };
+        assert_eq!(subimage.shape, vec![1, 2, 2]);
+        let subimage_image = PagedImage::<f32>::open(&subimage_path).unwrap();
+        assert_eq!(subimage_image.shape(), &[1, 2, 2]);
+
+        let product_path = temp.path().join("product.image");
+        let math_result =
+            run_image_analysis_task(ImageAnalysisTaskRequest::Immath(ImmathRequest {
+                imagename: vec![subimage_path.clone(), subimage_path.clone()],
+                outfile: product_path.clone(),
+                expr: "IM0 * IM1".to_string(),
+                overwrite: false,
+            }))
+            .unwrap();
+        let ImageAnalysisTaskResult::Immath(math) = math_result else {
+            panic!("expected immath result");
+        };
+        assert_eq!(math.shape, vec![1, 2, 2]);
+        assert_eq!(math.valid_pixels, 4);
+        let product_image = PagedImage::<f32>::open(&product_path).unwrap();
+        assert_eq!(product_image.shape(), &[1, 2, 2]);
 
         run_image_analysis_task(ImageAnalysisTaskRequest::Exportfits(ExportFitsRequest {
             imagename: source_path.clone(),
@@ -2429,6 +4174,7 @@ mod tests {
                 moments: 0,
                 chans: None,
                 includepix: None,
+                mask: None,
                 overwrite: false,
             }),
             Err(ImageError::InvalidMetadata(message))
@@ -2472,6 +4218,7 @@ mod tests {
                 moments: 2,
                 chans: None,
                 includepix: None,
+                mask: None,
                 overwrite: false,
             }),
             Err(ImageError::InvalidMetadata(message))
@@ -2484,6 +4231,7 @@ mod tests {
                 moments: 0,
                 chans: None,
                 includepix: None,
+                mask: None,
                 overwrite: false,
             }),
             Err(ImageError::InvalidMetadata(message))
@@ -2697,6 +4445,32 @@ mod tests {
                 object_name: "NGC Test".to_string(),
             })
             .unwrap();
+        image.save().unwrap();
+    }
+
+    fn create_spectral_mask_image(path: &Path) {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.2, -0.4],
+            [-2.0e-6, 3.0e-6],
+            [0.0, 0.0],
+        )));
+        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            372.0e9,
+            2.0e6,
+            0.0,
+            372.0e9,
+        )));
+        let shape = vec![2, 2, 3];
+        let mut image = PagedImage::<f32>::create(shape.clone(), coordinates, path).unwrap();
+        let mut data = ArrayD::<f32>::ones(IxDyn(&shape).f());
+        for chan in 0..shape[2] {
+            data[[0, 0, chan]] = 0.0;
+        }
+        image.put_slice(&data, &[0, 0, 0]).unwrap();
         image.save().unwrap();
     }
 

@@ -47,6 +47,10 @@ IMMOMENTS_BINARY_NAME = "immoments"
 IMMOMENTS_BINARY_ENVVAR = "CASARS_IMMOMENTS_BIN"
 IMPV_BINARY_NAME = "impv"
 IMPV_BINARY_ENVVAR = "CASARS_IMPV_BIN"
+IMSUBIMAGE_BINARY_NAME = "imsubimage"
+IMSUBIMAGE_BINARY_ENVVAR = "CASARS_IMSUBIMAGE_BIN"
+IMMATH_BINARY_NAME = "immath"
+IMMATH_BINARY_ENVVAR = "CASARS_IMMATH_BIN"
 EXPORTFITS_BINARY_NAME = "exportfits"
 EXPORTFITS_BINARY_ENVVAR = "CASARS_EXPORTFITS_BIN"
 IMPORTFITS_BINARY_NAME = "importfits"
@@ -62,6 +66,8 @@ _configured_imager_binary: str | None = None
 _configured_imexplore_binary: str | None = None
 _configured_immoments_binary: str | None = None
 _configured_impv_binary: str | None = None
+_configured_imsubimage_binary: str | None = None
+_configured_immath_binary: str | None = None
 _configured_exportfits_binary: str | None = None
 _configured_importfits_binary: str | None = None
 
@@ -204,6 +210,20 @@ def configure_impv_binary(binary: StrPath | None) -> None:
     _configured_impv_binary = None if binary is None else os.fspath(binary)
 
 
+def configure_imsubimage_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default imsubimage binary override."""
+
+    global _configured_imsubimage_binary
+    _configured_imsubimage_binary = None if binary is None else os.fspath(binary)
+
+
+def configure_immath_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default immath binary override."""
+
+    global _configured_immath_binary
+    _configured_immath_binary = None if binary is None else os.fspath(binary)
+
+
 def configure_exportfits_binary(binary: StrPath | None) -> None:
     """Set or clear the module-wide default exportfits binary override."""
 
@@ -319,6 +339,32 @@ def resolve_impv_binary(binary: StrPath | None = None) -> str:
         binary_name=IMPV_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="impv",
+    )
+
+
+def resolve_imsubimage_binary(binary: StrPath | None = None) -> str:
+    """Resolve the imsubimage binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_imsubimage_binary,
+        envvar=IMSUBIMAGE_BINARY_ENVVAR,
+        binary_name=IMSUBIMAGE_BINARY_NAME,
+        missing_error_cls=ImageAnalysisBinaryNotFoundError,
+        description="imsubimage",
+    )
+
+
+def resolve_immath_binary(binary: StrPath | None = None) -> str:
+    """Resolve the immath binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_immath_binary,
+        envvar=IMMATH_BINARY_ENVVAR,
+        binary_name=IMMATH_BINARY_NAME,
+        missing_error_cls=ImageAnalysisBinaryNotFoundError,
+        description="immath",
     )
 
 
@@ -439,6 +485,32 @@ def get_impv_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     )
 
 
+def get_imsubimage_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
+    """Return validated protocol info for the selected imsubimage binary."""
+
+    resolved = resolve_imsubimage_binary(binary)
+    return _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+
+
+def get_immath_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
+    """Return validated protocol info for the selected immath binary."""
+
+    resolved = resolve_immath_binary(binary)
+    return _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+
+
 def get_exportfits_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     """Return validated protocol info for the selected exportfits binary."""
 
@@ -517,6 +589,22 @@ def fetch_impv_schema(binary: StrPath | None = None) -> dict[str, Any]:
     """Fetch the JSON schema bundle advertised by the impv binary."""
 
     resolved = resolve_impv_binary(binary)
+    stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
+    return json.loads(stdout)
+
+
+def fetch_imsubimage_schema(binary: StrPath | None = None) -> dict[str, Any]:
+    """Fetch the JSON schema bundle advertised by the imsubimage binary."""
+
+    resolved = resolve_imsubimage_binary(binary)
+    stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
+    return json.loads(stdout)
+
+
+def fetch_immath_schema(binary: StrPath | None = None) -> dict[str, Any]:
+    """Fetch the JSON schema bundle advertised by the immath binary."""
+
+    resolved = resolve_immath_binary(binary)
     stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
     return json.loads(stdout)
 
@@ -702,6 +790,54 @@ def invoke_impv_task(
         invocation_error_cls=ImageAnalysisInvocationError,
     )
     payload = json.dumps({"kind": "impv", "request": request}, sort_keys=True)
+    stdout = _run_process(
+        [resolved, "--json-run", "-"],
+        stdin=payload,
+        error_cls=ImageAnalysisInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_imsubimage_task(
+    *,
+    request: dict[str, Any],
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run one imsubimage task request through ``imsubimage --json-run -``."""
+
+    resolved = resolve_imsubimage_binary(binary)
+    _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+    payload = json.dumps({"kind": "imsubimage", "request": request}, sort_keys=True)
+    stdout = _run_process(
+        [resolved, "--json-run", "-"],
+        stdin=payload,
+        error_cls=ImageAnalysisInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_immath_task(
+    *,
+    request: dict[str, Any],
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run one immath task request through ``immath --json-run -``."""
+
+    resolved = resolve_immath_binary(binary)
+    _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+    payload = json.dumps({"kind": "immath", "request": request}, sort_keys=True)
     stdout = _run_process(
         [resolved, "--json-run", "-"],
         stdin=payload,

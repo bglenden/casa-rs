@@ -53,7 +53,10 @@ use beam::{
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
-use gridder::{PlannedSample, ScreenProjector, StandardGridder, WProjectSamplePlan, WProjector};
+use gridder::{
+    PlannedSample, ScreenProjector, StandardGridder, WProjectSamplePlan, WProjector,
+    hetarray_screen_conv_size_for_support,
+};
 use weighting::{
     apply_weighting, apply_weighting_with_density_source,
     fractional_bandwidth_from_frequency_range, trace_weighting_with_density_source,
@@ -64,6 +67,9 @@ enum CubePredictionLambdaMode {
     OutputChannel,
     ModelChannel,
 }
+
+type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
+type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
 
 pub(crate) use cube::{HogbomMinorCycleOutcome, MinorCycleProbe};
 pub use cube::{run_cube, run_dirty_cube};
@@ -633,7 +639,9 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
 struct MosaicPointingGroup {
     pointing_direction_rad: [f64; 2],
     frequency_hz: f64,
+    primary_beam_model: PrimaryBeamModel,
     batch: VisibilityBatch,
+    sample_frequency_hz: Vec<f64>,
 }
 
 fn run_mosaic_dirty_imaging(
@@ -664,12 +672,18 @@ fn run_mosaic_dirty_imaging(
     let mut model = Array2::<f32>::zeros((nx, ny));
     let mut accumulated_residual_image = Array2::<f32>::zeros((nx, ny));
     let mut accumulated_weight_image = Array2::<f32>::zeros((nx, ny));
+    let dump_grids = mosaic_grid_dump_enabled();
+    let mut accumulated_residual_grid =
+        dump_grids.then(|| Array2::<Complex64>::zeros((grid_nx, grid_ny)));
+    let mut accumulated_mosaic_weight_grid =
+        dump_grids.then(|| Array2::<Complex64>::zeros((grid_nx, grid_ny)));
     let mut reported_sumwt = 0.0f64;
     let mut normalization_sumwt = 0.0f64;
     let mut gridded_samples = 0usize;
     let mut skipped_samples = 0usize;
-    let mut projector_cache = BTreeMap::<(u64, u8), ScreenProjector>::new();
+    let mut projector_cache = MosaicProjectorCache::new();
     let trace_enabled = mosaic_trace_enabled();
+    let cell_trace_targets = mosaic_cell_trace_targets();
 
     let pb_weight_image = build_mosaic_weight_image(request.geometry, config, &groups)?;
 
@@ -694,7 +708,7 @@ fn run_mosaic_dirty_imaging(
             &gridder,
             config.phase_center_direction_rad,
             group.pointing_direction_rad,
-            config.primary_beam_model,
+            group.primary_beam_model,
             group.frequency_hz,
             conv_sampling,
             2,
@@ -705,7 +719,7 @@ fn run_mosaic_dirty_imaging(
             &gridder,
             config.phase_center_direction_rad,
             group.pointing_direction_rad,
-            config.primary_beam_model,
+            group.primary_beam_model,
             group.frequency_hz,
             conv_sampling,
             4,
@@ -780,6 +794,54 @@ fn run_mosaic_dirty_imaging(
                 trace_group_weight_sum += f64::from(grid_weight);
                 trace_group_sample_count += 1;
             }
+            if trace_enabled && !cell_trace_targets.is_empty() {
+                let value = Complex64::new(visibility.re as f64, visibility.im as f64)
+                    * f64::from(grid_weight);
+                for &(target_x, target_y) in &cell_trace_targets {
+                    let ix = target_x - plan.loc_x;
+                    let iy = target_y - plan.loc_y;
+                    let Some(tap) = projector.trace_sample_tap_at(&plan, ix, iy) else {
+                        continue;
+                    };
+                    let contribution = value * Complex64::new(tap.re as f64, tap.im as f64);
+                    let sample_frequency_hz = group
+                        .sample_frequency_hz
+                        .get(sample_index)
+                        .copied()
+                        .unwrap_or(group.frequency_hz);
+                    append_mosaic_trace(format!(
+                        "{{\"event\":\"cell_contribution\",\"target\":[{},{}],\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"plane_freq_hz\":{:.17e},\"sample_freq_hz\":{:.17e},\"sample_index\":{},\"u_lambda\":{:.17e},\"v_lambda\":{:.17e},\"w_lambda\":{:.17e},\"loc\":[{},{}],\"off\":[{},{}],\"tap_offset\":[{},{}],\"tap\":[{:.17e},{:.17e}],\"visibility\":[{:.17e},{:.17e}],\"weight\":{:.17e},\"sumwt_factor\":{:.17e},\"grid_weight\":{:.17e},\"weighted_value\":[{:.17e},{:.17e}],\"contribution\":[{:.17e},{:.17e}]}}",
+                        target_x,
+                        target_y,
+                        group.pointing_direction_rad[0],
+                        group.pointing_direction_rad[1],
+                        group.frequency_hz,
+                        request.reffreq_hz,
+                        sample_frequency_hz,
+                        sample_index,
+                        group.batch.u_lambda[sample_index],
+                        group.batch.v_lambda[sample_index],
+                        group.batch.w_lambda[sample_index],
+                        plan.loc_x,
+                        plan.loc_y,
+                        plan.off_x,
+                        plan.off_y,
+                        ix,
+                        iy,
+                        tap.re,
+                        tap.im,
+                        visibility.re,
+                        visibility.im,
+                        weight,
+                        sumwt_factor,
+                        grid_weight,
+                        value.re,
+                        value.im,
+                        contribution.re,
+                        contribution.im,
+                    ));
+                }
+            }
             if !logged_first_sample {
                 let (tap_sum, center_tap, first_tap) =
                     projector.trace_sample_taps(&plan).unwrap_or((
@@ -850,6 +912,16 @@ fn run_mosaic_dirty_imaging(
             }
             gridded_samples += 1;
         }
+        if let Some(residual_grid) = accumulated_residual_grid.as_mut() {
+            Zip::from(residual_grid)
+                .and(&group_residual_grid)
+                .for_each(|accumulated, value| *accumulated += *value);
+        }
+        if let Some(weight_grid) = accumulated_mosaic_weight_grid.as_mut() {
+            Zip::from(weight_grid)
+                .and(&group_weight_grid)
+                .for_each(|accumulated, value| *accumulated += *value);
+        }
         if trace_enabled {
             append_mosaic_trace(format!(
                 "{{\"event\":\"group_aggregate\",\"pointing_ra\":{:.17e},\"pointing_dec\":{:.17e},\"freq_hz\":{:.17e},\"samples\":{},\"center_samples\":{},\"grid_weight_sum\":{:.17e},\"weighted_visibility_sum\":[{:.17e},{:.17e}]}}",
@@ -903,6 +975,13 @@ fn run_mosaic_dirty_imaging(
     }
 
     let fft_started = Instant::now();
+    dump_mosaic_complex_grid("psf_prefft", request.reffreq_hz, &psf_grid);
+    if let Some(residual_grid) = accumulated_residual_grid.as_ref() {
+        dump_mosaic_complex_grid("residual_prefft", request.reffreq_hz, residual_grid);
+    }
+    if let Some(weight_grid) = accumulated_mosaic_weight_grid.as_ref() {
+        dump_mosaic_complex_grid("weight_prefft", request.reffreq_hz, weight_grid);
+    }
     let raw_psf = centered_ifft2_f64(&psf_grid);
     stage_timings.psf_fft += fft_started.elapsed();
 
@@ -1128,11 +1207,21 @@ fn run_mosaic_dirty_imaging(
     })
 }
 
+fn primary_beam_model_key(model: PrimaryBeamModel) -> (u8, u64, u64) {
+    match model {
+        PrimaryBeamModel::Airy {
+            dish_diameter_m,
+            blockage_diameter_m,
+        } => (0, dish_diameter_m.to_bits(), blockage_diameter_m.to_bits()),
+        PrimaryBeamModel::EvlaLBandCommon => (1, 0, 0),
+    }
+}
+
 fn build_mosaic_pointing_groups(
     batches: &[VisibilityBatch],
     metadata_batches: &[VisibilityMetadataBatch],
 ) -> Result<Vec<MosaicPointingGroup>, ImagingError> {
-    let mut group_indices = BTreeMap::<(u64, u64, u64), usize>::new();
+    let mut group_indices = BTreeMap::<(u64, u64, u64, (u8, u64, u64)), usize>::new();
     let mut groups = Vec::<MosaicPointingGroup>::new();
     for (batch, metadata) in batches.iter().zip(metadata_batches.iter()) {
         for sample_index in 0..batch.len() {
@@ -1142,6 +1231,7 @@ fn build_mosaic_pointing_groups(
                 pointing_direction_rad[0].to_bits(),
                 pointing_direction_rad[1].to_bits(),
                 frequency_hz.to_bits(),
+                primary_beam_model_key(metadata.primary_beam_model),
             );
             let group_index = match group_indices.get(&key).copied() {
                 Some(index) => index,
@@ -1151,6 +1241,7 @@ fn build_mosaic_pointing_groups(
                     groups.push(MosaicPointingGroup {
                         pointing_direction_rad,
                         frequency_hz,
+                        primary_beam_model: metadata.primary_beam_model,
                         batch: VisibilityBatch {
                             u_lambda: Vec::new(),
                             v_lambda: Vec::new(),
@@ -1160,6 +1251,7 @@ fn build_mosaic_pointing_groups(
                             gridable: Vec::new(),
                             visibility: Vec::new(),
                         },
+                        sample_frequency_hz: Vec::new(),
                     });
                     index
                 }
@@ -1175,6 +1267,9 @@ fn build_mosaic_pointing_groups(
                 .push(batch.sumwt_factor[sample_index]);
             entry.batch.gridable.push(batch.gridable[sample_index]);
             entry.batch.visibility.push(batch.visibility[sample_index]);
+            entry
+                .sample_frequency_hz
+                .push(metadata.sample_frequency_hz[sample_index]);
         }
     }
     Ok(groups)
@@ -1239,10 +1334,14 @@ fn apply_mosaic_weighting(
     let mut weighted_batches = request.visibility_batches.clone();
     let fractional_bandwidth =
         fractional_bandwidth_from_frequency_range(request.selected_frequency_range_hz);
+    let density_mode = match request.weighting {
+        WeightingMode::BriggsBwTaper { .. } => WeightDensityMode::PerPlane,
+        _ => WeightDensityMode::Combined,
+    };
     for (_pointing, (positions, group_batch)) in grouped {
         let weighted_group = apply_weighting_with_density_source(
             request.weighting,
-            WeightDensityMode::Combined,
+            density_mode,
             None,
             fractional_bandwidth,
             std::slice::from_ref(&group_batch),
@@ -1290,6 +1389,82 @@ fn append_hogbom_trace(line: String) {
 
 fn mosaic_trace_enabled() -> bool {
     env::var_os("CASA_RS_MOSAIC_TRACE").is_some()
+}
+
+fn mosaic_cell_trace_targets() -> Vec<(isize, isize)> {
+    let Some(raw) = env::var_os("CASA_RS_MOSAIC_CELL_TRACE") else {
+        return Vec::new();
+    };
+    raw.to_string_lossy()
+        .split([';', ' ', '\n', '\t'])
+        .filter_map(|entry| {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                return None;
+            }
+            let (x, y) = entry.split_once(',')?;
+            Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+        })
+        .collect()
+}
+
+fn mosaic_grid_dump_enabled() -> bool {
+    env::var_os("CASA_RS_MOSAIC_GRID_DUMP").is_some()
+}
+
+fn dump_mosaic_complex_grid(role: &str, frequency_hz: f64, grid: &Array2<Complex64>) {
+    let Some(root) = env::var_os("CASA_RS_MOSAIC_GRID_DUMP") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(root);
+    if let Err(error) = std::fs::create_dir_all(&root) {
+        eprintln!(
+            "failed to create CASA_RS_MOSAIC_GRID_DUMP directory {}: {error}",
+            root.display()
+        );
+        return;
+    }
+    let frequency_tag = format!("{frequency_hz:.0}");
+    let meta_path = root.join(format!("rust-{role}-{frequency_tag}.json"));
+    let data_path = root.join(format!("rust-{role}-{frequency_tag}.bin"));
+    let (nx, ny) = grid.dim();
+    let meta = format!(
+        "{{\"producer\":\"rust\",\"role\":\"{}\",\"frequency_hz\":{:.17e},\"shape\":[{},{}],\"dtype\":\"complex128\",\"order\":\"x_y_re_im_f64_le\"}}\n",
+        role, frequency_hz, nx, ny
+    );
+    if let Err(error) = std::fs::write(&meta_path, meta) {
+        eprintln!(
+            "failed to write mosaic grid dump metadata {}: {error}",
+            meta_path.display()
+        );
+        return;
+    }
+    let mut file = match OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&data_path)
+    {
+        Ok(file) => file,
+        Err(error) => {
+            eprintln!(
+                "failed to open mosaic grid dump {}: {error}",
+                data_path.display()
+            );
+            return;
+        }
+    };
+    for x in 0..nx {
+        for y in 0..ny {
+            let value = grid[(x, y)];
+            if file.write_all(&value.re.to_le_bytes()).is_err()
+                || file.write_all(&value.im.to_le_bytes()).is_err()
+            {
+                eprintln!("failed to write mosaic grid dump {}", data_path.display());
+                return;
+            }
+        }
+    }
 }
 
 fn mosaic_trace_pixels_json(
@@ -1363,7 +1538,8 @@ fn build_mosaic_weight_image(
     config: &MosaicGridderConfig,
     groups: &[MosaicPointingGroup],
 ) -> Result<Array2<f32>, ImagingError> {
-    let mut pointing_weights = BTreeMap::<(u64, u64), ([f64; 2], f64, f64)>::new();
+    let mut pointing_weights =
+        BTreeMap::<(u64, u64, (u8, u64, u64)), ([f64; 2], PrimaryBeamModel, f64, f64)>::new();
     for group in groups {
         if !mosaic_pointing_contributes_by_simple_pb_center(
             geometry,
@@ -1388,16 +1564,20 @@ fn build_mosaic_weight_image(
         let key = (
             group.pointing_direction_rad[0].to_bits(),
             group.pointing_direction_rad[1].to_bits(),
+            primary_beam_model_key(group.primary_beam_model),
         );
-        let entry = pointing_weights
-            .entry(key)
-            .or_insert((group.pointing_direction_rad, 0.0, 0.0));
-        entry.1 += group.frequency_hz * group_weight;
-        entry.2 += group_weight;
+        let entry = pointing_weights.entry(key).or_insert((
+            group.pointing_direction_rad,
+            group.primary_beam_model,
+            0.0,
+            0.0,
+        ));
+        entry.2 += group.frequency_hz * group_weight;
+        entry.3 += group_weight;
     }
 
     let mut weight_image = Array2::<f32>::zeros((geometry.nx(), geometry.ny()));
-    for (pointing_direction_rad, weighted_frequency_hz, pointing_weight) in
+    for (pointing_direction_rad, primary_beam_model, weighted_frequency_hz, pointing_weight) in
         pointing_weights.into_values()
     {
         if !(pointing_weight.is_finite() && pointing_weight > 0.0) {
@@ -1414,11 +1594,7 @@ fn build_mosaic_weight_image(
             for y in 0..geometry.ny() {
                 let m = (y as f64 - pointing_y) * geometry.cell_size_rad[1].abs();
                 let radius_rad = (l * l + m * m).sqrt();
-                let vp = primary_beam_voltage_pattern(
-                    config.primary_beam_model,
-                    radius_rad,
-                    frequency_hz,
-                );
+                let vp = primary_beam_voltage_pattern(primary_beam_model, radius_rad, frequency_hz);
                 let pb = vp * vp;
                 weight_image[(x, y)] += (pointing_weight as f32) * pb * pb;
             }
@@ -1491,7 +1667,7 @@ fn compute_mosaic_residual(
     config: &MosaicGridderConfig,
     gridder: &StandardGridder,
     groups: &[MosaicPointingGroup],
-    projector_cache: &mut BTreeMap<(u64, u8), ScreenProjector>,
+    projector_cache: &mut MosaicProjectorCache,
     conv_sampling: usize,
     model: &Array2<f32>,
     psf_state: &PsfState,
@@ -1530,7 +1706,7 @@ fn compute_mosaic_residual(
             gridder,
             config.phase_center_direction_rad,
             group.pointing_direction_rad,
-            config.primary_beam_model,
+            group.primary_beam_model,
             group.frequency_hz,
             conv_sampling,
             2,
@@ -1647,7 +1823,7 @@ fn flat_sky_mosaic_model_for_prediction(
 
 #[allow(clippy::too_many_arguments)]
 fn cached_mosaic_projector(
-    cache: &mut BTreeMap<(u64, u8), ScreenProjector>,
+    cache: &mut MosaicProjectorCache,
     geometry: ImageGeometry,
     gridder: &StandardGridder,
     phase_center_direction_rad: [f64; 2],
@@ -1657,7 +1833,11 @@ fn cached_mosaic_projector(
     conv_sampling: usize,
     screen_power: u8,
 ) -> Result<ScreenProjector, ImagingError> {
-    let key = (frequency_hz.to_bits(), screen_power);
+    let key = (
+        primary_beam_model_key(primary_beam_model),
+        frequency_hz.to_bits(),
+        screen_power,
+    );
     let base = if let Some(projector) = cache.get(&key) {
         projector.clone()
     } else {
@@ -1700,6 +1880,7 @@ fn build_mosaic_projector(
         geometry,
         gridder,
         conv_sampling,
+        mosaic_hetarray_screen_conv_size(geometry, primary_beam_model, frequency_hz),
         |l, m| {
             let radius_rad = (l * l + m * m).sqrt();
             let vp = primary_beam_voltage_pattern(primary_beam_model, radius_rad, frequency_hz);
@@ -1738,6 +1919,42 @@ fn mosaic_projector_sampling(geometry: ImageGeometry) -> usize {
     // which defaults to 10, after enforcing a minimum of 10.
     let _ = geometry;
     10
+}
+
+fn mosaic_hetarray_screen_conv_size(
+    geometry: ImageGeometry,
+    primary_beam_model: PrimaryBeamModel,
+    frequency_hz: f64,
+) -> usize {
+    let pb_support_pixels =
+        primary_beam_support_diameter_pixels(primary_beam_model, geometry, frequency_hz)
+            .floor()
+            .max(0.0) as usize;
+    hetarray_screen_conv_size_for_support(geometry, pb_support_pixels)
+}
+
+fn primary_beam_support_diameter_pixels(
+    primary_beam_model: PrimaryBeamModel,
+    geometry: ImageGeometry,
+    frequency_hz: f64,
+) -> f64 {
+    if !(frequency_hz.is_finite() && frequency_hz > 0.0) {
+        return 0.0;
+    }
+    let Some(max_radius_arcsec_at_100ghz) =
+        primary_beam_max_radius_arcsec_at_100ghz(primary_beam_model)
+    else {
+        return 0.0;
+    };
+    let radius_rad = (max_radius_arcsec_at_100ghz / 3600.0).to_radians() * (100.0e9 / frequency_hz);
+    let pixel_rad = geometry.cell_size_rad[0]
+        .abs()
+        .min(geometry.cell_size_rad[1].abs());
+    if pixel_rad > 0.0 {
+        2.0 * radius_rad / pixel_rad
+    } else {
+        0.0
+    }
 }
 
 fn mosaic_pointing_contributes_by_simple_pb_center(
@@ -1836,7 +2053,9 @@ fn airy_voltage_pattern(
         return 0.0;
     }
     let radius_arcmin_ghz = radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9);
-    let maximum_radius_arcmin_ghz = 150.0 / 60.0 * 100.0;
+    let support_arcsec_at_100ghz =
+        airy_max_radius_arcsec_at_100ghz(dish_diameter_m, blockage_diameter_m);
+    let maximum_radius_arcmin_ghz = support_arcsec_at_100ghz / 60.0 * 100.0;
     if radius_arcmin_ghz > maximum_radius_arcmin_ghz {
         return 0.0;
     }
@@ -1858,6 +2077,27 @@ fn airy_voltage_pattern(
     let length_ratio = dish_diameter_m / blockage_diameter_m;
     ((area_ratio * 2.0 * j1(x) / x - 2.0 * j1(x * length_ratio) / (x * length_ratio)) / area_norm)
         as f32
+}
+
+fn primary_beam_max_radius_arcsec_at_100ghz(primary_beam_model: PrimaryBeamModel) -> Option<f64> {
+    match primary_beam_model {
+        PrimaryBeamModel::Airy {
+            dish_diameter_m,
+            blockage_diameter_m,
+        } => Some(airy_max_radius_arcsec_at_100ghz(
+            dish_diameter_m,
+            blockage_diameter_m,
+        )),
+        PrimaryBeamModel::EvlaLBandCommon => Some(58.0 * 60.0 / 100.0),
+    }
+}
+
+fn airy_max_radius_arcsec_at_100ghz(dish_diameter_m: f64, blockage_diameter_m: f64) -> f64 {
+    if dish_diameter_m <= 7.0 && blockage_diameter_m > 0.0 {
+        300.0
+    } else {
+        150.0
+    }
 }
 
 fn evla_common_voltage_pattern(radius_rad: f64, frequency_hz: f64) -> f32 {
@@ -2081,7 +2321,7 @@ fn run_mosaic_image_domain_controller(
     config: &MosaicGridderConfig,
     gridder: &StandardGridder,
     groups: &[MosaicPointingGroup],
-    projector_cache: &mut BTreeMap<(u64, u8), ScreenProjector>,
+    projector_cache: &mut MosaicProjectorCache,
     conv_sampling: usize,
     weight_image: &Array2<f32>,
     psf_state: &PsfState,
@@ -2097,13 +2337,6 @@ fn run_mosaic_image_domain_controller(
             "mosaic gridder does not support deconvolver='mtmfs'".to_string(),
         ));
     }
-    if request.clean.niter > request.clean.minor_cycle_length {
-        warnings.push(
-            "mosaic CLEAN uses image-domain PSF residual refreshes between minor-cycle blocks; final residual refresh uses the mosaic visibility predictor"
-                .to_string(),
-        );
-    }
-
     let mut multiscale_state = (request.deconvolver == Deconvolver::Multiscale).then(|| {
         let scales = effective_multiscale_scales(request);
         build_multiscale_state(&residual, &psf_state.psf, &scales, request.small_scale_bias)
@@ -2124,7 +2357,6 @@ fn run_mosaic_image_domain_controller(
     let mut min_residual_peak_jy_per_beam = initial_peak;
     let mut divergence_warned = false;
     let mut residual_needs_refresh = false;
-    let dirty_residual = residual.clone();
     while reported_minor_iterations < request.clean.niter {
         let cycle_peak = match request.deconvolver {
             Deconvolver::Multiscale => multiscale_state.as_ref().map(|state| {
@@ -2259,9 +2491,18 @@ fn run_mosaic_image_domain_controller(
             break;
         }
 
-        let refresh_started = Instant::now();
-        residual = &dirty_residual - &fft_convolve_real(&psf_state.psf, model);
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        residual = compute_mosaic_residual(
+            request,
+            config,
+            gridder,
+            groups,
+            projector_cache,
+            conv_sampling,
+            model,
+            psf_state,
+            weight_image,
+            stage_timings,
+        )?;
         major_cycles += 1;
         residual_needs_refresh = false;
         if let Some(state) = multiscale_state.as_mut() {
@@ -5291,7 +5532,7 @@ fn hclean_peak_location_masked(
     image: &Array2<f32>,
     mask: Option<&Array2<bool>>,
 ) -> Option<((usize, usize), f32)> {
-    peak_location_masked_with_relative_tolerance(image, mask, 5.0e-4)
+    peak_location_masked_with_relative_tolerance(image, mask, 0.0)
 }
 
 fn peak_location_masked_with_relative_tolerance(
@@ -5744,6 +5985,34 @@ mod tests {
     }
 
     #[test]
+    fn alma_aca_airy_voltage_uses_wide_casa_support() {
+        let radius_between_12m_and_7m_support = (220.0_f64 / 3600.0).to_radians();
+
+        assert_eq!(
+            super::primary_beam_voltage_pattern(
+                PrimaryBeamModel::Airy {
+                    dish_diameter_m: 10.7,
+                    blockage_diameter_m: 0.75,
+                },
+                radius_between_12m_and_7m_support,
+                100.0e9,
+            ),
+            0.0
+        );
+        assert_ne!(
+            super::primary_beam_voltage_pattern(
+                PrimaryBeamModel::Airy {
+                    dish_diameter_m: 6.25,
+                    blockage_diameter_m: 0.75,
+                },
+                radius_between_12m_and_7m_support,
+                100.0e9,
+            ),
+            0.0
+        );
+    }
+
+    #[test]
     fn mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule() {
         let geometry = ImageGeometry {
             image_shape: [100, 80],
@@ -5974,6 +6243,10 @@ mod tests {
         VisibilityMetadataBatch {
             sample_frequency_hz: vec![frequency_hz; batch.len()],
             beam_frequency_hz: vec![frequency_hz; batch.len()],
+            primary_beam_model: PrimaryBeamModel::Airy {
+                dish_diameter_m: 25.0,
+                blockage_diameter_m: 1.0,
+            },
             pointing_direction_rad: vec![[0.0, 0.0]; batch.len()],
         }
     }

@@ -60,21 +60,36 @@ pub(crate) fn apply_weighting_with_density_source(
     gridder: &StandardGridder,
 ) -> Result<Vec<VisibilityBatch>, crate::ImagingError> {
     let density_convention = density_cell_convention(weighting, weight_density_mode);
+    let density_build_convention = density_build_cell_convention(weighting, weight_density_mode);
+    let aligned_lookup =
+        aligned_density_lookup_batches(weight_density_mode, target_batches, density_batches);
+    let density_build_batches = if aligned_lookup.is_some() {
+        target_batches
+    } else {
+        density_batches
+    };
     match weighting {
         WeightingMode::Natural => Ok(apply_optional_uv_taper(target_batches.to_vec(), uv_taper)),
         WeightingMode::Uniform => {
             let density = build_density_grid(
-                density_batches,
+                density_build_batches,
                 gridder,
-                density_includes_conjugates(density_convention),
-                density_convention,
+                density_includes_conjugates(density_build_convention),
+                density_build_convention,
             );
             Ok(apply_optional_uv_taper(
                 target_batches
                     .iter()
-                    .map(|batch| {
+                    .enumerate()
+                    .map(|(batch_index, batch)| {
+                        let lookup_batch = aligned_lookup
+                            .as_ref()
+                            .and_then(|lookup_batches| lookup_batches.get(batch_index))
+                            .copied()
+                            .unwrap_or(batch);
                         reweight_batch(
                             batch,
+                            lookup_batch,
                             gridder,
                             &density,
                             density_convention,
@@ -87,16 +102,17 @@ pub(crate) fn apply_weighting_with_density_source(
         }
         WeightingMode::Briggs { robust } | WeightingMode::BriggsBwTaper { robust } => {
             let density = build_density_grid(
-                density_batches,
+                density_build_batches,
                 gridder,
-                density_includes_conjugates(density_convention),
-                density_convention,
+                density_includes_conjugates(density_build_convention),
+                density_build_convention,
             );
             let density_weight_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
             let total_density_weight = density_weight_sum
                 * match density_convention {
                     DensityCellConvention::VisImagingWeight => 1.0,
-                    DensityCellConvention::CubeBriggsWeightor => 1.0,
+                    DensityCellConvention::CubeBriggsWeightorDensity
+                    | DensityCellConvention::CubeBriggsWeightorLookup => 1.0,
                 };
             let sumlocwt = density
                 .iter()
@@ -121,9 +137,16 @@ pub(crate) fn apply_weighting_with_density_source(
             Ok(apply_optional_uv_taper(
                 target_batches
                     .iter()
-                    .map(|batch| {
+                    .enumerate()
+                    .map(|(batch_index, batch)| {
+                        let lookup_batch = aligned_lookup
+                            .as_ref()
+                            .and_then(|lookup_batches| lookup_batches.get(batch_index))
+                            .copied()
+                            .unwrap_or(batch);
                         reweight_batch(
                             batch,
+                            lookup_batch,
                             gridder,
                             &density,
                             density_convention,
@@ -160,15 +183,23 @@ pub(crate) fn trace_weighting_with_density_source(
     gridder: &StandardGridder,
 ) -> Result<WeightingTraceInternal, crate::ImagingError> {
     let density_convention = density_cell_convention(weighting, weight_density_mode);
+    let density_build_convention = density_build_cell_convention(weighting, weight_density_mode);
+    let aligned_lookup =
+        aligned_density_lookup_batches(weight_density_mode, target_batches, density_batches);
+    let density_build_batches = if aligned_lookup.is_some() {
+        target_batches
+    } else {
+        density_batches
+    };
     let density = match weighting {
         WeightingMode::Natural => None,
         WeightingMode::Uniform
         | WeightingMode::Briggs { .. }
         | WeightingMode::BriggsBwTaper { .. } => Some(build_density_grid(
-            density_batches,
+            density_build_batches,
             gridder,
-            density_includes_conjugates(density_convention),
-            density_convention,
+            density_includes_conjugates(density_build_convention),
+            density_build_convention,
         )),
     };
     let weighted_batches = apply_weighting_with_density_source(
@@ -191,6 +222,11 @@ pub(crate) fn trace_weighting_with_density_source(
         .zip(weighted_batches.iter())
         .enumerate()
     {
+        let lookup_batch = aligned_lookup
+            .as_ref()
+            .and_then(|lookup_batches| lookup_batches.get(batch_index))
+            .copied()
+            .unwrap_or(input_batch);
         for sample_index in 0..input_batch.len() {
             let output_weight = weighted_batch.weight[sample_index];
             let sumwt_factor = weighted_batch.sumwt_factor[sample_index];
@@ -223,8 +259,8 @@ pub(crate) fn trace_weighting_with_density_source(
                 density_weight: density.as_ref().and_then(|grid| {
                     gridder.density_at_with_convention(
                         grid,
-                        input_batch.u_lambda[sample_index],
-                        input_batch.v_lambda[sample_index],
+                        lookup_batch.u_lambda[sample_index],
+                        lookup_batch.v_lambda[sample_index],
                         density_convention,
                     )
                 }),
@@ -257,7 +293,22 @@ fn density_cell_convention(
             | WeightingMode::Briggs { .. }
             | WeightingMode::BriggsBwTaper { .. },
             WeightDensityMode::PerPlane,
-        ) => DensityCellConvention::CubeBriggsWeightor,
+        ) => DensityCellConvention::CubeBriggsWeightorLookup,
+        _ => DensityCellConvention::VisImagingWeight,
+    }
+}
+
+fn density_build_cell_convention(
+    weighting: WeightingMode,
+    weight_density_mode: WeightDensityMode,
+) -> DensityCellConvention {
+    match (weighting, weight_density_mode) {
+        (
+            WeightingMode::Uniform
+            | WeightingMode::Briggs { .. }
+            | WeightingMode::BriggsBwTaper { .. },
+            WeightDensityMode::PerPlane,
+        ) => DensityCellConvention::CubeBriggsWeightorDensity,
         _ => DensityCellConvention::VisImagingWeight,
     }
 }
@@ -265,8 +316,29 @@ fn density_cell_convention(
 fn density_includes_conjugates(convention: DensityCellConvention) -> bool {
     match convention {
         DensityCellConvention::VisImagingWeight => true,
-        DensityCellConvention::CubeBriggsWeightor => true,
+        DensityCellConvention::CubeBriggsWeightorDensity
+        | DensityCellConvention::CubeBriggsWeightorLookup => false,
     }
+}
+
+fn aligned_density_lookup_batches<'a>(
+    weight_density_mode: WeightDensityMode,
+    target_batches: &'a [VisibilityBatch],
+    density_batches: &'a [VisibilityBatch],
+) -> Option<Vec<&'a VisibilityBatch>> {
+    if weight_density_mode != WeightDensityMode::PerPlane
+        || target_batches.len() != density_batches.len()
+    {
+        return None;
+    }
+    let mut aligned = Vec::with_capacity(target_batches.len());
+    for (target, density) in target_batches.iter().zip(density_batches) {
+        if target.len() != density.len() {
+            return None;
+        }
+        aligned.push(density);
+    }
+    Some(aligned)
 }
 
 fn apply_optional_uv_taper(
@@ -346,6 +418,7 @@ fn build_density_grid(
 
 fn reweight_batch(
     batch: &VisibilityBatch,
+    lookup_batch: &VisibilityBatch,
     gridder: &StandardGridder,
     density: &Array2<f32>,
     convention: DensityCellConvention,
@@ -356,8 +429,8 @@ fn reweight_batch(
         let weight = batch.weight[index];
         let Some(cell_density) = gridder.density_at_with_convention(
             density,
-            batch.u_lambda[index],
-            batch.v_lambda[index],
+            lookup_batch.u_lambda[index],
+            lookup_batch.v_lambda[index],
             convention,
         ) else {
             reweighted.weight[index] = 0.0;
@@ -365,16 +438,67 @@ fn reweight_batch(
         };
         if !(weight.is_finite() && weight > 0.0 && cell_density.is_finite() && cell_density > 0.0) {
             reweighted.weight[index] = 0.0;
+            trace_weighting_sample(
+                index,
+                batch.u_lambda[index],
+                batch.v_lambda[index],
+                weight,
+                cell_density,
+                0.0,
+                gridder.density_cell_index_with_convention(
+                    lookup_batch.u_lambda[index],
+                    lookup_batch.v_lambda[index],
+                    convention,
+                ),
+            );
             continue;
         }
-        reweighted.weight[index] = transform(
+        let output_weight = transform(
             weight,
             cell_density,
+            lookup_batch.u_lambda[index],
+            lookup_batch.v_lambda[index],
+        );
+        trace_weighting_sample(
+            index,
             batch.u_lambda[index],
             batch.v_lambda[index],
+            weight,
+            cell_density,
+            output_weight,
+            gridder.density_cell_index_with_convention(
+                lookup_batch.u_lambda[index],
+                lookup_batch.v_lambda[index],
+                convention,
+            ),
         );
+        reweighted.weight[index] = output_weight;
     }
     reweighted
+}
+
+fn trace_weighting_sample(
+    index: usize,
+    u_lambda: f64,
+    v_lambda: f64,
+    input_weight: f32,
+    density: f32,
+    output_weight: f32,
+    cell: Option<(usize, usize)>,
+) {
+    if std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING").is_none() {
+        return;
+    }
+    let should_trace = index < 16 || (90..=240).contains(&index);
+    if !should_trace {
+        return;
+    }
+    let (cell_x, cell_y) = cell
+        .map(|(x, y)| (x.to_string(), y.to_string()))
+        .unwrap_or_else(|| ("null".to_string(), "null".to_string()));
+    eprintln!(
+        "CASA_RS_TRACE_RUST_WEIGHTING sample index={index} u_lambda={u_lambda:.17e} v_lambda={v_lambda:.17e} cell=({cell_x},{cell_y}) input_weight={input_weight:.17e} density={density:.17e} output_weight={output_weight:.17e}"
+    );
 }
 
 pub(crate) fn fractional_bandwidth_from_frequency_range(frequency_range_hz: [f64; 2]) -> f64 {

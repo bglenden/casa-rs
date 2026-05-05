@@ -16,7 +16,8 @@ const GRIDDER_PRODUCT_TAP_COUNT: usize = GRIDDER_TAP_COUNT * GRIDDER_TAP_COUNT;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DensityCellConvention {
     VisImagingWeight,
-    CubeBriggsWeightor,
+    CubeBriggsWeightorDensity,
+    CubeBriggsWeightorLookup,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -550,7 +551,11 @@ impl StandardGridder {
                     v * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
                 )
             }
-            DensityCellConvention::CubeBriggsWeightor => (
+            DensityCellConvention::CubeBriggsWeightorDensity => (
+                u_lambda * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
+                -v_lambda * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
+            ),
+            DensityCellConvention::CubeBriggsWeightorLookup => (
                 u_lambda * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
                 -v_lambda * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
             ),
@@ -560,7 +565,10 @@ impl StandardGridder {
         }
         let (anchor_x, anchor_y) = match convention {
             DensityCellConvention::VisImagingWeight => (x as isize, y as isize),
-            DensityCellConvention::CubeBriggsWeightor => (x.round() as isize, y.round() as isize),
+            DensityCellConvention::CubeBriggsWeightorDensity
+            | DensityCellConvention::CubeBriggsWeightorLookup => {
+                (x.round() as isize, y.round() as isize)
+            }
         };
         if anchor_x <= 0
             || anchor_y <= 0
@@ -830,6 +838,7 @@ impl ScreenProjector {
         geometry: ImageGeometry,
         gridder: &StandardGridder,
         sampling: usize,
+        conv_size: usize,
         mut imaging_evaluator: I,
         mut weight_evaluator: W,
     ) -> Result<Self, ImagingError>
@@ -842,7 +851,6 @@ impl ScreenProjector {
                 "screen projector sampling must be >= 1".to_string(),
             ));
         }
-        let conv_size = hetarray_screen_conv_size(geometry);
         let imaging_temp = hetarray_screen_fft_temp(geometry, conv_size, &mut imaging_evaluator)?;
         let weight_temp = hetarray_screen_fft_temp(geometry, conv_size, &mut weight_evaluator)?;
         let support = find_hetarray_screen_support(&weight_temp, 1);
@@ -1073,6 +1081,29 @@ impl ScreenProjector {
             }
         }
         Some(taps)
+    }
+
+    pub(crate) fn trace_sample_tap_at(
+        &self,
+        plan: &ScreenProjectSamplePlan,
+        ix: isize,
+        iy: isize,
+    ) -> Option<Complex32> {
+        if ix < plan.min_ix || ix > plan.max_ix || iy < plan.min_iy || iy > plan.max_iy {
+            return None;
+        }
+        let kernel_y =
+            usize::try_from(self.kernel_center as isize + iy * self.sampling as isize + plan.off_y)
+                .ok()?;
+        let signed_x = ix * self.sampling as isize + plan.off_x;
+        let signed_y = iy * self.sampling as isize + plan.off_y;
+        let kernel_x = usize::try_from(self.kernel_center as isize + signed_x).ok()?;
+        let phase = signed_x as f64 * self.phase_gradient_rad_per_sample[0]
+            + signed_y as f64 * self.phase_gradient_rad_per_sample[1];
+        let phasor = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+        self.kernel_weights
+            .get((kernel_x, kernel_y))
+            .map(|kernel| *kernel * phasor)
     }
 
     fn sample_normalization(
@@ -1540,8 +1571,18 @@ fn screen_projector_conv_size(geometry: ImageGeometry, sampling: usize) -> usize
     if scaled % 2 == 0 { scaled } else { scaled + 1 }
 }
 
-fn hetarray_screen_conv_size(geometry: ImageGeometry) -> usize {
-    let mut conv_size = geometry.nx().max(geometry.ny()).max(16);
+#[allow(dead_code)]
+pub(crate) fn hetarray_screen_conv_size(geometry: ImageGeometry) -> usize {
+    hetarray_screen_conv_size_for_support(geometry, geometry.nx().max(geometry.ny()) / 10)
+}
+
+pub(crate) fn hetarray_screen_conv_size_for_support(
+    geometry: ImageGeometry,
+    pb_support_pixels: usize,
+) -> usize {
+    let image_max = geometry.nx().max(geometry.ny());
+    let support = (image_max / 10).max(pb_support_pixels).min(image_max);
+    let mut conv_size = support.max(64);
     while conv_size % 2 != 0 || !is_casa_composite_len(conv_size) {
         conv_size += 1;
     }
@@ -1818,6 +1859,34 @@ mod tests {
     }
 
     #[test]
+    fn hetarray_screen_size_follows_casa_support_scale() {
+        let geometry = ImageGeometry {
+            image_shape: [800, 800],
+            cell_size_rad: [1.0e-6, 1.0e-6],
+        };
+        assert_eq!(super::hetarray_screen_conv_size(geometry), 80);
+        assert_eq!(
+            super::hetarray_screen_conv_size_for_support(geometry, 224),
+            240
+        );
+        assert_eq!(
+            super::hetarray_screen_conv_size_for_support(geometry, 524),
+            528
+        );
+        assert_eq!(
+            super::hetarray_screen_conv_size_for_support(geometry, 1040),
+            800
+        );
+        assert_eq!(
+            super::hetarray_screen_conv_size(ImageGeometry {
+                image_shape: [64, 64],
+                cell_size_rad: [1.0e-6, 1.0e-6],
+            }),
+            64
+        );
+    }
+
+    #[test]
     fn degridding_is_adjoint_to_gridding_for_single_sample() {
         let gridder = StandardGridder::new(ImageGeometry {
             image_shape: [32, 32],
@@ -1967,7 +2036,7 @@ mod tests {
             gridder.density_cell_index_with_convention(
                 0.49 * du,
                 -0.49 * dv,
-                DensityCellConvention::CubeBriggsWeightor,
+                DensityCellConvention::CubeBriggsWeightorLookup,
             ),
             Some(center)
         );
@@ -1975,7 +2044,7 @@ mod tests {
             gridder.density_cell_index_with_convention(
                 0.51 * du,
                 -0.51 * dv,
-                DensityCellConvention::CubeBriggsWeightor,
+                DensityCellConvention::CubeBriggsWeightorLookup,
             ),
             Some((center.0 + 1, center.1 + 1))
         );
