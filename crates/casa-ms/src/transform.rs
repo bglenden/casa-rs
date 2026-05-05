@@ -292,7 +292,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         let mut kept_ddids = Vec::with_capacity(selected_ddids.len());
         for (((row_index, ddid), flag_row), flags) in selected_rows
             .into_iter()
-            .zip(selected_ddids.into_iter())
+            .zip(selected_ddids)
             .zip(flag_row_values)
             .zip(flag_values)
         {
