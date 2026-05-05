@@ -112,7 +112,10 @@ pub(crate) fn write_gain_caltable(
                     COL_ANTENNA1,
                     Value::Scalar(ScalarValue::Int32(row.antenna_id)),
                 ),
-                RecordField::new(COL_ANTENNA2, Value::Scalar(ScalarValue::Int32(-1))),
+                RecordField::new(
+                    COL_ANTENNA2,
+                    Value::Scalar(ScalarValue::Int32(row.refant_id)),
+                ),
                 RecordField::new(
                     COL_INTERVAL,
                     Value::Scalar(ScalarValue::Float64(row.interval_seconds)),

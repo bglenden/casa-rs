@@ -312,6 +312,8 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         threshold_jy: options.threshold_jy,
         nsigma: options.nsigma,
         psf_cutoff: options.psf_cutoff,
+        mosaic_pb_limit: 0.1,
+        pbcor: false,
         minor_cycle_length: options.minor_cycle_length,
         cyclefactor: options.cyclefactor,
         min_psf_fraction: options.min_psf_fraction,

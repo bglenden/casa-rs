@@ -16,12 +16,16 @@ def reset_image_analysis_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
         imexplore_binary=None,
         immoments_binary=None,
         impv_binary=None,
+        imsubimage_binary=None,
+        immath_binary=None,
         exportfits_binary=None,
         importfits_binary=None,
     )
     monkeypatch.delenv("CASARS_IMEXPLORE_BIN", raising=False)
     monkeypatch.delenv("CASARS_IMMOMENTS_BIN", raising=False)
     monkeypatch.delenv("CASARS_IMPV_BIN", raising=False)
+    monkeypatch.delenv("CASARS_IMSUBIMAGE_BIN", raising=False)
+    monkeypatch.delenv("CASARS_IMMATH_BIN", raising=False)
     monkeypatch.delenv("CASARS_EXPORTFITS_BIN", raising=False)
     monkeypatch.delenv("CASARS_IMPORTFITS_BIN", raising=False)
     monkeypatch.delenv("CASARS_SUITE_ROOT", raising=False)
@@ -59,6 +63,7 @@ def test_immoments_wrapper_encodes_task_request(tmp_path: Path) -> None:
         outfile="twhya_n2hp.mom0",
         moments=0,
         chans="4~12",
+        mask="twhya_n2hp.pb>0.3",
         includepix=(0.03, 100.0),
         overwrite=True,
         binary=binary,
@@ -70,6 +75,7 @@ def test_immoments_wrapper_encodes_task_request(tmp_path: Path) -> None:
     assert request["outfile"] == "twhya_n2hp.mom0"
     assert request["moments"] == 0
     assert request["chans"] == "4~12"
+    assert request["mask"] == "twhya_n2hp.pb>0.3"
     assert request["includepix"] == [0.03, 100.0]
     assert request["overwrite"] is True
 
@@ -115,6 +121,49 @@ def test_impv_wrapper_encodes_task_request(tmp_path: Path) -> None:
     assert request["end"] == "180,160"
     assert request["width"] == 3
     assert request["chans"] == "11~40"
+    assert request["overwrite"] is True
+
+
+def test_imsubimage_wrapper_encodes_task_request(tmp_path: Path) -> None:
+    binary = _write_task_stub(tmp_path / "bin" / "imsubimage", version="ok")
+
+    result = image_analysis.imsubimage(
+        "M100_combine_CO_cube.pb",
+        "M100_combine_CO_cube.pb.subim",
+        box="219,148,612,579",
+        chans="35",
+        overwrite=True,
+        binary=binary,
+    )
+
+    assert result["kind"] == "imsubimage"
+    request = result["result"]["request"]
+    assert request["imagename"] == "M100_combine_CO_cube.pb"
+    assert request["outfile"] == "M100_combine_CO_cube.pb.subim"
+    assert request["box_pixels"] == "219,148,612,579"
+    assert request["chans"] == "35"
+    assert request["overwrite"] is True
+
+
+def test_immath_wrapper_encodes_task_request(tmp_path: Path) -> None:
+    binary = _write_task_stub(tmp_path / "bin" / "immath", version="ok")
+
+    result = image_analysis.immath(
+        ["M100_Feather_CO.image", "M100_combine_CO_cube.pb.subim"],
+        expr="IM0 / IM1",
+        outfile="M100_Feather_CO.image.pbcor",
+        overwrite=True,
+        binary=binary,
+    )
+
+    assert result["kind"] == "immath"
+    request = result["result"]["request"]
+    assert request["imagename"] == [
+        "M100_Feather_CO.image",
+        "M100_combine_CO_cube.pb.subim",
+    ]
+    assert request["outfile"] == "M100_Feather_CO.image.pbcor"
+    assert request["expr"] == "IM0 / IM1"
     assert request["overwrite"] is True
 
 

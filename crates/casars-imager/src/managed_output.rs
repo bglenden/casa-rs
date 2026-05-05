@@ -351,6 +351,9 @@ impl ManagedImagingOutput {
                         ImagerArtifactKind::Residual => "residual".to_string(),
                         ImagerArtifactKind::Model => "model".to_string(),
                         ImagerArtifactKind::Image => "image".to_string(),
+                        ImagerArtifactKind::Weight => "weight".to_string(),
+                        ImagerArtifactKind::PrimaryBeam => "pb".to_string(),
+                        ImagerArtifactKind::ImagePbcor => "image.pbcor".to_string(),
                         ImagerArtifactKind::Alpha => "alpha".to_string(),
                     },
                     label: artifact.label.clone(),
@@ -507,6 +510,18 @@ fn imaging_artifacts(config: &CliConfig) -> Vec<ManagedImagingArtifact> {
                     .then(|| PathBuf::from(format!("{base}.{kind}.png")));
                 artifacts.push(artifact(label.to_string(), kind, path, preview));
             }
+            if config.pbcor {
+                for (kind, label) in [
+                    ("pb", "Primary Beam"),
+                    ("image.pbcor", "PB-corrected Image"),
+                ] {
+                    let path = PathBuf::from(format!("{base}.{kind}"));
+                    let preview = config
+                        .write_preview_pngs
+                        .then(|| PathBuf::from(format!("{base}.{kind}.png")));
+                    artifacts.push(artifact(label.to_string(), kind, path, preview));
+                }
+            }
         }
     }
     artifacts
@@ -587,6 +602,8 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
+            pbcor: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -744,6 +761,8 @@ mod tests {
                 threshold_jy: 0.01,
                 nsigma: 5.0,
                 psf_cutoff: 0.4,
+                mosaic_pb_limit: 0.1,
+                pbcor: false,
                 minor_cycle_length: 16,
                 cyclefactor: 1.2,
                 min_psf_fraction: 0.15,

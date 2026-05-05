@@ -4480,6 +4480,20 @@ fn ensure_corrected_data_column(
         .expect("corrected data column present")
         .clone();
     ms.main_table_mut().add_column(column, None)?;
+    let row_indices = (0..ms.main_table().row_count()).collect::<Vec<_>>();
+    let data_values = ms
+        .main_table()
+        .column_accessor(VisibilityDataColumn::Data.name())?
+        .array_cells_owned(&row_indices)?;
+    let mut corrected_column = ms
+        .main_table_mut()
+        .column_accessor_mut(VisibilityDataColumn::CorrectedData.name())?;
+    for (row_index, data) in row_indices.into_iter().zip(data_values) {
+        corrected_column.set_array_assuming_valid(
+            row_index,
+            data.expect("MAIN DATA cells should be populated before applycal"),
+        )?;
+    }
 
     Ok(true)
 }
@@ -5805,7 +5819,7 @@ mod tests {
                 .row(0)
                 .unwrap()
                 .get(VisibilityDataColumn::CorrectedData.name())
-                .is_none()
+                .is_some()
         );
         assert!(!ensure_corrected_data_column(&mut ms, None).unwrap());
         assert_eq!(display_ms_path(&ms), "<in-memory>");

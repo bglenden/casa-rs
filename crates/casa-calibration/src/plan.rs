@@ -131,7 +131,7 @@ impl ApplyCalibrationTableSpec {
             apply_to: ApplyTableSelection::default(),
             gainfield: None,
             spwmap: Vec::new(),
-            interp: ApplyInterpolationMode::Nearest,
+            interp: ApplyInterpolationMode::Linear,
             calwt: false,
         }
     }

@@ -1,7 +1,7 @@
 # CASA Tutorial Capability Matrix
 
 Truth class: current descriptive
-Last reality check: 2026-04-26
+Last reality check: 2026-05-02
 Verification: just docs-check
 
 Wave issue: #137
@@ -41,7 +41,7 @@ Status legend:
 | `plotms` | partial | `casa-ms` | `msexplore`, calibration plots | long-tail axes, corrected-data diagnostics, polarization/P-band plots | CASA `plotms` or exported plot data where available | `scripts/bench-msexplore-vs-casa.sh` plus tutorial plot timings | #73, #117, #121 |
 | `plotcal` | partial | `casa-calibration` | `calibrate` diagnostic plots | CASA task-name compatibility is not a target; VLA pages need gain/bandpass/fluxscale diagnostic plot presets and export parity | CASA `plotcal` plots or exported caltable plot data where available | calibration plot timing on VLA tutorial caltables | #122, #128 |
 | `tclean` MFS | partial/available | `casa-imaging`, `casars-imager` | `casars-imager`; Python projection incomplete | tutorial parameter mapping, automasking, pbcor/outlier/startmodel tails | CASA `tclean` image products | imager parity scripts and tutorial timings | #117, #127 |
-| `tclean` cube / spectral | partial | `casa-imaging`, `casars-imager` | `casars-imager`; Python projection incomplete | cube seam coverage, spectral transform integration, large-cube controls | CASA `tclean` cube outputs | cube parity scripts and tutorial timings | #74, #76, #119, #123 |
+| `tclean` cube / spectral | partial | `casa-imaging`, `casars-imager` | `casars-imager`; Python projection incomplete | cube seam coverage, spectral transform integration, large-cube controls, mosaic cube gridding for Antennae Band 7 line products | CASA `tclean` cube outputs | cube parity scripts and tutorial timings | #74, #76, #119, #123, #161 |
 | legacy `clean` | external/compatibility reference | `casa-imaging`, `casars-imager` if comparison needed | no CASA alias planned | VLA imaging page references legacy output for comparison; implement equivalent capability through idiomatic imaging APIs, not a `clean` task clone | CASA legacy `clean` products only as regression inputs/comparison artifacts | compare legacy tutorial timing only if a breadth issue requires it | #128 |
 | `split` | partial | `casa-ms`, `casa-tables` | no dedicated task surface yet | corrected-data split, selected column/subset output, metadata preservation | CASA `split` output MS, 2x2 MS interop as needed | tutorial split timings | #118, #121 |
 | `mstransform` | missing/limited | `casa-ms` | none | spectral regrid/channel selection tutorial subset | CASA `mstransform` output MS | transform timing on VLA tutorials | #123 |

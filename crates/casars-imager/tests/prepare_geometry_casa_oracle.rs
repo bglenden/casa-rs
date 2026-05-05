@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
-use casa_imaging::{Deconvolver, RestoringBeamMode, WTermMode, WeightingMode};
+use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode};
 use casa_ms::CubeAxisConfig;
 use casa_test_support::{casatestdata_path, discover_casa_python};
 use casars_imager::{
@@ -259,14 +259,17 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         channel_start: None,
         channel_count: None,
         datacolumn: None,
+        save_model: casars_imager::SaveModelMode::None,
         correlation: None,
         spectral_mode,
         cube_axis: CubeAxisConfig::default(),
         weighting: WeightingMode::Natural,
         per_channel_weight_density: false,
+        use_pointing: false,
         uv_taper: None,
         restoring_beam_mode: RestoringBeamMode::PerPlane,
         deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 0,
@@ -274,10 +277,13 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         threshold_jy: 0.0,
         nsigma: 0.0,
         psf_cutoff: 0.35,
+        mosaic_pb_limit: 0.1,
+        pbcor: false,
         minor_cycle_length: 2,
         cyclefactor: 1.0,
         min_psf_fraction: 0.1,
         max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::Strict,
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,

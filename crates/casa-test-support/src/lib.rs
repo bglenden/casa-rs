@@ -232,6 +232,83 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         relative_path: "tutorial-parity/alma/first-look/twhya/twhya_n2hp.image",
     },
     TutorialDataset {
+        key: "alma/antennae/band7/calibrated-data",
+        source_url: "https://casaguides.nrao.edu/index.php/AntennaeBand7_Imaging_6.6.6",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/Antennae_Band7_6.6.6/Antennae_Band7_CalibratedData.tgz",
+        expected_filename: "Antennae_Band7_CalibratedData.tgz",
+        casa_guide_version: Some("6.6.6"),
+        expected_size_bytes: Some(912_711_095),
+        expected_sha256: Some("1976fea9239dea06c144c963c3750b03e7c53e82787f0a3c46b72fe17b5df339"),
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/antennae/band7/Antennae_Band7_CalibratedData.tgz",
+    },
+    TutorialDataset {
+        key: "alma/antennae/band7/reference-images",
+        source_url: "https://casaguides.nrao.edu/index.php/AntennaeBand7",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/Antennae_Band7_6.6.6/Antennae_Band7_ReferenceImages.tgz",
+        expected_filename: "Antennae_Band7_ReferenceImages.tgz",
+        casa_guide_version: Some("6.6.6"),
+        expected_size_bytes: Some(83_981_505),
+        expected_sha256: Some("cd52ffdc8f7b18f28ede2be70f6334f2f3f435fe31d7cff66f6e3a446eed2190"),
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/antennae/band7/Antennae_Band7_ReferenceImages.tgz",
+    },
+    TutorialDataset {
+        key: "alma/m100/band3-combine/12m-calibrated-data",
+        source_url: "https://casaguides.nrao.edu/index.php/M100_Band3_Combine_6.6.6",
+        artifact_url: "https://almascience.nrao.edu/almadata/sciver/M100Band3_12m/M100_Band3_12m_CalibratedData.tgz",
+        expected_filename: "M100_Band3_12m_CalibratedData.tgz",
+        casa_guide_version: Some("6.6.6; CASA 5.1.1 calibration"),
+        expected_size_bytes: Some(15_580_494_468),
+        expected_sha256: None,
+        tier: CasaTestDataTier::SlowParity,
+        relative_path: "tutorial-parity/alma/m100/band3-combine/raw/M100_Band3_12m_CalibratedData.tgz",
+    },
+    TutorialDataset {
+        key: "alma/m100/band3-combine/7m-calibrated-data",
+        source_url: "https://casaguides.nrao.edu/index.php/M100_Band3_Combine_6.6.6",
+        artifact_url: "https://almascience.nrao.edu/almadata/sciver/M100Band3ACA/M100_Band3_7m_CalibratedData.tgz",
+        expected_filename: "M100_Band3_7m_CalibratedData.tgz",
+        casa_guide_version: Some("6.6.6"),
+        expected_size_bytes: Some(9_774_558_254),
+        expected_sha256: None,
+        tier: CasaTestDataTier::SlowParity,
+        relative_path: "tutorial-parity/alma/m100/band3-combine/raw/M100_Band3_7m_CalibratedData.tgz",
+    },
+    TutorialDataset {
+        key: "alma/m100/band3-combine/tp-calibrated-data",
+        source_url: "https://casaguides.nrao.edu/index.php/M100_Band3_Combine_6.6.6",
+        artifact_url: "https://almascience.nrao.edu/almadata/sciver/M100Band3ACA/M100_Band3_TP_CalibratedData_5.1.tgz",
+        expected_filename: "M100_Band3_TP_CalibratedData_5.1.tgz",
+        casa_guide_version: Some("6.6.6; CASA 5.1 TP archive"),
+        expected_size_bytes: Some(14_372_792_248),
+        expected_sha256: None,
+        tier: CasaTestDataTier::SlowParity,
+        relative_path: "tutorial-parity/alma/m100/band3-combine/raw/M100_Band3_TP_CalibratedData_5.1.tgz",
+    },
+    TutorialDataset {
+        key: "alma/m100/band3-combine/aca-reference-images",
+        source_url: "https://casaguides.nrao.edu/index.php/M100_Band3_Combine_6.6.6",
+        artifact_url: "https://almascience.nrao.edu/almadata/sciver/M100Band3ACA/M100_Band3_ACA_ReferenceImages_5.1.tgz",
+        expected_filename: "M100_Band3_ACA_ReferenceImages_5.1.tgz",
+        casa_guide_version: Some("5.1 reference images; current guide page"),
+        expected_size_bytes: Some(24_775_689),
+        expected_sha256: None,
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/m100/band3-combine/raw/M100_Band3_ACA_ReferenceImages_5.1.tgz",
+    },
+    TutorialDataset {
+        key: "alma/m100/band3-combine/reference-images",
+        source_url: "https://casaguides.nrao.edu/index.php/M100_Band3_Combine",
+        artifact_url: "https://almascience.nrao.edu/almadata/sciver/M100Band3ACA/M100_Band3_DataComb_ReferenceImages_5.1.tgz",
+        expected_filename: "M100_Band3_DataComb_ReferenceImages_5.1.tgz",
+        casa_guide_version: Some("5.1 reference images; current guide page"),
+        expected_size_bytes: Some(411_602_337),
+        expected_sha256: Some("04e3e88f1393e93c18eab7fd4a9ae5c57e768dbb8be85259c3006ae9d4c7634b"),
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/m100/band3-combine/M100_Band3_DataComb_ReferenceImages_5.1.tgz",
+    },
+    TutorialDataset {
         key: "vla/irc10216/ms-10s",
         source_url: "https://casaguides.nrao.edu/index.php?title=VLA_high_frequency_Spectral_Line_tutorial_-_IRC%2B10216",
         artifact_url: "http://casa.nrao.edu/Data/EVLA/IRC10216/TDRW0001_10s.ms.tgz",
@@ -252,6 +329,28 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         expected_sha256: Some("9e476e1f98f63d9d870dfa1d72f6705ca40aed3c006115742a0bb2922cbd8071"),
         tier: CasaTestDataTier::TutorialParity,
         relative_path: "tutorial-parity/vla/irc10216/irc_fors1_dec_header.fits",
+    },
+    TutorialDataset {
+        key: "vla/3c391/raw-10s-spw0",
+        source_url: "https://casaguides.nrao.edu/index.php?title=VLA_Continuum_Tutorial_3C391-CASA6.4.1",
+        artifact_url: "https://casa.nrao.edu/Data/EVLA/3C391/3c391_ctm_mosaic_10s_spw0.ms.tgz",
+        expected_filename: "3c391_ctm_mosaic_10s_spw0.ms.tgz",
+        casa_guide_version: Some("6.4.1"),
+        expected_size_bytes: Some(221_474_816),
+        expected_sha256: Some("03e36442d56607f48caa6061713bf138ec38348c1bcb8cce11ddaba16af70f7d"),
+        tier: CasaTestDataTier::SlowParity,
+        relative_path: "tutorial-parity/vla/3c391/3c391_ctm_mosaic_10s_spw0.ms.tgz",
+    },
+    TutorialDataset {
+        key: "vla/3c391/final-calibrated-mosaic-ms",
+        source_url: "https://casaguides.nrao.edu/index.php?title=VLA_Continuum_Tutorial_3C391-CASA6.4.1",
+        artifact_url: "https://casa.nrao.edu/Data/EVLA/3C391/EVLA_3C391_FinalCalibratedMosaicMS.tgz",
+        expected_filename: "EVLA_3C391_FinalCalibratedMosaicMS.tgz",
+        casa_guide_version: Some("6.4.1"),
+        expected_size_bytes: Some(1_410_442_215),
+        expected_sha256: Some("c9084b2794d4b39ebab17f03a97f9b3a3a61717e8d76118f09c1e2d99e0c5268"),
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/vla/3c391/EVLA_3C391_FinalCalibratedMosaicMS.tgz",
     },
     TutorialDataset {
         key: "simulation/vla-ppdisk/model-fits",
@@ -2767,12 +2866,57 @@ mod tests {
         assert_eq!(irc10216.expected_size_bytes, Some(1_068_298_240));
         assert_eq!(irc10216.tier, CasaTestDataTier::SlowParity);
 
+        let c391_final = tutorial_dataset("vla/3c391/final-calibrated-mosaic-ms").unwrap();
+        assert_eq!(
+            c391_final.expected_filename,
+            "EVLA_3C391_FinalCalibratedMosaicMS.tgz"
+        );
+        assert_eq!(c391_final.expected_size_bytes, Some(1_410_442_215));
+        assert_eq!(c391_final.tier, CasaTestDataTier::TutorialParity);
+
+        let c391_raw = tutorial_dataset("vla/3c391/raw-10s-spw0").unwrap();
+        assert_eq!(c391_raw.expected_size_bytes, Some(221_474_816));
+        assert_eq!(c391_raw.tier, CasaTestDataTier::SlowParity);
+
+        let m100_reference = tutorial_dataset("alma/m100/band3-combine/reference-images").unwrap();
+        assert_eq!(
+            m100_reference.expected_filename,
+            "M100_Band3_DataComb_ReferenceImages_5.1.tgz"
+        );
+        assert_eq!(m100_reference.expected_size_bytes, Some(411_602_337));
+        assert_eq!(m100_reference.tier, CasaTestDataTier::TutorialParity);
+
+        let m100_12m = tutorial_dataset("alma/m100/band3-combine/12m-calibrated-data").unwrap();
+        assert_eq!(m100_12m.expected_size_bytes, Some(15_580_494_468));
+        assert_eq!(m100_12m.tier, CasaTestDataTier::SlowParity);
+
+        let m100_7m = tutorial_dataset("alma/m100/band3-combine/7m-calibrated-data").unwrap();
+        assert_eq!(m100_7m.expected_size_bytes, Some(9_774_558_254));
+        assert_eq!(m100_7m.tier, CasaTestDataTier::SlowParity);
+
+        let m100_tp = tutorial_dataset("alma/m100/band3-combine/tp-calibrated-data").unwrap();
+        assert_eq!(m100_tp.expected_size_bytes, Some(14_372_792_248));
+        assert_eq!(m100_tp.tier, CasaTestDataTier::SlowParity);
+
         let tutorial_keys = tutorial_datasets_for_tier(CasaTestDataTier::TutorialParity)
             .map(|dataset| dataset.key)
             .collect::<Vec<_>>();
         assert!(tutorial_keys.contains(&"alma/first-look/twhya/calibrated-ms"));
+        assert!(tutorial_keys.contains(&"alma/antennae/band7/calibrated-data"));
+        assert!(tutorial_keys.contains(&"alma/antennae/band7/reference-images"));
+        assert!(tutorial_keys.contains(&"alma/m100/band3-combine/aca-reference-images"));
+        assert!(tutorial_keys.contains(&"alma/m100/band3-combine/reference-images"));
         assert!(tutorial_keys.contains(&"vla/irc10216/fors1-fits"));
+        assert!(tutorial_keys.contains(&"vla/3c391/final-calibrated-mosaic-ms"));
+        assert!(!tutorial_keys.contains(&"alma/m100/band3-combine/12m-calibrated-data"));
+        assert!(!tutorial_keys.contains(&"alma/m100/band3-combine/7m-calibrated-data"));
+        assert!(!tutorial_keys.contains(&"alma/m100/band3-combine/tp-calibrated-data"));
         assert!(!tutorial_keys.contains(&"vla/irc10216/ms-10s"));
+        assert!(!tutorial_keys.contains(&"vla/3c391/raw-10s-spw0"));
+
+        let antennae = tutorial_dataset("alma/antennae/band7/calibrated-data").unwrap();
+        assert_eq!(antennae.expected_size_bytes, Some(912_711_095));
+        assert_eq!(antennae.casa_guide_version, Some("6.6.6"));
 
         let ppdisk = tutorial_dataset("simulation/vla-ppdisk/model-fits").unwrap();
         assert_eq!(ppdisk.casa_guide_version, Some("6.7.2"));

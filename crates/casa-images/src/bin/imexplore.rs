@@ -296,6 +296,7 @@ fn parse_immoments_args(args: impl IntoIterator<Item = String>) -> Result<Immome
             moments,
             chans,
             includepix,
+            mask: None,
             overwrite,
         },
         json,

@@ -578,7 +578,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 value_kind: UiValueKind::String,
                 default: None,
                 choices: &[],
-                help: "Semicolon-separated interpolation modes aligned to --gaintables: nearest, linear, nearest,linear",
+                help: "Semicolon-separated interpolation modes aligned to --gaintables: linear, nearest, nearest,linear",
                 group: "Apply",
                 required: false,
                 advanced: false,
@@ -2773,7 +2773,8 @@ fn parse_optional_gainfield_list(
 fn parse_interp_value(flag: &str, value: &str) -> Result<ApplyInterpolationMode, String> {
     let normalized = value.trim().to_ascii_lowercase().replace(' ', "");
     match normalized.as_str() {
-        "" | "nearest" => Ok(ApplyInterpolationMode::Nearest),
+        "" => Ok(ApplyInterpolationMode::Linear),
+        "nearest" => Ok(ApplyInterpolationMode::Nearest),
         "linear" => Ok(ApplyInterpolationMode::Linear),
         "nearest,linear" | "nearestlinear" => Ok(ApplyInterpolationMode::NearestLinear),
         _ => Err(format!(
@@ -2837,7 +2838,7 @@ fn build_calibration_table_specs(
         "--interp",
         interp_values,
         paths.len(),
-        ApplyInterpolationMode::Nearest,
+        ApplyInterpolationMode::Linear,
     )?;
     let expanded_spwmap =
         expand_aligned_values("--spwmap", spwmap_values, paths.len(), Vec::new())?;
@@ -4695,6 +4696,10 @@ mod tests {
         assert!(bad_bool.contains("expected true or false"));
         let bad_interp = super::parse_interp_value("--interp", "bogus").unwrap_err();
         assert!(bad_interp.contains("is unsupported"));
+        assert_eq!(
+            super::parse_interp_value("--interp", "").unwrap(),
+            ApplyInterpolationMode::Linear
+        );
         assert_eq!(
             super::parse_gainfield_value("--gainfield", "nearest,0").unwrap(),
             Some(GainFieldSelector::FieldName("nearest,0".into()))

@@ -106,6 +106,10 @@ pub(crate) fn restore_model(
     cell_size_rad: [f64; 2],
     beam: Option<BeamFit>,
 ) -> Array2<f32> {
+    if model.iter().all(|flux| flux.abs() <= 1.0e-12) {
+        return model.clone();
+    }
+
     let Some(beam) = beam else {
         return model.clone();
     };
@@ -1004,6 +1008,21 @@ mod tests {
         assert!(restored[(8, 8)] > restored[(8, 9)]);
         assert!(restored[(8, 8)] <= 1.0);
         assert!(restored[(8, 9)] > 0.0);
+    }
+
+    #[test]
+    fn restoration_skips_gaussian_kernel_for_empty_model() {
+        let model = Array2::<f32>::zeros((16, 16));
+        let restored = restore_model(
+            &model,
+            [1.0e-4, 1.0e-4],
+            Some(BeamFit {
+                major_fwhm_rad: 10.0,
+                minor_fwhm_rad: 10.0,
+                position_angle_rad: 0.0,
+            }),
+        );
+        assert_eq!(restored, model);
     }
 
     #[test]

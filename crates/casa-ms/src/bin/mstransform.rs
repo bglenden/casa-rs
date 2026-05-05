@@ -35,6 +35,7 @@ fn parse_request(args: &[String]) -> Result<MsTransformRequest, String> {
     let mut spw = None;
     let mut data_column = TransformDataColumn::default();
     let mut selection = MsSelection::default();
+    let mut keep_flags = true;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -85,6 +86,8 @@ fn parse_request(args: &[String]) -> Result<MsTransformRequest, String> {
                 index += 1;
                 selection = selection.taql(args.get(index).ok_or_else(usage)?);
             }
+            "--keepflags" => keep_flags = true,
+            "--no-keepflags" => keep_flags = false,
             "--selectdata" => {}
             "--no-selectdata" => {}
             other => return Err(format!("unknown argument {other:?}\n{}", usage())),
@@ -97,6 +100,7 @@ fn parse_request(args: &[String]) -> Result<MsTransformRequest, String> {
         spw: spw.ok_or_else(usage)?,
         data_column,
         selection,
+        keep_flags,
     })
 }
 
@@ -126,5 +130,5 @@ fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
 }
 
 fn usage() -> String {
-    "usage: mstransform --ms <input.ms> --out <output.ms> --spw <spw[:channels]> [--field <ids>] [--datacolumn DATA|CORRECTED_DATA]".to_string()
+    "usage: mstransform --ms <input.ms> --out <output.ms> --spw <spw[:channels]> [--field <ids>] [--datacolumn DATA|CORRECTED_DATA] [--keepflags|--no-keepflags]".to_string()
 }

@@ -18,13 +18,14 @@ pub(crate) mod kernel;
 mod trace;
 pub(crate) mod writer;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_tables::{Table, TableError};
-use casa_types::ScalarValue;
+use casa_types::{Complex32, ScalarValue};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -349,7 +350,119 @@ pub fn solve_gain(
         trace::trace_solution_rows(&base_key, &bucket_key, &group_rows, request, refant_id);
         solution_rows.extend(group_rows);
     }
+    apply_flex_refant(&mut solution_rows, refant_id);
     write_gain_caltable(ms, request, refant_id, &solution_rows)
+}
+
+fn apply_flex_refant(rows: &mut [kernel::SolutionRow], preferred_refant_id: i32) {
+    let mut group_indices = BTreeMap::<(i32, u64, i32), Vec<usize>>::new();
+    for (index, row) in rows.iter().enumerate() {
+        group_indices
+            .entry((row.spw_id, row.time_seconds.to_bits(), row.field_id))
+            .or_default()
+            .push(index);
+    }
+
+    let all_antennas = rows
+        .iter()
+        .map(|row| row.antenna_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut choices = Vec::with_capacity(all_antennas.len() + 2);
+    choices.push(preferred_refant_id);
+    choices.push(preferred_refant_id);
+    choices.extend(
+        all_antennas
+            .into_iter()
+            .filter(|antenna_id| *antenna_id != preferred_refant_id),
+    );
+
+    let mut previous = None::<Vec<usize>>;
+    let mut last_spw = None::<i32>;
+    for ((spw_id, _, _), current) in group_indices {
+        if last_spw != Some(spw_id) {
+            previous = None;
+            choices[1] = preferred_refant_id;
+            last_spw = Some(spw_id);
+        }
+
+        let previous_indices = previous.as_ref().unwrap_or(&current);
+        let Some((choice_index, current_ref_index, previous_ref_index)) =
+            find_flex_refant(rows, &choices, &current, previous_indices)
+        else {
+            for index in &current {
+                rows[*index].flags.iter_mut().for_each(|flag| *flag = true);
+            }
+            previous = Some(current);
+            continue;
+        };
+
+        let current_ref = rows[current_ref_index].gains.clone();
+        let previous_ref = rows[previous_ref_index].gains.clone();
+        let first = previous.is_none();
+        let ref_phasor = current_ref
+            .iter()
+            .zip(previous_ref.iter())
+            .map(|(current_gain, previous_gain)| {
+                let current_phase = phase_only(*current_gain);
+                if first {
+                    current_phase
+                } else {
+                    current_phase / phase_only(*previous_gain)
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let current_refant = rows[current_ref_index].antenna_id;
+        let _used_alternate = choice_index > 0;
+        choices[1] = current_refant;
+        for index in &current {
+            for (gain, phasor) in rows[*index].gains.iter_mut().zip(ref_phasor.iter()) {
+                if phasor.norm() > f32::EPSILON {
+                    *gain /= *phasor;
+                }
+            }
+            for (gain, flag) in rows[*index].gains.iter_mut().zip(rows[*index].flags.iter()) {
+                if *flag {
+                    *gain = Complex32::new(1.0, 0.0);
+                }
+            }
+            rows[*index].refant_id = current_refant;
+        }
+        previous = Some(current);
+    }
+}
+
+fn find_flex_refant(
+    rows: &[kernel::SolutionRow],
+    choices: &[i32],
+    current: &[usize],
+    previous: &[usize],
+) -> Option<(usize, usize, usize)> {
+    choices
+        .iter()
+        .enumerate()
+        .find_map(|(choice_index, antenna_id)| {
+            let current_index = current.iter().copied().find(|index| {
+                rows[*index].antenna_id == *antenna_id && any_unflagged(&rows[*index])
+            })?;
+            let previous_index = previous.iter().copied().find(|index| {
+                rows[*index].antenna_id == *antenna_id && any_unflagged(&rows[*index])
+            })?;
+            Some((choice_index, current_index, previous_index))
+        })
+}
+
+fn any_unflagged(row: &kernel::SolutionRow) -> bool {
+    row.flags.iter().any(|flag| !*flag)
+}
+
+fn phase_only(gain: Complex32) -> Complex32 {
+    let norm = gain.norm();
+    if norm > f32::EPSILON {
+        gain / Complex32::new(norm, 0.0)
+    } else {
+        Complex32::new(1.0, 0.0)
+    }
 }
 
 fn normalize_gain_solution_amplitudes(rows: &mut [kernel::SolutionRow]) {

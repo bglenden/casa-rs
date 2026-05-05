@@ -2043,7 +2043,7 @@ impl<T: ImagePixel> PagedImage<T> {
         relative_mask_path: &str,
         data: &ArrayD<bool>,
     ) -> Result<(), ImageError> {
-        let mask_path = image_path.join(relative_mask_path);
+        let mask_path = resolve_mask_table_path(image_path, relative_mask_path);
         if mask_path.exists() {
             std::fs::remove_dir_all(&mask_path).map_err(|e| ImageError::Io(e.to_string()))?;
         }
@@ -2440,8 +2440,15 @@ fn make_lcbox_record(shape: &[usize]) -> RecordValue {
     record
 }
 
-fn mask_table_reference(_image_path: &Path, mask_name: &str) -> String {
-    mask_name.to_string()
+fn mask_table_reference(image_path: &Path, mask_name: &str) -> String {
+    let image_path = if image_path.is_absolute() {
+        image_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(image_path))
+            .unwrap_or_else(|_| image_path.to_path_buf())
+    };
+    image_path.join(mask_name).to_string_lossy().to_string()
 }
 
 fn resolve_mask_table_path(image_path: &Path, stored_path: &str) -> PathBuf {

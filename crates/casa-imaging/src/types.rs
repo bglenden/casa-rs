@@ -112,7 +112,7 @@ pub enum PrimaryBeamModel {
         /// Central blockage diameter in meters.
         blockage_diameter_m: f64,
     },
-    /// CASA `PBMath1DEVLA` common L-band primary-beam voltage model.
+    /// CASA `PBMath1DEVLA` common primary-beam voltage model.
     EvlaLBandCommon,
 }
 
@@ -154,6 +154,8 @@ pub struct VisibilityMetadataBatch {
     /// CASA-style PB/conv-function frequency bucket in Hz for each scalar
     /// sample.
     pub beam_frequency_hz: Vec<f64>,
+    /// Primary-beam model for this homogeneous metadata batch.
+    pub primary_beam_model: PrimaryBeamModel,
     /// Beam-center direction `[ra, dec]` in radians for each sample.
     ///
     /// For the current `gridder='mosaic'` parity path this follows the row's
@@ -189,6 +191,7 @@ impl VisibilityMetadataBatch {
                 ));
             }
         }
+        self.primary_beam_model.validate()?;
         for direction in &self.pointing_direction_rad {
             if !(direction[0].is_finite() && direction[1].is_finite()) {
                 return Err(ImagingError::InvalidRequest(
@@ -764,7 +767,7 @@ impl Default for CleanConfig {
             psf_cutoff: 0.35,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
-            min_psf_fraction: 0.1,
+            min_psf_fraction: 0.05,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::Strict,
         }

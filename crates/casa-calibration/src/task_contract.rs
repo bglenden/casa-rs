@@ -502,10 +502,6 @@ fn default_polynomial_degree() -> usize {
 }
 
 pub(crate) fn selection_from_spec(spec: &MsSelectionSpec) -> Result<MsSelection, String> {
-    if !spec.selectdata {
-        return Ok(MsSelection::new());
-    }
-
     if let Some(value) = first_non_empty(&spec.uvrange) {
         return Err(format!(
             "selection field uvrange is not supported by calibrate tasks yet: {value}"
@@ -532,7 +528,12 @@ pub(crate) fn selection_from_spec(spec: &MsSelectionSpec) -> Result<MsSelection,
         selection = selection.field(&parse_i32_list("field", field)?);
     }
     if let Some(spw) = first_non_empty(&spec.spw) {
-        selection = selection.spw(&parse_i32_list("spw", spw)?);
+        selection = selection
+            .spw_selector(spw)
+            .map_err(|error| format!("failed to parse spw selector {spw:?}: {error}"))?;
+    }
+    if !spec.selectdata {
+        return Ok(selection);
     }
     if let Some(antenna) = first_non_empty(&spec.antenna) {
         selection = selection.antenna(&parse_i32_list("antenna", antenna)?);
@@ -600,12 +601,13 @@ fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
 mod tests {
     use std::path::PathBuf;
 
+    use casa_ms::MsSelectionSpec;
     use casa_provider_contracts::ProviderSurfaceKind;
 
     use super::{
         CALIBRATION_TASK_PROTOCOL_NAME, CALIBRATION_TASK_PROTOCOL_VERSION, CalibrationProtocolInfo,
         CalibrationTaskRequest, CalibrationTaskResult, CalibrationTaskSchemaBundle,
-        SummaryTaskRequest,
+        SummaryTaskRequest, selection_from_spec,
     };
     use crate::{
         CalibrationColumnSummary, CalibrationIssueSeverity, CalibrationKeywordSummary,
@@ -752,5 +754,23 @@ mod tests {
         );
         let ui_schema = bundle.ui_schema_projection().expect("ui schema projection");
         assert_eq!(ui_schema.command_id, "calibrate");
+    }
+
+    #[test]
+    fn calibration_selection_preserves_field_and_spw_when_selectdata_false() {
+        let selection = selection_from_spec(&MsSelectionSpec {
+            selectdata: false,
+            field: Some("12".to_string()),
+            spw: Some("0:82~89".to_string()),
+            scan: Some("9".to_string()),
+            ..MsSelectionSpec::default()
+        })
+        .expect("build selection");
+
+        let taql = selection.to_taql();
+        assert!(taql.contains("FIELD_ID IN [12]"), "{taql}");
+        assert!(taql.contains("DATA_DESC_ID IN [0]"), "{taql}");
+        assert!(!taql.contains("SCAN_NUMBER"), "{taql}");
+        assert!(selection.channel_selection_for_spw(0).is_some());
     }
 }

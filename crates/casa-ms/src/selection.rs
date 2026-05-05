@@ -22,8 +22,9 @@
 
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
+use crate::selection_syntax::{ChannelSelection, parse_spw_selector};
 use casa_tables::Table;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -39,6 +40,7 @@ use std::time::Instant;
 pub struct MsSelection {
     field_ids: Vec<i32>,
     spw_ids: Vec<i32>,
+    spw_channel_selections: BTreeMap<i32, ChannelSelection>,
     data_desc_ids: Vec<i32>,
     antenna_ids: Vec<i32>,
     antenna_names: Vec<String>,
@@ -71,6 +73,23 @@ impl MsSelection {
     pub fn spw(mut self, ids: &[i32]) -> Self {
         self.spw_ids.extend_from_slice(ids);
         self
+    }
+
+    /// Select rows matching a CASA spectral-window selector and retain any
+    /// channel ranges for consumers that operate inside row array cells.
+    pub fn spw_selector(mut self, selector: &str) -> MsResult<Self> {
+        for parsed in parse_spw_selector(selector)? {
+            self.spw_ids.push(parsed.spw_id);
+            if let Some(channels) = parsed.channels {
+                self.spw_channel_selections.insert(parsed.spw_id, channels);
+            }
+        }
+        Ok(self)
+    }
+
+    /// Return the retained channel selector for a spectral window, if present.
+    pub fn channel_selection_for_spw(&self, spw_id: i32) -> Option<&ChannelSelection> {
+        self.spw_channel_selections.get(&spw_id)
     }
 
     /// Select rows matching the given DATA_DESC_IDs directly.
@@ -879,6 +898,19 @@ mod tests {
 
         let rows = MsSelection::new().spw(&[7]).apply(&ms).unwrap();
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn spw_selector_preserves_channel_selection_for_array_cell_consumers() {
+        let selection = MsSelection::new().spw_selector("0:82~89,2").unwrap();
+
+        assert!(selection.channel_selection_for_spw(2).is_none());
+        let channels = selection
+            .channel_selection_for_spw(0)
+            .expect("spw 0 channel selector")
+            .indices(166)
+            .expect("expand channels");
+        assert_eq!(channels, (82..=89).collect::<Vec<_>>());
     }
 
     #[test]
