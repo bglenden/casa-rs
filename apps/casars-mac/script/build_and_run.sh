@@ -16,9 +16,11 @@ APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_BINARY="$APP_MACOS/$APP_NAME"
+IMAGER_HELPER="$APP_MACOS/casars-imager"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 FRONTEND_DYLIB_NAME="libcasars_frontend_services.dylib"
 FRONTEND_DYLIB="$REPO_ROOT/target/debug/$FRONTEND_DYLIB_NAME"
+IMAGER_BINARY="$REPO_ROOT/target/debug/casars-imager"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,6 +45,7 @@ done
 
 cd "$REPO_ROOT"
 "$REPO_ROOT/scripts/generate-frontend-bindings.sh" "$REPO_ROOT/target/frontend-bindings"
+cargo build -p casars-imager
 
 cd "$ROOT_DIR"
 
@@ -55,7 +58,8 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS"
 cp "$BUILD_BINARY" "$APP_BINARY"
 cp "$FRONTEND_DYLIB" "$APP_FRAMEWORKS/$FRONTEND_DYLIB_NAME"
-chmod +x "$APP_BINARY"
+cp "$IMAGER_BINARY" "$IMAGER_HELPER"
+chmod +x "$APP_BINARY" "$IMAGER_HELPER"
 
 frontend_dependency="$(
   otool -L "$APP_BINARY" \
@@ -89,6 +93,7 @@ cat >"$INFO_PLIST" <<PLIST
 PLIST
 
 codesign --force --sign - "$APP_FRAMEWORKS/$FRONTEND_DYLIB_NAME" >/dev/null
+codesign --force --sign - "$IMAGER_HELPER" >/dev/null
 codesign --force --sign - "$APP_BINARY" >/dev/null
 codesign --force --sign - "$APP_BUNDLE" >/dev/null
 

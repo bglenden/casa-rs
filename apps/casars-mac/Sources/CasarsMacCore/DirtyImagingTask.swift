@@ -19,6 +19,23 @@ public enum DirtyImagingWeighting: String, CaseIterable, Codable, Equatable, Ide
     }
 }
 
+public enum DirtyImagingDimensionSeverity: String, Equatable {
+    case good
+    case warning
+    case terrible
+}
+
+public struct DirtyImagingDimensionAssessment: Equatable {
+    public var value: Int
+    public var severity: DirtyImagingDimensionSeverity
+    public var adjustedValue: Int
+    public var message: String
+
+    public var needsAdjustment: Bool {
+        adjustedValue != value
+    }
+}
+
 public struct DirtyImagingTaskParameters: Codable, Equatable {
     public var datasetID: String
     public var measurementSetPath: String
@@ -30,6 +47,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
     public var channelCount: String
     public var dataColumn: String
     public var imageSize: Int
+    public var imageHeight: Int
     public var cellArcsec: Double
     public var weighting: DirtyImagingWeighting
     public var dirtyOnly: Bool
@@ -46,6 +64,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
         channelCount: String = "",
         dataColumn: String,
         imageSize: Int = 512,
+        imageHeight: Int? = nil,
         cellArcsec: Double = 1.0,
         weighting: DirtyImagingWeighting = .natural,
         dirtyOnly: Bool = true,
@@ -61,6 +80,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
         self.channelCount = channelCount
         self.dataColumn = dataColumn
         self.imageSize = imageSize
+        self.imageHeight = imageHeight ?? imageSize
         self.cellArcsec = cellArcsec
         self.weighting = weighting
         self.dirtyOnly = dirtyOnly
@@ -75,7 +95,7 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
             "phasecenter=\(phaseCenterField ?? "auto")",
             "spw=\(selectedSpectralWindow ?? "all")",
             "data=\(dataColumn)",
-            "imsize=\(imageSize)",
+            "image=\(imageSize)x\(imageHeight) px",
             "cell=\(cellArcsec) arcsec",
             "weighting=\(weighting.rawValue)",
             "dirty-only=\(dirtyOnly)"
@@ -91,7 +111,13 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
             errors.append("Output image prefix is required.")
         }
         if imageSize <= 0 {
-            errors.append("Image size must be positive.")
+            errors.append("Image width must be positive.")
+        }
+        if imageHeight <= 0 {
+            errors.append("Image height must be positive.")
+        }
+        if imageSize != imageHeight {
+            errors.append("Rectangular image sizes are not supported by the current casars-imager backend yet.")
         }
         if !(cellArcsec.isFinite && cellArcsec > 0) {
             errors.append("Cell size must be a positive finite arcsecond value.")
@@ -104,6 +130,88 @@ public struct DirtyImagingTaskParameters: Codable, Equatable {
         }
         return errors
     }
+
+    public static func imageDimensionAssessment(_ value: Int) -> DirtyImagingDimensionAssessment {
+        guard value > 0 else {
+            return DirtyImagingDimensionAssessment(
+                value: value,
+                severity: .terrible,
+                adjustedValue: 512,
+                message: "must be positive"
+            )
+        }
+
+        let adjusted = nearestNiceImageDimension(to: value)
+        if isNiceImageDimension(value) {
+            return DirtyImagingDimensionAssessment(
+                value: value,
+                severity: .good,
+                adjustedValue: value,
+                message: "FFT-friendly"
+            )
+        }
+
+        let largestFactor = largestPrimeFactor(value)
+        let severity: DirtyImagingDimensionSeverity = largestFactor >= 127 ? .terrible : .warning
+        let message = severity == .terrible ? "large prime factor" : "awkward FFT factors"
+        return DirtyImagingDimensionAssessment(
+            value: value,
+            severity: severity,
+            adjustedValue: adjusted,
+            message: message
+        )
+    }
+
+    public static func nearestNiceImageDimension(to value: Int) -> Int {
+        guard value > 0 else { return 512 }
+        let clamped = min(max(value, 32), 8192)
+        if isNiceImageDimension(clamped) {
+            return clamped
+        }
+
+        for candidate in clamped...8192 {
+            if isNiceImageDimension(candidate) {
+                return candidate
+            }
+        }
+
+        for delta in 1...8192 {
+            let lower = clamped - delta
+            if lower >= 32, isNiceImageDimension(lower) {
+                return lower
+            }
+        }
+
+        return clamped
+    }
+}
+
+private func isNiceImageDimension(_ value: Int) -> Bool {
+    guard value > 0 else { return false }
+    var remainder = value
+    for factor in [2, 3, 5] {
+        while remainder % factor == 0 {
+            remainder /= factor
+        }
+    }
+    return remainder == 1
+}
+
+private func largestPrimeFactor(_ value: Int) -> Int {
+    var remaining = abs(value)
+    var largest = 1
+    var factor = 2
+    while factor * factor <= remaining {
+        while remaining % factor == 0 {
+            largest = factor
+            remaining /= factor
+        }
+        factor += factor == 2 ? 1 : 2
+    }
+    if remaining > 1 {
+        largest = remaining
+    }
+    return largest
 }
 
 public struct DirtyImagingTaskRequest: Codable, Equatable {
@@ -248,11 +356,31 @@ public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {
     private let queue: DispatchQueue
 
     public init(
-        executablePath: String? = ProcessInfo.processInfo.environment["CASARS_IMAGER_BIN"],
+        executablePath: String? = nil,
         queue: DispatchQueue = DispatchQueue(label: "casars.mac.dirty-imaging-task", qos: .userInitiated)
     ) {
-        self.executablePath = executablePath
+        self.executablePath = executablePath ?? Self.resolvedExecutablePath()
         self.queue = queue
+    }
+
+    static func resolvedExecutablePath(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        bundleExecutableURL: URL? = Bundle.main.executableURL,
+        isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> String? {
+        if let path = environment["CASARS_IMAGER_BIN"], !path.isEmpty {
+            return path
+        }
+
+        let bundledPath = bundleExecutableURL?
+            .deletingLastPathComponent()
+            .appendingPathComponent("casars-imager")
+            .path
+        if let bundledPath, isExecutable(bundledPath) {
+            return bundledPath
+        }
+
+        return nil
     }
 
     public func startDirtyImaging(

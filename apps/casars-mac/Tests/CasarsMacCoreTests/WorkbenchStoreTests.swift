@@ -280,6 +280,63 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(store.state.tabs.contains { $0.kind == .task })
     }
 
+    func testDirtyImagingTaskCanOpenWhenSelectedDatasetIsAnImage() {
+        let msDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            dataColumns: ["DATA"],
+            notes: "Recognized by Rust probe."
+        )
+        let imageDataset = DatasetSummary(
+            id: "/data/output.image",
+            name: "output.image",
+            path: "/data/output.image",
+            kind: .imageCube,
+            size: "256 x 256",
+            units: "float32",
+            shape: [256, 256],
+            notes: "Produced image."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Real Project",
+                        rootPath: "/data",
+                        datasets: [msDataset, imageDataset],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: "/data")
+        store.selectDataset(imageDataset.id)
+        store.openDefaultTab(kind: .task)
+
+        XCTAssertEqual(store.state.selectedDatasetID, imageDataset.id)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.datasetID, "")
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.measurementSetPath, "")
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.selectedField, nil)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.selectedSpectralWindow, nil)
+        XCTAssertEqual(store.state.tabs.first(where: { $0.kind == .task })?.title, "Dirty Image")
+        XCTAssertFalse(store.state.lastErrors.contains("Dataset output.image is not a MeasurementSet"))
+
+        store.setDirtyImagingDataset(msDataset.id)
+
+        XCTAssertEqual(store.state.selectedDatasetID, msDataset.id)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.datasetID, msDataset.id)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.measurementSetPath, msDataset.path)
+        XCTAssertEqual(store.state.tabs.first(where: { $0.kind == .task })?.title, "Dirty Image: probed.ms")
+    }
+
     func testRealDirtyImagingRunUsesTaskClientAndRecordsDebugHistory() throws {
         let probedDataset = DatasetSummary(
             id: "/data/probed.ms",
@@ -305,7 +362,20 @@ final class WorkbenchStoreTests: XCTestCase {
                     source: .probed
                 ),
                 diagnostics: []
-            )
+            ),
+            probedPaths: [
+                "/data/casa-rs-runs/output.image": DatasetSummary(
+                    id: "/data/casa-rs-runs/output.image",
+                    name: "output.image",
+                    path: "/data/casa-rs-runs/output.image",
+                    kind: .imageCube,
+                    size: "256 x 256",
+                    units: "float32",
+                    sizeBytes: 4096,
+                    shape: [256, 256],
+                    notes: "Recognized by opening the path as a casa-rs image."
+                )
+            ]
         )
         let taskClient = StubDirtyImagingTaskClient()
         let store = WorkbenchStore(probeClient: probeClient, dirtyImagingClient: taskClient)
@@ -313,6 +383,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openProject(path: "/data")
         store.openDefaultTab(kind: .task)
         store.setDirtyImagingImageSize(256)
+        store.setDirtyImagingImageHeight(256)
         store.setDirtyImagingCellArcsec(0.25)
         store.setDirtyImagingWeighting(.briggs)
         store.setDirtyImagingChannelStart("2")
@@ -332,11 +403,74 @@ final class WorkbenchStoreTests: XCTestCase {
         let snapshot = store.debugSnapshot()
         XCTAssertEqual(snapshot.taskState, .succeeded)
         XCTAssertEqual(snapshot.taskRequest?.imageSize, 256)
+        XCTAssertEqual(snapshot.taskRequest?.imageHeight, 256)
         XCTAssertEqual(snapshot.taskRequest?.cellArcsec, 0.25)
         XCTAssertTrue(snapshot.taskOutputPaths.contains("/data/casa-rs-runs/output.image"))
         XCTAssertTrue(snapshot.processingHistoryEvents.contains("Dirty imaging completed"))
-        XCTAssertTrue(store.state.project.datasets.contains { $0.path == "/data/casa-rs-runs/output.image" })
+        let producedDataset = store.state.project.datasets.first { $0.path == "/data/casa-rs-runs/output.image" }
+        XCTAssertEqual(producedDataset?.kind, .imageCube)
+        XCTAssertEqual(producedDataset?.size, "256 x 256")
+        XCTAssertEqual(producedDataset?.units, "float32")
+        XCTAssertEqual(producedDataset?.shape, [256, 256])
         XCTAssertNoThrow(try store.debugJSON())
+    }
+
+    func testDirtyImagingTaskInputMeasurementSetCanBeChangedInsideTaskTab() {
+        let first = DatasetSummary(
+            id: "/data/first.ms",
+            name: "first.ms",
+            path: "/data/first.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: First"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            dataColumns: ["DATA"],
+            notes: "First MS."
+        )
+        let second = DatasetSummary(
+            id: "/data/second.ms",
+            name: "second.ms",
+            path: "/data/second.ms",
+            kind: .measurementSet,
+            size: "24 rows, 1 fields, 2 spw, 3 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["1: Second"],
+            spectralWindows: ["spw 1: 8 chan, 1.500000 GHz center"],
+            dataColumns: ["CORRECTED_DATA"],
+            notes: "Second MS."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Real Project",
+                        rootPath: "/data",
+                        datasets: [first, second],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .task)
+        store.setDirtyImagingImageSize(1024)
+        store.setDirtyImagingImageHeight(768)
+        store.setDirtyImagingCellArcsec(0.5)
+        store.setDirtyImagingDataset(second.id)
+
+        XCTAssertEqual(store.state.selectedDatasetID, second.id)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.datasetID, second.id)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.measurementSetPath, second.path)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.selectedField, "1: Second")
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.selectedSpectralWindow, "spw 1: 8 chan, 1.500000 GHz center")
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.dataColumn, "CORRECTED_DATA")
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.imageSize, 1024)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.imageHeight, 768)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.cellArcsec, 0.5)
+        XCTAssertEqual(store.state.tabs.first(where: { $0.kind == .task })?.title, "Dirty Image: second.ms")
     }
 
     func testDirtyImagingValidationFailuresAreDebugVisible() {
@@ -368,13 +502,99 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openProject(path: "/data")
         store.openDefaultTab(kind: .task)
         store.setDirtyImagingImageSize(0)
+        store.setDirtyImagingImageHeight(128)
         store.setDirtyImagingCellArcsec(-1)
         store.runTask()
 
         XCTAssertEqual(taskClient.requests.count, 0)
         XCTAssertEqual(store.debugSnapshot().taskState, .failed)
-        XCTAssertTrue(store.debugSnapshot().taskDiagnostics.contains("Image size must be positive."))
+        XCTAssertTrue(store.debugSnapshot().taskDiagnostics.contains("Image width must be positive."))
         XCTAssertTrue(store.debugSnapshot().taskDiagnostics.contains("Cell size must be a positive finite arcsecond value."))
+    }
+
+    func testDirtyImagingRectangularImageSizeIsVisibleButNotRunnableYet() {
+        let probedDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            notes: "Recognized by Rust probe."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Real Project",
+                        rootPath: "/data",
+                        datasets: [probedDataset],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            ),
+            dirtyImagingClient: StubDirtyImagingTaskClient()
+        )
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .task)
+        store.setDirtyImagingImageSize(512)
+        store.setDirtyImagingImageHeight(256)
+        store.runTask()
+
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.imageSize, 512)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.imageHeight, 256)
+        XCTAssertEqual(store.debugSnapshot().taskState, .failed)
+        XCTAssertTrue(store.debugSnapshot().taskDiagnostics.contains("Rectangular image sizes are not supported by the current casars-imager backend yet."))
+    }
+
+    func testDirtyImagingImageSizeAssessmentAndAdjustmentPreferFftFriendlyValues() {
+        XCTAssertEqual(DirtyImagingTaskParameters.imageDimensionAssessment(512).severity, .good)
+        XCTAssertEqual(DirtyImagingTaskParameters.imageDimensionAssessment(1000).severity, .good)
+        XCTAssertEqual(DirtyImagingTaskParameters.imageDimensionAssessment(511).severity, .warning)
+        XCTAssertEqual(DirtyImagingTaskParameters.imageDimensionAssessment(257).severity, .terrible)
+        XCTAssertEqual(DirtyImagingTaskParameters.nearestNiceImageDimension(to: 257), 270)
+        XCTAssertEqual(DirtyImagingTaskParameters.nearestNiceImageDimension(to: 511), 512)
+        XCTAssertEqual(DirtyImagingTaskParameters.nearestNiceImageDimension(to: 513), 540)
+        XCTAssertEqual(DirtyImagingTaskParameters.nearestNiceImageDimension(to: 8191), 8192)
+
+        let probedDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            notes: "Recognized by Rust probe."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Real Project",
+                        rootPath: "/data",
+                        datasets: [probedDataset],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: "/data")
+        store.openDefaultTab(kind: .task)
+        store.setDirtyImagingImageSize(257)
+        store.setDirtyImagingImageHeight(511)
+        store.adjustDirtyImagingImageWidthToNiceSize()
+        store.adjustDirtyImagingImageHeightToNiceSize()
+
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.imageSize, 270)
+        XCTAssertEqual(store.state.dirtyImagingTaskParameters?.imageHeight, 512)
     }
 
     func testRealMeasurementSetPlotRunUsesPlotClientAndDebugState() {
@@ -483,13 +703,46 @@ final class WorkbenchStoreTests: XCTestCase {
 
         XCTAssertNotEqual(first.imageCacheID, second.imageCacheID)
     }
+
+    func testDirtyImagingClientFindsBundledImagerHelperAfterEnvironmentOverride() {
+        let bundleExecutable = URL(fileURLWithPath: "/Applications/casars-mac.app/Contents/MacOS/casars-mac")
+
+        XCTAssertEqual(
+            ProcessDirtyImagingTaskClient.resolvedExecutablePath(
+                environment: ["CASARS_IMAGER_BIN": "/custom/casars-imager"],
+                bundleExecutableURL: bundleExecutable,
+                isExecutable: { _ in true }
+            ),
+            "/custom/casars-imager"
+        )
+        XCTAssertEqual(
+            ProcessDirtyImagingTaskClient.resolvedExecutablePath(
+                environment: [:],
+                bundleExecutableURL: bundleExecutable,
+                isExecutable: { $0 == "/Applications/casars-mac.app/Contents/MacOS/casars-imager" }
+            ),
+            "/Applications/casars-mac.app/Contents/MacOS/casars-imager"
+        )
+        XCTAssertNil(
+            ProcessDirtyImagingTaskClient.resolvedExecutablePath(
+                environment: [:],
+                bundleExecutableURL: bundleExecutable,
+                isExecutable: { _ in false }
+            )
+        )
+    }
 }
 
 private struct StubProjectProbeClient: ProjectProbeClient {
     var result: ProjectFixtureProbe
+    var probedPaths: [String: DatasetSummary] = [:]
 
     func probeProject(path: String) throws -> ProjectFixtureProbe {
         result
+    }
+
+    func probePath(path: String) throws -> DatasetSummary? {
+        probedPaths[path]
     }
 }
 

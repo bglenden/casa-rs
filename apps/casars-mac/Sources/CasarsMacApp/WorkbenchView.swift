@@ -456,36 +456,7 @@ struct InspectorView: View {
 
                 Divider()
 
-                compactSection(
-                    title: "Fields",
-                    count: dataset.fields.count,
-                    values: dataset.fields,
-                    isExpanded: $showFields
-                )
-                compactSection(
-                    title: "SPWs",
-                    count: dataset.spectralWindows.count,
-                    values: dataset.spectralWindows,
-                    isExpanded: $showSpectralWindows
-                )
-                compactSection(
-                    title: "Antennas",
-                    count: dataset.antennas.count,
-                    values: dataset.antennas,
-                    isExpanded: $showAntennas
-                )
-                InfoRow(label: "Correlations", value: compactList(dataset.correlations))
-                InfoRow(label: "Data", value: compactList(dataset.dataColumns))
-
-                DisclosureGroup("Columns (\(dataset.columns.count))", isExpanded: $showColumns) {
-                    valueList(dataset.columns)
-                }
-                .workbenchFont(.caption)
-
-                DisclosureGroup("Subtables (\(dataset.subtables.count))", isExpanded: $showSubtables) {
-                    valueList(dataset.subtables)
-                }
-                .workbenchFont(.caption)
+                inspectorDetails(for: dataset)
 
                 Divider()
 
@@ -517,6 +488,70 @@ struct InspectorView: View {
         case .none: "No project"
         case .fixture: "Demo metadata"
         case .probed: "Real probe metadata"
+        }
+    }
+
+    @ViewBuilder
+    private func inspectorDetails(for dataset: DatasetSummary) -> some View {
+        switch dataset.kind {
+        case .measurementSet:
+            compactSection(
+                title: "Fields",
+                count: dataset.fields.count,
+                values: dataset.fields,
+                isExpanded: $showFields
+            )
+            compactSection(
+                title: "SPWs",
+                count: dataset.spectralWindows.count,
+                values: dataset.spectralWindows,
+                isExpanded: $showSpectralWindows
+            )
+            compactSection(
+                title: "Antennas",
+                count: dataset.antennas.count,
+                values: dataset.antennas,
+                isExpanded: $showAntennas
+            )
+            InfoRow(label: "Correlations", value: compactList(dataset.correlations))
+            InfoRow(label: "Data", value: compactList(dataset.dataColumns))
+
+            DisclosureGroup("Columns (\(dataset.columns.count))", isExpanded: $showColumns) {
+                valueList(dataset.columns)
+            }
+            .workbenchFont(.caption)
+
+            DisclosureGroup("Subtables (\(dataset.subtables.count))", isExpanded: $showSubtables) {
+                valueList(dataset.subtables)
+            }
+            .workbenchFont(.caption)
+
+        case .imageCube:
+            InfoRow(label: "Shape", value: formatShape(dataset.shape))
+            InfoRow(label: "Pixel type", value: dataset.units)
+            if !dataset.diagnostics.isEmpty {
+                DisclosureGroup("Image details (\(dataset.diagnostics.count))", isExpanded: $showColumns) {
+                    valueList(dataset.diagnostics)
+                }
+                .workbenchFont(.caption)
+            }
+
+        case .calibrationTable, .table, .runProduct:
+            if !dataset.shape.isEmpty {
+                InfoRow(label: "Shape", value: formatShape(dataset.shape))
+            }
+            if !dataset.columns.isEmpty {
+                DisclosureGroup("Columns (\(dataset.columns.count))", isExpanded: $showColumns) {
+                    valueList(dataset.columns)
+                }
+                .workbenchFont(.caption)
+            }
+            if !dataset.subtables.isEmpty {
+                DisclosureGroup("Subtables (\(dataset.subtables.count))", isExpanded: $showSubtables) {
+                    valueList(dataset.subtables)
+                }
+                .workbenchFont(.caption)
+            }
         }
     }
 
@@ -596,4 +631,8 @@ struct InfoRow: View {
 
 private func byteCount(_ bytes: UInt64) -> String {
     ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+}
+
+private func formatShape(_ shape: [UInt64]) -> String {
+    shape.isEmpty ? "Unknown" : shape.map(String.init).joined(separator: " x ")
 }
