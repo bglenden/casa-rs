@@ -147,30 +147,65 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.workbenchPlots.map(\.id), [
             "sample-plotms-visibility",
             "sample-uv-coverage",
+            "sample-million-point-pixels",
             "sample-image-display"
         ])
         XCTAssertEqual(snapshot.workbenchPlots[0].layerCount, 3)
         XCTAssertGreaterThan(snapshot.workbenchPlots[0].pointCount, 250)
-        XCTAssertGreaterThan(snapshot.workbenchPlots[0].sourceSampleCount, UInt64(snapshot.workbenchPlots[0].displaySampleCount))
         XCTAssertEqual(snapshot.workbenchPlots[0].boundedLayerCount, 3)
-        XCTAssertTrue(snapshot.workbenchPlots[0].payloadStrategies.contains("viewportLevelOfDetail"))
-        XCTAssertEqual(snapshot.workbenchPlots[2].rasterLayerCount, 1)
-        XCTAssertEqual(snapshot.workbenchPlots[2].payloadStrategies, ["rasterOverview"])
-        XCTAssertFalse(snapshot.workbenchPlots[2].dataFingerprint.isEmpty)
+        XCTAssertEqual(snapshot.workbenchPlots[0].payloadStrategies, [
+            "inlineDisplayPoints",
+            "inlineDisplayPoints",
+            "inlineDisplayPoints"
+        ])
+        XCTAssertEqual(snapshot.workbenchPlots[2].pointCloudCount, 2_000_000)
+        XCTAssertEqual(snapshot.workbenchPlots[2].pointRasterLayerCount, 1)
+        XCTAssertEqual(snapshot.workbenchPlots[2].sourceSampleCount, 2_000_000)
+        XCTAssertLessThan(snapshot.workbenchPlots[2].displaySampleCount, snapshot.workbenchPlots[2].pointCloudCount)
+        XCTAssertEqual(snapshot.workbenchPlots[2].payloadStrategies, ["singlePixelPointRaster"])
+        XCTAssertEqual(snapshot.workbenchPlots[3].rasterLayerCount, 1)
+        XCTAssertEqual(snapshot.workbenchPlots[3].payloadStrategies, ["rasterOverview"])
+        XCTAssertFalse(snapshot.workbenchPlots[3].dataFingerprint.isEmpty)
         XCTAssertNoThrow(try store.debugJSON())
     }
 
-    func testWorkbenchPlotLargeSourceProfilesStayBoundedForRendering() throws {
-        let store = WorkbenchStore.fixture()
-        let plot = try XCTUnwrap(store.state.plotDocuments.first { $0.id == "sample-uv-coverage" })
+    func testWorkbenchPlotPointRasterBinsPointCloudToPixels() throws {
+        let pointCloud = WorkbenchPlotPointCloud(
+            xValues: [0.1, 0.9, 1.2, 2.0, 3.0],
+            yValues: [0.1, 0.8, 1.4, 2.0, 1.0]
+        )
+        let pointRaster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: WorkbenchPlotRange(lower: 0, upper: 2),
+            yRange: WorkbenchPlotRange(lower: 0, upper: 2),
+            width: 2,
+            height: 2
+        )
 
-        XCTAssertGreaterThan(plot.layers.reduce(0) { $0 + $1.dataProfile.sourceSampleCount }, 10_000_000)
-        for layer in plot.layers {
-            XCTAssertEqual(layer.dataProfile.strategy, .viewportLevelOfDetail)
-            XCTAssertLessThanOrEqual(layer.dataProfile.displaySampleCount, layer.dataProfile.pointBudget)
-            XCTAssertEqual(layer.dataProfile.displaySampleCount, layer.points.count)
-            XCTAssertTrue(layer.dataProfile.isDisplayPayloadBounded)
-        }
+        XCTAssertEqual(pointRaster.totalCount, 4)
+        XCTAssertEqual(pointRaster.occupiedPixelCount, 2)
+        XCTAssertEqual(pointRaster.maxCount, 2)
+        XCTAssertEqual(pointRaster.countAt(x: 0, y: 0), 2)
+        XCTAssertEqual(pointRaster.countAt(x: 1, y: 1), 2)
+        XCTAssertEqual(pointRaster.countAt(x: 2, y: 0), 0)
+    }
+
+    func testWorkbenchPlotMillionPointCloudRendersAsPointRaster() throws {
+        let plot = WorkbenchPlotSamples.millionPointPixels()
+        let layer = try XCTUnwrap(plot.layers.first)
+        let pointCloud = try XCTUnwrap(layer.pointCloud)
+        let pointRaster = try XCTUnwrap(layer.pointRaster)
+
+        XCTAssertEqual(layer.points.count, 0)
+        XCTAssertEqual(pointCloud.count, 2_000_000)
+        XCTAssertEqual(pointRaster.totalCount, 2_000_000)
+        XCTAssertGreaterThan(pointRaster.occupiedPixelCount, 20_000)
+        XCTAssertLessThan(pointRaster.occupiedPixelCount, pointCloud.count)
+        XCTAssertEqual(layer.dataProfile.strategy, .singlePixelPointRaster)
+        XCTAssertEqual(layer.dataProfile.sourceSampleCount, UInt64(pointCloud.count))
+        XCTAssertEqual(layer.dataProfile.displaySampleCount, pointRaster.occupiedPixelCount)
+        XCTAssertLessThanOrEqual(layer.dataProfile.displaySampleCount, layer.dataProfile.pointBudget)
+        XCTAssertTrue(layer.dataProfile.isDisplayPayloadBounded)
     }
 
     func testWorkbenchPlotDisplayEditsDoNotRegeneratePayload() throws {

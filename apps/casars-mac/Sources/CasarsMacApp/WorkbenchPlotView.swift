@@ -1,4 +1,5 @@
 import CasarsMacCore
+import CoreGraphics
 import SwiftUI
 
 struct PlotSamplesPanel: View {
@@ -151,6 +152,16 @@ private struct PlotSampleCard: View {
     }
 
     private var sampleCountSummary: String {
+        let rasterPixels = plot.layers.reduce(0) { total, layer in
+            total + (layer.pointRaster?.occupiedPixelCount ?? 0)
+        }
+        let pointClouds = plot.layers.reduce(0) { total, layer in
+            total + (layer.pointCloud?.count ?? 0)
+        }
+        if pointClouds > 0, rasterPixels > 0 {
+            return "\(formattedCount(pointClouds)) points, \(formattedCount(rasterPixels)) occupied pixels"
+        }
+
         let display = plot.layers.reduce(0) { total, layer in total + layer.dataProfile.displaySampleCount }
         let source = plot.layers.reduce(UInt64(0)) { total, layer in total + layer.dataProfile.sourceSampleCount }
         if source > UInt64(display) {
@@ -203,6 +214,7 @@ private struct SliderRow: View {
 
 struct WorkbenchPlotView: View {
     let plot: WorkbenchPlotDocument
+    @StateObject private var pointRasterCache = WorkbenchPointRasterCache()
 
     var body: some View {
         Canvas { context, size in
@@ -284,6 +296,10 @@ struct WorkbenchPlotView: View {
         for layer in plot.layers where layer.style.visible {
             switch layer.kind {
             case .scatter:
+                if let pointRaster = pointRaster(for: layer, plotRect: plotRect) {
+                    drawPointRaster(pointRaster, layer: layer, in: &context, plotRect: plotRect)
+                    continue
+                }
                 let color = color(hex: layer.style.colorHex).opacity(layer.style.opacity)
                 for point in renderPoints(for: layer) {
                     guard let position = screenPoint(point, plotRect: plotRect) else { continue }
@@ -315,6 +331,21 @@ struct WorkbenchPlotView: View {
                 continue
             }
         }
+    }
+
+    private func drawPointRaster(
+        _ pointRaster: WorkbenchPlotPointRaster,
+        layer: WorkbenchPlotLayer,
+        in context: inout GraphicsContext,
+        plotRect: CGRect
+    ) {
+        guard let image = pointRasterImage(pointRaster, layer: layer) else {
+            return
+        }
+        context.draw(
+            Image(decorative: image, scale: 1, orientation: .up),
+            in: plotRect
+        )
     }
 
     private func drawAnnotations(in context: inout GraphicsContext, plotRect: CGRect) {
@@ -390,6 +421,9 @@ struct WorkbenchPlotView: View {
 
     private func renderPoints(for layer: WorkbenchPlotLayer) -> [WorkbenchPlotPoint] {
         let pointLimit = max(1, min(layer.dataProfile.pointBudget, 50_000))
+        if layer.points.isEmpty, let pointCloud = layer.pointCloud {
+            return pointCloud.sampledPoints(limit: pointLimit)
+        }
         guard layer.points.count > pointLimit else {
             return layer.points
         }
@@ -400,6 +434,100 @@ struct WorkbenchPlotView: View {
         return (0..<pointLimit).map { index in
             layer.points[Int((Double(index) * step).rounded())]
         }
+    }
+
+    private func pointRaster(for layer: WorkbenchPlotLayer, plotRect: CGRect) -> WorkbenchPlotPointRaster? {
+        let rasterSize = pointRasterSize(for: plotRect)
+        if
+            let pointRaster = layer.pointRaster,
+            pointRaster.width == rasterSize.width,
+            pointRaster.height == rasterSize.height,
+            pointRaster.xRange == xAxis?.range,
+            pointRaster.yRange == yAxis?.range
+        {
+            return pointRaster
+        }
+        guard
+            let pointCloud = layer.pointCloud,
+            pointCloud.count > layer.dataProfile.pointBudget,
+            let xAxis,
+            let yAxis
+        else {
+            return nil
+        }
+        return pointRaster(
+            from: pointCloud,
+            layer: layer,
+            xAxis: xAxis,
+            yAxis: yAxis,
+            size: rasterSize
+        )
+    }
+
+    private func pointRaster(
+        from pointCloud: WorkbenchPlotPointCloud,
+        layer: WorkbenchPlotLayer,
+        xAxis: WorkbenchPlotAxis,
+        yAxis: WorkbenchPlotAxis,
+        size: (width: Int, height: Int)
+    ) -> WorkbenchPlotPointRaster {
+        pointRasterCache.raster(
+            plotFingerprint: plot.dataFingerprint,
+            layerID: layer.id,
+            pointCloud: pointCloud,
+            xRange: xAxis.range,
+            yRange: yAxis.range,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    private func pointRasterSize(for plotRect: CGRect) -> (width: Int, height: Int) {
+        (
+            width: max(64, min(2_048, Int(plotRect.width.rounded(.up)))),
+            height: max(64, min(2_048, Int(plotRect.height.rounded(.up))))
+        )
+    }
+
+    private func pointRasterImage(_ pointRaster: WorkbenchPlotPointRaster, layer: WorkbenchPlotLayer) -> CGImage? {
+        guard pointRaster.maxCount > 0, pointRaster.width > 0, pointRaster.height > 0 else { return nil }
+        let components = rgbaComponents(hex: layer.style.colorHex, opacity: layer.style.opacity)
+        let bytesPerPixel = 4
+        let bytesPerRow = pointRaster.width * bytesPerPixel
+        var pixels = Array(repeating: UInt8(0), count: pointRaster.height * bytesPerRow)
+
+        for y in 0..<pointRaster.height {
+            let outputY = pointRaster.height - 1 - y
+            for x in 0..<pointRaster.width {
+                guard pointRaster.countAt(x: x, y: y) > 0 else { continue }
+                let offset = outputY * bytesPerRow + x * bytesPerPixel
+                pixels[offset] = components.red
+                pixels[offset + 1] = components.green
+                pixels[offset + 2] = components.blue
+                pixels[offset + 3] = components.alpha
+            }
+        }
+
+        let data = Data(pixels)
+        guard
+            let provider = CGDataProvider(data: data as CFData),
+            let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+        else {
+            return nil
+        }
+        return CGImage(
+            width: pointRaster.width,
+            height: pointRaster.height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        )
     }
 
     private func axisLabel(_ axis: WorkbenchPlotAxis) -> String {
@@ -447,14 +575,81 @@ struct WorkbenchPlotView: View {
     }
 
     private func color(hex: String) -> Color {
+        let components = rgbComponents(hex: hex)
+        return Color(red: components.red, green: components.green, blue: components.blue)
+    }
+
+    private func rgbaComponents(hex: String, opacity: Double) -> (red: UInt8, green: UInt8, blue: UInt8, alpha: UInt8) {
+        let components = rgbComponents(hex: hex)
+        let alpha = min(1, max(0, opacity))
+        return (
+            red: UInt8((components.red * alpha * 255).rounded()),
+            green: UInt8((components.green * alpha * 255).rounded()),
+            blue: UInt8((components.blue * alpha * 255).rounded()),
+            alpha: UInt8((alpha * 255).rounded())
+        )
+    }
+
+    private func rgbComponents(hex: String) -> (red: Double, green: Double, blue: Double) {
         let trimmed = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
         guard trimmed.count == 6, let value = UInt64(trimmed, radix: 16) else {
-            return .accentColor
+            return (0, 0.48, 1)
         }
-        return Color(
+        return (
             red: Double((value >> 16) & 0xff) / 255,
             green: Double((value >> 8) & 0xff) / 255,
             blue: Double(value & 0xff) / 255
         )
+    }
+}
+
+private final class WorkbenchPointRasterCache: ObservableObject {
+    private struct Key: Hashable {
+        var plotFingerprint: String
+        var layerID: String
+        var width: Int
+        var height: Int
+        var xLower: UInt64
+        var xUpper: UInt64
+        var yLower: UInt64
+        var yUpper: UInt64
+    }
+
+    private var rasters: [Key: WorkbenchPlotPointRaster] = [:]
+
+    func raster(
+        plotFingerprint: String,
+        layerID: String,
+        pointCloud: WorkbenchPlotPointCloud,
+        xRange: WorkbenchPlotRange,
+        yRange: WorkbenchPlotRange,
+        width: Int,
+        height: Int
+    ) -> WorkbenchPlotPointRaster {
+        let key = Key(
+            plotFingerprint: plotFingerprint,
+            layerID: layerID,
+            width: width,
+            height: height,
+            xLower: xRange.lower.bitPattern,
+            xUpper: xRange.upper.bitPattern,
+            yLower: yRange.lower.bitPattern,
+            yUpper: yRange.upper.bitPattern
+        )
+        if let cached = rasters[key] {
+            return cached
+        }
+        let raster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: xRange,
+            yRange: yRange,
+            width: width,
+            height: height
+        )
+        if rasters.count >= 8 {
+            rasters.removeAll(keepingCapacity: true)
+        }
+        rasters[key] = raster
+        return raster
     }
 }

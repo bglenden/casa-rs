@@ -9,6 +9,7 @@ public enum WorkbenchPlotLayerKind: String, Codable, Equatable {
 public enum WorkbenchPlotPayloadStrategy: String, Codable, Equatable {
     case inlineDisplayPoints
     case viewportLevelOfDetail
+    case singlePixelPointRaster
     case densityGrid
     case rasterOverview
 }
@@ -133,6 +134,156 @@ public struct WorkbenchPlotPoint: Codable, Equatable {
     }
 }
 
+public struct WorkbenchPlotPointCloud: Codable, Equatable {
+    public var xValues: [Double]
+    public var yValues: [Double]
+    public var provenanceSamples: [WorkbenchPlotPointProvenance]
+
+    public init(
+        xValues: [Double],
+        yValues: [Double],
+        provenanceSamples: [WorkbenchPlotPointProvenance] = []
+    ) {
+        self.xValues = xValues
+        self.yValues = yValues
+        self.provenanceSamples = provenanceSamples
+    }
+
+    public var count: Int {
+        min(xValues.count, yValues.count)
+    }
+
+    public var firstPoint: WorkbenchPlotPoint? {
+        guard count > 0 else { return nil }
+        return WorkbenchPlotPoint(x: xValues[0], y: yValues[0], provenance: provenanceSamples.first)
+    }
+
+    public var lastPoint: WorkbenchPlotPoint? {
+        guard count > 0 else { return nil }
+        return WorkbenchPlotPoint(x: xValues[count - 1], y: yValues[count - 1], provenance: provenanceSamples.last)
+    }
+
+    public func sampledPoints(limit: Int) -> [WorkbenchPlotPoint] {
+        let boundedLimit = max(0, limit)
+        guard count > 0, boundedLimit > 0 else { return [] }
+        guard count > boundedLimit else {
+            return (0..<count).map { index in
+                WorkbenchPlotPoint(x: xValues[index], y: yValues[index])
+            }
+        }
+        guard boundedLimit > 1 else {
+            return [WorkbenchPlotPoint(x: xValues[0], y: yValues[0])]
+        }
+        let step = Double(count - 1) / Double(boundedLimit - 1)
+        return (0..<boundedLimit).map { outputIndex in
+            let sourceIndex = Int((Double(outputIndex) * step).rounded())
+            return WorkbenchPlotPoint(x: xValues[sourceIndex], y: yValues[sourceIndex])
+        }
+    }
+}
+
+public struct WorkbenchPlotPointRaster: Codable, Equatable {
+    public var width: Int
+    public var height: Int
+    public var counts: [UInt32]
+    public var maxCount: UInt32
+    public var totalCount: UInt64
+    public var xRange: WorkbenchPlotRange
+    public var yRange: WorkbenchPlotRange
+
+    public init(
+        width: Int,
+        height: Int,
+        counts: [UInt32],
+        totalCount: UInt64? = nil,
+        xRange: WorkbenchPlotRange,
+        yRange: WorkbenchPlotRange
+    ) {
+        let boundedWidth = max(1, width)
+        let boundedHeight = max(1, height)
+        let expectedCount = boundedWidth * boundedHeight
+        let boundedCounts: [UInt32]
+        if counts.count == expectedCount {
+            boundedCounts = counts
+        } else if counts.count > expectedCount {
+            boundedCounts = Array(counts.prefix(expectedCount))
+        } else {
+            boundedCounts = counts + Array(repeating: 0, count: expectedCount - counts.count)
+        }
+        self.width = boundedWidth
+        self.height = boundedHeight
+        self.counts = boundedCounts
+        self.maxCount = boundedCounts.max() ?? 0
+        self.totalCount = totalCount ?? boundedCounts.reduce(UInt64(0)) { total, count in
+            total + UInt64(count)
+        }
+        self.xRange = xRange
+        self.yRange = yRange
+    }
+
+    public var nonEmptyBinCount: Int {
+        counts.reduce(0) { total, count in total + (count > 0 ? 1 : 0) }
+    }
+
+    public var occupiedPixelCount: Int {
+        nonEmptyBinCount
+    }
+
+    public func countAt(x: Int, y: Int) -> UInt32 {
+        guard x >= 0, x < width, y >= 0, y < height else { return 0 }
+        return counts[y * width + x]
+    }
+
+    public static func build(
+        from pointCloud: WorkbenchPlotPointCloud,
+        xRange: WorkbenchPlotRange,
+        yRange: WorkbenchPlotRange,
+        width: Int,
+        height: Int
+    ) -> WorkbenchPlotPointRaster {
+        let boundedWidth = max(1, width)
+        let boundedHeight = max(1, height)
+        guard xRange.span > 0, yRange.span > 0 else {
+            return WorkbenchPlotPointRaster(
+                width: boundedWidth,
+                height: boundedHeight,
+                counts: [],
+                totalCount: 0,
+                xRange: xRange,
+                yRange: yRange
+            )
+        }
+
+        var counts = Array(repeating: UInt32(0), count: boundedWidth * boundedHeight)
+        var totalCount: UInt64 = 0
+        for index in 0..<pointCloud.count {
+            let x = pointCloud.xValues[index]
+            let y = pointCloud.yValues[index]
+            guard x.isFinite, y.isFinite else { continue }
+            guard x >= xRange.lower, x <= xRange.upper, y >= yRange.lower, y <= yRange.upper else { continue }
+
+            let xFraction = (x - xRange.lower) / xRange.span
+            let yFraction = (y - yRange.lower) / yRange.span
+            let xBin = min(boundedWidth - 1, max(0, Int((xFraction * Double(boundedWidth)).rounded(.down))))
+            let yBin = min(boundedHeight - 1, max(0, Int((yFraction * Double(boundedHeight)).rounded(.down))))
+            let binIndex = yBin * boundedWidth + xBin
+            if counts[binIndex] < UInt32.max {
+                counts[binIndex] += 1
+            }
+            totalCount += 1
+        }
+
+        return WorkbenchPlotPointRaster(
+            width: boundedWidth,
+            height: boundedHeight,
+            counts: counts,
+            totalCount: totalCount,
+            xRange: xRange,
+            yRange: yRange
+        )
+    }
+}
+
 public struct WorkbenchPlotLayerStyle: Codable, Equatable {
     public var colorHex: String
     public var symbolSize: Double
@@ -196,6 +347,8 @@ public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
     public var xAxisID: String
     public var yAxisID: String
     public var points: [WorkbenchPlotPoint]
+    public var pointCloud: WorkbenchPlotPointCloud?
+    public var pointRaster: WorkbenchPlotPointRaster?
     public var raster: WorkbenchPlotRaster?
     public var style: WorkbenchPlotLayerStyle
     public var provenanceSummary: String
@@ -208,6 +361,8 @@ public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
         xAxisID: String,
         yAxisID: String,
         points: [WorkbenchPlotPoint] = [],
+        pointCloud: WorkbenchPlotPointCloud? = nil,
+        pointRaster: WorkbenchPlotPointRaster? = nil,
         raster: WorkbenchPlotRaster? = nil,
         style: WorkbenchPlotLayerStyle,
         provenanceSummary: String,
@@ -219,14 +374,23 @@ public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
         self.xAxisID = xAxisID
         self.yAxisID = yAxisID
         self.points = points
+        self.pointCloud = pointCloud
+        self.pointRaster = pointRaster
         self.raster = raster
         self.style = style
         self.provenanceSummary = provenanceSummary
+        let defaultSourceCount = max(
+            points.count,
+            pointCloud?.count ?? 0,
+            Int(min(UInt64(Int.max), pointRaster?.totalCount ?? 0)),
+            raster?.values.count ?? 0
+        )
+        let defaultDisplayCount = pointRaster?.occupiedPixelCount ?? max(points.count, raster?.values.count ?? 0)
         self.dataProfile = dataProfile ?? WorkbenchPlotLayerDataProfile(
-            sourceSampleCount: UInt64(max(points.count, raster?.values.count ?? 0)),
-            displaySampleCount: max(points.count, raster?.values.count ?? 0),
-            pointBudget: kind == .line ? 100_000 : 50_000,
-            strategy: kind == .raster ? .rasterOverview : .inlineDisplayPoints,
+            sourceSampleCount: UInt64(defaultSourceCount),
+            displaySampleCount: defaultDisplayCount,
+            pointBudget: pointRaster.map { $0.width * $0.height } ?? (kind == .line ? 100_000 : 50_000),
+            strategy: kind == .raster ? .rasterOverview : (pointRaster == nil ? .inlineDisplayPoints : .singlePixelPointRaster),
             sourceDescription: provenanceSummary
         )
     }
@@ -295,7 +459,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
                 .joined(separator: ",")
         ]
         for layer in layers {
-            parts.append("\(layer.id):\(layer.kind.rawValue):\(layer.points.count)")
+            parts.append("\(layer.id):\(layer.kind.rawValue):\(layer.points.count):\(layer.pointCloud?.count ?? 0)")
             parts.append(
                 "profile:\(layer.dataProfile.sourceSampleCount):\(layer.dataProfile.displaySampleCount):\(layer.dataProfile.strategy.rawValue)"
             )
@@ -304,6 +468,17 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
             }
             if let last = layer.points.last {
                 parts.append("last:\(last.x.bitPattern):\(last.y.bitPattern)")
+            }
+            if let first = layer.pointCloud?.firstPoint {
+                parts.append("cloud-first:\(first.x.bitPattern):\(first.y.bitPattern)")
+            }
+            if let last = layer.pointCloud?.lastPoint {
+                parts.append("cloud-last:\(last.x.bitPattern):\(last.y.bitPattern)")
+            }
+            if let pointRaster = layer.pointRaster {
+                parts.append(
+                    "point-raster:\(pointRaster.width)x\(pointRaster.height):\(pointRaster.totalCount):\(pointRaster.occupiedPixelCount):\(pointRaster.maxCount)"
+                )
             }
             if let raster = layer.raster {
                 parts.append(
@@ -370,11 +545,13 @@ public struct DebugWorkbenchPlotSnapshot: Codable, Equatable {
     public var title: String
     public var layerCount: Int
     public var pointCount: Int
+    public var pointCloudCount: Int
     public var sourceSampleCount: UInt64
     public var displaySampleCount: Int
     public var boundedLayerCount: Int
     public var payloadStrategies: [String]
     public var rasterLayerCount: Int
+    public var pointRasterLayerCount: Int
     public var annotationCount: Int
     public var styleRevision: UInt64
     public var dataFingerprint: String
@@ -384,11 +561,13 @@ public struct DebugWorkbenchPlotSnapshot: Codable, Equatable {
         title = plot.title
         layerCount = plot.layers.count
         pointCount = plot.layers.reduce(0) { total, layer in total + layer.points.count }
+        pointCloudCount = plot.layers.reduce(0) { total, layer in total + (layer.pointCloud?.count ?? 0) }
         sourceSampleCount = plot.layers.reduce(0) { total, layer in total + layer.dataProfile.sourceSampleCount }
         displaySampleCount = plot.layers.reduce(0) { total, layer in total + layer.dataProfile.displaySampleCount }
         boundedLayerCount = plot.layers.filter(\.dataProfile.isDisplayPayloadBounded).count
         payloadStrategies = plot.layers.map(\.dataProfile.strategy.rawValue)
         rasterLayerCount = plot.layers.filter { $0.kind == .raster }.count
+        pointRasterLayerCount = plot.layers.filter { $0.pointRaster != nil }.count
         annotationCount = plot.annotations.count
         styleRevision = plot.styleRevision
         dataFingerprint = plot.dataFingerprint
@@ -400,9 +579,12 @@ public enum WorkbenchPlotSamples {
         [
             plotmsLikeVisibility(),
             uvCoverage(),
+            millionPointPixels(),
             imageDisplay()
         ]
     }
+
+    private static let cachedMillionPointPixels = makeMillionPointPixels()
 
     public static func plotmsLikeVisibility() -> WorkbenchPlotDocument {
         let axes = [
@@ -463,10 +645,10 @@ public enum WorkbenchPlotSamples {
                     style: WorkbenchPlotLayerStyle(colorHex: "#2563eb", symbolSize: 3.8, opacity: 0.82),
                     provenanceSummary: "Display-ready points from a MeasurementSet-style payload with row provenance.",
                     dataProfile: WorkbenchPlotLayerDataProfile(
-                        sourceSampleCount: 1_800_000,
+                        sourceSampleCount: UInt64(target.count),
                         displaySampleCount: target.count,
                         pointBudget: 8_000,
-                        strategy: .viewportLevelOfDetail,
+                        strategy: .inlineDisplayPoints,
                         sourceDescription: "Visibility samples selected from MS rows, channels, and correlations.",
                         provenanceKey: "ms-row-channel-correlation"
                     )
@@ -481,11 +663,11 @@ public enum WorkbenchPlotSamples {
                     style: WorkbenchPlotLayerStyle(colorHex: "#dc2626", symbolSize: 3.2, opacity: 0.62),
                     provenanceSummary: "Second field/correlation series for plot widget styling and legend behavior.",
                     dataProfile: WorkbenchPlotLayerDataProfile(
-                        sourceSampleCount: 1_800_000,
+                        sourceSampleCount: UInt64(calibrator.count),
                         displaySampleCount: calibrator.count,
                         pointBudget: 8_000,
-                        strategy: .viewportLevelOfDetail,
-                        sourceDescription: "Second visibility selection represented as a viewport-level display payload.",
+                        strategy: .inlineDisplayPoints,
+                        sourceDescription: "Second visibility selection represented as display points.",
                         provenanceKey: "ms-row-channel-correlation"
                     )
                 ),
@@ -568,11 +750,11 @@ public enum WorkbenchPlotSamples {
                 ),
                 provenanceSummary: "Mirrored uv points with row provenance.",
                 dataProfile: WorkbenchPlotLayerDataProfile(
-                    sourceSampleCount: 4_000_000,
+                    sourceSampleCount: UInt64(points.count),
                     displaySampleCount: points.count,
                     pointBudget: 12_000,
-                    strategy: .viewportLevelOfDetail,
-                    sourceDescription: "Large uv track reduced to display points for the current viewport.",
+                    strategy: .inlineDisplayPoints,
+                    sourceDescription: "Displayed uv track points with mirrored baselines.",
                     provenanceKey: "ms-row-uvw"
                 )
             )
@@ -585,6 +767,107 @@ public enum WorkbenchPlotSamples {
             layers: tracks,
             annotations: [
                 WorkbenchPlotAnnotation(id: "origin", x: 0, y: 0, text: "array center")
+            ]
+        )
+    }
+
+    public static func millionPointPixels() -> WorkbenchPlotDocument {
+        cachedMillionPointPixels
+    }
+
+    private static func makeMillionPointPixels() -> WorkbenchPlotDocument {
+        let axes = [
+            WorkbenchPlotAxis(
+                id: "channel",
+                label: "Channel",
+                unit: "",
+                range: WorkbenchPlotRange(lower: 0, upper: 1023)
+            ),
+            WorkbenchPlotAxis(
+                id: "amplitude",
+                label: "Amplitude",
+                unit: "Jy",
+                range: WorkbenchPlotRange(lower: 0, upper: 6.2)
+            )
+        ]
+        let sampleCount = 2_000_000
+        let channelCount = 1_024
+        var xValues: [Double] = []
+        var yValues: [Double] = []
+        xValues.reserveCapacity(sampleCount)
+        yValues.reserveCapacity(sampleCount)
+
+        for index in 0..<sampleCount {
+            let channel = Double(index % channelCount)
+            let sweep = Double(index / channelCount)
+            let center = 520.0 + 42.0 * sin(sweep * 0.018)
+            let sigma = 82.0 + 12.0 * cos(sweep * 0.009)
+            let normalizedChannel = (channel - center) / sigma
+            let line = 3.1 * exp(-0.5 * normalizedChannel * normalizedChannel)
+            let bandpass = 0.72 + 0.12 * sin(channel * 0.019) + 0.08 * cos(channel * 0.043)
+            let baseline = 0.00042 * channel
+            let fieldOffset = 0.18 * Double((index / (channelCount * 13)) % 5)
+            let deterministicNoise = 0.18 * sin(Double(index) * 0.011) + 0.11 * cos(Double(index) * 0.023)
+            xValues.append(channel)
+            yValues.append(max(0.02, bandpass + baseline + fieldOffset + line + deterministicNoise))
+        }
+
+        let pointCloud = WorkbenchPlotPointCloud(
+            xValues: xValues,
+            yValues: yValues,
+            provenanceSamples: [
+                WorkbenchPlotPointProvenance(
+                    row: 0,
+                    field: "IRC+10216",
+                    spectralWindow: "spw 1",
+                    correlation: "RR",
+                    source: "million-point sample start"
+                ),
+                WorkbenchPlotPointProvenance(
+                    row: UInt64(sampleCount - 1),
+                    field: "IRC+10216",
+                    spectralWindow: "spw 1",
+                    correlation: "RR",
+                    source: "million-point sample end"
+                )
+            ]
+        )
+        let pointRaster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: axes[0].range,
+            yRange: axes[1].range,
+            width: 512,
+            height: 256
+        )
+
+        return WorkbenchPlotDocument(
+            id: "sample-million-point-pixels",
+            title: "Two Million Point Pixels",
+            subtitle: "Actual 2M-point cloud rasterized to single display pixels",
+            axes: axes,
+            layers: [
+                WorkbenchPlotLayer(
+                    id: "visibility-pixels",
+                    title: "IRC+10216 RR pixels",
+                    kind: .scatter,
+                    xAxisID: "channel",
+                    yAxisID: "amplitude",
+                    pointCloud: pointCloud,
+                    pointRaster: pointRaster,
+                    style: WorkbenchPlotLayerStyle(colorHex: "#0f766e", symbolSize: 2.4, opacity: 0.85),
+                    provenanceSummary: "Columnar point cloud retained for extraction/fitting; point raster drives rendering.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(pointCloud.count),
+                        displaySampleCount: pointRaster.occupiedPixelCount,
+                        pointBudget: pointRaster.width * pointRaster.height,
+                        strategy: .singlePixelPointRaster,
+                        sourceDescription: "Two million channel/amplitude samples held by the Swift plot widget.",
+                        provenanceKey: "ms-row-channel-correlation"
+                    )
+                )
+            ],
+            annotations: [
+                WorkbenchPlotAnnotation(id: "pixel-line-center", x: 520, y: 4.45, text: "line ridge")
             ]
         )
     }
