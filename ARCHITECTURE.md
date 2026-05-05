@@ -1,8 +1,8 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-04-19
-Verification: just arch-check
+Last reality check: 2026-05-04
+Verification: just docs-check
 
 ## System purpose
 
@@ -19,7 +19,7 @@ coordinates, measures, and related workflows.
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
 | domain libraries (`casa-ms`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-imaging`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | Versioned schema bundles and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
-| apps and runtimes (`casars`, `casars-imager`, `casars-importvla`, `casars-python`, `ratatui-graphics`) | Terminal shells, orchestration binaries, Python bindings/package, and rendering/runtime support | boundary contracts, domain libraries, foundation crates |
+| apps and runtimes (`casars`, `casars-imager`, `casars-importvla`, `casars-python`, `casars-frontend-services`, `ratatui-graphics`, `apps/casars-mac`) | Terminal shells, orchestration binaries, Python bindings/package, frontend service bindings, rendering/runtime support, and the native macOS GUI prototype | boundary contracts, domain libraries, foundation crates; lightweight frontend services may expose read-only domain-library probes through UniFFI |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
 ## Dependency direction
@@ -37,7 +37,15 @@ Additional constraints:
 - `casa-tables` keeps the broader storage/write path crate-internal even when user-facing table APIs are exposed from the crate.
 - Within `casa-tables`, lazy read paths are safe to share across threads under an in-process multi-reader, single-writer contract; shared tiled reads use a process-wide bounded cache, while dirty write state stays under exclusive mutable ownership.
 - Within `casa-tables`, row/column/cell accessor objects are the public table-data surface; prepared-row accessors provide the reusable selected-column row fast path, and the old table-level convenience wrappers have been removed from the public API.
-- Versioned provider bundles are boundary contracts; UI projections are derived views, not separate truth sources.
+- Versioned provider bundles are boundary contracts; UI projections are derived
+  views, not separate truth sources.
+- `apps/casars-mac` keeps fixture schemas inside its SwiftPM core when modeling
+  proposed UI behavior. Real, read-only dataset discovery enters through
+  `casars-frontend-services`, whose Rust API is exposed to Swift and Python
+  with UniFFI.
+- `casars-frontend-services` is an apps/runtime boundary crate. It may compose
+  domain-library reads into GUI-appropriate summaries, but it must not become a
+  second implementation of persistence, task semantics, or provider contracts.
 
 ## Runtime model
 
@@ -46,6 +54,19 @@ harnesses on top. There is no repo-wide async runtime contract today.
 Long-running interoperability, parity, and packaging work is driven by
 shell/Python scripts, integration tests, or subprocess orchestration rather
 than a shared background service model.
+
+`apps/casars-mac` is a SwiftPM package for the macOS-native GUI prototype. Its
+workbench state remains headlessly testable in SwiftPM. GUI-Wave-1 introduces a
+small UniFFI runtime boundary through `casars-frontend-services` for read-only
+project and dataset probing. GUI-Wave-3 extends that boundary with a narrow
+MeasurementSet explorer plot API: Rust owns `casa-ms` / `msexplore` plot payload
+construction and PNG rendering, while Swift owns native controls, layout, and
+debug-state projection. GUI-Wave-4 adds the first real task-execution vertical:
+the Swift workbench supervises a short-lived `casars-imager --json-run`
+process for dirty imaging, records logs/results/products in processing history,
+and exposes the request/run state through the debug snapshot. This remains a
+narrow process-supervision path, not a shared background service, provider
+daemon, or repo-wide async runtime contract.
 
 ## Persistence / external systems
 
@@ -59,6 +80,9 @@ than a shared background service model.
 
 - published Rust library crates, especially `casa-types`, `casa-tables`, `casa-ms`, `casa-lattices`, `casa-coordinates`, and `casa-images`
 - CLI/TUI apps such as `casars`, `msexplore`, `tablebrowser`, `imexplore`, `calibrate`, and `casars-importvla`
+- native macOS GUI prototype package `apps/casars-mac`
+- experimental UniFFI frontend service bindings generated from
+  `casars-frontend-services`
 - Python package `casars-python`
 - persisted CASA-compatible on-disk table, image, and related data formats
 - versioned provider contract bundles and protocol schemas
@@ -92,3 +116,4 @@ than a shared background service model.
 | 0002 | Native Rust implementation with casacore-compatible persistence | accepted |
 | 0003 | Provider schema bundle as boundary contract | accepted |
 | 0004 | Tiered verification and heavy parity gates | accepted |
+| 0005 | Native macOS GUI prototype boundary | accepted |

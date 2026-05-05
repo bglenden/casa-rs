@@ -6,6 +6,7 @@ members = [
     "crates/casars-importvla",
     "crates/casars-imager",
     "crates/casars-python",
+    "crates/casars-frontend-services",
     "crates/casars-imagebrowser-protocol",
     "crates/casars-tablebrowser-protocol",
     "crates/casa-types",

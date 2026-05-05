@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-04-19
+Last reality check: 2026-05-04
 Verification: just verify
 
 ## Test categories
@@ -51,6 +51,15 @@ Verification: just verify
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test plus editable Python package checks
 - GitHub tag CI: PR CI plus smoke, suite-install, and CI-like coverage
+- Native macOS GUI prototype and frontend services:
+  `cargo test -p casars-frontend-services`,
+  `cargo test -p casars-imager dirty_imaging_json_request_accepts_gui_selection_fields`,
+  `scripts/test-frontend-services-python.sh`, `swift test` from
+  `apps/casars-mac`, and
+  `CASARS_IMAGER_BIN=target/debug/casars-imager swift run casars-mac
+  --dump-debug-state --simulate-main-flow --open-project <fixture-or-project>`
+  for the headless debug-state smoke path that includes the dirty-imaging task
+  run.
 
 ## Coverage / confidence policy
 

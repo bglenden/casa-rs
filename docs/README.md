@@ -6,8 +6,15 @@ Verification: just docs-check
 
 This directory holds stable project documentation.
 
-## `casars` TUI
+## User Interfaces
 
+- [`mac-native-gui-spec.md`](mac-native-gui-spec.md)
+  - proposed product spec for an AI-enhanced native macOS radio astronomy
+    workbench
+- [`mac-native-gui-mockups.md`](mac-native-gui-mockups.md)
+  - visual mockups and layout agreement notes for the native macOS workbench
+- [`../apps/casars-mac/README.md`](../apps/casars-mac/README.md)
+  - SwiftPM commands for the fixture-backed native macOS clickable prototype
 - [`casars-tui-framework.md`](casars-tui-framework.md)
   - architecture and app-authoring rules for the shell family
 - [`casars-calibrate-user-guide.md`](casars-calibrate-user-guide.md)

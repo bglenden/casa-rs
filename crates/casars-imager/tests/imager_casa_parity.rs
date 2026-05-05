@@ -250,8 +250,27 @@ fn dirty_cube_products_track_casa_on_simulated_jet() {
         stage_measurement_set(&ms_path, temp.path(), "sim_data_VLA_jet.ms").expect("stage ms");
     let rust_prefix = temp.path().join("rust-simjet-cube-dirty");
     let casa_prefix = temp.path().join("casa-simjet-cube-dirty");
+    let spw_selector = case.cube_channel_spw_selector();
+    let cube_options = CubeCaseOptions {
+        spw_selector: &spw_selector,
+        nchan: case.channel_count,
+        start: Some(CubeAxisStep::Text("1.0GHz")),
+        width: Some(CubeAxisStep::Text("0.2GHz")),
+        outframe: "LSRK",
+        interpolation: "nearest",
+        veltype: "radio",
+        restfreq: "1.25GHz",
+    };
 
-    run_rust_imager_cube_dirty(case, &staged_ms_path, &rust_prefix).expect("run rust imager");
+    run_rust_imager_cube_case_with_options(
+        case,
+        &staged_ms_path,
+        &rust_prefix,
+        cube_options,
+        true,
+        0,
+    )
+    .expect("run rust imager");
     run_casa_tclean_cube_dirty_case(
         case,
         &staged_ms_path,

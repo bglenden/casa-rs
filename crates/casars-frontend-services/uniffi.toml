@@ -1,0 +1,4 @@
+[bindings.swift]
+module_name = "CasarsFrontendServices"
+generate_codable_conformance = true
+generate_case_iterable_conformance = true

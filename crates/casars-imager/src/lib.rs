@@ -5740,8 +5740,8 @@ impl PreparedSelection {
         let weight_spectrum_row = weight_spectrum
             .map(|column| column.get_optional(row_slot))
             .transpose()
+            .map(|row| row.flatten())
             .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
-        let weight_spectrum_row = weight_spectrum_row.flatten();
         timings.weight_spectrum += stage_started_at.elapsed();
         let adapt_started_at = Instant::now();
         let data_2d = ComplexRow2d::new(data)?;
@@ -13299,6 +13299,12 @@ mod tests {
             values: vec![None],
         };
         assert_eq!(column.get_optional(0).unwrap(), None);
+        assert!(
+            column
+                .get_optional(1)
+                .unwrap_err()
+                .contains("out of bounds")
+        );
 
         let weight_row =
             ArrayValue::Float32(ArrayD::from_shape_vec(vec![2], vec![1.0f32, 2.0]).unwrap());
