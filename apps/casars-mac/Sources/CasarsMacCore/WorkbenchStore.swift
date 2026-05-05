@@ -207,6 +207,23 @@ public final class WorkbenchStore: ObservableObject {
         openExplorer(for: dataset)
     }
 
+    public func openRunProduct(runID: String, productID: String) {
+        guard let group = state.runProductGroups.first(where: { $0.runID == runID }) else {
+            state.lastErrors.append("Unknown run \(runID)")
+            return
+        }
+        guard let product = group.products.first(where: { $0.id == productID }) else {
+            state.lastErrors.append("Unknown product \(productID)")
+            return
+        }
+        guard let datasetID = product.datasetID else {
+            state.lastErrors.append("Product \(product.label) is not a recognized dataset")
+            return
+        }
+
+        openDatasetExplorer(datasetID)
+    }
+
     public func setMeasurementSetPlotPreset(_ preset: MeasurementSetExplorerPlotPreset, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
         plotState.preset = preset
@@ -1270,7 +1287,8 @@ public final class WorkbenchStore: ObservableObject {
                     requestSummary: result.request.parameters.requestSummary
                 )
             }
-            appendProducedDatasets(from: result)
+            let products = appendProducedDatasets(from: result)
+            recordRunProductGroup(from: result, products: products)
             state.history.append(
                 ProcessingHistoryEvent(
                     id: "hist-run-\(state.history.count + 1)",
@@ -1310,30 +1328,87 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
-    private func appendProducedDatasets(from result: DirtyImagingTaskResult) {
+    private func appendProducedDatasets(from result: DirtyImagingTaskResult) -> [RunProductReference] {
+        var products: [RunProductReference] = []
         for artifact in result.artifacts where artifact.exists {
-            guard !state.project.datasets.contains(where: { $0.path == artifact.path }) else {
+            if let existing = state.project.datasets.first(where: { $0.path == artifact.path }) {
+                products.append(runProductReference(artifact: artifact, datasetID: existing.id))
                 continue
             }
             if let probed = try? probeClient.probePath(path: artifact.path) {
                 state.project.datasets.append(probed)
+                products.append(runProductReference(artifact: artifact, datasetID: probed.id))
                 continue
             }
-            state.project.datasets.append(
-                DatasetSummary(
-                    id: artifact.path,
-                    name: URL(fileURLWithPath: artifact.path).lastPathComponent,
-                    path: artifact.path,
-                    kind: .imageCube,
-                    size: "Unprobed image product",
-                    units: "CASA image",
-                    notes: "Produced by \(result.request.runID) from \(result.request.parameters.measurementSetPath).",
-                    diagnostics: artifact.previewPngExists
-                        ? ["preview: \(artifact.previewPngPath ?? "")"]
-                        : []
-                )
+            let fallback = DatasetSummary(
+                id: artifact.path,
+                name: URL(fileURLWithPath: artifact.path).lastPathComponent,
+                path: artifact.path,
+                kind: fallbackDatasetKind(for: artifact),
+                size: "Unprobed \(artifact.kind) product",
+                units: fallbackDatasetUnits(for: artifact),
+                notes: "Produced by \(result.request.runID) from \(result.request.parameters.measurementSetPath).",
+                diagnostics: artifact.previewPngExists
+                    ? ["preview: \(artifact.previewPngPath ?? "")"]
+                    : []
             )
+            state.project.datasets.append(fallback)
+            products.append(runProductReference(artifact: artifact, datasetID: fallback.id))
         }
+        return products
+    }
+
+    private func recordRunProductGroup(from result: DirtyImagingTaskResult, products: [RunProductReference]) {
+        let parameters = result.request.parameters
+        let group = RunProductGroup(
+            id: "products-\(result.request.runID)",
+            runID: result.request.runID,
+            title: "Dirty imaging products",
+            sourceDatasetID: parameters.datasetID,
+            sourcePath: parameters.measurementSetPath,
+            products: products,
+            diagnostics: result.diagnostics
+        )
+        if let index = state.runProductGroups.firstIndex(where: { $0.runID == result.request.runID }) {
+            state.runProductGroups[index] = group
+        } else {
+            state.runProductGroups.append(group)
+        }
+    }
+
+    private func runProductReference(artifact: DirtyImagingArtifact, datasetID: String?) -> RunProductReference {
+        RunProductReference(
+            id: artifact.path,
+            artifactKind: artifact.kind,
+            label: artifact.label,
+            path: artifact.path,
+            datasetID: datasetID,
+            exists: artifact.exists,
+            previewPngPath: artifact.previewPngPath,
+            previewPngExists: artifact.previewPngExists
+        )
+    }
+
+    private func fallbackDatasetKind(for artifact: DirtyImagingArtifact) -> DatasetKind {
+        let kind = artifact.kind.lowercased()
+        if kind.contains("table") {
+            return .table
+        }
+        if kind.contains("ms") || kind.contains("measurement") {
+            return .measurementSet
+        }
+        return .imageCube
+    }
+
+    private func fallbackDatasetUnits(for artifact: DirtyImagingArtifact) -> String {
+        let kind = artifact.kind.lowercased()
+        if kind.contains("image") {
+            return "CASA image"
+        }
+        if kind.contains("table") {
+            return "CASA table"
+        }
+        return artifact.kind
     }
 
     private func currentTimestamp() -> String {

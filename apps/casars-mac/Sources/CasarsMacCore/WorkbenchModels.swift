@@ -320,6 +320,65 @@ public struct TaskRun: Codable, Equatable {
     }
 }
 
+public struct RunProductReference: Identifiable, Codable, Equatable {
+    public let id: String
+    public var artifactKind: String
+    public var label: String
+    public var path: String
+    public var datasetID: String?
+    public var exists: Bool
+    public var previewPngPath: String?
+    public var previewPngExists: Bool
+
+    public init(
+        id: String,
+        artifactKind: String,
+        label: String,
+        path: String,
+        datasetID: String?,
+        exists: Bool,
+        previewPngPath: String?,
+        previewPngExists: Bool
+    ) {
+        self.id = id
+        self.artifactKind = artifactKind
+        self.label = label
+        self.path = path
+        self.datasetID = datasetID
+        self.exists = exists
+        self.previewPngPath = previewPngPath
+        self.previewPngExists = previewPngExists
+    }
+}
+
+public struct RunProductGroup: Identifiable, Codable, Equatable {
+    public let id: String
+    public var runID: String
+    public var title: String
+    public var sourceDatasetID: String
+    public var sourcePath: String
+    public var products: [RunProductReference]
+    public var diagnostics: [String]
+
+    public init(
+        id: String,
+        runID: String,
+        title: String,
+        sourceDatasetID: String,
+        sourcePath: String,
+        products: [RunProductReference],
+        diagnostics: [String]
+    ) {
+        self.id = id
+        self.runID = runID
+        self.title = title
+        self.sourceDatasetID = sourceDatasetID
+        self.sourcePath = sourcePath
+        self.products = products
+        self.diagnostics = diagnostics
+    }
+}
+
 public enum AIProposalState: String, Codable, Equatable {
     case pending
     case applied
@@ -637,6 +696,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary]
     public var jobs: [String: WorkbenchJob]
     public var activeJobIDsByTab: [String: String]
+    public var runProductGroups: [RunProductGroup]
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -661,6 +721,7 @@ public struct WorkbenchState: Codable, Equatable {
         measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary] = [:],
         jobs: [String: WorkbenchJob] = [:],
         activeJobIDsByTab: [String: String] = [:],
+        runProductGroups: [RunProductGroup] = [],
         history: [ProcessingHistoryEvent],
         commandQuery: String,
         lastErrors: [String],
@@ -684,6 +745,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.measurementSetPlotResultCache = measurementSetPlotResultCache
         self.jobs = jobs
         self.activeJobIDsByTab = activeJobIDsByTab
+        self.runProductGroups = runProductGroups
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors
@@ -758,6 +820,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var probeDiagnostics: [String]
     public var inspectorCollapsed: Bool
     public var openTabs: [String]
+    public var explorerTabs: [DebugExplorerTabSnapshot]
     public var activeTab: String
     public var taskState: TaskRunState
     public var taskRequest: DirtyImagingTaskParameters?
@@ -769,6 +832,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var jobs: [DebugWorkbenchJobSnapshot]
     public var activeJobIDsByTab: [String: String]
     public var runningJobCount: Int
+    public var runProductGroups: [DebugRunProductGroupSnapshot]
     public var processingHistoryEvents: [String]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -786,6 +850,9 @@ public struct DebugStateSnapshot: Codable, Equatable {
         probeDiagnostics = state.probeDiagnostics
         inspectorCollapsed = state.inspectorCollapsed
         openTabs = state.tabs.map(\.title)
+        explorerTabs = state.tabs
+            .filter { $0.kind == .datasetExplorer }
+            .map { DebugExplorerTabSnapshot(tab: $0, state: state) }
         activeTab = state.tabs.first { $0.id == state.activeTabID }?.title ?? state.activeTabID
         taskState = state.taskRun.state
         taskRequest = state.dirtyImagingTaskParameters
@@ -805,10 +872,72 @@ public struct DebugStateSnapshot: Codable, Equatable {
             .map(DebugWorkbenchJobSnapshot.init(job:))
         activeJobIDsByTab = state.activeJobIDsByTab
         runningJobCount = state.jobs.values.filter { $0.status == .running || $0.status == .pending }.count
+        runProductGroups = state.runProductGroups.map(DebugRunProductGroupSnapshot.init(group:))
         processingHistoryEvents = state.history.map(\.title)
         commandQuery = state.commandQuery
         lastErrors = state.lastErrors
         interfaceFontSize = state.interfaceFontSize
+    }
+}
+
+public struct DebugExplorerTabSnapshot: Codable, Equatable {
+    public var id: String
+    public var title: String
+    public var datasetID: String?
+    public var datasetName: String?
+    public var datasetKind: DatasetKind?
+    public var path: String?
+
+    public init(tab: WorkbenchTab, state: WorkbenchState) {
+        id = tab.id
+        title = tab.title
+        datasetID = tab.datasetID
+        let dataset = tab.datasetID.flatMap { datasetID in
+            state.project.datasets.first { $0.id == datasetID }
+        }
+        datasetName = dataset?.name
+        datasetKind = dataset?.kind
+        path = dataset?.path
+    }
+}
+
+public struct DebugRunProductGroupSnapshot: Codable, Equatable {
+    public var runID: String
+    public var title: String
+    public var sourceDatasetID: String
+    public var sourcePath: String
+    public var products: [DebugRunProductReferenceSnapshot]
+    public var diagnostics: [String]
+
+    public init(group: RunProductGroup) {
+        runID = group.runID
+        title = group.title
+        sourceDatasetID = group.sourceDatasetID
+        sourcePath = group.sourcePath
+        products = group.products.map(DebugRunProductReferenceSnapshot.init(product:))
+        diagnostics = group.diagnostics
+    }
+}
+
+public struct DebugRunProductReferenceSnapshot: Codable, Equatable {
+    public var id: String
+    public var artifactKind: String
+    public var label: String
+    public var path: String
+    public var datasetID: String?
+    public var exists: Bool
+    public var previewPngPath: String?
+    public var previewPngExists: Bool
+
+    public init(product: RunProductReference) {
+        id = product.id
+        artifactKind = product.artifactKind
+        label = product.label
+        path = product.path
+        datasetID = product.datasetID
+        exists = product.exists
+        previewPngPath = product.previewPngPath
+        previewPngExists = product.previewPngExists
     }
 }
 

@@ -221,6 +221,76 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.title, "MS: probed.ms")
     }
 
+    func testExplorerTabsExposeTypedRealDatasetRoutesInDebugSnapshot() {
+        let msDataset = DatasetSummary(
+            id: "/data/probed.ms",
+            name: "probed.ms",
+            path: "/data/probed.ms",
+            kind: .measurementSet,
+            size: "12 rows, 1 fields, 1 spw, 2 antennas",
+            units: "Jy, Hz, seconds",
+            fields: ["0: Target"],
+            spectralWindows: ["spw 0: 4 chan, 1.420000 GHz center"],
+            dataColumns: ["DATA"],
+            notes: "Recognized by Rust probe."
+        )
+        let imageDataset = DatasetSummary(
+            id: "/data/restored.image",
+            name: "restored.image",
+            path: "/data/restored.image",
+            kind: .imageCube,
+            size: "256 x 256 x 8",
+            units: "Jy/beam",
+            columns: ["map"],
+            shape: [256, 256, 8],
+            notes: "Recognized by Rust image probe.",
+            diagnostics: [
+                "Pixel type: float32",
+                "Cell size: 0.1 x 0.1 arcsec",
+                "Center: RA 10:00:00.000 Dec -30.00.00.00",
+                "Cube center frequency: 372.533 GHz",
+                "Total bandwidth: 384 MHz",
+                "Channel separation: 1 MHz",
+                "Beam: 0.42 x 0.31 arcsec, PA 12 deg"
+            ]
+        )
+        let tableDataset = DatasetSummary(
+            id: "/data/G.cal",
+            name: "G.cal",
+            path: "/data/G.cal",
+            kind: .table,
+            size: "3 rows, 4 columns",
+            units: "Calibration Table",
+            columns: ["ANTENNA1", "FIELD_ID", "CPARAM", "FLAG"],
+            shape: [3],
+            notes: "Recognized by Rust table probe."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "Real Project",
+                        rootPath: "/data",
+                        datasets: [msDataset, imageDataset, tableDataset],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: "/data")
+        store.openDatasetExplorer(imageDataset.id)
+        store.openDatasetExplorer(tableDataset.id)
+
+        let snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.openTabs, ["MS: probed.ms", "Image: restored.image", "Table: G.cal"])
+        XCTAssertEqual(snapshot.explorerTabs.map(\.datasetKind), [.measurementSet, .imageCube, .table])
+        XCTAssertEqual(snapshot.explorerTabs.map(\.path), [msDataset.path, imageDataset.path, tableDataset.path])
+        XCTAssertEqual(snapshot.selectedDatasetSummary?.kind, .table)
+        XCTAssertEqual(snapshot.selectedDatasetSummary?.columns, ["ANTENNA1", "FIELD_ID", "CPARAM", "FLAG"])
+    }
+
     func testFakeExecutionTabsAreGatedOutsideDemoProjectButRealImagingTaskOpens() {
         let probedDataset = DatasetSummary(
             id: "/data/probed.ms",
@@ -412,6 +482,17 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(producedDataset?.size, "256 x 256")
         XCTAssertEqual(producedDataset?.units, "float32")
         XCTAssertEqual(producedDataset?.shape, [256, 256])
+        let runID = try XCTUnwrap(store.state.taskRun.runID)
+        XCTAssertEqual(snapshot.runProductGroups.count, 1)
+        XCTAssertEqual(snapshot.runProductGroups.first?.runID, runID)
+        XCTAssertEqual(snapshot.runProductGroups.first?.sourceDatasetID, probedDataset.id)
+        XCTAssertEqual(snapshot.runProductGroups.first?.products.first?.label, "Dirty Image")
+        XCTAssertEqual(snapshot.runProductGroups.first?.products.first?.datasetID, producedDataset?.id)
+
+        let productID = try XCTUnwrap(store.state.runProductGroups.first?.products.first?.id)
+        store.openRunProduct(runID: runID, productID: productID)
+        XCTAssertEqual(store.state.selectedDatasetID, producedDataset?.id)
+        XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.title, "Image: output.image")
         XCTAssertNoThrow(try store.debugJSON())
     }
 
