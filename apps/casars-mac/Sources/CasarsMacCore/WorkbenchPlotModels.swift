@@ -3,6 +3,7 @@ import Foundation
 public enum WorkbenchPlotLayerKind: String, Codable, Equatable {
     case scatter
     case line
+    case interval
     case raster
 }
 
@@ -84,6 +85,8 @@ public struct WorkbenchPlotAxis: Identifiable, Codable, Equatable {
     public var label: String
     public var unit: String
     public var range: WorkbenchPlotRange
+    public var laneLabels: [String]
+    public var drawsOnTrailingEdge: Bool
     public var labelsVisible: Bool
     public var gridVisible: Bool
 
@@ -92,6 +95,8 @@ public struct WorkbenchPlotAxis: Identifiable, Codable, Equatable {
         label: String,
         unit: String,
         range: WorkbenchPlotRange,
+        laneLabels: [String] = [],
+        drawsOnTrailingEdge: Bool = false,
         labelsVisible: Bool = true,
         gridVisible: Bool = true
     ) {
@@ -99,6 +104,8 @@ public struct WorkbenchPlotAxis: Identifiable, Codable, Equatable {
         self.label = label
         self.unit = unit
         self.range = range
+        self.laneLabels = laneLabels
+        self.drawsOnTrailingEdge = drawsOnTrailingEdge
         self.labelsVisible = labelsVisible
         self.gridVisible = gridVisible
     }
@@ -129,11 +136,27 @@ public struct WorkbenchPlotPointProvenance: Codable, Equatable {
 public struct WorkbenchPlotPoint: Codable, Equatable {
     public var x: Double
     public var y: Double
+    public var label: String?
+    public var symbolSize: Double?
+    public var lineBreakBefore: Bool
+    public var selected: Bool
     public var provenance: WorkbenchPlotPointProvenance?
 
-    public init(x: Double, y: Double, provenance: WorkbenchPlotPointProvenance? = nil) {
+    public init(
+        x: Double,
+        y: Double,
+        label: String? = nil,
+        symbolSize: Double? = nil,
+        lineBreakBefore: Bool = false,
+        selected: Bool = false,
+        provenance: WorkbenchPlotPointProvenance? = nil
+    ) {
         self.x = x
         self.y = y
+        self.label = label
+        self.symbolSize = symbolSize
+        self.lineBreakBefore = lineBreakBefore
+        self.selected = selected
         self.provenance = provenance
     }
 }
@@ -366,6 +389,56 @@ public struct WorkbenchPlotRaster: Codable, Equatable {
     }
 }
 
+public struct WorkbenchPlotInterval: Identifiable, Codable, Equatable {
+    public let id: String
+    public var xStart: Double
+    public var xEnd: Double
+    public var y: Double
+    public var height: Double
+    public var label: String?
+    public var provenance: WorkbenchPlotPointProvenance?
+
+    public init(
+        id: String,
+        xStart: Double,
+        xEnd: Double,
+        y: Double,
+        height: Double = 0.72,
+        label: String? = nil,
+        provenance: WorkbenchPlotPointProvenance? = nil
+    ) {
+        self.id = id
+        self.xStart = xStart
+        self.xEnd = xEnd
+        self.y = y
+        self.height = height
+        self.label = label
+        self.provenance = provenance
+    }
+}
+
+public struct WorkbenchPlotOverlayShape: Identifiable, Codable, Equatable {
+    public let id: String
+    public var points: [WorkbenchPlotPoint]
+    public var closed: Bool
+    public var label: String?
+    public var style: WorkbenchPlotLayerStyle
+
+    public init(
+        id: String,
+        points: [WorkbenchPlotPoint],
+        closed: Bool = true,
+        label: String? = nil,
+        style: WorkbenchPlotLayerStyle
+    ) {
+        self.id = id
+        self.points = points
+        self.closed = closed
+        self.label = label
+        self.style = style
+    }
+}
+
 public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
     public let id: String
     public var title: String
@@ -373,6 +446,7 @@ public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
     public var xAxisID: String
     public var yAxisID: String
     public var points: [WorkbenchPlotPoint]
+    public var intervals: [WorkbenchPlotInterval]
     public var pointCloud: WorkbenchPlotPointCloud?
     public var pointRaster: WorkbenchPlotPointRaster?
     public var raster: WorkbenchPlotRaster?
@@ -387,6 +461,7 @@ public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
         xAxisID: String,
         yAxisID: String,
         points: [WorkbenchPlotPoint] = [],
+        intervals: [WorkbenchPlotInterval] = [],
         pointCloud: WorkbenchPlotPointCloud? = nil,
         pointRaster: WorkbenchPlotPointRaster? = nil,
         raster: WorkbenchPlotRaster? = nil,
@@ -400,6 +475,7 @@ public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
         self.xAxisID = xAxisID
         self.yAxisID = yAxisID
         self.points = points
+        self.intervals = intervals
         self.pointCloud = pointCloud
         self.pointRaster = pointRaster
         self.raster = raster
@@ -407,11 +483,12 @@ public struct WorkbenchPlotLayer: Identifiable, Codable, Equatable {
         self.provenanceSummary = provenanceSummary
         let defaultSourceCount = max(
             points.count,
+            intervals.count,
             pointCloud?.count ?? 0,
             Int(min(UInt64(Int.max), pointRaster?.totalCount ?? 0)),
             raster?.values.count ?? 0
         )
-        let defaultDisplayCount = pointRaster?.occupiedPixelCount ?? max(points.count, raster?.values.count ?? 0)
+        let defaultDisplayCount = pointRaster?.occupiedPixelCount ?? max(points.count, intervals.count, raster?.values.count ?? 0)
         self.dataProfile = dataProfile ?? WorkbenchPlotLayerDataProfile(
             sourceSampleCount: UInt64(defaultSourceCount),
             displaySampleCount: defaultDisplayCount,
@@ -436,6 +513,31 @@ public struct WorkbenchPlotAnnotation: Identifiable, Codable, Equatable {
     }
 }
 
+public struct WorkbenchPlotPanel: Identifiable, Codable, Equatable {
+    public let id: String
+    public var title: String
+    public var axes: [WorkbenchPlotAxis]
+    public var layers: [WorkbenchPlotLayer]
+    public var annotations: [WorkbenchPlotAnnotation]
+    public var overlayShapes: [WorkbenchPlotOverlayShape]
+
+    public init(
+        id: String,
+        title: String,
+        axes: [WorkbenchPlotAxis],
+        layers: [WorkbenchPlotLayer],
+        annotations: [WorkbenchPlotAnnotation] = [],
+        overlayShapes: [WorkbenchPlotOverlayShape] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.axes = axes
+        self.layers = layers
+        self.annotations = annotations
+        self.overlayShapes = overlayShapes
+    }
+}
+
 public enum WorkbenchPlotEditAction: Codable, Equatable {
     case setLayerSymbolSize(layerID: String, size: Double)
     case setLayerLineWidth(layerID: String, width: Double)
@@ -455,6 +557,8 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
     public var axes: [WorkbenchPlotAxis]
     public var layers: [WorkbenchPlotLayer]
     public var annotations: [WorkbenchPlotAnnotation]
+    public var overlayShapes: [WorkbenchPlotOverlayShape]
+    public var panels: [WorkbenchPlotPanel]
     public var showLegend: Bool
     public var styleRevision: UInt64
 
@@ -465,6 +569,8 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
         axes: [WorkbenchPlotAxis],
         layers: [WorkbenchPlotLayer],
         annotations: [WorkbenchPlotAnnotation] = [],
+        overlayShapes: [WorkbenchPlotOverlayShape] = [],
+        panels: [WorkbenchPlotPanel] = [],
         showLegend: Bool = true,
         styleRevision: UInt64 = 0
     ) {
@@ -474,18 +580,37 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
         self.axes = axes
         self.layers = layers
         self.annotations = annotations
+        self.overlayShapes = overlayShapes
+        self.panels = panels
         self.showLegend = showLegend
         self.styleRevision = styleRevision
+    }
+
+    public var allLayers: [WorkbenchPlotLayer] {
+        layers + panels.flatMap(\.layers)
+    }
+
+    public var allAxes: [WorkbenchPlotAxis] {
+        axes + panels.flatMap(\.axes)
+    }
+
+    public var allAnnotations: [WorkbenchPlotAnnotation] {
+        annotations + panels.flatMap(\.annotations)
+    }
+
+    public var allOverlayShapes: [WorkbenchPlotOverlayShape] {
+        overlayShapes + panels.flatMap(\.overlayShapes)
     }
 
     public var dataFingerprint: String {
         var parts = [
             id,
-            axes.map { "\($0.id):\($0.range.lower.bitPattern):\($0.range.upper.bitPattern)" }
+            allAxes.map { "\($0.id):\($0.range.lower.bitPattern):\($0.range.upper.bitPattern):\($0.laneLabels.joined(separator: "/")):\($0.drawsOnTrailingEdge)" }
                 .joined(separator: ",")
         ]
-        for layer in layers {
-            parts.append("\(layer.id):\(layer.kind.rawValue):\(layer.points.count):\(layer.pointCloud?.count ?? 0)")
+        parts.append("panels:\(panels.count)")
+        for layer in allLayers {
+            parts.append("\(layer.id):\(layer.kind.rawValue):\(layer.points.count):\(layer.intervals.count):\(layer.pointCloud?.count ?? 0)")
             parts.append(
                 "profile:\(layer.dataProfile.sourceSampleCount):\(layer.dataProfile.displaySampleCount):\(layer.dataProfile.strategy.rawValue):\(layer.dataProfile.xBinWidth?.bitPattern ?? 0)"
             )
@@ -511,6 +636,9 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
                     "raster:\(raster.width)x\(raster.height):\(raster.values.count):\(raster.valueRange.lower.bitPattern):\(raster.valueRange.upper.bitPattern)"
                 )
             }
+        }
+        for shape in allOverlayShapes {
+            parts.append("overlay:\(shape.id):\(shape.points.count):\(shape.closed)")
         }
         return parts.joined(separator: "|")
     }
@@ -556,9 +684,18 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
     }
 
     private mutating func updateLayer(_ layerID: String, update: (inout WorkbenchPlotLayer) -> Void) {
-        guard let index = layers.firstIndex(where: { $0.id == layerID }) else { return }
-        update(&layers[index])
-        styleRevision += 1
+        if let index = layers.firstIndex(where: { $0.id == layerID }) {
+            update(&layers[index])
+            styleRevision += 1
+            return
+        }
+        for panelIndex in panels.indices {
+            if let layerIndex = panels[panelIndex].layers.firstIndex(where: { $0.id == layerID }) {
+                update(&panels[panelIndex].layers[layerIndex])
+                styleRevision += 1
+                return
+            }
+        }
     }
 
     private static func clamped(_ value: Double, _ lower: Double, _ upper: Double) -> Double {
@@ -578,6 +715,9 @@ public struct DebugWorkbenchPlotSnapshot: Codable, Equatable {
     public var payloadStrategies: [String]
     public var rasterLayerCount: Int
     public var pointRasterLayerCount: Int
+    public var intervalLayerCount: Int
+    public var panelCount: Int
+    public var overlayShapeCount: Int
     public var annotationCount: Int
     public var styleRevision: UInt64
     public var dataFingerprint: String
@@ -585,16 +725,20 @@ public struct DebugWorkbenchPlotSnapshot: Codable, Equatable {
     public init(plot: WorkbenchPlotDocument) {
         id = plot.id
         title = plot.title
-        layerCount = plot.layers.count
-        pointCount = plot.layers.reduce(0) { total, layer in total + layer.points.count }
-        pointCloudCount = plot.layers.reduce(0) { total, layer in total + (layer.pointCloud?.count ?? 0) }
-        sourceSampleCount = plot.layers.reduce(0) { total, layer in total + layer.dataProfile.sourceSampleCount }
-        displaySampleCount = plot.layers.reduce(0) { total, layer in total + layer.dataProfile.displaySampleCount }
-        boundedLayerCount = plot.layers.filter(\.dataProfile.isDisplayPayloadBounded).count
-        payloadStrategies = plot.layers.map(\.dataProfile.strategy.rawValue)
-        rasterLayerCount = plot.layers.filter { $0.kind == .raster }.count
-        pointRasterLayerCount = plot.layers.filter { $0.pointRaster != nil }.count
-        annotationCount = plot.annotations.count
+        let layers = plot.allLayers
+        layerCount = layers.count
+        pointCount = layers.reduce(0) { total, layer in total + layer.points.count }
+        pointCloudCount = layers.reduce(0) { total, layer in total + (layer.pointCloud?.count ?? 0) }
+        sourceSampleCount = layers.reduce(0) { total, layer in total + layer.dataProfile.sourceSampleCount }
+        displaySampleCount = layers.reduce(0) { total, layer in total + layer.dataProfile.displaySampleCount }
+        boundedLayerCount = layers.filter(\.dataProfile.isDisplayPayloadBounded).count
+        payloadStrategies = layers.map(\.dataProfile.strategy.rawValue)
+        rasterLayerCount = layers.filter { $0.kind == .raster }.count
+        pointRasterLayerCount = layers.filter { $0.pointRaster != nil }.count
+        intervalLayerCount = layers.filter { $0.kind == .interval }.count
+        panelCount = plot.panels.count
+        overlayShapeCount = plot.allOverlayShapes.count
+        annotationCount = plot.allAnnotations.count
         styleRevision = plot.styleRevision
         dataFingerprint = plot.dataFingerprint
     }
@@ -607,6 +751,10 @@ public enum WorkbenchPlotSamples {
             uvCoverage(),
             millionPointPixels(),
             continuousPointPixels(),
+            antennaLayout(),
+            metadataIntervals(),
+            stackedAmplitudePhase(),
+            profileSpectrum(),
             imageDisplay()
         ]
     }
@@ -1071,7 +1219,368 @@ public enum WorkbenchPlotSamples {
             ],
             annotations: [
                 WorkbenchPlotAnnotation(id: "beam", x: -9.5, y: -9.8, text: "beam"),
-                WorkbenchPlotAnnotation(id: "peak", x: 0.2, y: 0.4, text: "peak")
+                WorkbenchPlotAnnotation(id: "peak", x: 0.2, y: 0.4, text: "peak"),
+                WorkbenchPlotAnnotation(id: "pinned-probe", x: 4.7, y: -2.8, text: "probe")
+            ],
+            overlayShapes: [
+                WorkbenchPlotOverlayShape(
+                    id: "region-source-core",
+                    points: [
+                        WorkbenchPlotPoint(x: -2.2, y: -1.3),
+                        WorkbenchPlotPoint(x: 2.4, y: -1.0),
+                        WorkbenchPlotPoint(x: 3.0, y: 2.1),
+                        WorkbenchPlotPoint(x: -1.8, y: 2.6)
+                    ],
+                    label: "region",
+                    style: WorkbenchPlotLayerStyle(colorHex: "#f59e0b", lineWidth: 2.0, opacity: 0.85)
+                ),
+                WorkbenchPlotOverlayShape(
+                    id: "profile-cut",
+                    points: [
+                        WorkbenchPlotPoint(x: -8.5, y: -5.5),
+                        WorkbenchPlotPoint(x: 8.0, y: 5.8)
+                    ],
+                    closed: false,
+                    label: "profile cut",
+                    style: WorkbenchPlotLayerStyle(colorHex: "#111827", lineWidth: 1.8, opacity: 0.9)
+                )
+            ]
+        )
+    }
+
+    public static func antennaLayout() -> WorkbenchPlotDocument {
+        let axes = [
+            WorkbenchPlotAxis(
+                id: "east",
+                label: "East offset",
+                unit: "m",
+                range: WorkbenchPlotRange(lower: -95, upper: 95)
+            ),
+            WorkbenchPlotAxis(
+                id: "north",
+                label: "North offset",
+                unit: "m",
+                range: WorkbenchPlotRange(lower: -75, upper: 90)
+            )
+        ]
+        let antennas = [
+            ("ea01", -72.0, -21.0, 7.5),
+            ("ea02", -44.0, -48.0, 5.0),
+            ("ea03", -18.0, -11.0, 4.5),
+            ("ea04", 0.0, 0.0, 9.0),
+            ("ea05", 25.0, 18.0, 6.0),
+            ("ea06", 52.0, 43.0, 5.5),
+            ("ea07", 74.0, 70.0, 4.5),
+            ("ea08", 38.0, -37.0, 6.8)
+        ].map { antenna in
+            WorkbenchPlotPoint(
+                x: antenna.1,
+                y: antenna.2,
+                label: antenna.0,
+                symbolSize: antenna.3,
+                provenance: WorkbenchPlotPointProvenance(source: "antenna \(antenna.0)")
+            )
+        }
+        return WorkbenchPlotDocument(
+            id: "sample-antenna-layout",
+            title: "Antenna Layout",
+            subtitle: "Per-point labels and marker sizes for listobs-style array geometry",
+            axes: axes,
+            layers: [
+                WorkbenchPlotLayer(
+                    id: "antennas",
+                    title: "VLA antennas",
+                    kind: .scatter,
+                    xAxisID: "east",
+                    yAxisID: "north",
+                    points: antennas,
+                    style: WorkbenchPlotLayerStyle(colorHex: "#7c3aed", symbolSize: 5.0, opacity: 0.9),
+                    provenanceSummary: "Antenna table positions with labels retained as point metadata.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(antennas.count),
+                        displaySampleCount: antennas.count,
+                        pointBudget: 2_000,
+                        strategy: .inlineDisplayPoints,
+                        sourceDescription: "ANTENNA subtable positions mapped to labeled plot points.",
+                        provenanceKey: "antenna-position"
+                    )
+                )
+            ],
+            annotations: [
+                WorkbenchPlotAnnotation(id: "array-center", x: 0, y: 0, text: "reference")
+            ]
+        )
+    }
+
+    public static func metadataIntervals() -> WorkbenchPlotDocument {
+        let laneLabels = ["scan 1", "scan 2", "spw 0", "spw 1", "spw 2"]
+        let axes = [
+            WorkbenchPlotAxis(
+                id: "time",
+                label: "Time",
+                unit: "min",
+                range: WorkbenchPlotRange(lower: 0, upper: 72)
+            ),
+            WorkbenchPlotAxis(
+                id: "lane",
+                label: "Metadata lane",
+                unit: "",
+                range: WorkbenchPlotRange(lower: -0.5, upper: Double(laneLabels.count) - 0.5),
+                laneLabels: laneLabels
+            )
+        ]
+        let scans = [
+            WorkbenchPlotInterval(id: "scan-1a", xStart: 2, xEnd: 18, y: 0, label: "target"),
+            WorkbenchPlotInterval(id: "scan-1b", xStart: 25, xEnd: 42, y: 0, label: "target"),
+            WorkbenchPlotInterval(id: "scan-2a", xStart: 9, xEnd: 22, y: 1, label: "phasecal"),
+            WorkbenchPlotInterval(id: "scan-2b", xStart: 48, xEnd: 66, y: 1, label: "bandpass")
+        ]
+        let spws = [
+            WorkbenchPlotInterval(id: "spw-0", xStart: 4, xEnd: 30, y: 2, label: "1.420 GHz"),
+            WorkbenchPlotInterval(id: "spw-1", xStart: 17, xEnd: 55, y: 3, label: "1.421 GHz"),
+            WorkbenchPlotInterval(id: "spw-2", xStart: 36, xEnd: 70, y: 4, label: "continuum")
+        ]
+        return WorkbenchPlotDocument(
+            id: "sample-metadata-intervals",
+            title: "Scan and SPW Coverage",
+            subtitle: "Interval bars on categorical lanes for listobs timeline surfaces",
+            axes: axes,
+            layers: [
+                WorkbenchPlotLayer(
+                    id: "scan-bars",
+                    title: "Scans",
+                    kind: .interval,
+                    xAxisID: "time",
+                    yAxisID: "lane",
+                    intervals: scans,
+                    style: WorkbenchPlotLayerStyle(colorHex: "#2563eb", opacity: 0.78),
+                    provenanceSummary: "Scan timeline intervals.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(scans.count),
+                        displaySampleCount: scans.count,
+                        strategy: .inlineDisplayPoints,
+                        sourceDescription: "Listobs scan intervals represented as bars.",
+                        provenanceKey: "scan-interval"
+                    )
+                ),
+                WorkbenchPlotLayer(
+                    id: "spw-bars",
+                    title: "Spectral windows",
+                    kind: .interval,
+                    xAxisID: "time",
+                    yAxisID: "lane",
+                    intervals: spws,
+                    style: WorkbenchPlotLayerStyle(colorHex: "#16a34a", opacity: 0.70),
+                    provenanceSummary: "Spectral-window coverage intervals.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(spws.count),
+                        displaySampleCount: spws.count,
+                        strategy: .inlineDisplayPoints,
+                        sourceDescription: "Listobs spectral-window coverage represented as bars.",
+                        provenanceKey: "spw-coverage"
+                    )
+                )
+            ]
+        )
+    }
+
+    public static func stackedAmplitudePhase() -> WorkbenchPlotDocument {
+        let timeAxis = WorkbenchPlotAxis(
+            id: "time",
+            label: "Time",
+            unit: "min",
+            range: WorkbenchPlotRange(lower: 0, upper: 60)
+        )
+        let ampAxis = WorkbenchPlotAxis(
+            id: "amp",
+            label: "Amplitude",
+            unit: "Jy",
+            range: WorkbenchPlotRange(lower: 0, upper: 5.5)
+        )
+        let phaseAxis = WorkbenchPlotAxis(
+            id: "phase",
+            label: "Phase",
+            unit: "deg",
+            range: WorkbenchPlotRange(lower: -180, upper: 180),
+            drawsOnTrailingEdge: true
+        )
+        let amp = (0..<120).map { index in
+            let t = Double(index) * 0.5
+            return WorkbenchPlotPoint(x: t, y: 2.2 + 0.7 * sin(t * 0.18) + 0.18 * cos(t * 0.73))
+        }
+        let phase = (0..<120).map { index in
+            let t = Double(index) * 0.5
+            return WorkbenchPlotPoint(x: t, y: 95 * sin(t * 0.12) + 35 * cos(t * 0.31))
+        }
+        let residual = (0..<120).map { index in
+            let t = Double(index) * 0.5
+            return WorkbenchPlotPoint(x: t, y: 0.35 + 0.25 * abs(sin(t * 0.22)))
+        }
+        let ampPhasePanel = WorkbenchPlotPanel(
+            id: "amp-phase-panel",
+            title: "Amplitude and phase",
+            axes: [timeAxis, ampAxis, phaseAxis],
+            layers: [
+                WorkbenchPlotLayer(
+                    id: "amp-time",
+                    title: "Amplitude",
+                    kind: .scatter,
+                    xAxisID: "time",
+                    yAxisID: "amp",
+                    points: amp,
+                    style: WorkbenchPlotLayerStyle(colorHex: "#2563eb", symbolSize: 2.6, opacity: 0.8),
+                    provenanceSummary: "ScatterGrid amplitude panel.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(amp.count),
+                        displaySampleCount: amp.count,
+                        pointBudget: 10_000,
+                        strategy: .inlineDisplayPoints,
+                        sourceDescription: "Amplitude samples in a faceted scatter page.",
+                        provenanceKey: "scatter-grid-amplitude"
+                    )
+                ),
+                WorkbenchPlotLayer(
+                    id: "phase-time",
+                    title: "Phase",
+                    kind: .line,
+                    xAxisID: "time",
+                    yAxisID: "phase",
+                    points: phase,
+                    style: WorkbenchPlotLayerStyle(colorHex: "#dc2626", lineWidth: 1.6, opacity: 0.82),
+                    provenanceSummary: "Secondary-axis phase overlay.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(phase.count),
+                        displaySampleCount: phase.count,
+                        pointBudget: 10_000,
+                        strategy: .inlineDisplayPoints,
+                        sourceDescription: "Phase samples using a trailing y axis.",
+                        provenanceKey: "scatter-grid-phase"
+                    )
+                )
+            ]
+        )
+        let residualPanel = WorkbenchPlotPanel(
+            id: "residual-panel",
+            title: "Residual",
+            axes: [
+                timeAxis,
+                WorkbenchPlotAxis(
+                    id: "residual",
+                    label: "Residual",
+                    unit: "Jy",
+                    range: WorkbenchPlotRange(lower: 0, upper: 1.0)
+                )
+            ],
+            layers: [
+                WorkbenchPlotLayer(
+                    id: "residual-time",
+                    title: "Residual",
+                    kind: .line,
+                    xAxisID: "time",
+                    yAxisID: "residual",
+                    points: residual,
+                    style: WorkbenchPlotLayerStyle(colorHex: "#0f766e", lineWidth: 1.8, opacity: 0.86),
+                    provenanceSummary: "Stacked plot page residual line.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(residual.count),
+                        displaySampleCount: residual.count,
+                        pointBudget: 10_000,
+                        strategy: .inlineDisplayPoints,
+                        sourceDescription: "Second panel in a stacked scatter page.",
+                        provenanceKey: "scatter-page-residual"
+                    )
+                )
+            ]
+        )
+        return WorkbenchPlotDocument(
+            id: "sample-stacked-amp-phase",
+            title: "Stacked Visibility Page",
+            subtitle: "Multi-panel scatter page with a secondary phase axis",
+            axes: [],
+            layers: [],
+            panels: [ampPhasePanel, residualPanel]
+        )
+    }
+
+    public static func profileSpectrum() -> WorkbenchPlotDocument {
+        let axes = [
+            WorkbenchPlotAxis(
+                id: "velocity",
+                label: "Velocity",
+                unit: "km/s",
+                range: WorkbenchPlotRange(lower: -42, upper: 42)
+            ),
+            WorkbenchPlotAxis(
+                id: "intensity",
+                label: "Intensity",
+                unit: "Jy/beam",
+                range: WorkbenchPlotRange(lower: -0.2, upper: 4.4)
+            )
+        ]
+        let profile = stride(from: -42.0, through: 42.0, by: 1.0).map { velocity in
+            let gap = velocity > -6 && velocity < 3
+            let selected = abs(velocity - 18) < 0.1
+            let line = 3.2 * exp(-pow((velocity - 16) / 9.5, 2) / 2)
+            let shoulder = 1.1 * exp(-pow((velocity + 24) / 7.0, 2) / 2)
+            return WorkbenchPlotPoint(
+                x: velocity,
+                y: 0.25 + line + shoulder + 0.08 * sin(velocity),
+                lineBreakBefore: gap || abs(velocity - 3) < 0.1,
+                selected: selected,
+                provenance: WorkbenchPlotPointProvenance(source: selected ? "selected profile channel" : "profile channel")
+            )
+        }
+        let overlay = stride(from: -42.0, through: 42.0, by: 2.0).map { velocity in
+            WorkbenchPlotPoint(
+                x: velocity,
+                y: 0.22 + 2.9 * exp(-pow((velocity - 15) / 11.0, 2) / 2)
+            )
+        }
+        return WorkbenchPlotDocument(
+            id: "sample-profile-spectrum",
+            title: "Image Profile Spectrum",
+            subtitle: "Masked line gaps, selected channel marker, and overlay profile",
+            axes: axes,
+            layers: [
+                WorkbenchPlotLayer(
+                    id: "masked-profile",
+                    title: "Profile",
+                    kind: .line,
+                    xAxisID: "velocity",
+                    yAxisID: "intensity",
+                    points: profile,
+                    style: WorkbenchPlotLayerStyle(colorHex: "#2563eb", lineWidth: 2.0, opacity: 0.9),
+                    provenanceSummary: "Image profile with masked channels and selected sample.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(profile.count),
+                        displaySampleCount: profile.count,
+                        pointBudget: 6_000,
+                        strategy: .inlineDisplayPoints,
+                        sourceDescription: "imexplore profile samples with mask-gap metadata.",
+                        provenanceKey: "image-profile"
+                    )
+                ),
+                WorkbenchPlotLayer(
+                    id: "overlay-profile",
+                    title: "Overlay profile",
+                    kind: .line,
+                    xAxisID: "velocity",
+                    yAxisID: "intensity",
+                    points: overlay,
+                    style: WorkbenchPlotLayerStyle(colorHex: "#f59e0b", lineWidth: 1.5, opacity: 0.75),
+                    provenanceSummary: "Comparison or fitted profile overlay.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(overlay.count),
+                        displaySampleCount: overlay.count,
+                        pointBudget: 6_000,
+                        strategy: .inlineDisplayPoints,
+                        sourceDescription: "Optional imexplore profile overlay.",
+                        provenanceKey: "image-profile-overlay"
+                    )
+                )
+            ],
+            annotations: [
+                WorkbenchPlotAnnotation(id: "selected-channel", x: 18, y: 3.45, text: "selected")
             ]
         )
     }

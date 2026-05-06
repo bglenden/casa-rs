@@ -48,7 +48,7 @@ private struct PlotSampleCard: View {
             }
 
             WorkbenchPlotView(plot: plot)
-                .frame(height: plot.layers.contains { $0.kind == .raster } ? 360 : 320)
+                .frame(height: plot.allLayers.contains { $0.kind == .raster } ? 360 : (plot.panels.isEmpty ? 320 : 420))
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(key: PlotCanvasSizePreferenceKey.self, value: proxy.size)
@@ -77,7 +77,7 @@ private struct PlotSampleCard: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let layer = plot.layers.first(where: { $0.kind == .scatter }) {
+            if let layer = plot.allLayers.first(where: { $0.kind == .scatter }) {
                 SliderRow(
                     title: "Marker: \(layer.title)",
                     value: layer.style.symbolSize,
@@ -92,7 +92,7 @@ private struct PlotSampleCard: View {
                 .accessibilityIdentifier("plotSamples.\(plot.id).symbolSize")
             }
 
-            if let layer = plot.layers.first(where: { $0.kind == .line }) {
+            if let layer = plot.allLayers.first(where: { $0.kind == .line }) {
                 SliderRow(
                     title: "Fit line",
                     value: layer.style.lineWidth,
@@ -107,7 +107,7 @@ private struct PlotSampleCard: View {
                 .accessibilityIdentifier("plotSamples.\(plot.id).lineWidth")
             }
 
-            if let layer = plot.layers.first {
+            if let layer = plot.allLayers.first {
                 Toggle("Layer visible", isOn: Binding(
                     get: { layer.style.visible },
                     set: { visible in
@@ -121,7 +121,7 @@ private struct PlotSampleCard: View {
                 .accessibilityIdentifier("plotSamples.\(plot.id).layerVisible")
             }
 
-            if let rasterLayer = plot.layers.first(where: { $0.raster != nil }) {
+            if let rasterLayer = plot.allLayers.first(where: { $0.raster != nil }) {
                 HStack(spacing: 12) {
                     Picker("Stretch", selection: Binding(
                         get: { rasterLayer.raster?.stretch ?? .linear },
@@ -166,8 +166,8 @@ private struct PlotSampleCard: View {
             return pointCloudSummary
         }
 
-        let display = plot.layers.reduce(0) { total, layer in total + layer.dataProfile.displaySampleCount }
-        let source = plot.layers.reduce(UInt64(0)) { total, layer in total + layer.dataProfile.sourceSampleCount }
+        let display = plot.allLayers.reduce(0) { total, layer in total + layer.dataProfile.displaySampleCount }
+        let source = plot.allLayers.reduce(UInt64(0)) { total, layer in total + layer.dataProfile.sourceSampleCount }
         if source > UInt64(display) {
             return "\(formattedCount(display)) / \(formattedCount(source)) src"
         }
@@ -175,12 +175,12 @@ private struct PlotSampleCard: View {
     }
 
     private var pointCloudSummary: String? {
-        let pointClouds = plot.layers.reduce(0) { total, layer in
+        let pointClouds = plot.allLayers.reduce(0) { total, layer in
             total + (layer.pointCloud?.count ?? 0)
         }
         guard pointClouds > 0 else { return nil }
 
-        let occupiedPixels = plot.layers.reduce(0) { total, layer in
+        let occupiedPixels = plot.allLayers.reduce(0) { total, layer in
             total + occupiedPixelCount(for: layer)
         }
         guard occupiedPixels > 0 else {
@@ -197,8 +197,8 @@ private struct PlotSampleCard: View {
         guard
             plotCanvasSize.width > 0,
             plotCanvasSize.height > 0,
-            let xAxis = plot.axes.first(where: { $0.id == layer.xAxisID }),
-            let yAxis = plot.axes.first(where: { $0.id == layer.yAxisID })
+            let xAxis = plot.allAxes.first(where: { $0.id == layer.xAxisID }),
+            let yAxis = plot.allAxes.first(where: { $0.id == layer.yAxisID })
         else {
             return fallback
         }
@@ -311,30 +311,71 @@ struct WorkbenchPlotView: View {
 
     var body: some View {
         Canvas { context, size in
-            let plotRect = plotRect(for: size)
-            drawBackground(in: &context, size: size, plotRect: plotRect)
-            drawRasterLayers(in: &context, plotRect: plotRect)
-            drawVectorLayers(in: &context, plotRect: plotRect)
-            drawAnnotations(in: &context, plotRect: plotRect)
-            drawAxes(in: &context, size: size, plotRect: plotRect)
+            if plot.panels.isEmpty {
+                let plotRect = plotRect(for: size)
+                drawPlot(
+                    axes: plot.axes,
+                    layers: plot.layers,
+                    annotations: plot.annotations,
+                    overlayShapes: plot.overlayShapes,
+                    title: nil,
+                    in: &context,
+                    size: size,
+                    plotRect: plotRect
+                )
+            } else {
+                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(nsColor: .textBackgroundColor)))
+                for (index, panel) in plot.panels.enumerated() {
+                    let bounds = panelBounds(index: index, count: plot.panels.count, size: size)
+                    let plotRect = WorkbenchPlotLayout.plotRect(for: bounds.size).offsetBy(dx: bounds.minX, dy: bounds.minY)
+                    drawPlot(
+                        axes: panel.axes,
+                        layers: panel.layers,
+                        annotations: panel.annotations,
+                        overlayShapes: panel.overlayShapes,
+                        title: panel.title,
+                        in: &context,
+                        size: bounds.size,
+                        plotRect: plotRect
+                    )
+                }
+            }
         }
         .background(Color(nsColor: .textBackgroundColor))
-    }
-
-    private var xAxis: WorkbenchPlotAxis? {
-        plot.axes.first
-    }
-
-    private var yAxis: WorkbenchPlotAxis? {
-        plot.axes.dropFirst().first
     }
 
     private func plotRect(for size: CGSize) -> CGRect {
         WorkbenchPlotLayout.plotRect(for: size)
     }
 
+    private func panelBounds(index: Int, count: Int, size: CGSize) -> CGRect {
+        let rowHeight = size.height / Double(max(1, count))
+        return CGRect(x: 0, y: rowHeight * Double(index), width: size.width, height: rowHeight)
+    }
+
+    private func drawPlot(
+        axes: [WorkbenchPlotAxis],
+        layers: [WorkbenchPlotLayer],
+        annotations: [WorkbenchPlotAnnotation],
+        overlayShapes: [WorkbenchPlotOverlayShape],
+        title: String?,
+        in context: inout GraphicsContext,
+        size: CGSize,
+        plotRect: CGRect
+    ) {
+        drawBackground(in: &context, size: size, plotRect: plotRect)
+        if let title {
+            context.draw(Text(title).font(.caption).foregroundColor(.secondary), at: CGPoint(x: plotRect.minX, y: plotRect.minY - 12), anchor: .leading)
+        }
+        drawRasterLayers(layers, in: &context, plotRect: plotRect)
+        drawVectorLayers(layers, axes: axes, in: &context, plotRect: plotRect)
+        drawOverlayShapes(overlayShapes, axes: axes, in: &context, plotRect: plotRect)
+        drawAnnotations(annotations, axes: axes, in: &context, plotRect: plotRect)
+        drawAxes(axes, in: &context, size: size, plotRect: plotRect)
+    }
+
     private func drawBackground(in context: inout GraphicsContext, size: CGSize, plotRect: CGRect) {
-        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(nsColor: .textBackgroundColor)))
+        context.fill(Path(CGRect(x: plotRect.minX - 64, y: plotRect.minY - 26, width: size.width, height: size.height)), with: .color(Color(nsColor: .textBackgroundColor)))
         context.fill(Path(plotRect), with: .color(Color(nsColor: .controlBackgroundColor)))
 
         let gridColor = Color.secondary.opacity(0.16)
@@ -353,8 +394,8 @@ struct WorkbenchPlotView: View {
         }
     }
 
-    private func drawRasterLayers(in context: inout GraphicsContext, plotRect: CGRect) {
-        for layer in plot.layers where layer.kind == .raster && layer.style.visible {
+    private func drawRasterLayers(_ layers: [WorkbenchPlotLayer], in context: inout GraphicsContext, plotRect: CGRect) {
+        for layer in layers where layer.kind == .raster && layer.style.visible {
             guard let raster = layer.raster, raster.width > 0, raster.height > 0 else { continue }
             let cellWidth = plotRect.width / Double(raster.width)
             let cellHeight = plotRect.height / Double(raster.height)
@@ -376,18 +417,29 @@ struct WorkbenchPlotView: View {
         }
     }
 
-    private func drawVectorLayers(in context: inout GraphicsContext, plotRect: CGRect) {
-        for layer in plot.layers where layer.style.visible {
+    private func drawVectorLayers(
+        _ layers: [WorkbenchPlotLayer],
+        axes: [WorkbenchPlotAxis],
+        in context: inout GraphicsContext,
+        plotRect: CGRect
+    ) {
+        for layer in layers where layer.style.visible {
+            guard
+                let xAxis = axes.first(where: { $0.id == layer.xAxisID }),
+                let yAxis = axes.first(where: { $0.id == layer.yAxisID })
+            else {
+                continue
+            }
             switch layer.kind {
             case .scatter:
-                if let pointRaster = pointRaster(for: layer, plotRect: plotRect) {
+                if let pointRaster = pointRaster(for: layer, xAxis: xAxis, yAxis: yAxis, plotRect: plotRect) {
                     drawPointRaster(pointRaster, layer: layer, in: &context, plotRect: plotRect)
                     continue
                 }
                 let color = color(hex: layer.style.colorHex).opacity(layer.style.opacity)
                 for point in renderPoints(for: layer) {
-                    guard let position = screenPoint(point, plotRect: plotRect) else { continue }
-                    let radius = max(0.5, layer.style.symbolSize / 2)
+                    guard let position = screenPoint(point, xAxis: xAxis, yAxis: yAxis, plotRect: plotRect) else { continue }
+                    let radius = max(0.5, (point.symbolSize ?? layer.style.symbolSize) / 2)
                     context.fill(
                         Path(ellipseIn: CGRect(
                             x: position.x - radius,
@@ -397,20 +449,34 @@ struct WorkbenchPlotView: View {
                         )),
                         with: .color(color)
                     )
+                    drawPointDecorations(point, position: position, layer: layer, in: &context)
                 }
             case .line:
-                let points = renderPoints(for: layer).compactMap { screenPoint($0, plotRect: plotRect) }
-                guard points.count > 1 else { continue }
                 var path = Path()
-                path.move(to: points[0])
-                for point in points.dropFirst() {
-                    path.addLine(to: point)
+                var hasSubpath = false
+                var drewSegment = false
+                for point in renderPoints(for: layer) {
+                    guard let position = screenPoint(point, xAxis: xAxis, yAxis: yAxis, plotRect: plotRect) else {
+                        hasSubpath = false
+                        continue
+                    }
+                    if !hasSubpath || point.lineBreakBefore {
+                        path.move(to: position)
+                        hasSubpath = true
+                    } else {
+                        path.addLine(to: position)
+                        drewSegment = true
+                    }
+                    drawPointDecorations(point, position: position, layer: layer, in: &context)
                 }
+                guard drewSegment else { continue }
                 context.stroke(
                     path,
                     with: .color(color(hex: layer.style.colorHex).opacity(layer.style.opacity)),
                     lineWidth: layer.style.lineWidth
                 )
+            case .interval:
+                drawIntervals(layer.intervals, layer: layer, xAxis: xAxis, yAxis: yAxis, in: &context, plotRect: plotRect)
             case .raster:
                 continue
             }
@@ -432,10 +498,95 @@ struct WorkbenchPlotView: View {
         )
     }
 
-    private func drawAnnotations(in context: inout GraphicsContext, plotRect: CGRect) {
-        for annotation in plot.annotations {
+    private func drawPointDecorations(
+        _ point: WorkbenchPlotPoint,
+        position: CGPoint,
+        layer: WorkbenchPlotLayer,
+        in context: inout GraphicsContext
+    ) {
+        if point.selected {
+            let radius = max(4, (point.symbolSize ?? layer.style.symbolSize) + 3)
+            var path = Path()
+            path.move(to: CGPoint(x: position.x - radius, y: position.y))
+            path.addLine(to: CGPoint(x: position.x + radius, y: position.y))
+            path.move(to: CGPoint(x: position.x, y: position.y - radius))
+            path.addLine(to: CGPoint(x: position.x, y: position.y + radius))
+            context.stroke(path, with: .color(.primary.opacity(0.9)), lineWidth: 1.4)
+        }
+        guard let label = point.label else { return }
+        context.draw(Text(label).font(.caption2), at: CGPoint(x: position.x + 6, y: position.y - 6), anchor: .leading)
+    }
+
+    private func drawIntervals(
+        _ intervals: [WorkbenchPlotInterval],
+        layer: WorkbenchPlotLayer,
+        xAxis: WorkbenchPlotAxis,
+        yAxis: WorkbenchPlotAxis,
+        in context: inout GraphicsContext,
+        plotRect: CGRect
+    ) {
+        let fill = color(hex: layer.style.colorHex).opacity(layer.style.opacity)
+        for interval in intervals {
+            let lowerPoint = WorkbenchPlotPoint(x: interval.xStart, y: interval.y - interval.height / 2)
+            let upperPoint = WorkbenchPlotPoint(x: interval.xEnd, y: interval.y + interval.height / 2)
+            guard
+                let lower = screenPoint(lowerPoint, xAxis: xAxis, yAxis: yAxis, plotRect: plotRect),
+                let upper = screenPoint(upperPoint, xAxis: xAxis, yAxis: yAxis, plotRect: plotRect)
+            else {
+                continue
+            }
+            let rect = CGRect(
+                x: min(lower.x, upper.x),
+                y: min(lower.y, upper.y),
+                width: max(1, abs(upper.x - lower.x)),
+                height: max(3, abs(upper.y - lower.y))
+            )
+            context.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(fill))
+            if let label = interval.label, rect.width > 42 {
+                context.draw(Text(label).font(.caption2), at: CGPoint(x: rect.midX, y: rect.midY), anchor: .center)
+            }
+        }
+    }
+
+    private func drawOverlayShapes(
+        _ overlayShapes: [WorkbenchPlotOverlayShape],
+        axes: [WorkbenchPlotAxis],
+        in context: inout GraphicsContext,
+        plotRect: CGRect
+    ) {
+        guard let xAxis = axes.first, let yAxis = axes.dropFirst().first else { return }
+        for shape in overlayShapes where shape.points.count > 1 && shape.style.visible {
+            let positions = shape.points.compactMap { screenPoint($0, xAxis: xAxis, yAxis: yAxis, plotRect: plotRect) }
+            guard positions.count > 1 else { continue }
+            var path = Path()
+            path.move(to: positions[0])
+            for point in positions.dropFirst() {
+                path.addLine(to: point)
+            }
+            if shape.closed {
+                path.closeSubpath()
+            }
+            context.stroke(
+                path,
+                with: .color(color(hex: shape.style.colorHex).opacity(shape.style.opacity)),
+                lineWidth: shape.style.lineWidth
+            )
+            if let label = shape.label {
+                context.draw(Text(label).font(.caption2), at: positions[0], anchor: .bottomLeading)
+            }
+        }
+    }
+
+    private func drawAnnotations(
+        _ annotations: [WorkbenchPlotAnnotation],
+        axes: [WorkbenchPlotAxis],
+        in context: inout GraphicsContext,
+        plotRect: CGRect
+    ) {
+        guard let xAxis = axes.first, let yAxis = axes.dropFirst().first else { return }
+        for annotation in annotations {
             let point = WorkbenchPlotPoint(x: annotation.x, y: annotation.y)
-            guard let position = screenPoint(point, plotRect: plotRect) else { continue }
+            guard let position = screenPoint(point, xAxis: xAxis, yAxis: yAxis, plotRect: plotRect) else { continue }
             let label = Text(annotation.text).font(.caption)
             context.draw(label, at: CGPoint(x: position.x + 6, y: position.y - 8), anchor: .leading)
             context.fill(
@@ -445,27 +596,27 @@ struct WorkbenchPlotView: View {
         }
     }
 
-    private func drawAxes(in context: inout GraphicsContext, size: CGSize, plotRect: CGRect) {
+    private func drawAxes(_ axes: [WorkbenchPlotAxis], in context: inout GraphicsContext, size: CGSize, plotRect: CGRect) {
         let frame = Path(plotRect)
         context.stroke(frame, with: .color(Color.secondary.opacity(0.45)), lineWidth: 1)
 
-        if let xAxis {
+        if let xAxis = axes.first {
             drawTicks(axis: xAxis, horizontal: true, in: &context, plotRect: plotRect)
             if xAxis.labelsVisible {
                 context.draw(
                     Text(axisLabel(xAxis)).font(.caption),
-                    at: CGPoint(x: plotRect.midX, y: size.height - 20),
+                    at: CGPoint(x: plotRect.midX, y: plotRect.maxY + 38),
                     anchor: .center
                 )
             }
         }
-        if let yAxis {
+        for yAxis in axes.dropFirst() {
             drawTicks(axis: yAxis, horizontal: false, in: &context, plotRect: plotRect)
             if yAxis.labelsVisible {
                 context.draw(
                     Text(axisLabel(yAxis)).font(.caption),
-                    at: CGPoint(x: 12, y: plotRect.midY),
-                    anchor: .leading
+                    at: CGPoint(x: yAxis.drawsOnTrailingEdge ? plotRect.maxX + 12 : plotRect.minX - 52, y: plotRect.midY),
+                    anchor: yAxis.drawsOnTrailingEdge ? .leading : .leading
                 )
             }
         }
@@ -485,13 +636,27 @@ struct WorkbenchPlotView: View {
                 context.draw(text, at: CGPoint(x: x, y: plotRect.maxY + 16), anchor: .center)
             } else {
                 let y = plotRect.maxY - plotRect.height * fraction
-                context.draw(text, at: CGPoint(x: plotRect.minX - 8, y: y), anchor: .trailing)
+                let x = axis.drawsOnTrailingEdge ? plotRect.maxX + 8 : plotRect.minX - 8
+                context.draw(text, at: CGPoint(x: x, y: y), anchor: axis.drawsOnTrailingEdge ? .leading : .trailing)
             }
+        }
+        guard !horizontal, !axis.laneLabels.isEmpty else { return }
+        for (index, label) in axis.laneLabels.enumerated() {
+            let value = Double(index)
+            let fraction = (value - axis.range.lower) / axis.range.span
+            guard fraction.isFinite else { continue }
+            let y = plotRect.maxY - plotRect.height * fraction
+            context.draw(Text(label).font(.caption2), at: CGPoint(x: plotRect.minX - 8, y: y), anchor: .trailing)
         }
     }
 
-    private func screenPoint(_ point: WorkbenchPlotPoint, plotRect: CGRect) -> CGPoint? {
-        guard let xAxis, let yAxis, xAxis.range.span != 0, yAxis.range.span != 0 else {
+    private func screenPoint(
+        _ point: WorkbenchPlotPoint,
+        xAxis: WorkbenchPlotAxis,
+        yAxis: WorkbenchPlotAxis,
+        plotRect: CGRect
+    ) -> CGPoint? {
+        guard xAxis.range.span != 0, yAxis.range.span != 0 else {
             return nil
         }
         let x = (point.x - xAxis.range.lower) / xAxis.range.span
@@ -520,22 +685,25 @@ struct WorkbenchPlotView: View {
         }
     }
 
-    private func pointRaster(for layer: WorkbenchPlotLayer, plotRect: CGRect) -> WorkbenchPlotPointRaster? {
+    private func pointRaster(
+        for layer: WorkbenchPlotLayer,
+        xAxis: WorkbenchPlotAxis,
+        yAxis: WorkbenchPlotAxis,
+        plotRect: CGRect
+    ) -> WorkbenchPlotPointRaster? {
         let rasterSize = pointRasterSize(for: plotRect)
         if
             let pointRaster = layer.pointRaster,
             pointRaster.width == rasterSize.width,
             pointRaster.height == rasterSize.height,
-            pointRaster.xRange == xAxis?.range,
-            pointRaster.yRange == yAxis?.range
+            pointRaster.xRange == xAxis.range,
+            pointRaster.yRange == yAxis.range
         {
             return pointRaster
         }
         guard
             let pointCloud = layer.pointCloud,
-            pointCloud.count > layer.dataProfile.pointBudget,
-            let xAxis,
-            let yAxis
+            pointCloud.count > layer.dataProfile.pointBudget
         else {
             return nil
         }

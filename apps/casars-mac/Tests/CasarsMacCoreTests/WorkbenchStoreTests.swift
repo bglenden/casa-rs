@@ -149,6 +149,10 @@ final class WorkbenchStoreTests: XCTestCase {
             "sample-uv-coverage",
             "sample-million-point-pixels",
             "sample-continuous-point-pixels",
+            "sample-antenna-layout",
+            "sample-metadata-intervals",
+            "sample-stacked-amp-phase",
+            "sample-profile-spectrum",
             "sample-image-display"
         ])
         XCTAssertEqual(snapshot.workbenchPlots[0].layerCount, 3)
@@ -167,10 +171,44 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.workbenchPlots[3].pointCloudCount, 2_000_000)
         XCTAssertEqual(snapshot.workbenchPlots[3].pointRasterLayerCount, 1)
         XCTAssertEqual(snapshot.workbenchPlots[3].payloadStrategies, ["singlePixelPointRaster"])
-        XCTAssertEqual(snapshot.workbenchPlots[4].rasterLayerCount, 1)
-        XCTAssertEqual(snapshot.workbenchPlots[4].payloadStrategies, ["rasterOverview"])
-        XCTAssertFalse(snapshot.workbenchPlots[4].dataFingerprint.isEmpty)
+        XCTAssertEqual(snapshot.workbenchPlots[4].pointCount, 8)
+        XCTAssertEqual(snapshot.workbenchPlots[5].intervalLayerCount, 2)
+        XCTAssertEqual(snapshot.workbenchPlots[5].displaySampleCount, 7)
+        XCTAssertEqual(snapshot.workbenchPlots[6].panelCount, 2)
+        XCTAssertEqual(snapshot.workbenchPlots[6].layerCount, 3)
+        XCTAssertEqual(snapshot.workbenchPlots[7].layerCount, 2)
+        XCTAssertGreaterThan(snapshot.workbenchPlots[7].pointCount, 120)
+        XCTAssertEqual(snapshot.workbenchPlots[8].rasterLayerCount, 1)
+        XCTAssertEqual(snapshot.workbenchPlots[8].overlayShapeCount, 2)
+        XCTAssertEqual(snapshot.workbenchPlots[8].payloadStrategies, ["rasterOverview"])
+        XCTAssertFalse(snapshot.workbenchPlots[8].dataFingerprint.isEmpty)
         XCTAssertNoThrow(try store.debugJSON())
+    }
+
+    func testWorkbenchPlotGapSamplesCoverExplorePayloadShapes() throws {
+        let antennaPlot = WorkbenchPlotSamples.antennaLayout()
+        let antennaLayer = try XCTUnwrap(antennaPlot.layers.first)
+        XCTAssertTrue(antennaLayer.points.allSatisfy { $0.label != nil })
+        XCTAssertTrue(antennaLayer.points.contains { ($0.symbolSize ?? 0) > antennaLayer.style.symbolSize })
+
+        let intervals = WorkbenchPlotSamples.metadataIntervals()
+        XCTAssertEqual(intervals.axes[1].laneLabels, ["scan 1", "scan 2", "spw 0", "spw 1", "spw 2"])
+        XCTAssertEqual(intervals.layers.filter { $0.kind == .interval }.count, 2)
+        XCTAssertEqual(intervals.layers.reduce(0) { $0 + $1.intervals.count }, 7)
+
+        let stacked = WorkbenchPlotSamples.stackedAmplitudePhase()
+        XCTAssertEqual(stacked.panels.count, 2)
+        XCTAssertTrue(stacked.panels[0].axes.contains { $0.id == "phase" && $0.drawsOnTrailingEdge })
+        XCTAssertEqual(stacked.allLayers.map(\.id), ["amp-time", "phase-time", "residual-time"])
+
+        let profile = WorkbenchPlotSamples.profileSpectrum()
+        let profileLayer = try XCTUnwrap(profile.layers.first { $0.id == "masked-profile" })
+        XCTAssertTrue(profileLayer.points.contains { $0.lineBreakBefore })
+        XCTAssertTrue(profileLayer.points.contains { $0.selected })
+
+        let image = WorkbenchPlotSamples.imageDisplay()
+        XCTAssertEqual(image.overlayShapes.count, 2)
+        XCTAssertTrue(image.overlayShapes.contains { !$0.closed })
     }
 
     func testWorkbenchPlotPointRasterBinsPointCloudToPixels() throws {
