@@ -7,6 +7,11 @@ private let datasetSelectionLogger = Logger(
     category: "DatasetSelection"
 )
 
+private let measurementSetPlotLogger = Logger(
+    subsystem: "org.casa-rs.casars-mac",
+    category: "MeasurementSetPlot"
+)
+
 public protocol ProjectProbeClient {
     func probeProject(path: String) throws -> ProjectFixtureProbe
     func probePath(path: String) throws -> DatasetSummary?
@@ -193,6 +198,7 @@ public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
     public init() {}
 
     public func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary {
+        let ffiStartedAt = Date()
         let result = try CasarsFrontendServices.buildMeasurementSetPlot(
             request: CasarsFrontendServices.MeasurementSetPlotRequest(
                 datasetPath: request.datasetPath,
@@ -206,7 +212,20 @@ public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
                 maxPlotPoints: request.maxPlotPoints
             )
         )
-        return MeasurementSetPlotResultSummary(result: result)
+        let ffiElapsed = Date().timeIntervalSince(ffiStartedAt)
+        let summaryStartedAt = Date()
+        var summary = MeasurementSetPlotResultSummary(result: result)
+        let summaryElapsed = Date().timeIntervalSince(summaryStartedAt)
+        let totalElapsed = ffiElapsed + summaryElapsed
+        let diagnostic = String(
+            format: "swift timing: ffi=%.0f ms, summary=%.0f ms, total=%.0f ms",
+            ffiElapsed * 1000,
+            summaryElapsed * 1000,
+            totalElapsed * 1000
+        )
+        summary.diagnostics.append(diagnostic)
+        measurementSetPlotLogger.info("\(diagnostic, privacy: .public)")
+        return summary
     }
 }
 

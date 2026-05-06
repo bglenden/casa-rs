@@ -1,6 +1,12 @@
 import CasarsMacCore
 import CoreGraphics
+import OSLog
 import SwiftUI
+
+private let workbenchPlotLogger = Logger(
+    subsystem: "org.casa-rs.casars-mac",
+    category: "WorkbenchPlot"
+)
 
 struct PlotSamplesPanel: View {
     @ObservedObject var store: WorkbenchStore
@@ -278,8 +284,8 @@ private struct PlotCanvasSizePreferenceKey: PreferenceKey {
 
 private enum WorkbenchPlotLayout {
     static func plotRect(for size: CGSize) -> CGRect {
-        let left = 82.0
-        let top = 32.0
+        let left = 96.0
+        let top = 26.0
         let right = 26.0
         let bottom = 56.0
         return CGRect(
@@ -619,15 +625,23 @@ struct WorkbenchPlotView: View {
         for yAxis in axes.dropFirst() {
             drawTicks(axis: yAxis, horizontal: false, in: &context, plotRect: plotRect)
             if yAxis.labelsVisible {
-                let labelPoint = yAxis.drawsOnTrailingEdge
-                    ? CGPoint(x: plotRect.maxX, y: plotRect.minY - 11)
-                    : CGPoint(x: plotRect.minX, y: plotRect.minY - 11)
-                context.draw(
-                    Text(axisLabel(yAxis)).font(.caption),
-                    at: labelPoint,
-                    anchor: yAxis.drawsOnTrailingEdge ? .bottomTrailing : .bottomLeading
-                )
+                drawYAxisLabel(yAxis, in: &context, plotRect: plotRect)
             }
+        }
+    }
+
+    private func drawYAxisLabel(
+        _ axis: WorkbenchPlotAxis,
+        in context: inout GraphicsContext,
+        plotRect: CGRect
+    ) {
+        let label = context.resolve(Text(axisLabel(axis)).font(.caption))
+        let x = axis.drawsOnTrailingEdge ? plotRect.maxX + 58 : plotRect.minX - 70
+        let y = plotRect.midY
+        context.drawLayer { layerContext in
+            layerContext.concatenate(CGAffineTransform(translationX: x, y: y))
+            layerContext.concatenate(CGAffineTransform(rotationAngle: axis.drawsOnTrailingEdge ? .pi / 2 : -.pi / 2))
+            layerContext.draw(label, at: .zero, anchor: .center)
         }
     }
 
@@ -794,7 +808,8 @@ struct WorkbenchPlotView: View {
         yAxis: WorkbenchPlotAxis,
         size: (width: Int, height: Int)
     ) -> WorkbenchPlotPointRaster {
-        pointRasterCache.raster(
+        let startedAt = Date()
+        let raster = pointRasterCache.raster(
             plotFingerprint: plot.dataFingerprint,
             layerID: layer.id,
             pointCloud: pointCloud,
@@ -804,6 +819,13 @@ struct WorkbenchPlotView: View {
             height: size.height,
             xFootprintDataWidth: workbenchPointRasterXFootprintDataWidth(for: layer)
         )
+        let elapsed = Date().timeIntervalSince(startedAt)
+        if elapsed > 0.05 {
+            workbenchPlotLogger.info(
+                "point raster ready layer=\(layer.id, privacy: .public) points=\(pointCloud.count, privacy: .public) size=\(size.width, privacy: .public)x\(size.height, privacy: .public) elapsed_ms=\(elapsed * 1000, privacy: .public)"
+            )
+        }
+        return raster
     }
 
     private func pointRasterSize(for plotRect: CGRect) -> (width: Int, height: Int) {
@@ -812,6 +834,7 @@ struct WorkbenchPlotView: View {
 
     private func pointRasterImage(_ pointRaster: WorkbenchPlotPointRaster, layer: WorkbenchPlotLayer) -> CGImage? {
         guard pointRaster.maxCount > 0, pointRaster.width > 0, pointRaster.height > 0 else { return nil }
+        let startedAt = Date()
         let components = rgbaComponents(hex: layer.style.colorHex, opacity: layer.style.opacity)
         let bytesPerPixel = 4
         let bytesPerRow = pointRaster.width * bytesPerPixel
@@ -852,7 +875,7 @@ struct WorkbenchPlotView: View {
         else {
             return nil
         }
-        return CGImage(
+        let image = CGImage(
             width: pointRaster.width,
             height: pointRaster.height,
             bitsPerComponent: 8,
@@ -865,6 +888,13 @@ struct WorkbenchPlotView: View {
             shouldInterpolate: false,
             intent: .defaultIntent
         )
+        let elapsed = Date().timeIntervalSince(startedAt)
+        if elapsed > 0.05 {
+            workbenchPlotLogger.info(
+                "point raster image ready layer=\(layer.id, privacy: .public) pixels=\(pointRaster.width * pointRaster.height, privacy: .public) marker=\(markerSize, privacy: .public) elapsed_ms=\(elapsed * 1000, privacy: .public)"
+            )
+        }
+        return image
     }
 
     private func pointRasterMarkerSize(for layer: WorkbenchPlotLayer) -> Int {
