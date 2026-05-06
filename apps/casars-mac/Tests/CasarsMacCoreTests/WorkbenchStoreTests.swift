@@ -677,14 +677,14 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(store.state.lastErrors.contains("Python is not connected yet"))
         XCTAssertFalse(store.state.lastErrors.contains("Task panels are not connected for real projects yet"))
 
-        store.openFixtureProject()
-        store.openDefaultTab(kind: .aiChat)
-        store.openDefaultTab(kind: .python)
-        store.openDefaultTab(kind: .task)
+        let fixtureStore = WorkbenchStore.fixture()
+        fixtureStore.openDefaultTab(kind: .aiChat)
+        fixtureStore.openDefaultTab(kind: .python)
+        fixtureStore.openDefaultTab(kind: .task)
 
-        XCTAssertTrue(store.state.tabs.contains { $0.kind == .aiChat })
-        XCTAssertTrue(store.state.tabs.contains { $0.kind == .python })
-        XCTAssertTrue(store.state.tabs.contains { $0.kind == .task })
+        XCTAssertTrue(fixtureStore.state.tabs.contains { $0.kind == .aiChat })
+        XCTAssertTrue(fixtureStore.state.tabs.contains { $0.kind == .python })
+        XCTAssertTrue(fixtureStore.state.tabs.contains { $0.kind == .task })
     }
 
     func testDirtyImagingTaskCanOpenWhenSelectedDatasetIsAnImage() {
@@ -1402,7 +1402,10 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testInterfaceFontSizeIsAdjustableClampedAndPreservedAcrossFixtureOpen() {
-        let store = WorkbenchStore.fixture()
+        let store = WorkbenchStore(
+            state: FixtureWorkbench.makeState(),
+            demoProjectClient: StubDemoProjectClient(result: makeDemoProjectProbe(rootPath: "/tmp/tutorial-demo"))
+        )
 
         store.adjustInterfaceFontSize(by: 3)
         XCTAssertEqual(store.state.interfaceFontSize, WorkbenchState.defaultInterfaceFontSize + 3)
@@ -1419,6 +1422,46 @@ final class WorkbenchStoreTests: XCTestCase {
 
         store.resetInterfaceFontSize()
         XCTAssertEqual(store.state.interfaceFontSize, WorkbenchState.defaultInterfaceFontSize)
+    }
+
+    func testOpenDemoProjectStagesRealTutorialProjectAndCleansItUpWhenReplaced() {
+        let demoClient = StubDemoProjectClient(result: makeDemoProjectProbe(rootPath: "/tmp/tutorial-demo"))
+        let replacementDataset = DatasetSummary(
+            id: "/data/replacement.ms",
+            name: "replacement.ms",
+            path: "/data/replacement.ms",
+            kind: .measurementSet,
+            size: "4 rows",
+            units: "Jy",
+            dataColumns: ["DATA"],
+            notes: "Replacement real project."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Replacement", rootPath: "/data", datasets: [replacementDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            demoProjectClient: demoClient
+        )
+
+        store.openFixtureProject()
+
+        let snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.activeProject, "TW Hya Tutorial Demo")
+        XCTAssertEqual(snapshot.activeProjectRoot, "/tmp/tutorial-demo")
+        XCTAssertEqual(snapshot.activeProjectSource, ProjectSource.probed)
+        XCTAssertFalse(store.state.isDemoProject)
+        XCTAssertEqual(snapshot.selectedDataset, "twhya_calibrated.ms")
+        XCTAssertEqual(snapshot.discoveredDatasets, ["twhya_calibrated.ms", "twhya_cont.image", "twhya_calibrated_ANTENNA.table"])
+        XCTAssertEqual(snapshot.openTabs.first, "MS: twhya_calibrated.ms")
+        XCTAssertTrue(snapshot.probeDiagnostics.contains("Staged tutorial dataset: alma/first-look/twhya/calibrated-ms"))
+
+        store.openProject(path: "/data")
+
+        XCTAssertEqual(demoClient.cleanedRoots, ["/tmp/tutorial-demo"])
+        XCTAssertEqual(store.debugSnapshot().activeProject, "Replacement")
     }
 
     func testPlotImageCacheIDTracksFullImageBytes() {
@@ -1447,10 +1490,28 @@ final class WorkbenchStoreTests: XCTestCase {
             ),
             "/Applications/casars-mac.app/Contents/MacOS/casars-imager"
         )
+        XCTAssertEqual(
+            ProcessDirtyImagingTaskClient.resolvedExecutablePath(
+                environment: ["CASA_RS_REPO_ROOT": "/repo"],
+                bundleExecutableURL: nil,
+                isExecutable: { $0 == "/repo/target/debug/casars-imager" }
+            ),
+            "/repo/target/debug/casars-imager"
+        )
+        XCTAssertEqual(
+            ProcessDirtyImagingTaskClient.resolvedExecutablePath(
+                environment: [:],
+                bundleExecutableURL: nil,
+                currentDirectoryPath: "/repo/apps/casars-mac",
+                isExecutable: { $0 == "/repo/target/debug/casars-imager" }
+            ),
+            "/repo/target/debug/casars-imager"
+        )
         XCTAssertNil(
             ProcessDirtyImagingTaskClient.resolvedExecutablePath(
                 environment: [:],
                 bundleExecutableURL: bundleExecutable,
+                currentDirectoryPath: "/nowhere",
                 isExecutable: { _ in false }
             )
         )
@@ -1467,6 +1528,28 @@ private struct StubProjectProbeClient: ProjectProbeClient {
 
     func probePath(path: String) throws -> DatasetSummary? {
         probedPaths[path]
+    }
+}
+
+private final class StubDemoProjectClient: DemoProjectClient {
+    var result: ProjectFixtureProbe
+    var error: Error?
+    private(set) var cleanedRoots: [String] = []
+
+    init(result: ProjectFixtureProbe, error: Error? = nil) {
+        self.result = result
+        self.error = error
+    }
+
+    func createDemoProject() throws -> ProjectFixtureProbe {
+        if let error {
+            throw error
+        }
+        return result
+    }
+
+    func cleanupDemoProject(rootPath: String) {
+        cleanedRoots.append(rootPath)
     }
 }
 
@@ -1537,6 +1620,51 @@ private final class StubTableBrowserClient: TableBrowserClient {
         requests.append(Request(datasetPath: datasetPath, selectedView: selectedView))
         return snapshot
     }
+}
+
+private func makeDemoProjectProbe(rootPath: String) -> ProjectFixtureProbe {
+    let msDataset = DatasetSummary(
+        id: "\(rootPath)/twhya_calibrated.ms",
+        name: "twhya_calibrated.ms",
+        path: "\(rootPath)/twhya_calibrated.ms",
+        kind: .measurementSet,
+        size: "tutorial rows",
+        units: "Jy, Hz, seconds",
+        fields: ["5: TW Hya"],
+        spectralWindows: ["spw 0: 128 chan, 372.533 GHz center"],
+        dataColumns: ["DATA"],
+        notes: "ALMA First Look TW Hya tutorial MeasurementSet."
+    )
+    let imageDataset = DatasetSummary(
+        id: "\(rootPath)/twhya_cont.image",
+        name: "twhya_cont.image",
+        path: "\(rootPath)/twhya_cont.image",
+        kind: .imageCube,
+        size: "512 x 512",
+        units: "Jy/beam",
+        shape: [512, 512],
+        notes: "ALMA First Look TW Hya tutorial image."
+    )
+    let tableDataset = DatasetSummary(
+        id: "\(rootPath)/twhya_calibrated_ANTENNA.table",
+        name: "twhya_calibrated_ANTENNA.table",
+        path: "\(rootPath)/twhya_calibrated_ANTENNA.table",
+        kind: .table,
+        size: "27 rows",
+        units: "casacore table",
+        columns: ["NAME", "POSITION", "DISH_DIAMETER"],
+        shape: [27],
+        notes: "ANTENNA subtable copied from the TW Hya tutorial MeasurementSet."
+    )
+    return ProjectFixtureProbe(
+        project: ProjectFixture(
+            name: "TW Hya Tutorial Demo",
+            rootPath: rootPath,
+            datasets: [imageDataset, tableDataset, msDataset],
+            source: .probed
+        ),
+        diagnostics: ["Staged tutorial dataset: alma/first-look/twhya/calibrated-ms"]
+    )
 }
 
 private func makeImageExplorerSnapshot() -> ImageExplorerSnapshot {

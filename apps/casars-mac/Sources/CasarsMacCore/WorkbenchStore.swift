@@ -35,6 +35,122 @@ public struct UniFFIProjectProbeClient: ProjectProbeClient {
     }
 }
 
+public protocol DemoProjectClient {
+    func createDemoProject() throws -> ProjectFixtureProbe
+    func cleanupDemoProject(rootPath: String)
+}
+
+public struct TutorialDemoProjectClient: DemoProjectClient {
+    public init() {}
+
+    public func createDemoProject() throws -> ProjectFixtureProbe {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("casars-mac-tutorial-demo-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+
+        do {
+            let staged = try stageTutorialDatasets(in: root, fileManager: fileManager)
+            guard !staged.isEmpty else {
+                throw DemoProjectError.noTutorialDatasets(tutorialRootCandidates().map(\.path))
+            }
+            let probe = try UniFFIProjectProbeClient().probeProject(path: root.path)
+            var project = probe.project
+            project.name = "TW Hya Tutorial Demo"
+            project.source = .probed
+            let diagnostics = probe.diagnostics + staged.map { "Staged tutorial dataset: \($0)" }
+            return ProjectFixtureProbe(project: project, diagnostics: diagnostics)
+        } catch {
+            try? fileManager.removeItem(at: root)
+            throw error
+        }
+    }
+
+    public func cleanupDemoProject(rootPath: String) {
+        guard !rootPath.isEmpty else { return }
+        try? FileManager.default.removeItem(atPath: rootPath)
+    }
+
+    private func stageTutorialDatasets(in root: URL, fileManager: FileManager) throws -> [String] {
+        guard let tutorialRoot = tutorialRootCandidates().first(where: { fileManager.fileExists(atPath: $0.path) }) else {
+            return []
+        }
+
+        var staged: [String] = []
+        let twhyaRoot = tutorialRoot
+            .appendingPathComponent("tutorial-parity/alma/first-look/twhya", isDirectory: true)
+
+        let calibratedMS = twhyaRoot.appendingPathComponent("twhya_calibrated.ms.tar")
+        if fileManager.fileExists(atPath: calibratedMS.path) {
+            try extractTarArchive(calibratedMS, into: root)
+            staged.append("alma/first-look/twhya/calibrated-ms")
+
+            let antennaTable = root
+                .appendingPathComponent("twhya_calibrated.ms", isDirectory: true)
+                .appendingPathComponent("ANTENNA", isDirectory: true)
+            if fileManager.fileExists(atPath: antennaTable.path) {
+                let copy = root.appendingPathComponent("twhya_calibrated_ANTENNA.table", isDirectory: true)
+                try copyDirectory(from: antennaTable, to: copy, fileManager: fileManager)
+                staged.append("alma/first-look/twhya/calibrated-ms/ANTENNA")
+            }
+        }
+
+        for imageName in ["twhya_cont.image", "twhya_n2hp.image"] {
+            let source = twhyaRoot.appendingPathComponent(imageName, isDirectory: true)
+            guard fileManager.fileExists(atPath: source.path) else { continue }
+            let destination = root.appendingPathComponent(imageName, isDirectory: true)
+            try copyDirectory(from: source, to: destination, fileManager: fileManager)
+            staged.append("alma/first-look/twhya/\(imageName)")
+        }
+
+        return staged
+    }
+
+    private func tutorialRootCandidates() -> [URL] {
+        var candidates: [URL] = []
+        if let override = ProcessInfo.processInfo.environment["CASA_RS_TUTORIAL_DATA_ROOT"], !override.isEmpty {
+            candidates.append(URL(fileURLWithPath: override, isDirectory: true))
+        }
+        candidates.append(
+            URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appendingPathComponent("SoftwareProjects/casa-tutorial-data", isDirectory: true)
+        )
+        return candidates
+    }
+
+    private func extractTarArchive(_ archive: URL, into root: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        process.arguments = ["-xf", archive.path, "-C", root.path]
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw DemoProjectError.tarFailed(archive.path, process.terminationStatus)
+        }
+    }
+
+    private func copyDirectory(from source: URL, to destination: URL, fileManager: FileManager) throws {
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.copyItem(at: source, to: destination)
+    }
+}
+
+public enum DemoProjectError: Error, Equatable, CustomStringConvertible {
+    case noTutorialDatasets([String])
+    case tarFailed(String, Int32)
+
+    public var description: String {
+        switch self {
+        case .noTutorialDatasets(let roots):
+            "No local tutorial demo datasets found. Stage TW Hya tutorial data under one of: \(roots.joined(separator: ", "))"
+        case .tarFailed(let path, let status):
+            "Failed to extract tutorial archive \(path) with tar exit status \(status)"
+        }
+    }
+}
+
 public struct MeasurementSetPlotBuildRequest: Equatable {
     public var datasetPath: String
     public var preset: MeasurementSetExplorerPlotPreset
@@ -137,16 +253,19 @@ public struct UniFFITableBrowserClient: TableBrowserClient {
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
     private let probeClient: ProjectProbeClient
+    private let demoProjectClient: DemoProjectClient
     private let plotClient: MeasurementSetPlotClient
     private let imageExplorerClient: ImageExplorerClient
     private let tableBrowserClient: TableBrowserClient
     private let dirtyImagingClient: DirtyImagingTaskClient
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private var activeTaskExecutions: [String: DirtyImagingTaskExecution] = [:]
+    private var temporaryDemoProjectRoot: String?
 
     public init(
         state: WorkbenchState = EmptyWorkbench.makeState(),
         probeClient: ProjectProbeClient = UniFFIProjectProbeClient(),
+        demoProjectClient: DemoProjectClient = TutorialDemoProjectClient(),
         plotClient: MeasurementSetPlotClient = UniFFIMeasurementSetPlotClient(),
         imageExplorerClient: ImageExplorerClient = UniFFIImageExplorerClient(),
         tableBrowserClient: TableBrowserClient = UniFFITableBrowserClient(),
@@ -154,10 +273,15 @@ public final class WorkbenchStore: ObservableObject {
     ) {
         self.state = state
         self.probeClient = probeClient
+        self.demoProjectClient = demoProjectClient
         self.plotClient = plotClient
         self.imageExplorerClient = imageExplorerClient
         self.tableBrowserClient = tableBrowserClient
         self.dirtyImagingClient = dirtyImagingClient
+    }
+
+    deinit {
+        cleanupTemporaryDemoProject()
     }
 
     public static func empty() -> WorkbenchStore {
@@ -170,12 +294,41 @@ public final class WorkbenchStore: ObservableObject {
 
     public func openFixtureProject() {
         let interfaceFontSize = state.interfaceFontSize
-        state = FixtureWorkbench.makeState()
-        state.interfaceFontSize = interfaceFontSize
+        cleanupTemporaryDemoProject()
+        do {
+            let probed = try demoProjectClient.createDemoProject()
+            temporaryDemoProjectRoot = probed.project.rootPath
+            var project = probed.project
+            project.datasets = orderedDemoDatasets(project.datasets)
+            state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+            state.project = project
+            state.probeDiagnostics = probed.diagnostics
+            state.selectedDatasetID = project.datasets.first?.id
+            state.dockMode = .datasets
+            state.leftDockCollapsed = false
+            state.inspectorCollapsed = false
+            if let dataset = state.selectedDataset {
+                openExplorer(for: dataset)
+            }
+            state.history.append(
+                ProcessingHistoryEvent(
+                    id: "hist-demo-project-open",
+                    timestamp: "staged",
+                    title: "Tutorial demo opened",
+                    reason: "Staged local TW Hya tutorial datasets into a temporary project and probed them with Rust frontend services.",
+                    affectedPaths: [probed.project.rootPath],
+                    approval: "user"
+                )
+            )
+        } catch {
+            state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+            state.lastErrors.append("Open tutorial demo project: \(error)")
+        }
     }
 
     public func openProject(path: String) {
         let interfaceFontSize = state.interfaceFontSize
+        cleanupTemporaryDemoProject()
         do {
             let probed = try probeClient.probeProject(path: path)
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
@@ -200,6 +353,36 @@ public final class WorkbenchStore: ObservableObject {
             )
         } catch {
             state.lastErrors.append("Open project \(path): \(error)")
+        }
+    }
+
+    private func cleanupTemporaryDemoProject() {
+        guard let temporaryDemoProjectRoot else { return }
+        demoProjectClient.cleanupDemoProject(rootPath: temporaryDemoProjectRoot)
+        self.temporaryDemoProjectRoot = nil
+    }
+
+    private func orderedDemoDatasets(_ datasets: [DatasetSummary]) -> [DatasetSummary] {
+        datasets.sorted { lhs, rhs in
+            let leftRank = demoDatasetRank(lhs)
+            let rightRank = demoDatasetRank(rhs)
+            if leftRank != rightRank {
+                return leftRank < rightRank
+            }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private func demoDatasetRank(_ dataset: DatasetSummary) -> Int {
+        switch dataset.kind {
+        case .measurementSet:
+            0
+        case .imageCube:
+            1
+        case .table, .calibrationTable:
+            2
+        case .runProduct:
+            3
         }
     }
 
