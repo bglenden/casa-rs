@@ -104,7 +104,7 @@ coordinate delta localized to SPW 2 and accepted as solver-numerics drift.
 
 | Check | Selection | CASA 6.7.5-9 | casa-rs | Result |
 | --- | --- | ---: | ---: | --- |
-| `clipzeros` | full MS | 2 flagged samples after 7.6 s | 2 flagged samples after 10.16 s, 5.20 s user CPU, release build | count match; about 1.3x wall / 1.4x CPU |
+| `clipzeros` | full MS | 2 flagged samples after 7.6 s | 2 flagged samples after 9.59 s, 5.06 s user CPU, release build | count match; about 1.3x wall / 1.3x CPU |
 | `tfcrop` | `scan=251`, `DATA` | 152,904 flagged samples after 0.82 s | 152,840 flagged samples after 0.84 s, 0.74 s user CPU, release build | near match; about 1.0x wall / 0.9x CPU |
 | `rflag` | `scan=251`, `DATA` | 189,624 flagged samples after 0.52 s | 189,624 flagged samples after 0.71 s, 0.61 s user CPU, release build | exact `FLAG` cube match; about 1.4x wall / 1.2x CPU |
 
@@ -170,10 +170,10 @@ Source inspection explained both differences:
 - The full-scan runtime issue was mostly table access, not algorithm cost.
   Selected-row bulk loads, lazy FLAG writes, skipping unchanged `FLAG_ROW`
   writes, typed row scans, dense grouping, allocation-light RFlag median/MAD
-  evaluation, squared-norm clip-zero checks, and mask-based automatic-mode
-  application reduced the worst measured release runs from minute-scale to
-  CASA-level for checked one-scan automatic modes and close to 10 seconds for
-  full-MS `clipzeros`.
+  evaluation, squared-norm clip-zero checks, allocation-free full-channel clip
+  scans, and mask-based automatic-mode application reduced the worst measured
+  release runs from minute-scale to CASA-level for checked one-scan automatic
+  modes and under 10 seconds for full-MS `clipzeros`.
 
 Diagnostic instrumentation is available with:
 

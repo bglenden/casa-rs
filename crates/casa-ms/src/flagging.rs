@@ -528,15 +528,17 @@ fn apply_clip_flags(
             }
             total_samples += flags.len();
             flagged_samples += flags.iter().filter(|flag| **flag).count();
-            let channels =
-                if let Some(ddids) = ddids.as_ref() {
-                    let ddid = ddids[row_slot];
-                    let spw = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
-                        FlaggingError::MutateFlags {
+            let channels = if let Some(ddids) = ddids.as_ref() {
+                let ddid = ddids[row_slot];
+                let spw =
+                    ddid_to_spw
+                        .get(&ddid)
+                        .copied()
+                        .ok_or_else(|| FlaggingError::MutateFlags {
                             path: path.clone(),
                             reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
-                        }
-                    })?;
+                        })?;
+                Some(
                     match channel_selections.and_then(|selectors| selectors.get(&spw)) {
                         Some(selection) => selection.indices(data_shape[1]).map_err(|source| {
                             FlaggingError::MutateFlags {
@@ -545,12 +547,20 @@ fn apply_clip_flags(
                             }
                         })?,
                         None => (0..data_shape[1]).collect(),
-                    }
-                } else {
-                    (0..data_shape[1]).collect()
-                };
+                    },
+                )
+            } else {
+                None
+            };
             row_changes.clear();
-            apply_clip_zero_array(data_value, flags, &channels, &path, row, &mut row_changes)?;
+            apply_clip_zero_array(
+                data_value,
+                flags,
+                channels.as_deref(),
+                &path,
+                row,
+                &mut row_changes,
+            )?;
             let row_changed = row_changes.len();
             if row_changed > 0 {
                 let mut updated_flags = flags.clone();
@@ -1413,7 +1423,7 @@ fn push_sample(
 fn apply_clip_zero_array(
     data: &ArrayValue,
     flags: &ArrayD<bool>,
-    channels: &[usize],
+    channels: Option<&[usize]>,
     path: &str,
     row: usize,
     changed: &mut Vec<(usize, usize)>,
@@ -1435,9 +1445,19 @@ fn apply_clip_zero_array(
                     reason: format!("DATA row {row} must be rank-2: {source}"),
                 })?;
             for corr in 0..values.shape()[0] {
-                for &chan in channels {
-                    if !flags[(corr, chan)] && is_casa_clip_zero_complex32(values[(corr, chan)]) {
-                        changed.push((corr, chan));
+                if let Some(channels) = channels {
+                    for &chan in channels {
+                        if !flags[(corr, chan)] && is_casa_clip_zero_complex32(values[(corr, chan)])
+                        {
+                            changed.push((corr, chan));
+                        }
+                    }
+                } else {
+                    for chan in 0..values.shape()[1] {
+                        if !flags[(corr, chan)] && is_casa_clip_zero_complex32(values[(corr, chan)])
+                        {
+                            changed.push((corr, chan));
+                        }
                     }
                 }
             }
@@ -1451,9 +1471,19 @@ fn apply_clip_zero_array(
                     reason: format!("DATA row {row} must be rank-2: {source}"),
                 })?;
             for corr in 0..values.shape()[0] {
-                for &chan in channels {
-                    if !flags[(corr, chan)] && is_casa_clip_zero_complex64(values[(corr, chan)]) {
-                        changed.push((corr, chan));
+                if let Some(channels) = channels {
+                    for &chan in channels {
+                        if !flags[(corr, chan)] && is_casa_clip_zero_complex64(values[(corr, chan)])
+                        {
+                            changed.push((corr, chan));
+                        }
+                    }
+                } else {
+                    for chan in 0..values.shape()[1] {
+                        if !flags[(corr, chan)] && is_casa_clip_zero_complex64(values[(corr, chan)])
+                        {
+                            changed.push((corr, chan));
+                        }
                     }
                 }
             }
@@ -1467,9 +1497,21 @@ fn apply_clip_zero_array(
                     reason: format!("DATA row {row} must be rank-2: {source}"),
                 })?;
             for corr in 0..values.shape()[0] {
-                for &chan in channels {
-                    if !flags[(corr, chan)] && is_casa_clip_zero(f64::from(values[(corr, chan)])) {
-                        changed.push((corr, chan));
+                if let Some(channels) = channels {
+                    for &chan in channels {
+                        if !flags[(corr, chan)]
+                            && is_casa_clip_zero(f64::from(values[(corr, chan)]))
+                        {
+                            changed.push((corr, chan));
+                        }
+                    }
+                } else {
+                    for chan in 0..values.shape()[1] {
+                        if !flags[(corr, chan)]
+                            && is_casa_clip_zero(f64::from(values[(corr, chan)]))
+                        {
+                            changed.push((corr, chan));
+                        }
                     }
                 }
             }
@@ -1483,9 +1525,17 @@ fn apply_clip_zero_array(
                     reason: format!("DATA row {row} must be rank-2: {source}"),
                 })?;
             for corr in 0..values.shape()[0] {
-                for &chan in channels {
-                    if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)]) {
-                        changed.push((corr, chan));
+                if let Some(channels) = channels {
+                    for &chan in channels {
+                        if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)]) {
+                            changed.push((corr, chan));
+                        }
+                    }
+                } else {
+                    for chan in 0..values.shape()[1] {
+                        if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)]) {
+                            changed.push((corr, chan));
+                        }
                     }
                 }
             }
