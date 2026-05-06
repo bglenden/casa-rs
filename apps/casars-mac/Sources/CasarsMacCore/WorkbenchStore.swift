@@ -94,10 +94,52 @@ public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
     }
 }
 
+public protocol ImageExplorerClient {
+    func buildSnapshot(datasetPath: String, selectedView: String) throws -> ImageExplorerSnapshot
+}
+
+public struct UniFFIImageExplorerClient: ImageExplorerClient {
+    public init() {}
+
+    public func buildSnapshot(datasetPath: String, selectedView: String) throws -> ImageExplorerSnapshot {
+        let json = try CasarsFrontendServices.buildImageExplorerSnapshotJson(
+            datasetPath: datasetPath,
+            width: 120,
+            height: 36,
+            inspectorHeight: 10,
+            planePixelWidth: 512,
+            planePixelHeight: 384,
+            activeView: selectedView
+        )
+        return try JSONDecoder().decode(ImageExplorerSnapshot.self, from: Data(json.utf8))
+    }
+}
+
+public protocol TableBrowserClient {
+    func buildSnapshot(datasetPath: String, selectedView: String) throws -> TableBrowserSnapshot
+}
+
+public struct UniFFITableBrowserClient: TableBrowserClient {
+    public init() {}
+
+    public func buildSnapshot(datasetPath: String, selectedView: String) throws -> TableBrowserSnapshot {
+        let json = try CasarsFrontendServices.buildTableBrowserSnapshotJson(
+            datasetPath: datasetPath,
+            width: 120,
+            height: 32,
+            inspectorHeight: 10,
+            view: selectedView
+        )
+        return try JSONDecoder().decode(TableBrowserSnapshot.self, from: Data(json.utf8))
+    }
+}
+
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
     private let probeClient: ProjectProbeClient
     private let plotClient: MeasurementSetPlotClient
+    private let imageExplorerClient: ImageExplorerClient
+    private let tableBrowserClient: TableBrowserClient
     private let dirtyImagingClient: DirtyImagingTaskClient
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private var activeTaskExecutions: [String: DirtyImagingTaskExecution] = [:]
@@ -106,11 +148,15 @@ public final class WorkbenchStore: ObservableObject {
         state: WorkbenchState = EmptyWorkbench.makeState(),
         probeClient: ProjectProbeClient = UniFFIProjectProbeClient(),
         plotClient: MeasurementSetPlotClient = UniFFIMeasurementSetPlotClient(),
+        imageExplorerClient: ImageExplorerClient = UniFFIImageExplorerClient(),
+        tableBrowserClient: TableBrowserClient = UniFFITableBrowserClient(),
         dirtyImagingClient: DirtyImagingTaskClient = ProcessDirtyImagingTaskClient()
     ) {
         self.state = state
         self.probeClient = probeClient
         self.plotClient = plotClient
+        self.imageExplorerClient = imageExplorerClient
+        self.tableBrowserClient = tableBrowserClient
         self.dirtyImagingClient = dirtyImagingClient
     }
 
@@ -696,6 +742,94 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
+    public func refreshImageExplorer(datasetID: String) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        guard dataset.kind == .imageCube else {
+            state.lastErrors.append("Dataset \(dataset.name) is not an image")
+            return
+        }
+        let selectedView = state.imageExplorers[datasetID]?.selectedView ?? "plane"
+        do {
+            let snapshot = try imageExplorerClient.buildSnapshot(datasetPath: dataset.path, selectedView: selectedView)
+            state.imageExplorers[datasetID] = ImageExplorerSessionState(
+                datasetID: datasetID,
+                selectedView: selectedView,
+                status: .ready,
+                lastError: nil,
+                snapshot: snapshot
+            )
+        } catch {
+            state.imageExplorers[datasetID] = ImageExplorerSessionState(
+                datasetID: datasetID,
+                selectedView: selectedView,
+                status: .failed,
+                lastError: "\(error)",
+                snapshot: nil
+            )
+            state.lastErrors.append("Open image explorer for \(dataset.name): \(error)")
+        }
+    }
+
+    public func refreshTableBrowser(datasetID: String) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        guard dataset.kind == .table || dataset.kind == .calibrationTable else {
+            state.lastErrors.append("Dataset \(dataset.name) is not a table")
+            return
+        }
+        let selectedView = state.tableBrowsers[datasetID]?.selectedView ?? "overview"
+        do {
+            let snapshot = try tableBrowserClient.buildSnapshot(datasetPath: dataset.path, selectedView: selectedView)
+            state.tableBrowsers[datasetID] = TableBrowserSessionState(
+                datasetID: datasetID,
+                selectedView: selectedView,
+                status: .ready,
+                lastError: nil,
+                snapshot: snapshot
+            )
+        } catch {
+            state.tableBrowsers[datasetID] = TableBrowserSessionState(
+                datasetID: datasetID,
+                selectedView: selectedView,
+                status: .failed,
+                lastError: "\(error)",
+                snapshot: nil
+            )
+            state.lastErrors.append("Open table browser for \(dataset.name): \(error)")
+        }
+    }
+
+    public func setImageExplorerView(_ view: String, datasetID: String) {
+        var explorerState = state.imageExplorers[datasetID] ?? ImageExplorerSessionState(
+            datasetID: datasetID,
+            selectedView: "plane",
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+        explorerState.selectedView = view
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setTableBrowserView(_ view: String, datasetID: String) {
+        var browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
+            datasetID: datasetID,
+            selectedView: "overview",
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+        browserState.selectedView = view
+        state.tableBrowsers[datasetID] = browserState
+        refreshTableBrowser(datasetID: datasetID)
+    }
+
     public func rejectAIProposal(_ proposalID: String) {
         guard state.isDemoProject else {
             state.lastErrors.append("AI proposals are only available in the demo project")
@@ -1003,6 +1137,10 @@ public final class WorkbenchStore: ObservableObject {
     private func openExplorer(for dataset: DatasetSummary) {
         if dataset.kind == .measurementSet && !state.isDemoProject {
             _ = measurementSetPlotState(for: dataset.id)
+        } else if dataset.kind == .imageCube && !state.isDemoProject {
+            refreshImageExplorer(datasetID: dataset.id)
+        } else if (dataset.kind == .table || dataset.kind == .calibrationTable) && !state.isDemoProject {
+            refreshTableBrowser(datasetID: dataset.id)
         }
         openTab(
             WorkbenchTab(
@@ -1512,14 +1650,56 @@ extension CasarsFrontendServices.MeasurementSetPlotPreset {
         switch preset {
         case .uvCoverage:
             self = .uvCoverage
+        case .antennaLayout:
+            self = .antennaLayout
+        case .scanTimeline:
+            self = .scanTimeline
+        case .spectralWindowCoverage:
+            self = .spectralWindowCoverage
+        case .phaseVsTime:
+            self = .phaseVsTime
+        case .amplitudePhaseVsTimeStacked:
+            self = .amplitudePhaseVsTimeStacked
+        case .weightVsTime:
+            self = .weightVsTime
+        case .sigmaVsTime:
+            self = .sigmaVsTime
+        case .flagVsTime:
+            self = .flagVsTime
+        case .weightSpectrumVsTime:
+            self = .weightSpectrumVsTime
+        case .sigmaSpectrumVsTime:
+            self = .sigmaSpectrumVsTime
+        case .flagRowVsTime:
+            self = .flagRowVsTime
+        case .elevationVsTime:
+            self = .elevationVsTime
+        case .azimuthVsTime:
+            self = .azimuthVsTime
+        case .hourAngleVsTime:
+            self = .hourAngleVsTime
+        case .parallacticAngleVsTime:
+            self = .parallacticAngleVsTime
+        case .azimuthVsElevation:
+            self = .azimuthVsElevation
         case .amplitudeVsFrequency:
             self = .amplitudeVsFrequency
         case .amplitudeVsChannel:
             self = .amplitudeVsChannel
+        case .phaseVsChannel:
+            self = .phaseVsChannel
+        case .phaseVsFrequency:
+            self = .phaseVsFrequency
+        case .amplitudeVsVelocity:
+            self = .amplitudeVsVelocity
+        case .phaseVsVelocity:
+            self = .phaseVsVelocity
         case .amplitudeVsUvDistance:
             self = .amplitudeVsUvDistance
         case .amplitudeVsTime:
             self = .amplitudeVsTime
+        case .realVsImaginary:
+            self = .realVsImaginary
         }
     }
 }
@@ -1529,14 +1709,56 @@ extension MeasurementSetExplorerPlotPreset {
         switch preset {
         case .uvCoverage:
             self = .uvCoverage
+        case .antennaLayout:
+            self = .antennaLayout
+        case .scanTimeline:
+            self = .scanTimeline
+        case .spectralWindowCoverage:
+            self = .spectralWindowCoverage
+        case .phaseVsTime:
+            self = .phaseVsTime
+        case .amplitudePhaseVsTimeStacked:
+            self = .amplitudePhaseVsTimeStacked
+        case .weightVsTime:
+            self = .weightVsTime
+        case .sigmaVsTime:
+            self = .sigmaVsTime
+        case .flagVsTime:
+            self = .flagVsTime
+        case .weightSpectrumVsTime:
+            self = .weightSpectrumVsTime
+        case .sigmaSpectrumVsTime:
+            self = .sigmaSpectrumVsTime
+        case .flagRowVsTime:
+            self = .flagRowVsTime
+        case .elevationVsTime:
+            self = .elevationVsTime
+        case .azimuthVsTime:
+            self = .azimuthVsTime
+        case .hourAngleVsTime:
+            self = .hourAngleVsTime
+        case .parallacticAngleVsTime:
+            self = .parallacticAngleVsTime
+        case .azimuthVsElevation:
+            self = .azimuthVsElevation
         case .amplitudeVsFrequency:
             self = .amplitudeVsFrequency
         case .amplitudeVsChannel:
             self = .amplitudeVsChannel
+        case .phaseVsChannel:
+            self = .phaseVsChannel
+        case .phaseVsFrequency:
+            self = .phaseVsFrequency
+        case .amplitudeVsVelocity:
+            self = .amplitudeVsVelocity
+        case .phaseVsVelocity:
+            self = .phaseVsVelocity
         case .amplitudeVsUvDistance:
             self = .amplitudeVsUvDistance
         case .amplitudeVsTime:
             self = .amplitudeVsTime
+        case .realVsImaginary:
+            self = .realVsImaginary
         }
     }
 }

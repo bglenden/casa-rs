@@ -400,6 +400,22 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
+    typealias FfiType = UInt16
+    typealias SwiftType = UInt16
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt16 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias FfiType = UInt32
     typealias SwiftType = UInt32
@@ -1574,6 +1590,10 @@ public enum FrontendServiceError: Swift.Error {
     )
     case Plot(reason: String
     )
+    case ImageExplorer(reason: String
+    )
+    case TableExplorer(reason: String
+    )
 }
 
 
@@ -1600,6 +1620,12 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf)
             )
         case 4: return .Plot(
+            reason: try FfiConverterString.read(from: &buf)
+            )
+        case 5: return .ImageExplorer(
+            reason: try FfiConverterString.read(from: &buf)
+            )
+        case 6: return .TableExplorer(
             reason: try FfiConverterString.read(from: &buf)
             )
 
@@ -1631,6 +1657,16 @@ public struct FfiConverterTypeFrontendServiceError: FfiConverterRustBuffer {
 
         case let .Plot(reason):
             writeInt(&buf, Int32(4))
+            FfiConverterString.write(reason, into: &buf)
+
+
+        case let .ImageExplorer(reason):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(reason, into: &buf)
+
+
+        case let .TableExplorer(reason):
+            writeInt(&buf, Int32(6))
             FfiConverterString.write(reason, into: &buf)
 
         }
@@ -1675,10 +1711,31 @@ extension FrontendServiceError: Foundation.LocalizedError {
 public enum MeasurementSetPlotPreset {
 
     case uvCoverage
+    case antennaLayout
+    case scanTimeline
+    case spectralWindowCoverage
+    case phaseVsTime
+    case amplitudePhaseVsTimeStacked
+    case weightVsTime
+    case sigmaVsTime
+    case flagVsTime
+    case weightSpectrumVsTime
+    case sigmaSpectrumVsTime
+    case flagRowVsTime
+    case elevationVsTime
+    case azimuthVsTime
+    case hourAngleVsTime
+    case parallacticAngleVsTime
+    case azimuthVsElevation
     case amplitudeVsFrequency
     case amplitudeVsChannel
+    case phaseVsChannel
+    case phaseVsFrequency
+    case amplitudeVsVelocity
+    case phaseVsVelocity
     case amplitudeVsUvDistance
     case amplitudeVsTime
+    case realVsImaginary
 }
 
 
@@ -1698,13 +1755,55 @@ public struct FfiConverterTypeMeasurementSetPlotPreset: FfiConverterRustBuffer {
 
         case 1: return .uvCoverage
 
-        case 2: return .amplitudeVsFrequency
+        case 2: return .antennaLayout
 
-        case 3: return .amplitudeVsChannel
+        case 3: return .scanTimeline
 
-        case 4: return .amplitudeVsUvDistance
+        case 4: return .spectralWindowCoverage
 
-        case 5: return .amplitudeVsTime
+        case 5: return .phaseVsTime
+
+        case 6: return .amplitudePhaseVsTimeStacked
+
+        case 7: return .weightVsTime
+
+        case 8: return .sigmaVsTime
+
+        case 9: return .flagVsTime
+
+        case 10: return .weightSpectrumVsTime
+
+        case 11: return .sigmaSpectrumVsTime
+
+        case 12: return .flagRowVsTime
+
+        case 13: return .elevationVsTime
+
+        case 14: return .azimuthVsTime
+
+        case 15: return .hourAngleVsTime
+
+        case 16: return .parallacticAngleVsTime
+
+        case 17: return .azimuthVsElevation
+
+        case 18: return .amplitudeVsFrequency
+
+        case 19: return .amplitudeVsChannel
+
+        case 20: return .phaseVsChannel
+
+        case 21: return .phaseVsFrequency
+
+        case 22: return .amplitudeVsVelocity
+
+        case 23: return .phaseVsVelocity
+
+        case 24: return .amplitudeVsUvDistance
+
+        case 25: return .amplitudeVsTime
+
+        case 26: return .realVsImaginary
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1718,20 +1817,104 @@ public struct FfiConverterTypeMeasurementSetPlotPreset: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
 
 
-        case .amplitudeVsFrequency:
+        case .antennaLayout:
             writeInt(&buf, Int32(2))
 
 
-        case .amplitudeVsChannel:
+        case .scanTimeline:
             writeInt(&buf, Int32(3))
 
 
-        case .amplitudeVsUvDistance:
+        case .spectralWindowCoverage:
             writeInt(&buf, Int32(4))
 
 
-        case .amplitudeVsTime:
+        case .phaseVsTime:
             writeInt(&buf, Int32(5))
+
+
+        case .amplitudePhaseVsTimeStacked:
+            writeInt(&buf, Int32(6))
+
+
+        case .weightVsTime:
+            writeInt(&buf, Int32(7))
+
+
+        case .sigmaVsTime:
+            writeInt(&buf, Int32(8))
+
+
+        case .flagVsTime:
+            writeInt(&buf, Int32(9))
+
+
+        case .weightSpectrumVsTime:
+            writeInt(&buf, Int32(10))
+
+
+        case .sigmaSpectrumVsTime:
+            writeInt(&buf, Int32(11))
+
+
+        case .flagRowVsTime:
+            writeInt(&buf, Int32(12))
+
+
+        case .elevationVsTime:
+            writeInt(&buf, Int32(13))
+
+
+        case .azimuthVsTime:
+            writeInt(&buf, Int32(14))
+
+
+        case .hourAngleVsTime:
+            writeInt(&buf, Int32(15))
+
+
+        case .parallacticAngleVsTime:
+            writeInt(&buf, Int32(16))
+
+
+        case .azimuthVsElevation:
+            writeInt(&buf, Int32(17))
+
+
+        case .amplitudeVsFrequency:
+            writeInt(&buf, Int32(18))
+
+
+        case .amplitudeVsChannel:
+            writeInt(&buf, Int32(19))
+
+
+        case .phaseVsChannel:
+            writeInt(&buf, Int32(20))
+
+
+        case .phaseVsFrequency:
+            writeInt(&buf, Int32(21))
+
+
+        case .amplitudeVsVelocity:
+            writeInt(&buf, Int32(22))
+
+
+        case .phaseVsVelocity:
+            writeInt(&buf, Int32(23))
+
+
+        case .amplitudeVsUvDistance:
+            writeInt(&buf, Int32(24))
+
+
+        case .amplitudeVsTime:
+            writeInt(&buf, Int32(25))
+
+
+        case .realVsImaginary:
+            writeInt(&buf, Int32(26))
 
         }
     }
@@ -1935,10 +2118,34 @@ fileprivate struct FfiConverterSequenceTypePlotSeriesMetadata: FfiConverterRustB
         return seq
     }
 }
+public func buildImageExplorerSnapshotJson(datasetPath: String, width: UInt16, height: UInt16, inspectorHeight: UInt16, planePixelWidth: UInt16, planePixelHeight: UInt16, activeView: String?)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_build_image_explorer_snapshot_json(
+        FfiConverterString.lower(datasetPath),
+        FfiConverterUInt16.lower(width),
+        FfiConverterUInt16.lower(height),
+        FfiConverterUInt16.lower(inspectorHeight),
+        FfiConverterUInt16.lower(planePixelWidth),
+        FfiConverterUInt16.lower(planePixelHeight),
+        FfiConverterOptionString.lower(activeView),$0
+    )
+})
+}
 public func buildMeasurementSetPlot(request: MeasurementSetPlotRequest)throws  -> MeasurementSetPlotResult  {
     return try  FfiConverterTypeMeasurementSetPlotResult_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_build_measurement_set_plot(
         FfiConverterTypeMeasurementSetPlotRequest_lower(request),$0
+    )
+})
+}
+public func buildTableBrowserSnapshotJson(datasetPath: String, width: UInt16, height: UInt16, inspectorHeight: UInt16, view: String?)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_build_table_browser_snapshot_json(
+        FfiConverterString.lower(datasetPath),
+        FfiConverterUInt16.lower(width),
+        FfiConverterUInt16.lower(height),
+        FfiConverterUInt16.lower(inspectorHeight),
+        FfiConverterOptionString.lower(view),$0
     )
 })
 }
@@ -1972,7 +2179,13 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_casars_frontend_services_checksum_func_build_image_explorer_snapshot_json() != 45506) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_casars_frontend_services_checksum_func_build_measurement_set_plot() != 34309) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_build_table_browser_snapshot_json() != 45866) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_probe_path() != 47483) {

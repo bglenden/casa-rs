@@ -451,10 +451,31 @@ public struct PythonPanelState: Codable, Equatable {
 
 public enum MeasurementSetExplorerPlotPreset: String, CaseIterable, Codable, Equatable, Identifiable {
     case uvCoverage
+    case antennaLayout
+    case scanTimeline
+    case spectralWindowCoverage
+    case phaseVsTime
+    case amplitudePhaseVsTimeStacked
+    case weightVsTime
+    case sigmaVsTime
+    case flagVsTime
+    case weightSpectrumVsTime
+    case sigmaSpectrumVsTime
+    case flagRowVsTime
+    case elevationVsTime
+    case azimuthVsTime
+    case hourAngleVsTime
+    case parallacticAngleVsTime
+    case azimuthVsElevation
     case amplitudeVsFrequency
     case amplitudeVsChannel
+    case phaseVsChannel
+    case phaseVsFrequency
+    case amplitudeVsVelocity
+    case phaseVsVelocity
     case amplitudeVsUvDistance
     case amplitudeVsTime
+    case realVsImaginary
 
     public var id: String { rawValue }
 
@@ -462,14 +483,56 @@ public enum MeasurementSetExplorerPlotPreset: String, CaseIterable, Codable, Equ
         switch self {
         case .uvCoverage:
             "UV Coverage"
+        case .antennaLayout:
+            "Antenna Layout"
+        case .scanTimeline:
+            "Scan Timeline"
+        case .spectralWindowCoverage:
+            "Spectral Window Coverage"
+        case .phaseVsTime:
+            "Phase vs Time"
+        case .amplitudePhaseVsTimeStacked:
+            "Amplitude / Phase vs Time"
+        case .weightVsTime:
+            "Weight vs Time"
+        case .sigmaVsTime:
+            "Sigma vs Time"
+        case .flagVsTime:
+            "Flag vs Time"
+        case .weightSpectrumVsTime:
+            "Weight Spectrum vs Time"
+        case .sigmaSpectrumVsTime:
+            "Sigma Spectrum vs Time"
+        case .flagRowVsTime:
+            "Flag Row vs Time"
+        case .elevationVsTime:
+            "Elevation vs Time"
+        case .azimuthVsTime:
+            "Azimuth vs Time"
+        case .hourAngleVsTime:
+            "Hour Angle vs Time"
+        case .parallacticAngleVsTime:
+            "Parallactic Angle vs Time"
+        case .azimuthVsElevation:
+            "Azimuth vs Elevation"
         case .amplitudeVsFrequency:
             "Amplitude vs Frequency"
         case .amplitudeVsChannel:
             "Amplitude vs Channel"
+        case .phaseVsChannel:
+            "Phase vs Channel"
+        case .phaseVsFrequency:
+            "Phase vs Frequency"
+        case .amplitudeVsVelocity:
+            "Amplitude vs Velocity"
+        case .phaseVsVelocity:
+            "Phase vs Velocity"
         case .amplitudeVsUvDistance:
             "Amplitude vs UV Distance"
         case .amplitudeVsTime:
             "Amplitude vs Time"
+        case .realVsImaginary:
+            "Real vs Imaginary"
         }
     }
 }
@@ -639,6 +702,175 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
     }
 }
 
+public enum ExplorerSessionStatus: String, Codable, Equatable {
+    case idle
+    case ready
+    case failed
+}
+
+public struct ImageExplorerSnapshot: Codable, Equatable {
+    public struct Capabilities: Codable, Equatable {
+        public var renderablePlane: Bool
+        public var worldCoordsAvailable: Bool
+        public var pixelOnlyMode: Bool
+        public var nonDisplayAxisSelectors: Bool
+        public var maskPresent: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case renderablePlane = "renderable_plane"
+            case worldCoordsAvailable = "world_coords_available"
+            case pixelOnlyMode = "pixel_only_mode"
+            case nonDisplayAxisSelectors = "non_display_axis_selectors"
+            case maskPresent = "mask_present"
+        }
+    }
+
+    public struct Plane: Codable, Equatable {
+        public var width: Int
+        public var height: Int
+        public var pixelsU8: [UInt8]
+        public var clipMin: Double
+        public var clipMax: Double
+        public var dataMin: Double
+        public var dataMax: Double
+        public var valueUnit: String
+        public var maskedOrNonFiniteCount: Int
+
+        enum CodingKeys: String, CodingKey {
+            case width
+            case height
+            case pixelsU8 = "pixels_u8"
+            case clipMin = "clip_min"
+            case clipMax = "clip_max"
+            case dataMin = "data_min"
+            case dataMax = "data_max"
+            case valueUnit = "value_unit"
+            case maskedOrNonFiniteCount = "masked_or_non_finite_count"
+        }
+    }
+
+    public struct Profile: Codable, Equatable {
+        public struct Sample: Codable, Equatable {
+            public var sampleIndex: Int
+            public var pixelIndex: Int
+            public var value: Double
+            public var finite: Bool
+
+            enum CodingKeys: String, CodingKey {
+                case sampleIndex = "sample_index"
+                case pixelIndex = "pixel_index"
+                case value
+                case finite
+            }
+        }
+
+        public var axis: Int
+        public var axisName: String
+        public var axisUnit: String
+        public var valueUnit: String
+        public var samples: [Sample]
+
+        enum CodingKeys: String, CodingKey {
+            case axis
+            case axisName = "axis_name"
+            case axisUnit = "axis_unit"
+            case valueUnit = "value_unit"
+            case samples
+        }
+    }
+
+    public struct Region: Codable, Equatable {
+        public var label: String
+        public var shapeCount: Int
+        public var closedShapeCount: Int
+        public var editing: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case label
+            case shapeCount = "shape_count"
+            case closedShapeCount = "closed_shape_count"
+            case editing
+        }
+    }
+
+    public var statusLine: String
+    public var activeView: String
+    public var shape: [Int]
+    public var inspectorLines: [String]
+    public var contentLines: [String]
+    public var plane: Plane?
+    public var profile: Profile?
+    public var region: Region?
+    public var savedRegionNames: [String]
+    public var maskNames: [String]
+    public var capabilities: Capabilities
+
+    enum CodingKeys: String, CodingKey {
+        case statusLine = "status_line"
+        case activeView = "active_view"
+        case shape
+        case inspectorLines = "inspector_lines"
+        case contentLines = "content_lines"
+        case plane
+        case profile
+        case region
+        case savedRegionNames = "saved_region_names"
+        case maskNames = "mask_names"
+        case capabilities
+    }
+}
+
+public struct ImageExplorerSessionState: Codable, Equatable {
+    public var datasetID: String
+    public var selectedView: String
+    public var status: ExplorerSessionStatus
+    public var lastError: String?
+    public var snapshot: ImageExplorerSnapshot?
+}
+
+public struct TableBrowserSnapshot: Codable, Equatable {
+    public struct Breadcrumb: Codable, Equatable {
+        public var label: String
+        public var path: String
+    }
+
+    public struct Inspector: Codable, Equatable {
+        public var title: String
+        public var renderedLines: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case title
+            case renderedLines = "rendered_lines"
+        }
+    }
+
+    public var view: String
+    public var focus: String
+    public var tablePath: String
+    public var breadcrumb: [Breadcrumb]
+    public var statusLine: String
+    public var contentLines: [String]
+    public var inspector: Inspector?
+
+    enum CodingKeys: String, CodingKey {
+        case view
+        case focus
+        case tablePath = "table_path"
+        case breadcrumb
+        case statusLine = "status_line"
+        case contentLines = "content_lines"
+        case inspector
+    }
+}
+
+public struct TableBrowserSessionState: Codable, Equatable {
+    public var datasetID: String
+    public var selectedView: String
+    public var status: ExplorerSessionStatus
+    public var lastError: String?
+    public var snapshot: TableBrowserSnapshot?
+}
+
 public extension MeasurementSetPlotResultSummary {
     func matches(plotState: MeasurementSetExplorerPlotState) -> Bool {
         preset == plotState.preset
@@ -695,6 +927,8 @@ public struct WorkbenchState: Codable, Equatable {
     public var python: PythonPanelState
     public var measurementSetPlots: [String: MeasurementSetExplorerPlotState]
     public var measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary]
+    public var imageExplorers: [String: ImageExplorerSessionState]
+    public var tableBrowsers: [String: TableBrowserSessionState]
     public var plotDocuments: [WorkbenchPlotDocument]
     public var jobs: [String: WorkbenchJob]
     public var activeJobIDsByTab: [String: String]
@@ -721,6 +955,8 @@ public struct WorkbenchState: Codable, Equatable {
         python: PythonPanelState,
         measurementSetPlots: [String: MeasurementSetExplorerPlotState] = [:],
         measurementSetPlotResultCache: [String: MeasurementSetPlotResultSummary] = [:],
+        imageExplorers: [String: ImageExplorerSessionState] = [:],
+        tableBrowsers: [String: TableBrowserSessionState] = [:],
         plotDocuments: [WorkbenchPlotDocument] = [],
         jobs: [String: WorkbenchJob] = [:],
         activeJobIDsByTab: [String: String] = [:],
@@ -746,6 +982,8 @@ public struct WorkbenchState: Codable, Equatable {
         self.python = python
         self.measurementSetPlots = measurementSetPlots
         self.measurementSetPlotResultCache = measurementSetPlotResultCache
+        self.imageExplorers = imageExplorers
+        self.tableBrowsers = tableBrowsers
         self.plotDocuments = plotDocuments
         self.jobs = jobs
         self.activeJobIDsByTab = activeJobIDsByTab
@@ -833,6 +1071,8 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var aiProposalStates: [String: AIProposalState]
     public var pythonOwner: PythonOwner
     public var measurementSetPlots: [String: DebugMeasurementSetPlotSnapshot]
+    public var imageExplorers: [String: DebugImageExplorerSnapshot]
+    public var tableBrowsers: [String: DebugTableBrowserSnapshot]
     public var workbenchPlots: [DebugWorkbenchPlotSnapshot]
     public var jobs: [DebugWorkbenchJobSnapshot]
     public var activeJobIDsByTab: [String: String]
@@ -870,6 +1110,16 @@ public struct DebugStateSnapshot: Codable, Equatable {
         measurementSetPlots = Dictionary(
             uniqueKeysWithValues: state.measurementSetPlots.map { datasetID, plotState in
                 (datasetID, DebugMeasurementSetPlotSnapshot(plotState: plotState))
+            }
+        )
+        imageExplorers = Dictionary(
+            uniqueKeysWithValues: state.imageExplorers.map { datasetID, explorerState in
+                (datasetID, DebugImageExplorerSnapshot(state: explorerState))
+            }
+        )
+        tableBrowsers = Dictionary(
+            uniqueKeysWithValues: state.tableBrowsers.map { datasetID, browserState in
+                (datasetID, DebugTableBrowserSnapshot(state: browserState))
             }
         )
         workbenchPlots = state.plotDocuments.map(DebugWorkbenchPlotSnapshot.init(plot:))
@@ -1015,5 +1265,57 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
         imageByteCount = visibleResult?.imageBytes.count
         renderer = visibleResult?.renderer
         diagnostics = visibleResult?.diagnostics ?? []
+    }
+}
+
+public struct DebugImageExplorerSnapshot: Codable, Equatable {
+    public var status: ExplorerSessionStatus
+    public var activeView: String?
+    public var selectedView: String
+    public var shape: [Int]
+    public var planeSize: String?
+    public var profileSampleCount: Int?
+    public var maskCount: Int
+    public var savedRegionCount: Int
+    public var lastError: String?
+
+    public init(state: ImageExplorerSessionState) {
+        status = state.status
+        selectedView = state.selectedView
+        activeView = state.snapshot?.activeView
+        shape = state.snapshot?.shape ?? []
+        if let plane = state.snapshot?.plane {
+            planeSize = "\(plane.width)x\(plane.height)"
+        } else {
+            planeSize = nil
+        }
+        profileSampleCount = state.snapshot?.profile?.samples.count
+        maskCount = state.snapshot?.maskNames.count ?? 0
+        savedRegionCount = state.snapshot?.savedRegionNames.count ?? 0
+        lastError = state.lastError
+    }
+}
+
+public struct DebugTableBrowserSnapshot: Codable, Equatable {
+    public var status: ExplorerSessionStatus
+    public var view: String?
+    public var selectedView: String
+    public var focus: String?
+    public var tablePath: String?
+    public var breadcrumbDepth: Int
+    public var contentLineCount: Int
+    public var inspectorTitle: String?
+    public var lastError: String?
+
+    public init(state: TableBrowserSessionState) {
+        status = state.status
+        selectedView = state.selectedView
+        view = state.snapshot?.view
+        focus = state.snapshot?.focus
+        tablePath = state.snapshot?.tablePath
+        breadcrumbDepth = state.snapshot?.breadcrumb.count ?? 0
+        contentLineCount = state.snapshot?.contentLines.count ?? 0
+        inspectorTitle = state.snapshot?.inspector?.title
+        lastError = state.lastError
     }
 }

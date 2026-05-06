@@ -479,6 +479,85 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.title, "MS: probed.ms")
     }
 
+    func testRealImageExplorerUsesRustBackedSnapshotState() throws {
+        let imageDataset = DatasetSummary(
+            id: "/data/restored.image",
+            name: "restored.image",
+            path: "/data/restored.image",
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "Recognized by Rust probe."
+        )
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [imageDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            imageExplorerClient: imageClient
+        )
+
+        store.openProject(path: "/data")
+
+        let state = try XCTUnwrap(store.state.imageExplorers[imageDataset.id])
+        XCTAssertEqual(state.status, .ready)
+        XCTAssertEqual(state.selectedView, "plane")
+        XCTAssertEqual(state.snapshot?.activeView, "plane")
+        XCTAssertEqual(state.snapshot?.plane?.width, 2)
+        XCTAssertEqual(state.snapshot?.profile?.samples.count, 2)
+        XCTAssertEqual(imageClient.paths, ["/data/restored.image"])
+        XCTAssertEqual(store.debugSnapshot().imageExplorers[imageDataset.id]?.planeSize, "2x2")
+
+        store.setImageExplorerView("spectrum", datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.selectedView, "spectrum")
+        XCTAssertEqual(imageClient.requests.map(\.selectedView), ["plane", "spectrum"])
+    }
+
+    func testRealTableBrowserUsesRustBackedSnapshotState() throws {
+        let tableDataset = DatasetSummary(
+            id: "/data/MAIN",
+            name: "MAIN",
+            path: "/data/MAIN",
+            kind: .table,
+            size: "12 rows, 3 columns",
+            units: "casacore table",
+            columns: ["TIME", "DATA", "FLAG"],
+            subtables: ["ANTENNA"],
+            shape: [12],
+            notes: "Recognized by Rust probe."
+        )
+        let tableClient = StubTableBrowserClient(snapshot: makeTableBrowserSnapshot(path: tableDataset.path))
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [tableDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            tableBrowserClient: tableClient
+        )
+
+        store.openProject(path: "/data")
+
+        let state = try XCTUnwrap(store.state.tableBrowsers[tableDataset.id])
+        XCTAssertEqual(state.status, .ready)
+        XCTAssertEqual(state.selectedView, "overview")
+        XCTAssertEqual(state.snapshot?.view, "overview")
+        XCTAssertEqual(state.snapshot?.contentLines.first, "Rows: 12")
+        XCTAssertEqual(tableClient.paths, ["/data/MAIN"])
+        XCTAssertEqual(store.debugSnapshot().tableBrowsers[tableDataset.id]?.inspectorTitle, "Column DATA")
+
+        store.setTableBrowserView("columns", datasetID: tableDataset.id)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.selectedView, "columns")
+        XCTAssertEqual(tableClient.requests.map(\.selectedView), ["overview", "columns"])
+    }
+
     func testExplorerTabsExposeTypedRealDatasetRoutesInDebugSnapshot() {
         let msDataset = DatasetSummary(
             id: "/data/probed.ms",
@@ -1416,6 +1495,104 @@ private final class StubMeasurementSetPlotClient: MeasurementSetPlotClient {
             imageHeight: request.height
         )
     }
+}
+
+private final class StubImageExplorerClient: ImageExplorerClient {
+    struct Request {
+        var datasetPath: String
+        var selectedView: String
+    }
+
+    private(set) var paths: [String] = []
+    private(set) var requests: [Request] = []
+    var snapshot: ImageExplorerSnapshot
+
+    init(snapshot: ImageExplorerSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    func buildSnapshot(datasetPath: String, selectedView: String) throws -> ImageExplorerSnapshot {
+        paths.append(datasetPath)
+        requests.append(Request(datasetPath: datasetPath, selectedView: selectedView))
+        return snapshot
+    }
+}
+
+private final class StubTableBrowserClient: TableBrowserClient {
+    struct Request {
+        var datasetPath: String
+        var selectedView: String
+    }
+
+    private(set) var paths: [String] = []
+    private(set) var requests: [Request] = []
+    var snapshot: TableBrowserSnapshot
+
+    init(snapshot: TableBrowserSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    func buildSnapshot(datasetPath: String, selectedView: String) throws -> TableBrowserSnapshot {
+        paths.append(datasetPath)
+        requests.append(Request(datasetPath: datasetPath, selectedView: selectedView))
+        return snapshot
+    }
+}
+
+private func makeImageExplorerSnapshot() -> ImageExplorerSnapshot {
+    ImageExplorerSnapshot(
+        statusLine: "Browsing restored.image.",
+        activeView: "plane",
+        shape: [4, 4, 8],
+        inspectorLines: ["Cursor: 1,1", "Value: 2 Jy/beam"],
+        contentLines: ["plane content"],
+        plane: ImageExplorerSnapshot.Plane(
+            width: 2,
+            height: 2,
+            pixelsU8: [0, 64, 128, 255],
+            clipMin: 0,
+            clipMax: 3,
+            dataMin: 0,
+            dataMax: 3,
+            valueUnit: "Jy/beam",
+            maskedOrNonFiniteCount: 0
+        ),
+        profile: ImageExplorerSnapshot.Profile(
+            axis: 2,
+            axisName: "Frequency",
+            axisUnit: "Hz",
+            valueUnit: "Jy/beam",
+            samples: [
+                ImageExplorerSnapshot.Profile.Sample(sampleIndex: 0, pixelIndex: 0, value: 1.0, finite: true),
+                ImageExplorerSnapshot.Profile.Sample(sampleIndex: 1, pixelIndex: 1, value: 2.0, finite: true)
+            ]
+        ),
+        region: ImageExplorerSnapshot.Region(label: "active region", shapeCount: 1, closedShapeCount: 1, editing: false),
+        savedRegionNames: ["source"],
+        maskNames: ["mask0"],
+        capabilities: ImageExplorerSnapshot.Capabilities(
+            renderablePlane: true,
+            worldCoordsAvailable: true,
+            pixelOnlyMode: false,
+            nonDisplayAxisSelectors: true,
+            maskPresent: true
+        )
+    )
+}
+
+private func makeTableBrowserSnapshot(path: String) -> TableBrowserSnapshot {
+    TableBrowserSnapshot(
+        view: "overview",
+        focus: "main",
+        tablePath: path,
+        breadcrumb: [TableBrowserSnapshot.Breadcrumb(label: "MAIN", path: path)],
+        statusLine: "Browsing \(path).",
+        contentLines: ["Rows: 12", "Columns: TIME DATA FLAG"],
+        inspector: TableBrowserSnapshot.Inspector(
+            title: "Column DATA",
+            renderedLines: ["Array Complex64[4,2]", "Unit: Jy"]
+        )
+    )
 }
 
 private final class BlockingMeasurementSetPlotClient: MeasurementSetPlotClient {

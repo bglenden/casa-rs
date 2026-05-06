@@ -248,8 +248,46 @@ struct DatasetExplorerPanel: View {
         }
     }
 
+    @ViewBuilder
     private func imageExplorerContent(for dataset: DatasetSummary) -> some View {
+        let explorerState = store.state.imageExplorers[dataset.id]
         VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Picker("View", selection: Binding(
+                    get: { explorerState?.selectedView ?? "plane" },
+                    set: { store.setImageExplorerView($0, datasetID: dataset.id) }
+                )) {
+                    Text("Plane").tag("plane")
+                    Text("Spectrum").tag("spectrum")
+                    Text("Metadata").tag("metadata")
+                    Text("Coordinates").tag("coordinates")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 360)
+                .accessibilityIdentifier("imageExplorer.view.\(dataset.id)")
+
+                Button {
+                    store.refreshImageExplorer(datasetID: dataset.id)
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .accessibilityIdentifier("imageExplorer.refresh.\(dataset.id)")
+
+                if let snapshot = explorerState?.snapshot {
+                    Text(snapshot.statusLine)
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else if let error = explorerState?.lastError {
+                    Text(error)
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+            }
+
             HStack(alignment: .top, spacing: 16) {
                 SummaryBox(
                     title: "Image",
@@ -264,14 +302,57 @@ struct DatasetExplorerPanel: View {
                 SummaryBox(title: "Masks and Regions", values: imageMaskRegionValues(for: dataset))
             }
 
-            ImagePreviewPlaceholder(dataset: dataset)
+            if let snapshot = explorerState?.snapshot {
+                ImageExplorerSnapshotView(snapshot: snapshot)
+            } else {
+                ImagePreviewPlaceholder(dataset: dataset)
+            }
 
             SummaryBox(title: "Probe Notes", values: [dataset.notes] + dataset.diagnostics)
         }
     }
 
+    @ViewBuilder
     private func tableExplorerContent(for dataset: DatasetSummary) -> some View {
+        let browserState = store.state.tableBrowsers[dataset.id]
         VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Picker("View", selection: Binding(
+                    get: { browserState?.selectedView ?? "overview" },
+                    set: { store.setTableBrowserView($0, datasetID: dataset.id) }
+                )) {
+                    Text("Overview").tag("overview")
+                    Text("Columns").tag("columns")
+                    Text("Keywords").tag("keywords")
+                    Text("Cells").tag("cells")
+                    Text("Subtables").tag("subtables")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 460)
+                .accessibilityIdentifier("tableBrowser.view.\(dataset.id)")
+
+                Button {
+                    store.refreshTableBrowser(datasetID: dataset.id)
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .accessibilityIdentifier("tableBrowser.refresh.\(dataset.id)")
+
+                if let snapshot = browserState?.snapshot {
+                    Text(snapshot.statusLine)
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else if let error = browserState?.lastError {
+                    Text(error)
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+            }
+
             HStack(alignment: .top, spacing: 16) {
                 SummaryBox(
                     title: "Table",
@@ -286,7 +367,11 @@ struct DatasetExplorerPanel: View {
                 SummaryBox(title: "Subtables", values: dataset.subtables)
             }
 
-            TablePreviewSummary(dataset: dataset)
+            if let snapshot = browserState?.snapshot {
+                TableBrowserSnapshotView(snapshot: snapshot)
+            } else {
+                TablePreviewSummary(dataset: dataset)
+            }
             SummaryBox(title: "Probe Notes", values: [dataset.notes] + dataset.diagnostics)
         }
     }
@@ -410,6 +495,226 @@ private struct ExplorerPlot: Identifiable {
     let caption: String
 
     var id: String { title }
+}
+
+private struct ImageExplorerSnapshotView: View {
+    let snapshot: ImageExplorerSnapshot
+
+    var body: some View {
+        Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 14) {
+            GridRow {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Plane")
+                        .workbenchFont(.headline)
+                    if let plane = snapshot.plane {
+                        ImagePlaneRasterView(plane: plane)
+                            .frame(minHeight: 280)
+                        Text("\(plane.width)x\(plane.height), clip \(plane.clipMin.formatted())...\(plane.clipMax.formatted()) \(plane.valueUnit)")
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("No renderable plane in current image browser snapshot.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    SummaryBox(
+                        title: "Session",
+                        values: [
+                            "View: \(snapshot.activeView)",
+                            "Shape: \(formatShape(snapshot.shape.map(UInt64.init)))",
+                            "Plane: \(snapshot.capabilities.renderablePlane ? "renderable" : "unavailable")",
+                            "World coordinates: \(snapshot.capabilities.worldCoordsAvailable ? "available" : "pixel-only")"
+                        ]
+                    )
+                    SummaryBox(title: "Inspector", values: snapshot.inspectorLines)
+                }
+            }
+
+            GridRow {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Profile")
+                        .workbenchFont(.headline)
+                    if let profile = snapshot.profile {
+                        WorkbenchPlotView(plot: profilePlotDocument(profile))
+                            .frame(minHeight: 220)
+                        Text("\(profile.samples.count) samples on \(profile.axisName)")
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("No profile for the current cursor/plane.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                SummaryBox(
+                    title: "Masks and Regions",
+                    values: maskRegionValues(snapshot: snapshot)
+                )
+            }
+        }
+        .accessibilityIdentifier("imageExplorer.snapshot")
+    }
+
+    private func maskRegionValues(snapshot: ImageExplorerSnapshot) -> [String] {
+        var values: [String] = []
+        values.append("Masks: \(snapshot.maskNames.isEmpty ? "none" : snapshot.maskNames.joined(separator: ", "))")
+        values.append("Saved regions: \(snapshot.savedRegionNames.isEmpty ? "none" : snapshot.savedRegionNames.joined(separator: ", "))")
+        if let region = snapshot.region {
+            values.append("\(region.label): \(region.shapeCount) shape(s), \(region.closedShapeCount) closed")
+            values.append(region.editing ? "Region edit active" : "Region edit inactive")
+        }
+        return values
+    }
+
+    private func profilePlotDocument(_ profile: ImageExplorerSnapshot.Profile) -> WorkbenchPlotDocument {
+        let points = profile.samples
+            .filter(\.finite)
+            .map { WorkbenchPlotPoint(x: Double($0.sampleIndex), y: $0.value) }
+        let layer = WorkbenchPlotLayer(
+            id: "profile-\(profile.axis)",
+            title: "\(profile.axisName) profile",
+            kind: .line,
+            xAxisID: "sample",
+            yAxisID: "value",
+            points: points,
+            style: WorkbenchPlotLayerStyle(colorHex: "#4F7DFF", symbolSize: 2.0, lineWidth: 1.4),
+            provenanceSummary: "Profile samples from Rust imexplore session snapshot."
+        )
+        let xRange = WorkbenchPlotRange(
+            lower: points.map(\.x).min() ?? 0,
+            upper: points.map(\.x).max() ?? 1
+        )
+        let yRange = WorkbenchPlotRange(
+            lower: points.map(\.y).min() ?? 0,
+            upper: points.map(\.y).max() ?? 1
+        )
+        return WorkbenchPlotDocument(
+            id: "image-profile-\(profile.axis)",
+            title: "\(profile.axisName) Profile",
+            subtitle: "\(profile.valueUnit) vs \(profile.axisUnit)",
+            axes: [
+                WorkbenchPlotAxis(id: "sample", label: profile.axisName, unit: profile.axisUnit, range: expandedRange(xRange)),
+                WorkbenchPlotAxis(id: "value", label: "Value", unit: profile.valueUnit, range: expandedRange(yRange))
+            ],
+            layers: [layer]
+        )
+    }
+
+    private func expandedRange(_ range: WorkbenchPlotRange) -> WorkbenchPlotRange {
+        guard range.lower == range.upper else {
+            return range
+        }
+        return WorkbenchPlotRange(lower: range.lower - 0.5, upper: range.upper + 0.5)
+    }
+}
+
+private struct ImagePlaneRasterView: View {
+    let plane: ImageExplorerSnapshot.Plane
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+            } else {
+                Color(nsColor: .windowBackgroundColor)
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.18)))
+        .onAppear(perform: updateImage)
+        .onChange(of: plane.pixelsU8) { _ in updateImage() }
+    }
+
+    private func updateImage() {
+        guard plane.width > 0, plane.height > 0, plane.pixelsU8.count == plane.width * plane.height else {
+            image = nil
+            return
+        }
+        let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: plane.width,
+            pixelsHigh: plane.height,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: plane.width * 4,
+            bitsPerPixel: 32
+        )
+        guard let data = bitmap?.bitmapData else {
+            image = nil
+            return
+        }
+        for index in 0..<(plane.width * plane.height) {
+            let value = plane.pixelsU8[index]
+            let offset = index * 4
+            data[offset] = value
+            data[offset + 1] = value
+            data[offset + 2] = value
+            data[offset + 3] = 255
+        }
+        let output = NSImage(size: NSSize(width: plane.width, height: plane.height))
+        if let bitmap {
+            output.addRepresentation(bitmap)
+        }
+        image = output
+    }
+}
+
+private struct TableBrowserSnapshotView: View {
+    let snapshot: TableBrowserSnapshot
+
+    var body: some View {
+        Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 14) {
+            GridRow {
+                SummaryBox(
+                    title: "Browser",
+                    values: [
+                        "View: \(snapshot.view)",
+                        "Focus: \(snapshot.focus)",
+                        "Breadcrumb: \(snapshot.breadcrumb.map(\.label).joined(separator: " / "))"
+                    ]
+                )
+                SummaryBox(title: "Inspector", values: inspectorValues)
+            }
+
+            GridRow {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Content")
+                        .workbenchFont(.headline)
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(snapshot.contentLines.prefix(32), id: \.self) { line in
+                            Text(line)
+                                .workbenchFont(.caption, design: .monospaced)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.18)))
+                }
+                .gridCellColumns(2)
+            }
+        }
+        .accessibilityIdentifier("tableBrowser.snapshot")
+    }
+
+    private var inspectorValues: [String] {
+        guard let inspector = snapshot.inspector else {
+            return ["No selected inspector payload"]
+        }
+        return [inspector.title] + inspector.renderedLines
+    }
 }
 
 struct MeasurementSetPlotPanel: View {

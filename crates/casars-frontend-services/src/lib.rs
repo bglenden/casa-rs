@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
-use casa_images::{AnyPagedImage, ImageInfo, ImagePixelType};
+use casa_images::{AnyPagedImage, ImageBrowserSession, ImageInfo, ImagePixelType};
 use casa_ms::{
     MeasurementSet, MeasurementSetPlotPayload, MeasurementSetPlotTheme,
     MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPayload,
@@ -16,11 +16,13 @@ use casa_ms::{
     MsScatterSeries, MsSelectionSpec, VisibilityDataColumn, build_msexplore_payload_from_spec,
     render_msexplore_plot_image,
 };
-use casa_tables::{Table, TableOptions};
+use casa_tables::{Table, TableBrowser, TableOptions};
 use casa_types::measures::direction::{
     angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
     format_right_ascension_labeled,
 };
+use casars_imagebrowser_protocol::ImageBrowserViewport;
+use casars_tablebrowser_protocol::{BrowserView, BrowserViewport};
 use image::ImageFormat;
 use thiserror::Error;
 
@@ -76,10 +78,65 @@ pub struct ProjectProbe {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum MeasurementSetPlotPreset {
     UvCoverage,
+    AntennaLayout,
+    ScanTimeline,
+    SpectralWindowCoverage,
+    PhaseVsTime,
+    AmplitudePhaseVsTimeStacked,
+    WeightVsTime,
+    SigmaVsTime,
+    FlagVsTime,
+    WeightSpectrumVsTime,
+    SigmaSpectrumVsTime,
+    FlagRowVsTime,
+    ElevationVsTime,
+    AzimuthVsTime,
+    HourAngleVsTime,
+    ParallacticAngleVsTime,
+    AzimuthVsElevation,
     AmplitudeVsFrequency,
     AmplitudeVsChannel,
+    PhaseVsChannel,
+    PhaseVsFrequency,
+    AmplitudeVsVelocity,
+    PhaseVsVelocity,
     AmplitudeVsUvDistance,
     AmplitudeVsTime,
+    RealVsImaginary,
+}
+
+#[cfg(test)]
+impl MeasurementSetPlotPreset {
+    fn all() -> &'static [Self] {
+        &[
+            Self::UvCoverage,
+            Self::AntennaLayout,
+            Self::ScanTimeline,
+            Self::SpectralWindowCoverage,
+            Self::AmplitudeVsTime,
+            Self::PhaseVsTime,
+            Self::AmplitudePhaseVsTimeStacked,
+            Self::AmplitudeVsUvDistance,
+            Self::WeightVsTime,
+            Self::SigmaVsTime,
+            Self::FlagVsTime,
+            Self::WeightSpectrumVsTime,
+            Self::SigmaSpectrumVsTime,
+            Self::FlagRowVsTime,
+            Self::ElevationVsTime,
+            Self::AzimuthVsTime,
+            Self::HourAngleVsTime,
+            Self::ParallacticAngleVsTime,
+            Self::AzimuthVsElevation,
+            Self::AmplitudeVsChannel,
+            Self::PhaseVsChannel,
+            Self::AmplitudeVsFrequency,
+            Self::PhaseVsFrequency,
+            Self::AmplitudeVsVelocity,
+            Self::PhaseVsVelocity,
+            Self::RealVsImaginary,
+        ]
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -155,6 +212,10 @@ pub enum FrontendServiceError {
     Probe { reason: String },
     #[error("plot failed: {reason}")]
     Plot { reason: String },
+    #[error("image explorer failed: {reason}")]
+    ImageExplorer { reason: String },
+    #[error("table explorer failed: {reason}")]
+    TableExplorer { reason: String },
 }
 
 type FrontendResult<T> = Result<T, FrontendServiceError>;
@@ -290,6 +351,124 @@ pub fn build_measurement_set_plot(
     })
 }
 
+#[uniffi::export]
+pub fn build_image_explorer_snapshot_json(
+    dataset_path: String,
+    width: u16,
+    height: u16,
+    inspector_height: u16,
+    plane_pixel_width: u16,
+    plane_pixel_height: u16,
+    active_view: Option<String>,
+) -> FrontendResult<String> {
+    let dataset_path = PathBuf::from(dataset_path);
+    if !dataset_path.exists() {
+        return Err(FrontendServiceError::InvalidPath {
+            reason: format!("{} does not exist", dataset_path.display()),
+        });
+    }
+    let viewport = ImageBrowserViewport::with_plane_pixels(
+        width.max(20),
+        height.max(8),
+        inspector_height,
+        plane_pixel_width,
+        plane_pixel_height,
+    );
+    let mut session = ImageBrowserSession::open(&dataset_path, viewport).map_err(|error| {
+        FrontendServiceError::ImageExplorer {
+            reason: format!("open {}: {error}", dataset_path.display()),
+        }
+    })?;
+    let snapshot = image_snapshot_for_requested_view(&mut session, active_view.as_deref())
+        .map_err(|error| FrontendServiceError::ImageExplorer {
+            reason: format!("snapshot {}: {error}", dataset_path.display()),
+        })?;
+    serde_json::to_string(&snapshot).map_err(|error| FrontendServiceError::ImageExplorer {
+        reason: format!("encode snapshot {}: {error}", dataset_path.display()),
+    })
+}
+
+#[uniffi::export]
+pub fn build_table_browser_snapshot_json(
+    dataset_path: String,
+    width: u16,
+    height: u16,
+    inspector_height: u16,
+    view: Option<String>,
+) -> FrontendResult<String> {
+    let dataset_path = PathBuf::from(dataset_path);
+    if !dataset_path.exists() {
+        return Err(FrontendServiceError::InvalidPath {
+            reason: format!("{} does not exist", dataset_path.display()),
+        });
+    }
+    let mut browser =
+        TableBrowser::open(&dataset_path).map_err(|error| FrontendServiceError::TableExplorer {
+            reason: format!("open {}: {error}", dataset_path.display()),
+        })?;
+    let viewport =
+        BrowserViewport::with_inspector_height(width.max(20), height.max(8), inspector_height);
+    if let Some(view) = view.as_deref() {
+        browser.set_view(
+            parse_table_browser_view(view)
+                .map_err(|reason| FrontendServiceError::TableExplorer { reason })?,
+        );
+    }
+    browser
+        .apply(casars_tablebrowser_protocol::BrowserCommand::GetSnapshot {
+            viewport: Some(viewport),
+        })
+        .map_err(|error| FrontendServiceError::TableExplorer {
+            reason: format!("snapshot {}: {error}", dataset_path.display()),
+        })
+        .and_then(|snapshot| {
+            serde_json::to_string(&snapshot).map_err(|error| FrontendServiceError::TableExplorer {
+                reason: format!("encode snapshot {}: {error}", dataset_path.display()),
+            })
+        })
+}
+
+fn image_snapshot_for_requested_view(
+    session: &mut ImageBrowserSession,
+    active_view: Option<&str>,
+) -> Result<casars_imagebrowser_protocol::ImageBrowserSnapshot, casa_images::ImageError> {
+    let Some(active_view) = active_view else {
+        return session.snapshot();
+    };
+    let target = active_view.trim();
+    if target.is_empty() {
+        return session.snapshot();
+    }
+    for _ in 0..4 {
+        let snapshot = session.snapshot()?;
+        if snapshot.active_view.label().eq_ignore_ascii_case(target)
+            || format!("{:?}", snapshot.active_view).eq_ignore_ascii_case(target)
+            || serde_plain_view_name(snapshot.active_view.label()).eq_ignore_ascii_case(target)
+        {
+            return Ok(snapshot);
+        }
+        session.handle_command(
+            casars_imagebrowser_protocol::ImageBrowserCommand::CycleView { forward: true },
+        )?;
+    }
+    session.snapshot()
+}
+
+fn serde_plain_view_name(label: &str) -> String {
+    label.replace(' ', "_").to_ascii_lowercase()
+}
+
+fn parse_table_browser_view(value: &str) -> Result<BrowserView, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "overview" => Ok(BrowserView::Overview),
+        "columns" => Ok(BrowserView::Columns),
+        "keywords" => Ok(BrowserView::Keywords),
+        "cells" => Ok(BrowserView::Cells),
+        "subtables" => Ok(BrowserView::Subtables),
+        other => Err(format!("unknown table browser view {other:?}")),
+    }
+}
+
 struct PayloadMetadata {
     title: String,
     summary: String,
@@ -302,10 +481,33 @@ struct PayloadMetadata {
 fn ms_plot_preset(preset: MeasurementSetPlotPreset) -> MsPlotPreset {
     match preset {
         MeasurementSetPlotPreset::UvCoverage => MsPlotPreset::UvCoverage,
+        MeasurementSetPlotPreset::AntennaLayout => MsPlotPreset::AntennaLayout,
+        MeasurementSetPlotPreset::ScanTimeline => MsPlotPreset::ScanTimeline,
+        MeasurementSetPlotPreset::SpectralWindowCoverage => MsPlotPreset::SpectralWindowCoverage,
+        MeasurementSetPlotPreset::PhaseVsTime => MsPlotPreset::PhaseVsTime,
+        MeasurementSetPlotPreset::AmplitudePhaseVsTimeStacked => {
+            MsPlotPreset::AmplitudePhaseVsTimeStacked
+        }
+        MeasurementSetPlotPreset::WeightVsTime => MsPlotPreset::WeightVsTime,
+        MeasurementSetPlotPreset::SigmaVsTime => MsPlotPreset::SigmaVsTime,
+        MeasurementSetPlotPreset::FlagVsTime => MsPlotPreset::FlagVsTime,
+        MeasurementSetPlotPreset::WeightSpectrumVsTime => MsPlotPreset::WeightSpectrumVsTime,
+        MeasurementSetPlotPreset::SigmaSpectrumVsTime => MsPlotPreset::SigmaSpectrumVsTime,
+        MeasurementSetPlotPreset::FlagRowVsTime => MsPlotPreset::FlagRowVsTime,
+        MeasurementSetPlotPreset::ElevationVsTime => MsPlotPreset::ElevationVsTime,
+        MeasurementSetPlotPreset::AzimuthVsTime => MsPlotPreset::AzimuthVsTime,
+        MeasurementSetPlotPreset::HourAngleVsTime => MsPlotPreset::HourAngleVsTime,
+        MeasurementSetPlotPreset::ParallacticAngleVsTime => MsPlotPreset::ParallacticAngleVsTime,
+        MeasurementSetPlotPreset::AzimuthVsElevation => MsPlotPreset::AzimuthVsElevation,
         MeasurementSetPlotPreset::AmplitudeVsFrequency => MsPlotPreset::AmplitudeVsFrequency,
         MeasurementSetPlotPreset::AmplitudeVsChannel => MsPlotPreset::AmplitudeVsChannel,
+        MeasurementSetPlotPreset::PhaseVsChannel => MsPlotPreset::PhaseVsChannel,
+        MeasurementSetPlotPreset::PhaseVsFrequency => MsPlotPreset::PhaseVsFrequency,
+        MeasurementSetPlotPreset::AmplitudeVsVelocity => MsPlotPreset::AmplitudeVsVelocity,
+        MeasurementSetPlotPreset::PhaseVsVelocity => MsPlotPreset::PhaseVsVelocity,
         MeasurementSetPlotPreset::AmplitudeVsUvDistance => MsPlotPreset::AmplitudeVsUvDistance,
         MeasurementSetPlotPreset::AmplitudeVsTime => MsPlotPreset::AmplitudeVsTime,
+        MeasurementSetPlotPreset::RealVsImaginary => MsPlotPreset::RealVsImaginary,
     }
 }
 
@@ -1299,8 +1501,15 @@ mod tests {
     fn measurement_set_plot_builds_real_png_and_typed_metadata() {
         let (_dir, ms_path) = unpack_small_ms();
 
+        assert_eq!(
+            MeasurementSetPlotPreset::all().len(),
+            MsPlotPreset::ALL.len()
+        );
         for preset in [
             MeasurementSetPlotPreset::UvCoverage,
+            MeasurementSetPlotPreset::AntennaLayout,
+            MeasurementSetPlotPreset::ScanTimeline,
+            MeasurementSetPlotPreset::PhaseVsTime,
             MeasurementSetPlotPreset::AmplitudeVsFrequency,
             MeasurementSetPlotPreset::AmplitudeVsUvDistance,
         ] {
@@ -1326,8 +1535,16 @@ mod tests {
             assert!(!plot.title.is_empty());
             assert!(!plot.x_axis.label.is_empty());
             assert!(!plot.y_axis.label.is_empty());
-            assert!(!plot.series.is_empty());
-            assert!(plot.sampling.rendered_point_count > 0);
+            if preset == MeasurementSetPlotPreset::AntennaLayout
+                || preset == MeasurementSetPlotPreset::ScanTimeline
+            {
+                assert!(plot.sampling.diagnostics.iter().any(|line| {
+                    line.contains("metadata-oriented plot") || line.contains("no drawable")
+                }));
+            } else {
+                assert!(!plot.series.is_empty());
+                assert!(plot.sampling.rendered_point_count > 0);
+            }
             assert_eq!(plot.sampling.requested_max_points, 10_000);
             assert!(plot.selection_summary.contains("data column data"));
         }
@@ -1447,6 +1664,72 @@ mod tests {
                 .diagnostics
                 .iter()
                 .any(|line| line == "Beam: 0.42 x 0.31 arcsec, PA 12 deg")
+        );
+
+        let plane_snapshot_json = build_image_explorer_snapshot_json(
+            path.display().to_string(),
+            100,
+            32,
+            8,
+            128,
+            96,
+            Some("plane".to_string()),
+        )
+        .expect("image explorer plane snapshot");
+        let plane_snapshot: serde_json::Value =
+            serde_json::from_str(&plane_snapshot_json).expect("plane snapshot json");
+        assert_eq!(plane_snapshot["active_view"], "plane");
+        assert_eq!(plane_snapshot["capabilities"]["renderable_plane"], true);
+        assert!(
+            plane_snapshot["plane"]["width"]
+                .as_u64()
+                .is_some_and(|width| width > 0)
+        );
+        assert!(
+            plane_snapshot["plane"]["height"]
+                .as_u64()
+                .is_some_and(|height| height > 0)
+        );
+
+        let snapshot_json = build_image_explorer_snapshot_json(
+            path.display().to_string(),
+            100,
+            32,
+            8,
+            128,
+            96,
+            Some("spectrum".to_string()),
+        )
+        .expect("image explorer snapshot");
+        let snapshot: serde_json::Value =
+            serde_json::from_str(&snapshot_json).expect("snapshot json");
+        assert_eq!(snapshot["active_view"], "spectrum");
+        assert!(snapshot["profile"]["samples"].as_array().is_some());
+    }
+
+    #[test]
+    fn table_browser_snapshot_json_uses_tablebrowser_protocol() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let table_path = dir.path().join("gain_table");
+        make_table(&table_path);
+
+        let snapshot_json = build_table_browser_snapshot_json(
+            table_path.display().to_string(),
+            100,
+            24,
+            8,
+            Some("columns".to_string()),
+        )
+        .expect("table browser snapshot");
+        let snapshot: serde_json::Value =
+            serde_json::from_str(&snapshot_json).expect("snapshot json");
+        assert_eq!(snapshot["view"], "columns");
+        assert_eq!(snapshot["capabilities"]["editable"], false);
+        assert_eq!(snapshot["table_path"], table_path.display().to_string());
+        assert!(
+            snapshot["content_lines"]
+                .as_array()
+                .is_some_and(|lines| !lines.is_empty())
         );
     }
 
