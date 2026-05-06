@@ -453,6 +453,7 @@ fn apply_clip_flags(
     let mut flagged_samples = 0usize;
     let mut total_samples = 0usize;
     let table = ms.main_table();
+    let mut row_changes = Vec::<(usize, usize)>::new();
     for rows in selected_rows.chunks(CLIP_SCAN_CHUNK_ROWS) {
         let data_cells = table
             .column_accessor(request.data_column.name())
@@ -548,16 +549,23 @@ fn apply_clip_flags(
                 } else {
                     (0..data_shape[1]).collect()
                 };
-            let mut updated_flags = flags.clone();
-            let row_changed = apply_clip_zero_array(
-                data_value,
-                flags,
-                &mut updated_flags,
-                &channels,
-                &path,
-                row,
-            )?;
+            row_changes.clear();
+            apply_clip_zero_array(data_value, flags, &channels, &path, row, &mut row_changes)?;
+            let row_changed = row_changes.len();
             if row_changed > 0 {
+                let mut updated_flags = flags.clone();
+                {
+                    let mut updated_flags = updated_flags
+                        .view_mut()
+                        .into_dimensionality::<Ix2>()
+                        .map_err(|source| FlaggingError::MutateFlags {
+                        path: path.clone(),
+                        reason: format!("FLAG row {row} must be rank-2: {source}"),
+                    })?;
+                    for &(corr, chan) in &row_changes {
+                        updated_flags[(corr, chan)] = true;
+                    }
+                }
                 changed.changed_samples += row_changed;
                 flagged_samples += row_changed;
                 updates.insert(row, updated_flags);
@@ -792,16 +800,16 @@ fn extend_autoflag_grouped(
     let mut grown = modified.to_vec();
     for group in groups.values() {
         for by_corr in samples_by_corr(group) {
-            for by_row in samples_by_row(&by_corr).values() {
+            for by_row in sample_row_runs(&by_corr) {
                 if percent_modified(by_row, modified) >= 80.0 {
                     for sample in by_row {
                         grown[sample.index] = true;
                     }
                 }
             }
-            for by_chan in samples_by_chan(&by_corr).values() {
-                if percent_modified(by_chan, modified) >= 50.0 {
-                    for sample in by_chan {
+            for by_chan in samples_by_chan_dense(&by_corr) {
+                if percent_modified(&by_chan, modified) >= 50.0 {
+                    for sample in &by_chan {
                         grown[sample.index] = true;
                     }
                 }
@@ -1144,15 +1152,15 @@ fn load_samples(
                 });
             }
         };
-        let data_value =
-            Value::Array(data_cells.get(row_slot).cloned().flatten().ok_or_else(|| {
-                FlaggingError::MutateFlags {
-                    path: path.clone(),
-                    reason: format!("{} row {row} is undefined", data_column.name()),
-                }
-            })?);
+        let data_value = data_cells
+            .get(row_slot)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("{} row {row} is undefined", data_column.name()),
+            })?;
         let data_shape =
-            numeric_array_shape(&data_value).ok_or_else(|| FlaggingError::MutateFlags {
+            numeric_array_value_shape(data_value).ok_or_else(|| FlaggingError::MutateFlags {
                 path: path.clone(),
                 reason: format!(
                     "{} row {row} must be numeric array, found {data_value:?}",
@@ -1190,26 +1198,22 @@ fn load_samples(
         let scan = scans[row_slot];
         let ant1 = ant1s[row_slot];
         let ant2 = ant2s[row_slot];
-        for corr in 0..data_shape[0] {
-            for &chan in &channels {
-                let (real, imag) = numeric_real_imag_at(&data_value, &IxDyn(&[corr, chan]))?;
-                samples.push(Sample {
-                    index: samples.len(),
-                    row,
-                    corr,
-                    chan,
-                    amp: real.hypot(imag),
-                    real,
-                    imag,
-                    flag: flags[IxDyn(&[corr, chan])],
-                    field,
-                    spw,
-                    scan,
-                    ant1,
-                    ant2,
-                });
-            }
-        }
+        push_row_samples(
+            data_value,
+            &flags,
+            &channels,
+            RowSampleMetadata {
+                row,
+                field,
+                spw,
+                scan,
+                ant1,
+                ant2,
+            },
+            &path,
+            data_column.name(),
+            &mut samples,
+        )?;
         flags_by_row.insert(row, flags);
     }
     Ok(LoadedSamples {
@@ -1222,11 +1226,18 @@ fn is_casa_clip_zero(value: f64) -> bool {
     value.is_nan() || value <= f64::from(f32::EPSILON)
 }
 
-fn numeric_array_shape(value: &Value) -> Option<&[usize]> {
-    match value {
-        Value::Array(value) => numeric_array_value_shape(value),
-        _ => None,
-    }
+fn is_casa_clip_zero_complex32(value: Complex32) -> bool {
+    value.re.is_nan()
+        || value.im.is_nan()
+        || f64::from(value.re * value.re + value.im * value.im)
+            <= f64::from(f32::EPSILON) * f64::from(f32::EPSILON)
+}
+
+fn is_casa_clip_zero_complex64(value: Complex64) -> bool {
+    value.re.is_nan()
+        || value.im.is_nan()
+        || value.re * value.re + value.im * value.im
+            <= f64::from(f32::EPSILON) * f64::from(f32::EPSILON)
 }
 
 fn numeric_array_value_shape(value: &ArrayValue) -> Option<&[usize]> {
@@ -1239,14 +1250,174 @@ fn numeric_array_value_shape(value: &ArrayValue) -> Option<&[usize]> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RowSampleMetadata {
+    row: usize,
+    field: i32,
+    spw: i32,
+    scan: i32,
+    ant1: i32,
+    ant2: i32,
+}
+
+fn push_row_samples(
+    data: &ArrayValue,
+    flags: &ArrayD<bool>,
+    channels: &[usize],
+    metadata: RowSampleMetadata,
+    path: &str,
+    data_column: &str,
+    samples: &mut Vec<Sample>,
+) -> Result<(), FlaggingError> {
+    let flag_view = flags
+        .view()
+        .into_dimensionality::<Ix2>()
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.to_string(),
+            reason: format!("FLAG row {} must be rank-2: {source}", metadata.row),
+        })?;
+    match data {
+        ArrayValue::Complex32(values) => {
+            let values = values
+                .view()
+                .into_dimensionality::<Ix2>()
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.to_string(),
+                    reason: format!(
+                        "{data_column} row {} must be rank-2: {source}",
+                        metadata.row
+                    ),
+                })?;
+            for corr in 0..values.shape()[0] {
+                for &chan in channels {
+                    let value = values[(corr, chan)];
+                    push_sample(
+                        samples,
+                        metadata,
+                        corr,
+                        chan,
+                        f64::from(value.re),
+                        f64::from(value.im),
+                        flag_view[(corr, chan)],
+                    );
+                }
+            }
+        }
+        ArrayValue::Complex64(values) => {
+            let values = values
+                .view()
+                .into_dimensionality::<Ix2>()
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.to_string(),
+                    reason: format!(
+                        "{data_column} row {} must be rank-2: {source}",
+                        metadata.row
+                    ),
+                })?;
+            for corr in 0..values.shape()[0] {
+                for &chan in channels {
+                    let value = values[(corr, chan)];
+                    push_sample(
+                        samples,
+                        metadata,
+                        corr,
+                        chan,
+                        value.re,
+                        value.im,
+                        flag_view[(corr, chan)],
+                    );
+                }
+            }
+        }
+        ArrayValue::Float32(values) => {
+            let values = values
+                .view()
+                .into_dimensionality::<Ix2>()
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.to_string(),
+                    reason: format!(
+                        "{data_column} row {} must be rank-2: {source}",
+                        metadata.row
+                    ),
+                })?;
+            for corr in 0..values.shape()[0] {
+                for &chan in channels {
+                    push_sample(
+                        samples,
+                        metadata,
+                        corr,
+                        chan,
+                        f64::from(values[(corr, chan)]),
+                        0.0,
+                        flag_view[(corr, chan)],
+                    );
+                }
+            }
+        }
+        ArrayValue::Float64(values) => {
+            let values = values
+                .view()
+                .into_dimensionality::<Ix2>()
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.to_string(),
+                    reason: format!(
+                        "{data_column} row {} must be rank-2: {source}",
+                        metadata.row
+                    ),
+                })?;
+            for corr in 0..values.shape()[0] {
+                for &chan in channels {
+                    push_sample(
+                        samples,
+                        metadata,
+                        corr,
+                        chan,
+                        values[(corr, chan)],
+                        0.0,
+                        flag_view[(corr, chan)],
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn push_sample(
+    samples: &mut Vec<Sample>,
+    metadata: RowSampleMetadata,
+    corr: usize,
+    chan: usize,
+    real: f64,
+    imag: f64,
+    flag: bool,
+) {
+    samples.push(Sample {
+        index: samples.len(),
+        row: metadata.row,
+        corr,
+        chan,
+        amp: real.hypot(imag),
+        real,
+        imag,
+        flag,
+        field: metadata.field,
+        spw: metadata.spw,
+        scan: metadata.scan,
+        ant1: metadata.ant1,
+        ant2: metadata.ant2,
+    });
+}
+
 fn apply_clip_zero_array(
     data: &ArrayValue,
     flags: &ArrayD<bool>,
-    updated_flags: &mut ArrayD<bool>,
     channels: &[usize],
     path: &str,
     row: usize,
-) -> Result<usize, FlaggingError> {
+    changed: &mut Vec<(usize, usize)>,
+) -> Result<(), FlaggingError> {
     let flags = flags
         .view()
         .into_dimensionality::<Ix2>()
@@ -1254,14 +1425,6 @@ fn apply_clip_zero_array(
             path: path.to_string(),
             reason: format!("FLAG row {row} must be rank-2: {source}"),
         })?;
-    let mut updated_flags = updated_flags
-        .view_mut()
-        .into_dimensionality::<Ix2>()
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: path.to_string(),
-            reason: format!("FLAG row {row} must be rank-2: {source}"),
-        })?;
-    let mut changed = 0usize;
     match data {
         ArrayValue::Complex32(values) => {
             let values = values
@@ -1273,10 +1436,8 @@ fn apply_clip_zero_array(
                 })?;
             for corr in 0..values.shape()[0] {
                 for &chan in channels {
-                    if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)].norm() as f64)
-                    {
-                        updated_flags[(corr, chan)] = true;
-                        changed += 1;
+                    if !flags[(corr, chan)] && is_casa_clip_zero_complex32(values[(corr, chan)]) {
+                        changed.push((corr, chan));
                     }
                 }
             }
@@ -1291,9 +1452,8 @@ fn apply_clip_zero_array(
                 })?;
             for corr in 0..values.shape()[0] {
                 for &chan in channels {
-                    if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)].norm()) {
-                        updated_flags[(corr, chan)] = true;
-                        changed += 1;
+                    if !flags[(corr, chan)] && is_casa_clip_zero_complex64(values[(corr, chan)]) {
+                        changed.push((corr, chan));
                     }
                 }
             }
@@ -1309,8 +1469,7 @@ fn apply_clip_zero_array(
             for corr in 0..values.shape()[0] {
                 for &chan in channels {
                     if !flags[(corr, chan)] && is_casa_clip_zero(f64::from(values[(corr, chan)])) {
-                        updated_flags[(corr, chan)] = true;
-                        changed += 1;
+                        changed.push((corr, chan));
                     }
                 }
             }
@@ -1326,37 +1485,14 @@ fn apply_clip_zero_array(
             for corr in 0..values.shape()[0] {
                 for &chan in channels {
                     if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)]) {
-                        updated_flags[(corr, chan)] = true;
-                        changed += 1;
+                        changed.push((corr, chan));
                     }
                 }
             }
         }
         _ => {}
     }
-    Ok(changed)
-}
-
-fn numeric_real_imag_at(value: &Value, index: &IxDyn) -> Result<(f64, f64), FlaggingError> {
-    Ok(match value {
-        Value::Array(ArrayValue::Complex32(values)) => values
-            .get(index.clone())
-            .map(|value| (f64::from(value.re), f64::from(value.im)))
-            .unwrap_or((0.0, 0.0)),
-        Value::Array(ArrayValue::Complex64(values)) => values
-            .get(index.clone())
-            .map(|value| (value.re, value.im))
-            .unwrap_or((0.0, 0.0)),
-        Value::Array(ArrayValue::Float32(values)) => values
-            .get(index.clone())
-            .map(|value| (f64::from(*value), 0.0))
-            .unwrap_or((0.0, 0.0)),
-        Value::Array(ArrayValue::Float64(values)) => values
-            .get(index.clone())
-            .map(|value| (*value, 0.0))
-            .unwrap_or((0.0, 0.0)),
-        _ => (0.0, 0.0),
-    })
+    Ok(())
 }
 
 fn summarize_flags(
@@ -1410,8 +1546,8 @@ fn tfcrop_fit_base_and_flag(
     if samples.is_empty() {
         return;
     }
-    let rows = samples_by_row(samples).into_keys().collect::<Vec<_>>();
-    let chans = samples_by_chan(samples).into_keys().collect::<Vec<_>>();
+    let rows = unique_sample_rows(samples);
+    let chans = unique_sample_chans(samples);
     let (axis0, axis1) = match direction {
         TfcropDirection::Freq => (chans, rows),
         TfcropDirection::Time => (rows, chans),
@@ -1420,7 +1556,7 @@ fn tfcrop_fit_base_and_flag(
         return;
     }
 
-    let mut by_row_chan = BTreeMap::<(usize, usize), Sample>::new();
+    let mut by_row_chan = HashMap::<(usize, usize), Sample>::with_capacity(samples.len());
     for sample in samples {
         by_row_chan.insert((sample.row, sample.chan), *sample);
     }
@@ -1737,6 +1873,10 @@ fn tfcrop_std_about_mean(values: &[f32], flags: &[bool], mean: f32) -> f32 {
 }
 
 fn median(mut values: Vec<f64>) -> f64 {
+    median_in_place(&mut values)
+}
+
+fn median_in_place(values: &mut [f64]) -> f64 {
     if values.is_empty() {
         return 0.0;
     }
@@ -1847,7 +1987,7 @@ fn rflag_accumulate_group_histograms(group: &[Sample], histograms: &mut RFlagHis
         .or_insert_with(|| ChannelHistogram::new(nchan));
     let rows_by_corr = samples_by_corr(group);
     for by_corr in &rows_by_corr {
-        for by_chan in samples_by_chan(by_corr).values() {
+        for by_chan in samples_by_chan_dense(by_corr) {
             for (start, stop) in rflag_time_windows(by_chan.len()) {
                 let window = &by_chan[start..=stop];
                 let value = rflag_time_std_total(window);
@@ -1862,7 +2002,7 @@ fn rflag_accumulate_group_histograms(group: &[Sample], histograms: &mut RFlagHis
         .entry(key)
         .or_insert_with(|| ChannelHistogram::new(nchan));
     for by_corr in rows_by_corr {
-        for by_row in samples_by_row(&by_corr).values() {
+        for by_row in sample_row_runs(&by_corr) {
             let stats = rflag_spectral_stats(by_row);
             for sample in by_row {
                 if sample.flag {
@@ -1901,7 +2041,7 @@ fn rflag_group_flags(
         .copied()
         .unwrap_or(f64::INFINITY);
     for by_corr in samples_by_corr(group) {
-        for by_chan in samples_by_chan(&by_corr).values() {
+        for by_chan in samples_by_chan_dense(&by_corr) {
             for (start, stop) in rflag_time_windows(by_chan.len()) {
                 if rflag_time_std_total(&by_chan[start..=stop]) > timedev {
                     for sample in &by_chan[start..=stop] {
@@ -1912,7 +2052,7 @@ fn rflag_group_flags(
                 }
             }
         }
-        for by_row in samples_by_row(&by_corr).values() {
+        for by_row in sample_row_runs(&by_corr) {
             let stats = rflag_spectral_stats(by_row);
             let flag_all = stats.std_real > request.spectralmax
                 || stats.std_imag > request.spectralmax
@@ -1985,30 +2125,29 @@ struct RFlagSpectralStats {
 }
 
 fn rflag_spectral_stats(samples: &[Sample]) -> RFlagSpectralStats {
-    let valid = samples
-        .iter()
-        .filter(|sample| !sample.flag)
-        .collect::<Vec<_>>();
-    if valid.is_empty() {
+    let mut real_values = Vec::with_capacity(samples.len());
+    let mut imag_values = Vec::with_capacity(samples.len());
+    for sample in samples {
+        if sample.flag {
+            continue;
+        }
+        real_values.push(sample.real);
+        imag_values.push(sample.imag);
+    }
+    if real_values.is_empty() {
         return RFlagSpectralStats::default();
     }
-    let average_real = median(valid.iter().map(|sample| sample.real).collect());
-    let average_imag = median(valid.iter().map(|sample| sample.imag).collect());
-    let std_real = 1.4826
-        * median(
-            valid
-                .iter()
-                .map(|sample| (sample.real - average_real).abs())
-                .collect(),
-        );
-    let std_imag = 1.4826
-        * median(
-            valid
-                .iter()
-                .map(|sample| (sample.imag - average_imag).abs())
-                .collect(),
-        );
-    let weight = valid.len() as f64;
+    let average_real = median_in_place(&mut real_values);
+    let average_imag = median_in_place(&mut imag_values);
+    for value in &mut real_values {
+        *value = (*value - average_real).abs();
+    }
+    for value in &mut imag_values {
+        *value = (*value - average_imag).abs();
+    }
+    let std_real = 1.4826 * median_in_place(&mut real_values);
+    let std_imag = 1.4826 * median_in_place(&mut imag_values);
+    let weight = real_values.len() as f64;
     RFlagSpectralStats {
         average_real,
         average_imag,
@@ -2106,11 +2245,17 @@ fn group_samples(samples: &[Sample]) -> BTreeMap<GroupKey, Vec<Sample>> {
 }
 
 fn samples_by_corr(samples: &[Sample]) -> Vec<Vec<Sample>> {
-    let mut groups = BTreeMap::<usize, Vec<Sample>>::new();
+    let Some(max_corr) = samples.iter().map(|sample| sample.corr).max() else {
+        return Vec::new();
+    };
+    let mut groups = vec![Vec::<Sample>::new(); max_corr + 1];
     for sample in samples {
-        groups.entry(sample.corr).or_default().push(*sample);
+        groups[sample.corr].push(*sample);
     }
-    groups.into_values().collect()
+    groups
+        .into_iter()
+        .filter(|group| !group.is_empty())
+        .collect()
 }
 
 fn samples_by_row(samples: &[Sample]) -> BTreeMap<usize, Vec<Sample>> {
@@ -2127,6 +2272,58 @@ fn samples_by_chan(samples: &[Sample]) -> BTreeMap<usize, Vec<Sample>> {
         groups.entry(sample.chan).or_default().push(*sample);
     }
     groups
+}
+
+fn samples_by_chan_dense(samples: &[Sample]) -> Vec<Vec<Sample>> {
+    let Some(max_chan) = samples.iter().map(|sample| sample.chan).max() else {
+        return Vec::new();
+    };
+    let mut groups = vec![Vec::<Sample>::new(); max_chan + 1];
+    for sample in samples {
+        groups[sample.chan].push(*sample);
+    }
+    groups
+        .into_iter()
+        .filter(|group| !group.is_empty())
+        .collect()
+}
+
+fn sample_row_runs(samples: &[Sample]) -> Vec<&[Sample]> {
+    let mut runs = Vec::new();
+    let mut start = 0usize;
+    while start < samples.len() {
+        let row = samples[start].row;
+        let mut end = start + 1;
+        while end < samples.len() && samples[end].row == row {
+            end += 1;
+        }
+        runs.push(&samples[start..end]);
+        start = end;
+    }
+    runs
+}
+
+fn unique_sample_rows(samples: &[Sample]) -> Vec<usize> {
+    let mut rows = Vec::new();
+    let mut previous = None;
+    for sample in samples {
+        if previous != Some(sample.row) {
+            rows.push(sample.row);
+            previous = Some(sample.row);
+        }
+    }
+    rows
+}
+
+fn unique_sample_chans(samples: &[Sample]) -> Vec<usize> {
+    let mut chans = Vec::new();
+    for sample in samples {
+        if chans.last().copied() == Some(sample.chan) || chans.contains(&sample.chan) {
+            continue;
+        }
+        chans.push(sample.chan);
+    }
+    chans
 }
 
 fn samples_by_row_chan(samples: &[Sample]) -> BTreeMap<(usize, usize), Vec<Sample>> {

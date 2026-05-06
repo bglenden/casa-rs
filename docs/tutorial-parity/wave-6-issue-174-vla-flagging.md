@@ -104,9 +104,9 @@ coordinate delta localized to SPW 2 and accepted as solver-numerics drift.
 
 | Check | Selection | CASA 6.7.5-9 | casa-rs | Result |
 | --- | --- | ---: | ---: | --- |
-| `clipzeros` | full MS | 2 flagged samples after 7.6 s | 2 flagged samples after 9.83 s, release build | count match; about 1.3x slower |
-| `tfcrop` | `scan=251`, `DATA` | 152,904 flagged samples after 0.82 s | 152,840 flagged samples after 1.09 s, release build | near match; about 1.3x slower |
-| `rflag` | `scan=251`, `DATA` | 189,624 flagged samples after 0.52 s | 189,624 flagged samples after 0.97 s best measured release run; 0.82 s before save | exact `FLAG` cube match; about 1.9x wall / 1.6x CPU |
+| `clipzeros` | full MS | 2 flagged samples after 7.6 s | 2 flagged samples after 10.16 s, 5.20 s user CPU, release build | count match; about 1.3x wall / 1.4x CPU |
+| `tfcrop` | `scan=251`, `DATA` | 152,904 flagged samples after 0.82 s | 152,840 flagged samples after 0.84 s, 0.74 s user CPU, release build | near match; about 1.0x wall / 0.9x CPU |
+| `rflag` | `scan=251`, `DATA` | 189,624 flagged samples after 0.52 s | 189,624 flagged samples after 0.71 s, 0.61 s user CPU, release build | exact `FLAG` cube match; about 1.4x wall / 1.2x CPU |
 
 The CASA `clipzeros` samples were not bitwise zero when inspected through
 casatools after flagging; their amplitudes were approximately `1.1e-7`.
@@ -169,10 +169,11 @@ Source inspection explained both differences:
   the checked tutorial scan.
 - The full-scan runtime issue was mostly table access, not algorithm cost.
   Selected-row bulk loads, lazy FLAG writes, skipping unchanged `FLAG_ROW`
-  writes, typed row scans, allocation-light RFlag time windows, and mask-based
-  automatic-mode application reduced the worst measured release runs from
-  minute-scale to about 1 second for one-scan automatic modes and under 10
-  seconds for full-MS `clipzeros`.
+  writes, typed row scans, dense grouping, allocation-light RFlag median/MAD
+  evaluation, squared-norm clip-zero checks, and mask-based automatic-mode
+  application reduced the worst measured release runs from minute-scale to
+  CASA-level for checked one-scan automatic modes and close to 10 seconds for
+  full-MS `clipzeros`.
 
 Diagnostic instrumentation is available with:
 
@@ -186,6 +187,14 @@ CASA_RS_FLAGDATA_TRACE=/path/to/trace.jsonl target/release/flagdata \
 The trace records native candidate counts, threshold maps, phase timings, and
 per-SPW/correlation decision counts so future algorithm changes can be checked
 against CASA before comparing only final totals.
+
+The final 2026-05-06 performance traces on clean copy-on-write tutorial clones
+reported:
+
+| Mode | Load | Threshold | Plan | Apply | Total before save |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `tfcrop` | 119 ms | n/a | 599 ms | 30 ms | 748 ms |
+| `rflag` | 119 ms | 180 ms | 298 ms | 27 ms | 624 ms |
 
 ## Accepted TFCrop Solver Difference
 
@@ -211,7 +220,9 @@ post-extension behavior.
 Targeted checks:
 
 ```sh
+cargo fmt --all -- --check
 cargo test -p casa-ms --test flagging
+cargo clippy -p casa-ms --all-targets -- -D warnings
 cargo build --release -p casa-ms --bin flagdata
 cargo check -p casa-ms --bins
 just verify
@@ -236,11 +247,12 @@ Covered behavior:
 ## Remaining Tutorial-Parity Work
 
 - Continue profiling algorithm planning overhead: release-build `tfcrop` is
-  now close to CASA on the checked scan, while `rflag` still has the largest
-  automatic-mode CPU ratio despite matching the CASA `FLAG` cube.
+  now at CASA-level wall time on the checked scan, while `rflag` still has the
+  largest automatic-mode CPU ratio despite matching the CASA `FLAG` cube.
 - Continue storage-path profiling for full-MS scans. `clipzeros` now avoids the
-  previous full main-table eager load and writes only the changed `FLAG` cells,
-  but it still scans the full `DATA` and `FLAG` columns about 1.3x slower than
-  CASA on the tutorial MS.
+  previous full main-table eager load, avoids per-row `FLAG` clones when rows
+  do not change, and writes only the changed `FLAG` cells, but it still scans
+  the full `DATA` and `FLAG` columns about 1.3x slower than CASA on the
+  tutorial MS.
 - Extend the comparison beyond counts to `FLAG`/`FLAG_ROW` coordinate diffs,
   `<ms>.flagversions`, and tutorial-visible diagnostics.
