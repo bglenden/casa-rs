@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-06
-Verification: `cargo test -p casars-imager`; `just quick`; `scripts/test-python-package.sh`; `just docs-check`
+Verification: `cargo test -p casars-imager`; `just quick`; `scripts/test-python-package.sh`; `just docs-check`; `CASA_RS_TUTORIAL_DATA_ROOT=/Volumes/GLENDENNING/casa-rs/tutorial-data scripts/run-wave6-issue167-automasking.sh target/wave6-issue167-automasking`
 
 Wave issue: #167
 Parent wave: #143 / #127
@@ -55,8 +55,31 @@ Implemented as the #167-owned slice, not as a #196 sub-ticket:
 - Python `casars.tasks.imager.mfs(..., use_mask=..., auto_mask=...)`
 - `.mask` product writing for effective clean masks
 
-The native mask generator currently builds a deterministic initial automask from the dirty residual product and applies it to the clean run. It source-aligns with CASA's threshold, pruning, constrained growth, and negative-feature controls, but it does not yet claim CASA's full per-major-cycle mask-regeneration cadence as exact tutorial parity until same-input CASA C++ / casa-rs image and mask artifacts are produced.
+The native mask generator currently builds a deterministic initial automask from the dirty residual product and applies it to the clean run. It source-aligns with CASA's threshold, pruning, constrained growth, and negative-feature controls, but the same-input Automasking Guide evidence below shows that the cube path is not yet CASA-equivalent for channel-specific mask behavior.
 
-## Deferred Evidence
+## Same-Input Evidence
 
-The implementation surface is now present for the Automasking Guide route. Full tutorial closeout still requires extracting `twhya_selfcal.ms.contsub.tar`, CASA 6.7.5-9/CASA C++ reference runs, casa-rs runs from the same inputs, and side-by-side image/residual/mask comparison artifacts.
+Generated artifacts:
+
+- output directory: `target/wave6-issue167-automasking/`
+- summary JSON: `target/wave6-issue167-automasking/wave6-issue167-summary.json`
+- visual panels: `target/wave6-issue167-automasking/*-chan{0,7,14}-panel.png`
+
+Timing comparison from the same extracted MeasurementSet:
+
+| Case | CASA C++ | casa-rs | Notes |
+| --- | ---: | ---: | --- |
+| dirty cube | 1.081 s | 3.775 s | release binary built before timing |
+| base `auto-multithresh` cube | 5.595 s | 3.697 s | CASA guide base parameters |
+| dirty + base automask total | 6.676 s | 7.472 s | comparable bounded guide slice |
+
+Correctness comparison:
+
+| Product | Result |
+| --- | --- |
+| dirty `.image` / `.residual` | strong parity: maximum channel RMS diff / CASA RMS is `8.44e-7`; maximum abs diff / CASA peak is `1.09e-6` |
+| base automask `.image` | not parity-complete: maximum channel RMS diff / CASA RMS is `8.18e-2`; maximum abs diff / CASA peak is `3.38e-1` |
+| base automask `.residual` | not parity-complete: maximum channel RMS diff / CASA RMS is `7.28e-2`; maximum abs diff / CASA peak is `2.70e-1` |
+| base automask `.mask` | not parity-complete: CASA masks only channels 5 and 7 in this run; casa-rs writes 223 mask pixels in every channel |
+
+The current parity gap is channel-specific cube mask ownership. CASA's base Automasking Guide run produces per-channel masks, while the native cube path currently reduces generated detections to one 2D mask and applies/writes it across every channel. This PR should stay draft until #167 either implements per-channel cube automasks or records that exact parity as deferred scope.
