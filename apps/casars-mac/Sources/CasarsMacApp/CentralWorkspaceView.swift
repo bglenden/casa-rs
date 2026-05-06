@@ -840,23 +840,8 @@ struct MeasurementSetPlotPanel: View {
     }
 
     private var plotSurface: some View {
-        ZStack(alignment: .bottomLeading) {
-            plotDocumentSurface
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text(dataset.name)
-                    .workbenchFont(.caption, weight: .semibold)
-                Text(visiblePlotResult?.selectionSummary ?? "Select a plot and generate it")
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(14)
-        }
+        plotDocumentSurface
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder

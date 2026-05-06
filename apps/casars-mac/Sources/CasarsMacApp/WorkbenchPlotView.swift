@@ -278,8 +278,8 @@ private struct PlotCanvasSizePreferenceKey: PreferenceKey {
 
 private enum WorkbenchPlotLayout {
     static func plotRect(for size: CGSize) -> CGRect {
-        let left = 64.0
-        let top = 26.0
+        let left = 82.0
+        let top = 32.0
         let right = 26.0
         let bottom = 56.0
         return CGRect(
@@ -619,10 +619,13 @@ struct WorkbenchPlotView: View {
         for yAxis in axes.dropFirst() {
             drawTicks(axis: yAxis, horizontal: false, in: &context, plotRect: plotRect)
             if yAxis.labelsVisible {
+                let labelPoint = yAxis.drawsOnTrailingEdge
+                    ? CGPoint(x: plotRect.maxX, y: plotRect.minY - 11)
+                    : CGPoint(x: plotRect.minX, y: plotRect.minY - 11)
                 context.draw(
                     Text(axisLabel(yAxis)).font(.caption),
-                    at: CGPoint(x: yAxis.drawsOnTrailingEdge ? plotRect.maxX + 12 : plotRect.minX - 52, y: plotRect.midY),
-                    anchor: yAxis.drawsOnTrailingEdge ? .leading : .leading
+                    at: labelPoint,
+                    anchor: yAxis.drawsOnTrailingEdge ? .bottomTrailing : .bottomLeading
                 )
             }
         }

@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_images::{AnyPagedImage, ImageBrowserSession, ImageInfo, ImagePixelType};
@@ -405,12 +405,24 @@ pub fn build_measurement_set_plot(
         plots: vec![plot],
     };
 
+    let payload_started = Instant::now();
     let payload =
         build_frontend_msexplore_payload(&spec).map_err(|error| FrontendServiceError::Plot {
             reason: format!("{}: {error}", dataset_path.display()),
         })?;
-    let metadata = plot_payload_metadata(&payload, request.preset, max_plot_points);
+    let payload_elapsed = payload_started.elapsed();
+    let metadata_started = Instant::now();
+    let mut metadata = plot_payload_metadata(&payload, request.preset, max_plot_points);
+    let metadata_elapsed = metadata_started.elapsed();
+    let document_started = Instant::now();
     let document = plot_document_payload(&payload, &metadata, request.preset);
+    let document_elapsed = document_started.elapsed();
+    metadata.sampling.diagnostics.push(format!(
+        "timing: payload={} ms, metadata={} ms, document={} ms",
+        payload_elapsed.as_millis(),
+        metadata_elapsed.as_millis(),
+        document_elapsed.as_millis()
+    ));
 
     Ok(MeasurementSetPlotResult {
         preset: request.preset,
@@ -2652,7 +2664,7 @@ mod tests {
     use casa_tables::{ColumnSchema, TableInfo, TableSchema};
     use casa_types::measures::direction::DirectionRef;
     use casa_types::measures::frequency::FrequencyRef;
-    use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+    use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use flate2::read::GzDecoder;
     use tempfile::TempDir;
 
@@ -2810,6 +2822,108 @@ mod tests {
             assert_eq!(plot.sampling.requested_max_points, 10_000);
             assert!(plot.selection_summary.contains("data column data"));
         }
+    }
+
+    #[test]
+    #[ignore = "diagnostic timing helper for local tutorial MeasurementSets"]
+    fn twhya_measurement_set_plot_timing_diagnostic() {
+        let ms_path = std::env::var("CASA_RS_TWHYA_MS")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from("/private/tmp/casa-rs-wave6-prof/twhya_calibrated.ms")
+            });
+        if !ms_path.is_dir() {
+            eprintln!("skipping: {} is not staged", ms_path.display());
+            return;
+        }
+        for preset in [
+            MeasurementSetPlotPreset::ScanTimeline,
+            MeasurementSetPlotPreset::AmplitudeVsTime,
+            MeasurementSetPlotPreset::PhaseVsTime,
+            MeasurementSetPlotPreset::AmplitudePhaseVsTimeStacked,
+        ] {
+            let started = Instant::now();
+            let plot = build_measurement_set_plot(MeasurementSetPlotRequest {
+                dataset_path: ms_path.display().to_string(),
+                preset,
+                field: None,
+                spectral_window: None,
+                correlation: None,
+                data_column: "DATA".to_string(),
+                width: DEFAULT_PLOT_WIDTH,
+                height: DEFAULT_PLOT_HEIGHT,
+                max_plot_points: 250_000,
+            })
+            .unwrap_or_else(|error| panic!("plot {preset:?}: {error}"));
+            eprintln!(
+                "{preset:?}: total={} ms, points={}, layers={}, panels={}, diagnostics={:?}",
+                started.elapsed().as_millis(),
+                plot.sampling.rendered_point_count,
+                plot.document.layers.len(),
+                plot.document.panels.len(),
+                plot.sampling.diagnostics
+            );
+        }
+
+        let ms = MeasurementSet::open(&ms_path).expect("open timing MS");
+        let row_count = ms.main_table().row_count();
+        let target_rows = 250_000usize / (384 * 2);
+        let rows = sampled_indices_for_test(row_count, target_rows);
+        let scalars_started = Instant::now();
+        let _times = selected_f64_values(ms.main_table(), "TIME", &rows).expect("time rows");
+        let _fields = selected_i32_values(ms.main_table(), "FIELD_ID", &rows).expect("field rows");
+        let _ddids =
+            selected_i32_values(ms.main_table(), "DATA_DESC_ID", &rows).expect("ddid rows");
+        let scalars_elapsed = scalars_started.elapsed();
+        let flags_started = Instant::now();
+        let flags = ms
+            .main_table()
+            .column_accessor("FLAG")
+            .expect("FLAG")
+            .array_cells_owned(&rows)
+            .expect("flag rows");
+        let flags_elapsed = flags_started.elapsed();
+        let data_started = Instant::now();
+        let data = ms
+            .main_table()
+            .column_accessor("DATA")
+            .expect("DATA")
+            .array_cells_owned(&rows)
+            .expect("data rows");
+        let data_elapsed = data_started.elapsed();
+        let scan_started = Instant::now();
+        let mut sample_count = 0usize;
+        for cell in data {
+            sample_count += match cell {
+                Some(ArrayValue::Complex32(values)) => values.len(),
+                Some(ArrayValue::Complex64(values)) => values.len(),
+                _ => 0,
+            };
+        }
+        let scan_elapsed = scan_started.elapsed();
+        eprintln!(
+            "selected row probe: rows={}, samples={}, scalar={} ms, FLAG={} ms ({} cells), DATA={} ms, sample-scan={} ms",
+            rows.len(),
+            sample_count,
+            scalars_elapsed.as_millis(),
+            flags_elapsed.as_millis(),
+            flags.len(),
+            data_elapsed.as_millis(),
+            scan_elapsed.as_millis()
+        );
+    }
+
+    fn sampled_indices_for_test(total: usize, target: usize) -> Vec<usize> {
+        if target >= total {
+            return (0..total).collect();
+        }
+        if target <= 1 {
+            return vec![0];
+        }
+        let step = (total - 1) as f64 / (target - 1) as f64;
+        (0..target)
+            .map(|index| ((index as f64 * step).round() as usize).min(total - 1))
+            .collect()
     }
 
     #[test]
