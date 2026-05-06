@@ -11,7 +11,7 @@ use casa_images::{AnyPagedImage, ImageBrowserSession, ImageInfo, ImagePixelType}
 use casa_ms::columns::{main_ids, time_columns::TimeColumn};
 use casa_ms::plot::{
     AntennaLayoutPlotPayload, AntennaLayoutPoint, ScanTimelineBar, ScanTimelinePlotPayload,
-    SpectralWindowCoverageBar, SpectralWindowCoveragePlotPayload,
+    SpectralWindowCoverageBar, SpectralWindowCoveragePlotPayload, UvCoverageSeries,
 };
 use casa_ms::{
     MeasurementSet, MeasurementSetPlotPayload, MeasurementSetSummaryOutputFormat, MsExploreSpec,
@@ -967,26 +967,27 @@ fn listobs_plot_document(
                     PlotAxisScale::Linear,
                 ),
             ];
-            let layers = payload
-                .tracks
-                .iter()
-                .enumerate()
-                .map(|(index, track)| {
-                    let mut x_values =
-                        Vec::with_capacity(track.points.len() * if payload.mirror { 2 } else { 1 });
-                    let mut y_values =
-                        Vec::with_capacity(track.points.len() * if payload.mirror { 2 } else { 1 });
-                    for (u_lambda, v_lambda) in &track.points {
-                        x_values.push(*u_lambda / 1_000.0);
-                        y_values.push(*v_lambda / 1_000.0);
-                        if payload.mirror {
-                            x_values.push(-*u_lambda / 1_000.0);
-                            y_values.push(-*v_lambda / 1_000.0);
-                        }
+            let mut grouped_layers = BTreeMap::<String, (Vec<f64>, Vec<f64>, usize)>::new();
+            for track in &payload.tracks {
+                let group = uv_coverage_group_label(&track.label);
+                let entry = grouped_layers.entry(group).or_default();
+                entry.2 += track.points.len();
+                for (u_lambda, v_lambda) in &track.points {
+                    entry.0.push(*u_lambda / 1_000.0);
+                    entry.1.push(*v_lambda / 1_000.0);
+                    if payload.mirror {
+                        entry.0.push(-*u_lambda / 1_000.0);
+                        entry.1.push(-*v_lambda / 1_000.0);
                     }
+                }
+            }
+            let layers = grouped_layers
+                .into_iter()
+                .enumerate()
+                .map(|(index, (group, (x_values, y_values, source_count)))| {
                     point_layer(PointLayerSpec {
-                        id: format!("uv-track-{index}"),
-                        title: track.label.clone(),
+                        id: format!("uv-coverage-{index}"),
+                        title: group.clone(),
                         x_axis_id: "u",
                         y_axis_id: "v",
                         x_values,
@@ -994,11 +995,12 @@ fn listobs_plot_document(
                         point_labels: Vec::new(),
                         point_symbol_sizes: Vec::new(),
                         provenance: Vec::new(),
-                        color_group: "uv-track".to_string(),
+                        color_group: group,
                         symbol_size: 2.5,
                         line_width: 1.0,
-                        provenance_summary: "UV coverage samples from Rust msexplore payload"
-                            .to_string(),
+                        provenance_summary: format!(
+                            "UV coverage samples from Rust msexplore payload, coalesced from {source_count} samples"
+                        ),
                     })
                 })
                 .collect();
@@ -1664,26 +1666,18 @@ fn listobs_metadata(
                 .iter()
                 .map(|track| track.points.len() as u64)
                 .sum();
+            let series = uv_coverage_series_metadata(&payload.tracks);
+            let series_count = series.len() as u64;
             PayloadMetadata {
                 title: "UV Coverage".to_string(),
                 summary: payload.summary.clone(),
                 x_axis: axis_metadata("u", "u (kλ)"),
                 y_axis: axis_metadata("v", "v (kλ)"),
-                series: payload
-                    .tracks
-                    .iter()
-                    .map(|track| PlotSeriesMetadata {
-                        label: track.label.clone(),
-                        color_group: "uv-track".to_string(),
-                        point_count: track.points.len() as u64,
-                        first_row: None,
-                        last_row: None,
-                    })
-                    .collect(),
+                series,
                 sampling: PlotSamplingDiagnostics {
                     requested_max_points,
                     rendered_point_count,
-                    series_count: payload.tracks.len() as u64,
+                    series_count,
                     diagnostics: sampling_diagnostics(&payload.summary, rendered_point_count),
                 },
             }
@@ -1792,6 +1786,41 @@ fn scatter_metadata(payload: &MsScatterPlotPayload, requested_max_points: u64) -
             series_count,
             diagnostics: sampling_diagnostics(&payload.summary, rendered_point_count),
         },
+    }
+}
+
+fn uv_coverage_series_metadata(tracks: &[UvCoverageSeries]) -> Vec<PlotSeriesMetadata> {
+    let mut grouped = BTreeMap::<String, u64>::new();
+    for track in tracks {
+        *grouped
+            .entry(uv_coverage_group_label(&track.label))
+            .or_default() += track.points.len() as u64;
+    }
+    grouped
+        .into_iter()
+        .map(|(group, point_count)| PlotSeriesMetadata {
+            label: group.clone(),
+            color_group: group,
+            point_count,
+            first_row: None,
+            last_row: None,
+        })
+        .collect()
+}
+
+fn uv_coverage_group_label(track_label: &str) -> String {
+    let parts = track_label.split_whitespace().collect::<Vec<_>>();
+    let field = parts
+        .windows(2)
+        .find_map(|window| (window[0] == "field").then_some(window[1]));
+    let spw = parts
+        .windows(2)
+        .find_map(|window| (window[0] == "spw").then_some(window[1]));
+    match (field, spw) {
+        (Some(field), Some(spw)) => format!("field {field} spw {spw}"),
+        (Some(field), None) => format!("field {field}"),
+        (None, Some(spw)) => format!("spw {spw}"),
+        (None, None) => "UV samples".to_string(),
     }
 }
 
@@ -2681,6 +2710,16 @@ mod tests {
                 "plot document should expose manipulable layers or panels for {preset:?}"
             );
             match preset {
+                MeasurementSetPlotPreset::UvCoverage => {
+                    assert_eq!(
+                        plot.document.layers.len() as u64,
+                        plot.sampling.series_count
+                    );
+                    assert!(
+                        plot.document.layers.len() <= 32,
+                        "UV coverage should coalesce baseline tracks into coarse display groups"
+                    );
+                }
                 MeasurementSetPlotPreset::AntennaLayout => {
                     let layer = plot.document.layers.first().expect("antenna layer");
                     assert_eq!(layer.x_values.len(), layer.point_labels.len());

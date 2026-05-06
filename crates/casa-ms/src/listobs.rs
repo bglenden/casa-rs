@@ -24,15 +24,14 @@ use std::path::Path;
 
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_types::ArrayValue;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
 use casa_types::quanta::{MvAngle, MvTime};
+use casa_types::{ArrayValue, ScalarValue};
 use ndarray::IxDyn;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::columns::uvw_column::UvwColumn;
 use crate::subtables::{SubTable, get_f64, get_i32, has_column};
 use crate::{MeasurementSet, MsError, MsResult};
 
@@ -932,8 +931,6 @@ impl ListObsUvCoverage {
         let selected_rows = resolve_selected_rows(ms, options)?;
         let dd = ms.data_description()?;
         let spw = ms.spectral_window()?;
-        let uvw = UvwColumn::new(ms.main_table());
-
         let mut ddid_to_spw = HashMap::<i32, i32>::with_capacity(dd.row_count());
         for row in 0..dd.row_count() {
             ddid_to_spw.insert(row as i32, dd.spectral_window_id(row)?);
@@ -963,13 +960,20 @@ impl ListObsUvCoverage {
             .as_deref()
             .map(|rows| rows.to_vec())
             .unwrap_or_else(|| (0..ms.main_table().row_count()).collect());
+        let main_table = ms.main_table();
+        let antenna1_values = load_i32_rows(main_table, "ANTENNA1", &rows)?;
+        let antenna2_values = load_i32_rows(main_table, "ANTENNA2", &rows)?;
+        let field_values = load_i32_rows(main_table, "FIELD_ID", &rows)?;
+        let data_desc_values = load_i32_rows(main_table, "DATA_DESC_ID", &rows)?;
+        let time_values = load_f64_rows(main_table, "TIME", &rows)?;
+        let uvw_values = load_uvw_rows(main_table, "UVW", &rows)?;
 
-        for row in rows {
-            let antenna1 = get_i32(ms.main_table(), row, "ANTENNA1")?;
-            let antenna2 = get_i32(ms.main_table(), row, "ANTENNA2")?;
-            let field_id = get_i32(ms.main_table(), row, "FIELD_ID")?;
-            let data_desc_id = get_i32(ms.main_table(), row, "DATA_DESC_ID")?;
-            let time_mjd_seconds = get_f64(ms.main_table(), row, "TIME")?;
+        for (row_slot, row) in rows.iter().copied().enumerate() {
+            let antenna1 = antenna1_values[row_slot];
+            let antenna2 = antenna2_values[row_slot];
+            let field_id = field_values[row_slot];
+            let data_desc_id = data_desc_values[row_slot];
+            let time_mjd_seconds = time_values[row_slot];
             let spectral_window_id = *ddid_to_spw.get(&data_desc_id).ok_or_else(|| {
                 MsError::VersionError(format!(
                     "MAIN.DATA_DESC_ID {data_desc_id} does not resolve to a DATA_DESCRIPTION row"
@@ -981,7 +985,7 @@ impl ListObsUvCoverage {
                 ))
             })?;
             let wavelength_m = SPEED_OF_LIGHT_M_S / center_frequency_hz;
-            let [u_m, v_m, w_m] = uvw.get(row)?;
+            let [u_m, v_m, w_m] = uvw_values[row_slot];
             let point = ListObsUvPoint {
                 row,
                 time_mjd_seconds,
@@ -1061,6 +1065,90 @@ impl ListObsUvCoverage {
     pub fn render_json_pretty(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
+}
+
+fn load_i32_rows(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<i32>> {
+    table
+        .column_accessor(column)?
+        .scalar_cells_owned_for_rows(rows)?
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| match value {
+            Some(ScalarValue::Int32(v)) => Ok(v),
+            Some(other) => Err(MsError::ColumnTypeMismatch {
+                column: column.to_string(),
+                table: "MAIN".to_string(),
+                expected: "Int32".to_string(),
+                found: format!("{:?}", other.primitive_type()),
+            }),
+            None => Err(MsError::MissingColumn {
+                column: format!("{column}[row={row}]"),
+                table: "MAIN".to_string(),
+            }),
+        })
+        .collect()
+}
+
+fn load_f64_rows(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<f64>> {
+    table
+        .column_accessor(column)?
+        .scalar_cells_owned_for_rows(rows)?
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| match value {
+            Some(ScalarValue::Float64(v)) => Ok(v),
+            Some(other) => Err(MsError::ColumnTypeMismatch {
+                column: column.to_string(),
+                table: "MAIN".to_string(),
+                expected: "Float64".to_string(),
+                found: format!("{:?}", other.primitive_type()),
+            }),
+            None => Err(MsError::MissingColumn {
+                column: format!("{column}[row={row}]"),
+                table: "MAIN".to_string(),
+            }),
+        })
+        .collect()
+}
+
+fn load_uvw_rows(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<[f64; 3]>> {
+    table
+        .column_accessor(column)?
+        .array_cells_owned(rows)?
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| match value {
+            Some(ArrayValue::Float64(values)) => {
+                let slice = values
+                    .as_slice()
+                    .ok_or_else(|| MsError::ColumnTypeMismatch {
+                        column: column.to_string(),
+                        table: "MAIN".to_string(),
+                        expected: "contiguous f64[3]".to_string(),
+                        found: "non-contiguous".to_string(),
+                    })?;
+                if slice.len() != 3 {
+                    return Err(MsError::ColumnTypeMismatch {
+                        column: column.to_string(),
+                        table: "MAIN".to_string(),
+                        expected: "f64[3]".to_string(),
+                        found: format!("f64[{}]", slice.len()),
+                    });
+                }
+                Ok([slice[0], slice[1], slice[2]])
+            }
+            Some(other) => Err(MsError::ColumnTypeMismatch {
+                column: column.to_string(),
+                table: "MAIN".to_string(),
+                expected: "Float64 array".to_string(),
+                found: format!("{:?}", other.primitive_type()),
+            }),
+            None => Err(MsError::MissingColumn {
+                column: format!("{column}[row={row}]"),
+                table: "MAIN".to_string(),
+            }),
+        })
+        .collect()
 }
 
 fn build_observations(
