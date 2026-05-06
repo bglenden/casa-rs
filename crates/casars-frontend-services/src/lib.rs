@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_images::{AnyPagedImage, ImageBrowserSession, ImageInfo, ImagePixelType};
-use casa_ms::columns::{main_ids, time_columns::TimeColumn};
+use casa_ms::columns::main_ids;
 use casa_ms::plot::{
     AntennaLayoutPlotPayload, AntennaLayoutPoint, ScanTimelineBar, ScanTimelinePlotPayload,
     SpectralWindowCoverageBar, SpectralWindowCoveragePlotPayload, UvCoverageSeries,
@@ -20,6 +20,7 @@ use casa_ms::{
     VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
 use casa_tables::{Table, TableBrowser, TableOptions};
+use casa_types::ScalarValue;
 use casa_types::measures::direction::{
     angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
     format_right_ascension_labeled,
@@ -31,6 +32,7 @@ use thiserror::Error;
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
 const MAX_PROJECT_SCAN_DEPTH: usize = 4;
 const DEFAULT_GUI_MAX_PLOT_POINTS: u64 = 250_000;
+const MAIN_SCALAR_CHUNK_ROWS: usize = 65_536;
 #[cfg(test)]
 const DEFAULT_PLOT_WIDTH: u32 = 960;
 #[cfg(test)]
@@ -565,39 +567,40 @@ fn build_scan_timeline_payload_fast(
     let dd_to_spw = data_description_to_spw(ms)?;
     let field_names = field_names(ms)?;
     let main = ms.main_table();
-    let time = TimeColumn::new(main);
-    let scan_number = main_ids::scan_number(main);
-    let field_id = main_ids::field_id(main);
-    let data_desc_id = main_ids::data_desc_id(main);
+    let row_numbers = (0..main.row_count()).collect::<Vec<_>>();
     let mut lane_lookup = BTreeMap::<i32, usize>::new();
     let mut scans = BTreeMap::<i32, ScanAccum>::new();
 
-    for row in 0..main.row_count() {
-        let row_field = field_id.get(row).map_err(|error| error.to_string())?;
-        if selected_field.is_some_and(|field| row_field != field as i32) {
-            continue;
+    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
+        let scan_values = selected_i32_values(main, "SCAN_NUMBER", row_chunk)?;
+        let field_values = selected_i32_values(main, "FIELD_ID", row_chunk)?;
+        let data_desc_values = selected_i32_values(main, "DATA_DESC_ID", row_chunk)?;
+        let time_values = selected_f64_values(main, "TIME", row_chunk)?;
+        for row_slot in 0..row_chunk.len() {
+            let row_field = field_values[row_slot];
+            if selected_field.is_some_and(|field| row_field != field as i32) {
+                continue;
+            }
+            let row_dd = data_desc_values[row_slot];
+            let row_spw = dd_to_spw.get(&row_dd).copied().unwrap_or(-1);
+            if selected_spw.is_some_and(|spw| row_spw != spw as i32) {
+                continue;
+            }
+            let scan = scan_values[row_slot];
+            let row_time = time_values[row_slot];
+            let next_lane = lane_lookup.len();
+            let lane = *lane_lookup.entry(scan).or_insert(next_lane);
+            let entry = scans.entry(scan).or_insert_with(|| ScanAccum {
+                lane,
+                start: row_time,
+                end: row_time,
+                ..ScanAccum::default()
+            });
+            entry.start = entry.start.min(row_time);
+            entry.end = entry.end.max(row_time);
+            entry.field_ids.insert(row_field);
+            entry.row_count += 1;
         }
-        let row_dd = data_desc_id.get(row).map_err(|error| error.to_string())?;
-        let row_spw = dd_to_spw.get(&row_dd).copied().unwrap_or(-1);
-        if selected_spw.is_some_and(|spw| row_spw != spw as i32) {
-            continue;
-        }
-        let scan = scan_number.get(row).map_err(|error| error.to_string())?;
-        let row_time = time
-            .get_mjd_seconds(row)
-            .map_err(|error| error.to_string())?;
-        let next_lane = lane_lookup.len();
-        let lane = *lane_lookup.entry(scan).or_insert(next_lane);
-        let entry = scans.entry(scan).or_insert_with(|| ScanAccum {
-            lane,
-            start: row_time,
-            end: row_time,
-            ..ScanAccum::default()
-        });
-        entry.start = entry.start.min(row_time);
-        entry.end = entry.end.max(row_time);
-        entry.field_ids.insert(row_field);
-        entry.row_count += 1;
     }
 
     let mut lane_labels = vec![String::new(); lane_lookup.len()];
@@ -638,6 +641,55 @@ fn build_scan_timeline_payload_fast(
         lane_labels,
         summary: format!("Scan timeline. Scans={}", lane_lookup.len()),
     })
+}
+
+fn selected_i32_values(
+    table: &Table,
+    column: &'static str,
+    rows: &[usize],
+) -> Result<Vec<i32>, String> {
+    selected_scalar_values(table, column, rows, |value| match value {
+        ScalarValue::Int32(value) => Ok(value),
+        other => Err(format!(
+            "plot service requires INT {column} cells, found {:?}",
+            other.primitive_type()
+        )),
+    })
+}
+
+fn selected_f64_values(
+    table: &Table,
+    column: &'static str,
+    rows: &[usize],
+) -> Result<Vec<f64>, String> {
+    selected_scalar_values(table, column, rows, |value| match value {
+        ScalarValue::Float64(value) => Ok(value),
+        other => Err(format!(
+            "plot service requires DOUBLE {column} cells, found {:?}",
+            other.primitive_type()
+        )),
+    })
+}
+
+fn selected_scalar_values<T>(
+    table: &Table,
+    column: &'static str,
+    rows: &[usize],
+    convert: impl Fn(ScalarValue) -> Result<T, String>,
+) -> Result<Vec<T>, String> {
+    table
+        .column_accessor(column)
+        .map_err(|error| error.to_string())?
+        .scalar_cells_owned_for_rows(rows)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| {
+            value
+                .ok_or_else(|| format!("plot service requires {column} data for row {row}"))
+                .and_then(&convert)
+        })
+        .collect()
 }
 
 fn build_spectral_window_coverage_payload_fast(
