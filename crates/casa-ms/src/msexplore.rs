@@ -30,6 +30,7 @@ pub mod task_contract;
 use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use casa_tables::Table;
 use casa_types::measures::doppler::DopplerRef;
@@ -46,7 +47,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::columns::{
     frequency_columns::ChanFreqColumn,
-    main_ids,
     weight_columns::{SigmaSpectrumColumn, WeightSpectrumColumn},
 };
 use crate::derived::engine::MsCalEngine;
@@ -67,6 +67,49 @@ use crate::{MeasurementSet, MeasurementSetSummaryOptions, MeasurementSetSummaryO
 const EXPORT_DPI: f32 = 72.0;
 const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
 type BitmapArea<'a> = DrawingArea<BitMapBackend<'a>, plotters::coord::Shift>;
+
+#[derive(Default)]
+struct VisibilityScatterTiming {
+    row_grid: Duration,
+    row_arrays: Duration,
+    grouping: Duration,
+    bin_collect: Duration,
+    axis_compute: Duration,
+    point_push: Duration,
+}
+
+impl VisibilityScatterTiming {
+    fn enabled() -> bool {
+        std::env::var("CASA_RS_MSEXPLORE_TIMING")
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    }
+
+    fn checkpoint(label: &str, started: &mut Instant) {
+        if Self::enabled() {
+            let elapsed = started.elapsed();
+            eprintln!("msexplore timing: {label}={} ms", elapsed.as_millis());
+        }
+        *started = Instant::now();
+    }
+
+    fn report(&self, label: &str, rows: usize, points: usize, started: Instant) {
+        if !Self::enabled() {
+            return;
+        }
+        eprintln!(
+            "msexplore timing: {label} total={} ms rows={} points={} row_grid={} ms row_arrays={} ms grouping={} ms bin_collect={} ms axis_compute={} ms point_push={} ms",
+            started.elapsed().as_millis(),
+            rows,
+            points,
+            self.row_grid.as_millis(),
+            self.row_arrays.as_millis(),
+            self.grouping.as_millis(),
+            self.bin_collect.as_millis(),
+            self.axis_compute.as_millis(),
+            self.point_push.as_millis()
+        );
+    }
+}
 
 struct ScatterPanelAxes<'a> {
     x_axis: MsAxis,
@@ -3483,6 +3526,7 @@ fn predecimate_visibility_rows(
     spec: &MsPlotSpec,
     point_budget: &PointBudget,
     data_description: &MsDataDescription<'_>,
+    spectral_window: &crate::subtables::spectral_window::MsSpectralWindow<'_>,
     polarization: &MsPolarization<'_>,
     requested_corr_codes: Option<&[i32]>,
 ) -> Result<Vec<usize>, String> {
@@ -3496,38 +3540,50 @@ fn predecimate_visibility_rows(
         return Ok(row_numbers);
     };
 
-    let flag_probe = SelectedArrayColumn::load(ms.main_table(), "FLAG", &[first_row])?;
-    let flags = match flag_probe.get(0)? {
-        ArrayValue::Bool(values) => values.view().into_dimensionality::<Ix2>().map_err(|_| {
-            "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
-        })?,
-        other => {
-            return Err(format!(
-                "msexplore requires BOOL flag cells, found {:?}",
-                other.primitive_type()
-            ));
-        }
-    };
-    let corr_count = flags.nrows();
-    let chan_count = flags.ncols();
-    let data_desc_id = main_ids::data_desc_id(ms.main_table());
-    let ddid = data_desc_id
-        .get(first_row)
+    let ddid = selected_i32_values(ms.main_table(), "DATA_DESC_ID", &[first_row])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("msexplore requires DATA_DESC_ID data for row {first_row}"))?;
+    if ddid < 0 || (ddid as usize) >= data_description.row_count() {
+        return Ok(row_numbers);
+    }
+    let ddid = ddid as usize;
+    let spw_id = data_description
+        .spectral_window_id(ddid)
         .map_err(|error| error.to_string())?;
-    let corr_types = if ddid >= 0 && (ddid as usize) < data_description.row_count() {
-        let pol_id = data_description
-            .polarization_id(ddid as usize)
+    let chan_count = if spw_id >= 0 && (spw_id as usize) < spectral_window.row_count() {
+        let num_chan = spectral_window
+            .num_chan(spw_id as usize)
             .map_err(|error| error.to_string())?;
-        if pol_id >= 0 && (pol_id as usize) < polarization.row_count() {
-            polarization
-                .corr_type(pol_id as usize)
-                .map_err(|error| error.to_string())?
-        } else {
-            Vec::new()
-        }
+        usize::try_from(num_chan).unwrap_or(0)
     } else {
-        Vec::new()
+        0
     };
+    if chan_count == 0 {
+        return Ok(row_numbers);
+    }
+    let pol_id = data_description
+        .polarization_id(ddid)
+        .map_err(|error| error.to_string())?;
+    let (corr_count, corr_types) = if pol_id >= 0 && (pol_id as usize) < polarization.row_count() {
+        let pol_id = pol_id as usize;
+        let corr_types = polarization
+            .corr_type(pol_id)
+            .map_err(|error| error.to_string())?;
+        let num_corr = polarization
+            .num_corr(pol_id)
+            .map_err(|error| error.to_string())?;
+        let corr_count = usize::try_from(num_corr)
+            .ok()
+            .filter(|count| *count > 0)
+            .unwrap_or(corr_types.len());
+        (corr_count, corr_types)
+    } else {
+        (0, Vec::new())
+    };
+    if corr_count == 0 {
+        return Ok(row_numbers);
+    }
     let selected_correlations =
         select_correlation_slots(corr_count, &corr_types, requested_corr_codes);
     if selected_correlations.is_empty() {
@@ -3573,6 +3629,10 @@ fn build_generic_visibility_scatter(
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
+    let timing_enabled = VisibilityScatterTiming::enabled();
+    let scatter_started = Instant::now();
+    let mut checkpoint_started = Instant::now();
+    let mut scatter_timing = VisibilityScatterTiming::default();
     if uses_extended_averaging(spec) {
         return build_generic_visibility_scatter_with_averaging(ms, selection, spec, point_budget);
     }
@@ -3580,6 +3640,9 @@ fn build_generic_visibility_scatter(
     let listobs_options = selection.to_summary_options();
     let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
     let selected_row_count = row_numbers.len();
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("resolve_selected_rows", &mut checkpoint_started);
+    }
 
     let needs_visibility_grid = spec.x_axis.is_visibility_math()
         || spec.y_axes.iter().copied().any(MsAxis::is_visibility_math);
@@ -3594,6 +3657,9 @@ fn build_generic_visibility_scatter(
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("open_metadata_subtables", &mut checkpoint_started);
+    }
 
     let requested_corr_codes = selection
         .correlation
@@ -3609,10 +3675,14 @@ fn build_generic_visibility_scatter(
         spec,
         point_budget,
         &data_description,
+        &spectral_window,
         &polarization,
         requested_corr_codes.as_deref(),
     )?;
     let sampled_row_count = row_numbers.len();
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("predecimate_rows", &mut checkpoint_started);
+    }
     let row_sampling_summary = if sampled_row_count < selected_row_count {
         format!(" Sampled rows={sampled_row_count}/{selected_row_count}.")
     } else {
@@ -3628,6 +3698,9 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("load_visibility_data", &mut checkpoint_started);
+    }
     let selected_flags = SelectedArrayColumn::load(ms.main_table(), "FLAG", &row_numbers)?;
     let selected_weights = SelectedArrayColumn::load(ms.main_table(), "WEIGHT", &row_numbers)?;
     let selected_sigmas = SelectedArrayColumn::load(ms.main_table(), "SIGMA", &row_numbers)?;
@@ -3640,6 +3713,9 @@ fn build_generic_visibility_scatter(
     let selected_antenna2 = selected_i32_values(ms.main_table(), "ANTENNA2", &row_numbers)?;
     let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
     let selected_uvw = selected_uvw_values(ms.main_table(), "UVW", &row_numbers)?;
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("load_aux_columns", &mut checkpoint_started);
+    }
     let derived_engine = if spec.x_axis.uses_derived_geometry()
         || spec
             .y_axes
@@ -3665,6 +3741,9 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("prepare_context", &mut checkpoint_started);
+    }
 
     let iteraxis = spec.iteration.iteraxis;
     let mut panel_order = Vec::<String>::new();
@@ -3701,6 +3780,9 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("load_optional_spectra", &mut checkpoint_started);
+    }
 
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = selected_flag_rows[row_slot];
@@ -3740,10 +3822,14 @@ fn build_generic_visibility_scatter(
                 ));
             }
         };
+        let row_grid_started = timing_enabled.then(Instant::now);
         let grid = data_source
             .as_ref()
             .map(|source| source.row(row_slot))
             .transpose()?;
+        if let Some(started) = row_grid_started {
+            scatter_timing.row_grid += started.elapsed();
+        }
         let (corr_count, chan_count) = grid
             .as_ref()
             .map(|grid| (grid.corr_count, grid.chan_count))
@@ -3756,6 +3842,7 @@ fn build_generic_visibility_scatter(
                 chan_count
             ));
         }
+        let row_arrays_started = timing_enabled.then(Instant::now);
         let weight_values =
             float_axis_values(selected_weights.get(row_slot)?, corr_count, "WEIGHT")?;
         let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
@@ -3793,6 +3880,9 @@ fn build_generic_visibility_scatter(
                     ));
                 }
             }
+        }
+        if let Some(started) = row_arrays_started {
+            scatter_timing.row_arrays += started.elapsed();
         }
 
         let selected_correlations =
@@ -3836,6 +3926,7 @@ fn build_generic_visibility_scatter(
         let mut row_contributed = false;
         let mut row_panels = std::collections::BTreeSet::<String>::new();
         for (corr_index, corr_label) in &selected_correlations {
+            let grouping_started = timing_enabled.then(Instant::now);
             let row_weight = weight_values[*corr_index];
             let row_sigma = sigma_values[*corr_index];
             let (group_key, group_label) = visibility_group(
@@ -3882,11 +3973,15 @@ fn build_generic_visibility_scatter(
                     (y_axis, series_key, series_label, color_group)
                 })
                 .collect::<Vec<_>>();
+            if let Some(started) = grouping_started {
+                scatter_timing.grouping += started.elapsed();
+            }
             let mut samples = Vec::<Complex64>::new();
             let mut flag_samples = Vec::<bool>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
             for bin in &channel_bins {
+                let bin_collect_started = timing_enabled.then(Instant::now);
                 if let Some(grid) = grid.as_ref() {
                     collect_bin_samples_into(
                         grid,
@@ -3924,6 +4019,10 @@ fn build_generic_visibility_scatter(
                 } else {
                     sigma_spectrum_samples.clear();
                 }
+                if let Some(started) = bin_collect_started {
+                    scatter_timing.bin_collect += started.elapsed();
+                }
+                let axis_started = timing_enabled.then(Instant::now);
                 let Some(x_value) = compute_axis_value(
                     spec.x_axis,
                     &samples,
@@ -3992,6 +4091,7 @@ fn build_generic_visibility_scatter(
                                 points: Vec::new(),
                                 provenance: Vec::new(),
                             });
+                    let push_started = timing_enabled.then(Instant::now);
                     series.points.push((x_value, y_value));
                     series.provenance.push(MsScatterPointRef {
                         row,
@@ -3999,6 +4099,9 @@ fn build_generic_visibility_scatter(
                         chan_start: bin.start,
                         chan_end: bin.end,
                     });
+                    if let Some(started) = push_started {
+                        scatter_timing.point_push += started.elapsed();
+                    }
                     point_budget.record_points(
                         1,
                         spec.preset
@@ -4009,6 +4112,9 @@ fn build_generic_visibility_scatter(
                     contributing_points += 1;
                     row_contributed = true;
                     row_panels.insert(panel_key.clone());
+                }
+                if let Some(started) = axis_started {
+                    scatter_timing.axis_compute += started.elapsed();
                 }
             }
         }
@@ -4021,6 +4127,9 @@ fn build_generic_visibility_scatter(
         if row_contributed {
             contributing_rows += 1;
         }
+    }
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("expand_rows", &mut checkpoint_started);
     }
 
     if contributing_points == 0 {
@@ -4082,6 +4191,17 @@ fn build_generic_visibility_scatter(
             })
         })
         .collect::<Vec<_>>();
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("sort_and_pack_series", &mut checkpoint_started);
+        scatter_timing.report(
+            spec.preset
+                .map(MsPlotPreset::display_name)
+                .unwrap_or("MeasurementSet plot"),
+            contributing_rows,
+            contributing_points,
+            scatter_started,
+        );
+    }
     if let Some(iteraxis) = iteraxis {
         let (gridrows, gridcols) =
             resolve_iterated_grid(panels.len(), spec.layout.gridrows, spec.layout.gridcols)?;

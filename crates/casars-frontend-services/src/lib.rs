@@ -33,6 +33,7 @@ const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
 const MAX_PROJECT_SCAN_DEPTH: usize = 4;
 const DEFAULT_GUI_MAX_PLOT_POINTS: u64 = 250_000;
 const MAIN_SCALAR_CHUNK_ROWS: usize = 65_536;
+const FRONTEND_POINT_PROVENANCE_LIMIT: usize = 8_000;
 #[cfg(test)]
 const DEFAULT_PLOT_WIDTH: u32 = 960;
 #[cfg(test)]
@@ -1544,16 +1545,20 @@ fn scatter_layers(
         .enumerate()
         .map(|(index, series)| {
             let (x_values, y_values): (Vec<_>, Vec<_>) = series.points.iter().copied().unzip();
-            let provenance = series
-                .provenance
-                .iter()
-                .map(|point| PlotPointProvenance {
-                    row: point.row as u64,
-                    corr: point.corr as u64,
-                    chan_start: point.chan_start as u64,
-                    chan_end: point.chan_end as u64,
-                })
-                .collect();
+            let provenance = if series.points.len() <= FRONTEND_POINT_PROVENANCE_LIMIT {
+                series
+                    .provenance
+                    .iter()
+                    .map(|point| PlotPointProvenance {
+                        row: point.row as u64,
+                        corr: point.corr as u64,
+                        chan_start: point.chan_start as u64,
+                        chan_end: point.chan_end as u64,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             point_layer(PointLayerSpec {
                 id: format!("series-{index}"),
                 title: series.label.clone(),
