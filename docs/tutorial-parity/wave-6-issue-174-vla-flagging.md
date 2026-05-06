@@ -1,8 +1,8 @@
 # Wave 6 Issue 174 VLA Flagging
 
 Truth class: current descriptive
-Last reality check: 2026-05-05
-Verification: cargo test -p casa-ms --test flagging; cargo check -p casa-ms --bins; just verify; just docs-check
+Last reality check: 2026-05-06
+Verification: cargo test -p casa-ms --test flagging; cargo check -p casa-ms --bins; just verify; just docs-check; gzip -t SNR_G55_10s.clean.tar.gz; CASA/casa-rs tutorial-MS spot checks
 
 Wave issue: #174
 Parent issue: #128
@@ -63,20 +63,54 @@ The `tfcrop` and `rflag` modes are native robust-statistics implementations of
 the CASA task families, not bindings to the CASA C++ agent classes and not yet
 claimed as bit-for-bit clones.
 
-## Local Data State
+## Tutorial Data State
 
-The expected staged input is:
+The official VLA flagging tutorial archive was restaged from:
 
-`/Volumes/GLENDENNING/casa-rs/tutorial-data/tutorial-parity/vla/flagging/SNR_G55_10s.tar.gz`
+`https://casa.nrao.edu/Data/EVLA/SNRG55/SNR_G55_10s.tar.gz`
 
-Local validation found the archive present but truncated:
+The validated local copy is:
 
-`gzip -t` reported `unexpected end of file` and `uncompress failed`.
+`/Volumes/GLENDENNING/casa-rs/tutorial-data/tutorial-parity/vla/flagging/SNR_G55_10s.clean.tar.gz`
 
-This blocks the full same-input CASA 6.7.5-9 versus casa-rs VLA flagging guide
-run until the tutorial artifact is restaged. The issue therefore has native
-implementation and focused regression coverage, but the final tutorial-product
-comparison remains pending data repair.
+Validation:
+
+```sh
+stat -f '%z bytes' SNR_G55_10s.clean.tar.gz
+# 5293196015 bytes
+gzip -t SNR_G55_10s.clean.tar.gz
+tar -tzf SNR_G55_10s.clean.tar.gz
+```
+
+The archive extracts to a single `SNR_G55_10s.ms` MeasurementSet. Disposable
+copy-on-write clones for parity checks live under:
+
+`/Volumes/GLENDENNING/casa-rs/tutorial-data/tutorial-parity/vla/flagging/parity-runs/20260505-clean/`
+
+The older resumed `SNR_G55_10s.tar.gz` and salvage candidates in the same
+directory are known invalid and must not be used for parity evidence.
+
+## Real Tutorial-MS Parity Evidence
+
+CASA runs used:
+
+`/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python`
+
+The storage path is interoperable for the checked mutations: casa-rs summary
+reads CASA-written flags with the same post-CASA totals. Algorithm parity is
+not yet achieved for the checked modes.
+
+| Check | Selection | CASA 6.7.5-9 | casa-rs | Result |
+| --- | --- | ---: | ---: | --- |
+| `clipzeros` | full MS | 2 flagged samples after 7.6 s | 0 flagged samples after about 7.1 min | mismatch |
+| `tfcrop` | `scan=251`, `DATA` | 152,904 flagged samples after 0.82 s | 178,106 flagged samples after about 3.5 min | mismatch |
+| `rflag` | `scan=251`, `DATA` | 189,624 flagged samples after 0.52 s | 108,929 flagged samples after about 3.7 min | mismatch |
+
+The CASA `clipzeros` samples were not bitwise zero when inspected through
+casatools after flagging; their amplitudes were approximately `1.1e-7`.
+However, low-amplitude inspection showed many more samples below `1e-6`, so
+CASA's effective clip-zero behavior is not a simple broad epsilon threshold.
+This needs upstream-agent parity work rather than an ad hoc tolerance change.
 
 ## Verification
 
@@ -99,9 +133,11 @@ Covered behavior:
 
 ## Remaining Tutorial-Parity Work
 
-- Restage `SNR_G55_10s.tar.gz`.
-- Run the VLA CASA Flagging guide through CASA 6.7.5-9 and casa-rs from the
-  same input.
-- Compare `FLAG`, `FLAG_ROW`, `<ms>.flagversions`, and tutorial-visible
-  diagnostics.
-- Record timing for the native flagging modes on the tutorial MS.
+- Reconcile CASA `clipzeros` behavior on the two low-amplitude tutorial
+  samples without overflagging the 232 samples below `1e-6`.
+- Bring native `tfcrop` and `rflag` counts closer to CASA agentflagger behavior
+  on tutorial selections before claiming parity.
+- Profile the full-MS scan path: current native full-MS `clipzeros` is minutes
+  slower than CASA on the same tutorial data.
+- Extend the comparison beyond counts to `FLAG`/`FLAG_ROW` coordinate diffs,
+  `<ms>.flagversions`, and tutorial-visible diagnostics.
