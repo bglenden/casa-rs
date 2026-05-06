@@ -720,8 +720,11 @@ private struct TableBrowserSnapshotView: View {
 struct MeasurementSetPlotPanel: View {
     @ObservedObject var store: WorkbenchStore
     let dataset: DatasetSummary
+    @Environment(\.workbenchFontSize) private var workbenchFontSize
     @State private var showingAdvancedSetup = false
+    @State private var showingPlotControls = false
     @State private var plotDisplayMode: WorkbenchPlotDisplayMode = .automatic
+    @State private var plotCharacterSizeOverride: Double?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -768,15 +771,6 @@ struct MeasurementSetPlotPanel: View {
                     .frame(width: 320)
             }
             .accessibilityIdentifier("msPlot.selections.\(dataset.id)")
-
-            Picker("Rendering", selection: $plotDisplayMode) {
-                ForEach(WorkbenchPlotDisplayMode.allCases) { mode in
-                    Text(mode.controlLabel).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 230)
-            .accessibilityIdentifier("msPlot.displayMode.\(dataset.id)")
 
             Button {
                 store.runMeasurementSetPlot(datasetID: dataset.id)
@@ -896,8 +890,22 @@ struct MeasurementSetPlotPanel: View {
                         }
                     }
                 }
-                WorkbenchPlotView(plot: result.plotDocument, displayModeOverride: plotDisplayMode)
+                WorkbenchPlotView(
+                    plot: result.plotDocument,
+                    displayModeOverride: plotDisplayMode,
+                    characterSizeOverride: plotCharacterSizeOverride
+                )
                     .id(result.plotDocument.dataFingerprint)
+                    .contextMenu {
+                        Button("Plot Controls") {
+                            showingPlotControls = true
+                        }
+                    }
+                    .popover(isPresented: $showingPlotControls, arrowEdge: .trailing) {
+                        plotControls
+                            .padding(16)
+                            .frame(width: 340)
+                    }
                 Text(result.summary)
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
@@ -922,6 +930,37 @@ struct MeasurementSetPlotPanel: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(16)
             .accessibilityIdentifier("msPlot.empty.\(dataset.id)")
+        }
+    }
+
+    private var plotControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Plot Controls")
+                .workbenchFont(.headline)
+
+            Picker("Rendering", selection: $plotDisplayMode) {
+                ForEach(WorkbenchPlotDisplayMode.allCases) { mode in
+                    Text(mode.controlLabel).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("msPlot.displayMode.\(dataset.id)")
+
+            SliderRow(
+                title: "Character size",
+                value: plotCharacterSizeOverride ?? workbenchFontSize,
+                range: WorkbenchState.minimumInterfaceFontSize...WorkbenchState.maximumInterfaceFontSize,
+                format: "%.0f pt"
+            ) { value in
+                plotCharacterSizeOverride = value
+            }
+            .accessibilityIdentifier("msPlot.characterSize.\(dataset.id)")
+
+            Button("Reset Character Size") {
+                plotCharacterSizeOverride = nil
+            }
+            .disabled(plotCharacterSizeOverride == nil)
+            .accessibilityIdentifier("msPlot.characterSizeReset.\(dataset.id)")
         }
     }
 }

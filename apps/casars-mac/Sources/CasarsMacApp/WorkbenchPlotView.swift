@@ -32,8 +32,10 @@ struct PlotSamplesPanel: View {
 private struct PlotSampleCard: View {
     @ObservedObject var store: WorkbenchStore
     let plot: WorkbenchPlotDocument
+    @Environment(\.workbenchFontSize) private var workbenchFontSize
     @StateObject private var pointRasterSummaryCache = WorkbenchPointRasterCache()
-    @State private var controlsExpanded = false
+    @State private var showingPlotControls = false
+    @State private var characterSizeOverride: Double?
     @State private var plotCanvasSize = CGSize.zero
 
     var body: some View {
@@ -53,7 +55,7 @@ private struct PlotSampleCard: View {
                     .accessibilityIdentifier("plotSamples.\(plot.id).pointCount")
             }
 
-            WorkbenchPlotView(plot: plot)
+            WorkbenchPlotView(plot: plot, characterSizeOverride: characterSizeOverride)
                 .frame(height: plot.allLayers.contains { $0.kind == .raster } ? 360 : (plot.panels.isEmpty ? 320 : 420))
                 .background(
                     GeometryReader { proxy in
@@ -68,12 +70,16 @@ private struct PlotSampleCard: View {
                 .onPreferenceChange(PlotCanvasSizePreferenceKey.self) { size in
                     plotCanvasSize = size
                 }
-
-            DisclosureGroup("Display controls", isExpanded: $controlsExpanded) {
-                controls
-                    .padding(.top, 8)
-            }
-            .workbenchFont(.caption)
+                .contextMenu {
+                    Button("Plot Controls") {
+                        showingPlotControls = true
+                    }
+                }
+                .popover(isPresented: $showingPlotControls, arrowEdge: .trailing) {
+                    controls
+                        .padding(16)
+                        .frame(width: 360)
+                }
         }
         .padding()
         .background(.regularMaterial)
@@ -82,7 +88,44 @@ private struct PlotSampleCard: View {
     }
 
     private var controls: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Plot Controls")
+                .workbenchFont(.headline)
+
+            Picker("Rendering", selection: Binding(
+                get: { plot.displayMode },
+                set: { mode in
+                    store.applyWorkbenchPlotEdit(
+                        plotID: plot.id,
+                        action: .setDisplayMode(mode)
+                    )
+                }
+            )) {
+                ForEach(WorkbenchPlotDisplayMode.allCases) { mode in
+                    Text(mode.controlLabel).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("plotSamples.\(plot.id).displayMode")
+
+            SliderRow(
+                title: "Character size",
+                value: characterSizeOverride ?? workbenchFontSize,
+                range: WorkbenchState.minimumInterfaceFontSize...WorkbenchState.maximumInterfaceFontSize,
+                format: "%.0f pt"
+            ) { value in
+                characterSizeOverride = value
+            }
+            .accessibilityIdentifier("plotSamples.\(plot.id).characterSize")
+
+            Button("Reset Character Size") {
+                characterSizeOverride = nil
+            }
+            .disabled(characterSizeOverride == nil)
+            .accessibilityIdentifier("plotSamples.\(plot.id).characterSizeReset")
+
+            Divider()
+
             if let layer = plot.allLayers.first(where: { $0.kind == .scatter }) {
                 SliderRow(
                     title: "Marker: \(layer.title)",
@@ -126,23 +169,6 @@ private struct PlotSampleCard: View {
                 .workbenchFont(.caption)
                 .accessibilityIdentifier("plotSamples.\(plot.id).layerVisible")
             }
-
-            Picker("Rendering", selection: Binding(
-                get: { plot.displayMode },
-                set: { mode in
-                    store.applyWorkbenchPlotEdit(
-                        plotID: plot.id,
-                        action: .setDisplayMode(mode)
-                    )
-                }
-            )) {
-                ForEach(WorkbenchPlotDisplayMode.allCases) { mode in
-                    Text(mode.controlLabel).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 260)
-            .accessibilityIdentifier("plotSamples.\(plot.id).displayMode")
 
             if let rasterLayer = plot.allLayers.first(where: { $0.raster != nil }) {
                 HStack(spacing: 12) {
@@ -264,7 +290,7 @@ private struct PlotSampleCard: View {
     }
 }
 
-private struct SliderRow: View {
+struct SliderRow: View {
     var title: String
     var value: Double
     var range: ClosedRange<Double>
@@ -300,11 +326,11 @@ private struct PlotCanvasSizePreferenceKey: PreferenceKey {
 }
 
 private enum WorkbenchPlotLayout {
-    static func plotRect(for size: CGSize) -> CGRect {
-        let left = 96.0
-        let top = 26.0
+    static func plotRect(for size: CGSize, characterSize: Double = WorkbenchState.defaultInterfaceFontSize) -> CGRect {
+        let left = max(96.0, characterSize * 8.0)
+        let top = max(26.0, characterSize * 2.0)
         let right = 26.0
-        let bottom = 56.0
+        let bottom = max(56.0, characterSize * 4.3)
         return CGRect(
             x: left,
             y: top,
@@ -331,10 +357,16 @@ private func workbenchPointRasterXFootprintDataWidth(for layer: WorkbenchPlotLay
 struct WorkbenchPlotView: View {
     let plot: WorkbenchPlotDocument
     var displayModeOverride: WorkbenchPlotDisplayMode?
+    var characterSizeOverride: Double?
+    @Environment(\.workbenchFontSize) private var workbenchFontSize
     @StateObject private var pointRasterCache = WorkbenchPointRasterCache()
 
     private var displayMode: WorkbenchPlotDisplayMode {
         displayModeOverride ?? plot.displayMode
+    }
+
+    private var characterSize: Double {
+        characterSizeOverride ?? workbenchFontSize
     }
 
     var body: some View {
@@ -356,7 +388,7 @@ struct WorkbenchPlotView: View {
                 context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(nsColor: .textBackgroundColor)))
                 for (index, panel) in plot.panels.enumerated() {
                     let bounds = panelBounds(index: index, count: plot.panels.count, size: size)
-                    let plotRect = WorkbenchPlotLayout.plotRect(for: bounds.size).offsetBy(dx: bounds.minX, dy: bounds.minY)
+                    let plotRect = WorkbenchPlotLayout.plotRect(for: bounds.size, characterSize: characterSize).offsetBy(dx: bounds.minX, dy: bounds.minY)
                     drawPlot(
                         axes: panel.axes,
                         layers: panel.layers,
@@ -375,7 +407,7 @@ struct WorkbenchPlotView: View {
     }
 
     private func plotRect(for size: CGSize) -> CGRect {
-        WorkbenchPlotLayout.plotRect(for: size)
+        WorkbenchPlotLayout.plotRect(for: size, characterSize: characterSize)
     }
 
     private func panelBounds(index: Int, count: Int, size: CGSize) -> CGRect {
@@ -396,7 +428,7 @@ struct WorkbenchPlotView: View {
     ) {
         drawBackground(in: &context, size: size, plotRect: plotRect)
         if let title {
-            context.draw(Text(title).font(.caption).foregroundColor(.secondary), at: CGPoint(x: plotRect.minX, y: plotRect.minY - 12), anchor: .leading)
+            context.draw(Text(title).font(plotFont(.caption)).foregroundColor(.secondary), at: CGPoint(x: plotRect.minX, y: plotRect.minY - max(12, characterSize)), anchor: .leading)
         }
         drawRasterLayers(layers, in: &context, plotRect: plotRect)
         drawVectorLayers(layers, axes: axes, in: &context, plotRect: plotRect)
@@ -548,7 +580,7 @@ struct WorkbenchPlotView: View {
             context.stroke(path, with: .color(.primary.opacity(0.9)), lineWidth: 1.4)
         }
         guard let label = point.label else { return }
-        context.draw(Text(label).font(.caption2), at: CGPoint(x: position.x + 6, y: position.y - 6), anchor: .leading)
+        context.draw(Text(label).font(plotFont(.caption2)), at: CGPoint(x: position.x + 6, y: position.y - 6), anchor: .leading)
     }
 
     private func drawIntervals(
@@ -577,7 +609,7 @@ struct WorkbenchPlotView: View {
             )
             context.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(fill))
             if let label = interval.label, rect.width > 42 {
-                context.draw(Text(label).font(.caption2), at: CGPoint(x: rect.midX, y: rect.midY), anchor: .center)
+                context.draw(Text(label).font(plotFont(.caption2)), at: CGPoint(x: rect.midX, y: rect.midY), anchor: .center)
             }
         }
     }
@@ -606,7 +638,7 @@ struct WorkbenchPlotView: View {
                 lineWidth: shape.style.lineWidth
             )
             if let label = shape.label {
-                context.draw(Text(label).font(.caption2), at: positions[0], anchor: .bottomLeading)
+                context.draw(Text(label).font(plotFont(.caption2)), at: positions[0], anchor: .bottomLeading)
             }
         }
     }
@@ -621,7 +653,7 @@ struct WorkbenchPlotView: View {
         for annotation in annotations {
             let point = WorkbenchPlotPoint(x: annotation.x, y: annotation.y)
             guard let position = screenPoint(point, xAxis: xAxis, yAxis: yAxis, plotRect: plotRect) else { continue }
-            let label = Text(annotation.text).font(.caption)
+            let label = Text(annotation.text).font(plotFont(.caption))
             context.draw(label, at: CGPoint(x: position.x + 6, y: position.y - 8), anchor: .leading)
             context.fill(
                 Path(ellipseIn: CGRect(x: position.x - 2, y: position.y - 2, width: 4, height: 4)),
@@ -638,8 +670,8 @@ struct WorkbenchPlotView: View {
             drawTicks(axis: xAxis, horizontal: true, in: &context, plotRect: plotRect)
             if xAxis.labelsVisible {
                 context.draw(
-                    Text(axisLabel(xAxis)).font(.caption),
-                    at: CGPoint(x: plotRect.midX, y: plotRect.maxY + 38),
+                    Text(axisLabel(xAxis)).font(plotFont(.caption)),
+                    at: CGPoint(x: plotRect.midX, y: plotRect.maxY + max(38, characterSize * 2.9)),
                     anchor: .center
                 )
             }
@@ -657,8 +689,9 @@ struct WorkbenchPlotView: View {
         in context: inout GraphicsContext,
         plotRect: CGRect
     ) {
-        let label = context.resolve(Text(axisLabel(axis)).font(.caption))
-        let x = axis.drawsOnTrailingEdge ? plotRect.maxX + 58 : plotRect.minX - 70
+        let label = context.resolve(Text(axisLabel(axis)).font(plotFont(.caption)))
+        let offset = max(58, characterSize * 4.8)
+        let x = axis.drawsOnTrailingEdge ? plotRect.maxX + offset : plotRect.minX - offset
         let y = plotRect.midY
         context.drawLayer { layerContext in
             layerContext.concatenate(CGAffineTransform(translationX: x, y: y))
@@ -711,7 +744,7 @@ struct WorkbenchPlotView: View {
                 )
             }
             context.draw(
-                Text(layer.title).font(.caption2).foregroundColor(.secondary),
+                Text(layer.title).font(plotFont(.caption2)).foregroundColor(.secondary),
                 at: CGPoint(x: legendRect.minX + 30, y: y),
                 anchor: .topLeading
             )
@@ -720,7 +753,7 @@ struct WorkbenchPlotView: View {
         if visibleLayers.count > displayedLayers.count {
             let remaining = visibleLayers.count - displayedLayers.count
             context.draw(
-                Text("+ \(remaining) more").font(.caption2).foregroundColor(.secondary),
+                Text("+ \(remaining) more").font(plotFont(.caption2)).foregroundColor(.secondary),
                 at: CGPoint(x: legendRect.minX + 30, y: legendRect.minY + 10 + Double(displayedLayers.count) * rowHeight),
                 anchor: .topLeading
             )
@@ -735,7 +768,8 @@ struct WorkbenchPlotView: View {
     ) {
         for fraction in stride(from: 0.0, through: 1.0, by: 0.25) {
             let value = axisValue(at: fraction, axis: axis)
-            let text = Text(shortNumber(value)).font(.caption2)
+            let displayValue = value - timeAxisOffset(for: axis)
+            let text = Text(shortNumber(displayValue)).font(plotFont(.caption2))
             if horizontal {
                 let x = plotRect.minX + plotRect.width * fraction
                 context.draw(text, at: CGPoint(x: x, y: plotRect.maxY + 16), anchor: .center)
@@ -751,7 +785,7 @@ struct WorkbenchPlotView: View {
             let fraction = (value - axis.range.lower) / axis.range.span
             guard fraction.isFinite else { continue }
             let y = plotRect.maxY - plotRect.height * fraction
-            context.draw(Text(label).font(.caption2), at: CGPoint(x: plotRect.minX - 8, y: y), anchor: .trailing)
+            context.draw(Text(label).font(plotFont(.caption2)), at: CGPoint(x: plotRect.minX - 8, y: y), anchor: .trailing)
         }
     }
 
@@ -999,7 +1033,38 @@ struct WorkbenchPlotView: View {
 
     private func axisLabel(_ axis: WorkbenchPlotAxis) -> String {
         let label = axis.unit.isEmpty ? axis.label : "\(axis.label) (\(axis.unit))"
-        return axis.scale == .logarithmic ? "\(label), log" : label
+        let offset = timeAxisOffset(for: axis)
+        let displayLabel = if offset == 0 {
+            label
+        } else if axis.unit.isEmpty {
+            "\(axis.label) - \(String(format: "%.0f", offset))"
+        } else {
+            "\(axis.label) (\(axis.unit) - \(String(format: "%.0f", offset)))"
+        }
+        return axis.scale == .logarithmic ? "\(displayLabel), log" : displayLabel
+    }
+
+    private func plotFont(_ role: WorkbenchFontRole) -> Font {
+        .system(size: role.pointSize(base: characterSize))
+    }
+
+    private func timeAxisOffset(for axis: WorkbenchPlotAxis) -> Double {
+        let label = axis.label.lowercased()
+        let unit = axis.unit.lowercased()
+        guard axis.scale == .linear,
+              (axis.id.lowercased() == "time" || label.contains("time")),
+              (unit.contains("mjd") || label.contains("mjd"))
+        else {
+            return 0
+        }
+        let start = axis.range.lower
+        let end = axis.range.upper
+        let span = abs(end - start)
+        guard start.isFinite, end.isFinite, span >= 1 else {
+            return 0
+        }
+        let step = pow(10, floor(log10(span)))
+        return floor(start / step) * step
     }
 
     private func axisFraction(for value: Double, axis: WorkbenchPlotAxis) -> Double? {
