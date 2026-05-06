@@ -350,16 +350,7 @@ pub fn flagdata_path(
             path: path.display().to_string(),
             source,
         })?;
-    let report = flagdata(&mut ms, request)?;
-    if request.mode != FlagDataMode::Summary {
-        ms.save_main_table_only_assuming_valid().map_err(|source| {
-            FlaggingError::SaveMeasurementSet {
-                path: path.display().to_string(),
-                source,
-            }
-        })?;
-    }
-    Ok(report)
+    flagdata(&mut ms, request)
 }
 
 fn report_after(
@@ -371,7 +362,10 @@ fn report_after(
     thresholds: Option<(f64, f64)>,
 ) -> Result<FlagDataReport, FlaggingError> {
     let summary_rows = selected_rows(ms, request)?;
-    let summary = summarize_flags(ms, &summary_rows)?;
+    let summary = match changes.summary {
+        Some(summary) => summary,
+        None => summarize_flags(ms, &summary_rows)?,
+    };
     Ok(FlagDataReport {
         mode: request.mode,
         selected_rows: selected_row_count,
@@ -423,9 +417,94 @@ fn apply_clip_flags(
     if !request.clipzeros {
         return Ok(ChangeSet::default());
     }
-    mutate_selected_samples(ms, selected_rows, channel_selections, |amp, old| {
-        (!old && amp == 0.0).then_some(true)
-    })
+    let path = display_ms_path(ms);
+    let ddid_to_spw = data_description_spw_map(ms)?;
+    let mut updates = std::collections::BTreeMap::<usize, ArrayD<bool>>::new();
+    let mut changed = ChangeSet::default();
+    let mut flagged_samples = 0usize;
+    let mut total_samples = 0usize;
+    for &row in selected_rows {
+        let table = ms.main_table();
+        let ddid = table_i32(table, row, "DATA_DESC_ID", ms.path())?;
+        let spw = ddid_to_spw
+            .get(&ddid)
+            .copied()
+            .ok_or_else(|| FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
+            })?;
+        let old_flags = clone_flag_matrix(ms, row)?;
+        let data_value = table
+            .cell_accessor(row, request.data_column.name())
+            .and_then(|cell| cell.value().map(|value| value.cloned()))
+            .map_err(|source| FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("read {} row {row}: {source}", request.data_column.name()),
+            })?
+            .ok_or_else(|| FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("{} row {row} is undefined", request.data_column.name()),
+            })?;
+        let data_shape =
+            numeric_array_shape(&data_value).ok_or_else(|| FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!(
+                    "{} row {row} must be numeric array, found {data_value:?}",
+                    request.data_column.name()
+                ),
+            })?;
+        if data_shape != old_flags.shape() {
+            return Err(FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!(
+                    "{} and FLAG shapes differ on row {row}: {:?} vs {:?}",
+                    request.data_column.name(),
+                    data_shape,
+                    old_flags.shape()
+                ),
+            });
+        }
+        if data_shape.len() != 2 {
+            return Err(FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("{} row {row} is not rank-2", request.data_column.name()),
+            });
+        }
+        total_samples += old_flags.len();
+        flagged_samples += old_flags.iter().filter(|flag| **flag).count();
+        let channels =
+            match channel_selections.and_then(|selectors| selectors.get(&spw)) {
+                Some(selection) => selection.indices(data_shape[1]).map_err(|source| {
+                    FlaggingError::MutateFlags {
+                        path: path.clone(),
+                        reason: format!("resolve SPW {spw} channels: {source}"),
+                    }
+                })?,
+                None => (0..data_shape[1]).collect(),
+            };
+        let mut flags = old_flags.clone();
+        let mut row_changed = false;
+        for corr in 0..data_shape[0] {
+            for &chan in &channels {
+                let index = IxDyn(&[corr, chan]);
+                if !old_flags[index.clone()] && is_casa_clip_zero_at(&data_value, &index)? {
+                    flags[index] = true;
+                    changed.changed_samples += 1;
+                    flagged_samples += 1;
+                    row_changed = true;
+                }
+            }
+        }
+        if row_changed {
+            updates.insert(row, flags);
+        }
+    }
+    write_flag_updates(ms, updates, &mut changed)?;
+    changed.summary = Some(FlagSummary {
+        flagged_samples,
+        total_samples,
+    });
+    Ok(changed)
 }
 
 fn apply_quack_flags(
@@ -757,6 +836,38 @@ fn visibility_amplitudes(
             reason: format!("{column} row {row} must be numeric array, found {other:?}"),
         }),
     }
+}
+
+fn is_casa_clip_zero(value: f64) -> bool {
+    value.is_nan() || value <= f64::from(f32::EPSILON)
+}
+
+fn numeric_array_shape(value: &Value) -> Option<&[usize]> {
+    match value {
+        Value::Array(ArrayValue::Complex32(values)) => Some(values.shape()),
+        Value::Array(ArrayValue::Complex64(values)) => Some(values.shape()),
+        Value::Array(ArrayValue::Float32(values)) => Some(values.shape()),
+        Value::Array(ArrayValue::Float64(values)) => Some(values.shape()),
+        _ => None,
+    }
+}
+
+fn is_casa_clip_zero_at(value: &Value, index: &IxDyn) -> Result<bool, FlaggingError> {
+    Ok(match value {
+        Value::Array(ArrayValue::Complex32(values)) => values
+            .get(index.clone())
+            .is_some_and(|value| is_casa_clip_zero(value.norm() as f64)),
+        Value::Array(ArrayValue::Complex64(values)) => values
+            .get(index.clone())
+            .is_some_and(|value| is_casa_clip_zero(value.norm())),
+        Value::Array(ArrayValue::Float32(values)) => values
+            .get(index.clone())
+            .is_some_and(|value| is_casa_clip_zero(f64::from(*value))),
+        Value::Array(ArrayValue::Float64(values)) => values
+            .get(index.clone())
+            .is_some_and(|value| is_casa_clip_zero(*value)),
+        _ => false,
+    })
 }
 
 fn summarize_flags(
@@ -1530,8 +1641,10 @@ struct ChangeSet {
     changed_rows: usize,
     changed_samples: usize,
     changed_row_indices: Vec<usize>,
+    summary: Option<FlagSummary>,
 }
 
+#[derive(Clone)]
 struct FlagSummary {
     flagged_samples: usize,
     total_samples: usize,

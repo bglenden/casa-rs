@@ -4,7 +4,7 @@ mod common;
 
 use casa_ms::{
     FlagDataAction, FlagDataMode, FlagDataRequest, FlagMerge, MeasurementSet, flagdata,
-    list_flag_versions, restore_flag_version, save_flag_version,
+    flagdata_path, list_flag_versions, restore_flag_version, save_flag_version,
 };
 use casa_types::{ArrayValue, Complex32, Value};
 use ndarray::{ArrayD, IxDyn};
@@ -12,6 +12,39 @@ use std::process::Command;
 use tempfile::tempdir;
 
 use common::{NUM_CHAN, NUM_CORR, create_msexplore_fixture_ms};
+
+#[test]
+fn clipzeros_matches_casa_float_epsilon_behavior() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    seed_constant_data_with_outliers(
+        &ms_path,
+        &[
+            (0, 0, 0, 0.0),
+            (0, 0, 1, f32::EPSILON),
+            (0, 0, 2, f32::EPSILON * 1.25),
+        ],
+    );
+
+    let report = flagdata_path(
+        &ms_path,
+        &FlagDataRequest {
+            mode: FlagDataMode::Clip,
+            flagbackup: false,
+            clipzeros: true,
+            ..FlagDataRequest::default()
+        },
+    )
+    .expect("run clipzeros");
+
+    assert_eq!(report.changed_samples, 2);
+    assert_eq!(report.flagged_samples, 2);
+
+    let ms = MeasurementSet::open(&ms_path).expect("reopen MS");
+    assert_flag(&ms, 0, 0, 0);
+    assert_flag(&ms, 0, 0, 1);
+    assert_not_flag(&ms, 0, 0, 2);
+}
 
 #[test]
 fn tfcrop_flags_time_and_frequency_outliers() {
@@ -168,6 +201,21 @@ fn assert_flag(ms: &MeasurementSet, row: usize, corr: usize, chan: usize) {
         other => panic!("unexpected FLAG value {other:?}"),
     };
     assert!(flags[IxDyn(&[corr, chan])]);
+}
+
+fn assert_not_flag(ms: &MeasurementSet, row: usize, corr: usize, chan: usize) {
+    let flags = match ms
+        .main_table()
+        .cell_accessor(row, "FLAG")
+        .expect("FLAG cell")
+        .value()
+        .expect("FLAG value")
+        .expect("defined FLAG")
+    {
+        Value::Array(ArrayValue::Bool(flags)) => flags,
+        other => panic!("unexpected FLAG value {other:?}"),
+    };
+    assert!(!flags[IxDyn(&[corr, chan])]);
 }
 
 fn flag_count(ms: &MeasurementSet) -> usize {

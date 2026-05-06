@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-06
-Verification: cargo test -p casa-ms --test flagging; cargo check -p casa-ms --bins; just verify; just docs-check; gzip -t SNR_G55_10s.clean.tar.gz; CASA/casa-rs tutorial-MS spot checks
+Verification: cargo test -p casa-ms --test flagging; cargo build --release -p casa-ms --bin flagdata; cargo check -p casa-ms --bins; just verify; just docs-check; gzip -t SNR_G55_10s.clean.tar.gz; CASA/casa-rs tutorial-MS spot checks
 
 Wave issue: #174
 Parent issue: #128
@@ -98,19 +98,21 @@ CASA runs used:
 
 The storage path is interoperable for the checked mutations: casa-rs summary
 reads CASA-written flags with the same post-CASA totals. Algorithm parity is
-not yet achieved for the checked modes.
+now achieved for the checked `clipzeros` count, but not yet for the checked
+automatic-flagging modes.
 
 | Check | Selection | CASA 6.7.5-9 | casa-rs | Result |
 | --- | --- | ---: | ---: | --- |
-| `clipzeros` | full MS | 2 flagged samples after 7.6 s | 0 flagged samples after about 7.1 min | mismatch |
-| `tfcrop` | `scan=251`, `DATA` | 152,904 flagged samples after 0.82 s | 178,106 flagged samples after about 3.5 min | mismatch |
-| `rflag` | `scan=251`, `DATA` | 189,624 flagged samples after 0.52 s | 108,929 flagged samples after about 3.7 min | mismatch |
+| `clipzeros` | full MS | 2 flagged samples after 7.6 s | 2 flagged samples after 65.36 s, release build | count match; slower |
+| `tfcrop` | `scan=251`, `DATA` | 152,904 flagged samples after 0.82 s | 178,106 flagged samples after 54.75 s, release build | mismatch; slower |
+| `rflag` | `scan=251`, `DATA` | 189,624 flagged samples after 0.52 s | 108,929 flagged samples after 70.21 s, release build | mismatch; slower |
 
 The CASA `clipzeros` samples were not bitwise zero when inspected through
 casatools after flagging; their amplitudes were approximately `1.1e-7`.
-However, low-amplitude inspection showed many more samples below `1e-6`, so
-CASA's effective clip-zero behavior is not a simple broad epsilon threshold.
-This needs upstream-agent parity work rather than an ad hoc tolerance change.
+The upstream `FlagAgentBase::isNaNOrZero(Float)` path treats zero, subnormal,
+NaN, infinity, and normal values `<= FLT_EPSILON` as clip-zero samples. The
+native implementation now matches that checked behavior without widening to
+the 232 samples below `1e-6` in the tutorial MS.
 
 ## Verification
 
@@ -118,6 +120,7 @@ Targeted checks:
 
 ```sh
 cargo test -p casa-ms --test flagging
+cargo build --release -p casa-ms --bin flagdata
 cargo check -p casa-ms --bins
 just verify
 just docs-check
@@ -128,16 +131,17 @@ Covered behavior:
 - `tfcrop` flags seeded time/frequency outliers in a persisted MS fixture.
 - `rflag` honors explicit `timedev` and `freqdev` thresholds and flags seeded
   time/spectral outliers.
+- `clipzeros` persists CASA-style `FLT_EPSILON` clip-zero flags through the
+  path-based task entry point.
 - `flagmanager` save and restore round-trip the main `FLAG` state.
 - `flagdata` and `flagmanager` binaries emit JSON for summary/list paths.
 
 ## Remaining Tutorial-Parity Work
 
-- Reconcile CASA `clipzeros` behavior on the two low-amplitude tutorial
-  samples without overflagging the 232 samples below `1e-6`.
 - Bring native `tfcrop` and `rflag` counts closer to CASA agentflagger behavior
   on tutorial selections before claiming parity.
-- Profile the full-MS scan path: current native full-MS `clipzeros` is minutes
-  slower than CASA on the same tutorial data.
+- Profile and optimize the full-MS scan path: release-build native
+  `clipzeros` is still about 9x slower than CASA on the same tutorial data,
+  and release-build `tfcrop`/`rflag` remain roughly minute-scale for one scan.
 - Extend the comparison beyond counts to `FLAG`/`FLAG_ROW` coordinate diffs,
   `<ms>.flagversions`, and tutorial-visible diagnostics.
