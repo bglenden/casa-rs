@@ -29,7 +29,6 @@ mod corrected_export;
 mod execute;
 mod fluxscale;
 mod gencal;
-mod least_squares;
 mod managed_output;
 mod model;
 mod plan;

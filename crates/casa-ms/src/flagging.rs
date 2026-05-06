@@ -8,23 +8,25 @@
 //! modes are native robust-statistics implementations of the CASA algorithm
 //! families rather than a binding to CASA C++.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use casa_tables::{ColumnBinding, ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{ArrayD, Ix2, IxDyn};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 
 use crate::MsError;
+use crate::least_squares::solve_weighted_least_squares;
 use crate::ms::MeasurementSet;
 use crate::schema::main_table::VisibilityDataColumn;
 use crate::selection::MsSelection;
@@ -33,6 +35,9 @@ use crate::selection_syntax::{ChannelSelection, parse_spw_selector};
 const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
 const FLAG_VERSION_LIST: &str = "FLAG_VERSION_LIST";
+const CLIP_SCAN_CHUNK_ROWS: usize = 4096;
+type FlagSampleKey = (usize, usize, usize);
+type FlagSampleSet = HashSet<FlagSampleKey>;
 
 /// Input visibility column used by automatic flagging modes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -130,10 +135,18 @@ pub struct FlagDataRequest {
     pub timedevscale: f64,
     /// RFlag spectral threshold scale.
     pub freqdevscale: f64,
+    /// RFlag maximum acceptable spectral standard deviation before flagging
+    /// the full row spectrum.
+    pub spectralmax: f64,
+    /// RFlag minimum acceptable spectral standard deviation before flagging
+    /// the full row spectrum.
+    pub spectralmin: f64,
     /// Optional RFlag time threshold. `None` computes one from the data.
     pub timedev: Option<f64>,
     /// Optional RFlag spectral threshold. `None` computes one from the data.
     pub freqdev: Option<f64>,
+    /// Run CASA's automatic post-extension agent after TFCrop/RFlag.
+    pub extendflags: bool,
     /// Extend flags across correlations/polarizations.
     pub extendpols: bool,
     /// If > 0, flag full channel time columns whose flagged percentage meets
@@ -160,8 +173,11 @@ impl Default for FlagDataRequest {
             freqcutoff: 3.0,
             timedevscale: 5.0,
             freqdevscale: 5.0,
+            spectralmax: 1.0e6,
+            spectralmin: 0.0,
             timedev: None,
             freqdev: None,
+            extendflags: true,
             extendpols: false,
             growtime: 0.0,
             growfreq: 0.0,
@@ -316,21 +332,29 @@ pub fn flagdata(
     };
 
     if !changes.changed_row_indices.is_empty() {
-        ms.main_table_mut()
-            .save_selected_rows_in_place_assuming_valid(
-                &[FLAG_COLUMN, FLAG_ROW_COLUMN],
-                &changes.changed_row_indices,
-            )
-            .map_err(|source| FlaggingError::MutateFlags {
-                path: ms_path,
-                reason: format!("save changed MAIN flag rows: {source}"),
-            })?;
+        if changes.changed_flag_row_rows == 0 {
+            ms.main_table_mut()
+                .save_selected_rows_in_place_assuming_valid(
+                    &[FLAG_COLUMN],
+                    &changes.changed_row_indices,
+                )
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: ms_path,
+                    reason: format!("save changed MAIN flag rows: {source}"),
+                })?;
+        } else {
+            ms.main_table_mut()
+                .save_selected_rows_in_place_assuming_valid(
+                    &[FLAG_COLUMN, FLAG_ROW_COLUMN],
+                    &changes.changed_row_indices,
+                )
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: ms_path,
+                    reason: format!("save changed MAIN flag rows: {source}"),
+                })?;
+        }
     }
-    let thresholds = if request.mode == FlagDataMode::Rflag {
-        rflag_thresholds(ms, &selected_rows, channel_selections.as_ref(), request).ok()
-    } else {
-        None
-    };
+    let thresholds = changes.thresholds;
     report_after(
         ms,
         request,
@@ -363,10 +387,12 @@ fn report_after(
     backup_version: Option<String>,
     thresholds: Option<(f64, f64)>,
 ) -> Result<FlagDataReport, FlaggingError> {
-    let summary_rows = selected_rows(ms, request)?;
     let summary = match changes.summary {
         Some(summary) => summary,
-        None => summarize_flags(ms, &summary_rows)?,
+        None => {
+            let summary_rows = selected_rows(ms, request)?;
+            summarize_flags(ms, &summary_rows)?
+        }
     };
     Ok(FlagDataReport {
         mode: request.mode,
@@ -421,87 +447,125 @@ fn apply_clip_flags(
     }
     let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
-    let mut updates = std::collections::BTreeMap::<usize, ArrayD<bool>>::new();
+    let mut updates = BTreeMap::<usize, ArrayD<bool>>::new();
+    let mut touched_rows = std::collections::BTreeSet::<usize>::new();
     let mut changed = ChangeSet::default();
     let mut flagged_samples = 0usize;
     let mut total_samples = 0usize;
-    for &row in selected_rows {
-        let table = ms.main_table();
-        let ddid = table_i32(table, row, "DATA_DESC_ID", ms.path())?;
-        let spw = ddid_to_spw
-            .get(&ddid)
-            .copied()
-            .ok_or_else(|| FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
-            })?;
-        let old_flags = clone_flag_matrix(ms, row)?;
-        let data_value = table
-            .cell_accessor(row, request.data_column.name())
-            .and_then(|cell| cell.value().map(|value| value.cloned()))
+    let table = ms.main_table();
+    for rows in selected_rows.chunks(CLIP_SCAN_CHUNK_ROWS) {
+        let data_cells = table
+            .column_accessor(request.data_column.name())
+            .and_then(|column| column.array_cells_owned(rows))
             .map_err(|source| FlaggingError::MutateFlags {
                 path: path.clone(),
-                reason: format!("read {} row {row}: {source}", request.data_column.name()),
-            })?
-            .ok_or_else(|| FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("{} row {row} is undefined", request.data_column.name()),
-            })?;
-        let data_shape =
-            numeric_array_shape(&data_value).ok_or_else(|| FlaggingError::MutateFlags {
-                path: path.clone(),
                 reason: format!(
-                    "{} row {row} must be numeric array, found {data_value:?}",
+                    "read selected {} rows: {source}",
                     request.data_column.name()
                 ),
             })?;
-        if data_shape != old_flags.shape() {
-            return Err(FlaggingError::MutateFlags {
+        let flag_cells = table
+            .column_accessor(FLAG_COLUMN)
+            .and_then(|column| column.array_cells_owned(rows))
+            .map_err(|source| FlaggingError::MutateFlags {
                 path: path.clone(),
-                reason: format!(
-                    "{} and FLAG shapes differ on row {row}: {:?} vs {:?}",
-                    request.data_column.name(),
-                    data_shape,
-                    old_flags.shape()
-                ),
-            });
-        }
-        if data_shape.len() != 2 {
-            return Err(FlaggingError::MutateFlags {
-                path: path.clone(),
-                reason: format!("{} row {row} is not rank-2", request.data_column.name()),
-            });
-        }
-        total_samples += old_flags.len();
-        flagged_samples += old_flags.iter().filter(|flag| **flag).count();
-        let channels =
-            match channel_selections.and_then(|selectors| selectors.get(&spw)) {
-                Some(selection) => selection.indices(data_shape[1]).map_err(|source| {
-                    FlaggingError::MutateFlags {
+                reason: format!("read selected FLAG rows: {source}"),
+            })?;
+        let ddids = if channel_selections.is_some() {
+            Some(load_i32_cells(table, rows, "DATA_DESC_ID", &path)?)
+        } else {
+            None
+        };
+        for (row_slot, &row) in rows.iter().enumerate() {
+            let flags = match flag_cells.get(row_slot).and_then(Option::as_ref) {
+                Some(ArrayValue::Bool(values)) => values,
+                Some(other) => {
+                    return Err(FlaggingError::MutateFlags {
                         path: path.clone(),
-                        reason: format!("resolve SPW {spw} channels: {source}"),
-                    }
-                })?,
-                None => (0..data_shape[1]).collect(),
-            };
-        let mut flags = old_flags.clone();
-        let mut row_changed = false;
-        for corr in 0..data_shape[0] {
-            for &chan in &channels {
-                let index = IxDyn(&[corr, chan]);
-                if !old_flags[index.clone()] && is_casa_clip_zero_at(&data_value, &index)? {
-                    flags[index] = true;
-                    changed.changed_samples += 1;
-                    flagged_samples += 1;
-                    row_changed = true;
+                        reason: format!("FLAG row {row} must be bool array, found {other:?}"),
+                    });
                 }
+                None => {
+                    return Err(FlaggingError::MutateFlags {
+                        path: path.clone(),
+                        reason: format!("FLAG row {row} is undefined"),
+                    });
+                }
+            };
+            let data_value = data_cells
+                .get(row_slot)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("{} row {row} is undefined", request.data_column.name()),
+                })?;
+            let data_shape = numeric_array_value_shape(data_value).ok_or_else(|| {
+                FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!(
+                        "{} row {row} must be numeric array, found {data_value:?}",
+                        request.data_column.name()
+                    ),
+                }
+            })?;
+            if data_shape != flags.shape() {
+                return Err(FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!(
+                        "{} and FLAG shapes differ on row {row}: {:?} vs {:?}",
+                        request.data_column.name(),
+                        data_shape,
+                        flags.shape()
+                    ),
+                });
+            }
+            if data_shape.len() != 2 {
+                return Err(FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("{} row {row} is not rank-2", request.data_column.name()),
+                });
+            }
+            total_samples += flags.len();
+            flagged_samples += flags.iter().filter(|flag| **flag).count();
+            let channels =
+                if let Some(ddids) = ddids.as_ref() {
+                    let ddid = ddids[row_slot];
+                    let spw = ddid_to_spw.get(&ddid).copied().ok_or_else(|| {
+                        FlaggingError::MutateFlags {
+                            path: path.clone(),
+                            reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
+                        }
+                    })?;
+                    match channel_selections.and_then(|selectors| selectors.get(&spw)) {
+                        Some(selection) => selection.indices(data_shape[1]).map_err(|source| {
+                            FlaggingError::MutateFlags {
+                                path: path.clone(),
+                                reason: format!("resolve SPW {spw} channels: {source}"),
+                            }
+                        })?,
+                        None => (0..data_shape[1]).collect(),
+                    }
+                } else {
+                    (0..data_shape[1]).collect()
+                };
+            let mut updated_flags = flags.clone();
+            let row_changed = apply_clip_zero_array(
+                data_value,
+                flags,
+                &mut updated_flags,
+                &channels,
+                &path,
+                row,
+            )?;
+            if row_changed > 0 {
+                changed.changed_samples += row_changed;
+                flagged_samples += row_changed;
+                updates.insert(row, updated_flags);
+                touched_rows.insert(row);
             }
         }
-        if row_changed {
-            updates.insert(row, flags);
-        }
     }
-    write_flag_updates(ms, updates, &mut changed)?;
+    write_touched_flag_updates(ms, updates, touched_rows, &mut changed)?;
     changed.summary = Some(FlagSummary {
         flagged_samples,
         total_samples,
@@ -550,36 +614,68 @@ fn apply_tfcrop_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
-    let samples = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
-    let mut to_flag = std::collections::BTreeSet::<(usize, usize, usize)>::new();
-    let mut freq_flags = std::collections::BTreeSet::<(usize, usize, usize)>::new();
-    let mut time_flags = std::collections::BTreeSet::<(usize, usize, usize)>::new();
-    for group in group_samples(&samples).values() {
+    let started = Instant::now();
+    let loaded = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
+    let samples = loaded.samples;
+    let loaded_ms = started.elapsed().as_millis();
+    let mut modified = vec![false; samples.len()];
+    let mut freq_flags = vec![false; samples.len()];
+    let mut time_flags = vec![false; samples.len()];
+    let groups = group_samples(&samples);
+    for group in groups.values() {
         for by_corr in samples_by_corr(group) {
-            for by_row in samples_by_row(&by_corr).values() {
-                flag_outliers(by_row, request.freqcutoff, &mut freq_flags);
-            }
-            for by_chan in samples_by_chan(&by_corr).values() {
-                flag_outliers(by_chan, request.timecutoff, &mut time_flags);
-            }
+            tfcrop_fit_base_and_flag(
+                &by_corr,
+                TfcropDirection::Freq,
+                TfcropFit::Poly,
+                request.freqcutoff,
+                &mut modified,
+                &mut freq_flags,
+            );
+            tfcrop_fit_base_and_flag(
+                &by_corr,
+                TfcropDirection::Time,
+                TfcropFit::Line,
+                request.timecutoff,
+                &mut modified,
+                &mut time_flags,
+            );
         }
     }
-    to_flag.extend(freq_flags.iter().copied());
-    to_flag.extend(time_flags.iter().copied());
+    if request.extendflags {
+        extend_autoflag_grouped(&groups, &samples, &mut modified);
+    }
+    let union_candidates = count_mask(&modified);
+    let planned_ms = started.elapsed().as_millis();
     trace_flagdata(json!({
         "mode": "tfcrop",
         "implementation": "casa-rs-native-current",
         "selected_rows": selected_rows.len(),
         "samples": samples.len(),
-        "groups": group_samples(&samples).len(),
+        "groups": groups.len(),
         "freqcutoff": request.freqcutoff,
         "timecutoff": request.timecutoff,
-        "freq_candidate_samples": freq_flags.len(),
-        "time_candidate_samples": time_flags.len(),
-        "union_candidate_samples": to_flag.len(),
-        "union_by_spw_corr": flag_set_counts_by_spw_corr(&to_flag, &samples),
+        "freq_candidate_samples": count_mask(&freq_flags),
+        "time_candidate_samples": count_mask(&time_flags),
+        "union_candidate_samples": union_candidates,
+        "union_by_spw_corr": flag_mask_counts_by_spw_corr(&modified, &samples),
+        "timing_ms": {
+            "load": loaded_ms,
+            "plan": planned_ms.saturating_sub(loaded_ms),
+        },
     }));
-    apply_flag_set(ms, &to_flag)
+    let mut changes = apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms)?;
+    let applied_ms = started.elapsed().as_millis();
+    changes.summary = Some(summary_after_flag_only(&samples, changes.changed_samples));
+    trace_flagdata(json!({
+        "mode": "tfcrop",
+        "implementation": "casa-rs-casa-shaped-tfcrop",
+        "timing_ms": {
+            "apply": applied_ms.saturating_sub(planned_ms),
+            "total_before_save": applied_ms,
+        },
+    }));
+    Ok(changes)
 }
 
 fn apply_rflag_flags(
@@ -588,46 +684,61 @@ fn apply_rflag_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
-    let samples = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
-    let (timedev, freqdev) = rflag_thresholds_for_samples(&samples, request);
-    let mut to_flag = std::collections::BTreeSet::<(usize, usize, usize)>::new();
-    let mut time_flags = std::collections::BTreeSet::<(usize, usize, usize)>::new();
-    let mut freq_flags = std::collections::BTreeSet::<(usize, usize, usize)>::new();
-    for group in group_samples(&samples).values() {
-        for by_corr in samples_by_corr(group) {
-            for by_chan in samples_by_chan(&by_corr).values() {
-                if robust_sigma(by_chan.iter().map(|sample| sample.amp)) > timedev {
-                    for sample in by_chan {
-                        time_flags.insert((sample.row, sample.corr, sample.chan));
-                    }
-                }
-            }
-            for by_row in samples_by_row(&by_corr).values() {
-                let med = median(by_row.iter().map(|sample| sample.amp).collect());
-                for sample in by_row {
-                    if (sample.amp - med).abs() > freqdev {
-                        freq_flags.insert((sample.row, sample.corr, sample.chan));
-                    }
-                }
-            }
-        }
+    let started = Instant::now();
+    let loaded = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
+    let samples = loaded.samples;
+    let loaded_ms = started.elapsed().as_millis();
+    let groups = group_samples(&samples);
+    let thresholds = rflag_threshold_maps_for_groups(&groups, request);
+    let threshold_ms = started.elapsed().as_millis();
+    let mut time_flags = vec![false; samples.len()];
+    let mut freq_flags = vec![false; samples.len()];
+    for group in groups.values() {
+        rflag_group_flags(
+            group,
+            &thresholds,
+            request,
+            &mut time_flags,
+            &mut freq_flags,
+        );
     }
-    to_flag.extend(time_flags.iter().copied());
-    to_flag.extend(freq_flags.iter().copied());
+    let mut modified = union_masks(&time_flags, &freq_flags);
+    if request.extendflags {
+        extend_autoflag_grouped(&groups, &samples, &mut modified);
+    }
+    let union_candidates = count_mask(&modified);
+    let planned_ms = started.elapsed().as_millis();
     trace_flagdata(json!({
         "mode": "rflag",
-        "implementation": "casa-rs-native-current",
+        "implementation": "casa-rs-casa-shaped-rflag",
         "selected_rows": selected_rows.len(),
         "samples": samples.len(),
-        "groups": group_samples(&samples).len(),
-        "timedev": timedev,
-        "freqdev": freqdev,
-        "time_candidate_samples": time_flags.len(),
-        "freq_candidate_samples": freq_flags.len(),
-        "union_candidate_samples": to_flag.len(),
-        "union_by_spw_corr": flag_set_counts_by_spw_corr(&to_flag, &samples),
+        "groups": groups.len(),
+        "timedev_by_field_spw": format_threshold_map(&thresholds.timedev),
+        "freqdev_by_field_spw": format_threshold_map(&thresholds.freqdev),
+        "time_candidate_samples": count_mask(&time_flags),
+        "freq_candidate_samples": count_mask(&freq_flags),
+        "union_candidate_samples": union_candidates,
+        "union_by_spw_corr": flag_mask_counts_by_spw_corr(&modified, &samples),
+        "timing_ms": {
+            "load": loaded_ms,
+            "threshold": threshold_ms.saturating_sub(loaded_ms),
+            "plan": planned_ms.saturating_sub(threshold_ms),
+        },
     }));
-    apply_flag_set(ms, &to_flag)
+    let mut changes = apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms)?;
+    let applied_ms = started.elapsed().as_millis();
+    changes.summary = Some(summary_after_flag_only(&samples, changes.changed_samples));
+    changes.thresholds = Some(thresholds.representative_pair());
+    trace_flagdata(json!({
+        "mode": "rflag",
+        "implementation": "casa-rs-casa-shaped-rflag",
+        "timing_ms": {
+            "apply": applied_ms.saturating_sub(planned_ms),
+            "total_before_save": applied_ms,
+        },
+    }));
+    Ok(changes)
 }
 
 fn apply_extend_flags(
@@ -636,8 +747,9 @@ fn apply_extend_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
 ) -> Result<ChangeSet, FlaggingError> {
-    let samples = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
-    let mut to_flag = std::collections::BTreeSet::<(usize, usize, usize)>::new();
+    let loaded = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
+    let samples = loaded.samples;
+    let mut to_flag = FlagSampleSet::new();
     if request.extendpols {
         for group in samples_by_row_chan(&samples).values() {
             if group.iter().any(|sample| sample.flag) {
@@ -669,7 +781,44 @@ fn apply_extend_flags(
             }
         }
     }
-    apply_flag_set(ms, &to_flag)
+    apply_flag_set_with_preloaded(ms, &to_flag, loaded.flags_by_row)
+}
+
+fn extend_autoflag_grouped(
+    groups: &BTreeMap<GroupKey, Vec<Sample>>,
+    samples: &[Sample],
+    modified: &mut [bool],
+) {
+    let mut grown = modified.to_vec();
+    for group in groups.values() {
+        for by_corr in samples_by_corr(group) {
+            for by_row in samples_by_row(&by_corr).values() {
+                if percent_modified(by_row, modified) >= 80.0 {
+                    for sample in by_row {
+                        grown[sample.index] = true;
+                    }
+                }
+            }
+            for by_chan in samples_by_chan(&by_corr).values() {
+                if percent_modified(by_chan, modified) >= 50.0 {
+                    for sample in by_chan {
+                        grown[sample.index] = true;
+                    }
+                }
+            }
+        }
+    }
+    modified.copy_from_slice(&grown);
+    for group in samples_by_row_chan(samples).values() {
+        if group
+            .iter()
+            .any(|sample| sample.flag || modified[sample.index])
+        {
+            for sample in group {
+                modified[sample.index] = true;
+            }
+        }
+    }
 }
 
 fn mutate_selected_samples<F>(
@@ -681,16 +830,17 @@ fn mutate_selected_samples<F>(
 where
     F: FnMut(f64, bool) -> Option<bool>,
 {
-    let samples = load_samples(ms, selected_rows, channel_selections, FlagDataColumn::Data)?;
-    let mut updates = std::collections::BTreeMap::<usize, ArrayD<bool>>::new();
+    let loaded = load_samples(ms, selected_rows, channel_selections, FlagDataColumn::Data)?;
+    let samples = loaded.samples;
+    let mut updates = loaded.flags_by_row;
     let mut changed = ChangeSet::default();
     for sample in samples {
         let Some(new_flag) = edit(sample.amp, sample.flag) else {
             continue;
         };
-        let flags = updates
-            .entry(sample.row)
-            .or_insert(clone_flag_matrix(ms, sample.row)?);
+        let Some(flags) = updates.get_mut(&sample.row) else {
+            continue;
+        };
         if let Some(value) = flags.get_mut(IxDyn(&[sample.corr, sample.chan])) {
             if *value != new_flag {
                 *value = new_flag;
@@ -702,22 +852,53 @@ where
     Ok(changed)
 }
 
-fn apply_flag_set(
+fn apply_flag_set_with_preloaded(
     ms: &mut MeasurementSet,
-    to_flag: &std::collections::BTreeSet<(usize, usize, usize)>,
+    to_flag: &FlagSampleSet,
+    mut updates: BTreeMap<usize, ArrayD<bool>>,
 ) -> Result<ChangeSet, FlaggingError> {
-    let mut updates = std::collections::BTreeMap::<usize, ArrayD<bool>>::new();
     let mut changed = ChangeSet::default();
+    let mut touched_rows = std::collections::BTreeSet::<usize>::new();
     for &(row, corr, chan) in to_flag {
-        let flags = updates.entry(row).or_insert(clone_flag_matrix(ms, row)?);
+        let Some(flags) = updates.get_mut(&row) else {
+            continue;
+        };
         if let Some(value) = flags.get_mut(IxDyn(&[corr, chan])) {
             if !*value {
                 *value = true;
                 changed.changed_samples += 1;
+                touched_rows.insert(row);
             }
         }
     }
-    write_flag_updates(ms, updates, &mut changed)?;
+    write_touched_flag_updates(ms, updates, touched_rows, &mut changed)?;
+    Ok(changed)
+}
+
+fn apply_flag_mask_with_preloaded(
+    samples: &[Sample],
+    mask: &[bool],
+    mut updates: BTreeMap<usize, ArrayD<bool>>,
+    ms: &mut MeasurementSet,
+) -> Result<ChangeSet, FlaggingError> {
+    let mut changed = ChangeSet::default();
+    let mut touched_rows = std::collections::BTreeSet::<usize>::new();
+    for (sample, flag) in samples.iter().zip(mask.iter()) {
+        if !*flag {
+            continue;
+        }
+        let Some(flags) = updates.get_mut(&sample.row) else {
+            continue;
+        };
+        if let Some(value) = flags.get_mut(IxDyn(&[sample.corr, sample.chan])) {
+            if !*value {
+                *value = true;
+                changed.changed_samples += 1;
+                touched_rows.insert(sample.row);
+            }
+        }
+    }
+    write_touched_flag_updates(ms, updates, touched_rows, &mut changed)?;
     Ok(changed)
 }
 
@@ -753,6 +934,7 @@ fn write_flag_row_update(
         })?;
     changed.changed_rows += 1;
     changed.changed_row_indices.push(row);
+    changed.changed_flag_row_rows += 1;
     Ok(())
 }
 
@@ -772,18 +954,174 @@ fn write_flag_updates(
     Ok(())
 }
 
+fn write_touched_flag_updates(
+    ms: &mut MeasurementSet,
+    mut updates: std::collections::BTreeMap<usize, ArrayD<bool>>,
+    touched_rows: std::collections::BTreeSet<usize>,
+    changed: &mut ChangeSet,
+) -> Result<(), FlaggingError> {
+    let path = display_ms_path(ms);
+    let mut prepared = Vec::with_capacity(touched_rows.len());
+    for row in touched_rows {
+        let Some(flags) = updates.remove(&row) else {
+            continue;
+        };
+        let flag_row = flags.iter().all(|flag| *flag);
+        prepared.push((row, flags, flag_row));
+    }
+    let current_flag_rows = load_bool_cells(
+        ms.main_table(),
+        &prepared.iter().map(|(row, _, _)| *row).collect::<Vec<_>>(),
+        FLAG_ROW_COLUMN,
+        &path,
+    )?;
+    ms.main_table_mut()
+        .reserve_array_cell_updates(FLAG_COLUMN, prepared.len());
+    {
+        let mut flag_column = ms
+            .main_table_mut()
+            .column_accessor_mut(FLAG_COLUMN)
+            .map_err(|source| FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("open FLAG column: {source}"),
+            })?;
+        for (row, flags, _) in &prepared {
+            flag_column
+                .set_array_assuming_valid(*row, ArrayValue::Bool(flags.clone()))
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("write FLAG row {row}: {source}"),
+                })?;
+        }
+    }
+    let flag_row_updates = prepared
+        .iter()
+        .zip(current_flag_rows.iter())
+        .filter_map(|((row, _, flag_row), current)| {
+            (*current != *flag_row).then_some((*row, *flag_row))
+        })
+        .collect::<Vec<_>>();
+    if !flag_row_updates.is_empty() {
+        let mut flag_row_column = ms
+            .main_table_mut()
+            .column_accessor_mut(FLAG_ROW_COLUMN)
+            .map_err(|source| FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!("open FLAG_ROW column: {source}"),
+            })?;
+        for (row, flag_row) in &flag_row_updates {
+            flag_row_column
+                .set_scalar_assuming_valid(*row, ScalarValue::Bool(*flag_row))
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("write FLAG_ROW row {row}: {source}"),
+                })?;
+        }
+    }
+    changed.changed_flag_row_rows += flag_row_updates.len();
+    for (row, _, _) in prepared {
+        changed.changed_rows += 1;
+        changed.changed_row_indices.push(row);
+    }
+    Ok(())
+}
+
+fn load_bool_cells(
+    table: &Table,
+    rows: &[usize],
+    column: &str,
+    path: &str,
+) -> Result<Vec<bool>, FlaggingError> {
+    table
+        .column_accessor(column)
+        .and_then(|column_accessor| column_accessor.scalar_cells_owned_for_rows(rows))
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.to_string(),
+            reason: format!("read selected {column} rows: {source}"),
+        })?
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| match value {
+            Some(ScalarValue::Bool(value)) => Ok(value),
+            Some(other) => Err(FlaggingError::MutateFlags {
+                path: path.to_string(),
+                reason: format!(
+                    "{column} row {} must be Bool scalar, found {other:?}",
+                    rows[index]
+                ),
+            }),
+            None => Err(FlaggingError::MutateFlags {
+                path: path.to_string(),
+                reason: format!("{column} row {} is undefined", rows[index]),
+            }),
+        })
+        .collect()
+}
+
+fn load_i32_cells(
+    table: &Table,
+    rows: &[usize],
+    column: &str,
+    path: &str,
+) -> Result<Vec<i32>, FlaggingError> {
+    table
+        .column_accessor(column)
+        .and_then(|column_accessor| column_accessor.scalar_cells_owned_for_rows(rows))
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.to_string(),
+            reason: format!("read selected {column} rows: {source}"),
+        })?
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| match value {
+            Some(ScalarValue::Int32(value)) => Ok(value),
+            Some(other) => Err(FlaggingError::MutateFlags {
+                path: path.to_string(),
+                reason: format!(
+                    "{column} row {} must be Int32 scalar, found {other:?}",
+                    rows[index]
+                ),
+            }),
+            None => Err(FlaggingError::MutateFlags {
+                path: path.to_string(),
+                reason: format!("{column} row {} is undefined", rows[index]),
+            }),
+        })
+        .collect()
+}
+
 fn load_samples(
     ms: &MeasurementSet,
     selected_rows: &[usize],
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     data_column: FlagDataColumn,
-) -> Result<Vec<Sample>, FlaggingError> {
+) -> Result<LoadedSamples, FlaggingError> {
     let path = display_ms_path(ms);
     let ddid_to_spw = data_description_spw_map(ms)?;
+    let table = ms.main_table();
+    let data_cells = table
+        .column_accessor(data_column.name())
+        .and_then(|column| column.array_cells_owned(selected_rows))
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: format!("read selected {} rows: {source}", data_column.name()),
+        })?;
+    let flag_cells = table
+        .column_accessor(FLAG_COLUMN)
+        .and_then(|column| column.array_cells_owned(selected_rows))
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.clone(),
+            reason: format!("read selected FLAG rows: {source}"),
+        })?;
+    let ddids = load_i32_cells(table, selected_rows, "DATA_DESC_ID", &path)?;
+    let fields = load_i32_cells(table, selected_rows, "FIELD_ID", &path)?;
+    let scans = load_i32_cells(table, selected_rows, "SCAN_NUMBER", &path)?;
+    let ant1s = load_i32_cells(table, selected_rows, "ANTENNA1", &path)?;
+    let ant2s = load_i32_cells(table, selected_rows, "ANTENNA2", &path)?;
     let mut samples = Vec::new();
-    for &row in selected_rows {
-        let table = ms.main_table();
-        let ddid = table_i32(table, row, "DATA_DESC_ID", ms.path())?;
+    let mut flags_by_row = BTreeMap::new();
+    for (row_slot, &row) in selected_rows.iter().enumerate() {
+        let ddid = ddids[row_slot];
         let spw = ddid_to_spw
             .get(&ddid)
             .copied()
@@ -791,48 +1129,78 @@ fn load_samples(
                 path: path.clone(),
                 reason: format!("DATA_DESC_ID {ddid} has no SPW mapping"),
             })?;
-        let flags = clone_flag_matrix(ms, row)?;
-        let data = visibility_amplitudes(table, row, data_column.name(), ms.path())?;
-        if data.shape() != flags.shape() {
+        let flags = match flag_cells.get(row_slot).and_then(Option::as_ref) {
+            Some(ArrayValue::Bool(values)) => values.clone(),
+            Some(other) => {
+                return Err(FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("FLAG row {row} must be bool array, found {other:?}"),
+                });
+            }
+            None => {
+                return Err(FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("FLAG row {row} is undefined"),
+                });
+            }
+        };
+        let data_value =
+            Value::Array(data_cells.get(row_slot).cloned().flatten().ok_or_else(|| {
+                FlaggingError::MutateFlags {
+                    path: path.clone(),
+                    reason: format!("{} row {row} is undefined", data_column.name()),
+                }
+            })?);
+        let data_shape =
+            numeric_array_shape(&data_value).ok_or_else(|| FlaggingError::MutateFlags {
+                path: path.clone(),
+                reason: format!(
+                    "{} row {row} must be numeric array, found {data_value:?}",
+                    data_column.name()
+                ),
+            })?;
+        if data_shape != flags.shape() {
             return Err(FlaggingError::MutateFlags {
                 path: path.clone(),
                 reason: format!(
                     "{} and FLAG shapes differ on row {row}: {:?} vs {:?}",
                     data_column.name(),
-                    data.shape(),
+                    data_shape,
                     flags.shape()
                 ),
             });
         }
-        let shape = data.shape();
-        if shape.len() != 2 {
+        if data_shape.len() != 2 {
             return Err(FlaggingError::MutateFlags {
                 path: path.clone(),
                 reason: format!("{} row {row} is not rank-2", data_column.name()),
             });
         }
-        let channels = match channel_selections.and_then(|selectors| selectors.get(&spw)) {
-            Some(selection) => {
-                selection
-                    .indices(shape[1])
-                    .map_err(|source| FlaggingError::MutateFlags {
+        let channels =
+            match channel_selections.and_then(|selectors| selectors.get(&spw)) {
+                Some(selection) => selection.indices(data_shape[1]).map_err(|source| {
+                    FlaggingError::MutateFlags {
                         path: path.clone(),
                         reason: format!("resolve SPW {spw} channels: {source}"),
-                    })?
-            }
-            None => (0..shape[1]).collect(),
-        };
-        let field = table_i32(table, row, "FIELD_ID", ms.path())?;
-        let scan = table_i32(table, row, "SCAN_NUMBER", ms.path())?;
-        let ant1 = table_i32(table, row, "ANTENNA1", ms.path())?;
-        let ant2 = table_i32(table, row, "ANTENNA2", ms.path())?;
-        for corr in 0..shape[0] {
+                    }
+                })?,
+                None => (0..data_shape[1]).collect(),
+            };
+        let field = fields[row_slot];
+        let scan = scans[row_slot];
+        let ant1 = ant1s[row_slot];
+        let ant2 = ant2s[row_slot];
+        for corr in 0..data_shape[0] {
             for &chan in &channels {
+                let (real, imag) = numeric_real_imag_at(&data_value, &IxDyn(&[corr, chan]))?;
                 samples.push(Sample {
+                    index: samples.len(),
                     row,
                     corr,
                     chan,
-                    amp: data[IxDyn(&[corr, chan])],
+                    amp: real.hypot(imag),
+                    real,
+                    imag,
                     flag: flags[IxDyn(&[corr, chan])],
                     field,
                     spw,
@@ -842,36 +1210,12 @@ fn load_samples(
                 });
             }
         }
+        flags_by_row.insert(row, flags);
     }
-    Ok(samples)
-}
-
-fn visibility_amplitudes(
-    table: &Table,
-    row: usize,
-    column: &str,
-    path: Option<&Path>,
-) -> Result<ArrayD<f64>, FlaggingError> {
-    let value = table
-        .cell_accessor(row, column)
-        .and_then(|cell| cell.value().map(|value| value.cloned()))
-        .map_err(|source| FlaggingError::MutateFlags {
-            path: display_path(path),
-            reason: format!("read {column} row {row}: {source}"),
-        })?;
-    match value.ok_or_else(|| FlaggingError::MutateFlags {
-        path: display_path(path),
-        reason: format!("{column} row {row} is undefined"),
-    })? {
-        Value::Array(ArrayValue::Complex32(values)) => Ok(values.mapv(|value| value.norm() as f64)),
-        Value::Array(ArrayValue::Complex64(values)) => Ok(values.mapv(|value| value.norm())),
-        Value::Array(ArrayValue::Float32(values)) => Ok(values.mapv(f64::from)),
-        Value::Array(ArrayValue::Float64(values)) => Ok(values.clone()),
-        other => Err(FlaggingError::MutateFlags {
-            path: display_path(path),
-            reason: format!("{column} row {row} must be numeric array, found {other:?}"),
-        }),
-    }
+    Ok(LoadedSamples {
+        samples,
+        flags_by_row,
+    })
 }
 
 fn is_casa_clip_zero(value: f64) -> bool {
@@ -880,29 +1224,138 @@ fn is_casa_clip_zero(value: f64) -> bool {
 
 fn numeric_array_shape(value: &Value) -> Option<&[usize]> {
     match value {
-        Value::Array(ArrayValue::Complex32(values)) => Some(values.shape()),
-        Value::Array(ArrayValue::Complex64(values)) => Some(values.shape()),
-        Value::Array(ArrayValue::Float32(values)) => Some(values.shape()),
-        Value::Array(ArrayValue::Float64(values)) => Some(values.shape()),
+        Value::Array(value) => numeric_array_value_shape(value),
         _ => None,
     }
 }
 
-fn is_casa_clip_zero_at(value: &Value, index: &IxDyn) -> Result<bool, FlaggingError> {
+fn numeric_array_value_shape(value: &ArrayValue) -> Option<&[usize]> {
+    match value {
+        ArrayValue::Complex32(values) => Some(values.shape()),
+        ArrayValue::Complex64(values) => Some(values.shape()),
+        ArrayValue::Float32(values) => Some(values.shape()),
+        ArrayValue::Float64(values) => Some(values.shape()),
+        _ => None,
+    }
+}
+
+fn apply_clip_zero_array(
+    data: &ArrayValue,
+    flags: &ArrayD<bool>,
+    updated_flags: &mut ArrayD<bool>,
+    channels: &[usize],
+    path: &str,
+    row: usize,
+) -> Result<usize, FlaggingError> {
+    let flags = flags
+        .view()
+        .into_dimensionality::<Ix2>()
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.to_string(),
+            reason: format!("FLAG row {row} must be rank-2: {source}"),
+        })?;
+    let mut updated_flags = updated_flags
+        .view_mut()
+        .into_dimensionality::<Ix2>()
+        .map_err(|source| FlaggingError::MutateFlags {
+            path: path.to_string(),
+            reason: format!("FLAG row {row} must be rank-2: {source}"),
+        })?;
+    let mut changed = 0usize;
+    match data {
+        ArrayValue::Complex32(values) => {
+            let values = values
+                .view()
+                .into_dimensionality::<Ix2>()
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.to_string(),
+                    reason: format!("DATA row {row} must be rank-2: {source}"),
+                })?;
+            for corr in 0..values.shape()[0] {
+                for &chan in channels {
+                    if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)].norm() as f64)
+                    {
+                        updated_flags[(corr, chan)] = true;
+                        changed += 1;
+                    }
+                }
+            }
+        }
+        ArrayValue::Complex64(values) => {
+            let values = values
+                .view()
+                .into_dimensionality::<Ix2>()
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.to_string(),
+                    reason: format!("DATA row {row} must be rank-2: {source}"),
+                })?;
+            for corr in 0..values.shape()[0] {
+                for &chan in channels {
+                    if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)].norm()) {
+                        updated_flags[(corr, chan)] = true;
+                        changed += 1;
+                    }
+                }
+            }
+        }
+        ArrayValue::Float32(values) => {
+            let values = values
+                .view()
+                .into_dimensionality::<Ix2>()
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.to_string(),
+                    reason: format!("DATA row {row} must be rank-2: {source}"),
+                })?;
+            for corr in 0..values.shape()[0] {
+                for &chan in channels {
+                    if !flags[(corr, chan)] && is_casa_clip_zero(f64::from(values[(corr, chan)])) {
+                        updated_flags[(corr, chan)] = true;
+                        changed += 1;
+                    }
+                }
+            }
+        }
+        ArrayValue::Float64(values) => {
+            let values = values
+                .view()
+                .into_dimensionality::<Ix2>()
+                .map_err(|source| FlaggingError::MutateFlags {
+                    path: path.to_string(),
+                    reason: format!("DATA row {row} must be rank-2: {source}"),
+                })?;
+            for corr in 0..values.shape()[0] {
+                for &chan in channels {
+                    if !flags[(corr, chan)] && is_casa_clip_zero(values[(corr, chan)]) {
+                        updated_flags[(corr, chan)] = true;
+                        changed += 1;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(changed)
+}
+
+fn numeric_real_imag_at(value: &Value, index: &IxDyn) -> Result<(f64, f64), FlaggingError> {
     Ok(match value {
         Value::Array(ArrayValue::Complex32(values)) => values
             .get(index.clone())
-            .is_some_and(|value| is_casa_clip_zero(value.norm() as f64)),
+            .map(|value| (f64::from(value.re), f64::from(value.im)))
+            .unwrap_or((0.0, 0.0)),
         Value::Array(ArrayValue::Complex64(values)) => values
             .get(index.clone())
-            .is_some_and(|value| is_casa_clip_zero(value.norm())),
+            .map(|value| (value.re, value.im))
+            .unwrap_or((0.0, 0.0)),
         Value::Array(ArrayValue::Float32(values)) => values
             .get(index.clone())
-            .is_some_and(|value| is_casa_clip_zero(f64::from(*value))),
+            .map(|value| (f64::from(*value), 0.0))
+            .unwrap_or((0.0, 0.0)),
         Value::Array(ArrayValue::Float64(values)) => values
             .get(index.clone())
-            .is_some_and(|value| is_casa_clip_zero(*value)),
-        _ => false,
+            .map(|value| (*value, 0.0))
+            .unwrap_or((0.0, 0.0)),
+        _ => (0.0, 0.0),
     })
 }
 
@@ -923,108 +1376,364 @@ fn summarize_flags(
     })
 }
 
-fn rflag_thresholds(
-    ms: &MeasurementSet,
-    selected_rows: &[usize],
-    channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
+fn rflag_threshold_maps_for_groups(
+    groups: &BTreeMap<GroupKey, Vec<Sample>>,
     request: &FlagDataRequest,
-) -> Result<(f64, f64), FlaggingError> {
-    let samples = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
-    Ok(rflag_thresholds_for_samples(&samples, request))
+) -> RFlagThresholds {
+    let mut histograms = RFlagHistograms::default();
+    for group in groups.values() {
+        rflag_accumulate_group_histograms(group, &mut histograms);
+    }
+    histograms.into_thresholds(request)
 }
 
-fn rflag_thresholds_for_samples(samples: &[Sample], request: &FlagDataRequest) -> (f64, f64) {
-    let time_values = group_samples(samples)
-        .values()
-        .flat_map(|group| {
-            samples_by_corr(group)
-                .into_iter()
-                .flat_map(|by_corr| {
-                    samples_by_chan(&by_corr)
-                        .into_values()
-                        .map(|samples| robust_sigma(samples.iter().map(|sample| sample.amp)))
-                })
-                .collect::<Vec<_>>()
-        })
-        .filter(|value| *value > 0.0)
-        .collect::<Vec<_>>();
-    let freq_values = samples_by_row(samples)
-        .into_values()
-        .flat_map(|samples| {
-            let med = median(samples.iter().map(|sample| sample.amp).collect());
-            samples
-                .into_iter()
-                .map(move |sample| (sample.amp - med).abs())
-        })
-        .filter(|value| *value > 0.0)
-        .collect::<Vec<_>>();
-    let timedev = request
-        .timedev
-        .unwrap_or_else(|| robust_threshold(time_values) * request.timedevscale);
-    let freqdev = request
-        .freqdev
-        .unwrap_or_else(|| robust_threshold(freq_values) * request.freqdevscale);
-    (timedev, freqdev)
+#[derive(Debug, Clone, Copy)]
+enum TfcropDirection {
+    Freq,
+    Time,
 }
 
-fn flag_outliers(
+#[derive(Debug, Clone, Copy)]
+enum TfcropFit {
+    Line,
+    Poly,
+}
+
+fn tfcrop_fit_base_and_flag(
     samples: &[Sample],
+    direction: TfcropDirection,
+    fit: TfcropFit,
     cutoff: f64,
-    to_flag: &mut std::collections::BTreeSet<(usize, usize, usize)>,
+    modified: &mut [bool],
+    direction_flags: &mut [bool],
 ) {
-    if samples.len() < 3 {
+    if samples.is_empty() {
         return;
     }
-    let values = samples.iter().map(|sample| sample.amp).collect::<Vec<_>>();
-    let med = median(values.clone());
-    let sigma = robust_sigma(values);
-    if sigma <= f64::EPSILON {
+    let rows = samples_by_row(samples).into_keys().collect::<Vec<_>>();
+    let chans = samples_by_chan(samples).into_keys().collect::<Vec<_>>();
+    let (axis0, axis1) = match direction {
+        TfcropDirection::Freq => (chans, rows),
+        TfcropDirection::Time => (rows, chans),
+    };
+    if axis0.is_empty() || axis1.is_empty() {
         return;
     }
+
+    let mut by_row_chan = BTreeMap::<(usize, usize), Sample>::new();
     for sample in samples {
-        if !sample.flag && (sample.amp - med).abs() > cutoff * sigma {
-            to_flag.insert((sample.row, sample.corr, sample.chan));
+        by_row_chan.insert((sample.row, sample.chan), *sample);
+    }
+
+    let mut avg_dat = vec![0.0f32; axis0.len()];
+    let mut avg_flag = vec![false; axis0.len()];
+    let mut all_zeros = true;
+    for (i0, key0) in axis0.iter().enumerate() {
+        let mut sum = 0.0f32;
+        let mut count = 0usize;
+        for key1 in &axis1 {
+            let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
+            if let Some(sample) = by_row_chan.get(&(row, chan)) {
+                if !sample_is_modified(sample, modified) {
+                    sum += tfcrop_value(sample);
+                    count += 1;
+                }
+            }
+        }
+        if count > 0 {
+            avg_dat[i0] = sum / count as f32;
+            all_zeros = false;
+        } else {
+            avg_flag[i0] = true;
+        }
+    }
+    if all_zeros {
+        return;
+    }
+
+    let avg_fit = match fit {
+        TfcropFit::Line => tfcrop_fit_piecewise_poly(&avg_dat, &mut avg_flag, 1, 1),
+        TfcropFit::Poly => tfcrop_fit_piecewise_poly(&avg_dat, &mut avg_flag, 7, 4),
+    };
+
+    for key1 in &axis1 {
+        let mut normalized = vec![0.0f32; axis0.len()];
+        let mut flags = vec![false; axis0.len()];
+        for (i0, key0) in axis0.iter().enumerate() {
+            let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
+            if let Some(sample) = by_row_chan.get(&(row, chan)) {
+                flags[i0] = sample_is_modified(sample, modified);
+                if !flags[i0] && avg_fit[i0].abs() > f32::EPSILON {
+                    normalized[i0] = tfcrop_value(sample) / avg_fit[i0];
+                }
+            } else {
+                flags[i0] = true;
+            }
+        }
+
+        let mut previous_sd = 0.0f32;
+        for _ in 0..5 {
+            let sd = tfcrop_std_about_mean(&normalized, &flags, 1.0);
+            if !sd.is_finite() || sd <= f32::EPSILON {
+                break;
+            }
+            for i0 in 0..axis0.len() {
+                if !flags[i0] && (normalized[i0] - 1.0).abs() > cutoff as f32 * sd {
+                    flags[i0] = true;
+                }
+            }
+            if (previous_sd - sd).abs() < 0.1 {
+                break;
+            }
+            previous_sd = sd;
+        }
+
+        for (i0, key0) in axis0.iter().enumerate() {
+            if !flags[i0] {
+                continue;
+            }
+            let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
+            if let Some(sample) = by_row_chan.get(&(row, chan)) {
+                if !modified[sample.index] {
+                    modified[sample.index] = true;
+                    direction_flags[sample.index] = true;
+                }
+            }
         }
     }
 }
 
-fn robust_threshold(values: Vec<f64>) -> f64 {
-    if values.is_empty() {
-        return f64::INFINITY;
+fn tfcrop_row_chan(direction: TfcropDirection, axis0: usize, axis1: usize) -> (usize, usize) {
+    match direction {
+        TfcropDirection::Freq => (axis1, axis0),
+        TfcropDirection::Time => (axis0, axis1),
     }
-    let med = median(values.clone());
-    let mad = median(values.iter().map(|value| (*value - med).abs()).collect());
-    med + 1.4826 * mad
 }
 
-fn robust_sigma(values: impl IntoIterator<Item = f64>) -> f64 {
-    let values = values.into_iter().collect::<Vec<_>>();
-    if values.len() < 2 {
-        return 0.0;
-    }
-    let med = median(values.clone());
-    let mad = median(values.iter().map(|value| (*value - med).abs()).collect());
-    let robust = 1.4826 * mad;
-    if robust > f64::EPSILON {
-        return robust;
-    }
-    standard_deviation(values)
+fn tfcrop_value(sample: &Sample) -> f32 {
+    sample.amp as f32
 }
 
-fn standard_deviation(values: Vec<f64>) -> f64 {
-    if values.len() < 2 {
-        return 0.0;
+fn sample_is_modified(sample: &Sample, modified: &[bool]) -> bool {
+    sample.flag || modified[sample.index]
+}
+
+fn tfcrop_fit_piecewise_poly(
+    data: &[f32],
+    flag: &mut [bool],
+    max_pieces: usize,
+    max_degree: usize,
+) -> Vec<f32> {
+    let mut tdata = data.to_vec();
+    for i in 0..tdata.len() {
+        if tdata[i] != 0.0 {
+            continue;
+        }
+        if i == 0 {
+            if let Some((index, _)) = tdata
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find(|(_, value)| **value != 0.0)
+            {
+                tdata[i] = tdata[index];
+            }
+        } else {
+            let left = (0..=i).rev().find(|index| tdata[*index] != 0.0);
+            let right = (i + 1..tdata.len()).find(|index| tdata[*index] != 0.0);
+            match (left, right) {
+                (Some(left), Some(right)) => tdata[i] = (tdata[left] + tdata[right]) / 2.0,
+                (Some(left), None) => tdata[i] = tdata[left],
+                (None, Some(right)) => tdata[i] = tdata[right],
+                (None, None) => {}
+            }
+        }
     }
-    let mean = values.iter().sum::<f64>() / values.len() as f64;
-    let variance = values
-        .iter()
-        .map(|value| {
-            let delta = *value - mean;
-            delta * delta
+    for (index, value) in tdata.iter().enumerate() {
+        if *value == 0.0 {
+            flag[index] = true;
+        }
+    }
+
+    let mut fitted = tdata.clone();
+    for iteration in 0..5usize {
+        let npieces = (2 * iteration + 1).min(max_pieces);
+        let mut degree = 1usize;
+        if iteration > 1 {
+            degree = 2;
+        }
+        if iteration > 2 {
+            degree = 3;
+        }
+        degree = degree.min(max_degree);
+        let piece_size = tdata.len() / npieces;
+        let leftover = tdata.len() % npieces;
+        let leftover_front = leftover / 2;
+        for piece in 0..npieces {
+            let (left, right) = if npieces > 1 {
+                let mut left = leftover_front + piece * piece_size;
+                let mut right = left + piece_size;
+                if piece == 0 {
+                    left = 0;
+                    right = leftover_front + piece_size;
+                }
+                if piece == npieces - 1 {
+                    right = tdata.len() - 1;
+                }
+                (left, right)
+            } else {
+                (0, tdata.len() - 1)
+            };
+            if degree == 1 {
+                tfcrop_line_fit(&tdata, flag, &mut fitted, left, right);
+            } else {
+                tfcrop_poly_fit(&tdata, flag, &mut fitted, left, right, degree);
+            }
+        }
+
+        for i in 2..tdata.len().saturating_sub(2) {
+            let win_start = i - 2;
+            let win_end = (i + 2).min(tdata.len() - 1);
+            if win_end <= win_start {
+                break;
+            }
+            let sum = (win_start..=win_end)
+                .map(|index| fitted[index])
+                .sum::<f32>();
+            fitted[i] = sum / (win_end - win_start + 1) as f32;
+        }
+
+        let sd = tfcrop_std_about_fit(&tdata, flag, &fitted);
+        if !sd.is_finite() {
+            continue;
+        }
+        let tolerance = if iteration >= 2 { 2.0 } else { 3.0 };
+        for i in 0..tdata.len() {
+            if tdata[i] - fitted[i] > tolerance * sd {
+                flag[i] = true;
+            }
+        }
+    }
+    fitted
+}
+
+fn tfcrop_line_fit(data: &[f32], flag: &[bool], fit: &mut [f32], left: usize, right: usize) {
+    let mean = tfcrop_mean(data, flag);
+    let sd = tfcrop_std_about_mean(data, flag, mean);
+    if !sd.is_finite() || sd <= f32::EPSILON {
+        for fitted in fit.iter_mut().take(right + 1).skip(left) {
+            *fitted = mean;
+        }
+        return;
+    }
+    let mut sum_w = 0.0f32;
+    let mut sum_x = 0.0f32;
+    let mut sum_y = 0.0f32;
+    let mut sum_xx = 0.0f32;
+    let mut sum_xy = 0.0f32;
+    let weight = 1.0f32 / (sd * sd);
+    for i in left..=right {
+        if !flag[i] {
+            let x = i as f32;
+            sum_w += weight;
+            sum_x += x * weight;
+            sum_y += data[i] * weight;
+            sum_xx += x * x * weight;
+            sum_xy += x * data[i] * weight;
+        }
+    }
+    let denom = sum_w * sum_xx - sum_x * sum_x;
+    if denom.abs() <= f32::EPSILON {
+        for fitted in fit.iter_mut().take(right + 1).skip(left) {
+            *fitted = mean;
+        }
+        return;
+    }
+    let intercept = (sum_xx * sum_y - sum_x * sum_xy) / denom;
+    let slope = (sum_w * sum_xy - sum_x * sum_y) / denom;
+    for (i, fitted) in fit.iter_mut().enumerate().take(right + 1).skip(left) {
+        *fitted = intercept + slope * i as f32;
+    }
+}
+
+fn tfcrop_poly_fit(
+    data: &[f32],
+    flag: &[bool],
+    fit: &mut [f32],
+    left: usize,
+    right: usize,
+    degree: usize,
+) {
+    let rows = (left..=right)
+        .filter(|index| !flag[*index])
+        .map(|index| {
+            let x = index as f64 + 1.0;
+            let basis = (0..=degree)
+                .map(|power| x.powi(power as i32))
+                .collect::<Vec<_>>();
+            (basis, f64::from(data[index]), 1.0)
         })
-        .sum::<f64>()
-        / values.len() as f64;
-    variance.sqrt()
+        .collect::<Vec<_>>();
+    if rows.len() <= degree {
+        tfcrop_line_fit(data, flag, fit, left, right);
+        return;
+    }
+    let Some(solution) = solve_weighted_least_squares(&rows, degree + 1) else {
+        tfcrop_line_fit(data, flag, fit, left, right);
+        return;
+    };
+    for (i, fitted) in fit.iter_mut().enumerate().take(right + 1).skip(left) {
+        let x = i as f64 + 1.0;
+        *fitted = solution
+            .iter()
+            .enumerate()
+            .map(|(power, coefficient)| coefficient * x.powi(power as i32))
+            .sum::<f64>() as f32;
+    }
+}
+
+fn tfcrop_mean(values: &[f32], flags: &[bool]) -> f32 {
+    let mut sum = 0.0f32;
+    let mut count = 0usize;
+    for (value, flag) in values.iter().zip(flags.iter()) {
+        if !*flag {
+            sum += value;
+            count += 1;
+        }
+    }
+    if count == 0 { 0.0 } else { sum / count as f32 }
+}
+
+fn tfcrop_std_about_fit(values: &[f32], flags: &[bool], fit: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let mut count = 0usize;
+    for ((value, flag), fitted) in values.iter().zip(flags.iter()).zip(fit.iter()) {
+        if !*flag {
+            count += 1;
+            sum += (value - fitted) * (value - fitted);
+        }
+    }
+    if count == 0 {
+        0.0
+    } else {
+        (sum / count as f32).sqrt()
+    }
+}
+
+fn tfcrop_std_about_mean(values: &[f32], flags: &[bool], mean: f32) -> f32 {
+    let mut sum = 0.0f32;
+    let mut count = 0usize;
+    for (value, flag) in values.iter().zip(flags.iter()) {
+        if !*flag {
+            count += 1;
+            sum += (value - mean) * (value - mean);
+        }
+    }
+    if count == 0 {
+        0.0
+    } else {
+        (sum / count as f32).sqrt()
+    }
 }
 
 fn median(mut values: Vec<f64>) -> f64 {
@@ -1040,11 +1749,318 @@ fn median(mut values: Vec<f64>) -> f64 {
     }
 }
 
+#[derive(Debug, Default)]
+struct RFlagHistograms {
+    time: BTreeMap<FieldSpwKey, ChannelHistogram>,
+    freq: BTreeMap<FieldSpwKey, ChannelHistogram>,
+}
+
+impl RFlagHistograms {
+    fn into_thresholds(self, request: &FlagDataRequest) -> RFlagThresholds {
+        let mut timedev = BTreeMap::new();
+        let mut freqdev = BTreeMap::new();
+        for (key, histogram) in self.time {
+            timedev.insert(
+                key,
+                request
+                    .timedev
+                    .unwrap_or_else(|| histogram.threshold() * request.timedevscale),
+            );
+        }
+        for (key, histogram) in self.freq {
+            freqdev.insert(
+                key,
+                request
+                    .freqdev
+                    .unwrap_or_else(|| histogram.threshold() * request.freqdevscale),
+            );
+        }
+        RFlagThresholds { timedev, freqdev }
+    }
+}
+
+#[derive(Debug, Default)]
+struct RFlagThresholds {
+    timedev: BTreeMap<FieldSpwKey, f64>,
+    freqdev: BTreeMap<FieldSpwKey, f64>,
+}
+
+impl RFlagThresholds {
+    fn representative_pair(&self) -> (f64, f64) {
+        (
+            representative_threshold(&self.timedev),
+            representative_threshold(&self.freqdev),
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ChannelHistogram {
+    sum: Vec<f64>,
+    counts: Vec<f64>,
+}
+
+impl ChannelHistogram {
+    fn new(nchan: usize) -> Self {
+        Self {
+            sum: vec![0.0; nchan],
+            counts: vec![0.0; nchan],
+        }
+    }
+
+    fn add(&mut self, chan: usize, value: f64) {
+        if let (Some(sum), Some(count)) = (self.sum.get_mut(chan), self.counts.get_mut(chan)) {
+            *sum += value;
+            *count += 1.0;
+        }
+    }
+
+    fn threshold(&self) -> f64 {
+        let samples = self
+            .sum
+            .iter()
+            .zip(self.counts.iter())
+            .map(|(sum, count)| if *count > 0.0 { *sum / *count } else { 0.0 })
+            .collect::<Vec<_>>();
+        let med = median(samples.clone());
+        let mad = median(samples.iter().map(|value| (*value - med).abs()).collect());
+        med + 1.4826 * mad
+    }
+}
+
+fn representative_threshold(thresholds: &BTreeMap<FieldSpwKey, f64>) -> f64 {
+    if thresholds.is_empty() {
+        return f64::INFINITY;
+    }
+    median(thresholds.values().copied().collect())
+}
+
+fn rflag_accumulate_group_histograms(group: &[Sample], histograms: &mut RFlagHistograms) {
+    let Some(first) = group.first() else {
+        return;
+    };
+    let key = (first.field, first.spw);
+    let nchan = group.iter().map(|sample| sample.chan).max().unwrap_or(0) + 1;
+    let time_hist = histograms
+        .time
+        .entry(key)
+        .or_insert_with(|| ChannelHistogram::new(nchan));
+    let rows_by_corr = samples_by_corr(group);
+    for by_corr in &rows_by_corr {
+        for by_chan in samples_by_chan(by_corr).values() {
+            for (start, stop) in rflag_time_windows(by_chan.len()) {
+                let window = &by_chan[start..=stop];
+                let value = rflag_time_std_total(window);
+                if let Some(sample) = by_chan.first() {
+                    time_hist.add(sample.chan, value);
+                }
+            }
+        }
+    }
+    let freq_hist = histograms
+        .freq
+        .entry(key)
+        .or_insert_with(|| ChannelHistogram::new(nchan));
+    for by_corr in rows_by_corr {
+        for by_row in samples_by_row(&by_corr).values() {
+            let stats = rflag_spectral_stats(by_row);
+            for sample in by_row {
+                if sample.flag {
+                    continue;
+                }
+                if stats.sum_weight_real > 0.0 {
+                    freq_hist.add(sample.chan, (sample.real - stats.average_real).abs());
+                }
+                if stats.sum_weight_imag > 0.0 {
+                    freq_hist.add(sample.chan, (sample.imag - stats.average_imag).abs());
+                }
+            }
+        }
+    }
+}
+
+fn rflag_group_flags(
+    group: &[Sample],
+    thresholds: &RFlagThresholds,
+    request: &FlagDataRequest,
+    time_flags: &mut [bool],
+    freq_flags: &mut [bool],
+) {
+    let Some(first) = group.first() else {
+        return;
+    };
+    let key = (first.field, first.spw);
+    let timedev = thresholds
+        .timedev
+        .get(&key)
+        .copied()
+        .unwrap_or(f64::INFINITY);
+    let freqdev = thresholds
+        .freqdev
+        .get(&key)
+        .copied()
+        .unwrap_or(f64::INFINITY);
+    for by_corr in samples_by_corr(group) {
+        for by_chan in samples_by_chan(&by_corr).values() {
+            for (start, stop) in rflag_time_windows(by_chan.len()) {
+                if rflag_time_std_total(&by_chan[start..=stop]) > timedev {
+                    for sample in &by_chan[start..=stop] {
+                        if !sample.flag {
+                            time_flags[sample.index] = true;
+                        }
+                    }
+                }
+            }
+        }
+        for by_row in samples_by_row(&by_corr).values() {
+            let stats = rflag_spectral_stats(by_row);
+            let flag_all = stats.std_real > request.spectralmax
+                || stats.std_imag > request.spectralmax
+                || stats.std_real < request.spectralmin
+                || stats.std_imag < request.spectralmin;
+            for sample in by_row {
+                if sample.flag {
+                    continue;
+                }
+                if flag_all
+                    || (sample.real - stats.average_real).abs() > freqdev
+                    || (sample.imag - stats.average_imag).abs() > freqdev
+                {
+                    freq_flags[sample.index] = true;
+                }
+            }
+        }
+    }
+}
+
+fn rflag_time_windows(len: usize) -> impl Iterator<Item = (usize, usize)> {
+    let effective = len.min(3);
+    let delta = effective.saturating_sub(1) / 2;
+    (0..len).filter_map(move |center| {
+        if delta == 0 {
+            Some((center, center))
+        } else if center >= delta && center < len - delta {
+            Some((center - delta, center + delta))
+        } else {
+            None
+        }
+    })
+}
+
+fn rflag_time_std_total(samples: &[Sample]) -> f64 {
+    let mut count = 0usize;
+    let mut sum_real = 0.0;
+    let mut sum_imag = 0.0;
+    let mut sumsq_real = 0.0;
+    let mut sumsq_imag = 0.0;
+    for sample in samples {
+        if sample.flag {
+            continue;
+        }
+        count += 1;
+        sum_real += sample.real;
+        sum_imag += sample.imag;
+        sumsq_real += sample.real * sample.real;
+        sumsq_imag += sample.imag * sample.imag;
+    }
+    if count == 0 {
+        return 0.0;
+    }
+    let sum_weight = count as f64;
+    let avg_real = sum_real / sum_weight;
+    let avg_imag = sum_imag / sum_weight;
+    let var_real = sumsq_real / sum_weight - avg_real * avg_real;
+    let var_imag = sumsq_imag / sum_weight - avg_imag * avg_imag;
+    (var_real.max(0.0) + var_imag.max(0.0)).sqrt()
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct RFlagSpectralStats {
+    average_real: f64,
+    average_imag: f64,
+    std_real: f64,
+    std_imag: f64,
+    sum_weight_real: f64,
+    sum_weight_imag: f64,
+}
+
+fn rflag_spectral_stats(samples: &[Sample]) -> RFlagSpectralStats {
+    let valid = samples
+        .iter()
+        .filter(|sample| !sample.flag)
+        .collect::<Vec<_>>();
+    if valid.is_empty() {
+        return RFlagSpectralStats::default();
+    }
+    let average_real = median(valid.iter().map(|sample| sample.real).collect());
+    let average_imag = median(valid.iter().map(|sample| sample.imag).collect());
+    let std_real = 1.4826
+        * median(
+            valid
+                .iter()
+                .map(|sample| (sample.real - average_real).abs())
+                .collect(),
+        );
+    let std_imag = 1.4826
+        * median(
+            valid
+                .iter()
+                .map(|sample| (sample.imag - average_imag).abs())
+                .collect(),
+        );
+    let weight = valid.len() as f64;
+    RFlagSpectralStats {
+        average_real,
+        average_imag,
+        std_real,
+        std_imag,
+        sum_weight_real: weight,
+        sum_weight_imag: weight,
+    }
+}
+
+fn format_threshold_map(thresholds: &BTreeMap<FieldSpwKey, f64>) -> BTreeMap<String, f64> {
+    thresholds
+        .iter()
+        .map(|((field, spw), value)| (format!("field{field}_spw{spw}"), *value))
+        .collect()
+}
+
 fn percent_flagged(samples: &[Sample]) -> f64 {
     if samples.is_empty() {
         return 0.0;
     }
     100.0 * samples.iter().filter(|sample| sample.flag).count() as f64 / samples.len() as f64
+}
+
+fn summary_after_flag_only(samples: &[Sample], changed_samples: usize) -> FlagSummary {
+    FlagSummary {
+        flagged_samples: samples.iter().filter(|sample| sample.flag).count() + changed_samples,
+        total_samples: samples.len(),
+    }
+}
+
+fn percent_modified(samples: &[Sample], modified: &[bool]) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    100.0
+        * samples
+            .iter()
+            .filter(|sample| sample.flag || modified[sample.index])
+            .count() as f64
+        / samples.len() as f64
+}
+
+fn count_mask(mask: &[bool]) -> usize {
+    mask.iter().filter(|value| **value).count()
+}
+
+fn union_masks(left: &[bool], right: &[bool]) -> Vec<bool> {
+    left.iter()
+        .zip(right.iter())
+        .map(|(left, right)| *left || *right)
+        .collect()
 }
 
 fn trace_flagdata(value: serde_json::Value) {
@@ -1061,13 +2077,10 @@ fn trace_flagdata(value: serde_json::Value) {
     }
 }
 
-fn flag_set_counts_by_spw_corr(
-    flags: &std::collections::BTreeSet<(usize, usize, usize)>,
-    samples: &[Sample],
-) -> BTreeMap<String, usize> {
+fn flag_mask_counts_by_spw_corr(mask: &[bool], samples: &[Sample]) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::<String, usize>::new();
-    for sample in samples {
-        if flags.contains(&(sample.row, sample.corr, sample.chan)) {
+    for (sample, flag) in samples.iter().zip(mask.iter()) {
+        if *flag {
             *counts
                 .entry(format!("spw{}_corr{}", sample.spw, sample.corr))
                 .or_default() += 1;
@@ -1077,6 +2090,7 @@ fn flag_set_counts_by_spw_corr(
 }
 
 type GroupKey = (i32, i32, i32, i32, i32);
+type FieldSpwKey = (i32, i32);
 
 fn group_samples(samples: &[Sample]) -> BTreeMap<GroupKey, Vec<Sample>> {
     let mut groups = BTreeMap::<GroupKey, Vec<Sample>>::new();
@@ -1086,7 +2100,7 @@ fn group_samples(samples: &[Sample]) -> BTreeMap<GroupKey, Vec<Sample>> {
         groups
             .entry((sample.field, sample.spw, sample.scan, ant_low, ant_high))
             .or_default()
-            .push(sample.clone());
+            .push(*sample);
     }
     groups
 }
@@ -1094,7 +2108,7 @@ fn group_samples(samples: &[Sample]) -> BTreeMap<GroupKey, Vec<Sample>> {
 fn samples_by_corr(samples: &[Sample]) -> Vec<Vec<Sample>> {
     let mut groups = BTreeMap::<usize, Vec<Sample>>::new();
     for sample in samples {
-        groups.entry(sample.corr).or_default().push(sample.clone());
+        groups.entry(sample.corr).or_default().push(*sample);
     }
     groups.into_values().collect()
 }
@@ -1102,7 +2116,7 @@ fn samples_by_corr(samples: &[Sample]) -> Vec<Vec<Sample>> {
 fn samples_by_row(samples: &[Sample]) -> BTreeMap<usize, Vec<Sample>> {
     let mut groups = BTreeMap::<usize, Vec<Sample>>::new();
     for sample in samples {
-        groups.entry(sample.row).or_default().push(sample.clone());
+        groups.entry(sample.row).or_default().push(*sample);
     }
     groups
 }
@@ -1110,7 +2124,7 @@ fn samples_by_row(samples: &[Sample]) -> BTreeMap<usize, Vec<Sample>> {
 fn samples_by_chan(samples: &[Sample]) -> BTreeMap<usize, Vec<Sample>> {
     let mut groups = BTreeMap::<usize, Vec<Sample>>::new();
     for sample in samples {
-        groups.entry(sample.chan).or_default().push(sample.clone());
+        groups.entry(sample.chan).or_default().push(*sample);
     }
     groups
 }
@@ -1121,7 +2135,7 @@ fn samples_by_row_chan(samples: &[Sample]) -> BTreeMap<(usize, usize), Vec<Sampl
         groups
             .entry((sample.row, sample.chan))
             .or_default()
-            .push(sample.clone());
+            .push(*sample);
     }
     groups
 }
@@ -1687,12 +2701,15 @@ fn display_path(path: Option<&Path>) -> String {
         .unwrap_or_else(|| "<memory>".to_string())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct Sample {
+    index: usize,
     row: usize,
     corr: usize,
     chan: usize,
     amp: f64,
+    real: f64,
+    imag: f64,
     flag: bool,
     field: i32,
     spw: i32,
@@ -1701,12 +2718,19 @@ struct Sample {
     ant2: i32,
 }
 
+struct LoadedSamples {
+    samples: Vec<Sample>,
+    flags_by_row: BTreeMap<usize, ArrayD<bool>>,
+}
+
 #[derive(Default)]
 struct ChangeSet {
     changed_rows: usize,
     changed_samples: usize,
     changed_row_indices: Vec<usize>,
     summary: Option<FlagSummary>,
+    thresholds: Option<(f64, f64)>,
+    changed_flag_row_rows: usize,
 }
 
 #[derive(Clone)]

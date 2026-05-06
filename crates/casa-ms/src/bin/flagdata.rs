@@ -119,6 +119,16 @@ fn parse_args(args: &[String]) -> Result<(PathBuf, FlagDataRequest), String> {
                 request.freqdevscale =
                     parse_f64(args.get(index).ok_or_else(usage)?, "freqdevscale")?;
             }
+            "--spectralmax" => {
+                index += 1;
+                request.spectralmax = parse_f64(args.get(index).ok_or_else(usage)?, "spectralmax")?;
+            }
+            "--spectralmin" => {
+                index += 1;
+                request.spectralmin = parse_f64(args.get(index).ok_or_else(usage)?, "spectralmin")?;
+            }
+            "--extendflags" => request.extendflags = true,
+            "--no-extendflags" | "--extendflags=false" => request.extendflags = false,
             "--extendpols" => request.extendpols = true,
             "--growtime" => {
                 index += 1;
