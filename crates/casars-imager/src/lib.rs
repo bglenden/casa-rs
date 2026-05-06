@@ -3074,7 +3074,9 @@ fn run_frontend_cube(
     if config.uv_taper.is_some() {
         return Err("mosaic cube frontend path does not yet support uv taper".to_string());
     }
-    if weight_density_mode != WeightDensityMode::PerPlane {
+    if effective_weighting != WeightingMode::Natural
+        && weight_density_mode != WeightDensityMode::PerPlane
+    {
         return Err(
             "mosaic cube frontend path currently requires --perchanweightdensity".to_string(),
         );
@@ -10843,6 +10845,38 @@ mod tests {
         }
     }
 
+    fn prepared_sample_for_batching(
+        index: usize,
+        frequency_hz: f64,
+    ) -> PreparedVisibilitySampleTrace {
+        PreparedVisibilitySampleTrace {
+            row_index: index,
+            input_field_id: 0,
+            phase_center_field_id: Some(0),
+            ddid: 0,
+            spw_id: 0,
+            polarization_id: 0,
+            antenna1_id: 0,
+            antenna2_id: 1,
+            is_cross: true,
+            raw_uvw_m: [index as f64, 0.0, 0.0],
+            imaging_uvw_m: [index as f64, 0.0, 0.0],
+            phase_shift_m: 0.0,
+            correlation_indices: vec![0],
+            output_channel_index: Some(index),
+            output_frequency_hz: frequency_hz,
+            field_phase_center_direction_rad: [1.0, 0.5],
+            pointing_direction_rad: [1.0 + index as f64 * 1.0e-3, 0.5],
+            visibility_re: 1.0,
+            visibility_im: 0.0,
+            weight: 1.0,
+            weight_source: WeightSourceKind::Weight,
+            sumwt_factor: 1.0,
+            gridable: true,
+            source_contributions: Vec::new(),
+        }
+    }
+
     #[test]
     fn paired_batch_stokes_i_uses_half_sum_visibility_and_casa_style_weight() {
         let batch = ParallelHandBatch {
@@ -12361,6 +12395,374 @@ mod tests {
         assert_eq!(config.w_term_mode, WTermMode::None);
         assert_eq!(config.min_psf_fraction, 0.05);
         assert!(config.write_preview_pngs);
+    }
+
+    #[test]
+    fn canonical_manifest_names_cover_cube_and_imaging_modes() {
+        assert_eq!(canonical_spectral_mode_name(SpectralMode::Mfs), "mfs");
+        assert_eq!(canonical_spectral_mode_name(SpectralMode::Cube), "cube");
+        assert_eq!(
+            canonical_spectral_mode_name(SpectralMode::Cubedata),
+            "cubedata"
+        );
+        assert_eq!(
+            canonical_data_column_name(VisibilityDataColumn::Data),
+            "DATA"
+        );
+        assert_eq!(canonical_weighting_name(WeightingMode::Natural), "natural");
+        assert_eq!(canonical_weighting_name(WeightingMode::Uniform), "uniform");
+        assert_eq!(
+            canonical_weighting_name(WeightingMode::Briggs { robust: -0.5 }),
+            "briggs:-0.5"
+        );
+        assert_eq!(
+            canonical_weighting_name(WeightingMode::BriggsBwTaper { robust: 1.25 }),
+            "briggsbwtaper:1.25"
+        );
+        assert_eq!(
+            canonical_restoring_beam_mode_name(RestoringBeamMode::PerPlane),
+            "per_plane"
+        );
+        assert_eq!(
+            canonical_restoring_beam_mode_name(RestoringBeamMode::Common),
+            "common"
+        );
+        assert_eq!(canonical_deconvolver_name(Deconvolver::Hogbom), "hogbom");
+        assert_eq!(canonical_deconvolver_name(Deconvolver::Mtmfs), "mtmfs");
+        assert_eq!(canonical_deconvolver_name(Deconvolver::Clark), "clark");
+        assert_eq!(
+            canonical_deconvolver_name(Deconvolver::Multiscale),
+            "multiscale"
+        );
+        assert_eq!(
+            canonical_hogbom_iteration_mode_name(HogbomIterationMode::Strict),
+            "strict"
+        );
+        assert_eq!(
+            canonical_hogbom_iteration_mode_name(HogbomIterationMode::CasaInclusive),
+            "casa"
+        );
+        assert_eq!(canonical_w_term_mode_name(WTermMode::None), "none");
+        assert_eq!(canonical_w_term_mode_name(WTermMode::Direct), "direct");
+        assert_eq!(canonical_w_term_mode_name(WTermMode::WProject), "wproject");
+        assert_eq!(
+            canonical_cube_interpolation_name(CubeInterpolation::Nearest),
+            "nearest"
+        );
+        assert_eq!(
+            canonical_cube_interpolation_name(CubeInterpolation::Linear),
+            "linear"
+        );
+        assert_eq!(
+            canonical_cube_interpolation_name(CubeInterpolation::Cubic),
+            "cubic"
+        );
+        assert_eq!(
+            canonical_cube_axis_value(&CubeAxisValue::FrequencyHz {
+                hz: 1.42e9,
+                frame: Some(FrequencyRef::LSRK),
+            }),
+            "frequency_hz:1420000000@LSRK"
+        );
+        assert_eq!(
+            canonical_cube_axis_value(&CubeAxisValue::VelocityMs {
+                ms: -12_300.0,
+                frame: Some(FrequencyRef::BARY),
+            }),
+            "velocity_ms:-12300@BARY"
+        );
+        assert_eq!(
+            canonical_cube_axis_value(&CubeAxisValue::Doppler {
+                value: 0.01,
+                convention: DopplerRef::RADIO,
+            }),
+            "doppler:0.01@RADIO"
+        );
+        assert_eq!(
+            canonical_uv_taper(GaussianUvTaper {
+                major: UvTaperSize::ImageFwhmRad(1.0e-4),
+                minor: UvTaperSize::BaselineHwhmLambda(500.0),
+                position_angle_rad: 0.25,
+            }),
+            "major=image_fwhm_rad:0.0001,minor=baseline_hwhm_lambda:500,pa_rad=0.25"
+        );
+    }
+
+    #[test]
+    fn parse_modes_accept_aliases_and_reject_unsupported_values() {
+        assert_eq!(parse_spectral_mode("MFS").unwrap(), SpectralMode::Mfs);
+        assert_eq!(parse_spectral_mode("cube").unwrap(), SpectralMode::Cube);
+        assert_eq!(
+            parse_spectral_mode("cubedata").unwrap(),
+            SpectralMode::Cubedata
+        );
+        assert!(
+            parse_spectral_mode("channel")
+                .unwrap_err()
+                .contains("specmode")
+        );
+
+        assert_eq!(
+            parse_weighting_mode("natural", 0.0).unwrap(),
+            WeightingMode::Natural
+        );
+        assert_eq!(
+            parse_weighting_mode("uniform", 0.0).unwrap(),
+            WeightingMode::Uniform
+        );
+        assert_eq!(
+            parse_weighting_mode("robust", 0.75).unwrap(),
+            WeightingMode::Briggs { robust: 0.75 }
+        );
+        assert_eq!(
+            parse_weighting_mode("briggsbwtaper", -1.5).unwrap(),
+            WeightingMode::BriggsBwTaper { robust: -1.5 }
+        );
+        assert!(
+            parse_weighting_mode("radial", 0.0)
+                .unwrap_err()
+                .contains("weighting")
+        );
+
+        assert_eq!(parse_deconvolver("hogbom").unwrap(), Deconvolver::Hogbom);
+        assert_eq!(parse_deconvolver("mtmfs").unwrap(), Deconvolver::Mtmfs);
+        assert_eq!(parse_deconvolver("clark").unwrap(), Deconvolver::Clark);
+        assert_eq!(
+            parse_deconvolver("multiscale").unwrap(),
+            Deconvolver::Multiscale
+        );
+        assert!(
+            parse_deconvolver("mem")
+                .unwrap_err()
+                .contains("deconvolver")
+        );
+
+        assert_eq!(
+            parse_hogbom_iteration_mode("casa-inclusive").unwrap(),
+            HogbomIterationMode::CasaInclusive
+        );
+        assert_eq!(
+            parse_hogbom_iteration_mode("inclusive").unwrap(),
+            HogbomIterationMode::CasaInclusive
+        );
+        assert_eq!(
+            parse_hogbom_iteration_mode("strict").unwrap(),
+            HogbomIterationMode::Strict
+        );
+        assert!(
+            parse_hogbom_iteration_mode("loose")
+                .unwrap_err()
+                .contains("hogbom")
+        );
+
+        assert_eq!(parse_w_term_mode("2d").unwrap(), WTermMode::None);
+        assert_eq!(parse_w_term_mode("direct").unwrap(), WTermMode::Direct);
+        assert_eq!(parse_w_term_mode("wproject").unwrap(), WTermMode::WProject);
+        assert!(
+            parse_w_term_mode("awproject")
+                .unwrap_err()
+                .contains("wterm")
+        );
+    }
+
+    #[test]
+    fn mask_boxes_validate_bounds_and_fill_inclusive_pixels() {
+        assert_eq!(parse_mask_box("1, 2, 3, 4").unwrap(), [1, 2, 3, 4]);
+        assert!(parse_mask_box("1,2,3").unwrap_err().contains("expects"));
+
+        let mask = build_clean_mask(6, &[[1, 2, 3, 4]], None)
+            .unwrap()
+            .expect("mask");
+        assert!(mask[(1, 2)]);
+        assert!(mask[(3, 4)]);
+        assert!(!mask[(0, 0)]);
+        assert!(
+            build_clean_mask(6, &[[4, 1, 3, 2]], None)
+                .unwrap_err()
+                .contains("x0 <= x1")
+        );
+        assert!(
+            build_clean_mask(6, &[[0, 0, 6, 1]], None)
+                .unwrap_err()
+                .contains("exceeds image bounds")
+        );
+        assert!(build_clean_mask(6, &[], None).unwrap().is_none());
+    }
+
+    #[test]
+    fn stokes_pair_selection_follows_linear_and_circular_bases() {
+        assert_eq!(
+            derive_stokes_pair_selection(PlaneStokes::I, &[9, 12]).unwrap(),
+            ((0, 1), PairCollapseTransform::HalfSum)
+        );
+        assert_eq!(
+            derive_stokes_pair_selection(PlaneStokes::Q, &[9, 12]).unwrap(),
+            ((0, 1), PairCollapseTransform::HalfDifference)
+        );
+        assert_eq!(
+            derive_stokes_pair_selection(PlaneStokes::U, &[10, 11]).unwrap(),
+            ((0, 1), PairCollapseTransform::HalfSum)
+        );
+        assert_eq!(
+            derive_stokes_pair_selection(PlaneStokes::V, &[10, 11]).unwrap(),
+            ((0, 1), PairCollapseTransform::NegativeHalfImagDifference)
+        );
+        assert_eq!(
+            derive_stokes_pair_selection(PlaneStokes::Q, &[6, 7]).unwrap(),
+            ((0, 1), PairCollapseTransform::HalfSum)
+        );
+        assert_eq!(
+            derive_stokes_pair_selection(PlaneStokes::U, &[6, 7]).unwrap(),
+            ((0, 1), PairCollapseTransform::PositiveHalfImagDifference)
+        );
+        assert_eq!(
+            derive_stokes_pair_selection(PlaneStokes::V, &[5, 8]).unwrap(),
+            ((0, 1), PairCollapseTransform::HalfDifference)
+        );
+        assert!(
+            derive_stokes_pair_selection(PlaneStokes::XX, &[9, 12])
+                .unwrap_err()
+                .contains("raw correlation")
+        );
+        assert!(
+            derive_stokes_pair_selection(PlaneStokes::I, &[10, 11])
+                .unwrap_err()
+                .contains("Stokes I")
+        );
+    }
+
+    #[test]
+    fn beam_and_restoration_helpers_cover_common_edge_cases() {
+        let fitted = vec![
+            Some(BeamFit {
+                major_fwhm_rad: 3.0e-4,
+                minor_fwhm_rad: 2.0e-4,
+                position_angle_rad: 0.1,
+            }),
+            Some(BeamFit {
+                major_fwhm_rad: 3.2e-4,
+                minor_fwhm_rad: 2.1e-4,
+                position_angle_rad: 0.12,
+            }),
+        ];
+        assert_eq!(
+            select_frontend_restored_cube_beams(&fitted, RestoringBeamMode::PerPlane).unwrap(),
+            fitted
+        );
+        let common = select_frontend_restored_cube_beams(&fitted, RestoringBeamMode::Common)
+            .expect("common beam");
+        assert_eq!(common.len(), 2);
+        assert!(common.iter().all(Option::is_some));
+        assert_eq!(
+            select_frontend_restored_cube_beams(&[None, None], RestoringBeamMode::Common).unwrap(),
+            vec![None, None]
+        );
+
+        let invalid_kernel = frontend_gaussian_kernel(
+            BeamFit {
+                major_fwhm_rad: 0.0,
+                minor_fwhm_rad: 2.0e-4,
+                position_angle_rad: 0.0,
+            },
+            [1.0e-4, 1.0e-4],
+            false,
+        );
+        assert!(invalid_kernel.is_none());
+
+        let psf =
+            make_frontend_casa_gaussian_psf_image(7, 7, [1.0e-4, 1.0e-4], fitted[0].unwrap(), true);
+        assert!((psf.sum() - 1.0).abs() < 1.0e-5);
+
+        let mut model = Array2::<f32>::zeros((7, 7));
+        model[(3, 3)] = 2.0;
+        let restored = restore_frontend_model(&model, [1.0e-4, 1.0e-4], fitted[0]);
+        assert!(restored[(3, 3)] > 0.0);
+        assert!(restored.sum() > model[(3, 3)]);
+
+        let empty = Array2::<f32>::zeros((7, 7));
+        assert_eq!(
+            restore_frontend_model(&empty, [1.0e-4, 1.0e-4], fitted[0]),
+            empty
+        );
+        let residual = Array2::<f32>::from_elem((5, 5), 1.0);
+        let unchanged = rescale_frontend_residual_to_beam(
+            &residual,
+            [1.0e-4, 1.0e-4],
+            fitted[0].unwrap(),
+            fitted[0].unwrap(),
+        )
+        .expect("rescale");
+        assert_eq!(unchanged, residual);
+    }
+
+    #[test]
+    fn frontend_frequency_and_batch_helpers_preserve_sample_alignment() {
+        let samples = (0..5)
+            .map(|index| prepared_sample_for_batching(index, 1.40e9 + index as f64 * 1.0e6))
+            .collect::<Vec<_>>();
+        let frequency_batches = chunk_sample_frequencies_hz_from_samples(&samples, 2);
+        assert_eq!(
+            frequency_batches,
+            vec![vec![1.40e9, 1.401e9], vec![1.402e9, 1.403e9], vec![1.404e9],]
+        );
+
+        let beam_frequencies = casa_simplepb_beam_frequencies_for_samples(
+            &[1.40e9, 1.401e9, 1.402e9, 1.403e9, 1.404e9],
+            &[1.40e9, 1.402e9, 1.404e9],
+            &[1.0e6, 1.0e6, 1.0e6],
+        );
+        assert_eq!(beam_frequencies.len(), 5);
+        assert!(beam_frequencies.windows(2).all(|pair| pair[0] <= pair[1]));
+
+        let metadata_batches = chunk_visibility_metadata_batches(
+            &samples,
+            &beam_frequencies,
+            PrimaryBeamModel::EvlaLBandCommon,
+            2,
+        );
+        assert_eq!(metadata_batches.len(), 3);
+        assert_eq!(
+            metadata_batches[0].sample_frequency_hz,
+            vec![1.40e9, 1.401e9]
+        );
+        assert_eq!(metadata_batches[2].pointing_direction_rad.len(), 1);
+
+        let mut batch = empty_visibility_batch(0);
+        for index in 0..5 {
+            batch.u_lambda.push(index as f64);
+            batch.v_lambda.push(index as f64 + 10.0);
+            batch.w_lambda.push(index as f64 + 20.0);
+            batch.weight.push(1.0 + index as f32);
+            batch.sumwt_factor.push(0.5);
+            batch.gridable.push(index % 2 == 0);
+            batch.visibility.push(Complex32::new(index as f32, 0.0));
+        }
+        let chunks = chunk_visibility_batch(batch, 2);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[1].u_lambda, vec![2.0, 3.0]);
+        assert_eq!(chunks[2].visibility, vec![Complex32::new(4.0, 0.0)]);
+        assert!(chunk_density_batch(test_visibility_batch(1.0), false).is_empty());
+        assert_eq!(
+            chunk_density_batch(test_visibility_batch(1.0), true).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn spherical_direction_helpers_handle_ra_wrap_and_antipodal_fallback() {
+        let left = [std::f64::consts::TAU - 1.0e-4, 0.1];
+        let right = [1.0e-4, 0.1];
+        assert!(direction_separation_rad(left, right) < 3.0e-4);
+
+        let combined = combine_pointing_direction_rad(left, right);
+        assert!(combined[0] < 1.0e-3 || combined[0] > std::f64::consts::TAU - 1.0e-3);
+        assert!((combined[1] - 0.1).abs() < 1.0e-6);
+
+        let antipodal = combine_pointing_direction_rad([0.0, 0.0], [std::f64::consts::PI, 0.0]);
+        assert!((antipodal[0] - std::f64::consts::FRAC_PI_2).abs() < 1.0e-12);
+        assert_eq!(antipodal[1], 0.0);
+        assert_eq!(fractional_bandwidth_from_range([90.0, 110.0]), 0.2);
+        assert_eq!(fractional_bandwidth_from_range([0.0, 110.0]), 0.0);
     }
 
     #[test]
