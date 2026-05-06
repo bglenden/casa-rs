@@ -31,7 +31,7 @@ pinned datasets such as `refim_alma_mosaic.ms`, `papersky_mosaic.ms`, and
 | CASA minor-cycle controllers | cleaned mosaic images, masks, thresholds, cycle controls | standard controller plus final visibility-domain mosaic residual refresh path | implemented for the #53 Hogbom/Multiscale MFS proof; source-region tutorial deltas are now sub-percent |
 | CASA cube mosaic path | spectral cube imaging with frequency-dependent PB and common beams | `casars-imager` cube preparation plus `casa-imaging` mosaic dirty path | implemented for the #163 two-channel M100 dirty probe; full 70-channel scale-up remains issue scope |
 | CASA `pbcor` products | PB-corrected restored images with cutoff semantics | `mosaic_pb_product_from_weight`, `pb_correct_image_product`, `--pbcor` | implemented for mosaic MFS products using the current mosaic weight image and explicit `--pblimit` cutoff |
-| CASA `usemask='auto-multithresh'` | automask generation | manual `--mask-box` / `--mask-image` only | missing; #53 follow-up when tutorials require automask products |
+| CASA `usemask='auto-multithresh'` | automask generation | `casars-imager --usemask auto-multithresh` with guide-visible threshold, pruning, growth, negative-mask, and fast-noise controls; writes `.mask` product | #167 implements the Automasking Guide slice; full per-major-cycle CASA mask update parity remains evidence-driven issue scope |
 | CASA `startmodel` / `outlierfile` | model seeding and outlier-field orchestration | none | missing; keep out of #161/#169 unless the tutorial product needs it |
 
 ## Current Mode Matrix

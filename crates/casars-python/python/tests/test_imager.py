@@ -100,6 +100,8 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         use_pointing=True,
         niter=100,
         threshold_jy=0.001,
+        use_mask="auto-multithresh",
+        auto_mask={"sidelobe_threshold": 2.0, "noise_threshold": 4.25},
         mask_boxes=[(100, 100, 150, 150)],
         binary=binary,
     )
@@ -120,6 +122,9 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["use_pointing"] is True
     assert request["niter"] == 100
     assert request["threshold_jy"] == 0.001
+    assert request["use_mask"] == "auto-multithresh"
+    assert request["auto_mask"]["sidelobe_threshold"] == 2.0
+    assert request["auto_mask"]["noise_threshold"] == 4.25
     assert request["mask_boxes"] == [[100, 100, 150, 150]]
 
 

@@ -25,8 +25,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::{
-    ChannelRunSummary, CliConfig, FrontendStageTimings, RunSummary, SaveModelMode, SpectralMode,
-    command_schema, run_from_config,
+    AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, FrontendStageTimings,
+    RunSummary, SaveModelMode, SpectralMode, command_schema, run_from_config,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
@@ -384,6 +384,151 @@ impl From<ImagerHogbomIterationMode> for HogbomIterationMode {
             ImagerHogbomIterationMode::CasaInclusive => Self::CasaInclusive,
         }
     }
+}
+
+/// CASA-style clean-mask generation mode for the task protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImagerCleanMaskMode {
+    /// Use only explicit user mask boxes or a mask image.
+    #[default]
+    User,
+    /// Generate a mask using CASA's `auto-multithresh` control family.
+    AutoMultithresh,
+}
+
+impl From<CleanMaskMode> for ImagerCleanMaskMode {
+    fn from(value: CleanMaskMode) -> Self {
+        match value {
+            CleanMaskMode::User => Self::User,
+            CleanMaskMode::AutoMultiThreshold => Self::AutoMultithresh,
+        }
+    }
+}
+
+impl From<ImagerCleanMaskMode> for CleanMaskMode {
+    fn from(value: ImagerCleanMaskMode) -> Self {
+        match value {
+            ImagerCleanMaskMode::User => Self::User,
+            ImagerCleanMaskMode::AutoMultithresh => Self::AutoMultiThreshold,
+        }
+    }
+}
+
+/// CASA `auto-multithresh` controls for the task protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerAutoMultiThresholdConfig {
+    /// Sidelobe threshold factor multiplied by the PSF sidelobe level.
+    #[serde(default = "default_auto_sidelobe_threshold")]
+    pub sidelobe_threshold: f32,
+    /// Noise threshold factor multiplied by the robust residual RMS.
+    #[serde(default = "default_auto_noise_threshold")]
+    pub noise_threshold: f32,
+    /// Lower noise threshold factor used when growing a mask.
+    #[serde(default = "default_auto_low_noise_threshold")]
+    pub low_noise_threshold: f32,
+    /// Negative-feature threshold factor; zero disables negative masks.
+    #[serde(default)]
+    pub negative_threshold: f32,
+    /// Smoothing factor for CASA's beam-scaled mask smoothing stage.
+    #[serde(default = "default_auto_smooth_factor")]
+    pub smooth_factor: f32,
+    /// Minimum region size as a fraction of the fitted beam area.
+    #[serde(default = "default_auto_min_beam_frac")]
+    pub min_beam_frac: f32,
+    /// Fraction of the smoothed mask peak used to cut mask edges.
+    #[serde(default = "default_auto_cut_threshold")]
+    pub cut_threshold: f32,
+    /// Maximum constrained binary-dilation iterations for mask growth.
+    #[serde(default = "default_auto_grow_iterations")]
+    pub grow_iterations: usize,
+    /// Whether grown masks are pruned after dilation.
+    #[serde(default = "default_true")]
+    pub do_grow_prune: bool,
+    /// CASA percent-change stop control for later automask updates.
+    #[serde(default = "default_auto_min_percent_change")]
+    pub min_percent_change: f32,
+    /// Use CASA's fast-noise statistics path.
+    #[serde(default = "default_true")]
+    pub fast_noise: bool,
+}
+
+impl Default for ImagerAutoMultiThresholdConfig {
+    fn default() -> Self {
+        AutoMultiThresholdConfig::default().into()
+    }
+}
+
+impl From<AutoMultiThresholdConfig> for ImagerAutoMultiThresholdConfig {
+    fn from(value: AutoMultiThresholdConfig) -> Self {
+        Self {
+            sidelobe_threshold: value.sidelobe_threshold,
+            noise_threshold: value.noise_threshold,
+            low_noise_threshold: value.low_noise_threshold,
+            negative_threshold: value.negative_threshold,
+            smooth_factor: value.smooth_factor,
+            min_beam_frac: value.min_beam_frac,
+            cut_threshold: value.cut_threshold,
+            grow_iterations: value.grow_iterations,
+            do_grow_prune: value.do_grow_prune,
+            min_percent_change: value.min_percent_change,
+            fast_noise: value.fast_noise,
+        }
+    }
+}
+
+impl From<ImagerAutoMultiThresholdConfig> for AutoMultiThresholdConfig {
+    fn from(value: ImagerAutoMultiThresholdConfig) -> Self {
+        Self {
+            sidelobe_threshold: value.sidelobe_threshold,
+            noise_threshold: value.noise_threshold,
+            low_noise_threshold: value.low_noise_threshold,
+            negative_threshold: value.negative_threshold,
+            smooth_factor: value.smooth_factor,
+            min_beam_frac: value.min_beam_frac,
+            cut_threshold: value.cut_threshold,
+            grow_iterations: value.grow_iterations,
+            do_grow_prune: value.do_grow_prune,
+            min_percent_change: value.min_percent_change,
+            fast_noise: value.fast_noise,
+        }
+    }
+}
+
+fn default_auto_sidelobe_threshold() -> f32 {
+    AutoMultiThresholdConfig::default().sidelobe_threshold
+}
+
+fn default_auto_noise_threshold() -> f32 {
+    AutoMultiThresholdConfig::default().noise_threshold
+}
+
+fn default_auto_low_noise_threshold() -> f32 {
+    AutoMultiThresholdConfig::default().low_noise_threshold
+}
+
+fn default_auto_smooth_factor() -> f32 {
+    AutoMultiThresholdConfig::default().smooth_factor
+}
+
+fn default_auto_min_beam_frac() -> f32 {
+    AutoMultiThresholdConfig::default().min_beam_frac
+}
+
+fn default_auto_cut_threshold() -> f32 {
+    AutoMultiThresholdConfig::default().cut_threshold
+}
+
+fn default_auto_grow_iterations() -> usize {
+    AutoMultiThresholdConfig::default().grow_iterations
+}
+
+fn default_auto_min_percent_change() -> f32 {
+    AutoMultiThresholdConfig::default().min_percent_change
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// `w`-term handling mode for the imaging task.
@@ -763,6 +908,12 @@ pub struct ImagerRunTaskRequest {
     /// Hogbom minor-cycle iteration accounting policy.
     #[serde(default)]
     pub hogbom_iteration_mode: ImagerHogbomIterationMode,
+    /// CASA-style clean mask mode.
+    #[serde(default)]
+    pub use_mask: ImagerCleanMaskMode,
+    /// CASA-style `auto-multithresh` controls.
+    #[serde(default)]
+    pub auto_mask: ImagerAutoMultiThresholdConfig,
     /// Optional inclusive pixel-space clean boxes `(x0, y0, x1, y1)`.
     #[serde(default)]
     pub mask_boxes: Vec<[usize; 4]>,
@@ -829,6 +980,8 @@ impl ImagerRunTaskRequest {
             min_psf_fraction: config.min_psf_fraction,
             max_psf_fraction: config.max_psf_fraction,
             hogbom_iteration_mode: config.hogbom_iteration_mode.into(),
+            use_mask: config.use_mask.into(),
+            auto_mask: config.auto_mask.into(),
             mask_boxes: config.mask_boxes.clone(),
             mask_image: config.mask_image.clone(),
             w_term_mode: config.w_term_mode.into(),
@@ -862,6 +1015,22 @@ impl ImagerRunTaskRequest {
                 return Err(format!(
                     "invalid multiscale scale {scale}; expected finite value >= 0"
                 ));
+            }
+        }
+        if self.use_mask == ImagerCleanMaskMode::AutoMultithresh {
+            for (name, value) in [
+                ("sidelobe_threshold", self.auto_mask.sidelobe_threshold),
+                ("noise_threshold", self.auto_mask.noise_threshold),
+                ("low_noise_threshold", self.auto_mask.low_noise_threshold),
+                ("negative_threshold", self.auto_mask.negative_threshold),
+                ("smooth_factor", self.auto_mask.smooth_factor),
+                ("min_beam_frac", self.auto_mask.min_beam_frac),
+                ("cut_threshold", self.auto_mask.cut_threshold),
+                ("min_percent_change", self.auto_mask.min_percent_change),
+            ] {
+                if !value.is_finite() {
+                    return Err(format!("{name} must be finite"));
+                }
             }
         }
         Ok(CliConfig {
@@ -908,6 +1077,8 @@ impl ImagerRunTaskRequest {
             min_psf_fraction: self.min_psf_fraction,
             max_psf_fraction: self.max_psf_fraction,
             hogbom_iteration_mode: self.hogbom_iteration_mode.into(),
+            use_mask: self.use_mask.into(),
+            auto_mask: self.auto_mask.into(),
             mask_boxes: self.mask_boxes.clone(),
             mask_image: self.mask_image.clone(),
             w_term_mode: self.w_term_mode.into(),
@@ -1067,6 +1238,8 @@ pub enum ImagerArtifactKind {
     Model,
     /// Restored image.
     Image,
+    /// Clean mask image.
+    Mask,
     /// Mosaic weight/sensitivity image.
     Weight,
     /// Mosaic primary-beam image.
@@ -1084,6 +1257,7 @@ impl ImagerArtifactKind {
             Self::Residual => "residual",
             Self::Model => "model",
             Self::Image => "image",
+            Self::Mask => "mask",
             Self::Weight => "weight",
             Self::PrimaryBeam => "pb",
             Self::ImagePbcor => "image.pbcor",
@@ -1347,6 +1521,7 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
                 (ImagerArtifactKind::Residual, "Residual"),
                 (ImagerArtifactKind::Model, "Model"),
                 (ImagerArtifactKind::Image, "Restored Image"),
+                (ImagerArtifactKind::Mask, "Clean Mask"),
             ] {
                 let suffix = kind.as_suffix();
                 let preview = request
@@ -1399,11 +1574,11 @@ mod tests {
 
     use super::{
         IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
-        ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
-        ImagerDeconvolver, ImagerHogbomIterationMode, ImagerPlaneSelection,
-        ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
-        ImagerTaskRequest, ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize,
-        ImagerWTermMode, ImagerWeighting,
+        ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode, ImagerCleanStopReason,
+        ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
+        ImagerHogbomIterationMode, ImagerPlaneSelection, ImagerRestoringBeamMode,
+        ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest,
+        ImagerTaskSchemaBundle, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
     };
     use crate::{CliConfig, SaveModelMode, SpectralMode};
 
@@ -1499,6 +1674,12 @@ mod tests {
             OsString::from("0.2"),
             OsString::from("--maxpsffraction"),
             OsString::from("0.7"),
+            OsString::from("--usemask"),
+            OsString::from("auto-multithresh"),
+            OsString::from("--sidelobethreshold"),
+            OsString::from("2.0"),
+            OsString::from("--noisethreshold"),
+            OsString::from("4.25"),
             OsString::from("--mask-box"),
             OsString::from("1,2,10,20"),
             OsString::from("--mask-image"),
@@ -1529,6 +1710,9 @@ mod tests {
         assert!(restored.use_pointing);
         assert_eq!(restored.restoring_beam_mode, RestoringBeamMode::Common);
         assert_eq!(restored.deconvolver, Deconvolver::Multiscale);
+        assert_eq!(restored.use_mask, crate::CleanMaskMode::AutoMultiThreshold);
+        assert_eq!(restored.auto_mask.sidelobe_threshold, 2.0);
+        assert_eq!(restored.auto_mask.noise_threshold, 4.25);
         assert_eq!(restored.w_term_mode, WTermMode::WProject);
         assert_eq!(restored.w_project_planes, Some(8));
         assert!(restored.dirty_only);
@@ -1575,6 +1759,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
+            use_mask: ImagerCleanMaskMode::User,
+            auto_mask: ImagerAutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
@@ -1629,6 +1815,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
+            use_mask: ImagerCleanMaskMode::User,
+            auto_mask: ImagerAutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
@@ -1866,6 +2054,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
+            use_mask: ImagerCleanMaskMode::User,
+            auto_mask: ImagerAutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
@@ -2020,6 +2210,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
+            use_mask: ImagerCleanMaskMode::User,
+            auto_mask: ImagerAutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: Default::default(),
@@ -2032,10 +2224,16 @@ mod tests {
         assert_eq!(standard_config.correlation.as_deref(), Some("XX"));
 
         let standard_artifacts = super::build_artifacts(&standard);
-        assert_eq!(standard_artifacts.len(), 4);
+        assert_eq!(standard_artifacts.len(), 5);
         assert_eq!(standard_artifacts[0].kind, ImagerArtifactKind::Psf);
         assert!(standard_artifacts[0].exists);
         assert!(standard_artifacts[0].preview_png_exists);
+        assert!(
+            standard_artifacts
+                .iter()
+                .any(|artifact| artifact.kind == ImagerArtifactKind::Mask
+                    && artifact.label == "Clean Mask")
+        );
 
         let mtmfs = ImagerRunTaskRequest {
             deconvolver: ImagerDeconvolver::Mtmfs,

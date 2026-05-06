@@ -7,7 +7,7 @@ mod oracle;
 mod schema;
 mod task_contract;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -75,8 +75,9 @@ pub use oracle::{
 pub use schema::command_schema;
 pub use task_contract::{
     IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifact, ImagerArtifactKind,
-    ImagerChannelRunResult, ImagerCleanStopReason, ImagerCoreStageTimings, ImagerCubeAxisConfig,
-    ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
+    ImagerAutoMultiThresholdConfig, ImagerChannelRunResult, ImagerCleanMaskMode,
+    ImagerCleanStopReason, ImagerCoreStageTimings, ImagerCubeAxisConfig, ImagerCubeAxisValue,
+    ImagerCubeInterpolation, ImagerDeconvolver,
     ImagerFrontendStageTimings as ImagerFrontendTaskStageTimings, ImagerHogbomIterationMode,
     ImagerPlaneSelection, ImagerProtocolInfo, ImagerRestoringBeamMode, ImagerRunReport,
     ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode,
@@ -103,6 +104,61 @@ pub enum SpectralMode {
     /// This keeps the cube spectral axis in the native data frame and skips
     /// runtime frequency conversion.
     Cubedata,
+}
+
+/// CASA-style clean-mask generation mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CleanMaskMode {
+    /// Use only explicit user masks supplied through boxes or a CASA mask image.
+    #[default]
+    User,
+    /// Generate a clean mask with the CASA `auto-multithresh` control family.
+    AutoMultiThreshold,
+}
+
+/// Guide-visible CASA `auto-multithresh` controls.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AutoMultiThresholdConfig {
+    /// Sidelobe threshold factor multiplied by the PSF sidelobe level.
+    pub sidelobe_threshold: f32,
+    /// Noise threshold factor multiplied by the robust residual RMS.
+    pub noise_threshold: f32,
+    /// Lower noise threshold factor used when growing a mask.
+    pub low_noise_threshold: f32,
+    /// Negative-feature threshold factor; zero disables negative masks.
+    pub negative_threshold: f32,
+    /// Smoothing factor for CASA's beam-scaled mask smoothing stage.
+    pub smooth_factor: f32,
+    /// Minimum region size as a fraction of the fitted beam area.
+    pub min_beam_frac: f32,
+    /// Fraction of the smoothed mask peak used to cut mask edges.
+    pub cut_threshold: f32,
+    /// Maximum constrained binary-dilation iterations for mask growth.
+    pub grow_iterations: usize,
+    /// Whether grown masks are pruned after dilation.
+    pub do_grow_prune: bool,
+    /// CASA percent-change stop control for later automask updates.
+    pub min_percent_change: f32,
+    /// Use CASA's fast-noise statistics path.
+    pub fast_noise: bool,
+}
+
+impl Default for AutoMultiThresholdConfig {
+    fn default() -> Self {
+        Self {
+            sidelobe_threshold: 3.0,
+            noise_threshold: 5.0,
+            low_noise_threshold: 1.5,
+            negative_threshold: 0.0,
+            smooth_factor: 1.0,
+            min_beam_frac: 0.3,
+            cut_threshold: 0.01,
+            grow_iterations: 75,
+            do_grow_prune: true,
+            min_percent_change: -1.0,
+            fast_noise: true,
+        }
+    }
 }
 
 /// CASA-style model persistence after imaging.
@@ -169,6 +225,13 @@ fn canonical_hogbom_iteration_mode_name(mode: HogbomIterationMode) -> &'static s
     match mode {
         HogbomIterationMode::Strict => "strict",
         HogbomIterationMode::CasaInclusive => "casa",
+    }
+}
+
+fn canonical_clean_mask_mode_name(mode: CleanMaskMode) -> &'static str {
+    match mode {
+        CleanMaskMode::User => "user",
+        CleanMaskMode::AutoMultiThreshold => "auto-multithresh",
     }
 }
 
@@ -417,6 +480,54 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
     manifest.insert(
         "max_psf_fraction".to_string(),
         config.max_psf_fraction.to_string(),
+    );
+    manifest.insert(
+        "use_mask".to_string(),
+        canonical_clean_mask_mode_name(config.use_mask).to_string(),
+    );
+    manifest.insert(
+        "auto_sidelobe_threshold".to_string(),
+        config.auto_mask.sidelobe_threshold.to_string(),
+    );
+    manifest.insert(
+        "auto_noise_threshold".to_string(),
+        config.auto_mask.noise_threshold.to_string(),
+    );
+    manifest.insert(
+        "auto_low_noise_threshold".to_string(),
+        config.auto_mask.low_noise_threshold.to_string(),
+    );
+    manifest.insert(
+        "auto_negative_threshold".to_string(),
+        config.auto_mask.negative_threshold.to_string(),
+    );
+    manifest.insert(
+        "auto_smooth_factor".to_string(),
+        config.auto_mask.smooth_factor.to_string(),
+    );
+    manifest.insert(
+        "auto_min_beam_frac".to_string(),
+        config.auto_mask.min_beam_frac.to_string(),
+    );
+    manifest.insert(
+        "auto_cut_threshold".to_string(),
+        config.auto_mask.cut_threshold.to_string(),
+    );
+    manifest.insert(
+        "auto_grow_iterations".to_string(),
+        config.auto_mask.grow_iterations.to_string(),
+    );
+    manifest.insert(
+        "auto_do_grow_prune".to_string(),
+        config.auto_mask.do_grow_prune.to_string(),
+    );
+    manifest.insert(
+        "auto_min_percent_change".to_string(),
+        config.auto_mask.min_percent_change.to_string(),
+    );
+    manifest.insert(
+        "auto_fast_noise".to_string(),
+        config.auto_mask.fast_noise.to_string(),
     );
     manifest.insert(
         "mask_boxes".to_string(),
@@ -1080,6 +1191,7 @@ pub fn write_prepare_plane_oracle_bundle_from_config_with_overrides(
 /// Execute the imager using an already-parsed configuration.
 pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
     validate_save_model_request(config)?;
+    validate_auto_mask_config(config.use_mask, &config.auto_mask)?;
     let total_start = Instant::now();
     let stage_start = Instant::now();
     let ms_paths = measurement_set_paths(config)?;
@@ -1151,7 +1263,7 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
         PreparedInput::Cube(cube) => cube.freq_ref,
     };
     let prepared_input = prepared;
-    let run_result = match prepared_input {
+    let (run_result, effective_clean_mask) = match prepared_input {
         PreparedInput::Mfs(plane) => {
             let clean = CleanConfig {
                 niter: if config.dirty_only { 0 } else { config.niter },
@@ -1165,50 +1277,88 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
                 max_psf_fraction: config.max_psf_fraction,
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             };
-            let clean_mask = build_clean_mask(
+            let user_clean_mask = build_clean_mask(
                 config.imsize,
                 &config.mask_boxes,
                 config.mask_image.as_deref(),
             )?;
             if config.deconvolver == Deconvolver::Mtmfs {
-                RunProducts::Mtmfs(
-                    run_mtmfs(&MtmfsRequest {
-                        geometry,
-                        visibility_batches: plane.batches,
-                        sample_frequency_batches_hz: plane.sample_frequency_batches_hz,
-                        gridder_mode: plane.gridder_mode,
-                        plane_stokes: plane.plane_stokes,
-                        weighting: config.weighting,
-                        reffreq_hz: plane.reffreq_hz,
-                        selected_frequency_range_hz: plane.selected_frequency_range_hz,
-                        nterms: config.nterms,
-                        clean,
-                        clean_mask,
-                        compatibility: CompatibilityMode::CasaStandardMfs,
-                    })
-                    .map_err(|error| error.to_string())?,
+                if config.use_mask == CleanMaskMode::AutoMultiThreshold {
+                    return Err(
+                        "usemask='auto-multithresh' does not yet support deconvolver='mtmfs'"
+                            .to_string(),
+                    );
+                }
+                (
+                    RunProducts::Mtmfs(
+                        run_mtmfs(&MtmfsRequest {
+                            geometry,
+                            visibility_batches: plane.batches,
+                            sample_frequency_batches_hz: plane.sample_frequency_batches_hz,
+                            gridder_mode: plane.gridder_mode,
+                            plane_stokes: plane.plane_stokes,
+                            weighting: config.weighting,
+                            reffreq_hz: plane.reffreq_hz,
+                            selected_frequency_range_hz: plane.selected_frequency_range_hz,
+                            nterms: config.nterms,
+                            clean,
+                            clean_mask: user_clean_mask.clone(),
+                            compatibility: CompatibilityMode::CasaStandardMfs,
+                        })
+                        .map_err(|error| error.to_string())?,
+                    ),
+                    user_clean_mask,
                 )
             } else {
-                RunProducts::Mfs(
-                    run_imaging(&ImagingRequest {
+                let mut clean_mask = user_clean_mask;
+                let common_request = ImagingRequest {
+                    geometry,
+                    visibility_batches: plane.batches,
+                    gridder_mode: plane.gridder_mode,
+                    plane_stokes: plane.plane_stokes,
+                    weighting: config.weighting,
+                    reffreq_hz: plane.reffreq_hz,
+                    selected_frequency_range_hz: plane.selected_frequency_range_hz,
+                    deconvolver: config.deconvolver,
+                    multiscale_scales: config.multiscale_scales.clone(),
+                    small_scale_bias: config.small_scale_bias,
+                    clean,
+                    clean_mask: clean_mask.clone(),
+                    w_term_mode: config.w_term_mode,
+                    w_project_planes: config.w_project_planes,
+                    compatibility: CompatibilityMode::CasaStandardMfs,
+                };
+                let mut dirty_seed = None;
+                if config.use_mask == CleanMaskMode::AutoMultiThreshold {
+                    let mut dirty_request = common_request.clone();
+                    dirty_request.clean = frontend_dirty_clean_config(clean.psf_cutoff);
+                    dirty_request.clean_mask = clean_mask.clone();
+                    let dirty = run_imaging(&dirty_request).map_err(|error| error.to_string())?;
+                    clean_mask = Some(build_auto_multithresh_clean_mask(
                         geometry,
-                        visibility_batches: plane.batches,
-                        gridder_mode: plane.gridder_mode,
-                        plane_stokes: plane.plane_stokes,
-                        weighting: config.weighting,
-                        reffreq_hz: plane.reffreq_hz,
-                        selected_frequency_range_hz: plane.selected_frequency_range_hz,
-                        deconvolver: config.deconvolver,
-                        multiscale_scales: config.multiscale_scales.clone(),
-                        small_scale_bias: config.small_scale_bias,
-                        clean,
+                        &dirty.residual,
+                        dirty.diagnostics.max_psf_sidelobe_level,
+                        dirty.beam,
+                        clean_mask.as_ref(),
+                        &config.auto_mask,
+                    )?);
+                    dirty_seed = Some(dirty);
+                }
+                if clean.niter == 0 {
+                    let result = if let Some(dirty) = dirty_seed {
+                        dirty
+                    } else {
+                        run_imaging(&common_request).map_err(|error| error.to_string())?
+                    };
+                    (RunProducts::Mfs(result), clean_mask)
+                } else {
+                    let mut request = common_request;
+                    request.clean_mask = clean_mask.clone();
+                    (
+                        RunProducts::Mfs(run_imaging(&request).map_err(|error| error.to_string())?),
                         clean_mask,
-                        w_term_mode: config.w_term_mode,
-                        w_project_planes: config.w_project_planes,
-                        compatibility: CompatibilityMode::CasaStandardMfs,
-                    })
-                    .map_err(|error| error.to_string())?,
-                )
+                    )
+                }
             }
         }
         PreparedInput::Cube(cube) => {
@@ -1224,14 +1374,57 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
                 max_psf_fraction: config.max_psf_fraction,
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             };
-            let clean_mask = build_clean_mask(
+            let mut clean_mask = build_clean_mask(
                 config.imsize,
                 &config.mask_boxes,
                 config.mask_image.as_deref(),
             )?;
-            RunProducts::Cube(run_frontend_cube(
-                geometry, cube, config, clean, clean_mask,
-            )?)
+            let mut dirty_seed = None;
+            if config.use_mask == CleanMaskMode::AutoMultiThreshold {
+                let dirty = run_frontend_cube(
+                    geometry,
+                    cube.clone(),
+                    config,
+                    frontend_dirty_clean_config(clean.psf_cutoff),
+                    clean_mask.clone(),
+                )?;
+                let max_psf_sidelobe = dirty
+                    .result
+                    .diagnostics
+                    .channel_diagnostics
+                    .iter()
+                    .map(|diagnostics| diagnostics.max_psf_sidelobe_level)
+                    .fold(0.0f32, f32::max);
+                let beam = dirty.result.beams.iter().copied().flatten().next();
+                clean_mask = Some(build_auto_multithresh_clean_mask(
+                    geometry,
+                    &dirty.result.residual,
+                    max_psf_sidelobe,
+                    beam,
+                    clean_mask.as_ref(),
+                    &config.auto_mask,
+                )?);
+                dirty_seed = Some(dirty);
+            }
+            if clean.niter == 0 {
+                let result = if let Some(dirty) = dirty_seed {
+                    dirty
+                } else {
+                    run_frontend_cube(geometry, cube, config, clean, clean_mask.clone())?
+                };
+                (RunProducts::Cube(result), clean_mask)
+            } else {
+                (
+                    RunProducts::Cube(run_frontend_cube(
+                        geometry,
+                        cube,
+                        config,
+                        clean,
+                        clean_mask.clone(),
+                    )?),
+                    clean_mask,
+                )
+            }
         }
     };
     let run_imaging_time = stage_start.elapsed();
@@ -1271,7 +1464,7 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
             total_start.elapsed(),
         );
     }
-    write_products(config, &coords, &run_result)?;
+    write_products(config, &coords, &run_result, effective_clean_mask.as_ref())?;
     let write_products_time = stage_start.elapsed();
     maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
 
@@ -1641,6 +1834,10 @@ pub struct CliConfig {
     pub max_psf_fraction: f32,
     /// Hogbom minor-cycle iteration accounting policy.
     pub hogbom_iteration_mode: HogbomIterationMode,
+    /// CASA-style clean mask mode.
+    pub use_mask: CleanMaskMode,
+    /// CASA-style `auto-multithresh` controls used when `use_mask` is auto.
+    pub auto_mask: AutoMultiThresholdConfig,
     /// Optional inclusive pixel-space clean boxes `(x0, y0, x1, y1)`.
     pub mask_boxes: Vec<[usize; 4]>,
     /// Optional CASA image mask whose non-zero pixels are cleanable.
@@ -1697,6 +1894,8 @@ impl CliConfig {
         let mut min_psf_fraction = 0.05f32;
         let mut max_psf_fraction = 0.8f32;
         let mut hogbom_iteration_mode = HogbomIterationMode::Strict;
+        let mut use_mask = CleanMaskMode::User;
+        let mut auto_mask = AutoMultiThresholdConfig::default();
         let mut mask_boxes = Vec::<[usize; 4]>::new();
         let mut mask_image = None::<PathBuf>;
         let mut w_term_mode = WTermMode::None;
@@ -1974,6 +2173,72 @@ impl CliConfig {
                     hogbom_iteration_mode = HogbomIterationMode::CasaInclusive;
                     continue;
                 }
+                "--usemask" => {
+                    use_mask = parse_clean_mask_mode(&next_value(&mut args, "--usemask")?)?;
+                    continue;
+                }
+                "--sidelobethreshold" => {
+                    auto_mask.sidelobe_threshold =
+                        parse_auto_mask_f32(&next_value(&mut args, "--sidelobethreshold")?)?;
+                    continue;
+                }
+                "--noisethreshold" => {
+                    auto_mask.noise_threshold =
+                        parse_auto_mask_f32(&next_value(&mut args, "--noisethreshold")?)?;
+                    continue;
+                }
+                "--lownoisethreshold" => {
+                    auto_mask.low_noise_threshold =
+                        parse_auto_mask_f32(&next_value(&mut args, "--lownoisethreshold")?)?;
+                    continue;
+                }
+                "--negativethreshold" => {
+                    auto_mask.negative_threshold =
+                        parse_auto_mask_f32(&next_value(&mut args, "--negativethreshold")?)?;
+                    continue;
+                }
+                "--smoothfactor" => {
+                    auto_mask.smooth_factor =
+                        parse_auto_mask_f32(&next_value(&mut args, "--smoothfactor")?)?;
+                    continue;
+                }
+                "--minbeamfrac" => {
+                    auto_mask.min_beam_frac =
+                        parse_auto_mask_f32(&next_value(&mut args, "--minbeamfrac")?)?;
+                    continue;
+                }
+                "--cutthreshold" => {
+                    auto_mask.cut_threshold =
+                        parse_auto_mask_f32(&next_value(&mut args, "--cutthreshold")?)?;
+                    continue;
+                }
+                "--growiterations" => {
+                    auto_mask.grow_iterations = next_value(&mut args, "--growiterations")?
+                        .parse()
+                        .map_err(|error| format!("parse --growiterations: {error}"))?;
+                    continue;
+                }
+                "--dogrowprune" => {
+                    auto_mask.do_grow_prune = true;
+                    continue;
+                }
+                "--no-dogrowprune" => {
+                    auto_mask.do_grow_prune = false;
+                    continue;
+                }
+                "--minpercentchange" => {
+                    auto_mask.min_percent_change =
+                        parse_auto_mask_f32(&next_value(&mut args, "--minpercentchange")?)?;
+                    continue;
+                }
+                "--fastnoise" => {
+                    auto_mask.fast_noise = true;
+                    continue;
+                }
+                "--no-fastnoise" => {
+                    auto_mask.fast_noise = false;
+                    continue;
+                }
                 "--mask-box" => {
                     mask_boxes.push(parse_mask_box(&next_value(&mut args, "--mask-box")?)?);
                     continue;
@@ -2024,6 +2289,7 @@ impl CliConfig {
         if !(mosaic_pb_limit.is_finite() && mosaic_pb_limit > 0.0) {
             return Err("--pblimit must be finite and > 0".to_string());
         }
+        validate_auto_mask_config(use_mask, &auto_mask)?;
 
         Ok(Self {
             ms: ms.ok_or_else(|| format!("missing --ms\n\n{}", help_text()))?,
@@ -2066,6 +2332,8 @@ impl CliConfig {
             min_psf_fraction,
             max_psf_fraction,
             hogbom_iteration_mode,
+            use_mask,
+            auto_mask,
             mask_boxes,
             mask_image,
             w_term_mode,
@@ -2157,6 +2425,7 @@ struct PlaneInput {
     gridder_mode: GridderMode,
 }
 
+#[derive(Clone)]
 struct CubePlaneInput {
     phase_center: PhaseCenter,
     freq_ref: FrequencyRef,
@@ -7751,6 +8020,20 @@ fn pb_support_mask_product(pb: &Array4<f32>, pb_limit: f32) -> ArrayD<bool> {
         .into_dyn()
 }
 
+fn clean_mask_product(mask: &Array2<bool>, result: &RunProducts) -> Array4<f32> {
+    let channel_count = result.channel_frequencies_hz().len().max(1);
+    let (nx, ny) = mask.dim();
+    let mut product = Array4::<f32>::zeros((nx, ny, 1, channel_count));
+    for channel_index in 0..channel_count {
+        for x in 0..nx {
+            for y in 0..ny {
+                product[(x, y, 0, channel_index)] = if mask[(x, y)] { 1.0 } else { 0.0 };
+            }
+        }
+    }
+    product
+}
+
 fn pb_limited_product(pb: &Array4<f32>, pb_limit: f32) -> Array4<f32> {
     pb.mapv(|value| {
         if value.is_finite() && value > pb_limit {
@@ -7765,6 +8048,7 @@ fn write_products(
     config: &CliConfig,
     coords: &CoordinateSystem,
     result: &RunProducts,
+    clean_mask: Option<&Array2<bool>>,
 ) -> Result<(), String> {
     let base = config.imagename.to_string_lossy().to_string();
     let channel_frequencies_hz = result.channel_frequencies_hz();
@@ -8027,6 +8311,20 @@ fn write_products(
         channel_frequencies_hz,
         reffreq_hz,
     )?;
+    if let Some(clean_mask) = clean_mask {
+        let mask_product = clean_mask_product(clean_mask, result);
+        write_single_product(
+            &PathBuf::from(format!("{base}.mask")),
+            &mask_product,
+            coords,
+            "",
+            ImageBeamSet::default(),
+            "mask",
+            plane_stokes,
+            channel_frequencies_hz,
+            reffreq_hz,
+        )?;
+    }
     if let Some(weight_product) = debug_weight_product.as_ref() {
         write_single_product(
             &PathBuf::from(format!("{base}.weight")),
@@ -8756,6 +9054,65 @@ fn parse_mask_box(text: &str) -> Result<[usize; 4], String> {
     Ok([parts[0], parts[1], parts[2], parts[3]])
 }
 
+fn parse_clean_mask_mode(text: &str) -> Result<CleanMaskMode, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "user" => Ok(CleanMaskMode::User),
+        "auto-multithresh" | "automultithresh" => Ok(CleanMaskMode::AutoMultiThreshold),
+        other => Err(format!(
+            "unsupported --usemask {other:?}; expected user or auto-multithresh"
+        )),
+    }
+}
+
+fn parse_auto_mask_f32(text: &str) -> Result<f32, String> {
+    let value = text
+        .parse::<f32>()
+        .map_err(|error| format!("parse automask value {text:?}: {error}"))?;
+    if !value.is_finite() {
+        return Err(format!("automask value {text:?} must be finite"));
+    }
+    Ok(value)
+}
+
+fn validate_auto_mask_config(
+    mode: CleanMaskMode,
+    config: &AutoMultiThresholdConfig,
+) -> Result<(), String> {
+    if mode != CleanMaskMode::AutoMultiThreshold {
+        return Ok(());
+    }
+    for (name, value) in [
+        ("sidelobethreshold", config.sidelobe_threshold),
+        ("noisethreshold", config.noise_threshold),
+        ("lownoisethreshold", config.low_noise_threshold),
+        ("negativethreshold", config.negative_threshold),
+        ("smoothfactor", config.smooth_factor),
+        ("minbeamfrac", config.min_beam_frac),
+        ("cutthreshold", config.cut_threshold),
+        ("minpercentchange", config.min_percent_change),
+    ] {
+        if !value.is_finite() {
+            return Err(format!(
+                "{name} must be finite for usemask='auto-multithresh'"
+            ));
+        }
+    }
+    if config.sidelobe_threshold < 0.0
+        || config.noise_threshold < 0.0
+        || config.low_noise_threshold < 0.0
+        || config.negative_threshold < 0.0
+        || config.smooth_factor <= 0.0
+        || config.min_beam_frac < 0.0
+        || config.cut_threshold < 0.0
+    {
+        return Err(
+            "auto-multithresh thresholds must be non-negative and smoothfactor must be > 0"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn build_clean_mask(
     imsize: usize,
     mask_boxes: &[[usize; 4]],
@@ -8825,6 +9182,258 @@ fn merge_mask_image(mask: &mut Array2<bool>, path: &Path) -> Result<(), String> 
             shape
         )),
     }
+}
+
+fn build_auto_multithresh_clean_mask(
+    geometry: ImageGeometry,
+    residual: &Array4<f32>,
+    max_psf_sidelobe_level: f32,
+    beam: Option<BeamFit>,
+    user_mask: Option<&Array2<bool>>,
+    config: &AutoMultiThresholdConfig,
+) -> Result<Array2<bool>, String> {
+    let shape = residual.shape();
+    if shape.len() != 4 {
+        return Err(format!(
+            "auto-multithresh residual product must be rank-4, found shape {shape:?}"
+        ));
+    }
+    if shape[0] != geometry.nx() || shape[1] != geometry.ny() {
+        return Err(format!(
+            "auto-multithresh residual shape {:?} does not match image geometry {:?}",
+            &shape[0..2],
+            geometry.image_shape
+        ));
+    }
+    let min_region_pixels = auto_mask_min_region_pixels(geometry, beam, config);
+    let mut mask = user_mask
+        .cloned()
+        .unwrap_or_else(|| Array2::<bool>::from_elem((geometry.nx(), geometry.ny()), false));
+    for stokes_index in 0..shape[2] {
+        for channel_index in 0..shape[3] {
+            let plane = residual
+                .slice(s![.., .., stokes_index, channel_index])
+                .to_owned();
+            let plane_mask = auto_multithresh_plane_mask(
+                &plane,
+                max_psf_sidelobe_level,
+                min_region_pixels,
+                config,
+            );
+            Zip::from(&mut mask)
+                .and(&plane_mask)
+                .for_each(|out, generated| *out = *out || *generated);
+        }
+    }
+    Ok(mask)
+}
+
+fn auto_mask_min_region_pixels(
+    geometry: ImageGeometry,
+    beam: Option<BeamFit>,
+    config: &AutoMultiThresholdConfig,
+) -> usize {
+    if config.min_beam_frac <= 0.0 {
+        return 1;
+    }
+    let Some(beam) = beam else {
+        return 1;
+    };
+    let cell_area = geometry.cell_size_rad[0].abs() * geometry.cell_size_rad[1].abs();
+    if !(cell_area.is_finite() && cell_area > 0.0) {
+        return 1;
+    }
+    let beam_area = std::f64::consts::PI * beam.major_fwhm_rad.abs() * beam.minor_fwhm_rad.abs()
+        / (4.0 * std::f64::consts::LN_2);
+    if !(beam_area.is_finite() && beam_area > 0.0) {
+        return 1;
+    }
+    ((config.min_beam_frac as f64 * beam_area / cell_area).ceil() as usize).max(1)
+}
+
+fn auto_multithresh_plane_mask(
+    residual: &Array2<f32>,
+    max_psf_sidelobe_level: f32,
+    min_region_pixels: usize,
+    config: &AutoMultiThresholdConfig,
+) -> Array2<bool> {
+    let Some(stats) = robust_plane_stats(residual) else {
+        return Array2::<bool>::from_elem(residual.dim(), false);
+    };
+    let sidelobe_threshold =
+        stats.median + max_psf_sidelobe_level.max(0.0) * config.sidelobe_threshold * stats.absmax;
+    let noise_threshold = stats.median + config.noise_threshold * stats.robust_rms;
+    let low_noise_threshold = stats.median
+        + (max_psf_sidelobe_level.max(0.0) * config.sidelobe_threshold * stats.absmax)
+            .max(config.low_noise_threshold * stats.robust_rms);
+    let main_threshold = sidelobe_threshold.max(noise_threshold);
+    let mut initial = threshold_positive_mask(residual, main_threshold);
+    prune_small_regions(&mut initial, min_region_pixels);
+    let mut grown = initial.clone();
+    if config.grow_iterations > 0 {
+        let constraint = threshold_positive_mask(residual, low_noise_threshold);
+        grow_mask_constrained(&mut grown, &constraint, config.grow_iterations);
+        if config.do_grow_prune {
+            prune_small_regions(&mut grown, min_region_pixels);
+        }
+    }
+    if config.negative_threshold > 0.0 {
+        let negative_threshold = stats.median
+            - (max_psf_sidelobe_level.max(0.0) * config.sidelobe_threshold * stats.absmax)
+                .max(config.negative_threshold * stats.robust_rms);
+        let mut negative = threshold_negative_mask(residual, negative_threshold);
+        prune_small_regions(&mut negative, min_region_pixels);
+        Zip::from(&mut grown)
+            .and(&negative)
+            .for_each(|out, generated| *out = *out || *generated);
+    }
+    grown
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RobustPlaneStats {
+    median: f32,
+    robust_rms: f32,
+    absmax: f32,
+}
+
+fn robust_plane_stats(residual: &Array2<f32>) -> Option<RobustPlaneStats> {
+    let mut values = residual
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.total_cmp(b));
+    let median = sorted_median(&values);
+    let absmax = values
+        .iter()
+        .fold(0.0f32, |acc, value| acc.max(value.abs()));
+    let mut deviations = values
+        .iter()
+        .map(|value| (value - median).abs())
+        .collect::<Vec<_>>();
+    deviations.sort_by(|a, b| a.total_cmp(b));
+    let mad_rms = sorted_median(&deviations) * 1.4826;
+    let rms = (values.iter().map(|value| value * value).sum::<f32>() / values.len() as f32).sqrt();
+    let robust_rms = if mad_rms > 0.0 { mad_rms } else { rms };
+    Some(RobustPlaneStats {
+        median,
+        robust_rms,
+        absmax,
+    })
+}
+
+fn sorted_median(values: &[f32]) -> f32 {
+    let mid = values.len() / 2;
+    if values.len() % 2 == 0 {
+        0.5 * (values[mid - 1] + values[mid])
+    } else {
+        values[mid]
+    }
+}
+
+fn threshold_positive_mask(residual: &Array2<f32>, threshold: f32) -> Array2<bool> {
+    residual.mapv(|value| value.is_finite() && value >= threshold)
+}
+
+fn threshold_negative_mask(residual: &Array2<f32>, threshold: f32) -> Array2<bool> {
+    residual.mapv(|value| value.is_finite() && value <= threshold)
+}
+
+fn grow_mask_constrained(
+    mask: &mut Array2<bool>,
+    constraint: &Array2<bool>,
+    max_iterations: usize,
+) {
+    let (nx, ny) = mask.dim();
+    for _ in 0..max_iterations {
+        let mut next = mask.clone();
+        let mut changed = false;
+        for x in 0..nx {
+            for y in 0..ny {
+                if mask[(x, y)] || !constraint[(x, y)] {
+                    continue;
+                }
+                if neighboring_masked(mask, x, y) {
+                    next[(x, y)] = true;
+                    changed = true;
+                }
+            }
+        }
+        *mask = next;
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn neighboring_masked(mask: &Array2<bool>, x: usize, y: usize) -> bool {
+    let (nx, ny) = mask.dim();
+    (x > 0 && mask[(x - 1, y)])
+        || (x + 1 < nx && mask[(x + 1, y)])
+        || (y > 0 && mask[(x, y - 1)])
+        || (y + 1 < ny && mask[(x, y + 1)])
+}
+
+fn prune_small_regions(mask: &mut Array2<bool>, min_pixels: usize) {
+    if min_pixels <= 1 {
+        return;
+    }
+    let (nx, ny) = mask.dim();
+    let mut visited = Array2::<bool>::from_elem((nx, ny), false);
+    for x0 in 0..nx {
+        for y0 in 0..ny {
+            if visited[(x0, y0)] || !mask[(x0, y0)] {
+                continue;
+            }
+            let mut region = Vec::new();
+            let mut queue = VecDeque::from([(x0, y0)]);
+            visited[(x0, y0)] = true;
+            while let Some((x, y)) = queue.pop_front() {
+                region.push((x, y));
+                for (nx0, ny0) in neighbors4(mask.dim(), x, y) {
+                    if !visited[(nx0, ny0)] && mask[(nx0, ny0)] {
+                        visited[(nx0, ny0)] = true;
+                        queue.push_back((nx0, ny0));
+                    }
+                }
+            }
+            if region.len() < min_pixels {
+                for (x, y) in region {
+                    mask[(x, y)] = false;
+                }
+            }
+        }
+    }
+}
+
+fn neighbors4(
+    (nx, ny): (usize, usize),
+    x: usize,
+    y: usize,
+) -> impl Iterator<Item = (usize, usize)> {
+    let mut neighbors = [(usize::MAX, usize::MAX); 4];
+    let mut count = 0;
+    if x > 0 {
+        neighbors[count] = (x - 1, y);
+        count += 1;
+    }
+    if x + 1 < nx {
+        neighbors[count] = (x + 1, y);
+        count += 1;
+    }
+    if y > 0 {
+        neighbors[count] = (x, y - 1);
+        count += 1;
+    }
+    if y + 1 < ny {
+        neighbors[count] = (x, y + 1);
+        count += 1;
+    }
+    neighbors.into_iter().take(count)
 }
 
 fn beam_to_gaussian(beam: BeamFit) -> GaussianBeam {
@@ -10775,6 +11384,18 @@ Options:
   --hogbom-iteration-mode MODE
                             strict or casa; casa mirrors CASA's inclusive hclean loop
   --casa-hogbom-iterations  alias for --hogbom-iteration-mode casa
+  --usemask MODE            user or auto-multithresh
+  --sidelobethreshold VALUE auto-multithresh sidelobe factor (default 3.0)
+  --noisethreshold VALUE    auto-multithresh noise factor (default 5.0)
+  --lownoisethreshold VALUE auto-multithresh grow-mask noise factor (default 1.5)
+  --negativethreshold VALUE auto-multithresh negative-feature factor (default 0.0)
+  --smoothfactor VALUE      auto-multithresh smoothing factor (default 1.0)
+  --minbeamfrac VALUE       auto-multithresh pruning beam fraction (default 0.3)
+  --cutthreshold VALUE      auto-multithresh smoothed-mask cutoff (default 0.01)
+  --growiterations N        auto-multithresh grow iterations (default 75)
+  --no-dogrowprune          skip pruning after auto-multithresh growth
+  --minpercentchange VALUE  auto-multithresh percent-change stop control
+  --no-fastnoise            use the slower robust-noise automask setting
   --mask-box X0,Y0,X1,Y1    inclusive clean mask box in pixel coordinates (repeatable)
   --mask-image PATH         CASA image mask whose non-zero pixels are cleanable
   --wterm MODE              none, direct, or wproject
@@ -12027,6 +12648,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -12076,6 +12699,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -12141,6 +12766,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -12198,6 +12825,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -12258,6 +12887,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -12315,6 +12946,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -12364,6 +12997,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -12587,6 +13222,70 @@ mod tests {
                 .contains("exceeds image bounds")
         );
         assert!(build_clean_mask(6, &[], None).unwrap().is_none());
+    }
+
+    #[test]
+    fn cli_parses_auto_multithresh_controls() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/demo"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+            OsString::from("--usemask"),
+            OsString::from("auto-multithresh"),
+            OsString::from("--sidelobethreshold"),
+            OsString::from("2.0"),
+            OsString::from("--noisethreshold"),
+            OsString::from("4.25"),
+            OsString::from("--lownoisethreshold"),
+            OsString::from("1.5"),
+            OsString::from("--negativethreshold"),
+            OsString::from("3.0"),
+            OsString::from("--minbeamfrac"),
+            OsString::from("0.1"),
+            OsString::from("--growiterations"),
+            OsString::from("12"),
+            OsString::from("--no-dogrowprune"),
+            OsString::from("--no-fastnoise"),
+        ])
+        .unwrap();
+
+        assert_eq!(config.use_mask, CleanMaskMode::AutoMultiThreshold);
+        assert_eq!(config.auto_mask.sidelobe_threshold, 2.0);
+        assert_eq!(config.auto_mask.noise_threshold, 4.25);
+        assert_eq!(config.auto_mask.low_noise_threshold, 1.5);
+        assert_eq!(config.auto_mask.negative_threshold, 3.0);
+        assert_eq!(config.auto_mask.min_beam_frac, 0.1);
+        assert_eq!(config.auto_mask.grow_iterations, 12);
+        assert!(!config.auto_mask.do_grow_prune);
+        assert!(!config.auto_mask.fast_noise);
+    }
+
+    #[test]
+    fn auto_multithresh_mask_thresholds_grows_and_prunes_regions() {
+        let mut residual = Array2::<f32>::zeros((9, 9));
+        residual[(4, 4)] = 10.0;
+        residual[(4, 5)] = 4.0;
+        residual[(5, 4)] = 4.0;
+        residual[(0, 0)] = 9.0;
+        let config = AutoMultiThresholdConfig {
+            sidelobe_threshold: 0.0,
+            noise_threshold: 2.0,
+            low_noise_threshold: 0.4,
+            min_beam_frac: 0.0,
+            grow_iterations: 2,
+            ..AutoMultiThresholdConfig::default()
+        };
+
+        let mask = auto_multithresh_plane_mask(&residual, 0.0, 2, &config);
+        assert!(mask[(4, 4)]);
+        assert!(mask[(4, 5)]);
+        assert!(mask[(5, 4)]);
+        assert!(!mask[(0, 0)], "single-pixel island should be pruned");
     }
 
     #[test]
@@ -13949,6 +14648,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -14043,6 +14744,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -14133,6 +14836,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -14275,6 +14980,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -14397,6 +15104,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::WProject,
@@ -14472,6 +15181,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::WProject,
@@ -14579,6 +15290,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -14681,6 +15394,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -14765,6 +15480,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -14903,6 +15620,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -14993,6 +15712,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -15084,6 +15805,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -15170,6 +15893,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -15272,6 +15997,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -15382,6 +16109,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -15469,6 +16198,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -15699,6 +16430,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -15799,6 +16532,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -15916,6 +16651,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -16050,6 +16787,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -16151,6 +16890,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -16252,6 +16993,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -16372,6 +17115,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -16507,6 +17252,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -16620,6 +17367,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -16732,6 +17481,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -16822,6 +17573,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -16906,6 +17659,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
@@ -16991,6 +17746,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
