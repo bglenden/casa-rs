@@ -10,7 +10,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use casa_tables::{ColumnBinding, ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
@@ -20,6 +21,7 @@ use casa_types::{
 use ndarray::{ArrayD, IxDyn};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use thiserror::Error;
 
 use crate::MsError;
@@ -550,16 +552,33 @@ fn apply_tfcrop_flags(
 ) -> Result<ChangeSet, FlaggingError> {
     let samples = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
     let mut to_flag = std::collections::BTreeSet::<(usize, usize, usize)>::new();
+    let mut freq_flags = std::collections::BTreeSet::<(usize, usize, usize)>::new();
+    let mut time_flags = std::collections::BTreeSet::<(usize, usize, usize)>::new();
     for group in group_samples(&samples).values() {
         for by_corr in samples_by_corr(group) {
             for by_row in samples_by_row(&by_corr).values() {
-                flag_outliers(by_row, request.freqcutoff, &mut to_flag);
+                flag_outliers(by_row, request.freqcutoff, &mut freq_flags);
             }
             for by_chan in samples_by_chan(&by_corr).values() {
-                flag_outliers(by_chan, request.timecutoff, &mut to_flag);
+                flag_outliers(by_chan, request.timecutoff, &mut time_flags);
             }
         }
     }
+    to_flag.extend(freq_flags.iter().copied());
+    to_flag.extend(time_flags.iter().copied());
+    trace_flagdata(json!({
+        "mode": "tfcrop",
+        "implementation": "casa-rs-native-current",
+        "selected_rows": selected_rows.len(),
+        "samples": samples.len(),
+        "groups": group_samples(&samples).len(),
+        "freqcutoff": request.freqcutoff,
+        "timecutoff": request.timecutoff,
+        "freq_candidate_samples": freq_flags.len(),
+        "time_candidate_samples": time_flags.len(),
+        "union_candidate_samples": to_flag.len(),
+        "union_by_spw_corr": flag_set_counts_by_spw_corr(&to_flag, &samples),
+    }));
     apply_flag_set(ms, &to_flag)
 }
 
@@ -572,12 +591,14 @@ fn apply_rflag_flags(
     let samples = load_samples(ms, selected_rows, channel_selections, request.data_column)?;
     let (timedev, freqdev) = rflag_thresholds_for_samples(&samples, request);
     let mut to_flag = std::collections::BTreeSet::<(usize, usize, usize)>::new();
+    let mut time_flags = std::collections::BTreeSet::<(usize, usize, usize)>::new();
+    let mut freq_flags = std::collections::BTreeSet::<(usize, usize, usize)>::new();
     for group in group_samples(&samples).values() {
         for by_corr in samples_by_corr(group) {
             for by_chan in samples_by_chan(&by_corr).values() {
                 if robust_sigma(by_chan.iter().map(|sample| sample.amp)) > timedev {
                     for sample in by_chan {
-                        to_flag.insert((sample.row, sample.corr, sample.chan));
+                        time_flags.insert((sample.row, sample.corr, sample.chan));
                     }
                 }
             }
@@ -585,12 +606,27 @@ fn apply_rflag_flags(
                 let med = median(by_row.iter().map(|sample| sample.amp).collect());
                 for sample in by_row {
                     if (sample.amp - med).abs() > freqdev {
-                        to_flag.insert((sample.row, sample.corr, sample.chan));
+                        freq_flags.insert((sample.row, sample.corr, sample.chan));
                     }
                 }
             }
         }
     }
+    to_flag.extend(time_flags.iter().copied());
+    to_flag.extend(freq_flags.iter().copied());
+    trace_flagdata(json!({
+        "mode": "rflag",
+        "implementation": "casa-rs-native-current",
+        "selected_rows": selected_rows.len(),
+        "samples": samples.len(),
+        "groups": group_samples(&samples).len(),
+        "timedev": timedev,
+        "freqdev": freqdev,
+        "time_candidate_samples": time_flags.len(),
+        "freq_candidate_samples": freq_flags.len(),
+        "union_candidate_samples": to_flag.len(),
+        "union_by_spw_corr": flag_set_counts_by_spw_corr(&to_flag, &samples),
+    }));
     apply_flag_set(ms, &to_flag)
 }
 
@@ -1009,6 +1045,35 @@ fn percent_flagged(samples: &[Sample]) -> f64 {
         return 0.0;
     }
     100.0 * samples.iter().filter(|sample| sample.flag).count() as f64 / samples.len() as f64
+}
+
+fn trace_flagdata(value: serde_json::Value) {
+    let Ok(path) = std::env::var("CASA_RS_FLAGDATA_TRACE") else {
+        return;
+    };
+    match OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(mut file) => {
+            if serde_json::to_writer(&mut file, &value).is_ok() {
+                let _ = file.write_all(b"\n");
+            }
+        }
+        Err(error) => eprintln!("failed to open CASA_RS_FLAGDATA_TRACE {path}: {error}"),
+    }
+}
+
+fn flag_set_counts_by_spw_corr(
+    flags: &std::collections::BTreeSet<(usize, usize, usize)>,
+    samples: &[Sample],
+) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for sample in samples {
+        if flags.contains(&(sample.row, sample.corr, sample.chan)) {
+            *counts
+                .entry(format!("spw{}_corr{}", sample.spw, sample.corr))
+                .or_default() += 1;
+        }
+    }
+    counts
 }
 
 type GroupKey = (i32, i32, i32, i32, i32);

@@ -114,6 +114,68 @@ NaN, infinity, and normal values `<= FLT_EPSILON` as clip-zero samples. The
 native implementation now matches that checked behavior without widening to
 the 232 samples below `1e-6` in the tutorial MS.
 
+## TFCrop/RFlag Diagnostic Findings
+
+The remaining `tfcrop` and `rflag` differences are too large to be explained
+by floating-point drift. The current native code is not executing the same
+decision algorithm as the CASA C++ agents.
+
+For `rflag`, CASA `action="calculate"` reports field/SPW-specific thresholds
+for `scan=251`:
+
+| SPW | CASA `timedev` | CASA `freqdev` |
+| ---: | ---: | ---: |
+| 0 | 0.00271737629 | 0.00241967238 |
+| 1 | 0.00104904500 | 0.00095542112 |
+| 2 | 0.00363038148 | 0.00282458808 |
+| 3 | 0.00147350823 | 0.00115331159 |
+
+The current casa-rs `rflag` path instead computes one global pair:
+`timedev=0.006615205813706328` and
+`freqdev=0.007730504001694498`. That global thresholding is much looser than
+CASA for every SPW and explains much of the underflagging.
+
+Coordinate-level diagnostics also show a correlation-handling mismatch. CASA's
+default `ABS ALL` agent path produces identical counts across correlations
+within each SPW, while casa-rs currently evaluates each correlation
+independently:
+
+| Mode | Output | SPW 0 counts by corr | SPW 1 counts by corr | SPW 2 counts by corr | SPW 3 counts by corr |
+| --- | --- | --- | --- | --- | --- |
+| `tfcrop` | CASA | 18,323 / 18,323 / 18,323 / 18,323 | 4,036 / 4,036 / 4,036 / 4,036 | 12,188 / 12,188 / 12,188 / 12,188 | 3,679 / 3,679 / 3,679 / 3,679 |
+| `tfcrop` | casa-rs | 17,484 / 19,203 / 18,745 / 17,284 | 4,836 / 4,727 / 4,642 / 5,232 | 15,709 / 17,439 / 17,622 / 16,954 | 4,655 / 4,370 / 4,434 / 4,770 |
+| `rflag` | CASA | 19,052 / 19,052 / 19,052 / 19,052 | 7,484 / 7,484 / 7,484 / 7,484 | 18,095 / 18,095 / 18,095 / 18,095 | 2,775 / 2,775 / 2,775 / 2,775 |
+| `rflag` | casa-rs | 13,697 / 11,276 / 11,109 / 11,673 | 702 / 634 / 542 / 530 | 13,233 / 14,470 / 14,242 / 16,274 | 149 / 142 / 139 / 117 |
+
+Source inspection explains both differences:
+
+- CASA `tfcrop` runs `FlagAgentTimeFreqCrop::fitBaseAndFlag()` in `freqtime`
+  order by default, averages across the opposite axis, fits a line or
+  piecewise polynomial baseline, divides by that fit, and iteratively flags
+  normalized residuals. The current casa-rs implementation applies
+  median/MAD outlier tests directly to raw amplitudes by row and channel.
+- CASA `rflag` computes threshold histograms per `(field, spw)`, then flags
+  complex real/imag variance and spectral deviations using a moving
+  `winsize=3` time window. The current casa-rs implementation computes global
+  robust thresholds from amplitude values and applies them per correlation.
+- CASA's default auto-flagging correlation expression is `ABS ALL`, mapped by
+  `VisMapper`/`FlagMapper`; current casa-rs has no equivalent expression
+  mapper and does not propagate an automatic-mode decision across the selected
+  correlation set.
+
+Diagnostic instrumentation is available with:
+
+```sh
+CASA_RS_FLAGDATA_TRACE=/path/to/trace.jsonl target/release/flagdata \
+  --vis <clone.ms> --mode tfcrop --scan 251 --datacolumn DATA --no-flagbackup
+CASA_RS_FLAGDATA_TRACE=/path/to/trace.jsonl target/release/flagdata \
+  --vis <clone.ms> --mode rflag --scan 251 --datacolumn DATA --no-flagbackup
+```
+
+The trace records native candidate counts, global native thresholds, and
+per-SPW/correlation decision counts so future algorithm changes can be checked
+against CASA before comparing only final totals.
+
 ## Verification
 
 Targeted checks:
@@ -140,6 +202,10 @@ Covered behavior:
 
 - Bring native `tfcrop` and `rflag` counts closer to CASA agentflagger behavior
   on tutorial selections before claiming parity.
+- Replace the current native automatic-mode approximations with CASA-shaped
+  decision logic: `ABS ALL` correlation mapping, TFCrop baseline fitting and
+  normalized residual iteration, and RFlag per-field/SPW threshold histograms
+  plus moving-window complex real/imag tests.
 - Profile and optimize the full-MS scan path: release-build native
   `clipzeros` is still about 9x slower than CASA on the same tutorial data,
   and release-build `tfcrop`/`rflag` remain roughly minute-scale for one scan.
