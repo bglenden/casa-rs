@@ -1980,11 +1980,188 @@ extension MeasurementSetPlotResultSummary {
             requestedMaxPoints: result.sampling.requestedMaxPoints,
             renderedPointCount: result.sampling.renderedPointCount,
             diagnostics: result.sampling.diagnostics,
+            plotDocument: WorkbenchPlotDocument(payload: result.document),
             renderer: result.render.renderer,
             imageFormat: result.render.imageFormat,
             imageWidth: result.render.width,
             imageHeight: result.render.height,
             imageBytes: result.imageBytes
         )
+    }
+}
+
+extension WorkbenchPlotDocument {
+    init(payload: CasarsFrontendServices.PlotDocumentPayload) {
+        self.init(
+            id: payload.id,
+            title: payload.title,
+            subtitle: payload.subtitle,
+            axes: payload.axes.map(WorkbenchPlotAxis.init(payload:)),
+            layers: payload.layers.enumerated().map { index, layer in
+                WorkbenchPlotLayer(payload: layer, paletteIndex: index)
+            },
+            annotations: payload.annotations.map(WorkbenchPlotAnnotation.init(payload:)),
+            panels: payload.panels.map(WorkbenchPlotPanel.init(payload:)),
+            showLegend: payload.showLegend
+        )
+    }
+}
+
+extension WorkbenchPlotPanel {
+    init(payload: CasarsFrontendServices.PlotDocumentPanel) {
+        self.init(
+            id: payload.id,
+            title: payload.title,
+            axes: payload.axes.map(WorkbenchPlotAxis.init(payload:)),
+            layers: payload.layers.enumerated().map { index, layer in
+                WorkbenchPlotLayer(payload: layer, paletteIndex: index)
+            },
+            annotations: payload.annotations.map(WorkbenchPlotAnnotation.init(payload:))
+        )
+    }
+}
+
+extension WorkbenchPlotAxis {
+    init(payload: CasarsFrontendServices.PlotDocumentAxis) {
+        self.init(
+            id: payload.id,
+            label: payload.label,
+            unit: payload.unit,
+            range: WorkbenchPlotRange(lower: payload.lower, upper: payload.upper),
+            scale: WorkbenchPlotAxisScale(scale: payload.scale),
+            laneLabels: payload.laneLabels,
+            drawsOnTrailingEdge: payload.drawsOnTrailingEdge
+        )
+    }
+}
+
+extension WorkbenchPlotLayer {
+    init(payload: CasarsFrontendServices.PlotDocumentLayer, paletteIndex: Int) {
+        let pointCount = min(payload.xValues.count, payload.yValues.count)
+        let provenance = payload.provenance.map(WorkbenchPlotPointProvenance.init(payload:))
+        let points = pointCount <= 50_000
+            ? (0..<pointCount).map { index in
+                WorkbenchPlotPoint(
+                    x: payload.xValues[index],
+                    y: payload.yValues[index],
+                    provenance: index < provenance.count ? provenance[index] : nil
+                )
+            }
+            : []
+        let pointCloud = pointCount > 50_000
+            ? WorkbenchPlotPointCloud(
+                xValues: Array(payload.xValues.prefix(pointCount)),
+                yValues: Array(payload.yValues.prefix(pointCount)),
+                provenanceSamples: provenance
+            )
+            : nil
+        let intervalCount = min(
+            payload.intervalXStart.count,
+            payload.intervalXEnd.count,
+            payload.intervalY.count,
+            payload.intervalHeight.count
+        )
+        let intervals = (0..<intervalCount).map { index in
+            WorkbenchPlotInterval(
+                id: "\(payload.id)-interval-\(index)",
+                xStart: payload.intervalXStart[index],
+                xEnd: payload.intervalXEnd[index],
+                y: payload.intervalY[index],
+                height: payload.intervalHeight[index]
+            )
+        }
+        let layerKind = WorkbenchPlotLayerKind(kind: payload.kind)
+        self.init(
+            id: payload.id,
+            title: payload.title,
+            kind: layerKind,
+            xAxisID: payload.xAxisId,
+            yAxisID: payload.yAxisId,
+            points: points,
+            intervals: intervals,
+            pointCloud: pointCloud,
+            style: WorkbenchPlotLayerStyle(
+                colorHex: WorkbenchPlotLayerStyle.colorHex(for: payload.colorGroup, paletteIndex: paletteIndex),
+                symbolSize: payload.symbolSize,
+                lineWidth: payload.lineWidth,
+                opacity: payload.opacity
+            ),
+            provenanceSummary: payload.provenanceSummary,
+            dataProfile: WorkbenchPlotLayerDataProfile(
+                sourceSampleCount: payload.sourceSampleCount,
+                displaySampleCount: max(points.count, pointCloud?.count ?? 0, intervals.count),
+                pointBudget: layerKind == .line ? 100_000 : 50_000,
+                strategy: WorkbenchPlotPayloadStrategy(payloadStrategy: payload.payloadStrategy, fallback: pointCloud == nil ? .inlineDisplayPoints : .viewportLevelOfDetail),
+                sourceDescription: payload.provenanceSummary,
+                provenanceKey: payload.colorGroup
+            )
+        )
+    }
+}
+
+extension WorkbenchPlotAnnotation {
+    init(payload: CasarsFrontendServices.PlotDocumentAnnotation) {
+        self.init(id: payload.id, x: payload.x, y: payload.y, text: payload.text)
+    }
+}
+
+extension WorkbenchPlotPointProvenance {
+    init(payload: CasarsFrontendServices.PlotPointProvenance) {
+        self.init(
+            row: payload.row,
+            source: "row \(payload.row), corr \(payload.corr), chan \(payload.chanStart)..<\(payload.chanEnd)"
+        )
+    }
+}
+
+extension WorkbenchPlotAxisScale {
+    init(scale: CasarsFrontendServices.PlotAxisScale) {
+        switch scale {
+        case .linear:
+            self = .linear
+        case .log:
+            self = .logarithmic
+        }
+    }
+}
+
+extension WorkbenchPlotLayerKind {
+    init(kind: CasarsFrontendServices.PlotLayerKind) {
+        switch kind {
+        case .scatter:
+            self = .scatter
+        case .line:
+            self = .line
+        case .interval:
+            self = .interval
+        }
+    }
+}
+
+extension WorkbenchPlotPayloadStrategy {
+    init(payloadStrategy: String, fallback: WorkbenchPlotPayloadStrategy) {
+        switch payloadStrategy {
+        case "point_cloud":
+            self = .viewportLevelOfDetail
+        case "intervals":
+            self = .inlineDisplayPoints
+        case "single_pixel_point_raster":
+            self = .singlePixelPointRaster
+        case "density_grid":
+            self = .densityGrid
+        default:
+            self = fallback
+        }
+    }
+}
+
+extension WorkbenchPlotLayerStyle {
+    static func colorHex(for colorGroup: String, paletteIndex: Int) -> String {
+        let palette = ["#2563eb", "#16a34a", "#dc2626", "#9333ea", "#ea580c", "#0891b2", "#7c3aed", "#0f766e"]
+        var hash = 5381
+        for scalar in colorGroup.unicodeScalars {
+            hash = ((hash << 5) &+ hash) &+ Int(scalar.value)
+        }
+        return palette[abs(hash &+ paletteIndex) % palette.count]
     }
 }

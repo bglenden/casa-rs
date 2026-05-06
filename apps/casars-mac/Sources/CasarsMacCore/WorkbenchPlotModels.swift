@@ -80,11 +80,17 @@ public struct WorkbenchPlotRange: Codable, Equatable {
     }
 }
 
+public enum WorkbenchPlotAxisScale: String, Codable, Equatable {
+    case linear
+    case logarithmic
+}
+
 public struct WorkbenchPlotAxis: Identifiable, Codable, Equatable {
     public let id: String
     public var label: String
     public var unit: String
     public var range: WorkbenchPlotRange
+    public var scale: WorkbenchPlotAxisScale
     public var laneLabels: [String]
     public var drawsOnTrailingEdge: Bool
     public var labelsVisible: Bool
@@ -95,6 +101,7 @@ public struct WorkbenchPlotAxis: Identifiable, Codable, Equatable {
         label: String,
         unit: String,
         range: WorkbenchPlotRange,
+        scale: WorkbenchPlotAxisScale = .linear,
         laneLabels: [String] = [],
         drawsOnTrailingEdge: Bool = false,
         labelsVisible: Bool = true,
@@ -104,6 +111,7 @@ public struct WorkbenchPlotAxis: Identifiable, Codable, Equatable {
         self.label = label
         self.unit = unit
         self.range = range
+        self.scale = scale
         self.laneLabels = laneLabels
         self.drawsOnTrailingEdge = drawsOnTrailingEdge
         self.labelsVisible = labelsVisible
@@ -605,7 +613,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
     public var dataFingerprint: String {
         var parts = [
             id,
-            allAxes.map { "\($0.id):\($0.range.lower.bitPattern):\($0.range.upper.bitPattern):\($0.laneLabels.joined(separator: "/")):\($0.drawsOnTrailingEdge)" }
+            allAxes.map { "\($0.id):\($0.range.lower.bitPattern):\($0.range.upper.bitPattern):\($0.scale.rawValue):\($0.laneLabels.joined(separator: "/")):\($0.drawsOnTrailingEdge)" }
                 .joined(separator: ",")
         ]
         parts.append("panels:\(panels.count)")

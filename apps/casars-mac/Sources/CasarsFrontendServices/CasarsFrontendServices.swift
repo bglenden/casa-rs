@@ -448,6 +448,22 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
+    typealias FfiType = Double
+    typealias SwiftType = Double
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Double {
+        return try lift(readDouble(&buf))
+    }
+
+    public static func write(_ value: Double, into buf: inout [UInt8]) {
+        writeDouble(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -885,12 +901,13 @@ public struct MeasurementSetPlotResult {
     public var yAxis: PlotAxisMetadata
     public var series: [PlotSeriesMetadata]
     public var sampling: PlotSamplingDiagnostics
+    public var document: PlotDocumentPayload
     public var render: PlotRenderProvenance
     public var imageBytes: Data
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(preset: MeasurementSetPlotPreset, presetLabel: String, title: String, summary: String, datasetPath: String, dataColumn: String, selectionSummary: String, xAxis: PlotAxisMetadata, yAxis: PlotAxisMetadata, series: [PlotSeriesMetadata], sampling: PlotSamplingDiagnostics, render: PlotRenderProvenance, imageBytes: Data) {
+    public init(preset: MeasurementSetPlotPreset, presetLabel: String, title: String, summary: String, datasetPath: String, dataColumn: String, selectionSummary: String, xAxis: PlotAxisMetadata, yAxis: PlotAxisMetadata, series: [PlotSeriesMetadata], sampling: PlotSamplingDiagnostics, document: PlotDocumentPayload, render: PlotRenderProvenance, imageBytes: Data) {
         self.preset = preset
         self.presetLabel = presetLabel
         self.title = title
@@ -902,6 +919,7 @@ public struct MeasurementSetPlotResult {
         self.yAxis = yAxis
         self.series = series
         self.sampling = sampling
+        self.document = document
         self.render = render
         self.imageBytes = imageBytes
     }
@@ -947,6 +965,9 @@ extension MeasurementSetPlotResult: Equatable, Hashable {
         if lhs.sampling != rhs.sampling {
             return false
         }
+        if lhs.document != rhs.document {
+            return false
+        }
         if lhs.render != rhs.render {
             return false
         }
@@ -968,6 +989,7 @@ extension MeasurementSetPlotResult: Equatable, Hashable {
         hasher.combine(yAxis)
         hasher.combine(series)
         hasher.combine(sampling)
+        hasher.combine(document)
         hasher.combine(render)
         hasher.combine(imageBytes)
     }
@@ -995,6 +1017,7 @@ public struct FfiConverterTypeMeasurementSetPlotResult: FfiConverterRustBuffer {
                 yAxis: FfiConverterTypePlotAxisMetadata.read(from: &buf),
                 series: FfiConverterSequenceTypePlotSeriesMetadata.read(from: &buf),
                 sampling: FfiConverterTypePlotSamplingDiagnostics.read(from: &buf),
+                document: FfiConverterTypePlotDocumentPayload.read(from: &buf),
                 render: FfiConverterTypePlotRenderProvenance.read(from: &buf),
                 imageBytes: FfiConverterData.read(from: &buf)
         )
@@ -1012,6 +1035,7 @@ public struct FfiConverterTypeMeasurementSetPlotResult: FfiConverterRustBuffer {
         FfiConverterTypePlotAxisMetadata.write(value.yAxis, into: &buf)
         FfiConverterSequenceTypePlotSeriesMetadata.write(value.series, into: &buf)
         FfiConverterTypePlotSamplingDiagnostics.write(value.sampling, into: &buf)
+        FfiConverterTypePlotDocumentPayload.write(value.document, into: &buf)
         FfiConverterTypePlotRenderProvenance.write(value.render, into: &buf)
         FfiConverterData.write(value.imageBytes, into: &buf)
     }
@@ -1110,6 +1134,726 @@ public func FfiConverterTypePlotAxisMetadata_lift(_ buf: RustBuffer) throws -> P
 #endif
 public func FfiConverterTypePlotAxisMetadata_lower(_ value: PlotAxisMetadata) -> RustBuffer {
     return FfiConverterTypePlotAxisMetadata.lower(value)
+}
+
+
+public struct PlotDocumentAnnotation {
+    public var id: String
+    public var x: Double
+    public var y: Double
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, x: Double, y: Double, text: String) {
+        self.id = id
+        self.x = x
+        self.y = y
+        self.text = text
+    }
+}
+
+#if compiler(>=6)
+extension PlotDocumentAnnotation: Sendable {}
+#endif
+
+
+extension PlotDocumentAnnotation: Equatable, Hashable {
+    public static func ==(lhs: PlotDocumentAnnotation, rhs: PlotDocumentAnnotation) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.x != rhs.x {
+            return false
+        }
+        if lhs.y != rhs.y {
+            return false
+        }
+        if lhs.text != rhs.text {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(x)
+        hasher.combine(y)
+        hasher.combine(text)
+    }
+}
+
+extension PlotDocumentAnnotation: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotDocumentAnnotation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotDocumentAnnotation {
+        return
+            try PlotDocumentAnnotation(
+                id: FfiConverterString.read(from: &buf),
+                x: FfiConverterDouble.read(from: &buf),
+                y: FfiConverterDouble.read(from: &buf),
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlotDocumentAnnotation, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterDouble.write(value.x, into: &buf)
+        FfiConverterDouble.write(value.y, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotDocumentAnnotation_lift(_ buf: RustBuffer) throws -> PlotDocumentAnnotation {
+    return try FfiConverterTypePlotDocumentAnnotation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotDocumentAnnotation_lower(_ value: PlotDocumentAnnotation) -> RustBuffer {
+    return FfiConverterTypePlotDocumentAnnotation.lower(value)
+}
+
+
+public struct PlotDocumentAxis {
+    public var id: String
+    public var label: String
+    public var unit: String
+    public var lower: Double
+    public var upper: Double
+    public var scale: PlotAxisScale
+    public var laneLabels: [String]
+    public var drawsOnTrailingEdge: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, label: String, unit: String, lower: Double, upper: Double, scale: PlotAxisScale, laneLabels: [String], drawsOnTrailingEdge: Bool) {
+        self.id = id
+        self.label = label
+        self.unit = unit
+        self.lower = lower
+        self.upper = upper
+        self.scale = scale
+        self.laneLabels = laneLabels
+        self.drawsOnTrailingEdge = drawsOnTrailingEdge
+    }
+}
+
+#if compiler(>=6)
+extension PlotDocumentAxis: Sendable {}
+#endif
+
+
+extension PlotDocumentAxis: Equatable, Hashable {
+    public static func ==(lhs: PlotDocumentAxis, rhs: PlotDocumentAxis) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.label != rhs.label {
+            return false
+        }
+        if lhs.unit != rhs.unit {
+            return false
+        }
+        if lhs.lower != rhs.lower {
+            return false
+        }
+        if lhs.upper != rhs.upper {
+            return false
+        }
+        if lhs.scale != rhs.scale {
+            return false
+        }
+        if lhs.laneLabels != rhs.laneLabels {
+            return false
+        }
+        if lhs.drawsOnTrailingEdge != rhs.drawsOnTrailingEdge {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(label)
+        hasher.combine(unit)
+        hasher.combine(lower)
+        hasher.combine(upper)
+        hasher.combine(scale)
+        hasher.combine(laneLabels)
+        hasher.combine(drawsOnTrailingEdge)
+    }
+}
+
+extension PlotDocumentAxis: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotDocumentAxis: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotDocumentAxis {
+        return
+            try PlotDocumentAxis(
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                unit: FfiConverterString.read(from: &buf),
+                lower: FfiConverterDouble.read(from: &buf),
+                upper: FfiConverterDouble.read(from: &buf),
+                scale: FfiConverterTypePlotAxisScale.read(from: &buf),
+                laneLabels: FfiConverterSequenceString.read(from: &buf),
+                drawsOnTrailingEdge: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlotDocumentAxis, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.unit, into: &buf)
+        FfiConverterDouble.write(value.lower, into: &buf)
+        FfiConverterDouble.write(value.upper, into: &buf)
+        FfiConverterTypePlotAxisScale.write(value.scale, into: &buf)
+        FfiConverterSequenceString.write(value.laneLabels, into: &buf)
+        FfiConverterBool.write(value.drawsOnTrailingEdge, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotDocumentAxis_lift(_ buf: RustBuffer) throws -> PlotDocumentAxis {
+    return try FfiConverterTypePlotDocumentAxis.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotDocumentAxis_lower(_ value: PlotDocumentAxis) -> RustBuffer {
+    return FfiConverterTypePlotDocumentAxis.lower(value)
+}
+
+
+public struct PlotDocumentLayer {
+    public var id: String
+    public var title: String
+    public var kind: PlotLayerKind
+    public var xAxisId: String
+    public var yAxisId: String
+    public var xValues: [Double]
+    public var yValues: [Double]
+    public var intervalXStart: [Double]
+    public var intervalXEnd: [Double]
+    public var intervalY: [Double]
+    public var intervalHeight: [Double]
+    public var provenance: [PlotPointProvenance]
+    public var colorGroup: String
+    public var symbolSize: Double
+    public var lineWidth: Double
+    public var opacity: Double
+    public var sourceSampleCount: UInt64
+    public var payloadStrategy: String
+    public var provenanceSummary: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, title: String, kind: PlotLayerKind, xAxisId: String, yAxisId: String, xValues: [Double], yValues: [Double], intervalXStart: [Double], intervalXEnd: [Double], intervalY: [Double], intervalHeight: [Double], provenance: [PlotPointProvenance], colorGroup: String, symbolSize: Double, lineWidth: Double, opacity: Double, sourceSampleCount: UInt64, payloadStrategy: String, provenanceSummary: String) {
+        self.id = id
+        self.title = title
+        self.kind = kind
+        self.xAxisId = xAxisId
+        self.yAxisId = yAxisId
+        self.xValues = xValues
+        self.yValues = yValues
+        self.intervalXStart = intervalXStart
+        self.intervalXEnd = intervalXEnd
+        self.intervalY = intervalY
+        self.intervalHeight = intervalHeight
+        self.provenance = provenance
+        self.colorGroup = colorGroup
+        self.symbolSize = symbolSize
+        self.lineWidth = lineWidth
+        self.opacity = opacity
+        self.sourceSampleCount = sourceSampleCount
+        self.payloadStrategy = payloadStrategy
+        self.provenanceSummary = provenanceSummary
+    }
+}
+
+#if compiler(>=6)
+extension PlotDocumentLayer: Sendable {}
+#endif
+
+
+extension PlotDocumentLayer: Equatable, Hashable {
+    public static func ==(lhs: PlotDocumentLayer, rhs: PlotDocumentLayer) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.xAxisId != rhs.xAxisId {
+            return false
+        }
+        if lhs.yAxisId != rhs.yAxisId {
+            return false
+        }
+        if lhs.xValues != rhs.xValues {
+            return false
+        }
+        if lhs.yValues != rhs.yValues {
+            return false
+        }
+        if lhs.intervalXStart != rhs.intervalXStart {
+            return false
+        }
+        if lhs.intervalXEnd != rhs.intervalXEnd {
+            return false
+        }
+        if lhs.intervalY != rhs.intervalY {
+            return false
+        }
+        if lhs.intervalHeight != rhs.intervalHeight {
+            return false
+        }
+        if lhs.provenance != rhs.provenance {
+            return false
+        }
+        if lhs.colorGroup != rhs.colorGroup {
+            return false
+        }
+        if lhs.symbolSize != rhs.symbolSize {
+            return false
+        }
+        if lhs.lineWidth != rhs.lineWidth {
+            return false
+        }
+        if lhs.opacity != rhs.opacity {
+            return false
+        }
+        if lhs.sourceSampleCount != rhs.sourceSampleCount {
+            return false
+        }
+        if lhs.payloadStrategy != rhs.payloadStrategy {
+            return false
+        }
+        if lhs.provenanceSummary != rhs.provenanceSummary {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(title)
+        hasher.combine(kind)
+        hasher.combine(xAxisId)
+        hasher.combine(yAxisId)
+        hasher.combine(xValues)
+        hasher.combine(yValues)
+        hasher.combine(intervalXStart)
+        hasher.combine(intervalXEnd)
+        hasher.combine(intervalY)
+        hasher.combine(intervalHeight)
+        hasher.combine(provenance)
+        hasher.combine(colorGroup)
+        hasher.combine(symbolSize)
+        hasher.combine(lineWidth)
+        hasher.combine(opacity)
+        hasher.combine(sourceSampleCount)
+        hasher.combine(payloadStrategy)
+        hasher.combine(provenanceSummary)
+    }
+}
+
+extension PlotDocumentLayer: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotDocumentLayer: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotDocumentLayer {
+        return
+            try PlotDocumentLayer(
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                kind: FfiConverterTypePlotLayerKind.read(from: &buf),
+                xAxisId: FfiConverterString.read(from: &buf),
+                yAxisId: FfiConverterString.read(from: &buf),
+                xValues: FfiConverterSequenceDouble.read(from: &buf),
+                yValues: FfiConverterSequenceDouble.read(from: &buf),
+                intervalXStart: FfiConverterSequenceDouble.read(from: &buf),
+                intervalXEnd: FfiConverterSequenceDouble.read(from: &buf),
+                intervalY: FfiConverterSequenceDouble.read(from: &buf),
+                intervalHeight: FfiConverterSequenceDouble.read(from: &buf),
+                provenance: FfiConverterSequenceTypePlotPointProvenance.read(from: &buf),
+                colorGroup: FfiConverterString.read(from: &buf),
+                symbolSize: FfiConverterDouble.read(from: &buf),
+                lineWidth: FfiConverterDouble.read(from: &buf),
+                opacity: FfiConverterDouble.read(from: &buf),
+                sourceSampleCount: FfiConverterUInt64.read(from: &buf),
+                payloadStrategy: FfiConverterString.read(from: &buf),
+                provenanceSummary: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlotDocumentLayer, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterTypePlotLayerKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.xAxisId, into: &buf)
+        FfiConverterString.write(value.yAxisId, into: &buf)
+        FfiConverterSequenceDouble.write(value.xValues, into: &buf)
+        FfiConverterSequenceDouble.write(value.yValues, into: &buf)
+        FfiConverterSequenceDouble.write(value.intervalXStart, into: &buf)
+        FfiConverterSequenceDouble.write(value.intervalXEnd, into: &buf)
+        FfiConverterSequenceDouble.write(value.intervalY, into: &buf)
+        FfiConverterSequenceDouble.write(value.intervalHeight, into: &buf)
+        FfiConverterSequenceTypePlotPointProvenance.write(value.provenance, into: &buf)
+        FfiConverterString.write(value.colorGroup, into: &buf)
+        FfiConverterDouble.write(value.symbolSize, into: &buf)
+        FfiConverterDouble.write(value.lineWidth, into: &buf)
+        FfiConverterDouble.write(value.opacity, into: &buf)
+        FfiConverterUInt64.write(value.sourceSampleCount, into: &buf)
+        FfiConverterString.write(value.payloadStrategy, into: &buf)
+        FfiConverterString.write(value.provenanceSummary, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotDocumentLayer_lift(_ buf: RustBuffer) throws -> PlotDocumentLayer {
+    return try FfiConverterTypePlotDocumentLayer.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotDocumentLayer_lower(_ value: PlotDocumentLayer) -> RustBuffer {
+    return FfiConverterTypePlotDocumentLayer.lower(value)
+}
+
+
+public struct PlotDocumentPanel {
+    public var id: String
+    public var title: String
+    public var axes: [PlotDocumentAxis]
+    public var layers: [PlotDocumentLayer]
+    public var annotations: [PlotDocumentAnnotation]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, title: String, axes: [PlotDocumentAxis], layers: [PlotDocumentLayer], annotations: [PlotDocumentAnnotation]) {
+        self.id = id
+        self.title = title
+        self.axes = axes
+        self.layers = layers
+        self.annotations = annotations
+    }
+}
+
+#if compiler(>=6)
+extension PlotDocumentPanel: Sendable {}
+#endif
+
+
+extension PlotDocumentPanel: Equatable, Hashable {
+    public static func ==(lhs: PlotDocumentPanel, rhs: PlotDocumentPanel) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.axes != rhs.axes {
+            return false
+        }
+        if lhs.layers != rhs.layers {
+            return false
+        }
+        if lhs.annotations != rhs.annotations {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(title)
+        hasher.combine(axes)
+        hasher.combine(layers)
+        hasher.combine(annotations)
+    }
+}
+
+extension PlotDocumentPanel: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotDocumentPanel: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotDocumentPanel {
+        return
+            try PlotDocumentPanel(
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                axes: FfiConverterSequenceTypePlotDocumentAxis.read(from: &buf),
+                layers: FfiConverterSequenceTypePlotDocumentLayer.read(from: &buf),
+                annotations: FfiConverterSequenceTypePlotDocumentAnnotation.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlotDocumentPanel, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterSequenceTypePlotDocumentAxis.write(value.axes, into: &buf)
+        FfiConverterSequenceTypePlotDocumentLayer.write(value.layers, into: &buf)
+        FfiConverterSequenceTypePlotDocumentAnnotation.write(value.annotations, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotDocumentPanel_lift(_ buf: RustBuffer) throws -> PlotDocumentPanel {
+    return try FfiConverterTypePlotDocumentPanel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotDocumentPanel_lower(_ value: PlotDocumentPanel) -> RustBuffer {
+    return FfiConverterTypePlotDocumentPanel.lower(value)
+}
+
+
+public struct PlotDocumentPayload {
+    public var id: String
+    public var title: String
+    public var subtitle: String
+    public var axes: [PlotDocumentAxis]
+    public var layers: [PlotDocumentLayer]
+    public var annotations: [PlotDocumentAnnotation]
+    public var panels: [PlotDocumentPanel]
+    public var showLegend: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, title: String, subtitle: String, axes: [PlotDocumentAxis], layers: [PlotDocumentLayer], annotations: [PlotDocumentAnnotation], panels: [PlotDocumentPanel], showLegend: Bool) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.axes = axes
+        self.layers = layers
+        self.annotations = annotations
+        self.panels = panels
+        self.showLegend = showLegend
+    }
+}
+
+#if compiler(>=6)
+extension PlotDocumentPayload: Sendable {}
+#endif
+
+
+extension PlotDocumentPayload: Equatable, Hashable {
+    public static func ==(lhs: PlotDocumentPayload, rhs: PlotDocumentPayload) -> Bool {
+        if lhs.id != rhs.id {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.subtitle != rhs.subtitle {
+            return false
+        }
+        if lhs.axes != rhs.axes {
+            return false
+        }
+        if lhs.layers != rhs.layers {
+            return false
+        }
+        if lhs.annotations != rhs.annotations {
+            return false
+        }
+        if lhs.panels != rhs.panels {
+            return false
+        }
+        if lhs.showLegend != rhs.showLegend {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(title)
+        hasher.combine(subtitle)
+        hasher.combine(axes)
+        hasher.combine(layers)
+        hasher.combine(annotations)
+        hasher.combine(panels)
+        hasher.combine(showLegend)
+    }
+}
+
+extension PlotDocumentPayload: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotDocumentPayload: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotDocumentPayload {
+        return
+            try PlotDocumentPayload(
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                subtitle: FfiConverterString.read(from: &buf),
+                axes: FfiConverterSequenceTypePlotDocumentAxis.read(from: &buf),
+                layers: FfiConverterSequenceTypePlotDocumentLayer.read(from: &buf),
+                annotations: FfiConverterSequenceTypePlotDocumentAnnotation.read(from: &buf),
+                panels: FfiConverterSequenceTypePlotDocumentPanel.read(from: &buf),
+                showLegend: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlotDocumentPayload, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.subtitle, into: &buf)
+        FfiConverterSequenceTypePlotDocumentAxis.write(value.axes, into: &buf)
+        FfiConverterSequenceTypePlotDocumentLayer.write(value.layers, into: &buf)
+        FfiConverterSequenceTypePlotDocumentAnnotation.write(value.annotations, into: &buf)
+        FfiConverterSequenceTypePlotDocumentPanel.write(value.panels, into: &buf)
+        FfiConverterBool.write(value.showLegend, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotDocumentPayload_lift(_ buf: RustBuffer) throws -> PlotDocumentPayload {
+    return try FfiConverterTypePlotDocumentPayload.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotDocumentPayload_lower(_ value: PlotDocumentPayload) -> RustBuffer {
+    return FfiConverterTypePlotDocumentPayload.lower(value)
+}
+
+
+public struct PlotPointProvenance {
+    public var row: UInt64
+    public var corr: UInt64
+    public var chanStart: UInt64
+    public var chanEnd: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(row: UInt64, corr: UInt64, chanStart: UInt64, chanEnd: UInt64) {
+        self.row = row
+        self.corr = corr
+        self.chanStart = chanStart
+        self.chanEnd = chanEnd
+    }
+}
+
+#if compiler(>=6)
+extension PlotPointProvenance: Sendable {}
+#endif
+
+
+extension PlotPointProvenance: Equatable, Hashable {
+    public static func ==(lhs: PlotPointProvenance, rhs: PlotPointProvenance) -> Bool {
+        if lhs.row != rhs.row {
+            return false
+        }
+        if lhs.corr != rhs.corr {
+            return false
+        }
+        if lhs.chanStart != rhs.chanStart {
+            return false
+        }
+        if lhs.chanEnd != rhs.chanEnd {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(row)
+        hasher.combine(corr)
+        hasher.combine(chanStart)
+        hasher.combine(chanEnd)
+    }
+}
+
+extension PlotPointProvenance: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotPointProvenance: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotPointProvenance {
+        return
+            try PlotPointProvenance(
+                row: FfiConverterUInt64.read(from: &buf),
+                corr: FfiConverterUInt64.read(from: &buf),
+                chanStart: FfiConverterUInt64.read(from: &buf),
+                chanEnd: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlotPointProvenance, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.row, into: &buf)
+        FfiConverterUInt64.write(value.corr, into: &buf)
+        FfiConverterUInt64.write(value.chanStart, into: &buf)
+        FfiConverterUInt64.write(value.chanEnd, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotPointProvenance_lift(_ buf: RustBuffer) throws -> PlotPointProvenance {
+    return try FfiConverterTypePlotPointProvenance.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotPointProvenance_lower(_ value: PlotPointProvenance) -> RustBuffer {
+    return FfiConverterTypePlotPointProvenance.lower(value)
 }
 
 
@@ -1947,6 +2691,161 @@ extension MeasurementSetPlotPreset: CaseIterable {}
 
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum PlotAxisScale {
+
+    case linear
+    case log
+}
+
+
+#if compiler(>=6)
+extension PlotAxisScale: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotAxisScale: FfiConverterRustBuffer {
+    typealias SwiftType = PlotAxisScale
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotAxisScale {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .linear
+
+        case 2: return .log
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PlotAxisScale, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .linear:
+            writeInt(&buf, Int32(1))
+
+
+        case .log:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotAxisScale_lift(_ buf: RustBuffer) throws -> PlotAxisScale {
+    return try FfiConverterTypePlotAxisScale.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotAxisScale_lower(_ value: PlotAxisScale) -> RustBuffer {
+    return FfiConverterTypePlotAxisScale.lower(value)
+}
+
+
+extension PlotAxisScale: Equatable, Hashable {}
+
+extension PlotAxisScale: Codable {}
+
+
+
+
+extension PlotAxisScale: CaseIterable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum PlotLayerKind {
+
+    case scatter
+    case line
+    case interval
+}
+
+
+#if compiler(>=6)
+extension PlotLayerKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlotLayerKind: FfiConverterRustBuffer {
+    typealias SwiftType = PlotLayerKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlotLayerKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .scatter
+
+        case 2: return .line
+
+        case 3: return .interval
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PlotLayerKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .scatter:
+            writeInt(&buf, Int32(1))
+
+
+        case .line:
+            writeInt(&buf, Int32(2))
+
+
+        case .interval:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotLayerKind_lift(_ buf: RustBuffer) throws -> PlotLayerKind {
+    return try FfiConverterTypePlotLayerKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlotLayerKind_lower(_ value: PlotLayerKind) -> RustBuffer {
+    return FfiConverterTypePlotLayerKind.lower(value)
+}
+
+
+extension PlotLayerKind: Equatable, Hashable {}
+
+extension PlotLayerKind: Codable {}
+
+
+
+
+extension PlotLayerKind: CaseIterable {}
+
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -2047,6 +2946,31 @@ fileprivate struct FfiConverterSequenceUInt64: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceDouble: FfiConverterRustBuffer {
+    typealias SwiftType = [Double]
+
+    public static func write(_ value: [Double], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterDouble.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Double] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Double]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterDouble.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -2089,6 +3013,131 @@ fileprivate struct FfiConverterSequenceTypeDatasetProbe: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeDatasetProbe.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePlotDocumentAnnotation: FfiConverterRustBuffer {
+    typealias SwiftType = [PlotDocumentAnnotation]
+
+    public static func write(_ value: [PlotDocumentAnnotation], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePlotDocumentAnnotation.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PlotDocumentAnnotation] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PlotDocumentAnnotation]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePlotDocumentAnnotation.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePlotDocumentAxis: FfiConverterRustBuffer {
+    typealias SwiftType = [PlotDocumentAxis]
+
+    public static func write(_ value: [PlotDocumentAxis], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePlotDocumentAxis.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PlotDocumentAxis] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PlotDocumentAxis]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePlotDocumentAxis.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePlotDocumentLayer: FfiConverterRustBuffer {
+    typealias SwiftType = [PlotDocumentLayer]
+
+    public static func write(_ value: [PlotDocumentLayer], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePlotDocumentLayer.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PlotDocumentLayer] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PlotDocumentLayer]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePlotDocumentLayer.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePlotDocumentPanel: FfiConverterRustBuffer {
+    typealias SwiftType = [PlotDocumentPanel]
+
+    public static func write(_ value: [PlotDocumentPanel], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePlotDocumentPanel.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PlotDocumentPanel] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PlotDocumentPanel]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePlotDocumentPanel.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePlotPointProvenance: FfiConverterRustBuffer {
+    typealias SwiftType = [PlotPointProvenance]
+
+    public static func write(_ value: [PlotPointProvenance], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePlotPointProvenance.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PlotPointProvenance] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PlotPointProvenance]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePlotPointProvenance.read(from: &buf))
         }
         return seq
     }

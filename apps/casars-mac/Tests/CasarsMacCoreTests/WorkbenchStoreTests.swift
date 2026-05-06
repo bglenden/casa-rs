@@ -1178,6 +1178,9 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.title, "UV Coverage")
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.imageByteCount, 8)
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.renderedPointCount, 42)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.plotDocumentLayerCount, 1)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.plotDocumentPanelCount, 0)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.plotDocumentPayloadStrategies, ["inlineDisplayPoints"])
         XCTAssertEqual(plotClient.requests.last?.preset, .uvCoverage)
         XCTAssertNil(plotClient.requests.last?.field)
         XCTAssertNil(plotClient.requests.last?.spectralWindow)
@@ -1799,11 +1802,40 @@ private func makePlotResult(
         requestedMaxPoints: requestedMaxPoints,
         renderedPointCount: 42,
         diagnostics: [],
+        plotDocument: makeTestPlotDocument(title: title),
         renderer: "stub renderer",
         imageFormat: "png",
         imageWidth: imageWidth,
         imageHeight: imageHeight,
         imageBytes: imageBytes
+    )
+}
+
+private func makeTestPlotDocument(title: String = "UV Coverage") -> WorkbenchPlotDocument {
+    WorkbenchPlotDocument(
+        id: "test-ms-plot",
+        title: title,
+        subtitle: "Synthetic plot document for tests.",
+        axes: [
+            WorkbenchPlotAxis(id: "frequency", label: "Frequency", unit: "Hz", range: WorkbenchPlotRange(lower: 0, upper: 3)),
+            WorkbenchPlotAxis(id: "amplitude", label: "Amplitude", unit: "", range: WorkbenchPlotRange(lower: 0, upper: 2))
+        ],
+        layers: [
+            WorkbenchPlotLayer(
+                id: "target",
+                title: "Target",
+                kind: .scatter,
+                xAxisID: "frequency",
+                yAxisID: "amplitude",
+                points: [
+                    WorkbenchPlotPoint(x: 0, y: 0.2),
+                    WorkbenchPlotPoint(x: 1, y: 0.8),
+                    WorkbenchPlotPoint(x: 2, y: 1.4)
+                ],
+                style: WorkbenchPlotLayerStyle(colorHex: "#2563eb", symbolSize: 3, opacity: 0.8),
+                provenanceSummary: "Synthetic MeasurementSet samples."
+            )
+        ]
     )
 }
 

@@ -159,6 +159,91 @@ pub struct PlotAxisMetadata {
     pub unit: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PlotAxisScale {
+    Linear,
+    Log,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PlotLayerKind {
+    Scatter,
+    Line,
+    Interval,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PlotDocumentAxis {
+    pub id: String,
+    pub label: String,
+    pub unit: String,
+    pub lower: f64,
+    pub upper: f64,
+    pub scale: PlotAxisScale,
+    pub lane_labels: Vec<String>,
+    pub draws_on_trailing_edge: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PlotPointProvenance {
+    pub row: u64,
+    pub corr: u64,
+    pub chan_start: u64,
+    pub chan_end: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PlotDocumentLayer {
+    pub id: String,
+    pub title: String,
+    pub kind: PlotLayerKind,
+    pub x_axis_id: String,
+    pub y_axis_id: String,
+    pub x_values: Vec<f64>,
+    pub y_values: Vec<f64>,
+    pub interval_x_start: Vec<f64>,
+    pub interval_x_end: Vec<f64>,
+    pub interval_y: Vec<f64>,
+    pub interval_height: Vec<f64>,
+    pub provenance: Vec<PlotPointProvenance>,
+    pub color_group: String,
+    pub symbol_size: f64,
+    pub line_width: f64,
+    pub opacity: f64,
+    pub source_sample_count: u64,
+    pub payload_strategy: String,
+    pub provenance_summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PlotDocumentAnnotation {
+    pub id: String,
+    pub x: f64,
+    pub y: f64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PlotDocumentPanel {
+    pub id: String,
+    pub title: String,
+    pub axes: Vec<PlotDocumentAxis>,
+    pub layers: Vec<PlotDocumentLayer>,
+    pub annotations: Vec<PlotDocumentAnnotation>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PlotDocumentPayload {
+    pub id: String,
+    pub title: String,
+    pub subtitle: String,
+    pub axes: Vec<PlotDocumentAxis>,
+    pub layers: Vec<PlotDocumentLayer>,
+    pub annotations: Vec<PlotDocumentAnnotation>,
+    pub panels: Vec<PlotDocumentPanel>,
+    pub show_legend: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PlotSeriesMetadata {
     pub label: String,
@@ -198,6 +283,7 @@ pub struct MeasurementSetPlotResult {
     pub y_axis: PlotAxisMetadata,
     pub series: Vec<PlotSeriesMetadata>,
     pub sampling: PlotSamplingDiagnostics,
+    pub document: PlotDocumentPayload,
     pub render: PlotRenderProvenance,
     pub image_bytes: Vec<u8>,
 }
@@ -316,6 +402,7 @@ pub fn build_measurement_set_plot(
             reason: format!("{}: {error}", dataset_path.display()),
         })?;
     let metadata = plot_payload_metadata(&payload, request.preset, max_plot_points);
+    let document = plot_document_payload(&payload, &metadata, request.preset);
     let image =
         render_msexplore_plot_image(&payload, MeasurementSetPlotTheme::light(), width, height)
             .map_err(|error| FrontendServiceError::Plot {
@@ -340,6 +427,7 @@ pub fn build_measurement_set_plot(
         y_axis: metadata.y_axis,
         series: metadata.series,
         sampling: metadata.sampling,
+        document,
         render: PlotRenderProvenance {
             renderer: "casa-ms msexplore plotters PNG".to_string(),
             image_format: "png".to_string(),
@@ -522,6 +610,632 @@ fn plot_payload_metadata(
         MsPlotPayload::ScatterPage(payload) => scatter_page_metadata(payload, requested_max_points),
         MsPlotPayload::ListObs(payload) => listobs_metadata(payload, preset, requested_max_points),
     }
+}
+
+fn plot_document_payload(
+    payload: &MsPlotPayload,
+    metadata: &PayloadMetadata,
+    preset: MeasurementSetPlotPreset,
+) -> PlotDocumentPayload {
+    match payload {
+        MsPlotPayload::Scatter(payload) => scatter_plot_document(payload, metadata, preset),
+        MsPlotPayload::ScatterGrid(payload) => {
+            scatter_grid_plot_document(payload, metadata, preset)
+        }
+        MsPlotPayload::ScatterPage(payload) => {
+            scatter_page_plot_document(payload, metadata, preset)
+        }
+        MsPlotPayload::ListObs(payload) => listobs_plot_document(payload, metadata, preset),
+    }
+}
+
+fn listobs_plot_document(
+    payload: &MeasurementSetPlotPayload,
+    metadata: &PayloadMetadata,
+    preset: MeasurementSetPlotPreset,
+) -> PlotDocumentPayload {
+    match payload {
+        MeasurementSetPlotPayload::UvCoverage(payload) => {
+            let axis_extent = payload.axis_extent_lambda / 1_000.0;
+            let axes = vec![
+                document_axis(
+                    "u",
+                    "u",
+                    "kλ",
+                    -axis_extent,
+                    axis_extent,
+                    PlotAxisScale::Linear,
+                ),
+                document_axis(
+                    "v",
+                    "v",
+                    "kλ",
+                    -axis_extent,
+                    axis_extent,
+                    PlotAxisScale::Linear,
+                ),
+            ];
+            let layers = payload
+                .tracks
+                .iter()
+                .enumerate()
+                .map(|(index, track)| {
+                    let mut x_values =
+                        Vec::with_capacity(track.points.len() * if payload.mirror { 2 } else { 1 });
+                    let mut y_values =
+                        Vec::with_capacity(track.points.len() * if payload.mirror { 2 } else { 1 });
+                    for (u_lambda, v_lambda) in &track.points {
+                        x_values.push(*u_lambda / 1_000.0);
+                        y_values.push(*v_lambda / 1_000.0);
+                        if payload.mirror {
+                            x_values.push(-*u_lambda / 1_000.0);
+                            y_values.push(-*v_lambda / 1_000.0);
+                        }
+                    }
+                    point_layer(PointLayerSpec {
+                        id: format!("uv-track-{index}"),
+                        title: track.label.clone(),
+                        x_axis_id: "u",
+                        y_axis_id: "v",
+                        x_values,
+                        y_values,
+                        provenance: Vec::new(),
+                        color_group: "uv-track".to_string(),
+                        symbol_size: 2.5,
+                        line_width: 1.0,
+                        provenance_summary: "UV coverage samples from Rust msexplore payload"
+                            .to_string(),
+                    })
+                })
+                .collect();
+            base_document(preset, metadata, axes, layers, Vec::new(), Vec::new())
+        }
+        MeasurementSetPlotPayload::VisibilityScatter(payload) => {
+            let axes = axes_for_ranges(
+                "x",
+                &payload.x_label,
+                "y",
+                &payload.y_label,
+                None,
+                payload.fixed_y_bounds,
+                payload
+                    .series
+                    .iter()
+                    .flat_map(|series| series.points.iter().copied()),
+            );
+            let layers = payload
+                .series
+                .iter()
+                .enumerate()
+                .map(|(index, series)| {
+                    let (x_values, y_values): (Vec<_>, Vec<_>) =
+                        series.points.iter().copied().unzip();
+                    point_layer(PointLayerSpec {
+                        id: format!("visibility-series-{index}"),
+                        title: series.label.clone(),
+                        x_axis_id: "x",
+                        y_axis_id: "y",
+                        x_values,
+                        y_values,
+                        provenance: Vec::new(),
+                        color_group: series.color_group.clone(),
+                        symbol_size: 2.5,
+                        line_width: 1.0,
+                        provenance_summary: "Visibility scatter points from Rust msexplore payload"
+                            .to_string(),
+                    })
+                })
+                .collect();
+            base_document(preset, metadata, axes, layers, Vec::new(), Vec::new())
+        }
+        MeasurementSetPlotPayload::AntennaLayout(payload) => {
+            let x_values = payload
+                .antennas
+                .iter()
+                .map(|antenna| antenna.x)
+                .collect::<Vec<_>>();
+            let y_values = payload
+                .antennas
+                .iter()
+                .map(|antenna| antenna.y)
+                .collect::<Vec<_>>();
+            let axes = axes_for_ranges(
+                "x",
+                &payload.x_label,
+                "y",
+                &payload.y_label,
+                None,
+                None,
+                x_values.iter().copied().zip(y_values.iter().copied()),
+            );
+            let annotations = if payload.labels_enabled {
+                payload
+                    .antennas
+                    .iter()
+                    .enumerate()
+                    .map(|(index, antenna)| PlotDocumentAnnotation {
+                        id: format!("antenna-label-{index}"),
+                        x: antenna.x,
+                        y: antenna.y,
+                        text: antenna.label.clone(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let layer = point_layer(PointLayerSpec {
+                id: "antennas".to_string(),
+                title: "Antennas".to_string(),
+                x_axis_id: "x",
+                y_axis_id: "y",
+                x_values,
+                y_values,
+                provenance: Vec::new(),
+                color_group: "antenna".to_string(),
+                symbol_size: 4.0,
+                line_width: 1.0,
+                provenance_summary: "ANTENNA table positions from Rust msexplore payload"
+                    .to_string(),
+            });
+            base_document(preset, metadata, axes, vec![layer], annotations, Vec::new())
+        }
+        MeasurementSetPlotPayload::ScanTimeline(payload) => {
+            let axes = vec![
+                document_axis(
+                    "time",
+                    "Time",
+                    "MJD seconds",
+                    payload.start_mjd_seconds,
+                    payload.end_mjd_seconds,
+                    PlotAxisScale::Linear,
+                ),
+                document_lane_axis("scan", "Scan", payload.lane_labels.clone()),
+            ];
+            let layer = interval_layer(IntervalLayerSpec {
+                id: "scan-bars".to_string(),
+                title: "Scans".to_string(),
+                x_axis_id: "time",
+                y_axis_id: "scan",
+                interval_x_start: payload
+                    .bars
+                    .iter()
+                    .map(|bar| bar.start_mjd_seconds)
+                    .collect(),
+                interval_x_end: payload.bars.iter().map(|bar| bar.end_mjd_seconds).collect(),
+                interval_y: payload.bars.iter().map(|bar| bar.lane as f64).collect(),
+                interval_height: vec![0.72; payload.bars.len()],
+                color_group: "scan".to_string(),
+                provenance_summary: "MAIN-table scan intervals from Rust msexplore payload"
+                    .to_string(),
+            });
+            base_document(preset, metadata, axes, vec![layer], Vec::new(), Vec::new())
+        }
+        MeasurementSetPlotPayload::SpectralWindowCoverage(payload) => {
+            let lane_labels = payload
+                .bars
+                .iter()
+                .map(|bar| format!("spw {}", bar.spectral_window_id))
+                .collect::<Vec<_>>();
+            let x_bounds = payload
+                .bars
+                .iter()
+                .flat_map(|bar| [bar.start, bar.end])
+                .fold(None, bounds_accumulator);
+            let (lower, upper) = expanded_bounds(x_bounds.unwrap_or((0.0, 1.0)));
+            let axes = vec![
+                document_axis(
+                    "frequency",
+                    &payload.x_label,
+                    label_unit(&payload.x_label).as_str(),
+                    lower,
+                    upper,
+                    PlotAxisScale::Linear,
+                ),
+                document_lane_axis("spw", "Spectral window", lane_labels),
+            ];
+            let layer = interval_layer(IntervalLayerSpec {
+                id: "spw-bars".to_string(),
+                title: "Spectral windows".to_string(),
+                x_axis_id: "frequency",
+                y_axis_id: "spw",
+                interval_x_start: payload.bars.iter().map(|bar| bar.start).collect(),
+                interval_x_end: payload.bars.iter().map(|bar| bar.end).collect(),
+                interval_y: payload.bars.iter().map(|bar| bar.lane as f64).collect(),
+                interval_height: vec![0.72; payload.bars.len()],
+                color_group: "spectral-window".to_string(),
+                provenance_summary:
+                    "SPECTRAL_WINDOW coverage intervals from Rust msexplore payload".to_string(),
+            });
+            base_document(preset, metadata, axes, vec![layer], Vec::new(), Vec::new())
+        }
+    }
+}
+
+fn scatter_plot_document(
+    payload: &MsScatterPlotPayload,
+    metadata: &PayloadMetadata,
+    preset: MeasurementSetPlotPreset,
+) -> PlotDocumentPayload {
+    let axes = scatter_axes(
+        "x",
+        &payload.x_label,
+        "y",
+        &payload.y_label,
+        payload.fixed_x_bounds,
+        payload.fixed_y_bounds,
+        payload
+            .series
+            .iter()
+            .flat_map(|series| series.points.iter().copied()),
+    );
+    let mut layers = scatter_layers(&payload.series, "x", "y", payload.symbol_size_px);
+    if let Some(secondary_label) = &payload.secondary_y_label {
+        let secondary_axis = document_axis(
+            "y-secondary",
+            secondary_label,
+            &label_unit(secondary_label),
+            payload
+                .secondary_fixed_y_bounds
+                .unwrap_or_else(|| {
+                    series_y_bounds(
+                        payload
+                            .series
+                            .iter()
+                            .filter(|series| Some(series.y_axis) == payload.secondary_y_axis)
+                            .flat_map(|series| series.points.iter().map(|(_, y)| *y)),
+                    )
+                })
+                .0,
+            payload
+                .secondary_fixed_y_bounds
+                .unwrap_or_else(|| {
+                    series_y_bounds(
+                        payload
+                            .series
+                            .iter()
+                            .filter(|series| Some(series.y_axis) == payload.secondary_y_axis)
+                            .flat_map(|series| series.points.iter().map(|(_, y)| *y)),
+                    )
+                })
+                .1,
+            PlotAxisScale::Linear,
+        );
+        let mut axes = axes;
+        axes.push(PlotDocumentAxis {
+            draws_on_trailing_edge: true,
+            ..secondary_axis
+        });
+        for layer in &mut layers {
+            if payload
+                .series
+                .iter()
+                .find(|series| series.label == layer.title)
+                .is_some_and(|series| Some(series.y_axis) == payload.secondary_y_axis)
+            {
+                layer.y_axis_id = "y-secondary".to_string();
+            }
+        }
+        return base_document(preset, metadata, axes, layers, Vec::new(), Vec::new());
+    }
+    base_document(preset, metadata, axes, layers, Vec::new(), Vec::new())
+}
+
+fn scatter_grid_plot_document(
+    payload: &MsScatterGridPayload,
+    metadata: &PayloadMetadata,
+    preset: MeasurementSetPlotPreset,
+) -> PlotDocumentPayload {
+    let panels = payload
+        .panels
+        .iter()
+        .enumerate()
+        .map(|(index, panel)| {
+            let axes = scatter_axes(
+                "x",
+                &payload.x_label,
+                "y",
+                &payload.y_label,
+                payload.fixed_x_bounds,
+                payload.fixed_y_bounds,
+                panel
+                    .series
+                    .iter()
+                    .flat_map(|series| series.points.iter().copied()),
+            );
+            PlotDocumentPanel {
+                id: format!("panel-{index}"),
+                title: panel.label.clone(),
+                axes,
+                layers: scatter_layers(&panel.series, "x", "y", payload.symbol_size_px),
+                annotations: Vec::new(),
+            }
+        })
+        .collect();
+    base_document(preset, metadata, Vec::new(), Vec::new(), Vec::new(), panels)
+}
+
+fn scatter_page_plot_document(
+    payload: &MsScatterPagePayload,
+    metadata: &PayloadMetadata,
+    preset: MeasurementSetPlotPreset,
+) -> PlotDocumentPayload {
+    let panels = payload
+        .items
+        .iter()
+        .map(|item| {
+            let axes = scatter_axes(
+                "x",
+                &item.plot.x_label,
+                "y",
+                &item.plot.y_label,
+                item.plot.fixed_x_bounds,
+                item.plot.fixed_y_bounds,
+                item.plot
+                    .series
+                    .iter()
+                    .flat_map(|series| series.points.iter().copied()),
+            );
+            PlotDocumentPanel {
+                id: format!("plot-{}", item.plotindex),
+                title: item.plot.title.clone(),
+                axes,
+                layers: scatter_layers(&item.plot.series, "x", "y", item.plot.symbol_size_px),
+                annotations: Vec::new(),
+            }
+        })
+        .collect();
+    base_document(preset, metadata, Vec::new(), Vec::new(), Vec::new(), panels)
+}
+
+fn base_document(
+    preset: MeasurementSetPlotPreset,
+    metadata: &PayloadMetadata,
+    axes: Vec<PlotDocumentAxis>,
+    layers: Vec<PlotDocumentLayer>,
+    annotations: Vec<PlotDocumentAnnotation>,
+    panels: Vec<PlotDocumentPanel>,
+) -> PlotDocumentPayload {
+    PlotDocumentPayload {
+        id: format!("msexplore-{}", ms_plot_preset(preset).as_str()),
+        title: metadata.title.clone(),
+        subtitle: metadata.summary.clone(),
+        axes,
+        layers,
+        annotations,
+        panels,
+        show_legend: true,
+    }
+}
+
+fn scatter_axes(
+    x_id: &str,
+    x_label: &str,
+    y_id: &str,
+    y_label: &str,
+    fixed_x_bounds: Option<(f64, f64)>,
+    fixed_y_bounds: Option<(f64, f64)>,
+    points: impl Iterator<Item = (f64, f64)>,
+) -> Vec<PlotDocumentAxis> {
+    axes_for_ranges(
+        x_id,
+        x_label,
+        y_id,
+        y_label,
+        fixed_x_bounds,
+        fixed_y_bounds,
+        points,
+    )
+}
+
+fn axes_for_ranges(
+    x_id: &str,
+    x_label: &str,
+    y_id: &str,
+    y_label: &str,
+    fixed_x_bounds: Option<(f64, f64)>,
+    fixed_y_bounds: Option<(f64, f64)>,
+    points: impl Iterator<Item = (f64, f64)>,
+) -> Vec<PlotDocumentAxis> {
+    let (x_bounds, y_bounds) = points.fold((None, None), |(x_bounds, y_bounds), (x, y)| {
+        (
+            bounds_accumulator(x_bounds, x),
+            bounds_accumulator(y_bounds, y),
+        )
+    });
+    let x_bounds = expanded_bounds(fixed_x_bounds.or(x_bounds).unwrap_or((0.0, 1.0)));
+    let y_bounds = expanded_bounds(fixed_y_bounds.or(y_bounds).unwrap_or((0.0, 1.0)));
+    vec![
+        document_axis(
+            x_id,
+            x_label,
+            &label_unit(x_label),
+            x_bounds.0,
+            x_bounds.1,
+            PlotAxisScale::Linear,
+        ),
+        document_axis(
+            y_id,
+            y_label,
+            &label_unit(y_label),
+            y_bounds.0,
+            y_bounds.1,
+            PlotAxisScale::Linear,
+        ),
+    ]
+}
+
+fn scatter_layers(
+    series: &[MsScatterSeries],
+    x_axis_id: &str,
+    y_axis_id: &str,
+    symbol_size_px: Option<u32>,
+) -> Vec<PlotDocumentLayer> {
+    series
+        .iter()
+        .enumerate()
+        .map(|(index, series)| {
+            let (x_values, y_values): (Vec<_>, Vec<_>) = series.points.iter().copied().unzip();
+            let provenance = series
+                .provenance
+                .iter()
+                .map(|point| PlotPointProvenance {
+                    row: point.row as u64,
+                    corr: point.corr as u64,
+                    chan_start: point.chan_start as u64,
+                    chan_end: point.chan_end as u64,
+                })
+                .collect();
+            point_layer(PointLayerSpec {
+                id: format!("series-{index}"),
+                title: series.label.clone(),
+                x_axis_id,
+                y_axis_id,
+                x_values,
+                y_values,
+                provenance,
+                color_group: series.color_group.clone(),
+                symbol_size: symbol_size_px.unwrap_or(3) as f64,
+                line_width: 1.0,
+                provenance_summary: "Visibility samples from Rust msexplore payload".to_string(),
+            })
+        })
+        .collect()
+}
+
+struct PointLayerSpec<'a> {
+    id: String,
+    title: String,
+    x_axis_id: &'a str,
+    y_axis_id: &'a str,
+    x_values: Vec<f64>,
+    y_values: Vec<f64>,
+    provenance: Vec<PlotPointProvenance>,
+    color_group: String,
+    symbol_size: f64,
+    line_width: f64,
+    provenance_summary: String,
+}
+
+fn point_layer(spec: PointLayerSpec<'_>) -> PlotDocumentLayer {
+    let source_sample_count = spec.x_values.len() as u64;
+    PlotDocumentLayer {
+        id: spec.id,
+        title: spec.title,
+        kind: PlotLayerKind::Scatter,
+        x_axis_id: spec.x_axis_id.to_string(),
+        y_axis_id: spec.y_axis_id.to_string(),
+        x_values: spec.x_values,
+        y_values: spec.y_values,
+        interval_x_start: Vec::new(),
+        interval_x_end: Vec::new(),
+        interval_y: Vec::new(),
+        interval_height: Vec::new(),
+        provenance: spec.provenance,
+        color_group: spec.color_group,
+        symbol_size: spec.symbol_size,
+        line_width: spec.line_width,
+        opacity: 0.82,
+        source_sample_count,
+        payload_strategy: "point_cloud".to_string(),
+        provenance_summary: spec.provenance_summary,
+    }
+}
+
+struct IntervalLayerSpec<'a> {
+    id: String,
+    title: String,
+    x_axis_id: &'a str,
+    y_axis_id: &'a str,
+    interval_x_start: Vec<f64>,
+    interval_x_end: Vec<f64>,
+    interval_y: Vec<f64>,
+    interval_height: Vec<f64>,
+    color_group: String,
+    provenance_summary: String,
+}
+
+fn interval_layer(spec: IntervalLayerSpec<'_>) -> PlotDocumentLayer {
+    let source_sample_count = spec.interval_x_start.len() as u64;
+    PlotDocumentLayer {
+        id: spec.id,
+        title: spec.title,
+        kind: PlotLayerKind::Interval,
+        x_axis_id: spec.x_axis_id.to_string(),
+        y_axis_id: spec.y_axis_id.to_string(),
+        x_values: Vec::new(),
+        y_values: Vec::new(),
+        interval_x_start: spec.interval_x_start,
+        interval_x_end: spec.interval_x_end,
+        interval_y: spec.interval_y,
+        interval_height: spec.interval_height,
+        provenance: Vec::new(),
+        color_group: spec.color_group,
+        symbol_size: 1.0,
+        line_width: 1.0,
+        opacity: 0.78,
+        source_sample_count,
+        payload_strategy: "intervals".to_string(),
+        provenance_summary: spec.provenance_summary,
+    }
+}
+
+fn document_axis(
+    id: &str,
+    label: &str,
+    unit: &str,
+    lower: f64,
+    upper: f64,
+    scale: PlotAxisScale,
+) -> PlotDocumentAxis {
+    PlotDocumentAxis {
+        id: id.to_string(),
+        label: label.to_string(),
+        unit: unit.to_string(),
+        lower,
+        upper,
+        scale,
+        lane_labels: Vec::new(),
+        draws_on_trailing_edge: false,
+    }
+}
+
+fn document_lane_axis(id: &str, label: &str, lane_labels: Vec<String>) -> PlotDocumentAxis {
+    PlotDocumentAxis {
+        id: id.to_string(),
+        label: label.to_string(),
+        unit: String::new(),
+        lower: -0.5,
+        upper: lane_labels.len().saturating_sub(1) as f64 + 0.5,
+        scale: PlotAxisScale::Linear,
+        lane_labels,
+        draws_on_trailing_edge: false,
+    }
+}
+
+fn series_y_bounds(values: impl Iterator<Item = f64>) -> (f64, f64) {
+    expanded_bounds(values.fold(None, bounds_accumulator).unwrap_or((0.0, 1.0)))
+}
+
+fn bounds_accumulator(bounds: Option<(f64, f64)>, value: f64) -> Option<(f64, f64)> {
+    if !value.is_finite() {
+        return bounds;
+    }
+    Some(match bounds {
+        Some((lower, upper)) => (lower.min(value), upper.max(value)),
+        None => (value, value),
+    })
+}
+
+fn expanded_bounds((lower, upper): (f64, f64)) -> (f64, f64) {
+    if !lower.is_finite() || !upper.is_finite() {
+        return (0.0, 1.0);
+    }
+    if (upper - lower).abs() < f64::EPSILON {
+        let pad = lower.abs().max(1.0) * 0.05;
+        return (lower - pad, upper + pad);
+    }
+    let pad = (upper - lower).abs() * 0.04;
+    (lower - pad, upper + pad)
 }
 
 fn listobs_metadata(
@@ -1535,6 +2249,11 @@ mod tests {
             assert!(!plot.title.is_empty());
             assert!(!plot.x_axis.label.is_empty());
             assert!(!plot.y_axis.label.is_empty());
+            assert_eq!(plot.document.title, plot.title);
+            assert!(
+                !plot.document.layers.is_empty() || !plot.document.panels.is_empty(),
+                "plot document should expose manipulable layers or panels for {preset:?}"
+            );
             if preset == MeasurementSetPlotPreset::AntennaLayout
                 || preset == MeasurementSetPlotPreset::ScanTimeline
             {

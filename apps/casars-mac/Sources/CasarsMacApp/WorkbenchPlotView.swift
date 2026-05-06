@@ -629,7 +629,7 @@ struct WorkbenchPlotView: View {
         plotRect: CGRect
     ) {
         for fraction in stride(from: 0.0, through: 1.0, by: 0.25) {
-            let value = axis.range.lower + axis.range.span * fraction
+            let value = axisValue(at: fraction, axis: axis)
             let text = Text(shortNumber(value)).font(.caption2)
             if horizontal {
                 let x = plotRect.minX + plotRect.width * fraction
@@ -659,8 +659,10 @@ struct WorkbenchPlotView: View {
         guard xAxis.range.span != 0, yAxis.range.span != 0 else {
             return nil
         }
-        let x = (point.x - xAxis.range.lower) / xAxis.range.span
-        let y = (point.y - yAxis.range.lower) / yAxis.range.span
+        guard let x = axisFraction(for: point.x, axis: xAxis),
+              let y = axisFraction(for: point.y, axis: yAxis) else {
+            return nil
+        }
         guard x.isFinite, y.isFinite else { return nil }
         return CGPoint(
             x: plotRect.minX + plotRect.width * x,
@@ -842,7 +844,36 @@ struct WorkbenchPlotView: View {
     }
 
     private func axisLabel(_ axis: WorkbenchPlotAxis) -> String {
-        axis.unit.isEmpty ? axis.label : "\(axis.label) (\(axis.unit))"
+        let label = axis.unit.isEmpty ? axis.label : "\(axis.label) (\(axis.unit))"
+        return axis.scale == .logarithmic ? "\(label), log" : label
+    }
+
+    private func axisFraction(for value: Double, axis: WorkbenchPlotAxis) -> Double? {
+        switch axis.scale {
+        case .linear:
+            guard axis.range.span != 0 else { return nil }
+            return (value - axis.range.lower) / axis.range.span
+        case .logarithmic:
+            guard value > 0, axis.range.lower > 0, axis.range.upper > 0 else { return nil }
+            let lower = log10(axis.range.lower)
+            let upper = log10(axis.range.upper)
+            guard upper != lower else { return nil }
+            return (log10(value) - lower) / (upper - lower)
+        }
+    }
+
+    private func axisValue(at fraction: Double, axis: WorkbenchPlotAxis) -> Double {
+        switch axis.scale {
+        case .linear:
+            return axis.range.lower + axis.range.span * fraction
+        case .logarithmic:
+            guard axis.range.lower > 0, axis.range.upper > 0 else {
+                return axis.range.lower + axis.range.span * fraction
+            }
+            let lower = log10(axis.range.lower)
+            let upper = log10(axis.range.upper)
+            return pow(10, lower + (upper - lower) * fraction)
+        }
     }
 
     private func shortNumber(_ value: Double) -> String {

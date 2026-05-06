@@ -841,7 +841,7 @@ struct MeasurementSetPlotPanel: View {
 
     private var plotSurface: some View {
         ZStack(alignment: .bottomLeading) {
-            plotImage
+            plotDocumentSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             VStack(alignment: .leading, spacing: 12) {
@@ -887,13 +887,13 @@ struct MeasurementSetPlotPanel: View {
     }
 
     @ViewBuilder
-    private var plotImage: some View {
+    private var plotDocumentSurface: some View {
         if let result = visiblePlotResult {
             VStack(alignment: .leading, spacing: 8) {
                 Text(result.title)
                     .workbenchFont(.subheadline, weight: .semibold)
-                CachedPlotImage(result: result)
-                    .id(result.imageCacheID)
+                WorkbenchPlotView(plot: result.plotDocument)
+                    .id(result.plotDocument.dataFingerprint)
                 Text(result.summary)
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
@@ -901,7 +901,7 @@ struct MeasurementSetPlotPanel: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .accessibilityIdentifier("msPlot.image.\(dataset.id)")
+            .accessibilityIdentifier("msPlot.document.\(dataset.id)")
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
@@ -919,44 +919,6 @@ struct MeasurementSetPlotPanel: View {
             .padding(16)
             .accessibilityIdentifier("msPlot.empty.\(dataset.id)")
         }
-    }
-}
-
-private struct CachedPlotImage: View {
-    let result: MeasurementSetPlotResultSummary
-    @State private var image: NSImage?
-    @State private var imageCacheID: String?
-
-    var body: some View {
-        Group {
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                ZStack {
-                    Color(nsColor: .windowBackgroundColor)
-                    Text("Unable to decode plot image")
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .onAppear(perform: refreshImageIfNeeded)
-        .onChange(of: result.imageCacheID) { _ in
-            refreshImageIfNeeded()
-        }
-    }
-
-    private func refreshImageIfNeeded() {
-        guard imageCacheID != result.imageCacheID else {
-            return
-        }
-        image = NSImage(data: result.imageBytes)
-        imageCacheID = result.imageCacheID
     }
 }
 

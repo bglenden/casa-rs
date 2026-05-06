@@ -586,6 +586,7 @@ public struct MeasurementSetPlotResultSummary: Codable, Equatable {
     public var requestedMaxPoints: UInt64
     public var renderedPointCount: UInt64
     public var diagnostics: [String]
+    public var plotDocument: WorkbenchPlotDocument
     public var renderer: String
     public var imageFormat: String
     public var imageWidth: UInt32
@@ -607,6 +608,7 @@ public struct MeasurementSetPlotResultSummary: Codable, Equatable {
         requestedMaxPoints: UInt64,
         renderedPointCount: UInt64,
         diagnostics: [String],
+        plotDocument: WorkbenchPlotDocument,
         renderer: String,
         imageFormat: String,
         imageWidth: UInt32,
@@ -626,6 +628,7 @@ public struct MeasurementSetPlotResultSummary: Codable, Equatable {
         self.requestedMaxPoints = requestedMaxPoints
         self.renderedPointCount = renderedPointCount
         self.diagnostics = diagnostics
+        self.plotDocument = plotDocument
         self.renderer = renderer
         self.imageFormat = imageFormat
         self.imageWidth = imageWidth
@@ -1243,6 +1246,9 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
     public var yAxis: PlotAxisSummary?
     public var renderedPointCount: UInt64?
     public var seriesCount: Int?
+    public var plotDocumentLayerCount: Int?
+    public var plotDocumentPanelCount: Int?
+    public var plotDocumentPayloadStrategies: [String]
     public var imageByteCount: Int?
     public var renderer: String?
     public var diagnostics: [String]
@@ -1262,9 +1268,23 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
         yAxis = visibleResult?.yAxis
         renderedPointCount = visibleResult?.renderedPointCount
         seriesCount = visibleResult?.series.count
+        plotDocumentLayerCount = visibleResult?.plotDocument.allLayers.count
+        plotDocumentPanelCount = visibleResult?.plotDocument.panels.count
+        plotDocumentPayloadStrategies = Self.uniquePayloadStrategies(visibleResult?.plotDocument.allLayers ?? [])
         imageByteCount = visibleResult?.imageBytes.count
         renderer = visibleResult?.renderer
         diagnostics = visibleResult?.diagnostics ?? []
+    }
+
+    private static func uniquePayloadStrategies(_ layers: [WorkbenchPlotLayer]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for layer in layers {
+            let strategy = layer.dataProfile.strategy.rawValue
+            guard seen.insert(strategy).inserted else { continue }
+            ordered.append(strategy)
+        }
+        return ordered
     }
 }
 
