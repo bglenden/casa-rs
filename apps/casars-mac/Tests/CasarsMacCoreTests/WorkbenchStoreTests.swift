@@ -3,6 +3,41 @@ import XCTest
 @testable import CasarsMacCore
 
 final class WorkbenchStoreTests: XCTestCase {
+    func testLocalTWHyaMeasurementSetPlotTimingDiagnostic() throws {
+        guard ProcessInfo.processInfo.environment["CASA_RS_RUN_LOCAL_TIMING"] == "1" else {
+            throw XCTSkip("Set CASA_RS_RUN_LOCAL_TIMING=1 to run local TW Hya plot timing diagnostics.")
+        }
+        let msPath = ProcessInfo.processInfo.environment["CASA_RS_TWHYA_MS"]
+            ?? "/private/tmp/casa-rs-wave6-prof/twhya_calibrated.ms"
+        guard FileManager.default.fileExists(atPath: msPath) else {
+            throw XCTSkip("\(msPath) is not staged")
+        }
+
+        let client = UniFFIMeasurementSetPlotClient()
+        for preset in [
+            MeasurementSetExplorerPlotPreset.scanTimeline,
+            .amplitudeVsTime,
+            .phaseVsTime,
+            .amplitudePhaseVsTimeStacked,
+        ] {
+            let startedAt = Date()
+            let result = try client.buildPlot(
+                request: MeasurementSetPlotBuildRequest(
+                    datasetPath: msPath,
+                    preset: preset,
+                    field: nil,
+                    spectralWindow: nil,
+                    correlation: nil,
+                    dataColumn: "DATA"
+                )
+            )
+            let elapsedMilliseconds = Date().timeIntervalSince(startedAt) * 1000
+            print(
+                "\(preset.rawValue): total=\(String(format: "%.0f", elapsedMilliseconds)) ms, points=\(result.renderedPointCount), layers=\(result.plotDocument.layers.count), panels=\(result.plotDocument.panels.count), diagnostics=\(result.diagnostics)"
+            )
+        }
+    }
+
     func testDefaultStateStartsWithoutFixtureProject() throws {
         let store = WorkbenchStore()
 
