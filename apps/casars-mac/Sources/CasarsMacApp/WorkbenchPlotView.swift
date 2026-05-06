@@ -221,7 +221,8 @@ private struct PlotSampleCard: View {
             xRange: xAxis.range,
             yRange: yAxis.range,
             width: rasterSize.width,
-            height: rasterSize.height
+            height: rasterSize.height,
+            xFootprintDataWidth: workbenchPointRasterXFootprintDataWidth(for: layer)
         ).occupiedPixelCount
     }
 
@@ -295,6 +296,13 @@ private enum WorkbenchPlotLayout {
             height: max(64, min(2_048, Int(plotRect.height.rounded(.up))))
         )
     }
+}
+
+private func workbenchPointRasterXFootprintDataWidth(for layer: WorkbenchPlotLayer) -> Double {
+    guard layer.dataProfile.strategy == .channelBinPointRaster else {
+        return 0
+    }
+    return layer.dataProfile.xBinWidth ?? 0
 }
 
 struct WorkbenchPlotView: View {
@@ -554,7 +562,8 @@ struct WorkbenchPlotView: View {
             xRange: xAxis.range,
             yRange: yAxis.range,
             width: size.width,
-            height: size.height
+            height: size.height,
+            xFootprintDataWidth: workbenchPointRasterXFootprintDataWidth(for: layer)
         )
     }
 
@@ -747,6 +756,7 @@ private final class WorkbenchPointRasterCache: ObservableObject {
         var xUpper: UInt64
         var yLower: UInt64
         var yUpper: UInt64
+        var xFootprintDataWidth: UInt64
     }
 
     private var rasters: [Key: WorkbenchPlotPointRaster] = [:]
@@ -758,7 +768,8 @@ private final class WorkbenchPointRasterCache: ObservableObject {
         xRange: WorkbenchPlotRange,
         yRange: WorkbenchPlotRange,
         width: Int,
-        height: Int
+        height: Int,
+        xFootprintDataWidth: Double = 0
     ) -> WorkbenchPlotPointRaster {
         let key = Key(
             plotFingerprint: plotFingerprint,
@@ -768,7 +779,8 @@ private final class WorkbenchPointRasterCache: ObservableObject {
             xLower: xRange.lower.bitPattern,
             xUpper: xRange.upper.bitPattern,
             yLower: yRange.lower.bitPattern,
-            yUpper: yRange.upper.bitPattern
+            yUpper: yRange.upper.bitPattern,
+            xFootprintDataWidth: xFootprintDataWidth.bitPattern
         )
         if let cached = rasters[key] {
             return cached
@@ -778,7 +790,8 @@ private final class WorkbenchPointRasterCache: ObservableObject {
             xRange: xRange,
             yRange: yRange,
             width: width,
-            height: height
+            height: height,
+            xFootprintDataWidth: xFootprintDataWidth
         )
         if rasters.count >= 8 {
             rasters.removeAll(keepingCapacity: true)

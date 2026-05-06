@@ -10,6 +10,7 @@ public enum WorkbenchPlotPayloadStrategy: String, Codable, Equatable {
     case inlineDisplayPoints
     case viewportLevelOfDetail
     case singlePixelPointRaster
+    case channelBinPointRaster
     case densityGrid
     case rasterOverview
 }
@@ -21,6 +22,7 @@ public struct WorkbenchPlotLayerDataProfile: Codable, Equatable {
     public var strategy: WorkbenchPlotPayloadStrategy
     public var sourceDescription: String
     public var provenanceKey: String?
+    public var xBinWidth: Double?
 
     public init(
         sourceSampleCount: UInt64,
@@ -28,7 +30,8 @@ public struct WorkbenchPlotLayerDataProfile: Codable, Equatable {
         pointBudget: Int = 50_000,
         strategy: WorkbenchPlotPayloadStrategy,
         sourceDescription: String,
-        provenanceKey: String? = nil
+        provenanceKey: String? = nil,
+        xBinWidth: Double? = nil
     ) {
         self.sourceSampleCount = sourceSampleCount
         self.displaySampleCount = displaySampleCount
@@ -36,6 +39,7 @@ public struct WorkbenchPlotLayerDataProfile: Codable, Equatable {
         self.strategy = strategy
         self.sourceDescription = sourceDescription
         self.provenanceKey = provenanceKey
+        self.xBinWidth = xBinWidth
     }
 
     public var isDisplayPayloadBounded: Bool {
@@ -239,10 +243,12 @@ public struct WorkbenchPlotPointRaster: Codable, Equatable {
         xRange: WorkbenchPlotRange,
         yRange: WorkbenchPlotRange,
         width: Int,
-        height: Int
+        height: Int,
+        xFootprintDataWidth: Double = 0
     ) -> WorkbenchPlotPointRaster {
         let boundedWidth = max(1, width)
         let boundedHeight = max(1, height)
+        let xFootprintDataWidth = xFootprintDataWidth.isFinite ? max(0, xFootprintDataWidth) : 0
         guard xRange.span > 0, yRange.span > 0 else {
             return WorkbenchPlotPointRaster(
                 width: boundedWidth,
@@ -262,13 +268,33 @@ public struct WorkbenchPlotPointRaster: Codable, Equatable {
             guard x.isFinite, y.isFinite else { continue }
             guard x >= xRange.lower, x <= xRange.upper, y >= yRange.lower, y <= yRange.upper else { continue }
 
-            let xFraction = (x - xRange.lower) / xRange.span
             let yFraction = (y - yRange.lower) / yRange.span
-            let xBin = min(boundedWidth - 1, max(0, Int((xFraction * Double(boundedWidth)).rounded(.down))))
             let yBin = min(boundedHeight - 1, max(0, Int((yFraction * Double(boundedHeight)).rounded(.down))))
-            let binIndex = yBin * boundedWidth + xBin
-            if counts[binIndex] < UInt32.max {
-                counts[binIndex] += 1
+            let xBins: ClosedRange<Int>
+            if xFootprintDataWidth > 0 {
+                let lower = max(xRange.lower, x - xFootprintDataWidth / 2)
+                let upper = min(xRange.upper, x + xFootprintDataWidth / 2)
+                let lowerFraction = (lower - xRange.lower) / xRange.span
+                let upperFraction = (upper - xRange.lower) / xRange.span
+                let lowerBin = min(
+                    boundedWidth - 1,
+                    max(0, Int((lowerFraction * Double(boundedWidth)).rounded(.down)))
+                )
+                let upperBin = min(
+                    boundedWidth - 1,
+                    max(lowerBin, Int((upperFraction * Double(boundedWidth)).rounded(.up)) - 1)
+                )
+                xBins = lowerBin...upperBin
+            } else {
+                let xFraction = (x - xRange.lower) / xRange.span
+                let xBin = min(boundedWidth - 1, max(0, Int((xFraction * Double(boundedWidth)).rounded(.down))))
+                xBins = xBin...xBin
+            }
+            for xBin in xBins {
+                let binIndex = yBin * boundedWidth + xBin
+                if counts[binIndex] < UInt32.max {
+                    counts[binIndex] += 1
+                }
             }
             totalCount += 1
         }
@@ -461,7 +487,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
         for layer in layers {
             parts.append("\(layer.id):\(layer.kind.rawValue):\(layer.points.count):\(layer.pointCloud?.count ?? 0)")
             parts.append(
-                "profile:\(layer.dataProfile.sourceSampleCount):\(layer.dataProfile.displaySampleCount):\(layer.dataProfile.strategy.rawValue)"
+                "profile:\(layer.dataProfile.sourceSampleCount):\(layer.dataProfile.displaySampleCount):\(layer.dataProfile.strategy.rawValue):\(layer.dataProfile.xBinWidth?.bitPattern ?? 0)"
             )
             if let first = layer.points.first {
                 parts.append("first:\(first.x.bitPattern):\(first.y.bitPattern)")
@@ -580,11 +606,13 @@ public enum WorkbenchPlotSamples {
             plotmsLikeVisibility(),
             uvCoverage(),
             millionPointPixels(),
+            continuousPointPixels(),
             imageDisplay()
         ]
     }
 
     private static let cachedMillionPointPixels = makeMillionPointPixels()
+    private static let cachedContinuousPointPixels = makeContinuousPointPixels()
 
     public static func plotmsLikeVisibility() -> WorkbenchPlotDocument {
         let axes = [
@@ -837,13 +865,14 @@ public enum WorkbenchPlotSamples {
             xRange: axes[0].range,
             yRange: axes[1].range,
             width: 512,
-            height: 256
+            height: 256,
+            xFootprintDataWidth: 1.0
         )
 
         return WorkbenchPlotDocument(
             id: "sample-million-point-pixels",
-            title: "Two Million Point Pixels",
-            subtitle: "Actual 2M-point cloud rasterized to single display pixels",
+            title: "Two Million Channel Bins",
+            subtitle: "2M channelized samples rendered with channel-bin footprints",
             axes: axes,
             layers: [
                 WorkbenchPlotLayer(
@@ -860,9 +889,10 @@ public enum WorkbenchPlotSamples {
                         sourceSampleCount: UInt64(pointCloud.count),
                         displaySampleCount: pointRaster.occupiedPixelCount,
                         pointBudget: pointRaster.width * pointRaster.height,
-                        strategy: .singlePixelPointRaster,
+                        strategy: .channelBinPointRaster,
                         sourceDescription: "Two million channel/amplitude samples held by the Swift plot widget.",
-                        provenanceKey: "ms-row-channel-correlation"
+                        provenanceKey: "ms-row-channel-correlation",
+                        xBinWidth: 1.0
                     )
                 )
             ],
@@ -870,6 +900,105 @@ public enum WorkbenchPlotSamples {
                 WorkbenchPlotAnnotation(id: "pixel-line-center", x: 520, y: 4.45, text: "line ridge")
             ]
         )
+    }
+
+    public static func continuousPointPixels() -> WorkbenchPlotDocument {
+        cachedContinuousPointPixels
+    }
+
+    private static func makeContinuousPointPixels() -> WorkbenchPlotDocument {
+        let axes = [
+            WorkbenchPlotAxis(
+                id: "x",
+                label: "X",
+                unit: "",
+                range: WorkbenchPlotRange(lower: -9, upper: 9)
+            ),
+            WorkbenchPlotAxis(
+                id: "y",
+                label: "Y",
+                unit: "",
+                range: WorkbenchPlotRange(lower: -5, upper: 7)
+            )
+        ]
+        let sampleCount = 2_000_000
+        let centers: [(x: Double, y: Double)] = [(-3.8, 1.2), (1.0, 3.3), (4.6, 0.4), (0.0, 1.0)]
+        let widths: [(x: Double, y: Double)] = [(2.1, 1.25), (2.8, 1.55), (1.65, 1.15), (8.6, 5.3)]
+        var xValues: [Double] = []
+        var yValues: [Double] = []
+        xValues.reserveCapacity(sampleCount)
+        yValues.reserveCapacity(sampleCount)
+
+        for index in 0..<sampleCount {
+            let component = index % centers.count
+            let u = unitHash(UInt64(index), seed: 0x9e37_79b9_7f4a_7c15)
+            let v = unitHash(UInt64(index), seed: 0xbf58_476d_1ce4_e5b9)
+            let w = unitHash(UInt64(index), seed: 0x94d0_49bb_1331_11eb)
+            let center = centers[component]
+            let width = widths[component]
+            let x = center.x + width.x * (u * 2 - 1) + 0.18 * sin(Double(index) * 0.00037)
+            let y = center.y + width.y * (v * 2 - 1) + 0.28 * sin(x * 1.55) + 0.14 * cos(w * Double.pi * 2)
+            xValues.append(x)
+            yValues.append(y)
+        }
+
+        let pointCloud = WorkbenchPlotPointCloud(
+            xValues: xValues,
+            yValues: yValues,
+            provenanceSamples: [
+                WorkbenchPlotPointProvenance(source: "continuous scatter sample start"),
+                WorkbenchPlotPointProvenance(
+                    row: UInt64(sampleCount - 1),
+                    source: "continuous scatter sample end"
+                )
+            ]
+        )
+        let pointRaster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: axes[0].range,
+            yRange: axes[1].range,
+            width: 512,
+            height: 256
+        )
+
+        return WorkbenchPlotDocument(
+            id: "sample-continuous-point-pixels",
+            title: "Two Million Continuous Points",
+            subtitle: "True scatter cloud rasterized to occupied display pixels",
+            axes: axes,
+            layers: [
+                WorkbenchPlotLayer(
+                    id: "continuous-pixels",
+                    title: "continuous scatter pixels",
+                    kind: .scatter,
+                    xAxisID: "x",
+                    yAxisID: "y",
+                    pointCloud: pointCloud,
+                    pointRaster: pointRaster,
+                    style: WorkbenchPlotLayerStyle(colorHex: "#2563eb", symbolSize: 1.0, opacity: 0.78),
+                    provenanceSummary: "Columnar continuous point cloud retained for extraction/fitting; point raster drives rendering.",
+                    dataProfile: WorkbenchPlotLayerDataProfile(
+                        sourceSampleCount: UInt64(pointCloud.count),
+                        displaySampleCount: pointRaster.occupiedPixelCount,
+                        pointBudget: pointRaster.width * pointRaster.height,
+                        strategy: .singlePixelPointRaster,
+                        sourceDescription: "Two million continuous x/y samples held by the Swift plot widget.",
+                        provenanceKey: "continuous-x-y"
+                    )
+                )
+            ],
+            annotations: [
+                WorkbenchPlotAnnotation(id: "continuous-clump", x: 1.0, y: 3.3, text: "continuous cloud")
+            ]
+        )
+    }
+
+    private static func unitHash(_ value: UInt64, seed: UInt64) -> Double {
+        var z = value &+ seed
+        z = (z ^ (z >> 30)) &* 0xbf58_476d_1ce4_e5b9
+        z = (z ^ (z >> 27)) &* 0x94d0_49bb_1331_11eb
+        z = z ^ (z >> 31)
+        return Double(z >> 11) / 9_007_199_254_740_992.0
     }
 
     public static func imageDisplay() -> WorkbenchPlotDocument {

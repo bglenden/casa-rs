@@ -148,6 +148,7 @@ final class WorkbenchStoreTests: XCTestCase {
             "sample-plotms-visibility",
             "sample-uv-coverage",
             "sample-million-point-pixels",
+            "sample-continuous-point-pixels",
             "sample-image-display"
         ])
         XCTAssertEqual(snapshot.workbenchPlots[0].layerCount, 3)
@@ -162,10 +163,13 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.workbenchPlots[2].pointRasterLayerCount, 1)
         XCTAssertEqual(snapshot.workbenchPlots[2].sourceSampleCount, 2_000_000)
         XCTAssertLessThan(snapshot.workbenchPlots[2].displaySampleCount, snapshot.workbenchPlots[2].pointCloudCount)
-        XCTAssertEqual(snapshot.workbenchPlots[2].payloadStrategies, ["singlePixelPointRaster"])
-        XCTAssertEqual(snapshot.workbenchPlots[3].rasterLayerCount, 1)
-        XCTAssertEqual(snapshot.workbenchPlots[3].payloadStrategies, ["rasterOverview"])
-        XCTAssertFalse(snapshot.workbenchPlots[3].dataFingerprint.isEmpty)
+        XCTAssertEqual(snapshot.workbenchPlots[2].payloadStrategies, ["channelBinPointRaster"])
+        XCTAssertEqual(snapshot.workbenchPlots[3].pointCloudCount, 2_000_000)
+        XCTAssertEqual(snapshot.workbenchPlots[3].pointRasterLayerCount, 1)
+        XCTAssertEqual(snapshot.workbenchPlots[3].payloadStrategies, ["singlePixelPointRaster"])
+        XCTAssertEqual(snapshot.workbenchPlots[4].rasterLayerCount, 1)
+        XCTAssertEqual(snapshot.workbenchPlots[4].payloadStrategies, ["rasterOverview"])
+        XCTAssertFalse(snapshot.workbenchPlots[4].dataFingerprint.isEmpty)
         XCTAssertNoThrow(try store.debugJSON())
     }
 
@@ -190,8 +194,66 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(pointRaster.countAt(x: 2, y: 0), 0)
     }
 
-    func testWorkbenchPlotMillionPointCloudRendersAsPointRaster() throws {
+    func testWorkbenchPlotPointRasterCanFillChannelBinFootprints() throws {
+        let pointCloud = WorkbenchPlotPointCloud(
+            xValues: [0, 1, 2],
+            yValues: [0.5, 0.5, 0.5]
+        )
+        let pointRaster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: WorkbenchPlotRange(lower: 0, upper: 2),
+            yRange: WorkbenchPlotRange(lower: 0, upper: 1),
+            width: 8,
+            height: 1
+        )
+        let channelBinRaster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: WorkbenchPlotRange(lower: 0, upper: 2),
+            yRange: WorkbenchPlotRange(lower: 0, upper: 1),
+            width: 8,
+            height: 1,
+            xFootprintDataWidth: 1.0
+        )
+
+        XCTAssertEqual(pointRaster.totalCount, 3)
+        XCTAssertEqual(pointRaster.occupiedPixelCount, 3)
+        XCTAssertEqual(channelBinRaster.totalCount, 3)
+        XCTAssertEqual(channelBinRaster.occupiedPixelCount, 8)
+        XCTAssertGreaterThan(channelBinRaster.countAt(x: 1, y: 0), 0)
+        XCTAssertGreaterThan(channelBinRaster.countAt(x: 3, y: 0), 0)
+        XCTAssertGreaterThan(channelBinRaster.countAt(x: 6, y: 0), 0)
+    }
+
+    func testWorkbenchPlotChannelPointCloudUsesChannelBinRasterFootprint() throws {
         let plot = WorkbenchPlotSamples.millionPointPixels()
+        let layer = try XCTUnwrap(plot.layers.first)
+        let pointCloud = try XCTUnwrap(layer.pointCloud)
+        let pointRaster = try XCTUnwrap(layer.pointRaster)
+        let pointOnlyRaster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: plot.axes[0].range,
+            yRange: plot.axes[1].range,
+            width: pointRaster.width,
+            height: pointRaster.height
+        )
+
+        XCTAssertEqual(layer.points.count, 0)
+        XCTAssertEqual(pointCloud.count, 2_000_000)
+        XCTAssertEqual(pointRaster.totalCount, 2_000_000)
+        XCTAssertGreaterThan(pointRaster.occupiedPixelCount, 20_000)
+        XCTAssertGreaterThan(pointRaster.occupiedPixelCount, pointOnlyRaster.occupiedPixelCount)
+        XCTAssertLessThan(pointRaster.occupiedPixelCount, pointCloud.count)
+        XCTAssertEqual(layer.dataProfile.strategy, .channelBinPointRaster)
+        XCTAssertEqual(layer.dataProfile.xBinWidth, 1.0)
+        XCTAssertEqual(layer.dataProfile.sourceSampleCount, UInt64(pointCloud.count))
+        XCTAssertEqual(layer.dataProfile.displaySampleCount, pointRaster.occupiedPixelCount)
+        XCTAssertLessThanOrEqual(layer.dataProfile.displaySampleCount, layer.dataProfile.pointBudget)
+        XCTAssertTrue(layer.dataProfile.isDisplayPayloadBounded)
+        XCTAssertEqual(layer.style.symbolSize, 1.0)
+    }
+
+    func testWorkbenchPlotContinuousPointCloudUsesSinglePixelRaster() throws {
+        let plot = WorkbenchPlotSamples.continuousPointPixels()
         let layer = try XCTUnwrap(plot.layers.first)
         let pointCloud = try XCTUnwrap(layer.pointCloud)
         let pointRaster = try XCTUnwrap(layer.pointRaster)
@@ -199,9 +261,10 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(layer.points.count, 0)
         XCTAssertEqual(pointCloud.count, 2_000_000)
         XCTAssertEqual(pointRaster.totalCount, 2_000_000)
-        XCTAssertGreaterThan(pointRaster.occupiedPixelCount, 20_000)
+        XCTAssertGreaterThan(pointRaster.occupiedPixelCount, 70_000)
         XCTAssertLessThan(pointRaster.occupiedPixelCount, pointCloud.count)
         XCTAssertEqual(layer.dataProfile.strategy, .singlePixelPointRaster)
+        XCTAssertNil(layer.dataProfile.xBinWidth)
         XCTAssertEqual(layer.dataProfile.sourceSampleCount, UInt64(pointCloud.count))
         XCTAssertEqual(layer.dataProfile.displaySampleCount, pointRaster.occupiedPixelCount)
         XCTAssertLessThanOrEqual(layer.dataProfile.displaySampleCount, layer.dataProfile.pointBudget)
