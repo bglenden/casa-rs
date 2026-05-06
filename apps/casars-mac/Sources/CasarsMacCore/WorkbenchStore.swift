@@ -547,14 +547,17 @@ public final class WorkbenchStore: ObservableObject {
 
         let requestedPlotState = plotState
         plotQueue.async { [plotClient] in
+            let startedAt = Date()
             do {
                 let result = try plotClient.buildPlot(request: request)
+                let elapsedSeconds = Date().timeIntervalSince(startedAt)
                 DispatchQueue.main.async { [weak self] in
                     self?.finishMeasurementSetPlotJob(
                         jobID: jobID,
                         dataset: dataset,
                         plotState: requestedPlotState,
-                        result: result
+                        result: result,
+                        elapsedSeconds: elapsedSeconds
                     )
                 }
             } catch {
@@ -1266,7 +1269,8 @@ public final class WorkbenchStore: ObservableObject {
         jobID: String,
         dataset: DatasetSummary,
         plotState requestedPlotState: MeasurementSetExplorerPlotState,
-        result: MeasurementSetPlotResultSummary
+        result: MeasurementSetPlotResultSummary,
+        elapsedSeconds: TimeInterval
     ) {
         guard var job = state.jobs[jobID], job.status != .cancelled else {
             return
@@ -1284,7 +1288,9 @@ public final class WorkbenchStore: ObservableObject {
         job.progress = 1.0
         job.resultSummary = result.summary
         job.lastEvent = "succeeded"
-        job.logLines.append("Rendered \(result.renderedPointCount) points.")
+        job.logLines.append(
+            "Rendered \(result.renderedPointCount) points in \(formatDuration(elapsedSeconds))."
+        )
         state.jobs[jobID] = job
         state.activeJobIDsByTab.removeValue(forKey: job.tabID)
     }
@@ -2101,6 +2107,13 @@ extension WorkbenchPlotLayer {
             )
         )
     }
+}
+
+private func formatDuration(_ seconds: TimeInterval) -> String {
+    if seconds < 1.0 {
+        return "\(Int((seconds * 1_000).rounded())) ms"
+    }
+    return String(format: "%.2f s", seconds)
 }
 
 extension WorkbenchPlotAnnotation {

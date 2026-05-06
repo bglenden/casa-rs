@@ -63,6 +63,8 @@ use crate::spectral_selection::{
     convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz,
 };
 use crate::subtables::SubTable;
+use crate::subtables::data_description::MsDataDescription;
+use crate::subtables::polarization::MsPolarization;
 use crate::{MeasurementSet, MeasurementSetSummaryOptions, MeasurementSetSummaryOutputFormat};
 
 const EXPORT_DPI: f32 = 72.0;
@@ -2158,6 +2160,7 @@ pub struct MsScatterPagePayload {
 struct PointBudget {
     max_plot_points: Option<usize>,
     rendered_points: usize,
+    allow_predecimation: bool,
 }
 
 impl PointBudget {
@@ -2165,13 +2168,15 @@ impl PointBudget {
         Self {
             max_plot_points: None,
             rendered_points: 0,
+            allow_predecimation: false,
         }
     }
 
-    fn limited(max_plot_points: usize) -> Self {
+    fn limited(max_plot_points: usize, allow_predecimation: bool) -> Self {
         Self {
             max_plot_points: Some(max_plot_points),
             rendered_points: 0,
+            allow_predecimation,
         }
     }
 
@@ -2477,7 +2482,7 @@ fn build_msexplore_payload_internal(
     allow_decimation: bool,
 ) -> Result<MsPlotPayload, String> {
     spec.validate()?;
-    let mut point_budget = PointBudget::limited(spec.max_plot_points);
+    let mut point_budget = PointBudget::limited(spec.max_plot_points, allow_decimation);
     let header_lines = resolve_page_header_lines(ms, spec)?;
     if spec.plots.len() == 1 {
         let mut payload = build_msexplore_plot_payload_validated(
@@ -3475,6 +3480,96 @@ struct AveragedPanelAccumulator {
     contributing_rows: std::collections::BTreeSet<usize>,
 }
 
+fn predecimate_visibility_rows(
+    ms: &MeasurementSet,
+    row_numbers: Vec<usize>,
+    spec: &MsPlotSpec,
+    point_budget: &PointBudget,
+    data_description: &MsDataDescription<'_>,
+    polarization: &MsPolarization<'_>,
+    requested_corr_codes: Option<&[i32]>,
+) -> Result<Vec<usize>, String> {
+    if !point_budget.allow_predecimation || row_numbers.len() <= 1 {
+        return Ok(row_numbers);
+    }
+    let Some(max_plot_points) = point_budget.max_plot_points else {
+        return Ok(row_numbers);
+    };
+    let Some(first_row) = row_numbers.first().copied() else {
+        return Ok(row_numbers);
+    };
+
+    let flag_probe = SelectedArrayColumn::load(ms.main_table(), "FLAG", &[first_row])?;
+    let flags = match flag_probe.get(0)? {
+        ArrayValue::Bool(values) => values.view().into_dimensionality::<Ix2>().map_err(|_| {
+            "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
+        })?,
+        other => {
+            return Err(format!(
+                "msexplore requires BOOL flag cells, found {:?}",
+                other.primitive_type()
+            ));
+        }
+    };
+    let corr_count = flags.nrows();
+    let chan_count = flags.ncols();
+    let data_desc_id = main_ids::data_desc_id(ms.main_table());
+    let ddid = data_desc_id
+        .get(first_row)
+        .map_err(|error| error.to_string())?;
+    let corr_types = if ddid >= 0 && (ddid as usize) < data_description.row_count() {
+        let pol_id = data_description
+            .polarization_id(ddid as usize)
+            .map_err(|error| error.to_string())?;
+        if pol_id >= 0 && (pol_id as usize) < polarization.row_count() {
+            polarization
+                .corr_type(pol_id as usize)
+                .map_err(|error| error.to_string())?
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    let selected_correlations =
+        select_correlation_slots(corr_count, &corr_types, requested_corr_codes);
+    if selected_correlations.is_empty() {
+        return Ok(row_numbers);
+    }
+    let correlation_required = spec.x_axis.uses_correlation_slots()
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(MsAxis::uses_correlation_slots)
+        || matches!(spec.color_by, MsColorAxis::Correlation)
+        || matches!(spec.iteration.iteraxis, Some(MsIterationAxis::Correlation));
+    let corr_points_per_row = if correlation_required {
+        selected_correlations.len()
+    } else {
+        1
+    };
+    let channel_points_per_corr = plot_channel_bins(chan_count, spec)?.len();
+    let y_points_per_bin = spec.y_axes.len().max(1);
+    let estimated_points_per_row = corr_points_per_row
+        .saturating_mul(channel_points_per_corr)
+        .saturating_mul(y_points_per_bin);
+    if estimated_points_per_row == 0 {
+        return Ok(row_numbers);
+    }
+
+    let estimated_points = row_numbers.len().saturating_mul(estimated_points_per_row);
+    if estimated_points <= max_plot_points {
+        return Ok(row_numbers);
+    }
+    let target_rows = (max_plot_points / estimated_points_per_row).clamp(1, row_numbers.len());
+    let sampled = sampled_indices(row_numbers.len(), target_rows)
+        .into_iter()
+        .map(|index| row_numbers[index])
+        .collect();
+    Ok(sampled)
+}
+
 fn build_generic_visibility_scatter(
     ms: &MeasurementSet,
     selection: &MsSelectionSpec,
@@ -3487,6 +3582,7 @@ fn build_generic_visibility_scatter(
 
     let listobs_options = selection.to_summary_options();
     let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
+    let selected_row_count = row_numbers.len();
 
     let needs_visibility_grid = spec.x_axis.is_visibility_math()
         || spec.y_axes.iter().copied().any(MsAxis::is_visibility_math);
@@ -3497,6 +3593,35 @@ fn build_generic_visibility_scatter(
             .copied()
             .any(MsAxis::uses_spectral_coordinates);
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
+    let field = ms.field().map_err(|error| error.to_string())?;
+    let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
+    let polarization = ms.polarization().map_err(|error| error.to_string())?;
+    let data_description = ms.data_description().map_err(|error| error.to_string())?;
+
+    let requested_corr_codes = selection
+        .correlation
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(listobs::parse_correlation_selector)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+
+    let row_numbers = predecimate_visibility_rows(
+        ms,
+        row_numbers,
+        spec,
+        point_budget,
+        &data_description,
+        &polarization,
+        requested_corr_codes.as_deref(),
+    )?;
+    let sampled_row_count = row_numbers.len();
+    let row_sampling_summary = if sampled_row_count < selected_row_count {
+        format!(" Sampled rows={sampled_row_count}/{selected_row_count}.")
+    } else {
+        String::new()
+    };
+
     let data_source = if needs_visibility_grid {
         Some(PreparedSelectedDataSource::new(
             ms,
@@ -3537,24 +3662,11 @@ fn build_generic_visibility_scatter(
     let data_desc_id = main_ids::data_desc_id(ms.main_table());
     let antenna1 = main_ids::antenna1(ms.main_table());
     let antenna2 = main_ids::antenna2(ms.main_table());
-
-    let field = ms.field().map_err(|error| error.to_string())?;
-    let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
-    let polarization = ms.polarization().map_err(|error| error.to_string())?;
-    let data_description = ms.data_description().map_err(|error| error.to_string())?;
     let chan_freq = if needs_spectral_coordinates {
         Some(ChanFreqColumn::new(spectral_window.table()))
     } else {
         None
     };
-
-    let requested_corr_codes = selection
-        .correlation
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .map(listobs::parse_correlation_selector)
-        .transpose()
-        .map_err(|error| error.to_string())?;
 
     let iteraxis = spec.iteration.iteraxis;
     let mut panel_order = Vec::<String>::new();
@@ -4002,14 +4114,15 @@ fn build_generic_visibility_scatter(
             share_y_bounds,
             header_lines: Vec::new(),
             summary: format!(
-                "{}. Panels={} Rows={} Points={} Data column={}",
+                "{}. Panels={} Rows={} Points={} Data column={}.{}",
                 spec.preset
                     .map(MsPlotPreset::display_name)
                     .unwrap_or("MeasurementSet iterated plot"),
                 panels.len(),
                 contributing_rows,
                 contributing_points,
-                spec.data_column
+                spec.data_column,
+                row_sampling_summary
             ),
             panels,
         }));
@@ -4035,13 +4148,14 @@ fn build_generic_visibility_scatter(
         symbol_size_px: spec.style.symbol_size,
         header_lines: Vec::new(),
         summary: format!(
-            "{}. Rows={} Points={} Data column={}",
+            "{}. Rows={} Points={} Data column={}.{}",
             spec.preset
                 .map(MsPlotPreset::display_name)
                 .unwrap_or("MeasurementSet plot"),
             contributing_rows,
             contributing_points,
-            spec.data_column
+            spec.data_column,
+            row_sampling_summary
         ),
         series: panel.series,
     }))
@@ -8509,6 +8623,7 @@ mod tests {
         let point_budget = PointBudget {
             max_plot_points: Some(6),
             rendered_points: 10,
+            allow_predecimation: false,
         };
 
         let compacted = compact_payload_to_budget(payload, &point_budget).unwrap();
@@ -8753,6 +8868,7 @@ mod tests {
             &PointBudget {
                 max_plot_points: Some(4),
                 rendered_points: 9,
+                allow_predecimation: false,
             },
         )
         .unwrap();
@@ -8816,6 +8932,7 @@ mod tests {
             &PointBudget {
                 max_plot_points: Some(3),
                 rendered_points: 6,
+                allow_predecimation: false,
             },
         )
         .unwrap();
@@ -8863,6 +8980,7 @@ mod tests {
                 &PointBudget {
                     max_plot_points: Some(1),
                     rendered_points: 2,
+                    allow_predecimation: false,
                 },
             )
             .unwrap_err()

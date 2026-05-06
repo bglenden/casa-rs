@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared frontend services exposed to Swift and Python through UniFFI.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
 use casa_images::{AnyPagedImage, ImageBrowserSession, ImageInfo, ImagePixelType};
+use casa_ms::columns::{main_ids, time_columns::TimeColumn};
+use casa_ms::plot::{
+    AntennaLayoutPlotPayload, AntennaLayoutPoint, ScanTimelineBar, ScanTimelinePlotPayload,
+    SpectralWindowCoverageBar, SpectralWindowCoveragePlotPayload,
+};
 use casa_ms::{
-    MeasurementSet, MeasurementSetPlotPayload, MeasurementSetPlotTheme,
-    MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPayload,
-    MsPlotPreset, MsPlotSpec, MsScatterGridPayload, MsScatterPagePayload, MsScatterPlotPayload,
-    MsScatterSeries, MsSelectionSpec, VisibilityDataColumn, build_msexplore_payload_from_spec,
-    render_msexplore_plot_image,
+    MeasurementSet, MeasurementSetPlotPayload, MeasurementSetSummaryOutputFormat, MsExploreSpec,
+    MsPageExportRange, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsScatterGridPayload,
+    MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec,
+    VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
 use casa_tables::{Table, TableBrowser, TableOptions};
 use casa_types::measures::direction::{
@@ -23,7 +26,6 @@ use casa_types::measures::direction::{
 };
 use casars_imagebrowser_protocol::ImageBrowserViewport;
 use casars_tablebrowser_protocol::{BrowserView, BrowserViewport};
-use image::ImageFormat;
 use thiserror::Error;
 
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
@@ -402,22 +404,11 @@ pub fn build_measurement_set_plot(
     };
 
     let payload =
-        build_msexplore_payload_from_spec(&spec).map_err(|error| FrontendServiceError::Plot {
+        build_frontend_msexplore_payload(&spec).map_err(|error| FrontendServiceError::Plot {
             reason: format!("{}: {error}", dataset_path.display()),
         })?;
     let metadata = plot_payload_metadata(&payload, request.preset, max_plot_points);
     let document = plot_document_payload(&payload, &metadata, request.preset);
-    let image =
-        render_msexplore_plot_image(&payload, MeasurementSetPlotTheme::light(), width, height)
-            .map_err(|error| FrontendServiceError::Plot {
-                reason: format!("render {}: {error}", dataset_path.display()),
-            })?;
-    let mut encoded = Cursor::new(Vec::new());
-    image
-        .write_to(&mut encoded, ImageFormat::Png)
-        .map_err(|error| FrontendServiceError::Plot {
-            reason: format!("encode PNG {}: {error}", dataset_path.display()),
-        })?;
 
     Ok(MeasurementSetPlotResult {
         preset: request.preset,
@@ -433,14 +424,331 @@ pub fn build_measurement_set_plot(
         sampling: metadata.sampling,
         document,
         render: PlotRenderProvenance {
-            renderer: "casa-ms msexplore plotters PNG".to_string(),
-            image_format: "png".to_string(),
+            renderer: "casa-rs plot document".to_string(),
+            image_format: "none".to_string(),
             width,
             height,
-            source: "Rust casa-ms MeasurementSet payload rendered through UniFFI".to_string(),
+            source: "Rust casa-ms MeasurementSet payload converted to a structured plot document through UniFFI".to_string(),
         },
-        image_bytes: encoded.into_inner(),
+        image_bytes: Vec::new(),
     })
+}
+
+fn build_frontend_msexplore_payload(spec: &MsExploreSpec) -> Result<MsPlotPayload, String> {
+    let [plot] = spec.plots.as_slice() else {
+        return build_msexplore_payload_from_spec(spec);
+    };
+    match plot.preset {
+        Some(MsPlotPreset::AntennaLayout)
+            if spec.selection.spw.is_none() && spec.selection.correlation.is_none() =>
+        {
+            let ms = MeasurementSet::open(&spec.ms_path).map_err(|error| error.to_string())?;
+            build_antenna_layout_payload_fast(&ms, spec.selection.field.as_deref()).map(|payload| {
+                MsPlotPayload::ListObs(MeasurementSetPlotPayload::AntennaLayout(payload))
+            })
+        }
+        Some(MsPlotPreset::ScanTimeline) if spec.selection.correlation.is_none() => {
+            let ms = MeasurementSet::open(&spec.ms_path).map_err(|error| error.to_string())?;
+            build_scan_timeline_payload_fast(
+                &ms,
+                spec.selection.field.as_deref(),
+                spec.selection.spw.as_deref(),
+            )
+            .map(|payload| MsPlotPayload::ListObs(MeasurementSetPlotPayload::ScanTimeline(payload)))
+        }
+        Some(MsPlotPreset::SpectralWindowCoverage)
+            if spec.selection.field.is_none() && spec.selection.correlation.is_none() =>
+        {
+            let ms = MeasurementSet::open(&spec.ms_path).map_err(|error| error.to_string())?;
+            build_spectral_window_coverage_payload_fast(&ms, spec.selection.spw.as_deref()).map(
+                |payload| {
+                    MsPlotPayload::ListObs(MeasurementSetPlotPayload::SpectralWindowCoverage(
+                        payload,
+                    ))
+                },
+            )
+        }
+        _ => build_msexplore_payload_from_spec(spec),
+    }
+}
+
+fn build_antenna_layout_payload_fast(
+    ms: &MeasurementSet,
+    field_selection: Option<&str>,
+) -> Result<AntennaLayoutPlotPayload, String> {
+    let selected_field = field_selection.and_then(parse_single_index_selector);
+    let used_antennas = selected_field
+        .map(|field| selected_antennas_for_field(ms, field))
+        .transpose()?;
+    let antenna = ms.antenna().map_err(|error| error.to_string())?;
+    let mut points = Vec::new();
+    let mut omitted = 0usize;
+    for row in 0..antenna.row_count() {
+        if used_antennas
+            .as_ref()
+            .is_some_and(|used| !used.contains(&row))
+        {
+            continue;
+        }
+        let position = antenna.position(row).map_err(|error| error.to_string())?;
+        let x = position[0];
+        let y = position[1];
+        if !x.is_finite() || !y.is_finite() {
+            omitted += 1;
+            continue;
+        }
+        points.push(AntennaLayoutPoint {
+            label: antenna.name(row).map_err(|error| error.to_string())?,
+            x,
+            y,
+            marker_radius: ((antenna.dish_diameter(row).unwrap_or(15.0) / 3.0).round() as i32)
+                .clamp(3, 12),
+        });
+    }
+    if points.is_empty() {
+        return Err("Antenna layout requires finite ANTENNA positions".to_string());
+    }
+    let suffix = if omitted == 0 {
+        String::new()
+    } else {
+        format!(" ({} omitted without finite coordinates)", omitted)
+    };
+    Ok(AntennaLayoutPlotPayload {
+        x_label: "ITRF X (m)".to_string(),
+        y_label: "ITRF Y (m)".to_string(),
+        labels_enabled: true,
+        summary: format!("Antenna layout. Antennas={}{}", points.len(), suffix),
+        antennas: points,
+    })
+}
+
+fn selected_antennas_for_field(
+    ms: &MeasurementSet,
+    field_id: usize,
+) -> Result<BTreeSet<usize>, String> {
+    let main = ms.main_table();
+    let field_column = main_ids::field_id(main);
+    let antenna1 = main_ids::antenna1(main);
+    let antenna2 = main_ids::antenna2(main);
+    let mut antennas = BTreeSet::new();
+    for row in 0..main.row_count() {
+        if field_column.get(row).map_err(|error| error.to_string())? == field_id as i32 {
+            let ant1 = antenna1.get(row).map_err(|error| error.to_string())?;
+            let ant2 = antenna2.get(row).map_err(|error| error.to_string())?;
+            if ant1 >= 0 {
+                antennas.insert(ant1 as usize);
+            }
+            if ant2 >= 0 {
+                antennas.insert(ant2 as usize);
+            }
+        }
+    }
+    Ok(antennas)
+}
+
+fn build_scan_timeline_payload_fast(
+    ms: &MeasurementSet,
+    field_selection: Option<&str>,
+    spw_selection: Option<&str>,
+) -> Result<ScanTimelinePlotPayload, String> {
+    #[derive(Default)]
+    struct ScanAccum {
+        lane: usize,
+        start: f64,
+        end: f64,
+        field_ids: BTreeSet<i32>,
+        row_count: usize,
+    }
+
+    let selected_field = field_selection.and_then(parse_single_index_selector);
+    let selected_spw = spw_selection.and_then(parse_single_spw_selector);
+    let dd_to_spw = data_description_to_spw(ms)?;
+    let field_names = field_names(ms)?;
+    let main = ms.main_table();
+    let time = TimeColumn::new(main);
+    let scan_number = main_ids::scan_number(main);
+    let field_id = main_ids::field_id(main);
+    let data_desc_id = main_ids::data_desc_id(main);
+    let mut lane_lookup = BTreeMap::<i32, usize>::new();
+    let mut scans = BTreeMap::<i32, ScanAccum>::new();
+
+    for row in 0..main.row_count() {
+        let row_field = field_id.get(row).map_err(|error| error.to_string())?;
+        if selected_field.is_some_and(|field| row_field != field as i32) {
+            continue;
+        }
+        let row_dd = data_desc_id.get(row).map_err(|error| error.to_string())?;
+        let row_spw = dd_to_spw.get(&row_dd).copied().unwrap_or(-1);
+        if selected_spw.is_some_and(|spw| row_spw != spw as i32) {
+            continue;
+        }
+        let scan = scan_number.get(row).map_err(|error| error.to_string())?;
+        let row_time = time
+            .get_mjd_seconds(row)
+            .map_err(|error| error.to_string())?;
+        let next_lane = lane_lookup.len();
+        let lane = *lane_lookup.entry(scan).or_insert(next_lane);
+        let entry = scans.entry(scan).or_insert_with(|| ScanAccum {
+            lane,
+            start: row_time,
+            end: row_time,
+            ..ScanAccum::default()
+        });
+        entry.start = entry.start.min(row_time);
+        entry.end = entry.end.max(row_time);
+        entry.field_ids.insert(row_field);
+        entry.row_count += 1;
+    }
+
+    let mut lane_labels = vec![String::new(); lane_lookup.len()];
+    for (scan, lane) in &lane_lookup {
+        if let Some(label) = lane_labels.get_mut(*lane) {
+            *label = format!("Scan {scan}");
+        }
+    }
+    let mut bars = Vec::new();
+    let mut start = f64::INFINITY;
+    let mut end = f64::NEG_INFINITY;
+    for (scan, entry) in scans {
+        start = start.min(entry.start);
+        end = end.max(entry.end);
+        let field_label = entry
+            .field_ids
+            .iter()
+            .next()
+            .and_then(|field| field_names.get(field))
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+        bars.push(ScanTimelineBar {
+            lane: entry.lane,
+            start_mjd_seconds: entry.start,
+            end_mjd_seconds: entry.end.max(entry.start + 1.0e-6),
+            label: format!("Scan {scan}"),
+            color_group: field_label,
+        });
+    }
+    if !start.is_finite() || !end.is_finite() {
+        start = 0.0;
+        end = 1.0;
+    }
+    Ok(ScanTimelinePlotPayload {
+        start_mjd_seconds: start,
+        end_mjd_seconds: if end > start { end } else { start + 1.0 },
+        bars,
+        lane_labels,
+        summary: format!("Scan timeline. Scans={}", lane_lookup.len()),
+    })
+}
+
+fn build_spectral_window_coverage_payload_fast(
+    ms: &MeasurementSet,
+    spw_selection: Option<&str>,
+) -> Result<SpectralWindowCoveragePlotPayload, String> {
+    let spectral_windows = ms.spectral_window().map_err(|error| error.to_string())?;
+    let selected_spw = spw_selection.and_then(parse_single_spw_selector);
+    let mut bars = Vec::new();
+    for row in 0..spectral_windows.row_count() {
+        if selected_spw.is_some_and(|selected| selected != row) {
+            continue;
+        }
+        let chan_freq = spectral_windows
+            .chan_freq(row)
+            .map_err(|error| error.to_string())?;
+        let chan_width = spectral_windows.chan_width(row).unwrap_or_default();
+        let (start, end) = spectral_window_frequency_bounds_ghz(
+            &chan_freq,
+            &chan_width,
+            spectral_windows
+                .ref_frequency(row)
+                .map_err(|error| error.to_string())?,
+            spectral_windows.total_bandwidth(row).unwrap_or(0.0),
+        );
+        let name = spectral_windows.name(row).unwrap_or_default();
+        let label = if name.trim().is_empty() {
+            format!("SPW {row}")
+        } else {
+            format!("SPW {row} {name}")
+        };
+        bars.push(SpectralWindowCoverageBar {
+            spectral_window_id: row,
+            lane: bars.len(),
+            start,
+            end,
+            label,
+            color_group: format!("spw-{row}"),
+        });
+    }
+    Ok(SpectralWindowCoveragePlotPayload {
+        x_label: "Frequency (GHz)".to_string(),
+        summary: format!("Spectral window coverage. Windows={}", bars.len()),
+        bars,
+    })
+}
+
+fn parse_single_spw_selector(value: &str) -> Option<usize> {
+    parse_single_index_selector(value)
+}
+
+fn parse_single_index_selector(value: &str) -> Option<usize> {
+    let trimmed = value.trim();
+    let without_prefix = trimmed.strip_prefix("spw ").unwrap_or(trimmed);
+    without_prefix
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .ok()
+}
+
+fn data_description_to_spw(ms: &MeasurementSet) -> Result<BTreeMap<i32, i32>, String> {
+    let data_description = ms.data_description().map_err(|error| error.to_string())?;
+    let mut lookup = BTreeMap::new();
+    for row in 0..data_description.row_count() {
+        lookup.insert(
+            row as i32,
+            data_description
+                .spectral_window_id(row)
+                .map_err(|error| error.to_string())?,
+        );
+    }
+    Ok(lookup)
+}
+
+fn field_names(ms: &MeasurementSet) -> Result<BTreeMap<i32, String>, String> {
+    let fields = ms.field().map_err(|error| error.to_string())?;
+    let mut names = BTreeMap::new();
+    for row in 0..fields.row_count() {
+        names.insert(
+            row as i32,
+            fields.name(row).map_err(|error| error.to_string())?,
+        );
+    }
+    Ok(names)
+}
+
+fn spectral_window_frequency_bounds_ghz(
+    chan_freq_hz: &[f64],
+    chan_width_hz: &[f64],
+    ref_frequency_hz: f64,
+    total_bandwidth_hz: f64,
+) -> (f64, f64) {
+    let mut bounds = None;
+    for (index, frequency) in chan_freq_hz.iter().copied().enumerate() {
+        let half_width = chan_width_hz
+            .get(index)
+            .copied()
+            .or_else(|| chan_width_hz.first().copied())
+            .unwrap_or(0.0)
+            .abs()
+            / 2.0;
+        bounds = bounds_accumulator(bounds, frequency - half_width);
+        bounds = bounds_accumulator(bounds, frequency + half_width);
+    }
+    let (lower, upper) = bounds.unwrap_or_else(|| {
+        let half_width = total_bandwidth_hz.abs() / 2.0;
+        (ref_frequency_hz - half_width, ref_frequency_hz + half_width)
+    });
+    (lower / 1.0e9, upper / 1.0e9)
 }
 
 #[uniffi::export]
@@ -2326,23 +2634,15 @@ mod tests {
     }
 
     #[test]
-    fn measurement_set_plot_builds_real_png_and_typed_metadata() {
+    fn measurement_set_plot_builds_typed_document_without_gui_png_work() {
         let (_dir, ms_path) = unpack_small_ms();
 
         assert_eq!(
             MeasurementSetPlotPreset::all().len(),
             MsPlotPreset::ALL.len()
         );
-        for preset in [
-            MeasurementSetPlotPreset::UvCoverage,
-            MeasurementSetPlotPreset::AntennaLayout,
-            MeasurementSetPlotPreset::ScanTimeline,
-            MeasurementSetPlotPreset::SpectralWindowCoverage,
-            MeasurementSetPlotPreset::PhaseVsTime,
-            MeasurementSetPlotPreset::AmplitudeVsFrequency,
-            MeasurementSetPlotPreset::AmplitudeVsUvDistance,
-        ] {
-            let plot = build_measurement_set_plot(MeasurementSetPlotRequest {
+        for preset in MeasurementSetPlotPreset::all().iter().copied() {
+            let plot = match build_measurement_set_plot(MeasurementSetPlotRequest {
                 dataset_path: ms_path.display().to_string(),
                 preset,
                 field: None,
@@ -2352,15 +2652,26 @@ mod tests {
                 width: DEFAULT_PLOT_WIDTH,
                 height: DEFAULT_PLOT_HEIGHT,
                 max_plot_points: 10_000,
-            })
-            .expect("plot");
+            }) {
+                Ok(plot) => plot,
+                Err(FrontendServiceError::Plot { reason })
+                    if matches!(
+                        preset,
+                        MeasurementSetPlotPreset::WeightSpectrumVsTime
+                            | MeasurementSetPlotPreset::SigmaSpectrumVsTime
+                    ) && (reason.contains("requires") || reason.contains("shape [0, 0]")) =>
+                {
+                    continue;
+                }
+                Err(error) => panic!("plot {preset:?}: {error}"),
+            };
 
             assert_eq!(plot.preset, preset);
             assert_eq!(plot.data_column, "data");
-            assert_eq!(plot.render.image_format, "png");
+            assert_eq!(plot.render.image_format, "none");
             assert_eq!(plot.render.width, DEFAULT_PLOT_WIDTH);
             assert_eq!(plot.render.height, DEFAULT_PLOT_HEIGHT);
-            assert!(plot.image_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+            assert!(plot.image_bytes.is_empty());
             assert!(!plot.title.is_empty());
             assert!(!plot.x_axis.label.is_empty());
             assert!(!plot.y_axis.label.is_empty());
