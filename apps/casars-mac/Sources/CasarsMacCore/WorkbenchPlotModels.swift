@@ -16,6 +16,25 @@ public enum WorkbenchPlotPayloadStrategy: String, Codable, Equatable {
     case rasterOverview
 }
 
+public enum WorkbenchPlotDisplayMode: String, CaseIterable, Codable, Equatable, Identifiable {
+    case automatic
+    case symbols
+    case pixels
+
+    public var id: String { rawValue }
+
+    public var controlLabel: String {
+        switch self {
+        case .automatic:
+            return "Auto"
+        case .symbols:
+            return "Symbols"
+        case .pixels:
+            return "Pixels"
+        }
+    }
+}
+
 public struct WorkbenchPlotLayerDataProfile: Codable, Equatable {
     public var sourceSampleCount: UInt64
     public var displaySampleCount: Int
@@ -547,6 +566,7 @@ public struct WorkbenchPlotPanel: Identifiable, Codable, Equatable {
 }
 
 public enum WorkbenchPlotEditAction: Codable, Equatable {
+    case setDisplayMode(WorkbenchPlotDisplayMode)
     case setLayerSymbolSize(layerID: String, size: Double)
     case setLayerLineWidth(layerID: String, width: Double)
     case setLayerOpacity(layerID: String, opacity: Double)
@@ -569,6 +589,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
     public var overlayShapes: [WorkbenchPlotOverlayShape]
     public var panels: [WorkbenchPlotPanel]
     public var showLegend: Bool
+    public var displayMode: WorkbenchPlotDisplayMode
     public var styleRevision: UInt64
 
     public init(
@@ -582,6 +603,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
         overlayShapes: [WorkbenchPlotOverlayShape] = [],
         panels: [WorkbenchPlotPanel] = [],
         showLegend: Bool = true,
+        displayMode: WorkbenchPlotDisplayMode = .automatic,
         styleRevision: UInt64 = 0
     ) {
         self.id = id
@@ -594,6 +616,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
         self.overlayShapes = overlayShapes
         self.panels = panels
         self.showLegend = showLegend
+        self.displayMode = displayMode
         self.styleRevision = styleRevision
     }
 
@@ -616,6 +639,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
     public var dataFingerprint: String {
         var parts = [
             id,
+            "display:\(displayMode.rawValue)",
             headerLines.joined(separator: "\n"),
             allAxes.map { "\($0.id):\($0.range.lower.bitPattern):\($0.range.upper.bitPattern):\($0.scale.rawValue):\($0.laneLabels.joined(separator: "/")):\($0.drawsOnTrailingEdge)" }
                 .joined(separator: ",")
@@ -657,6 +681,9 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
 
     public mutating func apply(_ action: WorkbenchPlotEditAction) {
         switch action {
+        case let .setDisplayMode(displayMode):
+            self.displayMode = displayMode
+            styleRevision += 1
         case let .setLayerSymbolSize(layerID, size):
             updateLayer(layerID) { layer in
                 layer.style.symbolSize = Self.clamped(size, 1, 24)

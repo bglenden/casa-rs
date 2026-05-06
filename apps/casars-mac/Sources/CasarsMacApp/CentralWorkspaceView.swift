@@ -721,6 +721,7 @@ struct MeasurementSetPlotPanel: View {
     @ObservedObject var store: WorkbenchStore
     let dataset: DatasetSummary
     @State private var showingAdvancedSetup = false
+    @State private var plotDisplayMode: WorkbenchPlotDisplayMode = .automatic
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -767,6 +768,15 @@ struct MeasurementSetPlotPanel: View {
                     .frame(width: 320)
             }
             .accessibilityIdentifier("msPlot.selections.\(dataset.id)")
+
+            Picker("Rendering", selection: $plotDisplayMode) {
+                ForEach(WorkbenchPlotDisplayMode.allCases) { mode in
+                    Text(mode.controlLabel).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 230)
+            .accessibilityIdentifier("msPlot.displayMode.\(dataset.id)")
 
             Button {
                 store.runMeasurementSetPlot(datasetID: dataset.id)
@@ -886,7 +896,7 @@ struct MeasurementSetPlotPanel: View {
                         }
                     }
                 }
-                WorkbenchPlotView(plot: result.plotDocument)
+                WorkbenchPlotView(plot: result.plotDocument, displayModeOverride: plotDisplayMode)
                     .id(result.plotDocument.dataFingerprint)
                 Text(result.summary)
                     .workbenchFont(.caption)

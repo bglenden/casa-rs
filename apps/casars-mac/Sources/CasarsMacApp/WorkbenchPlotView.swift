@@ -127,6 +127,23 @@ private struct PlotSampleCard: View {
                 .accessibilityIdentifier("plotSamples.\(plot.id).layerVisible")
             }
 
+            Picker("Rendering", selection: Binding(
+                get: { plot.displayMode },
+                set: { mode in
+                    store.applyWorkbenchPlotEdit(
+                        plotID: plot.id,
+                        action: .setDisplayMode(mode)
+                    )
+                }
+            )) {
+                ForEach(WorkbenchPlotDisplayMode.allCases) { mode in
+                    Text(mode.controlLabel).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 260)
+            .accessibilityIdentifier("plotSamples.\(plot.id).displayMode")
+
             if let rasterLayer = plot.allLayers.first(where: { $0.raster != nil }) {
                 HStack(spacing: 12) {
                     Picker("Stretch", selection: Binding(
@@ -313,7 +330,12 @@ private func workbenchPointRasterXFootprintDataWidth(for layer: WorkbenchPlotLay
 
 struct WorkbenchPlotView: View {
     let plot: WorkbenchPlotDocument
+    var displayModeOverride: WorkbenchPlotDisplayMode?
     @StateObject private var pointRasterCache = WorkbenchPointRasterCache()
+
+    private var displayMode: WorkbenchPlotDisplayMode {
+        displayModeOverride ?? plot.displayMode
+    }
 
     var body: some View {
         Canvas { context, size in
@@ -449,7 +471,7 @@ struct WorkbenchPlotView: View {
                     continue
                 }
                 let color = color(hex: layer.style.colorHex).opacity(layer.style.opacity)
-                for point in renderPoints(for: layer) {
+                for point in renderPoints(for: layer, mode: displayMode) {
                     guard let position = screenPoint(point, xAxis: xAxis, yAxis: yAxis, plotRect: plotRect) else { continue }
                     let radius = max(0.5, (point.symbolSize ?? layer.style.symbolSize) / 2)
                     context.fill(
@@ -467,7 +489,7 @@ struct WorkbenchPlotView: View {
                 var path = Path()
                 var hasSubpath = false
                 var drewSegment = false
-                for point in renderPoints(for: layer) {
+                for point in renderPoints(for: layer, mode: .automatic) {
                     guard let position = screenPoint(point, xAxis: xAxis, yAxis: yAxis, plotRect: plotRect) else {
                         hasSubpath = false
                         continue
@@ -753,8 +775,16 @@ struct WorkbenchPlotView: View {
         )
     }
 
-    private func renderPoints(for layer: WorkbenchPlotLayer) -> [WorkbenchPlotPoint] {
-        let pointLimit = max(1, min(layer.dataProfile.pointBudget, 50_000))
+    private func renderPoints(
+        for layer: WorkbenchPlotLayer,
+        mode: WorkbenchPlotDisplayMode
+    ) -> [WorkbenchPlotPoint] {
+        let pointLimit: Int
+        if mode == .symbols, let pointCloud = layer.pointCloud {
+            pointLimit = pointCloud.count
+        } else {
+            pointLimit = max(1, min(layer.dataProfile.pointBudget, 50_000))
+        }
         if layer.points.isEmpty, let pointCloud = layer.pointCloud {
             return pointCloud.sampledPoints(limit: pointLimit)
         }
@@ -776,6 +806,9 @@ struct WorkbenchPlotView: View {
         yAxis: WorkbenchPlotAxis,
         plotRect: CGRect
     ) -> WorkbenchPlotPointRaster? {
+        guard displayMode != .symbols else {
+            return nil
+        }
         let rasterSize = pointRasterSize(for: plotRect)
         if
             let pointRaster = layer.pointRaster,
@@ -786,12 +819,25 @@ struct WorkbenchPlotView: View {
         {
             return pointRaster
         }
-        guard
+        if
             let pointCloud = layer.pointCloud,
-            pointCloud.count > layer.dataProfile.pointBudget
-        else {
+            displayMode == .pixels || shouldRasterize(layer: layer, pointCloudCount: pointCloud.count)
+        {
+            return pointRaster(
+                from: pointCloud,
+                layer: layer,
+                xAxis: xAxis,
+                yAxis: yAxis,
+                size: rasterSize
+            )
+        }
+        guard displayMode == .pixels, !layer.points.isEmpty else {
             return nil
         }
+        let pointCloud = WorkbenchPlotPointCloud(
+            xValues: layer.points.map(\.x),
+            yValues: layer.points.map(\.y)
+        )
         return pointRaster(
             from: pointCloud,
             layer: layer,
@@ -830,6 +876,15 @@ struct WorkbenchPlotView: View {
 
     private func pointRasterSize(for plotRect: CGRect) -> (width: Int, height: Int) {
         WorkbenchPlotLayout.pointRasterSize(for: plotRect)
+    }
+
+    private func shouldRasterize(layer: WorkbenchPlotLayer, pointCloudCount: Int) -> Bool {
+        if layer.dataProfile.strategy == .singlePixelPointRaster
+            || layer.dataProfile.strategy == .channelBinPointRaster
+            || layer.dataProfile.strategy == .viewportLevelOfDetail {
+            return true
+        }
+        return pointCloudCount > layer.dataProfile.pointBudget
     }
 
     private func pointRasterImage(_ pointRaster: WorkbenchPlotPointRaster, layer: WorkbenchPlotLayer) -> CGImage? {

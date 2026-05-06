@@ -12,6 +12,8 @@ private let measurementSetPlotLogger = Logger(
     category: "MeasurementSetPlot"
 )
 
+private let denseScatterPointThreshold = 8_000
+
 public protocol ProjectProbeClient {
     func probeProject(path: String) throws -> ProjectFixtureProbe
     func probePath(path: String) throws -> DatasetSummary?
@@ -2016,7 +2018,10 @@ extension MeasurementSetPlotResultSummary {
 }
 
 extension WorkbenchPlotDocument {
-    init(payload: CasarsFrontendServices.PlotDocumentPayload) {
+    init(
+        payload: CasarsFrontendServices.PlotDocumentPayload,
+        displayMode: WorkbenchPlotDisplayMode = .automatic
+    ) {
         self.init(
             id: payload.id,
             title: payload.title,
@@ -2028,7 +2033,8 @@ extension WorkbenchPlotDocument {
             },
             annotations: payload.annotations.map(WorkbenchPlotAnnotation.init(payload:)),
             panels: payload.panels.map(WorkbenchPlotPanel.init(payload:)),
-            showLegend: payload.showLegend
+            showLegend: payload.showLegend,
+            displayMode: displayMode
         )
     }
 }
@@ -2065,7 +2071,9 @@ extension WorkbenchPlotLayer {
     init(payload: CasarsFrontendServices.PlotDocumentLayer, paletteIndex: Int) {
         let pointCount = min(payload.xValues.count, payload.yValues.count)
         let provenance = payload.provenance.map(WorkbenchPlotPointProvenance.init(payload:))
-        let points = pointCount <= 50_000
+        let layerKind = WorkbenchPlotLayerKind(kind: payload.kind)
+        let inlinePointThreshold = layerKind == .line ? 50_000 : denseScatterPointThreshold
+        let points = pointCount <= inlinePointThreshold
             ? (0..<pointCount).map { index in
                 WorkbenchPlotPoint(
                     x: payload.xValues[index],
@@ -2076,7 +2084,7 @@ extension WorkbenchPlotLayer {
                 )
             }
             : []
-        let pointCloud = pointCount > 50_000
+        let pointCloud = pointCount > inlinePointThreshold
             ? WorkbenchPlotPointCloud(
                 xValues: Array(payload.xValues.prefix(pointCount)),
                 yValues: Array(payload.yValues.prefix(pointCount)),
@@ -2099,7 +2107,6 @@ extension WorkbenchPlotLayer {
                 label: index < payload.intervalLabels.count && !payload.intervalLabels[index].isEmpty ? payload.intervalLabels[index] : nil
             )
         }
-        let layerKind = WorkbenchPlotLayerKind(kind: payload.kind)
         self.init(
             id: payload.id,
             title: payload.title,
@@ -2119,7 +2126,7 @@ extension WorkbenchPlotLayer {
             dataProfile: WorkbenchPlotLayerDataProfile(
                 sourceSampleCount: payload.sourceSampleCount,
                 displaySampleCount: max(points.count, pointCloud?.count ?? 0, intervals.count),
-                pointBudget: layerKind == .line ? 100_000 : 50_000,
+                pointBudget: layerKind == .line ? 100_000 : denseScatterPointThreshold,
                 strategy: WorkbenchPlotPayloadStrategy(payloadStrategy: payload.payloadStrategy, fallback: pointCloud == nil ? .inlineDisplayPoints : .viewportLevelOfDetail),
                 sourceDescription: payload.provenanceSummary,
                 provenanceKey: payload.colorGroup
