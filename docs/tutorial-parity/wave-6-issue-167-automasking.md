@@ -10,10 +10,10 @@ Registry key: `alma/automasking`
 
 ## Tutorial Source
 
-- CASA Guide page: <https://casaguides.nrao.edu/index.php/Automasking_Guide>
-- Guide version observed during this wave: CASA 6.6.6, most recently updated for CASA 6.6.6 with Python 3.10.
-- Input artifact: `twhya_selfcal.ms.contsub.tgz`, staged by tutorial-data policy under `CASA_RS_TUTORIAL_DATA_ROOT/tutorial-parity/...` when local parity artifacts are produced.
-- Local staging status on 2026-05-06: not present under `~/SoftwareProjects/casa-tutorial-data/tutorial-parity/...`; this blocks same-input CASA/casa-rs product evidence in this branch until the archive is staged.
+- CASA Guide page: <https://casaguides.nrao.edu/index.php?title=Automasking_Guide_CASA_6.5.4>
+- Guide version observed during this wave: last checked on CASA 6.5.4; the current topical inventory keeps the same Automasking Guide route for #167.
+- Input artifact: `twhya_selfcal.ms.contsub.tar`, staged by tutorial-data policy under `CASA_RS_TUTORIAL_DATA_ROOT/tutorial-parity/alma/automasking/`.
+- Local staging status on 2026-05-06: present at `/Volumes/GLENDENNING/casa-rs/tutorial-data/tutorial-parity/alma/automasking/twhya_selfcal.ms.contsub.tar`; size `257537974` bytes; SHA-256 `9cd1b5f9a3bc80a5758e945d1c398e79a64fec9e2d40cad4336edbe7ea787de6`.
 
 ## Extracted Workflow
 
@@ -59,4 +59,4 @@ The native mask generator currently builds a deterministic initial automask from
 
 ## Deferred Evidence
 
-The implementation surface is now present for the Automasking Guide route. Full tutorial closeout still requires local staging of `twhya_selfcal.ms.contsub.tgz`, CASA 6.7.5-9/CASA C++ reference runs, casa-rs runs from the same inputs, and side-by-side image/residual/mask comparison artifacts.
+The implementation surface is now present for the Automasking Guide route. Full tutorial closeout still requires extracting `twhya_selfcal.ms.contsub.tar`, CASA 6.7.5-9/CASA C++ reference runs, casa-rs runs from the same inputs, and side-by-side image/residual/mask comparison artifacts.
