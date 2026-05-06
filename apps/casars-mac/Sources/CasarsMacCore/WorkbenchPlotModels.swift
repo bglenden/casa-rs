@@ -854,7 +854,7 @@ public enum WorkbenchPlotSamples {
                     yAxisID: "amplitude",
                     pointCloud: pointCloud,
                     pointRaster: pointRaster,
-                    style: WorkbenchPlotLayerStyle(colorHex: "#0f766e", symbolSize: 2.4, opacity: 0.85),
+                    style: WorkbenchPlotLayerStyle(colorHex: "#0f766e", symbolSize: 1.0, opacity: 0.85),
                     provenanceSummary: "Columnar point cloud retained for extraction/fitting; point raster drives rendering.",
                     dataProfile: WorkbenchPlotLayerDataProfile(
                         sourceSampleCount: UInt64(pointCloud.count),

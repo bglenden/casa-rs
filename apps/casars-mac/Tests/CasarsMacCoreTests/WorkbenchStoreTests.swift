@@ -206,6 +206,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(layer.dataProfile.displaySampleCount, pointRaster.occupiedPixelCount)
         XCTAssertLessThanOrEqual(layer.dataProfile.displaySampleCount, layer.dataProfile.pointBudget)
         XCTAssertTrue(layer.dataProfile.isDisplayPayloadBounded)
+        XCTAssertEqual(layer.style.symbolSize, 1.0)
     }
 
     func testWorkbenchPlotDisplayEditsDoNotRegeneratePayload() throws {
@@ -239,6 +240,28 @@ final class WorkbenchStoreTests: XCTestCase {
             WorkbenchPlotEditAction.setLayerLineWidth(layerID: "gaussian-fit", width: 3.0)
         )
         XCTAssertFalse(encodedAction.isEmpty)
+    }
+
+    func testWorkbenchPointRasterSymbolSizeIsDisplayOnly() throws {
+        let store = WorkbenchStore.fixture()
+        let plotID = "sample-million-point-pixels"
+        let original = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        let originalFingerprint = original.dataFingerprint
+        let layerID = try XCTUnwrap(original.layers.first?.id)
+        let originalRaster = try XCTUnwrap(original.layers.first?.pointRaster)
+
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setLayerSymbolSize(layerID: layerID, size: 11.0)
+        )
+
+        let edited = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        let editedRaster = try XCTUnwrap(edited.layers.first?.pointRaster)
+        XCTAssertEqual(edited.dataFingerprint, originalFingerprint)
+        XCTAssertEqual(edited.styleRevision, 1)
+        XCTAssertEqual(edited.layers.first?.style.symbolSize, 11.0)
+        XCTAssertEqual(editedRaster.totalCount, originalRaster.totalCount)
+        XCTAssertEqual(editedRaster.occupiedPixelCount, originalRaster.occupiedPixelCount)
     }
 
     func testWorkbenchImageSampleStretchAndColorMapAreDisplayOnly() throws {

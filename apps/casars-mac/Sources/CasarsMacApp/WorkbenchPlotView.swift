@@ -26,7 +26,9 @@ struct PlotSamplesPanel: View {
 private struct PlotSampleCard: View {
     @ObservedObject var store: WorkbenchStore
     let plot: WorkbenchPlotDocument
+    @StateObject private var pointRasterSummaryCache = WorkbenchPointRasterCache()
     @State private var controlsExpanded = false
+    @State private var plotCanvasSize = CGSize.zero
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -47,11 +49,19 @@ private struct PlotSampleCard: View {
 
             WorkbenchPlotView(plot: plot)
                 .frame(height: plot.layers.contains { $0.kind == .raster } ? 360 : 320)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: PlotCanvasSizePreferenceKey.self, value: proxy.size)
+                    }
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.secondary.opacity(0.22))
                 )
                 .accessibilityIdentifier("plotSamples.\(plot.id).canvas")
+                .onPreferenceChange(PlotCanvasSizePreferenceKey.self) { size in
+                    plotCanvasSize = size
+                }
 
             DisclosureGroup("Display controls", isExpanded: $controlsExpanded) {
                 controls
@@ -152,14 +162,8 @@ private struct PlotSampleCard: View {
     }
 
     private var sampleCountSummary: String {
-        let rasterPixels = plot.layers.reduce(0) { total, layer in
-            total + (layer.pointRaster?.occupiedPixelCount ?? 0)
-        }
-        let pointClouds = plot.layers.reduce(0) { total, layer in
-            total + (layer.pointCloud?.count ?? 0)
-        }
-        if pointClouds > 0, rasterPixels > 0 {
-            return "\(formattedCount(pointClouds)) points, \(formattedCount(rasterPixels)) occupied pixels"
+        if let pointCloudSummary {
+            return pointCloudSummary
         }
 
         let display = plot.layers.reduce(0) { total, layer in total + layer.dataProfile.displaySampleCount }
@@ -168,6 +172,57 @@ private struct PlotSampleCard: View {
             return "\(formattedCount(display)) / \(formattedCount(source)) src"
         }
         return "\(formattedCount(display)) pts"
+    }
+
+    private var pointCloudSummary: String? {
+        let pointClouds = plot.layers.reduce(0) { total, layer in
+            total + (layer.pointCloud?.count ?? 0)
+        }
+        guard pointClouds > 0 else { return nil }
+
+        let occupiedPixels = plot.layers.reduce(0) { total, layer in
+            total + occupiedPixelCount(for: layer)
+        }
+        guard occupiedPixels > 0 else {
+            return "\(formattedCount(pointClouds)) points"
+        }
+        return "\(formattedCount(pointClouds)) points, \(formattedCount(occupiedPixels)) occupied pixels"
+    }
+
+    private func occupiedPixelCount(for layer: WorkbenchPlotLayer) -> Int {
+        guard let pointCloud = layer.pointCloud else {
+            return layer.pointRaster?.occupiedPixelCount ?? 0
+        }
+        let fallback = layer.pointRaster?.occupiedPixelCount ?? 0
+        guard
+            plotCanvasSize.width > 0,
+            plotCanvasSize.height > 0,
+            let xAxis = plot.axes.first(where: { $0.id == layer.xAxisID }),
+            let yAxis = plot.axes.first(where: { $0.id == layer.yAxisID })
+        else {
+            return fallback
+        }
+
+        let plotRect = WorkbenchPlotLayout.plotRect(for: plotCanvasSize)
+        let rasterSize = WorkbenchPlotLayout.pointRasterSize(for: plotRect)
+        if
+            let pointRaster = layer.pointRaster,
+            pointRaster.width == rasterSize.width,
+            pointRaster.height == rasterSize.height,
+            pointRaster.xRange == xAxis.range,
+            pointRaster.yRange == yAxis.range
+        {
+            return pointRaster.occupiedPixelCount
+        }
+        return pointRasterSummaryCache.raster(
+            plotFingerprint: plot.dataFingerprint,
+            layerID: layer.id,
+            pointCloud: pointCloud,
+            xRange: xAxis.range,
+            yRange: yAxis.range,
+            width: rasterSize.width,
+            height: rasterSize.height
+        ).occupiedPixelCount
     }
 
     private func formattedCount(_ count: Int) -> String {
@@ -212,6 +267,36 @@ private struct SliderRow: View {
     }
 }
 
+private struct PlotCanvasSizePreferenceKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
+    }
+}
+
+private enum WorkbenchPlotLayout {
+    static func plotRect(for size: CGSize) -> CGRect {
+        let left = 64.0
+        let top = 26.0
+        let right = 26.0
+        let bottom = 56.0
+        return CGRect(
+            x: left,
+            y: top,
+            width: max(20, size.width - left - right),
+            height: max(20, size.height - top - bottom)
+        )
+    }
+
+    static func pointRasterSize(for plotRect: CGRect) -> (width: Int, height: Int) {
+        (
+            width: max(64, min(2_048, Int(plotRect.width.rounded(.up)))),
+            height: max(64, min(2_048, Int(plotRect.height.rounded(.up))))
+        )
+    }
+}
+
 struct WorkbenchPlotView: View {
     let plot: WorkbenchPlotDocument
     @StateObject private var pointRasterCache = WorkbenchPointRasterCache()
@@ -237,16 +322,7 @@ struct WorkbenchPlotView: View {
     }
 
     private func plotRect(for size: CGSize) -> CGRect {
-        let left = 64.0
-        let top = 26.0
-        let right = 26.0
-        let bottom = 56.0
-        return CGRect(
-            x: left,
-            y: top,
-            width: max(20, size.width - left - right),
-            height: max(20, size.height - top - bottom)
-        )
+        WorkbenchPlotLayout.plotRect(for: size)
     }
 
     private func drawBackground(in context: inout GraphicsContext, size: CGSize, plotRect: CGRect) {
@@ -483,10 +559,7 @@ struct WorkbenchPlotView: View {
     }
 
     private func pointRasterSize(for plotRect: CGRect) -> (width: Int, height: Int) {
-        (
-            width: max(64, min(2_048, Int(plotRect.width.rounded(.up)))),
-            height: max(64, min(2_048, Int(plotRect.height.rounded(.up))))
-        )
+        WorkbenchPlotLayout.pointRasterSize(for: plotRect)
     }
 
     private func pointRasterImage(_ pointRaster: WorkbenchPlotPointRaster, layer: WorkbenchPlotLayer) -> CGImage? {
@@ -495,11 +568,27 @@ struct WorkbenchPlotView: View {
         let bytesPerPixel = 4
         let bytesPerRow = pointRaster.width * bytesPerPixel
         var pixels = Array(repeating: UInt8(0), count: pointRaster.height * bytesPerRow)
+        let markerSize = pointRasterMarkerSize(for: layer)
+        let lowerRadius = (markerSize - 1) / 2
+        let upperRadius = markerSize / 2
+        let occupancyPrefix = markerSize > 1 ? pointRasterOccupancyPrefix(pointRaster) : []
 
         for y in 0..<pointRaster.height {
             let outputY = pointRaster.height - 1 - y
             for x in 0..<pointRaster.width {
-                guard pointRaster.countAt(x: x, y: y) > 0 else { continue }
+                if markerSize == 1 {
+                    guard pointRaster.countAt(x: x, y: y) > 0 else { continue }
+                } else {
+                    guard pointRasterHasPoint(
+                        occupancyPrefix: occupancyPrefix,
+                        width: pointRaster.width,
+                        height: pointRaster.height,
+                        nearX: x,
+                        y: y,
+                        lowerRadius: lowerRadius,
+                        upperRadius: upperRadius
+                    ) else { continue }
+                }
                 let offset = outputY * bytesPerRow + x * bytesPerPixel
                 pixels[offset] = components.red
                 pixels[offset + 1] = components.green
@@ -528,6 +617,51 @@ struct WorkbenchPlotView: View {
             shouldInterpolate: false,
             intent: .defaultIntent
         )
+    }
+
+    private func pointRasterMarkerSize(for layer: WorkbenchPlotLayer) -> Int {
+        max(1, min(24, Int(layer.style.symbolSize.rounded(.toNearestOrAwayFromZero))))
+    }
+
+    private func pointRasterOccupancyPrefix(_ pointRaster: WorkbenchPlotPointRaster) -> [Int] {
+        let prefixWidth = pointRaster.width + 1
+        var prefix = Array(repeating: 0, count: prefixWidth * (pointRaster.height + 1))
+        for y in 0..<pointRaster.height {
+            var rowTotal = 0
+            for x in 0..<pointRaster.width {
+                if pointRaster.counts[y * pointRaster.width + x] > 0 {
+                    rowTotal += 1
+                }
+                prefix[(y + 1) * prefixWidth + x + 1] = prefix[y * prefixWidth + x + 1] + rowTotal
+            }
+        }
+        return prefix
+    }
+
+    private func pointRasterHasPoint(
+        occupancyPrefix: [Int],
+        width: Int,
+        height: Int,
+        nearX x: Int,
+        y: Int,
+        lowerRadius: Int,
+        upperRadius: Int
+    ) -> Bool {
+        let prefixWidth = width + 1
+        guard occupancyPrefix.count == prefixWidth * (height + 1) else { return false }
+        let minX = max(0, x - lowerRadius)
+        let maxX = min(width - 1, x + upperRadius)
+        let minY = max(0, y - lowerRadius)
+        let maxY = min(height - 1, y + upperRadius)
+        let x0 = minX
+        let x1 = maxX + 1
+        let y0 = minY
+        let y1 = maxY + 1
+        let occupied = occupancyPrefix[y1 * prefixWidth + x1]
+            - occupancyPrefix[y0 * prefixWidth + x1]
+            - occupancyPrefix[y1 * prefixWidth + x0]
+            + occupancyPrefix[y0 * prefixWidth + x0]
+        return occupied > 0
     }
 
     private func axisLabel(_ axis: WorkbenchPlotAxis) -> String {
