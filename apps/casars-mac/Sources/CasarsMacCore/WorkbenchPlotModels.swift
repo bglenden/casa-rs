@@ -562,6 +562,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
     public let id: String
     public var title: String
     public var subtitle: String
+    public var headerLines: [String]
     public var axes: [WorkbenchPlotAxis]
     public var layers: [WorkbenchPlotLayer]
     public var annotations: [WorkbenchPlotAnnotation]
@@ -574,6 +575,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
         id: String,
         title: String,
         subtitle: String,
+        headerLines: [String] = [],
         axes: [WorkbenchPlotAxis],
         layers: [WorkbenchPlotLayer],
         annotations: [WorkbenchPlotAnnotation] = [],
@@ -585,6 +587,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
         self.id = id
         self.title = title
         self.subtitle = subtitle
+        self.headerLines = headerLines
         self.axes = axes
         self.layers = layers
         self.annotations = annotations
@@ -613,6 +616,7 @@ public struct WorkbenchPlotDocument: Identifiable, Codable, Equatable {
     public var dataFingerprint: String {
         var parts = [
             id,
+            headerLines.joined(separator: "\n"),
             allAxes.map { "\($0.id):\($0.range.lower.bitPattern):\($0.range.upper.bitPattern):\($0.scale.rawValue):\($0.laneLabels.joined(separator: "/")):\($0.drawsOnTrailingEdge)" }
                 .joined(separator: ",")
         ]

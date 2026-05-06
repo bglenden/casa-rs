@@ -892,6 +892,15 @@ struct MeasurementSetPlotPanel: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(result.title)
                     .workbenchFont(.subheadline, weight: .semibold)
+                if !result.plotDocument.headerLines.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(result.plotDocument.headerLines, id: \.self) { line in
+                            Text(line)
+                                .workbenchFont(.caption, design: .monospaced)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 WorkbenchPlotView(plot: result.plotDocument)
                     .id(result.plotDocument.dataFingerprint)
                 Text(result.summary)

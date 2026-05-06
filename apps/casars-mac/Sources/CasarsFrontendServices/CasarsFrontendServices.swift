@@ -1353,10 +1353,13 @@ public struct PlotDocumentLayer {
     public var yAxisId: String
     public var xValues: [Double]
     public var yValues: [Double]
+    public var pointLabels: [String]
+    public var pointSymbolSizes: [Double]
     public var intervalXStart: [Double]
     public var intervalXEnd: [Double]
     public var intervalY: [Double]
     public var intervalHeight: [Double]
+    public var intervalLabels: [String]
     public var provenance: [PlotPointProvenance]
     public var colorGroup: String
     public var symbolSize: Double
@@ -1368,7 +1371,7 @@ public struct PlotDocumentLayer {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, title: String, kind: PlotLayerKind, xAxisId: String, yAxisId: String, xValues: [Double], yValues: [Double], intervalXStart: [Double], intervalXEnd: [Double], intervalY: [Double], intervalHeight: [Double], provenance: [PlotPointProvenance], colorGroup: String, symbolSize: Double, lineWidth: Double, opacity: Double, sourceSampleCount: UInt64, payloadStrategy: String, provenanceSummary: String) {
+    public init(id: String, title: String, kind: PlotLayerKind, xAxisId: String, yAxisId: String, xValues: [Double], yValues: [Double], pointLabels: [String], pointSymbolSizes: [Double], intervalXStart: [Double], intervalXEnd: [Double], intervalY: [Double], intervalHeight: [Double], intervalLabels: [String], provenance: [PlotPointProvenance], colorGroup: String, symbolSize: Double, lineWidth: Double, opacity: Double, sourceSampleCount: UInt64, payloadStrategy: String, provenanceSummary: String) {
         self.id = id
         self.title = title
         self.kind = kind
@@ -1376,10 +1379,13 @@ public struct PlotDocumentLayer {
         self.yAxisId = yAxisId
         self.xValues = xValues
         self.yValues = yValues
+        self.pointLabels = pointLabels
+        self.pointSymbolSizes = pointSymbolSizes
         self.intervalXStart = intervalXStart
         self.intervalXEnd = intervalXEnd
         self.intervalY = intervalY
         self.intervalHeight = intervalHeight
+        self.intervalLabels = intervalLabels
         self.provenance = provenance
         self.colorGroup = colorGroup
         self.symbolSize = symbolSize
@@ -1419,6 +1425,12 @@ extension PlotDocumentLayer: Equatable, Hashable {
         if lhs.yValues != rhs.yValues {
             return false
         }
+        if lhs.pointLabels != rhs.pointLabels {
+            return false
+        }
+        if lhs.pointSymbolSizes != rhs.pointSymbolSizes {
+            return false
+        }
         if lhs.intervalXStart != rhs.intervalXStart {
             return false
         }
@@ -1429,6 +1441,9 @@ extension PlotDocumentLayer: Equatable, Hashable {
             return false
         }
         if lhs.intervalHeight != rhs.intervalHeight {
+            return false
+        }
+        if lhs.intervalLabels != rhs.intervalLabels {
             return false
         }
         if lhs.provenance != rhs.provenance {
@@ -1466,10 +1481,13 @@ extension PlotDocumentLayer: Equatable, Hashable {
         hasher.combine(yAxisId)
         hasher.combine(xValues)
         hasher.combine(yValues)
+        hasher.combine(pointLabels)
+        hasher.combine(pointSymbolSizes)
         hasher.combine(intervalXStart)
         hasher.combine(intervalXEnd)
         hasher.combine(intervalY)
         hasher.combine(intervalHeight)
+        hasher.combine(intervalLabels)
         hasher.combine(provenance)
         hasher.combine(colorGroup)
         hasher.combine(symbolSize)
@@ -1499,10 +1517,13 @@ public struct FfiConverterTypePlotDocumentLayer: FfiConverterRustBuffer {
                 yAxisId: FfiConverterString.read(from: &buf),
                 xValues: FfiConverterSequenceDouble.read(from: &buf),
                 yValues: FfiConverterSequenceDouble.read(from: &buf),
+                pointLabels: FfiConverterSequenceString.read(from: &buf),
+                pointSymbolSizes: FfiConverterSequenceDouble.read(from: &buf),
                 intervalXStart: FfiConverterSequenceDouble.read(from: &buf),
                 intervalXEnd: FfiConverterSequenceDouble.read(from: &buf),
                 intervalY: FfiConverterSequenceDouble.read(from: &buf),
                 intervalHeight: FfiConverterSequenceDouble.read(from: &buf),
+                intervalLabels: FfiConverterSequenceString.read(from: &buf),
                 provenance: FfiConverterSequenceTypePlotPointProvenance.read(from: &buf),
                 colorGroup: FfiConverterString.read(from: &buf),
                 symbolSize: FfiConverterDouble.read(from: &buf),
@@ -1522,10 +1543,13 @@ public struct FfiConverterTypePlotDocumentLayer: FfiConverterRustBuffer {
         FfiConverterString.write(value.yAxisId, into: &buf)
         FfiConverterSequenceDouble.write(value.xValues, into: &buf)
         FfiConverterSequenceDouble.write(value.yValues, into: &buf)
+        FfiConverterSequenceString.write(value.pointLabels, into: &buf)
+        FfiConverterSequenceDouble.write(value.pointSymbolSizes, into: &buf)
         FfiConverterSequenceDouble.write(value.intervalXStart, into: &buf)
         FfiConverterSequenceDouble.write(value.intervalXEnd, into: &buf)
         FfiConverterSequenceDouble.write(value.intervalY, into: &buf)
         FfiConverterSequenceDouble.write(value.intervalHeight, into: &buf)
+        FfiConverterSequenceString.write(value.intervalLabels, into: &buf)
         FfiConverterSequenceTypePlotPointProvenance.write(value.provenance, into: &buf)
         FfiConverterString.write(value.colorGroup, into: &buf)
         FfiConverterDouble.write(value.symbolSize, into: &buf)
@@ -1653,6 +1677,7 @@ public struct PlotDocumentPayload {
     public var id: String
     public var title: String
     public var subtitle: String
+    public var headerLines: [String]
     public var axes: [PlotDocumentAxis]
     public var layers: [PlotDocumentLayer]
     public var annotations: [PlotDocumentAnnotation]
@@ -1661,10 +1686,11 @@ public struct PlotDocumentPayload {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, title: String, subtitle: String, axes: [PlotDocumentAxis], layers: [PlotDocumentLayer], annotations: [PlotDocumentAnnotation], panels: [PlotDocumentPanel], showLegend: Bool) {
+    public init(id: String, title: String, subtitle: String, headerLines: [String], axes: [PlotDocumentAxis], layers: [PlotDocumentLayer], annotations: [PlotDocumentAnnotation], panels: [PlotDocumentPanel], showLegend: Bool) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
+        self.headerLines = headerLines
         self.axes = axes
         self.layers = layers
         self.annotations = annotations
@@ -1689,6 +1715,9 @@ extension PlotDocumentPayload: Equatable, Hashable {
         if lhs.subtitle != rhs.subtitle {
             return false
         }
+        if lhs.headerLines != rhs.headerLines {
+            return false
+        }
         if lhs.axes != rhs.axes {
             return false
         }
@@ -1711,6 +1740,7 @@ extension PlotDocumentPayload: Equatable, Hashable {
         hasher.combine(id)
         hasher.combine(title)
         hasher.combine(subtitle)
+        hasher.combine(headerLines)
         hasher.combine(axes)
         hasher.combine(layers)
         hasher.combine(annotations)
@@ -1733,6 +1763,7 @@ public struct FfiConverterTypePlotDocumentPayload: FfiConverterRustBuffer {
                 id: FfiConverterString.read(from: &buf),
                 title: FfiConverterString.read(from: &buf),
                 subtitle: FfiConverterString.read(from: &buf),
+                headerLines: FfiConverterSequenceString.read(from: &buf),
                 axes: FfiConverterSequenceTypePlotDocumentAxis.read(from: &buf),
                 layers: FfiConverterSequenceTypePlotDocumentLayer.read(from: &buf),
                 annotations: FfiConverterSequenceTypePlotDocumentAnnotation.read(from: &buf),
@@ -1745,6 +1776,7 @@ public struct FfiConverterTypePlotDocumentPayload: FfiConverterRustBuffer {
         FfiConverterString.write(value.id, into: &buf)
         FfiConverterString.write(value.title, into: &buf)
         FfiConverterString.write(value.subtitle, into: &buf)
+        FfiConverterSequenceString.write(value.headerLines, into: &buf)
         FfiConverterSequenceTypePlotDocumentAxis.write(value.axes, into: &buf)
         FfiConverterSequenceTypePlotDocumentLayer.write(value.layers, into: &buf)
         FfiConverterSequenceTypePlotDocumentAnnotation.write(value.annotations, into: &buf)

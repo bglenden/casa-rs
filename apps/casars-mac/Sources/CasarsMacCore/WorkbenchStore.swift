@@ -1996,6 +1996,7 @@ extension WorkbenchPlotDocument {
             id: payload.id,
             title: payload.title,
             subtitle: payload.subtitle,
+            headerLines: payload.headerLines,
             axes: payload.axes.map(WorkbenchPlotAxis.init(payload:)),
             layers: payload.layers.enumerated().map { index, layer in
                 WorkbenchPlotLayer(payload: layer, paletteIndex: index)
@@ -2044,6 +2045,8 @@ extension WorkbenchPlotLayer {
                 WorkbenchPlotPoint(
                     x: payload.xValues[index],
                     y: payload.yValues[index],
+                    label: index < payload.pointLabels.count && !payload.pointLabels[index].isEmpty ? payload.pointLabels[index] : nil,
+                    symbolSize: index < payload.pointSymbolSizes.count ? payload.pointSymbolSizes[index] : nil,
                     provenance: index < provenance.count ? provenance[index] : nil
                 )
             }
@@ -2067,7 +2070,8 @@ extension WorkbenchPlotLayer {
                 xStart: payload.intervalXStart[index],
                 xEnd: payload.intervalXEnd[index],
                 y: payload.intervalY[index],
-                height: payload.intervalHeight[index]
+                height: payload.intervalHeight[index],
+                label: index < payload.intervalLabels.count && !payload.intervalLabels[index].isEmpty ? payload.intervalLabels[index] : nil
             )
         }
         let layerKind = WorkbenchPlotLayerKind(kind: payload.kind)

@@ -319,6 +319,7 @@ struct WorkbenchPlotView: View {
                     annotations: plot.annotations,
                     overlayShapes: plot.overlayShapes,
                     title: nil,
+                    showLegend: plot.showLegend,
                     in: &context,
                     size: size,
                     plotRect: plotRect
@@ -334,6 +335,7 @@ struct WorkbenchPlotView: View {
                         annotations: panel.annotations,
                         overlayShapes: panel.overlayShapes,
                         title: panel.title,
+                        showLegend: plot.showLegend,
                         in: &context,
                         size: bounds.size,
                         plotRect: plotRect
@@ -359,6 +361,7 @@ struct WorkbenchPlotView: View {
         annotations: [WorkbenchPlotAnnotation],
         overlayShapes: [WorkbenchPlotOverlayShape],
         title: String?,
+        showLegend: Bool,
         in context: inout GraphicsContext,
         size: CGSize,
         plotRect: CGRect
@@ -372,6 +375,9 @@ struct WorkbenchPlotView: View {
         drawOverlayShapes(overlayShapes, axes: axes, in: &context, plotRect: plotRect)
         drawAnnotations(annotations, axes: axes, in: &context, plotRect: plotRect)
         drawAxes(axes, in: &context, size: size, plotRect: plotRect)
+        if showLegend {
+            drawLegend(for: layers, in: &context, plotRect: plotRect)
+        }
     }
 
     private func drawBackground(in context: inout GraphicsContext, size: CGSize, plotRect: CGRect) {
@@ -619,6 +625,66 @@ struct WorkbenchPlotView: View {
                     anchor: yAxis.drawsOnTrailingEdge ? .leading : .leading
                 )
             }
+        }
+    }
+
+    private func drawLegend(
+        for layers: [WorkbenchPlotLayer],
+        in context: inout GraphicsContext,
+        plotRect: CGRect
+    ) {
+        let visibleLayers = layers
+            .filter { $0.style.visible }
+            .filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard visibleLayers.count > 1 else { return }
+
+        let displayedLayers = Array(visibleLayers.prefix(8))
+        let rowHeight = 16.0
+        let legendWidth = min(260.0, max(150.0, plotRect.width * 0.32))
+        let legendHeight = rowHeight * Double(displayedLayers.count) + (visibleLayers.count > displayedLayers.count ? rowHeight : 0) + 10
+        let legendRect = CGRect(
+            x: plotRect.maxX - legendWidth - 8,
+            y: plotRect.minY + 8,
+            width: legendWidth,
+            height: legendHeight
+        )
+        context.fill(Path(roundedRect: legendRect, cornerRadius: 5), with: .color(Color(nsColor: .textBackgroundColor).opacity(0.82)))
+        context.stroke(Path(roundedRect: legendRect, cornerRadius: 5), with: .color(Color.secondary.opacity(0.22)), lineWidth: 1)
+
+        for (index, layer) in displayedLayers.enumerated() {
+            let y = legendRect.minY + 10 + Double(index) * rowHeight
+            let color = color(hex: layer.style.colorHex).opacity(layer.style.opacity)
+            var marker = Path()
+            let markerY = y + 5
+            switch layer.kind {
+            case .line:
+                marker.move(to: CGPoint(x: legendRect.minX + 9, y: markerY))
+                marker.addLine(to: CGPoint(x: legendRect.minX + 23, y: markerY))
+                context.stroke(marker, with: .color(color), lineWidth: max(1.4, layer.style.lineWidth))
+            case .interval:
+                let rect = CGRect(x: legendRect.minX + 9, y: markerY - 4, width: 14, height: 8)
+                context.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(color))
+            case .scatter, .raster:
+                let radius = max(2.0, min(5.0, layer.style.symbolSize / 2))
+                context.fill(
+                    Path(ellipseIn: CGRect(x: legendRect.minX + 16 - radius, y: markerY - radius, width: radius * 2, height: radius * 2)),
+                    with: .color(color)
+                )
+            }
+            context.draw(
+                Text(layer.title).font(.caption2).foregroundColor(.secondary),
+                at: CGPoint(x: legendRect.minX + 30, y: y),
+                anchor: .topLeading
+            )
+        }
+
+        if visibleLayers.count > displayedLayers.count {
+            let remaining = visibleLayers.count - displayedLayers.count
+            context.draw(
+                Text("+ \(remaining) more").font(.caption2).foregroundColor(.secondary),
+                at: CGPoint(x: legendRect.minX + 30, y: legendRect.minY + 10 + Double(displayedLayers.count) * rowHeight),
+                anchor: .topLeading
+            )
         }
     }
 

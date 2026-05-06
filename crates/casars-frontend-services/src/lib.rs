@@ -201,10 +201,13 @@ pub struct PlotDocumentLayer {
     pub y_axis_id: String,
     pub x_values: Vec<f64>,
     pub y_values: Vec<f64>,
+    pub point_labels: Vec<String>,
+    pub point_symbol_sizes: Vec<f64>,
     pub interval_x_start: Vec<f64>,
     pub interval_x_end: Vec<f64>,
     pub interval_y: Vec<f64>,
     pub interval_height: Vec<f64>,
+    pub interval_labels: Vec<String>,
     pub provenance: Vec<PlotPointProvenance>,
     pub color_group: String,
     pub symbol_size: f64,
@@ -237,6 +240,7 @@ pub struct PlotDocumentPayload {
     pub id: String,
     pub title: String,
     pub subtitle: String,
+    pub header_lines: Vec<String>,
     pub axes: Vec<PlotDocumentAxis>,
     pub layers: Vec<PlotDocumentLayer>,
     pub annotations: Vec<PlotDocumentAnnotation>,
@@ -679,6 +683,8 @@ fn listobs_plot_document(
                         y_axis_id: "v",
                         x_values,
                         y_values,
+                        point_labels: Vec::new(),
+                        point_symbol_sizes: Vec::new(),
                         provenance: Vec::new(),
                         color_group: "uv-track".to_string(),
                         symbol_size: 2.5,
@@ -688,7 +694,15 @@ fn listobs_plot_document(
                     })
                 })
                 .collect();
-            base_document(preset, metadata, axes, layers, Vec::new(), Vec::new())
+            base_document(
+                preset,
+                metadata,
+                Vec::new(),
+                axes,
+                layers,
+                Vec::new(),
+                Vec::new(),
+            )
         }
         MeasurementSetPlotPayload::VisibilityScatter(payload) => {
             let axes = axes_for_ranges(
@@ -717,6 +731,8 @@ fn listobs_plot_document(
                         y_axis_id: "y",
                         x_values,
                         y_values,
+                        point_labels: Vec::new(),
+                        point_symbol_sizes: Vec::new(),
                         provenance: Vec::new(),
                         color_group: series.color_group.clone(),
                         symbol_size: 2.5,
@@ -726,7 +742,15 @@ fn listobs_plot_document(
                     })
                 })
                 .collect();
-            base_document(preset, metadata, axes, layers, Vec::new(), Vec::new())
+            base_document(
+                preset,
+                metadata,
+                Vec::new(),
+                axes,
+                layers,
+                Vec::new(),
+                Vec::new(),
+            )
         }
         MeasurementSetPlotPayload::AntennaLayout(payload) => {
             let x_values = payload
@@ -739,6 +763,20 @@ fn listobs_plot_document(
                 .iter()
                 .map(|antenna| antenna.y)
                 .collect::<Vec<_>>();
+            let point_labels = if payload.labels_enabled {
+                payload
+                    .antennas
+                    .iter()
+                    .map(|antenna| antenna.label.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let point_symbol_sizes = payload
+                .antennas
+                .iter()
+                .map(|antenna| f64::from(antenna.marker_radius.max(1)) * 2.0)
+                .collect::<Vec<_>>();
             let axes = axes_for_ranges(
                 "x",
                 &payload.x_label,
@@ -748,21 +786,6 @@ fn listobs_plot_document(
                 None,
                 x_values.iter().copied().zip(y_values.iter().copied()),
             );
-            let annotations = if payload.labels_enabled {
-                payload
-                    .antennas
-                    .iter()
-                    .enumerate()
-                    .map(|(index, antenna)| PlotDocumentAnnotation {
-                        id: format!("antenna-label-{index}"),
-                        x: antenna.x,
-                        y: antenna.y,
-                        text: antenna.label.clone(),
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
             let layer = point_layer(PointLayerSpec {
                 id: "antennas".to_string(),
                 title: "Antennas".to_string(),
@@ -770,6 +793,8 @@ fn listobs_plot_document(
                 y_axis_id: "y",
                 x_values,
                 y_values,
+                point_labels,
+                point_symbol_sizes,
                 provenance: Vec::new(),
                 color_group: "antenna".to_string(),
                 symbol_size: 4.0,
@@ -777,7 +802,15 @@ fn listobs_plot_document(
                 provenance_summary: "ANTENNA table positions from Rust msexplore payload"
                     .to_string(),
             });
-            base_document(preset, metadata, axes, vec![layer], annotations, Vec::new())
+            base_document(
+                preset,
+                metadata,
+                Vec::new(),
+                axes,
+                vec![layer],
+                Vec::new(),
+                Vec::new(),
+            )
         }
         MeasurementSetPlotPayload::ScanTimeline(payload) => {
             let axes = vec![
@@ -791,24 +824,36 @@ fn listobs_plot_document(
                 ),
                 document_lane_axis("scan", "Scan", payload.lane_labels.clone()),
             ];
-            let layer = interval_layer(IntervalLayerSpec {
-                id: "scan-bars".to_string(),
-                title: "Scans".to_string(),
-                x_axis_id: "time",
-                y_axis_id: "scan",
-                interval_x_start: payload
-                    .bars
-                    .iter()
-                    .map(|bar| bar.start_mjd_seconds)
-                    .collect(),
-                interval_x_end: payload.bars.iter().map(|bar| bar.end_mjd_seconds).collect(),
-                interval_y: payload.bars.iter().map(|bar| bar.lane as f64).collect(),
-                interval_height: vec![0.72; payload.bars.len()],
-                color_group: "scan".to_string(),
-                provenance_summary: "MAIN-table scan intervals from Rust msexplore payload"
-                    .to_string(),
-            });
-            base_document(preset, metadata, axes, vec![layer], Vec::new(), Vec::new())
+            let layers = payload
+                .bars
+                .iter()
+                .enumerate()
+                .map(|(index, bar)| {
+                    interval_layer(IntervalLayerSpec {
+                        id: format!("scan-bar-{index}"),
+                        title: nonempty_or(&bar.label, "Scan").to_string(),
+                        x_axis_id: "time",
+                        y_axis_id: "scan",
+                        interval_x_start: vec![bar.start_mjd_seconds],
+                        interval_x_end: vec![bar.end_mjd_seconds],
+                        interval_y: vec![bar.lane as f64],
+                        interval_height: vec![0.72],
+                        interval_labels: vec![bar.label.clone()],
+                        color_group: bar.color_group.clone(),
+                        provenance_summary: "MAIN-table scan interval from Rust msexplore payload"
+                            .to_string(),
+                    })
+                })
+                .collect();
+            base_document(
+                preset,
+                metadata,
+                Vec::new(),
+                axes,
+                layers,
+                Vec::new(),
+                Vec::new(),
+            )
         }
         MeasurementSetPlotPayload::SpectralWindowCoverage(payload) => {
             let lane_labels = payload
@@ -833,20 +878,36 @@ fn listobs_plot_document(
                 ),
                 document_lane_axis("spw", "Spectral window", lane_labels),
             ];
-            let layer = interval_layer(IntervalLayerSpec {
-                id: "spw-bars".to_string(),
-                title: "Spectral windows".to_string(),
-                x_axis_id: "frequency",
-                y_axis_id: "spw",
-                interval_x_start: payload.bars.iter().map(|bar| bar.start).collect(),
-                interval_x_end: payload.bars.iter().map(|bar| bar.end).collect(),
-                interval_y: payload.bars.iter().map(|bar| bar.lane as f64).collect(),
-                interval_height: vec![0.72; payload.bars.len()],
-                color_group: "spectral-window".to_string(),
-                provenance_summary:
-                    "SPECTRAL_WINDOW coverage intervals from Rust msexplore payload".to_string(),
-            });
-            base_document(preset, metadata, axes, vec![layer], Vec::new(), Vec::new())
+            let layers = payload
+                .bars
+                .iter()
+                .map(|bar| {
+                    interval_layer(IntervalLayerSpec {
+                        id: format!("spw-bar-{}", bar.spectral_window_id),
+                        title: nonempty_or(&bar.label, "Spectral window").to_string(),
+                        x_axis_id: "frequency",
+                        y_axis_id: "spw",
+                        interval_x_start: vec![bar.start],
+                        interval_x_end: vec![bar.end],
+                        interval_y: vec![bar.lane as f64],
+                        interval_height: vec![0.72],
+                        interval_labels: vec![bar.label.clone()],
+                        color_group: bar.color_group.clone(),
+                        provenance_summary:
+                            "SPECTRAL_WINDOW coverage interval from Rust msexplore payload"
+                                .to_string(),
+                    })
+                })
+                .collect();
+            base_document(
+                preset,
+                metadata,
+                Vec::new(),
+                axes,
+                layers,
+                Vec::new(),
+                Vec::new(),
+            )
         }
     }
 }
@@ -915,9 +976,25 @@ fn scatter_plot_document(
                 layer.y_axis_id = "y-secondary".to_string();
             }
         }
-        return base_document(preset, metadata, axes, layers, Vec::new(), Vec::new());
+        return base_document(
+            preset,
+            metadata,
+            payload.header_lines.clone(),
+            axes,
+            layers,
+            Vec::new(),
+            Vec::new(),
+        );
     }
-    base_document(preset, metadata, axes, layers, Vec::new(), Vec::new())
+    base_document(
+        preset,
+        metadata,
+        payload.header_lines.clone(),
+        axes,
+        layers,
+        Vec::new(),
+        Vec::new(),
+    )
 }
 
 fn scatter_grid_plot_document(
@@ -951,7 +1028,15 @@ fn scatter_grid_plot_document(
             }
         })
         .collect();
-    base_document(preset, metadata, Vec::new(), Vec::new(), Vec::new(), panels)
+    base_document(
+        preset,
+        metadata,
+        payload.header_lines.clone(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        panels,
+    )
 }
 
 fn scatter_page_plot_document(
@@ -984,12 +1069,21 @@ fn scatter_page_plot_document(
             }
         })
         .collect();
-    base_document(preset, metadata, Vec::new(), Vec::new(), Vec::new(), panels)
+    base_document(
+        preset,
+        metadata,
+        payload.header_lines.clone(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        panels,
+    )
 }
 
 fn base_document(
     preset: MeasurementSetPlotPreset,
     metadata: &PayloadMetadata,
+    header_lines: Vec<String>,
     axes: Vec<PlotDocumentAxis>,
     layers: Vec<PlotDocumentLayer>,
     annotations: Vec<PlotDocumentAnnotation>,
@@ -999,6 +1093,7 @@ fn base_document(
         id: format!("msexplore-{}", ms_plot_preset(preset).as_str()),
         title: metadata.title.clone(),
         subtitle: metadata.summary.clone(),
+        header_lines,
         axes,
         layers,
         annotations,
@@ -1092,6 +1187,8 @@ fn scatter_layers(
                 y_axis_id,
                 x_values,
                 y_values,
+                point_labels: Vec::new(),
+                point_symbol_sizes: Vec::new(),
                 provenance,
                 color_group: series.color_group.clone(),
                 symbol_size: symbol_size_px.unwrap_or(3) as f64,
@@ -1109,6 +1206,8 @@ struct PointLayerSpec<'a> {
     y_axis_id: &'a str,
     x_values: Vec<f64>,
     y_values: Vec<f64>,
+    point_labels: Vec<String>,
+    point_symbol_sizes: Vec<f64>,
     provenance: Vec<PlotPointProvenance>,
     color_group: String,
     symbol_size: f64,
@@ -1126,10 +1225,13 @@ fn point_layer(spec: PointLayerSpec<'_>) -> PlotDocumentLayer {
         y_axis_id: spec.y_axis_id.to_string(),
         x_values: spec.x_values,
         y_values: spec.y_values,
+        point_labels: spec.point_labels,
+        point_symbol_sizes: spec.point_symbol_sizes,
         interval_x_start: Vec::new(),
         interval_x_end: Vec::new(),
         interval_y: Vec::new(),
         interval_height: Vec::new(),
+        interval_labels: Vec::new(),
         provenance: spec.provenance,
         color_group: spec.color_group,
         symbol_size: spec.symbol_size,
@@ -1150,6 +1252,7 @@ struct IntervalLayerSpec<'a> {
     interval_x_end: Vec<f64>,
     interval_y: Vec<f64>,
     interval_height: Vec<f64>,
+    interval_labels: Vec<String>,
     color_group: String,
     provenance_summary: String,
 }
@@ -1164,10 +1267,13 @@ fn interval_layer(spec: IntervalLayerSpec<'_>) -> PlotDocumentLayer {
         y_axis_id: spec.y_axis_id.to_string(),
         x_values: Vec::new(),
         y_values: Vec::new(),
+        point_labels: Vec::new(),
+        point_symbol_sizes: Vec::new(),
         interval_x_start: spec.interval_x_start,
         interval_x_end: spec.interval_x_end,
         interval_y: spec.interval_y,
         interval_height: spec.interval_height,
+        interval_labels: spec.interval_labels,
         provenance: Vec::new(),
         color_group: spec.color_group,
         symbol_size: 1.0,
@@ -1408,6 +1514,14 @@ fn label_unit(label: &str) -> String {
         .unwrap_or("")
         .trim()
         .to_string()
+}
+
+fn nonempty_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.trim().is_empty() {
+        fallback
+    } else {
+        value
+    }
 }
 
 fn sampling_diagnostics(summary: &str, rendered_point_count: u64) -> Vec<String> {
@@ -2223,6 +2337,7 @@ mod tests {
             MeasurementSetPlotPreset::UvCoverage,
             MeasurementSetPlotPreset::AntennaLayout,
             MeasurementSetPlotPreset::ScanTimeline,
+            MeasurementSetPlotPreset::SpectralWindowCoverage,
             MeasurementSetPlotPreset::PhaseVsTime,
             MeasurementSetPlotPreset::AmplitudeVsFrequency,
             MeasurementSetPlotPreset::AmplitudeVsUvDistance,
@@ -2254,8 +2369,34 @@ mod tests {
                 !plot.document.layers.is_empty() || !plot.document.panels.is_empty(),
                 "plot document should expose manipulable layers or panels for {preset:?}"
             );
+            match preset {
+                MeasurementSetPlotPreset::AntennaLayout => {
+                    let layer = plot.document.layers.first().expect("antenna layer");
+                    assert_eq!(layer.x_values.len(), layer.point_labels.len());
+                    assert_eq!(layer.x_values.len(), layer.point_symbol_sizes.len());
+                }
+                MeasurementSetPlotPreset::ScanTimeline
+                | MeasurementSetPlotPreset::SpectralWindowCoverage => {
+                    assert!(
+                        plot.document
+                            .layers
+                            .iter()
+                            .any(|layer| !layer.interval_labels.is_empty()),
+                        "interval labels should survive document conversion for {preset:?}"
+                    );
+                    assert!(
+                        plot.document
+                            .layers
+                            .iter()
+                            .any(|layer| !layer.color_group.is_empty()),
+                        "interval color groups should survive document conversion for {preset:?}"
+                    );
+                }
+                _ => {}
+            }
             if preset == MeasurementSetPlotPreset::AntennaLayout
                 || preset == MeasurementSetPlotPreset::ScanTimeline
+                || preset == MeasurementSetPlotPreset::SpectralWindowCoverage
             {
                 assert!(plot.sampling.diagnostics.iter().any(|line| {
                     line.contains("metadata-oriented plot") || line.contains("no drawable")
