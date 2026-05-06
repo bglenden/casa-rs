@@ -39,7 +39,6 @@ use crate::constants::{
     TABLE_INFO_TYPE,
 };
 use crate::execute::{ApplyExecutionError, EvaluatedApplyRow, evaluate_apply_rows};
-use crate::least_squares::solve_weighted_least_squares;
 use crate::plan::{ApplyPlanError, ApplyPlanRequest, plan_apply};
 use crate::solve::grouping::{
     SelectedSolveRow, collect_selected_rows, correlation_types_for_ddid, resolve_refant,
@@ -47,6 +46,7 @@ use crate::solve::grouping::{
 };
 use crate::solve::kernel::{SolveGraphOptions, solve_graph};
 use crate::solve::{GainSolveMode, RefAntSelector, correlation_receptors, stokes_name};
+use casa_ms::least_squares::solve_weighted_least_squares;
 
 const COL_ARRAY_ID: &str = "ARRAY_ID";
 const COL_TIME_EXTRA_PREC: &str = "TIME_EXTRA_PREC";

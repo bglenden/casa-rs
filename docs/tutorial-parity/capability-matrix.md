@@ -1,7 +1,7 @@
 # CASA Tutorial Capability Matrix
 
 Truth class: current descriptive
-Last reality check: 2026-05-02
+Last reality check: 2026-05-05
 Verification: just docs-check
 
 Wave issue: #137
@@ -53,8 +53,8 @@ Status legend:
 | `fluxscale` | partial/available | `casa-calibration` | `calibrate` | VLA tutorial models/fields, selection tails | CASA fluxscale tables/results | calibration benchmark scripts | #122 |
 | `setjy` | missing/partial model setup | `casa-calibration`, `casa-ms` | no first-class task stage | calibrator model setup, component/image model writes | CASA model columns/caltable downstream parity | tutorial calibration timings | #122 |
 | `gencal` | partial/available | `casa-calibration` | `calibrate gencal`, Python calibration wrapper | automatic antenna-position lookup, remaining caltypes beyond antpos/gceff/opac | CASA generated caltables | tutorial prior-cal timings | #121 |
-| `flagdata` | missing/partial | `casa-ms` | no tutorial task surface | manual/list/rflag/tfcrop subsets used by VLA/ALMA breadth | CASA FLAG column deltas | flagging timing on tutorial MS | #121, #128 |
-| `flagmanager` | missing | `casa-ms` | none | save/restore flag versions | CASA flag version products | VLA/ALMA breadth timing | #127, #128 |
+| `flagdata` | partial | `casa-ms` | `flagdata` CLI, Rust library | manual, clip-zero, quack, tfcrop-family, rflag-family, extend, and summary exist; needs full same-input VLA flagging guide comparison once tutorial MS artifact is restaged | CASA FLAG column deltas | flagging timing on tutorial MS | #121, #128, #174 |
+| `flagmanager` | partial | `casa-ms` | `flagmanager` CLI, Rust library | save/list/restore/delete/rename flag-version operations exist; needs CASA flag-version product comparison on the VLA flagging guide MS | CASA flag version products | VLA/ALMA breadth timing | #127, #128, #174 |
 | `statwt` | missing | `casa-ms` | none | weight recomputation for data-combination tutorials | CASA WEIGHT/SIGMA columns | tutorial timing | #127, #128 |
 | `concat` | missing/partial | `casa-ms`, `casa-tables` | none | MS concatenation metadata and weights | CASA `concat` output MS | data-combination timings | #127, #128 |
 | `hanningsmooth` | missing | `casa-ms` | none | P-band tutorial subset | CASA smoothed MS | breadth timing | #128 |

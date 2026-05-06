@@ -21,6 +21,7 @@ casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 image = { version = "0.25", default-features = false, features = ["png"] }
+nalgebra.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
 printpdf = { version = "0.9.1", default-features = false, features = ["png"] }
@@ -43,6 +44,14 @@ path = "src/bin/msexplore.rs"
 [[bin]]
 name = "mstransform"
 path = "src/bin/mstransform.rs"
+
+[[bin]]
+name = "flagdata"
+path = "src/bin/flagdata.rs"
+
+[[bin]]
+name = "flagmanager"
+path = "src/bin/flagmanager.rs"
 
 [[bin]]
 name = "simobserve"
@@ -100,6 +109,10 @@ path = "tests/source_subtable_regression.rs"
 [[test]]
 name = "transform"
 path = "tests/transform.rs"
+
+[[test]]
+name = "flagging"
+path = "tests/flagging.rs"
 
 [[test]]
 name = "spectral_frame_parity"

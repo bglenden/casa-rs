@@ -18,7 +18,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::least_squares::solve_weighted_least_squares;
+use casa_ms::least_squares::solve_weighted_least_squares;
 
 /// Input visibility column used for continuum subtraction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

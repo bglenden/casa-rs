@@ -16,7 +16,6 @@ casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-ms = { path = "../casa-ms" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
-nalgebra.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
 schemars = { version = "0.8", features = ["derive"] }
