@@ -3652,6 +3652,34 @@ fn build_generic_visibility_scatter(
             .iter()
             .copied()
             .any(MsAxis::uses_spectral_coordinates);
+    let needs_flag_grid = needs_visibility_grid
+        || matches!(spec.x_axis, MsAxis::Flag)
+        || spec.y_axes.iter().copied().any(|axis| {
+            matches!(
+                axis,
+                MsAxis::Flag | MsAxis::WeightSpectrum | MsAxis::SigmaSpectrum
+            )
+        });
+    let needs_weight_values = matches!(spec.x_axis, MsAxis::Weight | MsAxis::WeightSpectrum)
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(|axis| matches!(axis, MsAxis::Weight | MsAxis::WeightSpectrum));
+    let needs_sigma_values = matches!(spec.x_axis, MsAxis::Sigma | MsAxis::SigmaSpectrum)
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(|axis| matches!(axis, MsAxis::Sigma | MsAxis::SigmaSpectrum));
+    let needs_uvw_values = matches!(
+        spec.x_axis,
+        MsAxis::UvDistance | MsAxis::U | MsAxis::V | MsAxis::W
+    ) || spec
+        .y_axes
+        .iter()
+        .copied()
+        .any(|axis| matches!(axis, MsAxis::UvDistance | MsAxis::U | MsAxis::V | MsAxis::W));
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let field = ms.field().map_err(|error| error.to_string())?;
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
@@ -3701,9 +3729,33 @@ fn build_generic_visibility_scatter(
     if timing_enabled {
         VisibilityScatterTiming::checkpoint("load_visibility_data", &mut checkpoint_started);
     }
-    let selected_flags = SelectedArrayColumn::load(ms.main_table(), "FLAG", &row_numbers)?;
-    let selected_weights = SelectedArrayColumn::load(ms.main_table(), "WEIGHT", &row_numbers)?;
-    let selected_sigmas = SelectedArrayColumn::load(ms.main_table(), "SIGMA", &row_numbers)?;
+    let selected_flags = if needs_flag_grid {
+        Some(SelectedArrayColumn::load(
+            ms.main_table(),
+            "FLAG",
+            &row_numbers,
+        )?)
+    } else {
+        None
+    };
+    let selected_weights = if needs_weight_values {
+        Some(SelectedArrayColumn::load(
+            ms.main_table(),
+            "WEIGHT",
+            &row_numbers,
+        )?)
+    } else {
+        None
+    };
+    let selected_sigmas = if needs_sigma_values {
+        Some(SelectedArrayColumn::load(
+            ms.main_table(),
+            "SIGMA",
+            &row_numbers,
+        )?)
+    } else {
+        None
+    };
     let selected_flag_rows = selected_bool_values(ms.main_table(), "FLAG_ROW", &row_numbers)?;
     let selected_data_desc_ids =
         selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
@@ -3712,7 +3764,11 @@ fn build_generic_visibility_scatter(
     let selected_antenna1 = selected_i32_values(ms.main_table(), "ANTENNA1", &row_numbers)?;
     let selected_antenna2 = selected_i32_values(ms.main_table(), "ANTENNA2", &row_numbers)?;
     let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
-    let selected_uvw = selected_uvw_values(ms.main_table(), "UVW", &row_numbers)?;
+    let selected_uvw = if needs_uvw_values {
+        selected_uvw_values(ms.main_table(), "UVW", &row_numbers)?
+    } else {
+        Vec::new()
+    };
     if timing_enabled {
         VisibilityScatterTiming::checkpoint("load_aux_columns", &mut checkpoint_started);
     }
@@ -3809,19 +3865,6 @@ fn build_generic_visibility_scatter(
             Vec::new()
         };
 
-        let flags = match selected_flags.get(row_slot)? {
-            ArrayValue::Bool(values) => {
-                values.view().into_dimensionality::<Ix2>().map_err(|_| {
-                    "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
-                })?
-            }
-            other => {
-                return Err(format!(
-                    "msexplore requires BOOL flag cells, found {:?}",
-                    other.primitive_type()
-                ));
-            }
-        };
         let row_grid_started = timing_enabled.then(Instant::now);
         let grid = data_source
             .as_ref()
@@ -3830,11 +3873,37 @@ fn build_generic_visibility_scatter(
         if let Some(started) = row_grid_started {
             scatter_timing.row_grid += started.elapsed();
         }
+        let expected_corr_count = corr_types.len();
+        let spw_row = usize::try_from(spw_id)
+            .map_err(|_| format!("invalid DATA_DESCRIPTION SPECTRAL_WINDOW_ID {spw_id}"))?;
+        let expected_chan_count = spectral_window
+            .num_chan(spw_row)
+            .map_err(|error| error.to_string())
+            .and_then(|count| {
+                usize::try_from(count)
+                    .map_err(|_| format!("invalid SPECTRAL_WINDOW NUM_CHAN {count}"))
+            })?;
         let (corr_count, chan_count) = grid
             .as_ref()
             .map(|grid| (grid.corr_count, grid.chan_count))
-            .unwrap_or((flags.nrows(), flags.ncols()));
-        if flags.shape() != [corr_count, chan_count] {
+            .unwrap_or((expected_corr_count, expected_chan_count));
+        let flags = selected_flags
+            .as_ref()
+            .map(|column| match column.get(row_slot)? {
+                ArrayValue::Bool(values) => {
+                    values.view().into_dimensionality::<Ix2>().map_err(|_| {
+                        "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
+                    })
+                }
+                other => Err(format!(
+                    "msexplore requires BOOL flag cells, found {:?}",
+                    other.primitive_type()
+                )),
+            })
+            .transpose()?;
+        if let Some(flags) = flags.as_ref()
+            && flags.shape() != [corr_count, chan_count]
+        {
             return Err(format!(
                 "visibility flag shape {:?} does not match data shape [{}, {}]",
                 flags.shape(),
@@ -3843,9 +3912,16 @@ fn build_generic_visibility_scatter(
             ));
         }
         let row_arrays_started = timing_enabled.then(Instant::now);
-        let weight_values =
-            float_axis_values(selected_weights.get(row_slot)?, corr_count, "WEIGHT")?;
-        let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
+        let weight_values = selected_weights
+            .as_ref()
+            .map(|column| float_axis_values(column.get(row_slot)?, corr_count, "WEIGHT"))
+            .transpose()?
+            .unwrap_or_else(|| vec![0.0; corr_count]);
+        let sigma_values = selected_sigmas
+            .as_ref()
+            .map(|column| float_axis_values(column.get(row_slot)?, corr_count, "SIGMA"))
+            .transpose()?
+            .unwrap_or_else(|| vec![0.0; corr_count]);
         let weight_spectrum_grid = if needs_weight_spectrum {
             Some(
                 selected_weight_spectrum
@@ -3911,7 +3987,11 @@ fn build_generic_visibility_scatter(
         let antenna1_value = selected_antenna1[row_slot];
         let antenna2_value = selected_antenna2[row_slot];
         let row_time_value = selected_times[row_slot];
-        let row_uvw_value = selected_uvw[row_slot];
+        let row_uvw_value = if needs_uvw_values {
+            selected_uvw[row_slot]
+        } else {
+            [0.0, 0.0, 0.0]
+        };
         let spectral_context = resolve_spectral_context(
             spec,
             spw_id,
@@ -3983,9 +4063,12 @@ fn build_generic_visibility_scatter(
             for bin in &channel_bins {
                 let bin_collect_started = timing_enabled.then(Instant::now);
                 if let Some(grid) = grid.as_ref() {
+                    let flags = flags
+                        .as_ref()
+                        .expect("visibility grid loads matching flag grid");
                     collect_bin_samples_into(
                         grid,
-                        &flags,
+                        flags,
                         &[*corr_index],
                         bin.start,
                         bin.end,
@@ -3994,11 +4077,24 @@ fn build_generic_visibility_scatter(
                 } else {
                     samples.clear();
                 }
-                collect_bin_flags_into(&flags, *corr_index, bin.start, bin.end, &mut flag_samples);
+                if let Some(flags) = flags.as_ref() {
+                    collect_bin_flags_into(
+                        flags,
+                        *corr_index,
+                        bin.start,
+                        bin.end,
+                        &mut flag_samples,
+                    );
+                } else {
+                    flag_samples.clear();
+                }
                 if let Some(grid) = weight_spectrum_grid.as_ref() {
+                    let flags = flags
+                        .as_ref()
+                        .expect("weight spectrum loads matching flag grid");
                     collect_bin_float_samples_into(
                         grid,
-                        &flags,
+                        flags,
                         *corr_index,
                         bin.start,
                         bin.end,
@@ -4008,9 +4104,12 @@ fn build_generic_visibility_scatter(
                     weight_spectrum_samples.clear();
                 }
                 if let Some(grid) = sigma_spectrum_grid.as_ref() {
+                    let flags = flags
+                        .as_ref()
+                        .expect("sigma spectrum loads matching flag grid");
                     collect_bin_float_samples_into(
                         grid,
-                        &flags,
+                        flags,
                         *corr_index,
                         bin.start,
                         bin.end,

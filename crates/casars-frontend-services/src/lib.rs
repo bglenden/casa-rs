@@ -2841,12 +2841,7 @@ mod tests {
             eprintln!("skipping: {} is not staged", ms_path.display());
             return;
         }
-        for preset in [
-            MeasurementSetPlotPreset::ScanTimeline,
-            MeasurementSetPlotPreset::AmplitudeVsTime,
-            MeasurementSetPlotPreset::PhaseVsTime,
-            MeasurementSetPlotPreset::AmplitudePhaseVsTimeStacked,
-        ] {
+        for preset in MeasurementSetPlotPreset::all().iter().copied() {
             let started = Instant::now();
             let plot = build_measurement_set_plot(MeasurementSetPlotRequest {
                 dataset_path: ms_path.display().to_string(),
