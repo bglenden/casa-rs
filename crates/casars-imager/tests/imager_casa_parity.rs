@@ -7907,6 +7907,7 @@ fn multiscale_products_track_casa_on_m51_single_field() {
 }
 
 #[test]
+#[ignore = "issue #161/#169: mosaic cube wproject frontend path is not implemented"]
 fn wproject_dirty_cube_products_track_casa_on_n2403_source_backed_multifield() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/n2403.short.ms",

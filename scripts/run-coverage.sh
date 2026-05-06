@@ -60,14 +60,17 @@ run_tarpaulin() {
   cargo tarpaulin \
     --workspace \
     --exclude casars-python \
+    --exclude casa-test-support \
     --timeout "$tarpaulin_timeout" \
     --out Stdout \
-    --fail-under 75 \
+    --fail-under 78 \
     --exclude-files \
     '*/src/bin/*' \
     '*/src/main.rs' \
     '*/examples/*' \
     '*/tests/*perf*.rs' \
+    '*/crates/casa-test-support/*' \
+    '*/crates/casars-python/*' \
     -- \
     --skip tablebrowser::tests::browser_traverses_real_fixture_tables_and_cells
 }
