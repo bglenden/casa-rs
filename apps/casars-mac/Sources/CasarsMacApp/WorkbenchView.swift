@@ -427,6 +427,7 @@ struct InspectorView: View {
     @State private var showAntennas = false
     @State private var showColumns = false
     @State private var showSubtables = false
+    @State private var showImageLiveDetails = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -534,6 +535,9 @@ struct InspectorView: View {
                 }
                 .workbenchFont(.caption)
             }
+            if let snapshot = store.state.imageExplorers[dataset.id]?.snapshot {
+                imageExplorerLiveDetails(snapshot)
+            }
 
         case .calibrationTable, .table, .runProduct:
             if !dataset.shape.isEmpty {
@@ -552,6 +556,82 @@ struct InspectorView: View {
                 .workbenchFont(.caption)
             }
         }
+    }
+
+    private func imageExplorerLiveDetails(_ snapshot: ImageExplorerSnapshot) -> some View {
+        DisclosureGroup("Live plane", isExpanded: $showImageLiveDetails) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(imageExplorerLiveRows(snapshot)) { row in
+                    CompactInfoRow(label: row.label, value: row.value)
+                }
+            }
+            .padding(.top, 4)
+        }
+        .workbenchFont(.caption)
+    }
+
+    private func imageExplorerLiveRows(_ snapshot: ImageExplorerSnapshot) -> [InspectorDynamicLine] {
+        var rows: [InspectorDynamicLine] = []
+
+        if let plane = snapshot.plane {
+            rows.append(InspectorDynamicLine(
+                label: "Plane",
+                value: "\(plane.width)x\(plane.height), data \(formatImageValue(plane.dataMin, unit: plane.valueUnit))...\(formatImageValue(plane.dataMax, unit: plane.valueUnit))"
+            ))
+            rows.append(InspectorDynamicLine(
+                label: "Clip",
+                value: "\(formatImageValue(plane.clipMin, unit: plane.valueUnit))...\(formatImageValue(plane.clipMax, unit: plane.valueUnit))"
+            ))
+            if plane.maskedOrNonFiniteCount > 0 {
+                rows.append(InspectorDynamicLine(label: "Masked", value: "\(plane.maskedOrNonFiniteCount) pixels"))
+            }
+        }
+
+        if let cursor = snapshot.planeCursor {
+            rows.append(InspectorDynamicLine(
+                label: "Cursor",
+                value: "pixel \(cursor.pixelX),\(cursor.pixelY); sampled \(cursor.sampledX),\(cursor.sampledY)"
+            ))
+        }
+
+        if let probe = snapshot.probe {
+            let status = probe.masked ? "masked" : (probe.finite ? "finite" : "non-finite")
+            rows.append(InspectorDynamicLine(
+                label: "Value",
+                value: "\(formatImageValue(probe.value, unit: snapshot.plane?.valueUnit ?? "")) (\(status))"
+            ))
+            for axis in probe.worldAxes.prefix(3) {
+                rows.append(InspectorDynamicLine(label: axis.name, value: formatImageAxisValue(axis)))
+            }
+        }
+
+        if let profile = snapshot.profile {
+            let selected = profile.selectedSampleIndex.map { "sample \($0)" } ?? "\(profile.samples.count) samples"
+            rows.append(InspectorDynamicLine(label: "Profile", value: "\(profile.axisName), \(selected)"))
+        }
+
+        for axis in snapshot.nonDisplayAxes ?? [] {
+            rows.append(InspectorDynamicLine(
+                label: axis.label,
+                value: "index \(axis.index + 1)/\(axis.length), pixel \(axis.pixel)"
+            ))
+        }
+
+        if let defaultMask = snapshot.defaultMaskName {
+            rows.append(InspectorDynamicLine(label: "Mask", value: defaultMask))
+        } else if !snapshot.maskNames.isEmpty {
+            rows.append(InspectorDynamicLine(label: "Masks", value: snapshot.maskNames.joined(separator: ", ")))
+        }
+
+        if let region = snapshot.region {
+            var value = "\(region.shapeCount) shape(s)"
+            if let stats = region.stats {
+                value += ", mean \(formatImageValue(stats.mean, unit: stats.valueUnit))"
+            }
+            rows.append(InspectorDynamicLine(label: region.label, value: value))
+        }
+
+        return rows
     }
 
     private func compactSection(
@@ -611,6 +691,28 @@ private struct InspectorUpdateTelemetry: NSViewRepresentable {
     }
 }
 
+private struct InspectorDynamicLine: Identifiable {
+    let label: String
+    let value: String
+
+    var id: String { "\(label)-\(value)" }
+}
+
+private struct CompactInfoRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Text(value.isEmpty ? "None" : value)
+                .lineLimit(3)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct InfoRow: View {
     let label: String
     let value: String
@@ -634,4 +736,86 @@ private func byteCount(_ bytes: UInt64) -> String {
 
 private func formatShape(_ shape: [UInt64]) -> String {
     shape.isEmpty ? "Unknown" : shape.map(String.init).joined(separator: " x ")
+}
+
+private func formatImageAxisValue(_ axis: ImageExplorerSnapshot.AxisValue) -> String {
+    if isImageRightAscensionAxis(axis.name) {
+        return formatImageRightAscension(axis.value)
+    }
+    if isImageDeclinationAxis(axis.name) {
+        return formatImageDeclination(axis.value)
+    }
+    if let frequency = formatImageFrequency(axis.value, unit: axis.unit) {
+        return frequency
+    }
+    return formatImageValue(axis.value, unit: axis.unit)
+}
+
+private func formatImageValue(_ value: Double, unit: String) -> String {
+    let number = trimImageFloat(value)
+    return unit.isEmpty ? number : "\(number) \(unit)"
+}
+
+private func trimImageFloat(_ value: Double) -> String {
+    guard value.isFinite else {
+        return value.isNaN ? "NaN" : "Inf"
+    }
+    let text = String(format: "%.5g", value)
+    return text.replacingOccurrences(of: "+0", with: "+")
+}
+
+private func isImageRightAscensionAxis(_ name: String) -> Bool {
+    name.compare("Right Ascension", options: .caseInsensitive) == .orderedSame
+        || name.compare("RA", options: .caseInsensitive) == .orderedSame
+}
+
+private func isImageDeclinationAxis(_ name: String) -> Bool {
+    name.compare("Declination", options: .caseInsensitive) == .orderedSame
+        || name.compare("DEC", options: .caseInsensitive) == .orderedSame
+}
+
+private func formatImageRightAscension(_ radians: Double) -> String {
+    var totalSeconds = radians * 86_400.0 / (Double.pi * 2)
+    totalSeconds.formTruncatingRemainder(dividingBy: 86_400)
+    if totalSeconds < 0 {
+        totalSeconds += 86_400
+    }
+    let hours = Int(totalSeconds / 3_600)
+    let minutes = Int((totalSeconds - Double(hours * 3_600)) / 60)
+    let seconds = totalSeconds - Double(hours * 3_600 + minutes * 60)
+    return String(format: "%02d:%02d:%05.2f", hours, minutes, seconds)
+}
+
+private func formatImageDeclination(_ radians: Double) -> String {
+    let degrees = radians * 180.0 / Double.pi
+    let sign = degrees < 0 ? "-" : "+"
+    let absDegrees = abs(degrees)
+    let wholeDegrees = Int(absDegrees)
+    let minutesFloat = (absDegrees - Double(wholeDegrees)) * 60
+    let minutes = Int(minutesFloat)
+    let seconds = (minutesFloat - Double(minutes)) * 60
+    return String(format: "%@%02d:%02d:%04.1f", sign, wholeDegrees, minutes, seconds)
+}
+
+private func formatImageFrequency(_ value: Double, unit: String) -> String? {
+    guard unit.compare("Hz", options: .caseInsensitive) == .orderedSame else {
+        return nil
+    }
+    let absValue = abs(value)
+    let scale: Double
+    let suffix: String
+    if absValue >= 1e9 {
+        scale = 1e9
+        suffix = "GHz"
+    } else if absValue >= 1e6 {
+        scale = 1e6
+        suffix = "MHz"
+    } else if absValue >= 1e3 {
+        scale = 1e3
+        suffix = "kHz"
+    } else {
+        scale = 1
+        suffix = "Hz"
+    }
+    return "\(trimImageFloat(value / scale)) \(suffix)"
 }
