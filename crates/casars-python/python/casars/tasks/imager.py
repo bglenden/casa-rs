@@ -22,6 +22,7 @@ RestoringBeamMode: TypeAlias = Literal["per_plane", "common"]
 WTermMode: TypeAlias = Literal["none", "direct", "wproject"]
 PlaneSelection: TypeAlias = Literal["I", "Q", "U", "V", "XX", "YY", "RR", "LL"]
 SaveModel: TypeAlias = Literal["none", "modelcolumn"]
+CleanMaskMode: TypeAlias = Literal["user", "auto-multithresh"]
 
 
 def configure(*, binary: StrPath | None) -> None:
@@ -73,6 +74,8 @@ def mfs(
     gain: float = 0.1,
     threshold_jy: float = 0.0,
     nsigma: float = 0.0,
+    use_mask: CleanMaskMode = "user",
+    auto_mask: dict[str, Any] | None = None,
     mask_boxes: list[tuple[int, int, int, int]] | None = None,
     mask_image: StrPath | None = None,
     w_term_mode: WTermMode = "none",
@@ -112,6 +115,8 @@ def mfs(
         "gain": gain,
         "threshold_jy": threshold_jy,
         "nsigma": nsigma,
+        "use_mask": use_mask,
+        "auto_mask": {} if auto_mask is None else dict(auto_mask),
         "mask_boxes": [list(box) for box in (mask_boxes or [])],
         "mask_image": None if mask_image is None else os.fspath(mask_image),
         "w_term_mode": w_term_mode,

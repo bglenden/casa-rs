@@ -351,6 +351,7 @@ impl ManagedImagingOutput {
                         ImagerArtifactKind::Residual => "residual".to_string(),
                         ImagerArtifactKind::Model => "model".to_string(),
                         ImagerArtifactKind::Image => "image".to_string(),
+                        ImagerArtifactKind::Mask => "mask".to_string(),
                         ImagerArtifactKind::Weight => "weight".to_string(),
                         ImagerArtifactKind::PrimaryBeam => "pb".to_string(),
                         ImagerArtifactKind::ImagePbcor => "image.pbcor".to_string(),
@@ -551,14 +552,14 @@ fn artifact(
 mod tests {
     use super::{ManagedImagingOutput, artifact, imaging_artifacts, label_for_term};
     use crate::task_contract::{
-        ImagerArtifact, ImagerArtifactKind, ImagerCleanStopReason, ImagerDeconvolver,
-        ImagerHogbomIterationMode, ImagerPlaneSelection, ImagerRestoringBeamMode, ImagerRunReport,
-        ImagerRunTaskRequest, ImagerRunTaskResult, ImagerSaveModel, ImagerSpectralMode,
-        ImagerWTermMode, ImagerWeighting,
+        ImagerArtifact, ImagerArtifactKind, ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode,
+        ImagerCleanStopReason, ImagerDeconvolver, ImagerHogbomIterationMode, ImagerPlaneSelection,
+        ImagerRestoringBeamMode, ImagerRunReport, ImagerRunTaskRequest, ImagerRunTaskResult,
+        ImagerSaveModel, ImagerSpectralMode, ImagerWTermMode, ImagerWeighting,
     };
     use crate::{
-        ChannelRunSummary, CliConfig, CubeAxisConfig, FrontendStageTimings, RunSummary,
-        SaveModelMode, SpectralMode,
+        AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, CubeAxisConfig,
+        FrontendStageTimings, RunSummary, SaveModelMode, SpectralMode,
     };
     use casa_imaging::{
         CleanStopReason, Deconvolver, HogbomIterationMode, ImagingStageTimings, RestoringBeamMode,
@@ -609,6 +610,8 @@ mod tests {
             min_psf_fraction: 0.1,
             max_psf_fraction: 0.8,
             hogbom_iteration_mode: HogbomIterationMode::Strict,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::Direct,
@@ -768,6 +771,8 @@ mod tests {
                 min_psf_fraction: 0.15,
                 max_psf_fraction: 0.9,
                 hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
+                use_mask: ImagerCleanMaskMode::User,
+                auto_mask: ImagerAutoMultiThresholdConfig::default(),
                 mask_boxes: vec![[1, 2, 3, 4]],
                 mask_image: None,
                 w_term_mode: ImagerWTermMode::Wproject,

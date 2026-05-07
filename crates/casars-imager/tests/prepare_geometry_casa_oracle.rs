@@ -284,6 +284,8 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         min_psf_fraction: 0.1,
         max_psf_fraction: 0.8,
         hogbom_iteration_mode: HogbomIterationMode::Strict,
+        use_mask: Default::default(),
+        auto_mask: Default::default(),
         mask_boxes: Vec::new(),
         mask_image: None,
         w_term_mode: WTermMode::None,

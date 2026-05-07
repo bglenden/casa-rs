@@ -210,6 +210,17 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         relative_path: "tutorial-parity/alma/first-look/twhya/twhya_selfcal.ms.tgz",
     },
     TutorialDataset {
+        key: "alma/automasking/contsub-ms",
+        source_url: "https://casaguides.nrao.edu/index.php?title=Automasking_Guide_CASA_6.5.4",
+        artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/Automasking_Guide/twhya_selfcal.ms.contsub.tar",
+        expected_filename: "twhya_selfcal.ms.contsub.tar",
+        casa_guide_version: Some("6.5.4"),
+        expected_size_bytes: Some(257_537_974),
+        expected_sha256: Some("9cd1b5f9a3bc80a5758e945d1c398e79a64fec9e2d40cad4336edbe7ea787de6"),
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/alma/automasking/twhya_selfcal.ms.contsub.tar",
+    },
+    TutorialDataset {
         key: "alma/first-look/twhya/continuum-image",
         source_url: "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
         artifact_url: "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_cont.image",
@@ -2902,6 +2913,7 @@ mod tests {
             .map(|dataset| dataset.key)
             .collect::<Vec<_>>();
         assert!(tutorial_keys.contains(&"alma/first-look/twhya/calibrated-ms"));
+        assert!(tutorial_keys.contains(&"alma/automasking/contsub-ms"));
         assert!(tutorial_keys.contains(&"alma/antennae/band7/calibrated-data"));
         assert!(tutorial_keys.contains(&"alma/antennae/band7/reference-images"));
         assert!(tutorial_keys.contains(&"alma/m100/band3-combine/aca-reference-images"));
@@ -2917,6 +2929,17 @@ mod tests {
         let antennae = tutorial_dataset("alma/antennae/band7/calibrated-data").unwrap();
         assert_eq!(antennae.expected_size_bytes, Some(912_711_095));
         assert_eq!(antennae.casa_guide_version, Some("6.6.6"));
+
+        let automasking = tutorial_dataset("alma/automasking/contsub-ms").unwrap();
+        assert_eq!(
+            automasking.expected_filename,
+            "twhya_selfcal.ms.contsub.tar"
+        );
+        assert_eq!(automasking.expected_size_bytes, Some(257_537_974));
+        assert_eq!(
+            automasking.expected_sha256,
+            Some("9cd1b5f9a3bc80a5758e945d1c398e79a64fec9e2d40cad4336edbe7ea787de6")
+        );
 
         let ppdisk = tutorial_dataset("simulation/vla-ppdisk/model-fits").unwrap();
         assert_eq!(ppdisk.casa_guide_version, Some("6.7.2"));

@@ -319,6 +319,8 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         min_psf_fraction: options.min_psf_fraction,
         max_psf_fraction: options.max_psf_fraction,
         hogbom_iteration_mode: options.hogbom_iteration_mode,
+        use_mask: Default::default(),
+        auto_mask: Default::default(),
         mask_boxes: options.mask_boxes.clone(),
         mask_image: options.mask_image.clone(),
         w_term_mode: options.w_term_mode,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::{fs, path::PathBuf};
+use std::{collections::VecDeque, fs, path::PathBuf};
 
 use ndarray::s;
 
@@ -75,7 +75,7 @@ pub fn run_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Imagi
             multiscale_scales: request.multiscale_scales.clone(),
             small_scale_bias: request.small_scale_bias,
             clean: request.clean,
-            clean_mask: request.clean_mask.clone(),
+            clean_mask: clean_mask_for_channel(request, channel_index),
             w_term_mode: request.w_term_mode,
             w_project_planes: request.w_project_planes,
             compatibility: request.compatibility,
@@ -129,6 +129,7 @@ pub fn run_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Imagi
         model,
         image,
         sumwt,
+        clean_mask: None,
         restored_beams: beams.clone(),
         beams,
         diagnostics: CubeImagingDiagnostics {
@@ -169,6 +170,8 @@ pub fn run_dirty_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult,
     dirty_request.multiscale_scales.clear();
     dirty_request.clean = dirty_clean_config(request.psf_cutoff);
     dirty_request.clean_mask = None;
+    dirty_request.channel_clean_mask = None;
+    dirty_request.auto_mask = None;
     run_cube(&dirty_request)
 }
 
@@ -195,6 +198,8 @@ struct CubePlaneWork {
     final_cycle_threshold_jy_per_beam: f32,
     cached_peak_residual_jy_per_beam: f32,
     cached_nsigma_threshold_jy_per_beam: f32,
+    auto_mask_beam: Option<BeamFit>,
+    auto_mask_skip: bool,
     min_residual_peak_jy_per_beam: f32,
     divergence_warned: bool,
     is_blank: bool,
@@ -241,6 +246,400 @@ fn residual_metrics(
         peak_abs_value_masked(residual, clean_mask),
         nsigma_threshold_jy_per_beam(residual, clean_mask, clean),
     )
+}
+
+fn clean_mask_for_channel(
+    request: &CubeImagingRequest,
+    channel_index: usize,
+) -> Option<Array2<bool>> {
+    let shared = request.clean_mask.clone();
+    let Some(channel_mask) = request.channel_clean_mask.as_ref() else {
+        return shared;
+    };
+    let mut plane = channel_mask.slice(s![.., .., 0, channel_index]).to_owned();
+    if let Some(shared) = shared.as_ref() {
+        Zip::from(&mut plane)
+            .and(shared)
+            .for_each(|out, shared| *out = *out && *shared);
+    }
+    Some(plane)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CubeAutoMaskBeamShape {
+    sigma_x_pixels: f64,
+    sigma_y_pixels: f64,
+    position_angle_rad: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CubeAutoMaskStats {
+    median: f32,
+    robust_rms: f32,
+    absmax: f32,
+}
+
+fn update_cube_auto_multithresh_masks(
+    planes: &mut [CubePlaneWork],
+    geometry: ImageGeometry,
+    beams: &[Option<BeamFit>],
+    config: CubeAutoMultiThresholdConfig,
+    allow_grow: bool,
+) {
+    for (channel_index, plane) in planes.iter_mut().enumerate() {
+        if plane.is_blank {
+            continue;
+        }
+        let beam = beams.get(channel_index).copied().flatten();
+        let min_region_pixels = cube_auto_mask_min_region_pixels(geometry, beam, config);
+        let beam_shape = cube_auto_mask_beam_shape(geometry, beam, config);
+        if plane.auto_mask_skip {
+            continue;
+        }
+        let (updated_mask, used_noise_threshold) = cube_auto_multithresh_plane_mask(
+            &plane.residual,
+            plane.request.clean_mask.as_ref(),
+            plane.max_psf_sidelobe_level,
+            min_region_pixels,
+            beam_shape,
+            config,
+            allow_grow,
+        );
+        if used_noise_threshold && !updated_mask.iter().any(|value| *value) {
+            plane.auto_mask_skip = true;
+        }
+        plane.request.clean_mask = Some(updated_mask);
+        let (peak, nsigma) = residual_metrics(
+            &plane.residual,
+            plane.request.clean_mask.as_ref(),
+            plane.request.clean,
+        );
+        plane.cached_peak_residual_jy_per_beam = peak;
+        plane.cached_nsigma_threshold_jy_per_beam = nsigma;
+    }
+}
+
+fn cube_auto_multithresh_plane_mask(
+    residual: &Array2<f32>,
+    previous_mask: Option<&Array2<bool>>,
+    max_psf_sidelobe_level: f32,
+    min_region_pixels: usize,
+    beam_shape: Option<CubeAutoMaskBeamShape>,
+    config: CubeAutoMultiThresholdConfig,
+    allow_grow: bool,
+) -> (Array2<bool>, bool) {
+    let Some(stats) = cube_auto_mask_stats(residual) else {
+        return (
+            previous_mask
+                .cloned()
+                .unwrap_or_else(|| Array2::<bool>::from_elem(residual.dim(), false)),
+            false,
+        );
+    };
+    let sidelobe_threshold =
+        stats.median + max_psf_sidelobe_level.max(0.0) * config.sidelobe_threshold * stats.absmax;
+    let noise_threshold = stats.median + config.noise_threshold * stats.robust_rms;
+    let low_noise_threshold = stats.median
+        + (max_psf_sidelobe_level.max(0.0) * config.sidelobe_threshold * stats.absmax)
+            .max(config.low_noise_threshold * stats.robust_rms);
+    let main_threshold = sidelobe_threshold.max(noise_threshold);
+    let used_noise_threshold = noise_threshold > sidelobe_threshold;
+    let mut current = previous_mask
+        .cloned()
+        .unwrap_or_else(|| Array2::<bool>::from_elem(residual.dim(), false));
+
+    let mut threshold_mask = cube_threshold_positive_mask(residual, main_threshold);
+    cube_prune_small_regions(&mut threshold_mask, min_region_pixels);
+    let threshold_mask =
+        cube_smooth_and_cut_mask(&threshold_mask, beam_shape, config.cut_threshold);
+    Zip::from(&mut current)
+        .and(&threshold_mask)
+        .for_each(|out, generated| *out = *out || *generated);
+
+    if allow_grow && config.grow_iterations > 0 {
+        let mut grown = previous_mask
+            .cloned()
+            .unwrap_or_else(|| Array2::<bool>::from_elem(residual.dim(), false));
+        let constraint = cube_threshold_positive_mask(residual, low_noise_threshold);
+        grow_mask_constrained(&mut grown, &constraint, config.grow_iterations);
+        if config.do_grow_prune {
+            cube_prune_small_regions(&mut grown, min_region_pixels);
+        }
+        let grown = cube_smooth_and_cut_mask(&grown, beam_shape, config.cut_threshold);
+        Zip::from(&mut current)
+            .and(&grown)
+            .for_each(|out, generated| *out = *out || *generated);
+    }
+
+    if config.negative_threshold > 0.0 {
+        let negative_threshold = stats.median
+            - (max_psf_sidelobe_level.max(0.0) * config.sidelobe_threshold * stats.absmax)
+                .max(config.negative_threshold * stats.robust_rms);
+        let mut negative = cube_threshold_negative_mask(residual, negative_threshold);
+        cube_prune_small_regions(&mut negative, min_region_pixels);
+        let negative = cube_smooth_and_cut_mask(&negative, beam_shape, config.cut_threshold);
+        Zip::from(&mut current)
+            .and(&negative)
+            .for_each(|out, generated| *out = *out || *generated);
+    }
+    (current, used_noise_threshold)
+}
+
+fn cube_auto_mask_stats(residual: &Array2<f32>) -> Option<CubeAutoMaskStats> {
+    let mut values = residual
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.total_cmp(b));
+    let median = cube_sorted_median(&values);
+    let absmax = values
+        .iter()
+        .fold(0.0f32, |acc, value| acc.max(value.abs()));
+    let mut deviations = values
+        .iter()
+        .map(|value| (*value - median).abs())
+        .collect::<Vec<_>>();
+    deviations.sort_by(|a, b| a.total_cmp(b));
+    let robust_rms = cube_sorted_median(&deviations) * 1.4826;
+    Some(CubeAutoMaskStats {
+        median,
+        robust_rms,
+        absmax,
+    })
+}
+
+fn cube_sorted_median(values: &[f32]) -> f32 {
+    let middle = values.len() / 2;
+    if values.len() % 2 == 0 {
+        0.5 * (values[middle - 1] + values[middle])
+    } else {
+        values[middle]
+    }
+}
+
+fn cube_threshold_positive_mask(residual: &Array2<f32>, threshold: f32) -> Array2<bool> {
+    residual.mapv(|value| value.is_finite() && value > threshold)
+}
+
+fn cube_threshold_negative_mask(residual: &Array2<f32>, threshold: f32) -> Array2<bool> {
+    residual.mapv(|value| value.is_finite() && value < threshold)
+}
+
+fn cube_auto_mask_min_region_pixels(
+    geometry: ImageGeometry,
+    beam: Option<BeamFit>,
+    config: CubeAutoMultiThresholdConfig,
+) -> usize {
+    if config.min_beam_frac <= 0.0 {
+        return 1;
+    }
+    let Some(beam) = beam else {
+        return 1;
+    };
+    let cell_area = geometry.cell_size_rad[0].abs() * geometry.cell_size_rad[1].abs();
+    if !(cell_area.is_finite() && cell_area > 0.0) {
+        return 1;
+    }
+    let beam_area = std::f64::consts::PI * beam.major_fwhm_rad.abs() * beam.minor_fwhm_rad.abs()
+        / (4.0 * std::f64::consts::LN_2);
+    if !(beam_area.is_finite() && beam_area > 0.0) {
+        return 1;
+    }
+    ((config.min_beam_frac as f64 * beam_area / cell_area).ceil() as usize).max(1)
+}
+
+fn cube_auto_mask_beam_shape(
+    geometry: ImageGeometry,
+    beam: Option<BeamFit>,
+    config: CubeAutoMultiThresholdConfig,
+) -> Option<CubeAutoMaskBeamShape> {
+    let beam = beam?;
+    if config.smooth_factor <= 0.0 {
+        return None;
+    }
+    let cell_x = geometry.cell_size_rad[0].abs();
+    let cell_y = geometry.cell_size_rad[1].abs();
+    if !(cell_x.is_finite() && cell_x > 0.0 && cell_y.is_finite() && cell_y > 0.0) {
+        return None;
+    }
+    let sigma_from_fwhm = |fwhm_rad: f64, cell_rad: f64| {
+        config.smooth_factor as f64 * fwhm_rad.abs()
+            / (2.0 * (2.0 * std::f64::consts::LN_2).sqrt() * cell_rad)
+    };
+    let sigma_x_pixels = sigma_from_fwhm(beam.minor_fwhm_rad, cell_x);
+    let sigma_y_pixels = sigma_from_fwhm(beam.major_fwhm_rad, cell_y);
+    (sigma_x_pixels.is_finite()
+        && sigma_x_pixels > 0.0
+        && sigma_y_pixels.is_finite()
+        && sigma_y_pixels > 0.0)
+        .then_some(CubeAutoMaskBeamShape {
+            sigma_x_pixels,
+            sigma_y_pixels,
+            position_angle_rad: beam.position_angle_rad,
+        })
+}
+
+fn cube_smooth_and_cut_mask(
+    mask: &Array2<bool>,
+    beam_shape: Option<CubeAutoMaskBeamShape>,
+    cut_threshold: f32,
+) -> Array2<bool> {
+    let Some(beam_shape) = beam_shape else {
+        return mask.clone();
+    };
+    let (nx, ny) = mask.dim();
+    let radius_x = (beam_shape.sigma_x_pixels * 4.0).ceil().max(1.0) as isize;
+    let radius_y = (beam_shape.sigma_y_pixels * 4.0).ceil().max(1.0) as isize;
+    let cos_pa = beam_shape.position_angle_rad.cos();
+    let sin_pa = beam_shape.position_angle_rad.sin();
+    let mut smoothed = Array2::<f32>::zeros((nx, ny));
+    for ((x, y), value) in mask.indexed_iter() {
+        if !*value {
+            continue;
+        }
+        let x = x as isize;
+        let y = y as isize;
+        for dx in -radius_x..=radius_x {
+            let xx = x + dx;
+            if !(0..nx as isize).contains(&xx) {
+                continue;
+            }
+            for dy in -radius_y..=radius_y {
+                let yy = y + dy;
+                if !(0..ny as isize).contains(&yy) {
+                    continue;
+                }
+                let rotated_x = dx as f64 * cos_pa + dy as f64 * sin_pa;
+                let rotated_y = -dx as f64 * sin_pa + dy as f64 * cos_pa;
+                let exponent = -0.5
+                    * ((rotated_x / beam_shape.sigma_x_pixels).powi(2)
+                        + (rotated_y / beam_shape.sigma_y_pixels).powi(2));
+                smoothed[(xx as usize, yy as usize)] += exponent.exp() as f32;
+            }
+        }
+    }
+    let peak = smoothed.iter().copied().fold(0.0f32, f32::max);
+    if !(peak.is_finite() && peak > 0.0) {
+        return Array2::<bool>::from_elem((nx, ny), false);
+    }
+    let threshold = cut_threshold.max(0.0) * peak;
+    smoothed.mapv(|value| value.is_finite() && value > threshold)
+}
+
+fn grow_mask_constrained(
+    mask: &mut Array2<bool>,
+    constraint: &Array2<bool>,
+    max_iterations: usize,
+) {
+    let (nx, ny) = mask.dim();
+    for _ in 0..max_iterations {
+        let mut next = mask.clone();
+        let mut changed = false;
+        for x in 0..nx {
+            for y in 0..ny {
+                if !mask[(x, y)] || !constraint[(x, y)] {
+                    continue;
+                }
+                for (nx0, ny0) in cube_neighbors4(mask.dim(), x, y) {
+                    if !next[(nx0, ny0)] {
+                        next[(nx0, ny0)] = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        *mask = next;
+        if !changed {
+            break;
+        }
+    }
+    Zip::from(mask)
+        .and(constraint)
+        .for_each(|out, allowed| *out = *out && *allowed);
+}
+
+fn cube_prune_small_regions(mask: &mut Array2<bool>, min_pixels: usize) {
+    if min_pixels <= 1 {
+        return;
+    }
+    let (nx, ny) = mask.dim();
+    let mut visited = Array2::<bool>::from_elem((nx, ny), false);
+    for x0 in 0..nx {
+        for y0 in 0..ny {
+            if visited[(x0, y0)] || !mask[(x0, y0)] {
+                continue;
+            }
+            let mut region = Vec::new();
+            let mut queue = VecDeque::from([(x0, y0)]);
+            visited[(x0, y0)] = true;
+            while let Some((x, y)) = queue.pop_front() {
+                region.push((x, y));
+                for (nx0, ny0) in cube_neighbors4(mask.dim(), x, y) {
+                    if !visited[(nx0, ny0)] && mask[(nx0, ny0)] {
+                        visited[(nx0, ny0)] = true;
+                        queue.push_back((nx0, ny0));
+                    }
+                }
+            }
+            if region.len() < min_pixels {
+                for (x, y) in region {
+                    mask[(x, y)] = false;
+                }
+            }
+        }
+    }
+}
+
+fn cube_neighbors4(
+    (nx, ny): (usize, usize),
+    x: usize,
+    y: usize,
+) -> impl Iterator<Item = (usize, usize)> {
+    let mut neighbors = [(usize::MAX, usize::MAX); 4];
+    let mut count = 0;
+    if x > 0 {
+        neighbors[count] = (x - 1, y);
+        count += 1;
+    }
+    if x + 1 < nx {
+        neighbors[count] = (x + 1, y);
+        count += 1;
+    }
+    if y > 0 {
+        neighbors[count] = (x, y - 1);
+        count += 1;
+    }
+    if y + 1 < ny {
+        neighbors[count] = (x, y + 1);
+        count += 1;
+    }
+    neighbors.into_iter().take(count)
+}
+
+fn final_cube_clean_mask(
+    planes: &[CubePlaneWork],
+    nx: usize,
+    ny: usize,
+    nchan: usize,
+) -> Option<Array4<bool>> {
+    if !planes
+        .iter()
+        .any(|plane| plane.request.clean_mask.is_some())
+    {
+        return None;
+    }
+    let mut mask = Array4::<bool>::from_elem((nx, ny, 1, nchan), false);
+    for (channel_index, plane) in planes.iter().enumerate() {
+        if let Some(channel_mask) = plane.request.clean_mask.as_ref() {
+            mask.slice_mut(s![.., .., 0, channel_index])
+                .assign(channel_mask);
+        }
+    }
+    Some(mask)
 }
 
 fn blank_plane_diagnostics(
@@ -305,7 +704,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
         });
     let cube_fractional_bandwidth = cube_fractional_bandwidth(request);
     let mut planes = Vec::with_capacity(nchan);
-    for channel in &request.channels {
+    for (channel_index, channel) in request.channels.iter().enumerate() {
         let plane_request = ImagingRequest {
             geometry: request.geometry,
             visibility_batches: channel.visibility_batches.clone(),
@@ -321,7 +720,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             multiscale_scales: request.multiscale_scales.clone(),
             small_scale_bias: request.small_scale_bias,
             clean: request.clean,
-            clean_mask: request.clean_mask.clone(),
+            clean_mask: clean_mask_for_channel(request, channel_index),
             w_term_mode: request.w_term_mode,
             w_project_planes: request.w_project_planes,
             compatibility: request.compatibility,
@@ -353,6 +752,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             build_standard_residual_sample_plans(&gridder, &weighted_batches);
         let (
             psf_state,
+            auto_mask_beam,
             model,
             residual,
             multiscale_state,
@@ -367,6 +767,14 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 &mut plane_stage_timings,
             ) {
                 Ok(psf_state) => {
+                    let BeamFitOutcome {
+                        beam: auto_mask_beam,
+                        ..
+                    } = fit_beam_from_psf(
+                        &psf_state.psf,
+                        plane_request.geometry.cell_size_rad,
+                        plane_request.clean.psf_cutoff,
+                    );
                     let model = Array2::<f32>::zeros((nx, ny));
                     let residual = compute_residual(
                         &plane_request,
@@ -390,6 +798,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                         peak_abs_value_masked(&residual, plane_request.clean_mask.as_ref());
                     (
                         psf_state,
+                        auto_mask_beam,
                         model,
                         residual,
                         multiscale_state,
@@ -400,6 +809,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                 }
                 Err(ImagingError::NoUsableSamples) => (
                     blank_psf_state(plane_request.geometry.image_shape),
+                    None,
                     Array2::<f32>::zeros((nx, ny)),
                     Array2::<f32>::zeros((nx, ny)),
                     None,
@@ -434,6 +844,8 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             final_cycle_threshold_jy_per_beam: plane_request.clean.threshold_jy_per_beam,
             cached_peak_residual_jy_per_beam: initial_peak,
             cached_nsigma_threshold_jy_per_beam,
+            auto_mask_beam,
+            auto_mask_skip: false,
             request: plane_request,
             weighted_batches,
             residual_sample_plans,
@@ -468,6 +880,22 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
         .iter()
         .map(|plane| plane.max_psf_sidelobe_level)
         .fold(0.0f32, f32::max);
+    let auto_mask_beams = select_restored_cube_beams(
+        &planes
+            .iter()
+            .map(|plane| plane.auto_mask_beam)
+            .collect::<Vec<_>>(),
+        request.restoring_beam_mode,
+    )?;
+    if let Some(config) = request.auto_mask {
+        update_cube_auto_multithresh_masks(
+            &mut planes,
+            request.geometry,
+            &auto_mask_beams,
+            config,
+            false,
+        );
+    }
     while total_reported_minor_iterations < request.clean.niter {
         let global_peak = planes
             .iter()
@@ -775,6 +1203,15 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
             }
             break;
         }
+        if let Some(config) = request.auto_mask {
+            update_cube_auto_multithresh_masks(
+                &mut planes,
+                request.geometry,
+                &auto_mask_beams,
+                config,
+                true,
+            );
+        }
     }
 
     let mut fitted_beams = Vec::with_capacity(nchan);
@@ -824,6 +1261,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
     let mut stage_timings = ImagingStageTimings::default();
     let mut gridded_samples = 0usize;
     let mut skipped_samples = 0usize;
+    let clean_mask = final_cube_clean_mask(&planes, nx, ny, nchan);
 
     for (channel_index, mut plane) in planes.into_iter().enumerate() {
         let beam = fitted_beams[channel_index];
@@ -940,6 +1378,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
         model,
         image,
         sumwt,
+        clean_mask,
         beams,
         restored_beams: result_restored_beams,
         diagnostics: CubeImagingDiagnostics {
