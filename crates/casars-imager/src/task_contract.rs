@@ -800,6 +800,7 @@ impl From<ImagerUvTaper> for GaussianUvTaper {
 
 /// Canonical imager task request for one end-to-end run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ImagerRunTaskRequest {
     /// Input MeasurementSet path.
     pub measurement_set: PathBuf,
@@ -2309,5 +2310,27 @@ mod tests {
         assert_eq!(config.datacolumn.as_deref(), Some("DATA"));
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: 0.5 });
         assert!(config.dirty_only);
+    }
+
+    #[test]
+    fn json_request_rejects_unsupported_tclean_controls_instead_of_ignoring_them() {
+        let payload = r#"{
+          "kind": "run",
+          "request": {
+            "measurement_set": "/data/probed.ms",
+            "image_name": "/data/casa-rs-runs/probed-dirty",
+            "image_size": 256,
+            "cell_arcsec": 0.25,
+            "startmodel": "/data/seed.model",
+            "outlierfile": "/data/outliers.txt"
+          }
+        }"#;
+        let error = serde_json::from_str::<ImagerTaskRequest>(payload)
+            .expect_err("unsupported CASA tclean controls must not be silently ignored");
+        let message = error.to_string();
+        assert!(
+            message.contains("unknown field"),
+            "expected unknown-field rejection, got {message}"
+        );
     }
 }

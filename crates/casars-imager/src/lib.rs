@@ -8519,6 +8519,9 @@ fn write_model_column(
         .collect::<Result<BTreeMap<_, _>, _>>()?;
     let mut written_samples = 0usize;
     for sample in &trace.samples {
+        if !sample.gridable {
+            continue;
+        }
         if sample.source_contributions.is_empty() {
             continue;
         }
@@ -18132,6 +18135,117 @@ mod tests {
         .unwrap();
 
         assert_eq!(summary.gridded_samples, 1);
+    }
+
+    #[test]
+    fn savemodel_modelcolumn_leaves_autocorrelations_zero() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("auto_savemodel.ms");
+        let image_prefix = tmp.path().join("auto_savemodel_image");
+        let mut ms = MeasurementSet::create(
+            &ms_path,
+            MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+        )
+        .unwrap();
+        add_field_row(&mut ms);
+        add_spectral_window_row(&mut ms, &[1.4e9]);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_main_row_with_antennas(
+            &mut ms,
+            0,
+            0,
+            [0.0, 0.0, 0.0],
+            [Complex32::new(50.0, 0.0), Complex32::new(50.0, 0.0)],
+        );
+        add_main_row_with_antennas(
+            &mut ms,
+            0,
+            1,
+            [15.0, -20.0, 0.0],
+            [Complex32::new(1.0, 0.0), Complex32::new(1.0, 0.0)],
+        );
+        add_main_row_with_antennas(
+            &mut ms,
+            1,
+            2,
+            [-12.0, 18.0, 0.0],
+            [Complex32::new(0.8, 0.0), Complex32::new(0.8, 0.0)],
+        );
+        ms.save().unwrap();
+
+        let summary = run_from_config(&CliConfig {
+            ms: ms_path.clone(),
+            imagename: image_prefix,
+            imsize: 32,
+            cell_arcsec: 20.0,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            save_model: SaveModelMode::ModelColumn,
+            correlation: None,
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            use_pointing: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 4,
+            gain: 0.2,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.1,
+            pbcor: false,
+            minor_cycle_length: 2,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.1,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: false,
+        })
+        .unwrap();
+        assert!(summary.gridded_samples > 0);
+
+        let reopened = MeasurementSet::open(&ms_path).unwrap();
+        let model_row_norm = |row_index| {
+            let model_data = reopened
+                .main_table()
+                .cell_accessor(row_index, "MODEL_DATA")
+                .and_then(|cell| cell.array())
+                .unwrap();
+            let ArrayValue::Complex32(model_data) = model_data else {
+                panic!("MODEL_DATA should be complex");
+            };
+            model_data.iter().map(|value| value.norm()).sum::<f32>()
+        };
+        assert_eq!(
+            model_row_norm(0),
+            0.0,
+            "CASA leaves autocorrelation MODEL_DATA rows zero"
+        );
+        assert!(
+            model_row_norm(1) > 0.0 || model_row_norm(2) > 0.0,
+            "cross-correlation rows should still receive predicted model visibilities"
+        );
     }
 
     #[test]

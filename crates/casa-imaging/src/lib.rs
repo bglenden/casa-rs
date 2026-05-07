@@ -122,15 +122,17 @@ impl StandardMfsModelPredictor {
         let Some(model_grid) = self.model_grid.as_ref() else {
             return Complex32::new(0.0, 0.0);
         };
+        if let Some(predicted) = self
+            .gridder
+            .degrid_sample_product_planned_sectdgrid(model_grid, u_lambda, v_lambda)
+        {
+            return predicted;
+        }
         let Some(plan) = self.gridder.plan_sample(u_lambda, v_lambda) else {
             return Complex32::new(0.0, 0.0);
         };
         self.gridder
-            .degrid_sample_product_planned_sectdgrid(model_grid, u_lambda, v_lambda)
-            .unwrap_or_else(|| {
-                self.gridder
-                    .degrid_sample_product_planned(model_grid, &plan.positive)
-            })
+            .degrid_sample_product_planned(model_grid, &plan.positive)
     }
 }
 
