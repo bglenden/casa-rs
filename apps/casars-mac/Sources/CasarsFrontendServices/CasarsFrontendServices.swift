@@ -558,7 +558,11 @@ public struct DatasetProbe {
     public var fields: [String]
     public var spectralWindows: [String]
     public var scans: [String]
+    public var arrays: [String]
+    public var observations: [String]
     public var antennas: [String]
+    public var intents: [String]
+    public var feeds: [String]
     public var correlations: [String]
     public var columns: [String]
     public var dataColumns: [String]
@@ -569,7 +573,7 @@ public struct DatasetProbe {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, name: String, path: String, kind: DatasetKind, sizeBytes: UInt64, modifiedUnixSeconds: UInt64?, probedUnixSeconds: UInt64, logicalSize: String, units: String, fields: [String], spectralWindows: [String], scans: [String], antennas: [String], correlations: [String], columns: [String], dataColumns: [String], subtables: [String], shape: [UInt64], notes: String, diagnostics: [String]) {
+    public init(id: String, name: String, path: String, kind: DatasetKind, sizeBytes: UInt64, modifiedUnixSeconds: UInt64?, probedUnixSeconds: UInt64, logicalSize: String, units: String, fields: [String], spectralWindows: [String], scans: [String], arrays: [String], observations: [String], antennas: [String], intents: [String], feeds: [String], correlations: [String], columns: [String], dataColumns: [String], subtables: [String], shape: [UInt64], notes: String, diagnostics: [String]) {
         self.id = id
         self.name = name
         self.path = path
@@ -582,7 +586,11 @@ public struct DatasetProbe {
         self.fields = fields
         self.spectralWindows = spectralWindows
         self.scans = scans
+        self.arrays = arrays
+        self.observations = observations
         self.antennas = antennas
+        self.intents = intents
+        self.feeds = feeds
         self.correlations = correlations
         self.columns = columns
         self.dataColumns = dataColumns
@@ -636,7 +644,19 @@ extension DatasetProbe: Equatable, Hashable {
         if lhs.scans != rhs.scans {
             return false
         }
+        if lhs.arrays != rhs.arrays {
+            return false
+        }
+        if lhs.observations != rhs.observations {
+            return false
+        }
         if lhs.antennas != rhs.antennas {
+            return false
+        }
+        if lhs.intents != rhs.intents {
+            return false
+        }
+        if lhs.feeds != rhs.feeds {
             return false
         }
         if lhs.correlations != rhs.correlations {
@@ -676,7 +696,11 @@ extension DatasetProbe: Equatable, Hashable {
         hasher.combine(fields)
         hasher.combine(spectralWindows)
         hasher.combine(scans)
+        hasher.combine(arrays)
+        hasher.combine(observations)
         hasher.combine(antennas)
+        hasher.combine(intents)
+        hasher.combine(feeds)
         hasher.combine(correlations)
         hasher.combine(columns)
         hasher.combine(dataColumns)
@@ -710,7 +734,11 @@ public struct FfiConverterTypeDatasetProbe: FfiConverterRustBuffer {
                 fields: FfiConverterSequenceString.read(from: &buf),
                 spectralWindows: FfiConverterSequenceString.read(from: &buf),
                 scans: FfiConverterSequenceString.read(from: &buf),
+                arrays: FfiConverterSequenceString.read(from: &buf),
+                observations: FfiConverterSequenceString.read(from: &buf),
                 antennas: FfiConverterSequenceString.read(from: &buf),
+                intents: FfiConverterSequenceString.read(from: &buf),
+                feeds: FfiConverterSequenceString.read(from: &buf),
                 correlations: FfiConverterSequenceString.read(from: &buf),
                 columns: FfiConverterSequenceString.read(from: &buf),
                 dataColumns: FfiConverterSequenceString.read(from: &buf),
@@ -734,7 +762,11 @@ public struct FfiConverterTypeDatasetProbe: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.fields, into: &buf)
         FfiConverterSequenceString.write(value.spectralWindows, into: &buf)
         FfiConverterSequenceString.write(value.scans, into: &buf)
+        FfiConverterSequenceString.write(value.arrays, into: &buf)
+        FfiConverterSequenceString.write(value.observations, into: &buf)
         FfiConverterSequenceString.write(value.antennas, into: &buf)
+        FfiConverterSequenceString.write(value.intents, into: &buf)
+        FfiConverterSequenceString.write(value.feeds, into: &buf)
         FfiConverterSequenceString.write(value.correlations, into: &buf)
         FfiConverterSequenceString.write(value.columns, into: &buf)
         FfiConverterSequenceString.write(value.dataColumns, into: &buf)

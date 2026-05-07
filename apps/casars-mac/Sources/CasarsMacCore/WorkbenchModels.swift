@@ -75,7 +75,11 @@ public struct DatasetSummary: Identifiable, Codable, Equatable {
     public var fields: [String]
     public var spectralWindows: [String]
     public var scans: [String]
+    public var arrays: [String]
+    public var observations: [String]
     public var antennas: [String]
+    public var intents: [String]
+    public var feeds: [String]
     public var correlations: [String]
     public var columns: [String]
     public var dataColumns: [String]
@@ -97,7 +101,11 @@ public struct DatasetSummary: Identifiable, Codable, Equatable {
         fields: [String] = [],
         spectralWindows: [String] = [],
         scans: [String] = [],
+        arrays: [String] = [],
+        observations: [String] = [],
         antennas: [String] = [],
+        intents: [String] = [],
+        feeds: [String] = [],
         correlations: [String] = [],
         columns: [String] = [],
         dataColumns: [String] = [],
@@ -118,7 +126,11 @@ public struct DatasetSummary: Identifiable, Codable, Equatable {
         self.fields = fields
         self.spectralWindows = spectralWindows
         self.scans = scans
+        self.arrays = arrays
+        self.observations = observations
         self.antennas = antennas
+        self.intents = intents
+        self.feeds = feeds
         self.correlations = correlations
         self.columns = columns
         self.dataColumns = dataColumns

@@ -60,7 +60,11 @@ pub struct DatasetProbe {
     pub fields: Vec<String>,
     pub spectral_windows: Vec<String>,
     pub scans: Vec<String>,
+    pub arrays: Vec<String>,
+    pub observations: Vec<String>,
     pub antennas: Vec<String>,
+    pub intents: Vec<String>,
+    pub feeds: Vec<String>,
     pub correlations: Vec<String>,
     pub columns: Vec<String>,
     pub data_columns: Vec<String>,
@@ -2106,6 +2110,11 @@ fn probe_measurement_set(
         Ok(antennas) => antennas,
         Err(_) => return Ok(None),
     };
+    let scans = ms_main_id_labels(&ms, "SCAN_NUMBER", "scan").unwrap_or_default();
+    let arrays = ms_main_id_labels(&ms, "ARRAY_ID", "array").unwrap_or_default();
+    let observations = ms_main_id_labels(&ms, "OBSERVATION_ID", "observation").unwrap_or_default();
+    let intents = ms_intent_labels(&ms).unwrap_or_default();
+    let feeds = ms_feed_labels(&ms).unwrap_or_default();
     let correlations = match ms_correlation_labels(&ms) {
         Ok(correlations) => correlations,
         Err(_) => return Ok(None),
@@ -2133,8 +2142,12 @@ fn probe_measurement_set(
         units: "Jy, Hz, seconds".to_string(),
         fields,
         spectral_windows,
-        scans: vec![],
+        scans,
+        arrays,
+        observations,
         antennas,
+        intents,
+        feeds,
         correlations,
         columns,
         data_columns,
@@ -2188,6 +2201,63 @@ fn ms_antenna_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
     (0..antennas.row_count())
         .map(|row| antennas.name(row).map_err(|error| error.to_string()))
         .collect()
+}
+
+fn ms_main_id_labels(
+    ms: &MeasurementSet,
+    column: &'static str,
+    prefix: &str,
+) -> Result<Vec<String>, String> {
+    let table = ms.main_table();
+    let row_numbers = (0..table.row_count()).collect::<Vec<_>>();
+    let mut ids = BTreeSet::new();
+    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
+        for id in selected_i32_values(table, column, row_chunk)? {
+            if id >= 0 {
+                ids.insert(id);
+            }
+        }
+    }
+    Ok(ids.into_iter().map(|id| format!("{prefix} {id}")).collect())
+}
+
+fn ms_intent_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
+    let state = ms.state().map_err(|error| error.to_string())?;
+    let mut intents = BTreeSet::new();
+    for row in 0..state.row_count() {
+        let intent = state
+            .string(row, "OBS_MODE")
+            .map_err(|error| error.to_string())?;
+        for item in intent
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            intents.insert(item.to_string());
+        }
+    }
+    Ok(intents.into_iter().collect())
+}
+
+fn ms_feed_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
+    let table = ms.main_table();
+    let row_numbers = (0..table.row_count()).collect::<Vec<_>>();
+    let mut ids = BTreeSet::new();
+    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
+        for id in selected_i32_values(table, "FEED1", row_chunk)? {
+            if id >= 0 {
+                ids.insert(id);
+            }
+        }
+        if table.column_accessor("FEED2").is_ok() {
+            for id in selected_i32_values(table, "FEED2", row_chunk)? {
+                if id >= 0 {
+                    ids.insert(id);
+                }
+            }
+        }
+    }
+    Ok(ids.into_iter().map(|id| format!("feed {id}")).collect())
 }
 
 fn ms_correlation_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
@@ -2267,7 +2337,11 @@ fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
         fields: vec![],
         spectral_windows: vec![],
         scans: vec![],
+        arrays: vec![],
+        observations: vec![],
         antennas: vec![],
+        intents: vec![],
+        feeds: vec![],
         correlations: vec![],
         columns: vec!["map".to_string()],
         data_columns: vec![],
@@ -2531,7 +2605,11 @@ fn probe_table(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
         fields: vec![],
         spectral_windows: vec![],
         scans: vec![],
+        arrays: vec![],
+        observations: vec![],
         antennas: vec![],
+        intents: vec![],
+        feeds: vec![],
         correlations: vec![],
         columns,
         data_columns: vec![],
