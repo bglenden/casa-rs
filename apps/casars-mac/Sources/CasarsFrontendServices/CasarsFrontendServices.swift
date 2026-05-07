@@ -1225,6 +1225,86 @@ public func FfiConverterTypeMeasurementSetPlotResult_lower(_ value: MeasurementS
 }
 
 
+public struct MeasurementSetTimeRangeProbe {
+    public var minSeconds: Double
+    public var maxSeconds: Double
+    public var rowCount: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(minSeconds: Double, maxSeconds: Double, rowCount: UInt64) {
+        self.minSeconds = minSeconds
+        self.maxSeconds = maxSeconds
+        self.rowCount = rowCount
+    }
+}
+
+#if compiler(>=6)
+extension MeasurementSetTimeRangeProbe: Sendable {}
+#endif
+
+
+extension MeasurementSetTimeRangeProbe: Equatable, Hashable {
+    public static func ==(lhs: MeasurementSetTimeRangeProbe, rhs: MeasurementSetTimeRangeProbe) -> Bool {
+        if lhs.minSeconds != rhs.minSeconds {
+            return false
+        }
+        if lhs.maxSeconds != rhs.maxSeconds {
+            return false
+        }
+        if lhs.rowCount != rhs.rowCount {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(minSeconds)
+        hasher.combine(maxSeconds)
+        hasher.combine(rowCount)
+    }
+}
+
+extension MeasurementSetTimeRangeProbe: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMeasurementSetTimeRangeProbe: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MeasurementSetTimeRangeProbe {
+        return
+            try MeasurementSetTimeRangeProbe(
+                minSeconds: FfiConverterDouble.read(from: &buf),
+                maxSeconds: FfiConverterDouble.read(from: &buf),
+                rowCount: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MeasurementSetTimeRangeProbe, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.minSeconds, into: &buf)
+        FfiConverterDouble.write(value.maxSeconds, into: &buf)
+        FfiConverterUInt64.write(value.rowCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetTimeRangeProbe_lift(_ buf: RustBuffer) throws -> MeasurementSetTimeRangeProbe {
+    return try FfiConverterTypeMeasurementSetTimeRangeProbe.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetTimeRangeProbe_lower(_ value: MeasurementSetTimeRangeProbe) -> RustBuffer {
+    return FfiConverterTypeMeasurementSetTimeRangeProbe.lower(value)
+}
+
+
 public struct MeasurementSetUvRangeProbe {
     public var minMeters: Double
     public var maxMeters: Double
@@ -3518,6 +3598,13 @@ public func buildTableBrowserSnapshotJson(datasetPath: String, width: UInt16, he
     )
 })
 }
+public func probeMeasurementSetTimeRange(datasetPath: String)throws  -> MeasurementSetTimeRangeProbe  {
+    return try  FfiConverterTypeMeasurementSetTimeRangeProbe_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_probe_measurement_set_time_range(
+        FfiConverterString.lower(datasetPath),$0
+    )
+})
+}
 public func probeMeasurementSetUvRange(datasetPath: String)throws  -> MeasurementSetUvRangeProbe  {
     return try  FfiConverterTypeMeasurementSetUvRangeProbe_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_probe_measurement_set_uv_range(
@@ -3562,6 +3649,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_table_browser_snapshot_json() != 45866) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_probe_measurement_set_time_range() != 14615) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_probe_measurement_set_uv_range() != 25491) {

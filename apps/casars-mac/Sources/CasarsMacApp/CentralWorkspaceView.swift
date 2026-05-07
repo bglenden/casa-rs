@@ -741,6 +741,19 @@ struct MeasurementSetPlotPanel: View {
     @State private var uvRangeUnit = "m"
     @State private var uvRangeScanStatus: String?
     @State private var isScanningUVRange = false
+    @State private var channelStartText = ""
+    @State private var channelEndText = ""
+    @State private var channelStepText = ""
+    @State private var timerangeStartText = ""
+    @State private var timerangeEndText = ""
+    @State private var timerangeScanStatus: String?
+    @State private var isScanningTimerange = false
+    @State private var integerRangeStartText = ""
+    @State private var integerRangeEndText = ""
+    @State private var msSelectColumn = ""
+    @State private var msSelectOperator = "=="
+    @State private var msSelectValue = ""
+    @State private var avgTimeUnit = "s"
     private let metadataClient: MeasurementSetMetadataClient = UniFFIMeasurementSetMetadataClient()
 
     var body: some View {
@@ -865,8 +878,9 @@ struct MeasurementSetPlotPanel: View {
                 ),
                 prompt: "CASA timerange",
                 systemImage: "clock",
-                help: "CASA timerange syntax, for example 2024/01/01/00:00:00~2024/01/01/00:10:00. Leave empty for all times.",
-                helperOptions: [SelectionHelperOption(label: "All times", value: "")]
+                help: "CASA timerange syntax. This helper builds numeric MJD-second ranges from MAIN.TIME, for example 4860027194~4860033280.",
+                helperOptions: [SelectionHelperOption(label: "All times", value: "")],
+                validator: isValidTimerangeSelection
             )
 
             selectionTextField(
@@ -1142,10 +1156,24 @@ struct MeasurementSetPlotPanel: View {
         help: String,
         helperOptions: [SelectionHelperOption]
     ) -> some View {
-        if label == "UV range" {
+        if label == "Channels" {
+            channelHelperPopover(text: text, help: help)
+        } else if label == "Timerange" {
+            timerangeHelperPopover(text: text, help: help)
+        } else if label == "UV range" {
             uvRangeHelperPopover(text: text, help: help)
         } else if label == "Antenna" {
             antennaHelperPopover(text: text, help: help)
+        } else if ["Scan", "Array", "Observation", "Feed"].contains(label) {
+            integerSetHelperPopover(label: label, text: text, help: help, helperOptions: helperOptions)
+        } else if label == "Intent" {
+            toggleListHelperPopover(emptyLabel: "all intents", text: text, help: help, helperOptions: helperOptions)
+        } else if label == "MS select" {
+            msSelectHelperPopover(text: text, help: help)
+        } else if label == "Avg channel" {
+            avgChannelHelperPopover(text: text, help: help)
+        } else if label == "Avg time" {
+            avgTimeHelperPopover(text: text, help: help)
         } else {
             defaultSelectionHelperPopover(text: text, help: help, helperOptions: helperOptions)
         }
@@ -1179,6 +1207,113 @@ struct MeasurementSetPlotPanel: View {
         }
         .padding(12)
         .frame(width: 300, alignment: .leading)
+    }
+
+    private func channelHelperPopover(text: Binding<String>, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(help)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let limit = selectedSpectralWindowChannelLimit {
+                Text("Valid channel IDs: 0 through \(max(0, limit - 1))")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                TextField("start", text: $channelStartText)
+                    .textFieldStyle(.roundedBorder)
+                Text("to")
+                    .foregroundStyle(.secondary)
+                TextField("end", text: $channelEndText)
+                    .textFieldStyle(.roundedBorder)
+                Text("step")
+                    .foregroundStyle(.secondary)
+                TextField("1", text: $channelStepText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 48)
+            }
+            HStack {
+                Button("Apply range") {
+                    applyChannelSelection(text: text)
+                }
+                Button("Clear") {
+                    channelStartText = ""
+                    channelEndText = ""
+                    channelStepText = ""
+                    text.wrappedValue = ""
+                }
+                Spacer()
+                Button("All") {
+                    text.wrappedValue = ""
+                }
+            }
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(channelSelectionOptions) { option in
+                        Button(option.label) {
+                            text.wrappedValue = option.value
+                            populateChannelFields(from: option.value)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 150)
+        }
+        .padding(12)
+        .frame(width: 420, alignment: .leading)
+        .onAppear {
+            populateChannelFields(from: text.wrappedValue)
+        }
+    }
+
+    private func timerangeHelperPopover(text: Binding<String>, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(help)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Use MJD seconds here; the generated selector is min~max. Leave one side blank for open-ended ranges.")
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                TextField("start seconds", text: $timerangeStartText)
+                    .textFieldStyle(.roundedBorder)
+                Text("to")
+                    .foregroundStyle(.secondary)
+                TextField("end seconds", text: $timerangeEndText)
+                    .textFieldStyle(.roundedBorder)
+            }
+            HStack {
+                Button("Apply") {
+                    applyTimerangeSelection(text: text)
+                }
+                Button("Clear") {
+                    timerangeStartText = ""
+                    timerangeEndText = ""
+                    text.wrappedValue = ""
+                }
+                Spacer()
+                Button(isScanningTimerange ? "Scanning..." : "Scan MS") {
+                    scanTimerange(text: text)
+                }
+                .disabled(isScanningTimerange)
+            }
+            if let timerangeScanStatus {
+                Text(timerangeScanStatus)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(width: 420, alignment: .leading)
+        .onAppear {
+            populateTimerangeFields(from: text.wrappedValue)
+        }
     }
 
     private func uvRangeHelperPopover(text: Binding<String>, help: String) -> some View {
@@ -1264,6 +1399,387 @@ struct MeasurementSetPlotPanel: View {
         .frame(width: 380, alignment: .leading)
     }
 
+    private func integerSetHelperPopover(
+        label: String,
+        text: Binding<String>,
+        help: String,
+        helperOptions: [SelectionHelperOption]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(help)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                TextField("start", text: $integerRangeStartText)
+                    .textFieldStyle(.roundedBorder)
+                Text("to")
+                    .foregroundStyle(.secondary)
+                TextField("end", text: $integerRangeEndText)
+                    .textFieldStyle(.roundedBorder)
+            }
+            HStack {
+                Button("Apply range") {
+                    applyIntegerRangeSelection(label: label, text: text)
+                }
+                Button("Clear") {
+                    integerRangeStartText = ""
+                    integerRangeEndText = ""
+                    text.wrappedValue = ""
+                }
+                Spacer()
+                Text(text.wrappedValue.isEmpty ? "all \(label.lowercased())s" : text.wrappedValue)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 6)], alignment: .leading, spacing: 6) {
+                    ForEach(helperOptions.filter { !$0.value.isEmpty }) { option in
+                        Button(option.label) {
+                            toggleCommaToken(option.value, text: text)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+            .frame(maxHeight: 220)
+        }
+        .padding(12)
+        .frame(width: 390, alignment: .leading)
+        .onAppear {
+            populateIntegerRangeFields(from: text.wrappedValue)
+        }
+    }
+
+    private func toggleListHelperPopover(
+        emptyLabel: String,
+        text: Binding<String>,
+        help: String,
+        helperOptions: [SelectionHelperOption]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(help)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Clear") {
+                    text.wrappedValue = ""
+                }
+                Spacer()
+                Text(text.wrappedValue.isEmpty ? emptyLabel : text.wrappedValue)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(helperOptions.filter { !$0.value.isEmpty }) { option in
+                        Button(option.label) {
+                            toggleCommaToken(option.value, text: text)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 220)
+        }
+        .padding(12)
+        .frame(width: 360, alignment: .leading)
+    }
+
+    private func msSelectHelperPopover(text: Binding<String>, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(help)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("This builds a simple TaQL clause. Use the text field directly for expressions beyond one column comparison.")
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Picker("Column", selection: $msSelectColumn) {
+                ForEach(dataset.columns, id: \.self) { column in
+                    Text(column).tag(column)
+                }
+            }
+            HStack {
+                Picker("Operator", selection: $msSelectOperator) {
+                    ForEach(["==", "!=", ">", ">=", "<", "<="], id: \.self) { op in
+                        Text(op).tag(op)
+                    }
+                }
+                .frame(width: 92)
+                TextField("value", text: $msSelectValue)
+                    .textFieldStyle(.roundedBorder)
+            }
+            HStack {
+                Button("Apply") {
+                    applyMSSelect(text: text)
+                }
+                Button("Clear") {
+                    msSelectValue = ""
+                    text.wrappedValue = ""
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 380, alignment: .leading)
+        .onAppear {
+            if msSelectColumn.isEmpty {
+                msSelectColumn = dataset.columns.first ?? ""
+            }
+        }
+    }
+
+    private func avgChannelHelperPopover(text: Binding<String>, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(help)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let limit = selectedSpectralWindowChannelLimit {
+                Text("Maximum useful bin for selected SPW: \(limit)")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                TextField("channels", text: text)
+                    .textFieldStyle(.roundedBorder)
+                Button("Apply") {
+                    applyAveragingText()
+                }
+                Button("Clear") {
+                    text.wrappedValue = ""
+                    applyAveragingText()
+                }
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(avgChannelOptions) { option in
+                        Button(option.label) {
+                            text.wrappedValue = option.value
+                            applyAveragingText()
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 180)
+        }
+        .padding(12)
+        .frame(width: 330, alignment: .leading)
+    }
+
+    private func avgTimeHelperPopover(text: Binding<String>, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(help)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Picker("Units", selection: $avgTimeUnit) {
+                Text("seconds").tag("s")
+                Text("minutes").tag("min")
+                Text("hours").tag("h")
+            }
+            .pickerStyle(.segmented)
+            HStack {
+                TextField("interval", text: text)
+                    .textFieldStyle(.roundedBorder)
+                Button("Apply") {
+                    applyAvgTimeUnit(text: text)
+                }
+                Button("Clear") {
+                    text.wrappedValue = ""
+                    applyAveragingText()
+                }
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(avgTimeOptions) { option in
+                        Button(option.label) {
+                            text.wrappedValue = option.value
+                            avgTimeUnit = "s"
+                            applyAveragingText()
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 160)
+        }
+        .padding(12)
+        .frame(width: 340, alignment: .leading)
+    }
+
+    private func applyChannelSelection(text: Binding<String>) {
+        let start = channelStartText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let end = channelEndText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let step = channelStepText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !start.isEmpty, Int(start) != nil else {
+            return
+        }
+        let candidate: String
+        if end.isEmpty {
+            candidate = start
+        } else if step.isEmpty || step == "1" {
+            candidate = "\(start)~\(end)"
+        } else {
+            candidate = "\(start)~\(end)^\(step)"
+        }
+        if isValidChannelSelection(candidate) {
+            text.wrappedValue = candidate
+        }
+    }
+
+    private func populateChannelFields(from value: String) {
+        let first = value
+            .split(whereSeparator: { $0 == ";" || $0 == "," })
+            .first
+            .map(String.init) ?? ""
+        guard !first.isEmpty else {
+            channelStartText = ""
+            channelEndText = ""
+            channelStepText = ""
+            return
+        }
+        let stepped = first.split(separator: "^", omittingEmptySubsequences: false)
+        channelStepText = stepped.count == 2 ? String(stepped[1]) : ""
+        let range = stepped[0].split(separator: "~", omittingEmptySubsequences: false)
+        channelStartText = range.first.map(String.init) ?? ""
+        channelEndText = range.count == 2 ? String(range[1]) : ""
+    }
+
+    private func applyTimerangeSelection(text: Binding<String>) {
+        let start = timerangeStartText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let end = timerangeEndText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (start.isEmpty || Double(start) != nil), (end.isEmpty || Double(end) != nil) else {
+            timerangeScanStatus = "Enter numeric MJD seconds."
+            return
+        }
+        if start.isEmpty && end.isEmpty {
+            text.wrappedValue = ""
+        } else if !start.isEmpty && !end.isEmpty {
+            text.wrappedValue = "\(start)~\(end)"
+        } else if !start.isEmpty {
+            text.wrappedValue = ">\(start)"
+        } else {
+            text.wrappedValue = "<\(end)"
+        }
+        timerangeScanStatus = nil
+    }
+
+    private func populateTimerangeFields(from value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            timerangeStartText = ""
+            timerangeEndText = ""
+            return
+        }
+        let range = trimmed.split(separator: "~", omittingEmptySubsequences: false)
+        if range.count == 2 {
+            timerangeStartText = String(range[0])
+            timerangeEndText = String(range[1])
+        } else if trimmed.hasPrefix(">") {
+            timerangeStartText = String(trimmed.drop(while: { $0 == ">" || $0 == "=" }))
+            timerangeEndText = ""
+        } else if trimmed.hasPrefix("<") {
+            timerangeStartText = ""
+            timerangeEndText = String(trimmed.drop(while: { $0 == "<" || $0 == "=" }))
+        }
+    }
+
+    private func scanTimerange(text: Binding<String>) {
+        isScanningTimerange = true
+        timerangeScanStatus = "Scanning MAIN.TIME..."
+        let datasetPath = dataset.path
+        Task {
+            do {
+                let probe = try metadataClient.probeTimeRange(datasetPath: datasetPath)
+                await MainActor.run {
+                    timerangeStartText = Self.formatSeconds(probe.minSeconds)
+                    timerangeEndText = Self.formatSeconds(probe.maxSeconds)
+                    timerangeScanStatus = "Scanned \(probe.rowCount) rows. Press Apply to use these bounds."
+                    isScanningTimerange = false
+                }
+            } catch {
+                await MainActor.run {
+                    timerangeScanStatus = "Time scan failed: \(error.localizedDescription)"
+                    isScanningTimerange = false
+                }
+            }
+        }
+    }
+
+    private func applyIntegerRangeSelection(label: String, text: Binding<String>) {
+        let start = integerRangeStartText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let end = integerRangeEndText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !start.isEmpty, Int(start) != nil else {
+            return
+        }
+        let candidate = end.isEmpty ? start : "\(start)~\(end)"
+        let labels: [String]
+        switch label {
+        case "Scan":
+            labels = dataset.scans
+        case "Array":
+            labels = dataset.arrays
+        case "Observation":
+            labels = dataset.observations
+        case "Feed":
+            labels = dataset.feeds
+        default:
+            labels = []
+        }
+        if isValidIntegerSelection(candidate, labels: labels) {
+            text.wrappedValue = candidate
+        }
+    }
+
+    private func populateIntegerRangeFields(from value: String) {
+        let first = value
+            .split(separator: ",")
+            .first
+            .map(String.init) ?? ""
+        let range = first.split(separator: "~", omittingEmptySubsequences: false)
+        integerRangeStartText = range.first.map(String.init) ?? ""
+        integerRangeEndText = range.count == 2 ? String(range[1]) : ""
+    }
+
+    private func applyMSSelect(text: Binding<String>) {
+        let value = msSelectValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !msSelectColumn.isEmpty, !value.isEmpty else {
+            return
+        }
+        let renderedValue: String
+        if Double(value) != nil || value.uppercased() == "TRUE" || value.uppercased() == "FALSE" {
+            renderedValue = value
+        } else {
+            renderedValue = "'\(value.replacingOccurrences(of: "'", with: "\\'"))'"
+        }
+        text.wrappedValue = "\(msSelectColumn) \(msSelectOperator) \(renderedValue)"
+    }
+
+    private func applyAvgTimeUnit(text: Binding<String>) {
+        let rawValue = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = Double(rawValue), value.isFinite, value > 0 else {
+            applyAveragingText()
+            return
+        }
+        let seconds: Double
+        switch avgTimeUnit {
+        case "min":
+            seconds = value * 60.0
+        case "h":
+            seconds = value * 3_600.0
+        default:
+            seconds = value
+        }
+        text.wrappedValue = Self.formatSeconds(seconds)
+        applyAveragingText()
+    }
+
     private func applyUVRangeSelection(text: Binding<String>) {
         let minValue = uvRangeMinText.trimmingCharacters(in: .whitespacesAndNewlines)
         let maxValue = uvRangeMaxText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1347,6 +1863,19 @@ struct MeasurementSetPlotPanel: View {
             tokens.remove(at: index)
         } else {
             tokens.append(antenna)
+        }
+        text.wrappedValue = tokens.joined(separator: ",")
+    }
+
+    private func toggleCommaToken(_ token: String, text: Binding<String>) {
+        var tokens = text.wrappedValue
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if let index = tokens.firstIndex(of: token) {
+            tokens.remove(at: index)
+        } else {
+            tokens.append(token)
         }
         text.wrappedValue = tokens.joined(separator: ",")
     }
@@ -1551,6 +2080,31 @@ struct MeasurementSetPlotPanel: View {
             .allSatisfy(isValidUVRangePart)
     }
 
+    private func isValidTimerangeSelection(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return true
+        }
+        return trimmed
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .allSatisfy(isValidNumericRangePart)
+    }
+
+    private func isValidNumericRangePart(_ value: String) -> Bool {
+        for prefix in [">=", "<=", ">", "<"] where value.hasPrefix(prefix) {
+            return Double(value.dropFirst(prefix.count)) != nil
+        }
+        let range = value.split(separator: "~", omittingEmptySubsequences: false)
+        if range.count == 2 {
+            guard let start = Double(range[0]), let end = Double(range[1]) else {
+                return false
+            }
+            return start <= end
+        }
+        return Double(value) != nil
+    }
+
     private func isValidUVRangePart(_ value: String) -> Bool {
         for prefix in [">=", "<=", ">", "<"] where value.hasPrefix(prefix) {
             return Self.parseUVBound(String(value.dropFirst(prefix.count))) != nil
@@ -1647,6 +2201,16 @@ struct MeasurementSetPlotPanel: View {
             .split(whereSeparator: { !$0.isNumber })
             .last
         return digits.flatMap { Int($0) }
+    }
+
+    private static func formatSeconds(_ value: Double) -> String {
+        guard value.isFinite else {
+            return ""
+        }
+        if abs(value) >= 1_000 {
+            return String(format: "%.3f", value)
+        }
+        return String(format: "%.6g", value)
     }
 
     @ViewBuilder

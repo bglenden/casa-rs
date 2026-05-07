@@ -94,6 +94,13 @@ pub struct MeasurementSetUvRangeProbe {
     pub row_count: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MeasurementSetTimeRangeProbe {
+    pub min_seconds: f64,
+    pub max_seconds: f64,
+    pub row_count: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum MeasurementSetPlotPreset {
     UvCoverage,
@@ -2281,6 +2288,17 @@ pub fn probe_measurement_set_uv_range(
     })
 }
 
+#[uniffi::export]
+pub fn probe_measurement_set_time_range(
+    dataset_path: String,
+) -> FrontendResult<MeasurementSetTimeRangeProbe> {
+    probe_measurement_set_time_range_inner(&dataset_path).map_err(|error| {
+        FrontendServiceError::Probe {
+            reason: format!("{dataset_path}: {error}"),
+        }
+    })
+}
+
 fn probe_measurement_set_uv_range_inner(
     dataset_path: &str,
 ) -> Result<MeasurementSetUvRangeProbe, String> {
@@ -2335,6 +2353,38 @@ fn probe_measurement_set_uv_range_inner(
         max_meters,
         min_kilolambda,
         max_kilolambda,
+        row_count: seen_rows,
+    })
+}
+
+fn probe_measurement_set_time_range_inner(
+    dataset_path: &str,
+) -> Result<MeasurementSetTimeRangeProbe, String> {
+    let ms = MeasurementSet::open(Path::new(dataset_path)).map_err(|error| error.to_string())?;
+    let table = ms.main_table();
+    if table.row_count() == 0 {
+        return Err("MeasurementSet has no MAIN rows".to_string());
+    }
+    let row_numbers = (0..table.row_count()).collect::<Vec<_>>();
+    let mut min_seconds = f64::INFINITY;
+    let mut max_seconds = f64::NEG_INFINITY;
+    let mut seen_rows = 0u64;
+    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
+        for seconds in selected_f64_values(table, "TIME", row_chunk)? {
+            if !seconds.is_finite() {
+                continue;
+            }
+            min_seconds = min_seconds.min(seconds);
+            max_seconds = max_seconds.max(seconds);
+            seen_rows += 1;
+        }
+    }
+    if seen_rows == 0 || !min_seconds.is_finite() || !max_seconds.is_finite() {
+        return Err("MeasurementSet TIME column did not contain finite seconds".to_string());
+    }
+    Ok(MeasurementSetTimeRangeProbe {
+        min_seconds,
+        max_seconds,
         row_count: seen_rows,
     })
 }
@@ -2985,6 +3035,18 @@ mod tests {
         assert!(probe.row_count > 0);
         assert!(probe.min_meters.is_finite());
         assert!(probe.max_meters >= probe.min_meters);
+    }
+
+    #[test]
+    fn probe_measurement_set_time_range_reads_main_time() {
+        let (_dir, ms_path) = unpack_small_ms();
+
+        let probe =
+            probe_measurement_set_time_range(ms_path.display().to_string()).expect("time probe");
+
+        assert!(probe.row_count > 0);
+        assert!(probe.min_seconds.is_finite());
+        assert!(probe.max_seconds >= probe.min_seconds);
     }
 
     #[test]

@@ -190,6 +190,18 @@ public struct MeasurementSetUVRangeSummary: Codable, Equatable {
     }
 }
 
+public struct MeasurementSetTimeRangeSummary: Codable, Equatable {
+    public var minSeconds: Double
+    public var maxSeconds: Double
+    public var rowCount: UInt64
+
+    public init(minSeconds: Double, maxSeconds: Double, rowCount: UInt64) {
+        self.minSeconds = minSeconds
+        self.maxSeconds = maxSeconds
+        self.rowCount = rowCount
+    }
+}
+
 public enum ProjectSource: String, Codable, Equatable {
     case none
     case fixture

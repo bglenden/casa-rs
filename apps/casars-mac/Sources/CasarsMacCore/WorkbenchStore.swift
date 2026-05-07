@@ -249,6 +249,7 @@ public protocol MeasurementSetPlotClient {
 
 public protocol MeasurementSetMetadataClient {
     func probeUVRange(datasetPath: String) throws -> MeasurementSetUVRangeSummary
+    func probeTimeRange(datasetPath: String) throws -> MeasurementSetTimeRangeSummary
 }
 
 public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
@@ -313,6 +314,15 @@ public struct UniFFIMeasurementSetMetadataClient: MeasurementSetMetadataClient {
             maxMeters: probe.maxMeters,
             minKiloLambda: probe.minKilolambda,
             maxKiloLambda: probe.maxKilolambda,
+            rowCount: probe.rowCount
+        )
+    }
+
+    public func probeTimeRange(datasetPath: String) throws -> MeasurementSetTimeRangeSummary {
+        let probe = try CasarsFrontendServices.probeMeasurementSetTimeRange(datasetPath: datasetPath)
+        return MeasurementSetTimeRangeSummary(
+            minSeconds: probe.minSeconds,
+            maxSeconds: probe.maxSeconds,
             rowCount: probe.rowCount
         )
     }
