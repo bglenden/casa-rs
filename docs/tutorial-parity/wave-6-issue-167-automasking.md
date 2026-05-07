@@ -69,9 +69,15 @@ Timing comparison from the same extracted MeasurementSet:
 
 | Case | CASA C++ | casa-rs | Notes |
 | --- | ---: | ---: | --- |
-| dirty cube | 1.081 s | 3.775 s | release binary built before timing |
-| base `auto-multithresh` cube | 5.595 s | 3.697 s | CASA guide base parameters |
-| dirty + base automask total | 6.676 s | 7.472 s | comparable bounded guide slice |
+| dirty cube | 1.282 s | 2.048 s | release binary built before timing |
+| base `auto-multithresh` cube | 5.776 s | 1.689 s | CASA guide base parameters |
+| dirty + base automask total | 7.058 s | 3.737 s | comparable bounded guide slice |
+
+The dirty cube path originally measured `3.775 s` for the casa-rs CLI leg. A
+follow-up cache for row-local cube source-frequency conversions reduced the
+same CLI leg to `2.048 s`; an instrumented dirty run reports `0.735 s` inside
+the frontend/imaging/write path itself, with `0.560 s` in preparation,
+`0.147 s` in the imaging core, and `0.021 s` writing products.
 
 Correctness comparison:
 

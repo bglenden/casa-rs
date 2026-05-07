@@ -5227,6 +5227,7 @@ struct PreparedSelection {
     freq_ref: FrequencyRef,
     cube_spectral_setup: Option<CubeSpectralSetup>,
     cube_row_spectral_cache: HashMap<(u64, usize), Rc<CubeRowSpectralContributions>>,
+    cube_row_source_frequency_cache: HashMap<(u64, usize), Rc<Vec<f64>>>,
     mfs_frequency_scale_cache: HashMap<(u64, usize), f64>,
     casa_cube_grid_interpolation: bool,
     casa_cube_briggs_preweighting: Option<CasaCubeBriggsPreparedWeighting>,
@@ -5913,6 +5914,7 @@ impl PreparedSelection {
                 freq_ref: output_freq_ref,
                 cube_spectral_setup,
                 cube_row_spectral_cache: HashMap::new(),
+                cube_row_source_frequency_cache: HashMap::new(),
                 mfs_frequency_scale_cache: HashMap::new(),
                 casa_cube_grid_interpolation: config.per_channel_weight_density,
                 casa_cube_briggs_preweighting,
@@ -5937,6 +5939,7 @@ impl PreparedSelection {
                 freq_ref: FrequencyRef::TOPO,
                 cube_spectral_setup: None,
                 cube_row_spectral_cache: HashMap::new(),
+                cube_row_source_frequency_cache: HashMap::new(),
                 mfs_frequency_scale_cache: HashMap::new(),
                 casa_cube_grid_interpolation: false,
                 casa_cube_briggs_preweighting: None,
@@ -6114,21 +6117,31 @@ impl PreparedSelection {
                 let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
                     "internal error: missing row time for cube imaging".to_string()
                 })?;
-                Some(
-                    cube_setup
-                        .row_source_frequencies_for_interpolation(
-                            &self.source_channel_frequencies_hz,
-                            row_time_mjd_sec,
-                            selected_row.field_id,
-                            derived_engine,
-                        )
-                        .map_err(|error| error.to_string())?,
-                )
+                let cache_key = (row_time_mjd_sec.to_bits(), selected_row.field_id);
+                if let Some(cached) = self.cube_row_source_frequency_cache.get(&cache_key) {
+                    Some(Rc::clone(cached))
+                } else {
+                    let computed = Rc::new(
+                        cube_setup
+                            .row_source_frequencies_for_interpolation(
+                                &self.source_channel_frequencies_hz,
+                                row_time_mjd_sec,
+                                selected_row.field_id,
+                                derived_engine,
+                            )
+                            .map_err(|error| error.to_string())?,
+                    );
+                    self.cube_row_source_frequency_cache
+                        .insert(cache_key, Rc::clone(&computed));
+                    Some(computed)
+                }
             } else {
                 None
             };
         let cube_row_source_frequencies_for_interpolation =
-            cube_row_source_frequencies_for_interpolation.as_deref();
+            cube_row_source_frequencies_for_interpolation
+                .as_deref()
+                .map(Vec::as_slice);
         if std::env::var_os("CASA_RS_TRACE_CUBE_GRID_INTERP").is_some()
             && trace_m100_row(selected_row.row_index)
         {
@@ -7409,6 +7422,7 @@ impl PreparedSelection {
             freq_ref,
             cube_spectral_setup: _,
             cube_row_spectral_cache: _,
+            cube_row_source_frequency_cache: _,
             mfs_frequency_scale_cache: _,
             casa_cube_grid_interpolation: _,
             casa_cube_briggs_preweighting: _,
@@ -7483,6 +7497,7 @@ impl PreparedSelection {
             freq_ref,
             cube_spectral_setup,
             cube_row_spectral_cache: _,
+            cube_row_source_frequency_cache: _,
             mfs_frequency_scale_cache: _,
             casa_cube_grid_interpolation: _,
             casa_cube_briggs_preweighting,
@@ -7666,6 +7681,7 @@ impl PreparedSelection {
             freq_ref,
             cube_spectral_setup,
             cube_row_spectral_cache: _,
+            cube_row_source_frequency_cache: _,
             mfs_frequency_scale_cache: _,
             casa_cube_grid_interpolation: _,
             casa_cube_briggs_preweighting,
