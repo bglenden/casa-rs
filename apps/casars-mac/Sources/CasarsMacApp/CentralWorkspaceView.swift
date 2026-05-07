@@ -726,6 +726,8 @@ struct MeasurementSetPlotPanel: View {
     @State private var plotDisplayMode: WorkbenchPlotDisplayMode = .automatic
     @State private var plotCharacterSizeOverride: Double?
     @State private var maxPlotPointsText = ""
+    @State private var avgChannelText = ""
+    @State private var avgTimeText = ""
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -768,8 +770,10 @@ struct MeasurementSetPlotPanel: View {
                 Label("Selections", systemImage: "slider.horizontal.3")
             }
             .popover(isPresented: $showingAdvancedSetup, arrowEdge: .top) {
-                plotSelections
-                    .frame(width: 320)
+                ScrollView {
+                    plotSelections
+                }
+                .frame(width: 360, height: 680)
             }
             .accessibilityIdentifier("msPlot.selections.\(dataset.id)")
 
@@ -826,6 +830,96 @@ struct MeasurementSetPlotPanel: View {
             }
             .accessibilityIdentifier("msPlot.correlation.\(dataset.id)")
 
+            selectionTextField(
+                "Channels",
+                text: Binding(
+                    get: { plotState.selectedChannelSelection ?? "" },
+                    set: { store.setMeasurementSetPlotChannelSelection($0, datasetID: dataset.id) }
+                ),
+                prompt: "3~7;12 or 0~63^4"
+            )
+
+            selectionTextField(
+                "Timerange",
+                text: Binding(
+                    get: { plotState.selectedTimerange ?? "" },
+                    set: { store.setMeasurementSetPlotTimerange($0, datasetID: dataset.id) }
+                ),
+                prompt: "CASA timerange"
+            )
+
+            selectionTextField(
+                "UV range",
+                text: Binding(
+                    get: { plotState.selectedUVRange ?? "" },
+                    set: { store.setMeasurementSetPlotUVRange($0, datasetID: dataset.id) }
+                ),
+                prompt: "CASA uvrange"
+            )
+
+            selectionTextField(
+                "Antenna",
+                text: Binding(
+                    get: { plotState.selectedAntenna ?? "" },
+                    set: { store.setMeasurementSetPlotAntenna($0, datasetID: dataset.id) }
+                ),
+                prompt: "CASA antenna"
+            )
+
+            selectionTextField(
+                "Scan",
+                text: Binding(
+                    get: { plotState.selectedScan ?? "" },
+                    set: { store.setMeasurementSetPlotScan($0, datasetID: dataset.id) }
+                ),
+                prompt: "CASA scan"
+            )
+
+            selectionTextField(
+                "Array",
+                text: Binding(
+                    get: { plotState.selectedArray ?? "" },
+                    set: { store.setMeasurementSetPlotArray($0, datasetID: dataset.id) }
+                ),
+                prompt: "CASA array"
+            )
+
+            selectionTextField(
+                "Observation",
+                text: Binding(
+                    get: { plotState.selectedObservation ?? "" },
+                    set: { store.setMeasurementSetPlotObservation($0, datasetID: dataset.id) }
+                ),
+                prompt: "CASA observation"
+            )
+
+            selectionTextField(
+                "Intent",
+                text: Binding(
+                    get: { plotState.selectedIntent ?? "" },
+                    set: { store.setMeasurementSetPlotIntent($0, datasetID: dataset.id) }
+                ),
+                prompt: "CASA intent"
+            )
+
+            selectionTextField(
+                "Feed",
+                text: Binding(
+                    get: { plotState.selectedFeed ?? "" },
+                    set: { store.setMeasurementSetPlotFeed($0, datasetID: dataset.id) }
+                ),
+                prompt: "CASA feed"
+            )
+
+            selectionTextField(
+                "MS select",
+                text: Binding(
+                    get: { plotState.selectedMSSelect ?? "" },
+                    set: { store.setMeasurementSetPlotMSSelect($0, datasetID: dataset.id) }
+                ),
+                prompt: "TaQL/MSSelection"
+            )
+
             Picker("Data column", selection: Binding(
                 get: { plotState.dataColumn },
                 set: { store.setMeasurementSetPlotDataColumn($0, datasetID: dataset.id) }
@@ -858,20 +952,84 @@ struct MeasurementSetPlotPanel: View {
 
             Divider()
 
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Averaging")
+                    .workbenchFont(.subheadline, weight: .semibold)
+
+                selectionTextField(
+                    "Avg channel",
+                    text: $avgChannelText,
+                    prompt: "bin size"
+                )
+                .onSubmit {
+                    applyAveragingText()
+                }
+
+                selectionTextField(
+                    "Avg time",
+                    text: $avgTimeText,
+                    prompt: "seconds"
+                )
+                .onSubmit {
+                    applyAveragingText()
+                }
+
+                Toggle("Average across scans", isOn: Binding(
+                    get: { plotState.avgScan },
+                    set: { store.setMeasurementSetPlotAvgScan($0, datasetID: dataset.id) }
+                ))
+                Toggle("Average across fields", isOn: Binding(
+                    get: { plotState.avgField },
+                    set: { store.setMeasurementSetPlotAvgField($0, datasetID: dataset.id) }
+                ))
+                Toggle("Average across baselines", isOn: Binding(
+                    get: { plotState.avgBaseline },
+                    set: { store.setMeasurementSetPlotAvgBaseline($0, datasetID: dataset.id) }
+                ))
+                Toggle("Average across antennas", isOn: Binding(
+                    get: { plotState.avgAntenna },
+                    set: { store.setMeasurementSetPlotAvgAntenna($0, datasetID: dataset.id) }
+                ))
+                Toggle("Average across spectral windows", isOn: Binding(
+                    get: { plotState.avgSPW },
+                    set: { store.setMeasurementSetPlotAvgSPW($0, datasetID: dataset.id) }
+                ))
+                Toggle("Scalar average", isOn: Binding(
+                    get: { plotState.scalarAverage },
+                    set: { store.setMeasurementSetPlotScalarAverage($0, datasetID: dataset.id) }
+                ))
+            }
+
+            Divider()
+
             plotMetadata
         }
         .padding(16)
         .onAppear {
             maxPlotPointsText = Self.formatPointBudget(plotState.maxPlotPoints)
+            avgChannelText = plotState.avgChannel.map { String($0) } ?? ""
+            avgTimeText = plotState.avgTime.map { String($0) } ?? ""
         }
         .onDisappear {
             applyMaxPlotPointsText()
+            applyAveragingText()
         }
     }
 
     private var plotSurface: some View {
         plotDocumentSurface
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func selectionTextField(_ label: String, text: Binding<String>, prompt: String) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            TextField(prompt, text: text)
+                .multilineTextAlignment(.trailing)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 150)
+        }
     }
 
     @ViewBuilder
@@ -1015,6 +1173,28 @@ struct MeasurementSetPlotPanel: View {
         store.setMeasurementSetPlotMaxPoints(maxPlotPoints, datasetID: dataset.id)
         let clamped = store.state.measurementSetPlots[dataset.id]?.maxPlotPoints ?? plotState.maxPlotPoints
         maxPlotPointsText = Self.formatPointBudget(clamped)
+    }
+
+    private func applyAveragingText() {
+        let trimmedAvgChannel = avgChannelText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedAvgChannel.isEmpty {
+            store.setMeasurementSetPlotAvgChannel(nil, datasetID: dataset.id)
+        } else if let avgChannel = UInt64(trimmedAvgChannel), avgChannel > 0 {
+            store.setMeasurementSetPlotAvgChannel(avgChannel, datasetID: dataset.id)
+            avgChannelText = String(avgChannel)
+        } else {
+            avgChannelText = plotState.avgChannel.map { String($0) } ?? ""
+        }
+
+        let trimmedAvgTime = avgTimeText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedAvgTime.isEmpty {
+            store.setMeasurementSetPlotAvgTime(nil, datasetID: dataset.id)
+        } else if let avgTime = Double(trimmedAvgTime), avgTime.isFinite, avgTime > 0 {
+            store.setMeasurementSetPlotAvgTime(avgTime, datasetID: dataset.id)
+            avgTimeText = String(avgTime)
+        } else {
+            avgTimeText = plotState.avgTime.map { String($0) } ?? ""
+        }
     }
 }
 

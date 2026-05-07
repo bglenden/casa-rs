@@ -662,8 +662,26 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
     public var preset: MeasurementSetExplorerPlotPreset
     public var selectedField: String?
     public var selectedSpectralWindow: String?
+    public var selectedChannelSelection: String?
+    public var selectedTimerange: String?
+    public var selectedUVRange: String?
+    public var selectedAntenna: String?
+    public var selectedScan: String?
     public var selectedCorrelation: String?
+    public var selectedArray: String?
+    public var selectedObservation: String?
+    public var selectedIntent: String?
+    public var selectedFeed: String?
+    public var selectedMSSelect: String?
     public var dataColumn: String
+    public var avgChannel: UInt64?
+    public var avgTime: Double?
+    public var avgScan: Bool
+    public var avgField: Bool
+    public var avgBaseline: Bool
+    public var avgAntenna: Bool
+    public var avgSPW: Bool
+    public var scalarAverage: Bool
     public var maxPlotPoints: UInt64
     public var status: MeasurementSetPlotStatus
     public var lastError: String?
@@ -674,8 +692,26 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         preset: MeasurementSetExplorerPlotPreset,
         selectedField: String?,
         selectedSpectralWindow: String?,
+        selectedChannelSelection: String? = nil,
+        selectedTimerange: String? = nil,
+        selectedUVRange: String? = nil,
+        selectedAntenna: String? = nil,
+        selectedScan: String? = nil,
         selectedCorrelation: String?,
+        selectedArray: String? = nil,
+        selectedObservation: String? = nil,
+        selectedIntent: String? = nil,
+        selectedFeed: String? = nil,
+        selectedMSSelect: String? = nil,
         dataColumn: String,
+        avgChannel: UInt64? = nil,
+        avgTime: Double? = nil,
+        avgScan: Bool = false,
+        avgField: Bool = false,
+        avgBaseline: Bool = false,
+        avgAntenna: Bool = false,
+        avgSPW: Bool = false,
+        scalarAverage: Bool = false,
         maxPlotPoints: UInt64 = WorkbenchState.defaultMeasurementSetPlotMaxPoints,
         status: MeasurementSetPlotStatus,
         lastError: String?,
@@ -685,8 +721,26 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         self.preset = preset
         self.selectedField = selectedField
         self.selectedSpectralWindow = selectedSpectralWindow
+        self.selectedChannelSelection = selectedChannelSelection
+        self.selectedTimerange = selectedTimerange
+        self.selectedUVRange = selectedUVRange
+        self.selectedAntenna = selectedAntenna
+        self.selectedScan = selectedScan
         self.selectedCorrelation = selectedCorrelation
+        self.selectedArray = selectedArray
+        self.selectedObservation = selectedObservation
+        self.selectedIntent = selectedIntent
+        self.selectedFeed = selectedFeed
+        self.selectedMSSelect = selectedMSSelect
         self.dataColumn = dataColumn
+        self.avgChannel = avgChannel
+        self.avgTime = avgTime
+        self.avgScan = avgScan
+        self.avgField = avgField
+        self.avgBaseline = avgBaseline
+        self.avgAntenna = avgAntenna
+        self.avgSPW = avgSPW
+        self.scalarAverage = scalarAverage
         self.maxPlotPoints = maxPlotPoints
         self.status = status
         self.lastError = lastError
@@ -1274,8 +1328,26 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
     public var status: MeasurementSetPlotStatus
     public var selectedField: String?
     public var selectedSpectralWindow: String?
+    public var selectedChannelSelection: String?
+    public var selectedTimerange: String?
+    public var selectedUVRange: String?
+    public var selectedAntenna: String?
+    public var selectedScan: String?
     public var selectedCorrelation: String?
+    public var selectedArray: String?
+    public var selectedObservation: String?
+    public var selectedIntent: String?
+    public var selectedFeed: String?
+    public var selectedMSSelect: String?
     public var dataColumn: String
+    public var avgChannel: UInt64?
+    public var avgTime: Double?
+    public var avgScan: Bool
+    public var avgField: Bool
+    public var avgBaseline: Bool
+    public var avgAntenna: Bool
+    public var avgSPW: Bool
+    public var scalarAverage: Bool
     public var maxPlotPoints: UInt64
     public var lastError: String?
     public var resultPreset: MeasurementSetExplorerPlotPreset?
@@ -1296,8 +1368,26 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
         status = plotState.status
         selectedField = plotState.selectedField
         selectedSpectralWindow = plotState.selectedSpectralWindow
+        selectedChannelSelection = plotState.selectedChannelSelection
+        selectedTimerange = plotState.selectedTimerange
+        selectedUVRange = plotState.selectedUVRange
+        selectedAntenna = plotState.selectedAntenna
+        selectedScan = plotState.selectedScan
         selectedCorrelation = plotState.selectedCorrelation
+        selectedArray = plotState.selectedArray
+        selectedObservation = plotState.selectedObservation
+        selectedIntent = plotState.selectedIntent
+        selectedFeed = plotState.selectedFeed
+        selectedMSSelect = plotState.selectedMSSelect
         dataColumn = plotState.dataColumn
+        avgChannel = plotState.avgChannel
+        avgTime = plotState.avgTime
+        avgScan = plotState.avgScan
+        avgField = plotState.avgField
+        avgBaseline = plotState.avgBaseline
+        avgAntenna = plotState.avgAntenna
+        avgSPW = plotState.avgSPW
+        scalarAverage = plotState.scalarAverage
         maxPlotPoints = plotState.maxPlotPoints
         lastError = plotState.lastError
         let visibleResult = plotState.result?.matches(plotState: plotState) == true ? plotState.result : nil

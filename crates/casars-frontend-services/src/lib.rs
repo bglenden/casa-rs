@@ -144,14 +144,31 @@ impl MeasurementSetPlotPreset {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct MeasurementSetPlotRequest {
     pub dataset_path: String,
     pub preset: MeasurementSetPlotPreset,
     pub field: Option<String>,
     pub spectral_window: Option<String>,
+    pub timerange: Option<String>,
+    pub uvrange: Option<String>,
+    pub antenna: Option<String>,
+    pub scan: Option<String>,
     pub correlation: Option<String>,
+    pub array: Option<String>,
+    pub observation: Option<String>,
+    pub intent: Option<String>,
+    pub feed: Option<String>,
+    pub msselect: Option<String>,
     pub data_column: String,
+    pub avgchannel: Option<u64>,
+    pub avgtime: Option<f64>,
+    pub avgscan: bool,
+    pub avgfield: bool,
+    pub avgbaseline: bool,
+    pub avgantenna: bool,
+    pub avgspw: bool,
+    pub scalar: bool,
     pub width: u32,
     pub height: u32,
     pub max_plot_points: u64,
@@ -381,18 +398,34 @@ pub fn build_measurement_set_plot(
         casa_ms::MsDataColumn::parse(&data_column).map_err(|error| FrontendServiceError::Plot {
             reason: format!("{}: {error}", dataset_path.display()),
         })?;
-    if matches!(
-        request.preset,
-        MeasurementSetPlotPreset::AmplitudeVsChannel
-            | MeasurementSetPlotPreset::AmplitudeVsFrequency
-    ) {
-        plot.averaging.avgchannel = Some(4);
-    }
+    plot.averaging.avgchannel = request
+        .avgchannel
+        .map(usize::try_from)
+        .transpose()
+        .map_err(|_| FrontendServiceError::Plot {
+            reason: "avgchannel exceeds platform usize".to_string(),
+        })?;
+    plot.averaging.avgtime = request.avgtime;
+    plot.averaging.avgscan = request.avgscan;
+    plot.averaging.avgfield = request.avgfield;
+    plot.averaging.avgbaseline = request.avgbaseline;
+    plot.averaging.avgantenna = request.avgantenna;
+    plot.averaging.avgspw = request.avgspw;
+    plot.averaging.scalar = request.scalar;
 
     let selection = MsSelectionSpec {
         field: normalized_optional(request.field.clone()),
         spw: normalized_optional(request.spectral_window.clone()),
+        timerange: normalized_optional(request.timerange.clone()),
+        uvrange: normalized_optional(request.uvrange.clone()),
+        antenna: normalized_optional(request.antenna.clone()),
+        scan: normalized_optional(request.scan.clone()),
         correlation: normalized_optional(request.correlation.clone()),
+        array: normalized_optional(request.array.clone()),
+        observation: normalized_optional(request.observation.clone()),
+        intent: normalized_optional(request.intent.clone()),
+        feed: normalized_optional(request.feed.clone()),
+        msselect: normalized_optional(request.msselect.clone()),
         ..MsSelectionSpec::default()
     };
     let spec = MsExploreSpec {
@@ -2745,8 +2778,25 @@ mod tests {
                 preset,
                 field: None,
                 spectral_window: None,
+                timerange: None,
+                uvrange: None,
+                antenna: None,
+                scan: None,
                 correlation: None,
+                array: None,
+                observation: None,
+                intent: None,
+                feed: None,
+                msselect: None,
                 data_column: "DATA".to_string(),
+                avgchannel: None,
+                avgtime: None,
+                avgscan: false,
+                avgfield: false,
+                avgbaseline: false,
+                avgantenna: false,
+                avgspw: false,
+                scalar: false,
                 width: DEFAULT_PLOT_WIDTH,
                 height: DEFAULT_PLOT_HEIGHT,
                 max_plot_points: 10_000,
@@ -2848,8 +2898,25 @@ mod tests {
                 preset,
                 field: None,
                 spectral_window: None,
+                timerange: None,
+                uvrange: None,
+                antenna: None,
+                scan: None,
                 correlation: None,
+                array: None,
+                observation: None,
+                intent: None,
+                feed: None,
+                msselect: None,
                 data_column: "DATA".to_string(),
+                avgchannel: None,
+                avgtime: None,
+                avgscan: false,
+                avgfield: false,
+                avgbaseline: false,
+                avgantenna: false,
+                avgspw: false,
+                scalar: false,
                 width: DEFAULT_PLOT_WIDTH,
                 height: DEFAULT_PLOT_HEIGHT,
                 max_plot_points: 250_000,

@@ -163,8 +163,25 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
     public var preset: MeasurementSetExplorerPlotPreset
     public var field: String?
     public var spectralWindow: String?
+    public var timerange: String?
+    public var uvRange: String?
+    public var antenna: String?
+    public var scan: String?
     public var correlation: String?
+    public var array: String?
+    public var observation: String?
+    public var intent: String?
+    public var feed: String?
+    public var msselect: String?
     public var dataColumn: String
+    public var avgChannel: UInt64?
+    public var avgTime: Double?
+    public var avgScan: Bool
+    public var avgField: Bool
+    public var avgBaseline: Bool
+    public var avgAntenna: Bool
+    public var avgSPW: Bool
+    public var scalarAverage: Bool
     public var width: UInt32
     public var height: UInt32
     public var maxPlotPoints: UInt64
@@ -174,8 +191,25 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
         preset: MeasurementSetExplorerPlotPreset,
         field: String?,
         spectralWindow: String?,
+        timerange: String? = nil,
+        uvRange: String? = nil,
+        antenna: String? = nil,
+        scan: String? = nil,
         correlation: String?,
+        array: String? = nil,
+        observation: String? = nil,
+        intent: String? = nil,
+        feed: String? = nil,
+        msselect: String? = nil,
         dataColumn: String,
+        avgChannel: UInt64? = nil,
+        avgTime: Double? = nil,
+        avgScan: Bool = false,
+        avgField: Bool = false,
+        avgBaseline: Bool = false,
+        avgAntenna: Bool = false,
+        avgSPW: Bool = false,
+        scalarAverage: Bool = false,
         width: UInt32 = 960,
         height: UInt32 = 600,
         maxPlotPoints: UInt64 = WorkbenchState.defaultMeasurementSetPlotMaxPoints
@@ -184,8 +218,25 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
         self.preset = preset
         self.field = field
         self.spectralWindow = spectralWindow
+        self.timerange = timerange
+        self.uvRange = uvRange
+        self.antenna = antenna
+        self.scan = scan
         self.correlation = correlation
+        self.array = array
+        self.observation = observation
+        self.intent = intent
+        self.feed = feed
+        self.msselect = msselect
         self.dataColumn = dataColumn
+        self.avgChannel = avgChannel
+        self.avgTime = avgTime
+        self.avgScan = avgScan
+        self.avgField = avgField
+        self.avgBaseline = avgBaseline
+        self.avgAntenna = avgAntenna
+        self.avgSPW = avgSPW
+        self.scalarAverage = scalarAverage
         self.width = width
         self.height = height
         self.maxPlotPoints = maxPlotPoints
@@ -207,8 +258,25 @@ public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
                 preset: CasarsFrontendServices.MeasurementSetPlotPreset(preset: request.preset),
                 field: request.field,
                 spectralWindow: request.spectralWindow,
+                timerange: request.timerange,
+                uvrange: request.uvRange,
+                antenna: request.antenna,
+                scan: request.scan,
                 correlation: request.correlation,
+                array: request.array,
+                observation: request.observation,
+                intent: request.intent,
+                feed: request.feed,
+                msselect: request.msselect,
                 dataColumn: request.dataColumn,
+                avgchannel: request.avgChannel,
+                avgtime: request.avgTime,
+                avgscan: request.avgScan,
+                avgfield: request.avgField,
+                avgbaseline: request.avgBaseline,
+                avgantenna: request.avgAntenna,
+                avgspw: request.avgSPW,
+                scalar: request.scalarAverage,
                 width: request.width,
                 height: request.height,
                 maxPlotPoints: request.maxPlotPoints
@@ -498,6 +566,36 @@ public final class WorkbenchStore: ObservableObject {
         state.measurementSetPlots[datasetID] = plotState
     }
 
+    public func setMeasurementSetPlotChannelSelection(_ channelSelection: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedChannelSelection = normalizedTextSelection(channelSelection)
+        }
+    }
+
+    public func setMeasurementSetPlotTimerange(_ timerange: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedTimerange = normalizedTextSelection(timerange)
+        }
+    }
+
+    public func setMeasurementSetPlotUVRange(_ uvRange: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedUVRange = normalizedTextSelection(uvRange)
+        }
+    }
+
+    public func setMeasurementSetPlotAntenna(_ antenna: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedAntenna = normalizedTextSelection(antenna)
+        }
+    }
+
+    public func setMeasurementSetPlotScan(_ scan: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedScan = normalizedTextSelection(scan)
+        }
+    }
+
     public func setMeasurementSetPlotCorrelation(_ correlation: String?, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
         plotState.selectedCorrelation = normalizedPickerValue(correlation)
@@ -506,12 +604,90 @@ public final class WorkbenchStore: ObservableObject {
         state.measurementSetPlots[datasetID] = plotState
     }
 
+    public func setMeasurementSetPlotArray(_ array: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedArray = normalizedTextSelection(array)
+        }
+    }
+
+    public func setMeasurementSetPlotObservation(_ observation: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedObservation = normalizedTextSelection(observation)
+        }
+    }
+
+    public func setMeasurementSetPlotIntent(_ intent: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedIntent = normalizedTextSelection(intent)
+        }
+    }
+
+    public func setMeasurementSetPlotFeed(_ feed: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedFeed = normalizedTextSelection(feed)
+        }
+    }
+
+    public func setMeasurementSetPlotMSSelect(_ msselect: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedMSSelect = normalizedTextSelection(msselect)
+        }
+    }
+
     public func setMeasurementSetPlotDataColumn(_ dataColumn: String, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
         plotState.dataColumn = dataColumn
         plotState.lastError = nil
         refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
+    }
+
+    public func setMeasurementSetPlotAvgChannel(_ avgChannel: UInt64?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgChannel = avgChannel
+        }
+    }
+
+    public func setMeasurementSetPlotAvgTime(_ avgTime: Double?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgTime = avgTime
+        }
+    }
+
+    public func setMeasurementSetPlotAvgScan(_ avgScan: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgScan = avgScan
+        }
+    }
+
+    public func setMeasurementSetPlotAvgField(_ avgField: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgField = avgField
+        }
+    }
+
+    public func setMeasurementSetPlotAvgBaseline(_ avgBaseline: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgBaseline = avgBaseline
+        }
+    }
+
+    public func setMeasurementSetPlotAvgAntenna(_ avgAntenna: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgAntenna = avgAntenna
+        }
+    }
+
+    public func setMeasurementSetPlotAvgSPW(_ avgSPW: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgSPW = avgSPW
+        }
+    }
+
+    public func setMeasurementSetPlotScalarAverage(_ scalarAverage: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.scalarAverage = scalarAverage
+        }
     }
 
     public func setMeasurementSetPlotMaxPoints(_ maxPlotPoints: UInt64, datasetID: String) {
@@ -549,9 +725,26 @@ public final class WorkbenchStore: ObservableObject {
             datasetPath: dataset.path,
             preset: plotState.preset,
             field: selectorToken(plotState.selectedField),
-            spectralWindow: selectorToken(plotState.selectedSpectralWindow),
+            spectralWindow: spectralWindowSelectorToken(plotState),
+            timerange: plotState.selectedTimerange,
+            uvRange: plotState.selectedUVRange,
+            antenna: plotState.selectedAntenna,
+            scan: plotState.selectedScan,
             correlation: selectorToken(plotState.selectedCorrelation),
+            array: plotState.selectedArray,
+            observation: plotState.selectedObservation,
+            intent: plotState.selectedIntent,
+            feed: plotState.selectedFeed,
+            msselect: plotState.selectedMSSelect,
             dataColumn: plotState.dataColumn,
+            avgChannel: plotState.avgChannel,
+            avgTime: plotState.avgTime,
+            avgScan: plotState.avgScan,
+            avgField: plotState.avgField,
+            avgBaseline: plotState.avgBaseline,
+            avgAntenna: plotState.avgAntenna,
+            avgSPW: plotState.avgSPW,
+            scalarAverage: plotState.scalarAverage,
             maxPlotPoints: plotState.maxPlotPoints
         )
         let tabID = dataset.explorerTabID
@@ -1445,8 +1638,26 @@ public final class WorkbenchStore: ObservableObject {
             "preset:\(plotState.preset.rawValue)",
             "field:\(plotState.selectedField ?? "all")",
             "spw:\(plotState.selectedSpectralWindow ?? "all")",
+            "chan:\(plotState.selectedChannelSelection ?? "all")",
+            "timerange:\(plotState.selectedTimerange ?? "all")",
+            "uvrange:\(plotState.selectedUVRange ?? "all")",
+            "antenna:\(plotState.selectedAntenna ?? "all")",
+            "scan:\(plotState.selectedScan ?? "all")",
             "corr:\(plotState.selectedCorrelation ?? "all")",
+            "array:\(plotState.selectedArray ?? "all")",
+            "observation:\(plotState.selectedObservation ?? "all")",
+            "intent:\(plotState.selectedIntent ?? "all")",
+            "feed:\(plotState.selectedFeed ?? "all")",
+            "msselect:\(plotState.selectedMSSelect ?? "all")",
             "data:\(plotState.dataColumn)",
+            "avgchannel:\(plotState.avgChannel.map { String($0) } ?? "none")",
+            "avgtime:\(plotState.avgTime.map { String($0) } ?? "none")",
+            "avgscan:\(plotState.avgScan)",
+            "avgfield:\(plotState.avgField)",
+            "avgbaseline:\(plotState.avgBaseline)",
+            "avgantenna:\(plotState.avgAntenna)",
+            "avgspw:\(plotState.avgSPW)",
+            "scalar:\(plotState.scalarAverage)",
             "size:960x600",
             "maxPoints:\(plotState.maxPlotPoints)"
         ].joined(separator: "|")
@@ -1803,6 +2014,24 @@ public final class WorkbenchStore: ObservableObject {
         return value
     }
 
+    private func normalizedTextSelection(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty, value != "all" else {
+            return nil
+        }
+        return value
+    }
+
+    private func updateMeasurementSetPlotState(
+        datasetID: String,
+        update: (inout MeasurementSetExplorerPlotState) -> Void
+    ) {
+        var plotState = measurementSetPlotState(for: datasetID)
+        update(&plotState)
+        plotState.lastError = nil
+        refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
+        state.measurementSetPlots[datasetID] = plotState
+    }
+
     private func selectorToken(_ value: String?) -> String? {
         guard let value = normalizedPickerValue(value) else {
             return nil
@@ -1813,6 +2042,27 @@ public final class WorkbenchStore: ObservableObject {
         }
         if let colon = value.firstIndex(of: ":") {
             return String(value[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value
+    }
+
+    private func spectralWindowSelectorToken(_ plotState: MeasurementSetExplorerPlotState) -> String? {
+        guard let spectralWindow = spectralWindowSelectorToken(plotState.selectedSpectralWindow) else {
+            return nil
+        }
+        guard let channelSelection = plotState.selectedChannelSelection else {
+            return spectralWindow
+        }
+        return "\(spectralWindow):\(channelSelection)"
+    }
+
+    private func spectralWindowSelectorToken(_ value: String?) -> String? {
+        guard let value = normalizedPickerValue(value) else {
+            return nil
+        }
+        if value.hasPrefix("spw ") {
+            let remainder = value.dropFirst(4)
+            return String(remainder.prefix { $0.isNumber })
         }
         return value
     }

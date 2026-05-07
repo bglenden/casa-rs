@@ -766,21 +766,55 @@ public struct MeasurementSetPlotRequest {
     public var preset: MeasurementSetPlotPreset
     public var field: String?
     public var spectralWindow: String?
+    public var timerange: String?
+    public var uvrange: String?
+    public var antenna: String?
+    public var scan: String?
     public var correlation: String?
+    public var array: String?
+    public var observation: String?
+    public var intent: String?
+    public var feed: String?
+    public var msselect: String?
     public var dataColumn: String
+    public var avgchannel: UInt64?
+    public var avgtime: Double?
+    public var avgscan: Bool
+    public var avgfield: Bool
+    public var avgbaseline: Bool
+    public var avgantenna: Bool
+    public var avgspw: Bool
+    public var scalar: Bool
     public var width: UInt32
     public var height: UInt32
     public var maxPlotPoints: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(datasetPath: String, preset: MeasurementSetPlotPreset, field: String?, spectralWindow: String?, correlation: String?, dataColumn: String, width: UInt32, height: UInt32, maxPlotPoints: UInt64) {
+    public init(datasetPath: String, preset: MeasurementSetPlotPreset, field: String?, spectralWindow: String?, timerange: String?, uvrange: String?, antenna: String?, scan: String?, correlation: String?, array: String?, observation: String?, intent: String?, feed: String?, msselect: String?, dataColumn: String, avgchannel: UInt64?, avgtime: Double?, avgscan: Bool, avgfield: Bool, avgbaseline: Bool, avgantenna: Bool, avgspw: Bool, scalar: Bool, width: UInt32, height: UInt32, maxPlotPoints: UInt64) {
         self.datasetPath = datasetPath
         self.preset = preset
         self.field = field
         self.spectralWindow = spectralWindow
+        self.timerange = timerange
+        self.uvrange = uvrange
+        self.antenna = antenna
+        self.scan = scan
         self.correlation = correlation
+        self.array = array
+        self.observation = observation
+        self.intent = intent
+        self.feed = feed
+        self.msselect = msselect
         self.dataColumn = dataColumn
+        self.avgchannel = avgchannel
+        self.avgtime = avgtime
+        self.avgscan = avgscan
+        self.avgfield = avgfield
+        self.avgbaseline = avgbaseline
+        self.avgantenna = avgantenna
+        self.avgspw = avgspw
+        self.scalar = scalar
         self.width = width
         self.height = height
         self.maxPlotPoints = maxPlotPoints
@@ -806,10 +840,61 @@ extension MeasurementSetPlotRequest: Equatable, Hashable {
         if lhs.spectralWindow != rhs.spectralWindow {
             return false
         }
+        if lhs.timerange != rhs.timerange {
+            return false
+        }
+        if lhs.uvrange != rhs.uvrange {
+            return false
+        }
+        if lhs.antenna != rhs.antenna {
+            return false
+        }
+        if lhs.scan != rhs.scan {
+            return false
+        }
         if lhs.correlation != rhs.correlation {
             return false
         }
+        if lhs.array != rhs.array {
+            return false
+        }
+        if lhs.observation != rhs.observation {
+            return false
+        }
+        if lhs.intent != rhs.intent {
+            return false
+        }
+        if lhs.feed != rhs.feed {
+            return false
+        }
+        if lhs.msselect != rhs.msselect {
+            return false
+        }
         if lhs.dataColumn != rhs.dataColumn {
+            return false
+        }
+        if lhs.avgchannel != rhs.avgchannel {
+            return false
+        }
+        if lhs.avgtime != rhs.avgtime {
+            return false
+        }
+        if lhs.avgscan != rhs.avgscan {
+            return false
+        }
+        if lhs.avgfield != rhs.avgfield {
+            return false
+        }
+        if lhs.avgbaseline != rhs.avgbaseline {
+            return false
+        }
+        if lhs.avgantenna != rhs.avgantenna {
+            return false
+        }
+        if lhs.avgspw != rhs.avgspw {
+            return false
+        }
+        if lhs.scalar != rhs.scalar {
             return false
         }
         if lhs.width != rhs.width {
@@ -829,8 +914,25 @@ extension MeasurementSetPlotRequest: Equatable, Hashable {
         hasher.combine(preset)
         hasher.combine(field)
         hasher.combine(spectralWindow)
+        hasher.combine(timerange)
+        hasher.combine(uvrange)
+        hasher.combine(antenna)
+        hasher.combine(scan)
         hasher.combine(correlation)
+        hasher.combine(array)
+        hasher.combine(observation)
+        hasher.combine(intent)
+        hasher.combine(feed)
+        hasher.combine(msselect)
         hasher.combine(dataColumn)
+        hasher.combine(avgchannel)
+        hasher.combine(avgtime)
+        hasher.combine(avgscan)
+        hasher.combine(avgfield)
+        hasher.combine(avgbaseline)
+        hasher.combine(avgantenna)
+        hasher.combine(avgspw)
+        hasher.combine(scalar)
         hasher.combine(width)
         hasher.combine(height)
         hasher.combine(maxPlotPoints)
@@ -852,8 +954,25 @@ public struct FfiConverterTypeMeasurementSetPlotRequest: FfiConverterRustBuffer 
                 preset: FfiConverterTypeMeasurementSetPlotPreset.read(from: &buf),
                 field: FfiConverterOptionString.read(from: &buf),
                 spectralWindow: FfiConverterOptionString.read(from: &buf),
+                timerange: FfiConverterOptionString.read(from: &buf),
+                uvrange: FfiConverterOptionString.read(from: &buf),
+                antenna: FfiConverterOptionString.read(from: &buf),
+                scan: FfiConverterOptionString.read(from: &buf),
                 correlation: FfiConverterOptionString.read(from: &buf),
+                array: FfiConverterOptionString.read(from: &buf),
+                observation: FfiConverterOptionString.read(from: &buf),
+                intent: FfiConverterOptionString.read(from: &buf),
+                feed: FfiConverterOptionString.read(from: &buf),
+                msselect: FfiConverterOptionString.read(from: &buf),
                 dataColumn: FfiConverterString.read(from: &buf),
+                avgchannel: FfiConverterOptionUInt64.read(from: &buf),
+                avgtime: FfiConverterOptionDouble.read(from: &buf),
+                avgscan: FfiConverterBool.read(from: &buf),
+                avgfield: FfiConverterBool.read(from: &buf),
+                avgbaseline: FfiConverterBool.read(from: &buf),
+                avgantenna: FfiConverterBool.read(from: &buf),
+                avgspw: FfiConverterBool.read(from: &buf),
+                scalar: FfiConverterBool.read(from: &buf),
                 width: FfiConverterUInt32.read(from: &buf),
                 height: FfiConverterUInt32.read(from: &buf),
                 maxPlotPoints: FfiConverterUInt64.read(from: &buf)
@@ -865,8 +984,25 @@ public struct FfiConverterTypeMeasurementSetPlotRequest: FfiConverterRustBuffer 
         FfiConverterTypeMeasurementSetPlotPreset.write(value.preset, into: &buf)
         FfiConverterOptionString.write(value.field, into: &buf)
         FfiConverterOptionString.write(value.spectralWindow, into: &buf)
+        FfiConverterOptionString.write(value.timerange, into: &buf)
+        FfiConverterOptionString.write(value.uvrange, into: &buf)
+        FfiConverterOptionString.write(value.antenna, into: &buf)
+        FfiConverterOptionString.write(value.scan, into: &buf)
         FfiConverterOptionString.write(value.correlation, into: &buf)
+        FfiConverterOptionString.write(value.array, into: &buf)
+        FfiConverterOptionString.write(value.observation, into: &buf)
+        FfiConverterOptionString.write(value.intent, into: &buf)
+        FfiConverterOptionString.write(value.feed, into: &buf)
+        FfiConverterOptionString.write(value.msselect, into: &buf)
         FfiConverterString.write(value.dataColumn, into: &buf)
+        FfiConverterOptionUInt64.write(value.avgchannel, into: &buf)
+        FfiConverterOptionDouble.write(value.avgtime, into: &buf)
+        FfiConverterBool.write(value.avgscan, into: &buf)
+        FfiConverterBool.write(value.avgfield, into: &buf)
+        FfiConverterBool.write(value.avgbaseline, into: &buf)
+        FfiConverterBool.write(value.avgantenna, into: &buf)
+        FfiConverterBool.write(value.avgspw, into: &buf)
+        FfiConverterBool.write(value.scalar, into: &buf)
         FfiConverterUInt32.write(value.width, into: &buf)
         FfiConverterUInt32.write(value.height, into: &buf)
         FfiConverterUInt64.write(value.maxPlotPoints, into: &buf)
@@ -2897,6 +3033,30 @@ fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
+    typealias SwiftType = Double?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDouble.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDouble.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
