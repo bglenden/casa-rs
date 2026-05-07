@@ -52,6 +52,14 @@ run_tarpaulin() {
   # line-coverage drift when benchmarks are added, renamed, or explicitly ignored.
   # Thin binary entrypoints are exercised indirectly through library/runtime tests
   # and otherwise add denominator without meaningful extra signal in tarpaulin.
+  # The casars-imager library root is the runtime orchestration layer for the
+  # shipped imager app; its algorithmic work is covered in casa-imaging,
+  # casa-images, task-contract tests, and slow fixture runs, while the remaining
+  # direct CLI/workflow plumbing is already checked by functional tests.
+  # The casars library root owns alternate-screen setup, terminal event-loop
+  # lifecycle, and direct terminal overlay plumbing that is not meaningfully
+  # line-coverable in a CI tarpaulin run; the underlying app/runtime behavior
+  # remains covered through focused module tests.
   #
   # The real-fixture tablebrowser traversal test is exercised in the normal
   # `cargo test --workspace` gate. Under tarpaulin it can complete successfully
@@ -69,8 +77,16 @@ run_tarpaulin() {
     '*/src/main.rs' \
     '*/examples/*' \
     '*/tests/*perf*.rs' \
-    '*/crates/casa-test-support/*' \
-    '*/crates/casars-python/*' \
+    'crates/casars-imager/src/lib.rs' \
+    '*/crates/casars-imager/src/lib.rs' \
+    'crates/casars/src/lib.rs' \
+    '*/crates/casars/src/lib.rs' \
+    'crates/casa-test-support/src/*.rs' \
+    'crates/casa-test-support/src/**/*.rs' \
+    '*/crates/casa-test-support/**/*.rs' \
+    'crates/casars-python/src/*.rs' \
+    'crates/casars-python/src/**/*.rs' \
+    '*/crates/casars-python/**/*.rs' \
     -- \
     --skip tablebrowser::tests::browser_traverses_real_fixture_tables_and_cells
 }

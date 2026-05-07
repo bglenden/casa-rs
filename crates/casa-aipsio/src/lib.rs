@@ -593,8 +593,9 @@ impl<R: Read> AipsReader<R> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AipsIoError, AipsReader, AipsWriter, ArrayValue, ByteOrder, Complex64, PrimitiveType,
-        RecordField, RecordValue, ScalarValue, Value,
+        AipsIoError, AipsReader, AipsWriter, ArrayValue, ByteOrder, Complex32, Complex64,
+        PrimitiveType, RecordField, RecordValue, ScalarValue, TypeTag, Value, ValueRank,
+        detect_aipsio_byte_order,
     };
 
     #[test]
@@ -659,6 +660,132 @@ mod tests {
             strings,
             ArrayValue::from_string_vec(vec!["a".to_string(), "bc".to_string()])
         );
+    }
+
+    #[test]
+    fn byte_order_detection_accepts_canonical_and_little_endian_headers() {
+        let mut be = Vec::new();
+        be.extend_from_slice(&0xBEBE_BEBE_u32.to_be_bytes());
+        be.extend_from_slice(&32_u32.to_be_bytes());
+        assert_eq!(
+            detect_aipsio_byte_order(&be).expect("big-endian header"),
+            ByteOrder::BigEndian
+        );
+
+        let mut le = Vec::new();
+        le.extend_from_slice(&0xBEBE_BEBE_u32.to_le_bytes());
+        le.extend_from_slice(&64_u32.to_le_bytes());
+        assert_eq!(
+            detect_aipsio_byte_order(&le).expect("little-endian header"),
+            ByteOrder::LittleEndian
+        );
+
+        assert!(detect_aipsio_byte_order(&[1, 2, 3]).is_err());
+        assert!(detect_aipsio_byte_order(&[0, 0, 0, 0, 0, 0, 0, 0]).is_err());
+
+        let mut unreasonable = Vec::new();
+        unreasonable.extend_from_slice(&0xBEBE_BEBE_u32.to_be_bytes());
+        unreasonable.extend_from_slice(&0_u32.to_be_bytes());
+        assert!(detect_aipsio_byte_order(&unreasonable).is_err());
+    }
+
+    #[test]
+    fn primitive_codec_round_trips_every_scalar_family() {
+        let scalars = [
+            ScalarValue::Bool(true),
+            ScalarValue::UInt8(3),
+            ScalarValue::UInt16(513),
+            ScalarValue::UInt32(65_537),
+            ScalarValue::Int16(-123),
+            ScalarValue::Int32(-65_537),
+            ScalarValue::Int64(-9_000_000_000),
+            ScalarValue::Float32(1.25),
+            ScalarValue::Float64(-2.5),
+            ScalarValue::Complex32(Complex32 { re: 3.0, im: -4.0 }),
+            ScalarValue::Complex64(Complex64 { re: 5.0, im: -6.0 }),
+            ScalarValue::String("ngc5921".to_string()),
+        ];
+
+        for scalar in scalars {
+            let mut buf = Vec::new();
+            AipsWriter::new(&mut buf)
+                .write_scalar(&scalar)
+                .expect("write scalar");
+            let mut reader = AipsReader::new(buf.as_slice());
+            let decoded = reader
+                .read_scalar(scalar.type_tag().primitive)
+                .expect("read scalar");
+            assert_eq!(decoded, scalar);
+        }
+    }
+
+    #[test]
+    fn primitive_codec_round_trips_every_array_family() {
+        let arrays = [
+            ArrayValue::from_bool_vec(vec![true, false]),
+            ArrayValue::from_u8_vec(vec![1, 2]),
+            ArrayValue::from_u16_vec(vec![3, 4]),
+            ArrayValue::from_u32_vec(vec![5, 6]),
+            ArrayValue::from_i16_vec(vec![-1, 2]),
+            ArrayValue::from_i32_vec(vec![-3, 4]),
+            ArrayValue::from_i64_vec(vec![-5, 6]),
+            ArrayValue::from_f32_vec(vec![1.5, 2.5]),
+            ArrayValue::from_f64_vec(vec![3.5, 4.5]),
+            ArrayValue::from_complex32_vec(vec![Complex32 { re: 1.0, im: 2.0 }]),
+            ArrayValue::from_complex64_vec(vec![Complex64 { re: 3.0, im: 4.0 }]),
+            ArrayValue::from_string_vec(vec!["rr".to_string(), "ll".to_string()]),
+        ];
+
+        for array in arrays {
+            let mut buf = Vec::new();
+            AipsWriter::new(&mut buf)
+                .write_value(&Value::Array(array.clone()))
+                .expect("write array");
+            let tag = array.type_tag();
+            let mut reader = AipsReader::new(buf.as_slice());
+            assert_eq!(
+                reader.read_value(tag).expect("read array"),
+                Value::Array(array)
+            );
+        }
+    }
+
+    #[test]
+    fn primitive_codec_reports_invalid_wire_values_and_unsupported_values() {
+        let mut invalid_bool = AipsReader::new([7_u8].as_slice());
+        assert!(matches!(
+            invalid_bool.read_bool().expect_err("invalid bool byte"),
+            AipsIoError::InvalidBoolean(7)
+        ));
+
+        let mut invalid_utf8 = Vec::new();
+        AipsWriter::new(&mut invalid_utf8)
+            .write_u32(1)
+            .expect("length");
+        invalid_utf8.push(0xff);
+        let mut reader = AipsReader::new(invalid_utf8.as_slice());
+        assert!(matches!(
+            reader.read_string().expect_err("invalid utf8"),
+            AipsIoError::Utf8(_)
+        ));
+
+        let mut writer = AipsWriter::new(Vec::new());
+        assert!(matches!(
+            writer
+                .write_value(&Value::TableRef("table/path".to_string()))
+                .expect_err("table refs are unsupported"),
+            AipsIoError::UnsupportedValueKind(super::ValueKind::TableRef)
+        ));
+
+        let mut reader = AipsReader::new([0_u8].as_slice());
+        let tag = TypeTag {
+            primitive: PrimitiveType::UInt32,
+            rank: ValueRank::Scalar,
+        };
+        assert!(matches!(
+            reader.read_value(tag).expect_err("short read"),
+            AipsIoError::Io(_)
+        ));
     }
 
     #[test]

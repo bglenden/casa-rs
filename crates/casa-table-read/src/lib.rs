@@ -140,3 +140,72 @@ impl PlainTable {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table() -> PlainTable {
+        let mut columns = HashMap::new();
+        columns.insert("TIME".to_string(), ColumnData::Float64(vec![1.0, 2.0]));
+        columns.insert(
+            "NAME".to_string(),
+            ColumnData::String(vec!["A".to_string(), "B".to_string()]),
+        );
+        columns.insert(
+            "DIRECTION".to_string(),
+            ColumnData::ArrayFloat64 {
+                values: vec![0.1, 0.2, 0.3, 0.4],
+                shape: vec![2],
+            },
+        );
+        PlainTable {
+            row_count: 2,
+            columns,
+        }
+    }
+
+    #[test]
+    fn plain_table_accessors_return_typed_columns_and_array_cells() {
+        let table = table();
+        assert_eq!(table.row_count(), 2);
+        assert_eq!(table.scalar_f64("TIME").expect("time"), &[1.0, 2.0]);
+        assert_eq!(
+            table.scalar_string("NAME").expect("name"),
+            &["A".to_string(), "B".to_string()]
+        );
+        assert_eq!(
+            table.array_f64_cell("DIRECTION", 1).expect("direction"),
+            &[0.3, 0.4]
+        );
+    }
+
+    #[test]
+    fn plain_table_accessors_report_missing_wrong_type_and_bounds() {
+        let table = table();
+        assert!(matches!(
+            table.scalar_f64("NAME").expect_err("wrong scalar type"),
+            TableReadError::UnsupportedColumn(_)
+        ));
+        assert!(matches!(
+            table.scalar_string("TIME").expect_err("wrong string type"),
+            TableReadError::UnsupportedColumn(_)
+        ));
+        assert!(matches!(
+            table
+                .array_f64_cell("TIME", 0)
+                .expect_err("wrong array type"),
+            TableReadError::UnsupportedColumn(_)
+        ));
+        assert!(matches!(
+            table.scalar_f64("MISSING").expect_err("missing column"),
+            TableReadError::Format(_)
+        ));
+        assert!(matches!(
+            table
+                .array_f64_cell("DIRECTION", 3)
+                .expect_err("row out of bounds"),
+            TableReadError::Format(_)
+        ));
+    }
+}

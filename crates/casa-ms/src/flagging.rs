@@ -2995,3 +2995,415 @@ fn _complex_norm32(value: Complex32) -> f64 {
 fn _complex_norm64(value: Complex64) -> f64 {
     value.norm()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::array;
+
+    fn sample(index: usize, row: usize, corr: usize, chan: usize, real: f64, flag: bool) -> Sample {
+        Sample {
+            index,
+            row,
+            corr,
+            chan,
+            amp: real.abs(),
+            real,
+            imag: 0.0,
+            flag,
+            field: 0,
+            spw: 0,
+            scan: 1,
+            ant1: 0,
+            ant2: 1,
+        }
+    }
+
+    #[test]
+    fn clip_zero_and_sample_loading_helpers_cover_numeric_families() {
+        assert!(is_casa_clip_zero(f64::NAN));
+        assert!(is_casa_clip_zero(f64::from(f32::EPSILON)));
+        assert!(!is_casa_clip_zero(f64::from(f32::EPSILON) * 2.0));
+        assert!(is_casa_clip_zero_complex32(Complex32::new(f32::NAN, 0.0)));
+        assert!(is_casa_clip_zero_complex64(Complex64::new(0.0, f64::NAN)));
+        assert!(!is_casa_clip_zero_complex64(Complex64::new(1.0, 0.0)));
+
+        let flags = ArrayD::from_elem(IxDyn(&[2, 3]), false);
+        let mut changed = Vec::new();
+        let c64 = ArrayValue::Complex64(
+            array![
+                [
+                    Complex64::new(0.0, 0.0),
+                    Complex64::new(2.0, 0.0),
+                    Complex64::new(f64::NAN, 0.0)
+                ],
+                [
+                    Complex64::new(3.0, 0.0),
+                    Complex64::new(0.0, 0.0),
+                    Complex64::new(4.0, 0.0)
+                ]
+            ]
+            .into_dyn(),
+        );
+        apply_clip_zero_array(&c64, &flags, Some(&[0, 2]), "<test>", 4, &mut changed)
+            .expect("clip complex64");
+        assert_eq!(changed, vec![(0, 0), (0, 2)]);
+
+        changed.clear();
+        let flags_2x2 = ArrayD::from_elem(IxDyn(&[2, 2]), false);
+        let f32s = ArrayValue::Float32(array![[0.0_f32, 1.0], [f32::EPSILON, 2.0]].into_dyn());
+        apply_clip_zero_array(&f32s, &flags_2x2, None, "<test>", 5, &mut changed)
+            .expect("clip float32");
+        assert_eq!(changed, vec![(0, 0), (1, 0)]);
+
+        changed.clear();
+        let f64s = ArrayValue::Float64(array![[0.0_f64, 5.0], [f64::NAN, 6.0]].into_dyn());
+        apply_clip_zero_array(&f64s, &flags_2x2, None, "<test>", 6, &mut changed)
+            .expect("clip float64");
+        assert_eq!(changed, vec![(0, 0), (1, 0)]);
+
+        let mut samples = Vec::new();
+        let metadata = RowSampleMetadata {
+            row: 9,
+            field: 2,
+            spw: 3,
+            scan: 4,
+            ant1: 5,
+            ant2: 6,
+        };
+        push_row_samples(
+            &c64,
+            &flags,
+            &[1, 2],
+            metadata,
+            "<test>",
+            "DATA",
+            &mut samples,
+        )
+        .expect("push complex64");
+        push_row_samples(
+            &f32s,
+            &flags_2x2,
+            &[0],
+            metadata,
+            "<test>",
+            "DATA",
+            &mut samples,
+        )
+        .expect("push float32");
+        push_row_samples(
+            &f64s,
+            &flags_2x2,
+            &[1],
+            metadata,
+            "<test>",
+            "DATA",
+            &mut samples,
+        )
+        .expect("push float64");
+        assert_eq!(samples.len(), 8);
+        assert!(
+            samples
+                .iter()
+                .any(|s| s.field == 2 && s.spw == 3 && s.amp == 5.0)
+        );
+    }
+
+    #[test]
+    fn tfcrop_fitting_helpers_cover_zero_interpolation_and_fallbacks() {
+        let data = [1.0, 0.0, 3.0, 4.0, 40.0, 6.0, 7.0, 8.0, 9.0];
+        let mut flags = vec![false; data.len()];
+        let fit = tfcrop_fit_piecewise_poly(&data, &mut flags, 7, 4);
+        assert_eq!(fit.len(), data.len());
+        assert!(fit.iter().all(|value| value.is_finite()));
+        assert!(flags.iter().any(|flag| *flag));
+
+        let mut all_flagged_fit = vec![0.0; 3];
+        tfcrop_line_fit(
+            &[2.0, 2.0, 2.0],
+            &[true, true, true],
+            &mut all_flagged_fit,
+            0,
+            2,
+        );
+        assert_eq!(all_flagged_fit, vec![0.0, 0.0, 0.0]);
+
+        let mut fallback_fit = vec![0.0; 3];
+        tfcrop_poly_fit(
+            &[1.0, 2.0, 3.0],
+            &[false, true, true],
+            &mut fallback_fit,
+            0,
+            2,
+            3,
+        );
+        assert_eq!(fallback_fit, vec![1.0, 1.0, 1.0]);
+        assert_eq!(tfcrop_mean(&[1.0, 3.0], &[false, false]), 2.0);
+        assert_eq!(
+            tfcrop_std_about_mean(&[1.0, 3.0], &[false, false], 2.0),
+            1.0
+        );
+        assert_eq!(
+            tfcrop_std_about_fit(&[1.0, 3.0], &[false, false], &[1.0, 1.0]),
+            2.0_f32.sqrt()
+        );
+        assert_eq!(median(Vec::new()), 0.0);
+        assert_eq!(median(vec![1.0, 4.0, 2.0, 3.0]), 2.5);
+    }
+
+    #[test]
+    fn rflag_thresholds_and_group_flags_cover_time_and_spectral_paths() {
+        let samples = vec![
+            sample(0, 0, 0, 0, 1.0, false),
+            sample(1, 0, 0, 1, 1.0, false),
+            sample(2, 1, 0, 0, 1.0, false),
+            sample(3, 1, 0, 1, 1.0, false),
+            sample(4, 2, 0, 0, 10.0, false),
+            sample(5, 2, 0, 1, 1.0, false),
+            sample(6, 0, 1, 0, 2.0, true),
+            sample(7, 0, 1, 1, 2.0, true),
+        ];
+        let groups = group_samples(&samples);
+        let request = FlagDataRequest {
+            timedev: Some(1.0),
+            freqdev: Some(2.0),
+            spectralmax: 0.1,
+            spectralmin: 0.0,
+            ..FlagDataRequest::default()
+        };
+        let thresholds = rflag_threshold_maps_for_groups(&groups, &request);
+        assert_eq!(thresholds.representative_pair(), (1.0, 2.0));
+        assert_eq!(
+            format_threshold_map(&thresholds.timedev).get("field0_spw0"),
+            Some(&1.0)
+        );
+
+        let mut time_flags = vec![false; samples.len()];
+        let mut freq_flags = vec![false; samples.len()];
+        for group in groups.values() {
+            rflag_group_flags(
+                group,
+                &thresholds,
+                &request,
+                &mut time_flags,
+                &mut freq_flags,
+            );
+        }
+        assert!(time_flags[0] || time_flags[2] || time_flags[4]);
+        assert!(freq_flags[4] || freq_flags[5]);
+        assert!(!freq_flags[6]);
+
+        assert_eq!(
+            rflag_time_windows(0).collect::<Vec<_>>(),
+            Vec::<(usize, usize)>::new()
+        );
+        assert_eq!(rflag_time_windows(1).collect::<Vec<_>>(), vec![(0, 0)]);
+        assert_eq!(
+            rflag_time_windows(4).collect::<Vec<_>>(),
+            vec![(0, 2), (1, 3)]
+        );
+        assert_eq!(rflag_time_std_total(&samples[6..8]), 0.0);
+        assert_eq!(rflag_spectral_stats(&samples[6..8]).sum_weight_real, 0.0);
+
+        let mut histogram = ChannelHistogram::new(2);
+        histogram.add(0, 1.0);
+        histogram.add(0, 3.0);
+        histogram.add(1, 9.0);
+        assert!(histogram.threshold().is_finite());
+        assert_eq!(representative_threshold(&BTreeMap::new()), f64::INFINITY);
+    }
+
+    #[test]
+    fn grouping_extension_and_merge_helpers_cover_boundary_cases() {
+        let mut samples = Vec::new();
+        for row in 0..2 {
+            for corr in 0..2 {
+                for chan in 0..3 {
+                    let index = samples.len();
+                    samples.push(sample(
+                        index,
+                        row,
+                        corr,
+                        chan,
+                        (row + chan + 1) as f64,
+                        false,
+                    ));
+                }
+            }
+        }
+        samples[0].flag = true;
+        let groups = group_samples(&samples);
+        let mut modified = vec![false; samples.len()];
+        modified[1] = true;
+        modified[2] = true;
+        modified[3] = true;
+        modified[4] = true;
+        extend_autoflag_grouped(&groups, &samples, &mut modified);
+        assert!(modified[0]);
+        assert!(modified[5]);
+
+        assert_eq!(samples_by_corr(&samples).len(), 2);
+        assert_eq!(samples_by_row(&samples).len(), 2);
+        assert_eq!(samples_by_chan(&samples).len(), 3);
+        assert_eq!(samples_by_chan_dense(&samples).len(), 3);
+        assert_eq!(sample_row_runs(&samples).len(), 2);
+        assert_eq!(unique_sample_rows(&samples), vec![0, 1]);
+        assert_eq!(unique_sample_chans(&samples), vec![0, 1, 2]);
+        assert_eq!(samples_by_row_chan(&samples).len(), 6);
+        assert_eq!(percent_flagged(&samples), 100.0 / 12.0);
+        assert_eq!(percent_modified(&samples, &modified), 100.0);
+        assert_eq!(count_mask(&modified), 12);
+        assert_eq!(
+            union_masks(&[true, false], &[false, true]),
+            vec![true, true]
+        );
+        assert_eq!(summary_after_flag_only(&samples, 2).flagged_samples, 3);
+        assert_eq!(
+            flag_mask_counts_by_spw_corr(&modified, &samples).get("spw0_corr0"),
+            Some(&6)
+        );
+
+        assert!(merge_bool(true, false, FlagMerge::Or));
+        assert!(!merge_bool(true, false, FlagMerge::And));
+        let source = ArrayD::from_elem(IxDyn(&[1, 2]), true);
+        let dest = ArrayD::from_elem(IxDyn(&[1, 2]), false);
+        let merged = merge_bool_arrays(&source, &dest, FlagMerge::Replace).expect("merge arrays");
+        assert!(merged.iter().all(|flag| *flag));
+        let mismatched = ArrayD::from_elem(IxDyn(&[2, 1]), false);
+        assert!(merge_bool_arrays(&source, &mismatched, FlagMerge::Or).is_err());
+    }
+
+    #[test]
+    fn clip_sample_and_threshold_helpers_cover_errors_and_defaults() {
+        let flags_rank1 = ArrayD::from_elem(IxDyn(&[2]), false);
+        let data_rank2 = ArrayValue::Float32(array![[0.0_f32, 1.0]].into_dyn());
+        let mut changed = Vec::new();
+        assert!(
+            apply_clip_zero_array(&data_rank2, &flags_rank1, None, "<test>", 12, &mut changed,)
+                .is_err()
+        );
+
+        let flags_rank2 = ArrayD::from_elem(IxDyn(&[1, 2]), false);
+        let data_rank1 = ArrayValue::Float64(ArrayD::from_elem(IxDyn(&[2]), 1.0_f64));
+        assert!(
+            apply_clip_zero_array(&data_rank1, &flags_rank2, None, "<test>", 13, &mut changed,)
+                .is_err()
+        );
+
+        let metadata = RowSampleMetadata {
+            row: 14,
+            field: 0,
+            spw: 0,
+            scan: 0,
+            ant1: 2,
+            ant2: 1,
+        };
+        let mut samples = Vec::new();
+        assert!(
+            push_row_samples(
+                &data_rank2,
+                &flags_rank1,
+                &[0],
+                metadata,
+                "<test>",
+                "DATA",
+                &mut samples,
+            )
+            .is_err()
+        );
+        assert!(
+            push_row_samples(
+                &data_rank1,
+                &flags_rank2,
+                &[0],
+                metadata,
+                "<test>",
+                "DATA",
+                &mut samples,
+            )
+            .is_err()
+        );
+
+        let strings = ArrayValue::String(ArrayD::from_elem(IxDyn(&[1, 1]), "x".to_string()));
+        push_row_samples(
+            &strings,
+            &flags_rank2,
+            &[0],
+            metadata,
+            "<test>",
+            "DATA",
+            &mut samples,
+        )
+        .expect("ignore non-numeric arrays");
+        assert!(samples.is_empty());
+
+        let groups = BTreeMap::from([(
+            (0, 0, 0, 1, 2),
+            vec![
+                sample(0, 0, 0, 0, 1.0, false),
+                sample(1, 1, 0, 0, 3.0, false),
+                sample(2, 2, 0, 0, 5.0, false),
+            ],
+        )]);
+        let thresholds = rflag_threshold_maps_for_groups(
+            &groups,
+            &FlagDataRequest {
+                timedev: None,
+                freqdev: None,
+                timedevscale: 2.0,
+                freqdevscale: 3.0,
+                ..FlagDataRequest::default()
+            },
+        );
+        assert!(thresholds.representative_pair().0.is_finite());
+        assert!(thresholds.representative_pair().1.is_finite());
+        assert_eq!(
+            format_threshold_map(&thresholds.timedev)
+                .keys()
+                .collect::<Vec<_>>(),
+            vec![&"field0_spw0".to_string()]
+        );
+    }
+
+    #[test]
+    fn tfcrop_flagger_handles_empty_all_flagged_and_missing_axis_cases() {
+        let mut modified = Vec::new();
+        let mut direction_flags = Vec::new();
+        tfcrop_fit_base_and_flag(
+            &[],
+            TfcropDirection::Freq,
+            TfcropFit::Poly,
+            1.0,
+            &mut modified,
+            &mut direction_flags,
+        );
+
+        let samples = vec![
+            sample(0, 0, 0, 0, 1.0, true),
+            sample(1, 0, 0, 2, 1.0, true),
+            sample(2, 2, 0, 0, 1.0, true),
+        ];
+        let mut modified = vec![false; samples.len()];
+        let mut direction_flags = vec![false; samples.len()];
+        tfcrop_fit_base_and_flag(
+            &samples,
+            TfcropDirection::Time,
+            TfcropFit::Line,
+            1.0,
+            &mut modified,
+            &mut direction_flags,
+        );
+        assert_eq!(modified, vec![false; samples.len()]);
+        assert_eq!(direction_flags, vec![false; samples.len()]);
+
+        let mut flagged = vec![false, true, false, true];
+        let fit = tfcrop_fit_piecewise_poly(&[0.0, 0.0, 2.0, 0.0], &mut flagged, 3, 2);
+        assert_eq!(fit.len(), 4);
+        assert!(fit.iter().all(|value| value.is_finite()));
+
+        let mut all_zero_flags = vec![false, false];
+        let all_zero_fit = tfcrop_fit_piecewise_poly(&[0.0, 0.0], &mut all_zero_flags, 1, 1);
+        assert_eq!(all_zero_fit, vec![0.0, 0.0]);
+        assert_eq!(all_zero_flags, vec![true, true]);
+    }
+}
