@@ -638,6 +638,7 @@ private struct ImageExplorerControlsView: View {
                 .frame(width: 76)
             TextField("INC", text: $parameters.inc)
                 .frame(width: 66)
+            colorMapPicker
             stretchPicker
             autoscalePicker
             TextField("Low", text: $parameters.clipLow)
@@ -651,6 +652,19 @@ private struct ImageExplorerControlsView: View {
             }
         }
         .textFieldStyle(.roundedBorder)
+    }
+
+    private var colorMapPicker: some View {
+        Picker("Colormap", selection: Binding(
+            get: { explorerState?.planeColorMap ?? .grayscale },
+            set: { store.setImageExplorerColorMap($0, datasetID: datasetID) }
+        )) {
+            ForEach(ImageExplorerColorMap.allCases) { colorMap in
+                Text(colorMap.label).tag(colorMap)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(width: 120)
     }
 
     private var stretchPicker: some View {
@@ -901,6 +915,7 @@ private struct ImageExplorerSnapshotView: View {
                     .help(controlsExpanded ? "Hide display controls" : "Show display controls")
 
                     quickMovieControls
+                    quickColorMapControl
 
                     Spacer()
 
@@ -931,7 +946,8 @@ private struct ImageExplorerSnapshotView: View {
             ImageExplorerImageWorkspaceView(
                 store: store,
                 datasetID: datasetID,
-                snapshot: snapshot
+                snapshot: snapshot,
+                colorMap: explorerState?.planeColorMap ?? .grayscale
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
@@ -959,6 +975,18 @@ private struct ImageExplorerSnapshotView: View {
             .help("Stop movie playback")
         }
         .buttonStyle(.borderless)
+    }
+
+    private var quickColorMapControl: some View {
+        Button {
+            store.cycleImageExplorerColorMap(datasetID: datasetID)
+        } label: {
+            Image(systemName: "paintpalette")
+        }
+        .buttonStyle(.borderless)
+        .keyboardShortcut("c", modifiers: [])
+        .accessibilityLabel("Cycle colormap")
+        .help("Cycle colormap (C)")
     }
 
     private var canStartQuickMovie: Bool {
@@ -1008,6 +1036,7 @@ private struct ImageExplorerImageWorkspaceView: View {
     @ObservedObject var store: WorkbenchStore
     let datasetID: String
     let snapshot: ImageExplorerSnapshot
+    let colorMap: ImageExplorerColorMap
 
     var body: some View {
         GeometryReader { geometry in
@@ -1020,9 +1049,12 @@ private struct ImageExplorerImageWorkspaceView: View {
                         region: snapshot.region,
                         displayAxes: snapshot.displayAxes ?? [],
                         probe: snapshot.probe,
-                        nonDisplayAxes: snapshot.nonDisplayAxes ?? []
+                        nonDisplayAxes: snapshot.nonDisplayAxes ?? [],
+                        colorMap: colorMap
                     ) { x, y in
                         store.setImageExplorerCursor(x: x, y: y, datasetID: datasetID)
+                    } onClipRangeChange: { low, high in
+                        store.setImageExplorerManualClip(low: low, high: high, datasetID: datasetID)
                     }
                     .frame(height: max(1, geometry.size.height - profileHeight))
                 } else {
@@ -1208,9 +1240,14 @@ private struct ImagePlaneRasterView: View {
     let displayAxes: [ImageExplorerSnapshot.DisplayAxis]
     let probe: ImageExplorerSnapshot.Probe?
     let nonDisplayAxes: [ImageExplorerSnapshot.NonDisplayAxis]
+    let colorMap: ImageExplorerColorMap
     let onCursorSelect: (Int, Int) -> Void
+    let onClipRangeChange: (Double, Double) -> Void
     @Environment(\.workbenchFontSize) private var workbenchFontSize
     @State private var image: NSImage?
+    @State private var draggingClipMarker: ImagePlaneClipMarker?
+    @State private var previewClipMin: Double?
+    @State private var previewClipMax: Double?
 
     var body: some View {
         GeometryReader { geometry in
@@ -1240,16 +1277,41 @@ private struct ImagePlaneRasterView: View {
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if draggingClipMarker == nil {
+                            draggingClipMarker = clipMarker(at: value.startLocation, layout: layout)
+                        }
+                        if let marker = draggingClipMarker {
+                            updatePreviewClip(marker: marker, y: value.location.y, layout: layout)
+                        }
+                    }
                     .onEnded { value in
-                        if let pixel = sourcePixel(at: value.location, layout: layout) {
+                        if let marker = draggingClipMarker {
+                            let clip = clipRange(marker: marker, y: value.location.y, layout: layout)
+                            previewClipMin = clip.low
+                            previewClipMax = clip.high
+                            onClipRangeChange(clip.low, clip.high)
+                        } else if let pixel = sourcePixel(at: value.location, layout: layout) {
                             onCursorSelect(pixel.x, pixel.y)
                         }
+                        draggingClipMarker = nil
                     }
             )
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onAppear(perform: updateImage)
         .onChange(of: plane.pixelsU8) { _ in updateImage() }
+        .onChange(of: colorMap) { _ in updateImage() }
+        .onChange(of: plane.clipMin) { _ in clearPreviewClip() }
+        .onChange(of: plane.clipMax) { _ in clearPreviewClip() }
+    }
+
+    private var displayClipMin: Double {
+        previewClipMin ?? plane.clipMin
+    }
+
+    private var displayClipMax: Double {
+        previewClipMax ?? plane.clipMax
     }
 
     private func drawAxisAnnotations(in context: inout GraphicsContext, layout: ImagePlaneViewportGeometry) {
@@ -1297,8 +1359,15 @@ private struct ImagePlaneRasterView: View {
             at: CGPoint(x: layout.imageRect.midX, y: layout.imageRect.maxY + layout.bottomGutter - 12),
             anchor: .bottom
         )
+        let yTickLabelWidth = yTicks
+            .map { approximateTextWidth($0.label, fontSize: max(10, workbenchFontSize * 0.82)) }
+            .max() ?? 0
+        let yAxisTitleX = max(
+            12,
+            layout.imageRect.minX - tickLength - 7 - yTickLabelWidth - max(22, CGFloat(workbenchFontSize * 1.9))
+        )
         var rotated = context
-        rotated.translateBy(x: layout.leftGutter * 0.30, y: layout.imageRect.midY)
+        rotated.translateBy(x: yAxisTitleX, y: layout.imageRect.midY)
         rotated.rotate(by: .degrees(-90))
         rotated.draw(
             Text(axisTitle(yAxis)).font(axisFont).foregroundColor(.secondary),
@@ -1336,8 +1405,8 @@ private struct ImagePlaneRasterView: View {
             drawHistogram(bins: bins, in: &context, rect: histogramRect)
         }
         drawScaleTicks(in: &context, layout: layout)
-        drawScaleMarker(value: plane.clipMin, color: .yellow.opacity(0.8), in: &context, layout: layout)
-        drawScaleMarker(value: plane.clipMax, color: .yellow.opacity(0.8), in: &context, layout: layout)
+        drawScaleMarker(value: displayClipMin, color: .yellow.opacity(0.8), in: &context, layout: layout)
+        drawScaleMarker(value: displayClipMax, color: .yellow.opacity(0.8), in: &context, layout: layout)
         if let probe, probe.finite, !probe.masked {
             drawScaleMarker(value: probe.value, color: .cyan.opacity(0.9), in: &context, layout: layout)
         }
@@ -1457,6 +1526,68 @@ private struct ImagePlaneRasterView: View {
             x: rect.minX + rect.width * CGFloat(x) / CGFloat(max(plane.width - 1, 1)),
             y: rect.minY + rect.height * CGFloat(y) / CGFloat(max(plane.height - 1, 1))
         )
+    }
+
+    private func clipMarker(at location: CGPoint, layout: ImagePlaneViewportGeometry) -> ImagePlaneClipMarker? {
+        let wedgeHit = layout.scaleWedgeRect.insetBy(dx: -8, dy: -10)
+        let histogramHit = layout.histogramRect?.insetBy(dx: -8, dy: -10)
+        guard wedgeHit.contains(location) || histogramHit?.contains(location) == true else {
+            return nil
+        }
+        guard let lowY = scaleY(for: displayClipMin, layout: layout),
+              let highY = scaleY(for: displayClipMax, layout: layout)
+        else {
+            return nil
+        }
+        let lowDistance = abs(location.y - lowY)
+        let highDistance = abs(location.y - highY)
+        let threshold = max(10, CGFloat(workbenchFontSize * 0.85))
+        guard min(lowDistance, highDistance) <= threshold else {
+            return nil
+        }
+        return lowDistance <= highDistance ? .low : .high
+    }
+
+    private func updatePreviewClip(
+        marker: ImagePlaneClipMarker,
+        y: CGFloat,
+        layout: ImagePlaneViewportGeometry
+    ) {
+        let clip = clipRange(marker: marker, y: y, layout: layout)
+        previewClipMin = clip.low
+        previewClipMax = clip.high
+    }
+
+    private func clipRange(
+        marker: ImagePlaneClipMarker,
+        y: CGFloat,
+        layout: ImagePlaneViewportGeometry
+    ) -> (low: Double, high: Double) {
+        let dataLow = min(plane.dataMin, plane.dataMax)
+        let dataHigh = max(plane.dataMin, plane.dataMax)
+        guard dataLow.isFinite, dataHigh.isFinite, dataLow < dataHigh else {
+            return (displayClipMin, displayClipMax)
+        }
+        let minDelta = max((dataHigh - dataLow) * 1e-9, Double.leastNonzeroMagnitude)
+        let draggedValue = scaleValue(atY: y, layout: layout).clamped(to: dataLow...dataHigh)
+        let currentLow = displayClipMin.isFinite ? displayClipMin : dataLow
+        let currentHigh = displayClipMax.isFinite ? displayClipMax : dataHigh
+        switch marker {
+        case .low:
+            return (min(draggedValue, currentHigh - minDelta), currentHigh)
+        case .high:
+            return (currentLow, max(draggedValue, currentLow + minDelta))
+        }
+    }
+
+    private func scaleValue(atY y: CGFloat, layout: ImagePlaneViewportGeometry) -> Double {
+        let fraction = ((layout.scaleWedgeRect.maxY - y) / max(layout.scaleWedgeRect.height, 1)).clamped(to: 0...1)
+        return plane.dataMin + (plane.dataMax - plane.dataMin) * Double(fraction)
+    }
+
+    private func clearPreviewClip() {
+        previewClipMin = nil
+        previewClipMax = nil
     }
 
     private func sourcePixel(at location: CGPoint, layout: ImagePlaneViewportGeometry) -> (x: Int, y: Int)? {
@@ -1597,13 +1728,13 @@ private struct ImagePlaneRasterView: View {
     }
 
     private func sidebarColor(for value: Double) -> Color {
-        let clipLow = plane.clipMin
-        let clipHigh = plane.clipMax
+        let clipLow = displayClipMin
+        let clipHigh = displayClipMax
         guard value.isFinite, clipLow.isFinite, clipHigh.isFinite, clipHigh != clipLow else {
             return Color(white: 0)
         }
         let sample = CGFloat((value - clipLow) / (clipHigh - clipLow)).clamped(to: 0...1)
-        return Color(white: sample)
+        return imagePlaneColor(sample, colorMap: colorMap)
     }
 
     private func updateImage() {
@@ -1629,10 +1760,11 @@ private struct ImagePlaneRasterView: View {
         }
         for index in 0..<(plane.width * plane.height) {
             let value = plane.pixelsU8[index]
+            let color = imagePlaneRGB(value, colorMap: colorMap)
             let offset = index * 4
-            data[offset] = value
-            data[offset + 1] = value
-            data[offset + 2] = value
+            data[offset] = color.red
+            data[offset + 1] = color.green
+            data[offset + 2] = color.blue
             data[offset + 3] = 255
         }
         let output = NSImage(size: NSSize(width: plane.width, height: plane.height))
@@ -1646,6 +1778,11 @@ private struct ImagePlaneRasterView: View {
 private struct ImagePlaneAxisTick {
     var label: String
     var position: CGFloat
+}
+
+private enum ImagePlaneClipMarker {
+    case low
+    case high
 }
 
 private struct ImagePlaneViewportGeometry {
@@ -1812,6 +1949,79 @@ private func formatPlaneValueAxisTitle(_ unit: String) -> String {
     unit.isEmpty ? "Value" : "Value [\(unit)]"
 }
 
+private func imagePlaneColor(_ sample: CGFloat, colorMap: ImageExplorerColorMap) -> Color {
+    let value = UInt8((sample.clamped(to: 0...1) * 255).rounded())
+    let rgb = imagePlaneRGB(value, colorMap: colorMap)
+    return Color(
+        red: Double(rgb.red) / 255.0,
+        green: Double(rgb.green) / 255.0,
+        blue: Double(rgb.blue) / 255.0
+    )
+}
+
+private func imagePlaneRGB(
+    _ value: UInt8,
+    colorMap: ImageExplorerColorMap
+) -> (red: UInt8, green: UInt8, blue: UInt8) {
+    switch colorMap {
+    case .grayscale:
+        return (value, value, value)
+    case .viridis:
+        return interpolateColorStops(
+            value,
+            stops: [(68, 1, 84), (59, 82, 139), (33, 145, 140), (94, 201, 98), (253, 231, 37)]
+        )
+    case .inferno:
+        return interpolateColorStops(
+            value,
+            stops: [(0, 0, 4), (87, 15, 109), (187, 55, 84), (249, 142, 8), (252, 255, 164)]
+        )
+    case .magma:
+        return interpolateColorStops(
+            value,
+            stops: [(0, 0, 4), (74, 16, 107), (179, 53, 88), (251, 135, 97), (252, 253, 191)]
+        )
+    case .coolWarm:
+        return interpolateColorStops(
+            value,
+            stops: [(59, 76, 192), (180, 205, 232), (245, 245, 245), (221, 132, 105), (180, 4, 38)]
+        )
+    }
+}
+
+private func interpolateColorStops(
+    _ value: UInt8,
+    stops: [(red: UInt8, green: UInt8, blue: UInt8)]
+) -> (red: UInt8, green: UInt8, blue: UInt8) {
+    guard !stops.isEmpty else {
+        return (value, value, value)
+    }
+    guard stops.count > 1 else {
+        return stops[0]
+    }
+    let segmentCount = stops.count - 1
+    let scaled = Int(value) * segmentCount * 256 / 255
+    let segment = min(scaled / 256, segmentCount - 1)
+    let fraction = scaled % 256
+    let start = stops[segment]
+    let end = stops[segment + 1]
+    return (
+        interpolateChannel(start.red, end.red, fraction: fraction),
+        interpolateChannel(start.green, end.green, fraction: fraction),
+        interpolateChannel(start.blue, end.blue, fraction: fraction)
+    )
+}
+
+private func interpolateChannel(_ start: UInt8, _ end: UInt8, fraction: Int) -> UInt8 {
+    let startValue = Int(start)
+    let delta = Int(end) - startValue
+    return UInt8(clamping: startValue + (delta * fraction + 128) / 256)
+}
+
+private func approximateTextWidth(_ text: String, fontSize: Double) -> CGFloat {
+    CGFloat(text.count) * CGFloat(fontSize) * 0.58
+}
+
 private extension CGFloat {
     func clamped(to range: ClosedRange<CGFloat>) -> CGFloat {
         Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
@@ -1819,6 +2029,12 @@ private extension CGFloat {
 
     func nonZeroFallback(_ fallback: CGFloat) -> CGFloat {
         self > 0 ? self : fallback
+    }
+}
+
+private extension Double {
+    func clamped(to range: ClosedRange<Double>) -> Double {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }
 

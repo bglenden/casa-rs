@@ -1296,6 +1296,29 @@ public final class WorkbenchStore: ObservableObject {
         refreshImageExplorer(datasetID: datasetID)
     }
 
+    public func setImageExplorerColorMap(_ colorMap: ImageExplorerColorMap, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.planeColorMap = colorMap
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func cycleImageExplorerColorMap(datasetID: String) {
+        let explorerState = imageExplorerState(datasetID: datasetID)
+        setImageExplorerColorMap(explorerState.planeColorMap.next(), datasetID: datasetID)
+    }
+
+    public func setImageExplorerManualClip(low: Double, high: Double, datasetID: String) {
+        guard low.isFinite, high.isFinite, low < high else {
+            state.lastErrors.append("Invalid image clip range")
+            return
+        }
+        var parameters = imageExplorerState(datasetID: datasetID).parameters
+        parameters.stretch = "manual"
+        parameters.clipLow = Self.formatImageExplorerClipValue(low)
+        parameters.clipHigh = Self.formatImageExplorerClipValue(high)
+        setImageExplorerParameters(parameters, datasetID: datasetID)
+    }
+
     public func setImageExplorerCursor(x: Int?, y: Int?, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.cursorX = x
@@ -1819,6 +1842,10 @@ public final class WorkbenchStore: ObservableObject {
             return 6.0
         }
         return min(max(framesPerSecond, 0.2), 60.0)
+    }
+
+    private static func formatImageExplorerClipValue(_ value: Double) -> String {
+        String(format: "%.6g", value)
     }
 
     private func normalizedNonDisplayIndices(

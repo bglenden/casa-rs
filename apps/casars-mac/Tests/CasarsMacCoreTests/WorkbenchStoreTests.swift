@@ -605,6 +605,19 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(imageClient.requests.last?.cursorY, 3)
         XCTAssertEqual(imageClient.requests.last?.parameters.stretch, "minmax")
 
+        let requestCountBeforeColorMap = imageClient.requests.count
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.planeColorMap, .grayscale)
+        store.cycleImageExplorerColorMap(datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.planeColorMap, .viridis)
+        store.setImageExplorerColorMap(.inferno, datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.planeColorMap, .inferno)
+        XCTAssertEqual(imageClient.requests.count, requestCountBeforeColorMap)
+
+        store.setImageExplorerManualClip(low: -0.125, high: 2.75, datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.parameters.stretch, "manual")
+        XCTAssertEqual(imageClient.requests.last?.parameters.clipLow, "-0.125")
+        XCTAssertEqual(imageClient.requests.last?.parameters.clipHigh, "2.75")
+
         store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: imageDataset.id)
         store.appendImageExplorerRegionCommand(.appendRegionVertex(x: 2, y: 3), datasetID: imageDataset.id)
         XCTAssertEqual(imageClient.requests.last?.commands.map(\.command), ["start_region_shape", "append_region_vertex"])
@@ -1802,6 +1815,7 @@ private final class StubImageExplorerClient: ImageExplorerClient {
                 pixelY: y
             )
         }
+        nextSnapshot.parameters = request.parameters
         nextSnapshot.nonDisplayAxes = snapshot.nonDisplayAxes?.map { axis in
             var nextAxis = axis
             if let position = snapshot.nonDisplayAxes?.firstIndex(where: { $0.axis == axis.axis }),

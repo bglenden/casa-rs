@@ -853,6 +853,39 @@ public struct ImageExplorerParameters: Codable, Equatable {
     }
 }
 
+public enum ImageExplorerColorMap: String, CaseIterable, Codable, Equatable, Identifiable {
+    case grayscale
+    case viridis
+    case inferno
+    case magma
+    case coolWarm
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .grayscale:
+            return "Grayscale"
+        case .viridis:
+            return "Viridis"
+        case .inferno:
+            return "Inferno"
+        case .magma:
+            return "Magma"
+        case .coolWarm:
+            return "Cool/Warm"
+        }
+    }
+
+    public func next() -> Self {
+        let cases = Self.allCases
+        guard let index = cases.firstIndex(of: self) else {
+            return .grayscale
+        }
+        return cases[(index + 1) % cases.count]
+    }
+}
+
 public struct ImageExplorerSnapshotRequest: Codable, Equatable {
     public var datasetPath: String
     public var selectedView: String
@@ -1276,6 +1309,7 @@ public struct ImageExplorerSessionState: Codable, Equatable {
     public var selectedView: String
     public var focus: String = "content"
     public var planeContentMode: String = "raster"
+    public var planeColorMap: ImageExplorerColorMap = .grayscale
     public var parameters: ImageExplorerParameters = ImageExplorerParameters()
     public var cursorX: Int?
     public var cursorY: Int?
