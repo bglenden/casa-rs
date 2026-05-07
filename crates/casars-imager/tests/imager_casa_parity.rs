@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use casa_images::PagedImage;
 use casa_images::beam::{GaussianBeam, ImageBeamSet};
@@ -13,12 +14,15 @@ use casa_imaging::{
     UvTaperSize, WTermMode, WeightingMode, estimate_psf_sidelobe_from_psf,
     fit_restoring_beam_from_psf,
 };
+use casa_ms::MeasurementSet;
+use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_test_support::{
     casa_source_root, casacore_source_root, casatestdata_path, discover_casa_python,
     git_head_commit, gridder_interop::cpp_convolve_gridder_make_dirty_image_2d,
     hogbom_interop::cpp_hogbom_clean_minor_cycle_2d,
 };
 use casa_types::measures::frequency::FrequencyRef;
+use casa_types::{ArrayValue, ScalarValue};
 use casars_imager::{
     CliConfig, RunSummary, build_prepare_plane_trace_from_config, run_from_config,
     trace_cube_channel_residual_refresh_from_config,
@@ -182,6 +186,68 @@ fn dirty_products_track_casa_headers_and_pixels() {
     assert!(
         casa_sumwt.is_finite() && casa_sumwt > 0.0,
         "expected positive CASA sumwt"
+    );
+}
+
+#[test]
+fn savemodel_modelcolumn_writes_casa_comparable_model_data() {
+    if !parity_available() {
+        eprintln!("{}", skip_reason());
+        return;
+    }
+
+    let ms_path = ngc5921_ms_path().expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let rust_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "rust-ngc5921.ms").expect("stage rust ms");
+    let casa_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "casa-ngc5921.ms").expect("stage casa ms");
+    let rust_prefix = temp.path().join("rust-ngc5921-savemodel");
+    let casa_prefix = temp.path().join("casa-ngc5921-savemodel");
+
+    let rust_start = Instant::now();
+    run_rust_imager_savemodel(&rust_ms_path, &rust_prefix).expect("run rust savemodel");
+    let rust_elapsed = rust_start.elapsed();
+    let casa_start = Instant::now();
+    run_casa_tclean_savemodel(&casa_ms_path, &casa_prefix).expect("run CASA savemodel");
+    let casa_elapsed = casa_start.elapsed();
+
+    let rust_stats = read_model_column_stats(&rust_ms_path, 0, 0, 0).expect("read Rust MODEL_DATA");
+    let casa_stats = read_model_column_stats(&casa_ms_path, 0, 0, 0).expect("read CASA MODEL_DATA");
+    let diff_stats = compare_model_column_values(&rust_stats, &casa_stats);
+    eprintln!(
+        "savemodel=modelcolumn parity: rust_elapsed={:.3}s casa_elapsed={:.3}s total_values={} rust_max_abs={:.6e} casa_max_abs={:.6e} max_abs_diff={:.6e} rms_abs_diff={:.6e} normalized_max_diff={:.6e} normalized_rms_diff={:.6e} max_location={:?}",
+        duration_seconds(rust_elapsed),
+        duration_seconds(casa_elapsed),
+        rust_stats.total_values,
+        rust_stats.max_abs,
+        casa_stats.max_abs,
+        diff_stats.max_abs_diff,
+        diff_stats.rms_abs_diff,
+        diff_stats.normalized_max_diff,
+        diff_stats.normalized_rms_diff,
+        diff_stats.max_location
+    );
+    assert_eq!(
+        rust_stats.row_shapes, casa_stats.row_shapes,
+        "Rust and CASA should preserve MODEL_DATA row shapes"
+    );
+    assert!(
+        rust_stats.max_abs > 0.0,
+        "Rust savemodel=modelcolumn should write non-zero MODEL_DATA"
+    );
+    assert!(
+        casa_stats.max_abs > 0.0,
+        "CASA savemodel=modelcolumn should write non-zero MODEL_DATA"
+    );
+    assert!(
+        rust_stats.finite_values == rust_stats.total_values
+            && casa_stats.finite_values == casa_stats.total_values,
+        "MODEL_DATA values should be finite for both Rust and CASA"
+    );
+    assert!(
+        diff_stats.normalized_rms_diff < 0.4,
+        "MODEL_DATA normalized RMS diff too large: {diff_stats:?}"
     );
 }
 
@@ -8450,6 +8516,59 @@ fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<()
     .map(|_| ())
 }
 
+fn run_rust_imager_savemodel(ms_path: &Path, prefix: &Path) -> Result<(), String> {
+    let _ = (casa_source_root(), casacore_source_root());
+    run_from_config(&CliConfig {
+        ms: ms_path.to_path_buf(),
+        imagename: prefix.to_path_buf(),
+        imsize: 128,
+        cell_arcsec: 30.0,
+        field_ids: Some(vec![0]),
+        phasecenter_field: Some(0),
+        phasecenter: None,
+        ddid: None,
+        spw: Some(0),
+        spw_selector: None,
+        channel_start: Some(0),
+        channel_count: Some(1),
+        datacolumn: Some("DATA".to_string()),
+        save_model: casars_imager::SaveModelMode::ModelColumn,
+        correlation: None,
+        spectral_mode: casars_imager::SpectralMode::Mfs,
+        cube_axis: casa_ms::CubeAxisConfig::default(),
+        weighting: WeightingMode::Natural,
+        per_channel_weight_density: false,
+        use_pointing: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter: 4,
+        gain: 0.1,
+        threshold_jy: 0.0,
+        nsigma: 0.0,
+        psf_cutoff: 0.35,
+        mosaic_pb_limit: 0.1,
+        pbcor: false,
+        minor_cycle_length: 2,
+        cyclefactor: 1.0,
+        min_psf_fraction: 0.1,
+        max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+        use_mask: Default::default(),
+        auto_mask: Default::default(),
+        mask_boxes: Vec::new(),
+        mask_image: None,
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        dirty_only: false,
+        write_preview_pngs: false,
+    })
+    .map(|_| ())
+}
+
 fn run_rust_imager_case(
     case: ParityCase<'_>,
     ms_path: &Path,
@@ -9168,6 +9287,229 @@ tclean(
         );
     }
     Ok(())
+}
+
+fn run_casa_tclean_savemodel(ms_path: &Path, prefix: &Path) -> Result<(), String> {
+    let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
+    let casa = discover_casa_python().ok_or_else(skip_reason)?;
+    let prefix_text = prefix
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 imagename prefix {}", prefix.display()))?;
+    let script = r#"
+import os
+from casatasks import tclean
+tclean(
+    vis=os.environ["CASA_VIS"],
+    imagename=os.environ["CASA_IMAGENAME"],
+    datacolumn="data",
+    field="0",
+    spw="0:0",
+    specmode="mfs",
+    gridder="standard",
+    weighting="natural",
+    deconvolver="hogbom",
+    imsize=128,
+    cell="30arcsec",
+    niter=4,
+    cycleniter=2,
+    gain=0.1,
+    threshold="0Jy",
+    restoration=True,
+    calcpsf=True,
+    calcres=True,
+    restart=True,
+    interactive=False,
+    parallel=False,
+    pbcor=False,
+    usemask="user",
+    mask="",
+    savemodel="modelcolumn",
+    psfcutoff=0.35,
+)
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_IMAGENAME", prefix_text)
+        .output()
+        .map_err(|error| format!("spawn casa tclean savemodel: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "casa tclean savemodel failed with status {}:\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, PartialEq)]
+struct ModelColumnStats {
+    row_shapes: Vec<Vec<usize>>,
+    total_values: usize,
+    finite_values: usize,
+    max_abs: f32,
+    values: Vec<ModelColumnValue>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ModelColumnValue {
+    row_index: usize,
+    corr_index: usize,
+    re: f32,
+    im: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ModelColumnDiffLocation {
+    row_index: usize,
+    corr_index: usize,
+    rust: (f32, f32),
+    casa: (f32, f32),
+    abs_diff: f32,
+}
+
+#[derive(Debug, PartialEq)]
+struct ModelColumnDiffStats {
+    max_abs_diff: f32,
+    rms_abs_diff: f64,
+    normalized_max_diff: f32,
+    normalized_rms_diff: f64,
+    max_location: Option<ModelColumnDiffLocation>,
+}
+
+fn read_model_column_stats(
+    ms_path: &Path,
+    field_id: i32,
+    data_desc_id: i32,
+    channel_index: usize,
+) -> Result<ModelColumnStats, String> {
+    let ms = MeasurementSet::open(ms_path)
+        .map_err(|error| format!("open MeasurementSet {}: {error}", ms_path.display()))?;
+    if !ms
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column(VisibilityDataColumn::ModelData.name()))
+    {
+        return Err(format!("{} has no MODEL_DATA column", ms_path.display()));
+    }
+    let mut row_shapes = Vec::with_capacity(ms.row_count());
+    let mut total_values = 0usize;
+    let mut finite_values = 0usize;
+    let mut max_abs = 0.0f32;
+    let mut flat_values = Vec::new();
+    for row_index in 0..ms.row_count() {
+        if scalar_i32_cell(&ms, row_index, "FIELD_ID")? != field_id
+            || scalar_i32_cell(&ms, row_index, "DATA_DESC_ID")? != data_desc_id
+        {
+            continue;
+        }
+        let array = ms
+            .main_table()
+            .cell_accessor(row_index, VisibilityDataColumn::ModelData.name())
+            .and_then(|cell| cell.array())
+            .map_err(|error| format!("read MODEL_DATA row {row_index}: {error}"))?;
+        let ArrayValue::Complex32(values) = array else {
+            return Err(format!("MODEL_DATA row {row_index} is not Complex32"));
+        };
+        row_shapes.push(values.shape().to_vec());
+        if values.shape().len() != 2 || channel_index >= values.shape()[1] {
+            return Err(format!(
+                "MODEL_DATA row {row_index} shape {:?} has no channel {channel_index}",
+                values.shape()
+            ));
+        }
+        total_values += values.shape()[0];
+        for corr_index in 0..values.shape()[0] {
+            let value = values[[corr_index, channel_index]];
+            let norm = value.norm();
+            if norm.is_finite() {
+                finite_values += 1;
+                max_abs = max_abs.max(norm);
+            }
+            flat_values.push(ModelColumnValue {
+                row_index,
+                corr_index,
+                re: value.re,
+                im: value.im,
+            });
+        }
+    }
+    Ok(ModelColumnStats {
+        row_shapes,
+        total_values,
+        finite_values,
+        max_abs,
+        values: flat_values,
+    })
+}
+
+fn scalar_i32_cell(ms: &MeasurementSet, row_index: usize, column: &str) -> Result<i32, String> {
+    let scalar = ms
+        .main_table()
+        .cell_accessor(row_index, column)
+        .and_then(|cell| cell.scalar())
+        .map_err(|error| format!("read {column} row {row_index}: {error}"))?;
+    match scalar {
+        ScalarValue::Int32(value) => Ok(*value),
+        other => Err(format!(
+            "{column} row {row_index} should be Int32, found {other:?}"
+        )),
+    }
+}
+
+fn compare_model_column_values(
+    rust_stats: &ModelColumnStats,
+    casa_stats: &ModelColumnStats,
+) -> ModelColumnDiffStats {
+    assert_eq!(
+        rust_stats.values.len(),
+        casa_stats.values.len(),
+        "MODEL_DATA value counts should match before diffing"
+    );
+    let mut max_abs_diff = 0.0f32;
+    let mut sum_sq = 0.0f64;
+    let mut max_location = None;
+    for (rust_value, casa_value) in rust_stats.values.iter().zip(casa_stats.values.iter()) {
+        assert_eq!(
+            (rust_value.row_index, rust_value.corr_index),
+            (casa_value.row_index, casa_value.corr_index),
+            "MODEL_DATA value labels should match before diffing"
+        );
+        let re_diff = rust_value.re - casa_value.re;
+        let im_diff = rust_value.im - casa_value.im;
+        let abs_diff = re_diff.hypot(im_diff);
+        if abs_diff > max_abs_diff {
+            max_abs_diff = abs_diff;
+            max_location = Some(ModelColumnDiffLocation {
+                row_index: rust_value.row_index,
+                corr_index: rust_value.corr_index,
+                rust: (rust_value.re, rust_value.im),
+                casa: (casa_value.re, casa_value.im),
+                abs_diff,
+            });
+        }
+        sum_sq += (abs_diff as f64) * (abs_diff as f64);
+    }
+    let rms_abs_diff = if rust_stats.values.is_empty() {
+        0.0
+    } else {
+        (sum_sq / rust_stats.values.len() as f64).sqrt()
+    };
+    let norm = casa_stats.max_abs.max(f32::EPSILON);
+    ModelColumnDiffStats {
+        max_abs_diff,
+        rms_abs_diff,
+        normalized_max_diff: max_abs_diff / norm,
+        normalized_rms_diff: rms_abs_diff / norm as f64,
+        max_location,
+    }
+}
+
+fn duration_seconds(duration: Duration) -> f64 {
+    duration.as_secs_f64()
 }
 
 fn run_casa_mstransform_default_cube_case(
