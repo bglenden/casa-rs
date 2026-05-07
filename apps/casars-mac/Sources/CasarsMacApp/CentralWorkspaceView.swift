@@ -1056,6 +1056,7 @@ private struct ImageExplorerImageWorkspaceView: View {
                     } onClipRangeChange: { low, high in
                         store.setImageExplorerManualClip(low: low, high: high, datasetID: datasetID)
                     }
+                    .id(colorMap.rawValue)
                     .frame(height: max(1, geometry.size.height - profileHeight))
                 } else {
                     Text("No renderable plane in current image browser snapshot.")
