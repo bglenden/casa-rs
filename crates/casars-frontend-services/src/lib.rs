@@ -34,6 +34,7 @@ const MAX_PROJECT_SCAN_DEPTH: usize = 4;
 const DEFAULT_GUI_MAX_PLOT_POINTS: u64 = 250_000;
 const MAIN_SCALAR_CHUNK_ROWS: usize = 65_536;
 const FRONTEND_POINT_PROVENANCE_LIMIT: usize = 8_000;
+const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 #[cfg(test)]
 const DEFAULT_PLOT_WIDTH: u32 = 960;
 #[cfg(test)]
@@ -82,6 +83,15 @@ pub struct ProjectProbe {
     pub diagnostics: Vec<String>,
     pub scanned_entry_count: u64,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MeasurementSetUvRangeProbe {
+    pub min_meters: f64,
+    pub max_meters: f64,
+    pub min_kilolambda: f64,
+    pub max_kilolambda: f64,
+    pub row_count: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -2260,6 +2270,129 @@ fn ms_feed_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
     Ok(ids.into_iter().map(|id| format!("feed {id}")).collect())
 }
 
+#[uniffi::export]
+pub fn probe_measurement_set_uv_range(
+    dataset_path: String,
+) -> FrontendResult<MeasurementSetUvRangeProbe> {
+    probe_measurement_set_uv_range_inner(&dataset_path).map_err(|error| {
+        FrontendServiceError::Probe {
+            reason: format!("{dataset_path}: {error}"),
+        }
+    })
+}
+
+fn probe_measurement_set_uv_range_inner(
+    dataset_path: &str,
+) -> Result<MeasurementSetUvRangeProbe, String> {
+    let ms = MeasurementSet::open(Path::new(dataset_path)).map_err(|error| error.to_string())?;
+    let table = ms.main_table();
+    if table.row_count() == 0 {
+        return Err("MeasurementSet has no MAIN rows".to_string());
+    }
+    let ddid_to_spw = data_description_to_spw(&ms)?;
+    let spw_center_frequency_hz = spw_center_frequency_lookup(&ms)?;
+    let row_numbers = (0..table.row_count()).collect::<Vec<_>>();
+    let mut min_meters = f64::INFINITY;
+    let mut max_meters = f64::NEG_INFINITY;
+    let mut min_kilolambda = f64::INFINITY;
+    let mut max_kilolambda = f64::NEG_INFINITY;
+    let mut seen_rows = 0u64;
+
+    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
+        let uvw_values = selected_uvw_values(table, "UVW", row_chunk)?;
+        let ddids = selected_i32_values(table, "DATA_DESC_ID", row_chunk)?;
+        for (uvw, ddid) in uvw_values.into_iter().zip(ddids.into_iter()) {
+            let uv_meters = uvw[0].hypot(uvw[1]);
+            if !uv_meters.is_finite() {
+                continue;
+            }
+            min_meters = min_meters.min(uv_meters);
+            max_meters = max_meters.max(uv_meters);
+            if let Some(frequency_hz) = ddid_to_spw
+                .get(&ddid)
+                .and_then(|spw| spw_center_frequency_hz.get(spw))
+                .copied()
+                .filter(|frequency| *frequency > 0.0)
+            {
+                let kilo_lambda = uv_meters * frequency_hz / SPEED_OF_LIGHT_M_S / 1_000.0;
+                min_kilolambda = min_kilolambda.min(kilo_lambda);
+                max_kilolambda = max_kilolambda.max(kilo_lambda);
+            }
+            seen_rows += 1;
+        }
+    }
+
+    if seen_rows == 0 || !min_meters.is_finite() || !max_meters.is_finite() {
+        return Err("MeasurementSet UVW column did not contain finite UV distances".to_string());
+    }
+    if !min_kilolambda.is_finite() || !max_kilolambda.is_finite() {
+        min_kilolambda = 0.0;
+        max_kilolambda = 0.0;
+    }
+
+    Ok(MeasurementSetUvRangeProbe {
+        min_meters,
+        max_meters,
+        min_kilolambda,
+        max_kilolambda,
+        row_count: seen_rows,
+    })
+}
+
+fn spw_center_frequency_lookup(ms: &MeasurementSet) -> Result<BTreeMap<i32, f64>, String> {
+    let spectral_windows = ms.spectral_window().map_err(|error| error.to_string())?;
+    let mut lookup = BTreeMap::new();
+    for row in 0..spectral_windows.row_count() {
+        let chan_freq = spectral_windows.chan_freq(row).unwrap_or_default();
+        let center_hz = if chan_freq.is_empty() {
+            spectral_windows
+                .ref_frequency(row)
+                .map_err(|error| error.to_string())?
+        } else {
+            mean_or_zero(&chan_freq)
+        };
+        lookup.insert(row as i32, center_hz);
+    }
+    Ok(lookup)
+}
+
+fn selected_uvw_values(
+    table: &Table,
+    column: &'static str,
+    rows: &[usize],
+) -> Result<Vec<[f64; 3]>, String> {
+    table
+        .column_accessor(column)
+        .map_err(|error| error.to_string())?
+        .array_cells_owned(rows)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| {
+            let value = value
+                .ok_or_else(|| format!("plot service requires {column} data for row {row}"))?;
+            match value {
+                casa_types::ArrayValue::Float64(values) => {
+                    let slice = values.as_slice().ok_or_else(|| {
+                        format!("plot service requires contiguous {column} f64[3] cells")
+                    })?;
+                    if slice.len() != 3 {
+                        return Err(format!(
+                            "plot service requires {column} cells with shape [3], found [{}]",
+                            slice.len()
+                        ));
+                    }
+                    Ok([slice[0], slice[1], slice[2]])
+                }
+                other => Err(format!(
+                    "plot service requires DOUBLE array {column} cells, found {:?}",
+                    other.primitive_type()
+                )),
+            }
+        })
+        .collect()
+}
+
 fn ms_correlation_labels(ms: &MeasurementSet) -> Result<Vec<String>, String> {
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let mut labels = Vec::new();
@@ -2840,6 +2973,18 @@ mod tests {
                 .any(|subtable| subtable == "ANTENNA (required)")
         );
         assert!(probe.size_bytes > 0);
+    }
+
+    #[test]
+    fn probe_measurement_set_uv_range_reads_main_uvw() {
+        let (_dir, ms_path) = unpack_small_ms();
+
+        let probe =
+            probe_measurement_set_uv_range(ms_path.display().to_string()).expect("uv probe");
+
+        assert!(probe.row_count > 0);
+        assert!(probe.min_meters.is_finite());
+        assert!(probe.max_meters >= probe.min_meters);
     }
 
     #[test]

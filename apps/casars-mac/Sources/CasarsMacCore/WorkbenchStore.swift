@@ -247,6 +247,10 @@ public protocol MeasurementSetPlotClient {
     func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary
 }
 
+public protocol MeasurementSetMetadataClient {
+    func probeUVRange(datasetPath: String) throws -> MeasurementSetUVRangeSummary
+}
+
 public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
     public init() {}
 
@@ -296,6 +300,44 @@ public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
         summary.diagnostics.append(diagnostic)
         measurementSetPlotLogger.info("\(diagnostic, privacy: .public)")
         return summary
+    }
+}
+
+public struct UniFFIMeasurementSetMetadataClient: MeasurementSetMetadataClient {
+    public init() {}
+
+    public func probeUVRange(datasetPath: String) throws -> MeasurementSetUVRangeSummary {
+        let probe = try CasarsFrontendServices.probeMeasurementSetUvRange(datasetPath: datasetPath)
+        return MeasurementSetUVRangeSummary(
+            minMeters: probe.minMeters,
+            maxMeters: probe.maxMeters,
+            minKiloLambda: probe.minKilolambda,
+            maxKiloLambda: probe.maxKilolambda,
+            rowCount: probe.rowCount
+        )
+    }
+}
+
+public enum MeasurementSetUVRangeFormatter {
+    public static func formatMeters(_ value: Double) -> String {
+        format(value)
+    }
+
+    public static func formatKiloLambda(_ value: Double) -> String {
+        format(value)
+    }
+
+    private static func format(_ value: Double) -> String {
+        guard value.isFinite else {
+            return ""
+        }
+        if abs(value) >= 1_000 {
+            return String(format: "%.0f", value)
+        }
+        if abs(value) >= 10 {
+            return String(format: "%.2f", value)
+        }
+        return String(format: "%.3g", value)
     }
 }
 

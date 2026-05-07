@@ -168,6 +168,28 @@ public struct ProjectFixture: Codable, Equatable {
     }
 }
 
+public struct MeasurementSetUVRangeSummary: Codable, Equatable {
+    public var minMeters: Double
+    public var maxMeters: Double
+    public var minKiloLambda: Double
+    public var maxKiloLambda: Double
+    public var rowCount: UInt64
+
+    public init(
+        minMeters: Double,
+        maxMeters: Double,
+        minKiloLambda: Double,
+        maxKiloLambda: Double,
+        rowCount: UInt64
+    ) {
+        self.minMeters = minMeters
+        self.maxMeters = maxMeters
+        self.minKiloLambda = minKiloLambda
+        self.maxKiloLambda = maxKiloLambda
+        self.rowCount = rowCount
+    }
+}
+
 public enum ProjectSource: String, Codable, Equatable {
     case none
     case fixture

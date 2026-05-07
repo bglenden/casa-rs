@@ -735,6 +735,13 @@ struct MeasurementSetPlotPanel: View {
     @State private var maxPlotPointsText = ""
     @State private var avgChannelText = ""
     @State private var avgTimeText = ""
+    @State private var activeSelectionHelper: String?
+    @State private var uvRangeMinText = ""
+    @State private var uvRangeMaxText = ""
+    @State private var uvRangeUnit = "m"
+    @State private var uvRangeScanStatus: String?
+    @State private var isScanningUVRange = false
+    private let metadataClient: MeasurementSetMetadataClient = UniFFIMeasurementSetMetadataClient()
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -870,8 +877,9 @@ struct MeasurementSetPlotPanel: View {
                 ),
                 prompt: "CASA uvrange",
                 systemImage: "ruler",
-                help: "CASA UV range syntax, for example 0~1klambda. Leave empty for all baselines.",
-                helperOptions: [SelectionHelperOption(label: "All UV distances", value: "")]
+                help: "CASA UV range syntax: min~maxm, >100m, <2klambda, or 0~1klambda. Supported units are m and klambda here.",
+                helperOptions: [SelectionHelperOption(label: "All UV distances", value: "")],
+                validator: isValidUVRangeSelection
             )
 
             selectionTextField(
@@ -1100,26 +1108,247 @@ struct MeasurementSetPlotPanel: View {
                 .foregroundStyle(isValid ? Color.primary : Color.red)
                 .frame(width: 150)
                 .help(help)
-            Menu {
-                Button("Clear") {
-                    text.wrappedValue = ""
+            Button {
+                activeSelectionHelper = label
+            } label: {
+                Image(systemName: systemImage)
+                    .frame(width: 18)
+            }
+            .buttonStyle(.borderless)
+            .fixedSize()
+            .help("Open guided choices for \(label.lowercased()). \(help)")
+            .popover(isPresented: Binding(
+                get: { activeSelectionHelper == label },
+                set: { isPresented in
+                    if !isPresented && activeSelectionHelper == label {
+                        activeSelectionHelper = nil
+                    }
                 }
-                if !helperOptions.isEmpty {
-                    Divider()
+            )) {
+                selectionHelperPopover(
+                    label: label,
+                    text: text,
+                    help: help,
+                    helperOptions: helperOptions
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func selectionHelperPopover(
+        label: String,
+        text: Binding<String>,
+        help: String,
+        helperOptions: [SelectionHelperOption]
+    ) -> some View {
+        if label == "UV range" {
+            uvRangeHelperPopover(text: text, help: help)
+        } else if label == "Antenna" {
+            antennaHelperPopover(text: text, help: help)
+        } else {
+            defaultSelectionHelperPopover(text: text, help: help, helperOptions: helperOptions)
+        }
+    }
+
+    private func defaultSelectionHelperPopover(
+        text: Binding<String>,
+        help: String,
+        helperOptions: [SelectionHelperOption]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(help)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            Button("Clear") {
+                text.wrappedValue = ""
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
                     ForEach(helperOptions) { option in
                         Button(option.label) {
                             text.wrappedValue = option.value
                         }
                     }
                 }
-            } label: {
-                Image(systemName: systemImage)
-                    .frame(width: 18)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Open guided choices for \(label.lowercased()).")
+            .frame(maxHeight: 220)
         }
+        .padding(12)
+        .frame(width: 300, alignment: .leading)
+    }
+
+    private func uvRangeHelperPopover(text: Binding<String>, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(help)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Picker("Units", selection: $uvRangeUnit) {
+                Text("meters").tag("m")
+                Text("kilo-lambda").tag("klambda")
+            }
+            .pickerStyle(.segmented)
+            HStack {
+                TextField("min", text: $uvRangeMinText)
+                    .textFieldStyle(.roundedBorder)
+                Text("to")
+                    .foregroundStyle(.secondary)
+                TextField("max", text: $uvRangeMaxText)
+                    .textFieldStyle(.roundedBorder)
+            }
+            HStack {
+                Button("Apply") {
+                    applyUVRangeSelection(text: text)
+                }
+                Button("Clear") {
+                    uvRangeMinText = ""
+                    uvRangeMaxText = ""
+                    text.wrappedValue = ""
+                }
+                Spacer()
+                Button(isScanningUVRange ? "Scanning..." : "Scan MS") {
+                    scanUVRange(text: text)
+                }
+                .disabled(isScanningUVRange)
+            }
+            if let uvRangeScanStatus {
+                Text(uvRangeScanStatus)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(width: 340, alignment: .leading)
+        .onAppear {
+            populateUVRangeFields(from: text.wrappedValue)
+        }
+    }
+
+    private func antennaHelperPopover(text: Binding<String>, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(help)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Clear") {
+                    text.wrappedValue = ""
+                }
+                Button("All") {
+                    text.wrappedValue = ""
+                }
+                Spacer()
+                Text(text.wrappedValue.isEmpty ? "all antennas" : text.wrappedValue)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 82), spacing: 6)], alignment: .leading, spacing: 6) {
+                    ForEach(dataset.antennas, id: \.self) { antenna in
+                        Button(antenna) {
+                            toggleAntenna(antenna, text: text)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+            .frame(maxHeight: 220)
+        }
+        .padding(12)
+        .frame(width: 380, alignment: .leading)
+    }
+
+    private func applyUVRangeSelection(text: Binding<String>) {
+        let minValue = uvRangeMinText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let maxValue = uvRangeMaxText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (minValue.isEmpty || Double(minValue) != nil),
+              (maxValue.isEmpty || Double(maxValue) != nil) else {
+            uvRangeScanStatus = "Enter numeric UV bounds."
+            return
+        }
+        if minValue.isEmpty && maxValue.isEmpty {
+            text.wrappedValue = ""
+        } else if !minValue.isEmpty && !maxValue.isEmpty {
+            text.wrappedValue = "\(minValue)~\(maxValue)\(uvRangeUnit)"
+        } else if !minValue.isEmpty {
+            text.wrappedValue = ">\(minValue)\(uvRangeUnit)"
+        } else {
+            text.wrappedValue = "<\(maxValue)\(uvRangeUnit)"
+        }
+        uvRangeScanStatus = nil
+    }
+
+    private func populateUVRangeFields(from value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return
+        }
+        let unit = trimmed.lowercased().hasSuffix("klambda") ? "klambda" : "m"
+        uvRangeUnit = unit
+        var body = trimmed
+        if body.lowercased().hasSuffix("klambda") {
+            body.removeLast("klambda".count)
+        } else if body.lowercased().hasSuffix("m") {
+            body.removeLast()
+        }
+        let range = body.split(separator: "~", omittingEmptySubsequences: false)
+        if range.count == 2 {
+            uvRangeMinText = String(range[0])
+            uvRangeMaxText = String(range[1])
+        } else if body.hasPrefix(">") {
+            uvRangeMinText = String(body.drop(while: { $0 == ">" || $0 == "=" }))
+            uvRangeMaxText = ""
+        } else if body.hasPrefix("<") {
+            uvRangeMinText = ""
+            uvRangeMaxText = String(body.drop(while: { $0 == "<" || $0 == "=" }))
+        }
+    }
+
+    private func scanUVRange(text: Binding<String>) {
+        isScanningUVRange = true
+        uvRangeScanStatus = "Scanning MAIN.UVW..."
+        let datasetPath = dataset.path
+        let unit = uvRangeUnit
+        Task {
+            do {
+                let probe = try metadataClient.probeUVRange(datasetPath: datasetPath)
+                await MainActor.run {
+                    if unit == "klambda" {
+                        uvRangeMinText = MeasurementSetUVRangeFormatter.formatKiloLambda(probe.minKiloLambda)
+                        uvRangeMaxText = MeasurementSetUVRangeFormatter.formatKiloLambda(probe.maxKiloLambda)
+                    } else {
+                        uvRangeMinText = MeasurementSetUVRangeFormatter.formatMeters(probe.minMeters)
+                        uvRangeMaxText = MeasurementSetUVRangeFormatter.formatMeters(probe.maxMeters)
+                    }
+                    uvRangeScanStatus = "Scanned \(probe.rowCount) rows. Press Apply to use these bounds."
+                    isScanningUVRange = false
+                }
+            } catch {
+                await MainActor.run {
+                    uvRangeScanStatus = "UV scan failed: \(error.localizedDescription)"
+                    isScanningUVRange = false
+                }
+            }
+        }
+    }
+
+    private func toggleAntenna(_ antenna: String, text: Binding<String>) {
+        var tokens = text.wrappedValue
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if let index = tokens.firstIndex(of: antenna) {
+            tokens.remove(at: index)
+        } else {
+            tokens.append(antenna)
+        }
+        text.wrappedValue = tokens.joined(separator: ",")
     }
 
     private var selectedSpectralWindowChannelLimit: Int? {
@@ -1309,6 +1538,57 @@ struct MeasurementSetPlotPanel: View {
             }
             return false
         }
+    }
+
+    private func isValidUVRangeSelection(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return true
+        }
+        return trimmed
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .allSatisfy(isValidUVRangePart)
+    }
+
+    private func isValidUVRangePart(_ value: String) -> Bool {
+        for prefix in [">=", "<=", ">", "<"] where value.hasPrefix(prefix) {
+            return Self.parseUVBound(String(value.dropFirst(prefix.count))) != nil
+        }
+        let range = value.split(separator: "~", omittingEmptySubsequences: false)
+        if range.count == 2 {
+            guard let start = Self.parseUVBound(String(range[0])),
+                  let end = Self.parseUVBound(String(range[1])) else {
+                return false
+            }
+            if let startUnit = start.unit, let endUnit = end.unit, startUnit != endUnit {
+                return false
+            }
+            return start.value <= end.value
+        }
+        return Self.parseUVBound(value) != nil
+    }
+
+    private static func parseUVBound(_ value: String) -> (value: Double, unit: String?)? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        let splitIndex = trimmed.firstIndex { character in
+            !(character.isNumber || character == "." || character == "+" || character == "-")
+        } ?? trimmed.endIndex
+        let numberText = String(trimmed[..<splitIndex])
+        let unitText = trimmed[splitIndex...].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let number = Double(numberText), number.isFinite else {
+            return nil
+        }
+        if unitText.isEmpty {
+            return (number, nil)
+        }
+        guard ["m", "lambda", "klambda", "mlambda", "glambda"].contains(unitText) else {
+            return nil
+        }
+        return (number, unitText)
     }
 
     private func isValidIntentSelection(_ value: String) -> Bool {

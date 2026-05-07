@@ -1225,6 +1225,102 @@ public func FfiConverterTypeMeasurementSetPlotResult_lower(_ value: MeasurementS
 }
 
 
+public struct MeasurementSetUvRangeProbe {
+    public var minMeters: Double
+    public var maxMeters: Double
+    public var minKilolambda: Double
+    public var maxKilolambda: Double
+    public var rowCount: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(minMeters: Double, maxMeters: Double, minKilolambda: Double, maxKilolambda: Double, rowCount: UInt64) {
+        self.minMeters = minMeters
+        self.maxMeters = maxMeters
+        self.minKilolambda = minKilolambda
+        self.maxKilolambda = maxKilolambda
+        self.rowCount = rowCount
+    }
+}
+
+#if compiler(>=6)
+extension MeasurementSetUvRangeProbe: Sendable {}
+#endif
+
+
+extension MeasurementSetUvRangeProbe: Equatable, Hashable {
+    public static func ==(lhs: MeasurementSetUvRangeProbe, rhs: MeasurementSetUvRangeProbe) -> Bool {
+        if lhs.minMeters != rhs.minMeters {
+            return false
+        }
+        if lhs.maxMeters != rhs.maxMeters {
+            return false
+        }
+        if lhs.minKilolambda != rhs.minKilolambda {
+            return false
+        }
+        if lhs.maxKilolambda != rhs.maxKilolambda {
+            return false
+        }
+        if lhs.rowCount != rhs.rowCount {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(minMeters)
+        hasher.combine(maxMeters)
+        hasher.combine(minKilolambda)
+        hasher.combine(maxKilolambda)
+        hasher.combine(rowCount)
+    }
+}
+
+extension MeasurementSetUvRangeProbe: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMeasurementSetUvRangeProbe: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MeasurementSetUvRangeProbe {
+        return
+            try MeasurementSetUvRangeProbe(
+                minMeters: FfiConverterDouble.read(from: &buf),
+                maxMeters: FfiConverterDouble.read(from: &buf),
+                minKilolambda: FfiConverterDouble.read(from: &buf),
+                maxKilolambda: FfiConverterDouble.read(from: &buf),
+                rowCount: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MeasurementSetUvRangeProbe, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.minMeters, into: &buf)
+        FfiConverterDouble.write(value.maxMeters, into: &buf)
+        FfiConverterDouble.write(value.minKilolambda, into: &buf)
+        FfiConverterDouble.write(value.maxKilolambda, into: &buf)
+        FfiConverterUInt64.write(value.rowCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetUvRangeProbe_lift(_ buf: RustBuffer) throws -> MeasurementSetUvRangeProbe {
+    return try FfiConverterTypeMeasurementSetUvRangeProbe.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetUvRangeProbe_lower(_ value: MeasurementSetUvRangeProbe) -> RustBuffer {
+    return FfiConverterTypeMeasurementSetUvRangeProbe.lower(value)
+}
+
+
 public struct PlotAxisMetadata {
     public var id: String
     public var label: String
@@ -3422,6 +3518,13 @@ public func buildTableBrowserSnapshotJson(datasetPath: String, width: UInt16, he
     )
 })
 }
+public func probeMeasurementSetUvRange(datasetPath: String)throws  -> MeasurementSetUvRangeProbe  {
+    return try  FfiConverterTypeMeasurementSetUvRangeProbe_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_probe_measurement_set_uv_range(
+        FfiConverterString.lower(datasetPath),$0
+    )
+})
+}
 public func probePath(path: String)throws  -> DatasetProbe?  {
     return try  FfiConverterOptionTypeDatasetProbe.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_probe_path(
@@ -3459,6 +3562,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_table_browser_snapshot_json() != 45866) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_probe_measurement_set_uv_range() != 25491) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_probe_path() != 47483) {
