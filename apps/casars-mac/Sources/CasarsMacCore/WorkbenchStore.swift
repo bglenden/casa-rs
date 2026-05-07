@@ -178,7 +178,7 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
         dataColumn: String,
         width: UInt32 = 960,
         height: UInt32 = 600,
-        maxPlotPoints: UInt64 = 250_000
+        maxPlotPoints: UInt64 = WorkbenchState.defaultMeasurementSetPlotMaxPoints
     ) {
         self.datasetPath = datasetPath
         self.preset = preset
@@ -514,6 +514,14 @@ public final class WorkbenchStore: ObservableObject {
         state.measurementSetPlots[datasetID] = plotState
     }
 
+    public func setMeasurementSetPlotMaxPoints(_ maxPlotPoints: UInt64, datasetID: String) {
+        var plotState = measurementSetPlotState(for: datasetID)
+        plotState.maxPlotPoints = Self.clampedMeasurementSetPlotMaxPoints(maxPlotPoints)
+        plotState.lastError = nil
+        refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
+        state.measurementSetPlots[datasetID] = plotState
+    }
+
     public func runMeasurementSetPlot(datasetID: String) {
         guard !state.isDemoProject else {
             state.lastErrors.append("Real MeasurementSet plots are not available in the demo project")
@@ -543,7 +551,8 @@ public final class WorkbenchStore: ObservableObject {
             field: selectorToken(plotState.selectedField),
             spectralWindow: selectorToken(plotState.selectedSpectralWindow),
             correlation: selectorToken(plotState.selectedCorrelation),
-            dataColumn: plotState.dataColumn
+            dataColumn: plotState.dataColumn,
+            maxPlotPoints: plotState.maxPlotPoints
         )
         let tabID = dataset.explorerTabID
         let jobID = nextJobID(prefix: "ms-plot")
@@ -1374,6 +1383,7 @@ public final class WorkbenchStore: ObservableObject {
                 selectedSpectralWindow: nil,
                 selectedCorrelation: nil,
                 dataColumn: "DATA",
+                maxPlotPoints: WorkbenchState.defaultMeasurementSetPlotMaxPoints,
                 status: .idle,
                 lastError: nil,
                 result: nil
@@ -1438,8 +1448,15 @@ public final class WorkbenchStore: ObservableObject {
             "corr:\(plotState.selectedCorrelation ?? "all")",
             "data:\(plotState.dataColumn)",
             "size:960x600",
-            "maxPoints:250000"
+            "maxPoints:\(plotState.maxPlotPoints)"
         ].joined(separator: "|")
+    }
+
+    private static func clampedMeasurementSetPlotMaxPoints(_ value: UInt64) -> UInt64 {
+        min(
+            WorkbenchState.maximumMeasurementSetPlotMaxPoints,
+            max(WorkbenchState.minimumMeasurementSetPlotMaxPoints, value)
+        )
     }
 
     private func defaultDirtyImagingParameters(for dataset: DatasetSummary) -> DirtyImagingTaskParameters {

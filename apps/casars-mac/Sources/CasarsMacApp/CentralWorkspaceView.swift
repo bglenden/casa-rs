@@ -836,6 +836,29 @@ struct MeasurementSetPlotPanel: View {
             .disabled(plotState.preset == .uvCoverage)
             .accessibilityIdentifier("msPlot.dataColumn.\(dataset.id)")
 
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Max plotted points")
+                    Spacer()
+                    Text(Self.formatPointBudget(plotState.maxPlotPoints))
+                        .foregroundStyle(.secondary)
+                }
+                Stepper(
+                    "Max plotted points",
+                    value: Binding(
+                        get: { Int(plotState.maxPlotPoints) },
+                        set: { store.setMeasurementSetPlotMaxPoints(UInt64($0), datasetID: dataset.id) }
+                    ),
+                    in: Int(WorkbenchState.minimumMeasurementSetPlotMaxPoints)...Int(WorkbenchState.maximumMeasurementSetPlotMaxPoints),
+                    step: 25_000
+                )
+                .labelsHidden()
+                .accessibilityIdentifier("msPlot.maxPlotPoints.\(dataset.id)")
+                Text("Display budget only; averaging controls will be added separately.")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Divider()
 
             plotMetadata
@@ -962,6 +985,16 @@ struct MeasurementSetPlotPanel: View {
             .disabled(plotCharacterSizeOverride == nil)
             .accessibilityIdentifier("msPlot.characterSizeReset.\(dataset.id)")
         }
+    }
+
+    private static func formatPointBudget(_ points: UInt64) -> String {
+        if points >= 1_000_000 {
+            return String(format: "%.2gM", Double(points) / 1_000_000.0)
+        }
+        if points >= 1_000 {
+            return String(format: "%.0fk", Double(points) / 1_000.0)
+        }
+        return "\(points)"
     }
 }
 

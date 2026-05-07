@@ -1219,6 +1219,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(plotClient.requests.last?.preset, .uvCoverage)
         XCTAssertNil(plotClient.requests.last?.field)
         XCTAssertNil(plotClient.requests.last?.spectralWindow)
+        XCTAssertEqual(plotClient.requests.last?.maxPlotPoints, WorkbenchState.defaultMeasurementSetPlotMaxPoints)
         XCTAssertEqual(plotClient.requests.count, 1)
 
         store.setMeasurementSetPlotPreset(.amplitudeVsUvDistance, datasetID: probedDataset.id)
@@ -1256,6 +1257,29 @@ final class WorkbenchStoreTests: XCTestCase {
         store.runMeasurementSetPlot(datasetID: probedDataset.id)
 
         XCTAssertEqual(plotClient.requests.count, 2)
+
+        store.setMeasurementSetPlotMaxPoints(100_000, datasetID: probedDataset.id)
+
+        snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.maxPlotPoints, 100_000)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.status, .idle)
+        XCTAssertNil(snapshot.measurementSetPlots[probedDataset.id]?.resultPreset)
+
+        store.runMeasurementSetPlot(datasetID: probedDataset.id)
+        waitFor("budgeted plot job to finish") {
+            store.debugSnapshot().measurementSetPlots[probedDataset.id]?.status == .ready
+        }
+
+        XCTAssertEqual(plotClient.requests.count, 3)
+        XCTAssertEqual(plotClient.requests.last?.maxPlotPoints, 100_000)
+
+        store.setMeasurementSetPlotMaxPoints(1, datasetID: probedDataset.id)
+
+        snapshot = store.debugSnapshot()
+        XCTAssertEqual(
+            snapshot.measurementSetPlots[probedDataset.id]?.maxPlotPoints,
+            WorkbenchState.minimumMeasurementSetPlotMaxPoints
+        )
     }
 
     func testMeasurementSetPlotJobDoesNotBlockUnrelatedWorkbenchActions() {

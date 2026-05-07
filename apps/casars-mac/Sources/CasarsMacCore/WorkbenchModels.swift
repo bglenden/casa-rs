@@ -664,6 +664,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
     public var selectedSpectralWindow: String?
     public var selectedCorrelation: String?
     public var dataColumn: String
+    public var maxPlotPoints: UInt64
     public var status: MeasurementSetPlotStatus
     public var lastError: String?
     public var result: MeasurementSetPlotResultSummary?
@@ -675,6 +676,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         selectedSpectralWindow: String?,
         selectedCorrelation: String?,
         dataColumn: String,
+        maxPlotPoints: UInt64 = WorkbenchState.defaultMeasurementSetPlotMaxPoints,
         status: MeasurementSetPlotStatus,
         lastError: String?,
         result: MeasurementSetPlotResultSummary?
@@ -685,6 +687,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         self.selectedSpectralWindow = selectedSpectralWindow
         self.selectedCorrelation = selectedCorrelation
         self.dataColumn = dataColumn
+        self.maxPlotPoints = maxPlotPoints
         self.status = status
         self.lastError = lastError
         self.result = result
@@ -698,6 +701,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
             selectedSpectralWindow: nil,
             selectedCorrelation: nil,
             dataColumn: dataset.dataColumns.first ?? "DATA",
+            maxPlotPoints: WorkbenchState.defaultMeasurementSetPlotMaxPoints,
             status: .idle,
             lastError: nil,
             result: nil
@@ -878,6 +882,7 @@ public extension MeasurementSetPlotResultSummary {
     func matches(plotState: MeasurementSetExplorerPlotState) -> Bool {
         preset == plotState.preset
             && Self.canonicalDataColumn(dataColumn) == Self.canonicalDataColumn(plotState.dataColumn)
+            && requestedMaxPoints == plotState.maxPlotPoints
     }
 
     private static func canonicalDataColumn(_ dataColumn: String) -> String {
@@ -914,6 +919,9 @@ public struct WorkbenchState: Codable, Equatable {
     public static let defaultInterfaceFontSize = 13.0
     public static let minimumInterfaceFontSize = 10.0
     public static let maximumInterfaceFontSize = 22.0
+    public static let defaultMeasurementSetPlotMaxPoints: UInt64 = 250_000
+    public static let minimumMeasurementSetPlotMaxPoints: UInt64 = 1_000
+    public static let maximumMeasurementSetPlotMaxPoints: UInt64 = 5_000_000
 
     public var project: ProjectFixture
     public var dockMode: DockMode
@@ -1239,6 +1247,7 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
     public var selectedSpectralWindow: String?
     public var selectedCorrelation: String?
     public var dataColumn: String
+    public var maxPlotPoints: UInt64
     public var lastError: String?
     public var resultPreset: MeasurementSetExplorerPlotPreset?
     public var title: String?
@@ -1260,6 +1269,7 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
         selectedSpectralWindow = plotState.selectedSpectralWindow
         selectedCorrelation = plotState.selectedCorrelation
         dataColumn = plotState.dataColumn
+        maxPlotPoints = plotState.maxPlotPoints
         lastError = plotState.lastError
         let visibleResult = plotState.result?.matches(plotState: plotState) == true ? plotState.result : nil
         resultPreset = visibleResult?.preset
