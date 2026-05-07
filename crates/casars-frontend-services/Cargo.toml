@@ -23,6 +23,7 @@ casa-types = { path = "../casa-types" }
 casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
 casars-tablebrowser-protocol = { path = "../casars-tablebrowser-protocol" }
 image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror.workspace = true
 uniffi = "0.29.5"

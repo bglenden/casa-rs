@@ -3567,6 +3567,13 @@ fileprivate struct FfiConverterSequenceTypePlotSeriesMetadata: FfiConverterRustB
         return seq
     }
 }
+public func buildImageExplorerSnapshotFromRequestJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_build_image_explorer_snapshot_from_request_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
 public func buildImageExplorerSnapshotJson(datasetPath: String, width: UInt16, height: UInt16, inspectorHeight: UInt16, planePixelWidth: UInt16, planePixelHeight: UInt16, activeView: String?)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_build_image_explorer_snapshot_json(
@@ -3641,6 +3648,9 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_casars_frontend_services_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_build_image_explorer_snapshot_from_request_json() != 58871) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_image_explorer_snapshot_json() != 45506) {
         return InitializationResult.apiChecksumMismatch

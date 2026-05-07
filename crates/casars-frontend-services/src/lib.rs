@@ -26,7 +26,12 @@ use casa_types::measures::direction::{
     format_right_ascension_labeled,
 };
 use casars_imagebrowser_protocol::ImageBrowserViewport;
+use casars_imagebrowser_protocol::{
+    ImageBrowserCommand, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserPreviewRequest,
+    ImagePlaneContentMode,
+};
 use casars_tablebrowser_protocol::{BrowserView, BrowserViewport};
+use serde::Deserialize;
 use thiserror::Error;
 
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
@@ -39,6 +44,67 @@ const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 const DEFAULT_PLOT_WIDTH: u32 = 960;
 #[cfg(test)]
 const DEFAULT_PLOT_HEIGHT: u32 = 600;
+
+#[derive(Debug, Clone, Deserialize)]
+struct ImageExplorerSnapshotRequest {
+    dataset_path: String,
+    #[serde(default = "default_image_browser_width")]
+    width: u16,
+    #[serde(default = "default_image_browser_height")]
+    height: u16,
+    #[serde(default = "default_image_browser_inspector_height")]
+    inspector_height: u16,
+    #[serde(default = "default_image_browser_plane_pixel_width")]
+    plane_pixel_width: u16,
+    #[serde(default = "default_image_browser_plane_pixel_height")]
+    plane_pixel_height: u16,
+    #[serde(default)]
+    active_view: Option<String>,
+    #[serde(default)]
+    focus: Option<String>,
+    #[serde(default)]
+    plane_content_mode: Option<String>,
+    #[serde(default)]
+    parameters: ImageBrowserParameters,
+    #[serde(default)]
+    cursor_x: Option<u64>,
+    #[serde(default)]
+    cursor_y: Option<u64>,
+    #[serde(default)]
+    selected_profile_axis: Option<u64>,
+    #[serde(default)]
+    non_display_indices: Vec<u64>,
+    #[serde(default)]
+    commands: Vec<ImageBrowserCommand>,
+    #[serde(default)]
+    transient_commands: Vec<ImageBrowserCommand>,
+    #[serde(default = "default_include_image_profile")]
+    include_profile: bool,
+}
+
+const fn default_image_browser_width() -> u16 {
+    120
+}
+
+const fn default_image_browser_height() -> u16 {
+    36
+}
+
+const fn default_image_browser_inspector_height() -> u16 {
+    10
+}
+
+const fn default_image_browser_plane_pixel_width() -> u16 {
+    512
+}
+
+const fn default_image_browser_plane_pixel_height() -> u16 {
+    384
+}
+
+const fn default_include_image_profile() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum DatasetKind {
@@ -908,6 +974,72 @@ pub fn build_image_explorer_snapshot_json(
 }
 
 #[uniffi::export]
+pub fn build_image_explorer_snapshot_from_request_json(
+    request_json: String,
+) -> FrontendResult<String> {
+    let request: ImageExplorerSnapshotRequest =
+        serde_json::from_str(&request_json).map_err(|error| {
+            FrontendServiceError::ImageExplorer {
+                reason: format!("decode image explorer snapshot request: {error}"),
+            }
+        })?;
+    let dataset_path = PathBuf::from(&request.dataset_path);
+    if !dataset_path.exists() {
+        return Err(FrontendServiceError::InvalidPath {
+            reason: format!("{} does not exist", dataset_path.display()),
+        });
+    }
+    let viewport = ImageBrowserViewport::with_plane_pixels(
+        request.width.max(20),
+        request.height.max(8),
+        request.inspector_height,
+        request.plane_pixel_width,
+        request.plane_pixel_height,
+    );
+    let mut session = ImageBrowserSession::open_with_parameters(
+        &dataset_path,
+        viewport,
+        Some(&request.parameters),
+    )
+    .map_err(|error| FrontendServiceError::ImageExplorer {
+        reason: format!("open {}: {error}", dataset_path.display()),
+    })?;
+    apply_image_explorer_snapshot_request(&mut session, &request).map_err(|error| {
+        FrontendServiceError::ImageExplorer {
+            reason: format!("snapshot {}: {error}", dataset_path.display()),
+        }
+    })?;
+    let mode = parse_image_plane_content_mode(request.plane_content_mode.as_deref())
+        .map_err(|reason| FrontendServiceError::ImageExplorer { reason })?;
+    let snapshot = if !request.non_display_indices.is_empty() {
+        session
+            .preview_occurrence(&ImageBrowserPreviewRequest {
+                viewport,
+                parameters: request.parameters.clone(),
+                plane_content_mode: mode,
+                non_display_indices: request
+                    .non_display_indices
+                    .iter()
+                    .copied()
+                    .map(|index| index as usize)
+                    .collect(),
+                include_profile: request.include_profile,
+            })
+            .map(|payload| *payload.snapshot)
+    } else if request.include_profile {
+        session.snapshot()
+    } else {
+        session.handle_command(ImageBrowserCommand::GetSnapshot)
+    }
+    .map_err(|error| FrontendServiceError::ImageExplorer {
+        reason: format!("snapshot {}: {error}", dataset_path.display()),
+    })?;
+    serde_json::to_string(&snapshot).map_err(|error| FrontendServiceError::ImageExplorer {
+        reason: format!("encode snapshot {}: {error}", dataset_path.display()),
+    })
+}
+
+#[uniffi::export]
 pub fn build_table_browser_snapshot_json(
     dataset_path: String,
     width: u16,
@@ -971,6 +1103,64 @@ fn image_snapshot_for_requested_view(
         )?;
     }
     session.snapshot()
+}
+
+fn apply_image_explorer_snapshot_request(
+    session: &mut ImageBrowserSession,
+    request: &ImageExplorerSnapshotRequest,
+) -> Result<(), casa_images::ImageError> {
+    let mode = parse_image_plane_content_mode(request.plane_content_mode.as_deref())
+        .map_err(casa_images::ImageError::InvalidMetadata)?;
+    session.handle_command(ImageBrowserCommand::SetPlaneContentMode { mode })?;
+    if let Some(focus) = parse_image_browser_focus(request.focus.as_deref())
+        .map_err(casa_images::ImageError::InvalidMetadata)?
+    {
+        session.handle_command(ImageBrowserCommand::SetFocus { focus })?;
+    }
+    if let (Some(x), Some(y)) = (request.cursor_x, request.cursor_y) {
+        session.handle_command(ImageBrowserCommand::SetCursor {
+            x: x as usize,
+            y: y as usize,
+        })?;
+    }
+    if let Some(axis) = request.selected_profile_axis {
+        session.handle_command(ImageBrowserCommand::SetSelectedNonDisplayAxis {
+            axis: axis as usize,
+        })?;
+    }
+    for command in request
+        .commands
+        .iter()
+        .chain(request.transient_commands.iter())
+        .cloned()
+    {
+        session.handle_command(command)?;
+    }
+    let _ = image_snapshot_for_requested_view(session, request.active_view.as_deref())?;
+    Ok(())
+}
+
+fn parse_image_browser_focus(value: Option<&str>) -> Result<Option<ImageBrowserFocus>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" => Ok(None),
+        "content" => Ok(Some(ImageBrowserFocus::Content)),
+        "inspector" => Ok(Some(ImageBrowserFocus::Inspector)),
+        other => Err(format!("unknown image browser focus {other:?}")),
+    }
+}
+
+fn parse_image_plane_content_mode(value: Option<&str>) -> Result<ImagePlaneContentMode, String> {
+    let Some(value) = value else {
+        return Ok(ImagePlaneContentMode::Raster);
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "raster" => Ok(ImagePlaneContentMode::Raster),
+        "spreadsheet" => Ok(ImagePlaneContentMode::Spreadsheet),
+        other => Err(format!("unknown image plane content mode {other:?}")),
+    }
 }
 
 fn serde_plain_view_name(label: &str) -> String {
@@ -3433,6 +3623,41 @@ mod tests {
             serde_json::from_str(&snapshot_json).expect("snapshot json");
         assert_eq!(snapshot["active_view"], "spectrum");
         assert!(snapshot["profile"]["samples"].as_array().is_some());
+
+        let request_json = serde_json::json!({
+            "dataset_path": path.display().to_string(),
+            "width": 100,
+            "height": 32,
+            "inspector_height": 8,
+            "plane_pixel_width": 128,
+            "plane_pixel_height": 96,
+            "active_view": "plane",
+            "focus": "inspector",
+            "plane_content_mode": "spreadsheet",
+            "parameters": {
+                "blc": "0,0,0",
+                "trc": "3,3,0",
+                "inc": "1,1,1",
+                "stretch": "percentile99",
+                "autoscale": "per_plane",
+                "clip_low": "",
+                "clip_high": ""
+            },
+            "cursor_x": 1,
+            "cursor_y": 1,
+            "selected_profile_axis": 0,
+            "non_display_indices": [],
+            "include_profile": true
+        })
+        .to_string();
+        let requested_snapshot_json = build_image_explorer_snapshot_from_request_json(request_json)
+            .expect("image explorer requested snapshot");
+        let requested_snapshot: serde_json::Value =
+            serde_json::from_str(&requested_snapshot_json).expect("requested snapshot json");
+        assert_eq!(requested_snapshot["active_view"], "plane");
+        assert_eq!(requested_snapshot["focus"], "inspector");
+        assert_eq!(requested_snapshot["plane_cursor"]["pixel_x"], 1);
+        assert_eq!(requested_snapshot["plane_cursor"]["pixel_y"], 1);
     }
 
     #[test]

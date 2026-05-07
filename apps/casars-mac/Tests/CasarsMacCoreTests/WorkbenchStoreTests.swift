@@ -562,6 +562,26 @@ final class WorkbenchStoreTests: XCTestCase {
         store.setImageExplorerView("spectrum", datasetID: imageDataset.id)
         XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.selectedView, "spectrum")
         XCTAssertEqual(imageClient.requests.map(\.selectedView), ["plane", "spectrum"])
+
+        store.setImageExplorerFocus("inspector", datasetID: imageDataset.id)
+        store.setImageExplorerPlaneContentMode("spreadsheet", datasetID: imageDataset.id)
+        store.setImageExplorerCursor(x: 2, y: 3, datasetID: imageDataset.id)
+        store.setImageExplorerParameters(
+            ImageExplorerParameters(blc: "0,0", trc: "3,3", inc: "1,1", stretch: "minmax"),
+            datasetID: imageDataset.id
+        )
+        XCTAssertEqual(imageClient.requests.last?.focus, "inspector")
+        XCTAssertEqual(imageClient.requests.last?.planeContentMode, "spreadsheet")
+        XCTAssertEqual(imageClient.requests.last?.cursorX, 2)
+        XCTAssertEqual(imageClient.requests.last?.cursorY, 3)
+        XCTAssertEqual(imageClient.requests.last?.parameters.stretch, "minmax")
+
+        store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: imageDataset.id)
+        store.appendImageExplorerRegionCommand(.appendRegionVertex(x: 2, y: 3), datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.commands.map(\.command), ["start_region_shape", "append_region_vertex"])
+        store.runImageExplorerCommandOnce(.setDefaultMask(name: "mask0"), datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.transientCommands.map(\.command), ["set_default_mask"])
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.transientCommands, [])
     }
 
     func testRealTableBrowserUsesRustBackedSnapshotState() throws {
@@ -1708,6 +1728,13 @@ private final class StubImageExplorerClient: ImageExplorerClient {
     struct Request {
         var datasetPath: String
         var selectedView: String
+        var focus: String
+        var planeContentMode: String
+        var parameters: ImageExplorerParameters
+        var cursorX: Int?
+        var cursorY: Int?
+        var commands: [ImageExplorerCommand]
+        var transientCommands: [ImageExplorerCommand]
     }
 
     private(set) var paths: [String] = []
@@ -1718,9 +1745,21 @@ private final class StubImageExplorerClient: ImageExplorerClient {
         self.snapshot = snapshot
     }
 
-    func buildSnapshot(datasetPath: String, selectedView: String) throws -> ImageExplorerSnapshot {
-        paths.append(datasetPath)
-        requests.append(Request(datasetPath: datasetPath, selectedView: selectedView))
+    func buildSnapshot(request: ImageExplorerSnapshotRequest) throws -> ImageExplorerSnapshot {
+        paths.append(request.datasetPath)
+        requests.append(
+            Request(
+                datasetPath: request.datasetPath,
+                selectedView: request.selectedView,
+                focus: request.focus,
+                planeContentMode: request.planeContentMode,
+                parameters: request.parameters,
+                cursorX: request.cursorX,
+                cursorY: request.cursorY,
+                commands: request.commands,
+                transientCommands: request.transientCommands
+            )
+        )
         return snapshot
     }
 }

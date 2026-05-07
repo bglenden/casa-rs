@@ -3520,15 +3520,19 @@ struct AveragedPanelAccumulator {
     contributing_rows: std::collections::BTreeSet<usize>,
 }
 
+struct VisibilityPredecimationContext<'a> {
+    data_description: &'a MsDataDescription<'a>,
+    spectral_window: &'a crate::subtables::spectral_window::MsSpectralWindow<'a>,
+    polarization: &'a MsPolarization<'a>,
+    requested_corr_codes: Option<&'a [i32]>,
+}
+
 fn predecimate_visibility_rows(
     ms: &MeasurementSet,
     row_numbers: Vec<usize>,
     spec: &MsPlotSpec,
     point_budget: &PointBudget,
-    data_description: &MsDataDescription<'_>,
-    spectral_window: &crate::subtables::spectral_window::MsSpectralWindow<'_>,
-    polarization: &MsPolarization<'_>,
-    requested_corr_codes: Option<&[i32]>,
+    context: VisibilityPredecimationContext<'_>,
 ) -> Result<Vec<usize>, String> {
     if !point_budget.allow_predecimation || row_numbers.len() <= 1 {
         return Ok(row_numbers);
@@ -3544,15 +3548,17 @@ fn predecimate_visibility_rows(
         .into_iter()
         .next()
         .ok_or_else(|| format!("msexplore requires DATA_DESC_ID data for row {first_row}"))?;
-    if ddid < 0 || (ddid as usize) >= data_description.row_count() {
+    if ddid < 0 || (ddid as usize) >= context.data_description.row_count() {
         return Ok(row_numbers);
     }
     let ddid = ddid as usize;
-    let spw_id = data_description
+    let spw_id = context
+        .data_description
         .spectral_window_id(ddid)
         .map_err(|error| error.to_string())?;
-    let chan_count = if spw_id >= 0 && (spw_id as usize) < spectral_window.row_count() {
-        let num_chan = spectral_window
+    let chan_count = if spw_id >= 0 && (spw_id as usize) < context.spectral_window.row_count() {
+        let num_chan = context
+            .spectral_window
             .num_chan(spw_id as usize)
             .map_err(|error| error.to_string())?;
         usize::try_from(num_chan).unwrap_or(0)
@@ -3562,30 +3568,34 @@ fn predecimate_visibility_rows(
     if chan_count == 0 {
         return Ok(row_numbers);
     }
-    let pol_id = data_description
+    let pol_id = context
+        .data_description
         .polarization_id(ddid)
         .map_err(|error| error.to_string())?;
-    let (corr_count, corr_types) = if pol_id >= 0 && (pol_id as usize) < polarization.row_count() {
-        let pol_id = pol_id as usize;
-        let corr_types = polarization
-            .corr_type(pol_id)
-            .map_err(|error| error.to_string())?;
-        let num_corr = polarization
-            .num_corr(pol_id)
-            .map_err(|error| error.to_string())?;
-        let corr_count = usize::try_from(num_corr)
-            .ok()
-            .filter(|count| *count > 0)
-            .unwrap_or(corr_types.len());
-        (corr_count, corr_types)
-    } else {
-        (0, Vec::new())
-    };
+    let (corr_count, corr_types) =
+        if pol_id >= 0 && (pol_id as usize) < context.polarization.row_count() {
+            let pol_id = pol_id as usize;
+            let corr_types = context
+                .polarization
+                .corr_type(pol_id)
+                .map_err(|error| error.to_string())?;
+            let num_corr = context
+                .polarization
+                .num_corr(pol_id)
+                .map_err(|error| error.to_string())?;
+            let corr_count = usize::try_from(num_corr)
+                .ok()
+                .filter(|count| *count > 0)
+                .unwrap_or(corr_types.len());
+            (corr_count, corr_types)
+        } else {
+            (0, Vec::new())
+        };
     if corr_count == 0 {
         return Ok(row_numbers);
     }
     let selected_correlations =
-        select_correlation_slots(corr_count, &corr_types, requested_corr_codes);
+        select_correlation_slots(corr_count, &corr_types, context.requested_corr_codes);
     if selected_correlations.is_empty() {
         return Ok(row_numbers);
     }
@@ -3702,10 +3712,12 @@ fn build_generic_visibility_scatter(
         row_numbers,
         spec,
         point_budget,
-        &data_description,
-        &spectral_window,
-        &polarization,
-        requested_corr_codes.as_deref(),
+        VisibilityPredecimationContext {
+            data_description: &data_description,
+            spectral_window: &spectral_window,
+            polarization: &polarization,
+            requested_corr_codes: requested_corr_codes.as_deref(),
+        },
     )?;
     let sampled_row_count = row_numbers.len();
     if timing_enabled {

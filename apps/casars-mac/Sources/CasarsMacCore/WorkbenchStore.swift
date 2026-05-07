@@ -352,22 +352,16 @@ public enum MeasurementSetUVRangeFormatter {
 }
 
 public protocol ImageExplorerClient {
-    func buildSnapshot(datasetPath: String, selectedView: String) throws -> ImageExplorerSnapshot
+    func buildSnapshot(request: ImageExplorerSnapshotRequest) throws -> ImageExplorerSnapshot
 }
 
 public struct UniFFIImageExplorerClient: ImageExplorerClient {
     public init() {}
 
-    public func buildSnapshot(datasetPath: String, selectedView: String) throws -> ImageExplorerSnapshot {
-        let json = try CasarsFrontendServices.buildImageExplorerSnapshotJson(
-            datasetPath: datasetPath,
-            width: 120,
-            height: 36,
-            inspectorHeight: 10,
-            planePixelWidth: 512,
-            planePixelHeight: 384,
-            activeView: selectedView
-        )
+    public func buildSnapshot(request: ImageExplorerSnapshotRequest) throws -> ImageExplorerSnapshot {
+        let requestData = try JSONEncoder().encode(request)
+        let requestJSON = String(decoding: requestData, as: UTF8.self)
+        let json = try CasarsFrontendServices.buildImageExplorerSnapshotFromRequestJson(requestJson: requestJSON)
         return try JSONDecoder().decode(ImageExplorerSnapshot.self, from: Data(json.utf8))
     }
 }
@@ -1212,24 +1206,33 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Dataset \(dataset.name) is not an image")
             return
         }
-        let selectedView = state.imageExplorers[datasetID]?.selectedView ?? "plane"
+        let explorerState = state.imageExplorers[datasetID] ?? ImageExplorerSessionState(
+            datasetID: datasetID,
+            selectedView: "plane",
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
         do {
-            let snapshot = try imageExplorerClient.buildSnapshot(datasetPath: dataset.path, selectedView: selectedView)
-            state.imageExplorers[datasetID] = ImageExplorerSessionState(
-                datasetID: datasetID,
-                selectedView: selectedView,
-                status: .ready,
-                lastError: nil,
-                snapshot: snapshot
-            )
+            let snapshot = try imageExplorerClient.buildSnapshot(request: explorerState.snapshotRequest(datasetPath: dataset.path))
+            var nextState = explorerState
+            nextState.status = .ready
+            nextState.lastError = nil
+            nextState.snapshot = snapshot
+            nextState.cursorX = snapshot.planeCursor?.pixelX ?? nextState.cursorX
+            nextState.cursorY = snapshot.planeCursor?.pixelY ?? nextState.cursorY
+            nextState.nonDisplayIndices = snapshot.nonDisplayAxes?.map(\.index) ?? nextState.nonDisplayIndices
+            if let parameters = snapshot.parameters {
+                nextState.parameters = parameters
+            }
+            nextState.transientCommands = []
+            state.imageExplorers[datasetID] = nextState
         } catch {
-            state.imageExplorers[datasetID] = ImageExplorerSessionState(
-                datasetID: datasetID,
-                selectedView: selectedView,
-                status: .failed,
-                lastError: "\(error)",
-                snapshot: nil
-            )
+            var failedState = explorerState
+            failedState.status = .failed
+            failedState.lastError = "\(error)"
+            failedState.snapshot = nil
+            state.imageExplorers[datasetID] = failedState
             state.lastErrors.append("Open image explorer for \(dataset.name): \(error)")
         }
     }
@@ -1266,14 +1269,83 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     public func setImageExplorerView(_ view: String, datasetID: String) {
-        var explorerState = state.imageExplorers[datasetID] ?? ImageExplorerSessionState(
-            datasetID: datasetID,
-            selectedView: "plane",
-            status: .idle,
-            lastError: nil,
-            snapshot: nil
-        )
+        var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.selectedView = view
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerFocus(_ focus: String, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.focus = focus
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerPlaneContentMode(_ mode: String, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.planeContentMode = mode
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerParameters(_ parameters: ImageExplorerParameters, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.parameters = parameters
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerCursor(x: Int?, y: Int?, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.cursorX = x
+        explorerState.cursorY = y
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func stepImageExplorerNonDisplayAxis(axis: Int, delta: Int, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        var indices = explorerState.nonDisplayIndices
+        let snapshotAxis = explorerState.snapshot?.nonDisplayAxes?.first { $0.axis == axis }
+        let currentIndex = snapshotAxis?.index ?? indices[safe: axis] ?? 0
+        let length = max(snapshotAxis?.length ?? currentIndex + 1, 1)
+        let nextIndex = min(max(currentIndex + delta, 0), length - 1)
+        while indices.count <= axis {
+            indices.append(0)
+        }
+        indices[axis] = nextIndex
+        explorerState.nonDisplayIndices = indices
+        explorerState.selectedProfileAxis = axis
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerSelectedProfileAxis(_ axis: Int, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.selectedProfileAxis = axis
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func appendImageExplorerRegionCommand(_ command: ImageExplorerCommand, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.regionCommands.append(command)
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func runImageExplorerCommandOnce(_ command: ImageExplorerCommand, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.transientCommands.append(command)
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func clearImageExplorerRegionCommands(datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.regionCommands = []
+        explorerState.transientCommands = [.clearRegion]
         state.imageExplorers[datasetID] = explorerState
         refreshImageExplorer(datasetID: datasetID)
     }
@@ -1613,6 +1685,16 @@ public final class WorkbenchStore: ObservableObject {
                 kind: .datasetExplorer,
                 datasetID: dataset.id
             )
+        )
+    }
+
+    private func imageExplorerState(datasetID: String) -> ImageExplorerSessionState {
+        state.imageExplorers[datasetID] ?? ImageExplorerSessionState(
+            datasetID: datasetID,
+            selectedView: "plane",
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
         )
     }
 
@@ -2117,6 +2199,13 @@ public final class WorkbenchStore: ObservableObject {
             return String(remainder.prefix { $0.isNumber })
         }
         return value
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else { return nil }
+        return self[index]
     }
 }
 

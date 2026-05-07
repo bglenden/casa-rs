@@ -815,13 +815,177 @@ public enum ExplorerSessionStatus: String, Codable, Equatable {
     case failed
 }
 
+public struct ImageExplorerParameters: Codable, Equatable {
+    public var blc: String
+    public var trc: String
+    public var inc: String
+    public var stretch: String
+    public var autoscale: String
+    public var clipLow: String
+    public var clipHigh: String
+
+    public init(
+        blc: String = "",
+        trc: String = "",
+        inc: String = "",
+        stretch: String = "percentile99",
+        autoscale: String = "per_plane",
+        clipLow: String = "",
+        clipHigh: String = ""
+    ) {
+        self.blc = blc
+        self.trc = trc
+        self.inc = inc
+        self.stretch = stretch
+        self.autoscale = autoscale
+        self.clipLow = clipLow
+        self.clipHigh = clipHigh
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case blc
+        case trc
+        case inc
+        case stretch
+        case autoscale
+        case clipLow = "clip_low"
+        case clipHigh = "clip_high"
+    }
+}
+
+public struct ImageExplorerSnapshotRequest: Codable, Equatable {
+    public var datasetPath: String
+    public var selectedView: String
+    public var focus: String
+    public var planeContentMode: String
+    public var parameters: ImageExplorerParameters
+    public var cursorX: Int?
+    public var cursorY: Int?
+    public var selectedProfileAxis: Int?
+    public var nonDisplayIndices: [Int]
+    public var commands: [ImageExplorerCommand]
+    public var transientCommands: [ImageExplorerCommand]
+    public var includeProfile: Bool
+
+    public init(
+        datasetPath: String,
+        selectedView: String = "plane",
+        focus: String = "content",
+        planeContentMode: String = "raster",
+        parameters: ImageExplorerParameters = ImageExplorerParameters(),
+        cursorX: Int? = nil,
+        cursorY: Int? = nil,
+        selectedProfileAxis: Int? = nil,
+        nonDisplayIndices: [Int] = [],
+        commands: [ImageExplorerCommand] = [],
+        transientCommands: [ImageExplorerCommand] = [],
+        includeProfile: Bool = true
+    ) {
+        self.datasetPath = datasetPath
+        self.selectedView = selectedView
+        self.focus = focus
+        self.planeContentMode = planeContentMode
+        self.parameters = parameters
+        self.cursorX = cursorX
+        self.cursorY = cursorY
+        self.selectedProfileAxis = selectedProfileAxis
+        self.nonDisplayIndices = nonDisplayIndices
+        self.commands = commands
+        self.transientCommands = transientCommands
+        self.includeProfile = includeProfile
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case datasetPath = "dataset_path"
+        case selectedView = "active_view"
+        case focus
+        case planeContentMode = "plane_content_mode"
+        case parameters
+        case cursorX = "cursor_x"
+        case cursorY = "cursor_y"
+        case selectedProfileAxis = "selected_profile_axis"
+        case nonDisplayIndices = "non_display_indices"
+        case commands
+        case transientCommands = "transient_commands"
+        case includeProfile = "include_profile"
+    }
+}
+
+public struct ImageExplorerCommand: Codable, Equatable {
+    public var command: String
+    public var x: Int?
+    public var y: Int?
+    public var name: String?
+    public var newName: String?
+    public var setDefault: Bool?
+
+    public init(
+        command: String,
+        x: Int? = nil,
+        y: Int? = nil,
+        name: String? = nil,
+        newName: String? = nil,
+        setDefault: Bool? = nil
+    ) {
+        self.command = command
+        self.x = x
+        self.y = y
+        self.name = name
+        self.newName = newName
+        self.setDefault = setDefault
+    }
+
+    public static let startRegionShape = ImageExplorerCommand(command: "start_region_shape")
+    public static func appendRegionVertex(x: Int, y: Int) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "append_region_vertex", x: x, y: y)
+    }
+    public static let closeRegionShape = ImageExplorerCommand(command: "close_region_shape")
+    public static let undoRegionVertex = ImageExplorerCommand(command: "undo_region_vertex")
+    public static let cancelRegionShape = ImageExplorerCommand(command: "cancel_region_shape")
+    public static let clearRegion = ImageExplorerCommand(command: "clear_region")
+    public static let saveRegionDefinition = ImageExplorerCommand(command: "save_region_definition")
+    public static let loadNextRegionDefinition = ImageExplorerCommand(command: "load_next_region_definition")
+    public static func loadRegionDefinition(name: String) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "load_region_definition", name: name)
+    }
+    public static func deleteRegionDefinition(name: String) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "delete_region_definition", name: name)
+    }
+    public static func setDefaultMask(name: String) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "set_default_mask", name: name)
+    }
+    public static let unsetDefaultMask = ImageExplorerCommand(command: "unset_default_mask")
+    public static func deleteMask(name: String) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "delete_mask", name: name)
+    }
+    public static func writeRegionMask(name: String?, setDefault: Bool) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "write_region_mask", name: name, setDefault: setDefault)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case command
+        case x
+        case y
+        case name
+        case newName = "new_name"
+        case setDefault = "set_default"
+    }
+}
+
 public struct ImageExplorerSnapshot: Codable, Equatable {
+    public struct AxisValue: Codable, Equatable {
+        public var name: String
+        public var unit: String
+        public var value: Double
+    }
+
     public struct Capabilities: Codable, Equatable {
         public var renderablePlane: Bool
         public var worldCoordsAvailable: Bool
         public var pixelOnlyMode: Bool
         public var nonDisplayAxisSelectors: Bool
         public var maskPresent: Bool
+        public var complexUnsupported: Bool?
 
         enum CodingKeys: String, CodingKey {
             case renderablePlane = "renderable_plane"
@@ -829,6 +993,7 @@ public struct ImageExplorerSnapshot: Codable, Equatable {
             case pixelOnlyMode = "pixel_only_mode"
             case nonDisplayAxisSelectors = "non_display_axis_selectors"
             case maskPresent = "mask_present"
+            case complexUnsupported = "complex_unsupported"
         }
     }
 
@@ -841,7 +1006,9 @@ public struct ImageExplorerSnapshot: Codable, Equatable {
         public var dataMin: Double
         public var dataMax: Double
         public var valueUnit: String
+        public var histogramBins: [UInt32]?
         public var maskedOrNonFiniteCount: Int
+        public var noFiniteValues: Bool?
 
         enum CodingKeys: String, CodingKey {
             case width
@@ -852,7 +1019,9 @@ public struct ImageExplorerSnapshot: Codable, Equatable {
             case dataMin = "data_min"
             case dataMax = "data_max"
             case valueUnit = "value_unit"
+            case histogramBins = "histogram_bins"
             case maskedOrNonFiniteCount = "masked_or_non_finite_count"
+            case noFiniteValues = "no_finite_values"
         }
     }
 
@@ -861,13 +1030,17 @@ public struct ImageExplorerSnapshot: Codable, Equatable {
             public var sampleIndex: Int
             public var pixelIndex: Int
             public var value: Double
+            public var masked: Bool?
             public var finite: Bool
+            public var worldAxis: AxisValue?
 
             enum CodingKeys: String, CodingKey {
                 case sampleIndex = "sample_index"
                 case pixelIndex = "pixel_index"
                 case value
+                case masked
                 case finite
+                case worldAxis = "world_axis"
             }
         }
 
@@ -875,6 +1048,8 @@ public struct ImageExplorerSnapshot: Codable, Equatable {
         public var axisName: String
         public var axisUnit: String
         public var valueUnit: String
+        public var coordType: String?
+        public var selectedSampleIndex: Int?
         public var samples: [Sample]
 
         enum CodingKeys: String, CodingKey {
@@ -882,47 +1057,216 @@ public struct ImageExplorerSnapshot: Codable, Equatable {
             case axisName = "axis_name"
             case axisUnit = "axis_unit"
             case valueUnit = "value_unit"
+            case coordType = "coord_type"
+            case selectedSampleIndex = "selected_sample_index"
             case samples
         }
     }
 
     public struct Region: Codable, Equatable {
+        public struct OverlayVertex: Codable, Equatable {
+            public var sampledX: Double
+            public var sampledY: Double
+
+            enum CodingKeys: String, CodingKey {
+                case sampledX = "sampled_x"
+                case sampledY = "sampled_y"
+            }
+        }
+
+        public struct OverlayShape: Codable, Equatable {
+            public var vertices: [OverlayVertex]
+            public var closed: Bool
+        }
+
+        public struct Stats: Codable, Equatable {
+            public var pixelCount: Int
+            public var median: Double
+            public var min: Double
+            public var max: Double
+            public var mean: Double
+            public var sigma: Double
+            public var rms: Double
+            public var sum: Double
+            public var valueUnit: String
+
+            enum CodingKeys: String, CodingKey {
+                case pixelCount = "pixel_count"
+                case median
+                case min
+                case max
+                case mean
+                case sigma
+                case rms
+                case sum
+                case valueUnit = "value_unit"
+            }
+        }
+
         public var label: String
         public var shapeCount: Int
         public var closedShapeCount: Int
         public var editing: Bool
+        public var activeShapeVertices: Int?
+        public var overlayShapes: [OverlayShape]?
+        public var stats: Stats?
 
         enum CodingKeys: String, CodingKey {
             case label
             case shapeCount = "shape_count"
             case closedShapeCount = "closed_shape_count"
             case editing
+            case activeShapeVertices = "active_shape_vertices"
+            case overlayShapes = "overlay_shapes"
+            case stats
+        }
+    }
+
+    public struct Navigation: Codable, Equatable {
+        public var selectedIndex: Int
+        public var totalItems: Int
+        public var viewportItems: Int
+
+        enum CodingKeys: String, CodingKey {
+            case selectedIndex = "selected_index"
+            case totalItems = "total_items"
+            case viewportItems = "viewport_items"
+        }
+    }
+
+    public struct DisplayAxis: Codable, Equatable {
+        public var axis: Int
+        public var name: String
+        public var unit: String
+        public var blc: Int
+        public var trc: Int
+        public var inc: Int
+        public var sampledLen: Int
+        public var worldIncrement: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case axis
+            case name
+            case unit
+            case blc
+            case trc
+            case inc
+            case sampledLen = "sampled_len"
+            case worldIncrement = "world_increment"
+        }
+    }
+
+    public struct PlaneCursor: Codable, Equatable {
+        public var sampledX: Int
+        public var sampledY: Int
+        public var pixelX: Int
+        public var pixelY: Int
+
+        enum CodingKeys: String, CodingKey {
+            case sampledX = "sampled_x"
+            case sampledY = "sampled_y"
+            case pixelX = "pixel_x"
+            case pixelY = "pixel_y"
+        }
+    }
+
+    public struct NonDisplayAxis: Codable, Equatable, Identifiable {
+        public var axis: Int
+        public var label: String
+        public var index: Int
+        public var length: Int
+        public var pixel: Int
+
+        public var id: Int { axis }
+    }
+
+    public struct Probe: Codable, Equatable {
+        public var pixelIndices: [Int]
+        public var pixelAxes: [AxisValue]
+        public var value: Double
+        public var masked: Bool
+        public var finite: Bool
+        public var worldAxes: [AxisValue]
+
+        enum CodingKeys: String, CodingKey {
+            case pixelIndices = "pixel_indices"
+            case pixelAxes = "pixel_axes"
+            case value
+            case masked
+            case finite
+            case worldAxes = "world_axes"
+        }
+    }
+
+    public struct BackendTiming: Codable, Equatable {
+        public var planeCacheResult: String
+        public var cachedPlaneLookupNs: UInt64
+        public var planeExtractNs: UInt64
+        public var statCollectionNs: UInt64
+        public var histogramNs: UInt64
+        public var rasterizeNs: UInt64
+        public var totalPlaneNs: UInt64
+        public var profileCacheHits: UInt64?
+        public var profileCacheMisses: UInt64?
+        public var profileExtractTotalNs: UInt64?
+
+        enum CodingKeys: String, CodingKey {
+            case planeCacheResult = "plane_cache_result"
+            case cachedPlaneLookupNs = "cached_plane_lookup_ns"
+            case planeExtractNs = "plane_extract_ns"
+            case statCollectionNs = "stat_collection_ns"
+            case histogramNs = "histogram_ns"
+            case rasterizeNs = "rasterize_ns"
+            case totalPlaneNs = "total_plane_ns"
+            case profileCacheHits = "profile_cache_hits"
+            case profileCacheMisses = "profile_cache_misses"
+            case profileExtractTotalNs = "profile_extract_total_ns"
         }
     }
 
     public var statusLine: String
     public var activeView: String
+    public var focus: String?
     public var shape: [Int]
+    public var parameters: ImageExplorerParameters?
     public var inspectorLines: [String]
     public var contentLines: [String]
+    public var navigation: Navigation?
     public var plane: Plane?
+    public var probe: Probe?
     public var profile: Profile?
+    public var displayAxes: [DisplayAxis]?
+    public var planeCursor: PlaneCursor?
+    public var nonDisplayAxes: [NonDisplayAxis]?
     public var region: Region?
     public var savedRegionNames: [String]
+    public var activeRegionDefinitionName: String?
     public var maskNames: [String]
+    public var defaultMaskName: String?
+    public var backendTiming: BackendTiming?
     public var capabilities: Capabilities
 
     enum CodingKeys: String, CodingKey {
         case statusLine = "status_line"
         case activeView = "active_view"
+        case focus
         case shape
+        case parameters
         case inspectorLines = "inspector_lines"
         case contentLines = "content_lines"
+        case navigation
         case plane
+        case probe
         case profile
+        case displayAxes = "display_axes"
+        case planeCursor = "plane_cursor"
+        case nonDisplayAxes = "non_display_axes"
         case region
         case savedRegionNames = "saved_region_names"
+        case activeRegionDefinitionName = "active_region_definition_name"
         case maskNames = "mask_names"
+        case defaultMaskName = "default_mask_name"
+        case backendTiming = "backend_timing"
         case capabilities
     }
 }
@@ -930,9 +1274,35 @@ public struct ImageExplorerSnapshot: Codable, Equatable {
 public struct ImageExplorerSessionState: Codable, Equatable {
     public var datasetID: String
     public var selectedView: String
+    public var focus: String = "content"
+    public var planeContentMode: String = "raster"
+    public var parameters: ImageExplorerParameters = ImageExplorerParameters()
+    public var cursorX: Int?
+    public var cursorY: Int?
+    public var selectedProfileAxis: Int?
+    public var nonDisplayIndices: [Int] = []
+    public var regionCommands: [ImageExplorerCommand] = []
+    public var transientCommands: [ImageExplorerCommand] = []
     public var status: ExplorerSessionStatus
     public var lastError: String?
     public var snapshot: ImageExplorerSnapshot?
+
+    public func snapshotRequest(datasetPath: String) -> ImageExplorerSnapshotRequest {
+        ImageExplorerSnapshotRequest(
+            datasetPath: datasetPath,
+            selectedView: selectedView,
+            focus: focus,
+            planeContentMode: planeContentMode,
+            parameters: parameters,
+            cursorX: cursorX,
+            cursorY: cursorY,
+            selectedProfileAxis: selectedProfileAxis,
+            nonDisplayIndices: nonDisplayIndices,
+            commands: regionCommands,
+            transientCommands: transientCommands,
+            includeProfile: true
+        )
+    }
 }
 
 public struct TableBrowserSnapshot: Codable, Equatable {

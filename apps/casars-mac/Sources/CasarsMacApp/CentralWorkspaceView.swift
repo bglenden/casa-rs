@@ -288,6 +288,13 @@ struct DatasetExplorerPanel: View {
                 Spacer()
             }
 
+            ImageExplorerControlsView(
+                store: store,
+                datasetID: dataset.id,
+                explorerState: explorerState,
+                snapshot: explorerState?.snapshot
+            )
+
             HStack(alignment: .top, spacing: 16) {
                 SummaryBox(
                     title: "Image",
@@ -497,6 +504,244 @@ private struct ExplorerPlot: Identifiable {
     var id: String { title }
 }
 
+private struct ImageExplorerControlsView: View {
+    @ObservedObject var store: WorkbenchStore
+    let datasetID: String
+    let explorerState: ImageExplorerSessionState?
+    let snapshot: ImageExplorerSnapshot?
+
+    @State private var parameters: ImageExplorerParameters
+    @State private var cursorXText: String
+    @State private var cursorYText: String
+
+    init(
+        store: WorkbenchStore,
+        datasetID: String,
+        explorerState: ImageExplorerSessionState?,
+        snapshot: ImageExplorerSnapshot?
+    ) {
+        self.store = store
+        self.datasetID = datasetID
+        self.explorerState = explorerState
+        self.snapshot = snapshot
+        let parameters = explorerState?.parameters ?? snapshot?.parameters ?? ImageExplorerParameters()
+        _parameters = State(initialValue: parameters)
+        _cursorXText = State(initialValue: String(explorerState?.cursorX ?? snapshot?.planeCursor?.pixelX ?? 0))
+        _cursorYText = State(initialValue: String(explorerState?.cursorY ?? snapshot?.planeCursor?.pixelY ?? 0))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            modeAndCursorControls
+            displayParameterControls
+            nonDisplayAxisControls
+            regionMaskControls
+        }
+        .workbenchFont(.caption)
+    }
+
+    private var modeAndCursorControls: some View {
+        HStack(spacing: 12) {
+            focusPicker
+            planeModePicker
+            TextField("X", text: $cursorXText)
+                .frame(width: 70)
+                .textFieldStyle(.roundedBorder)
+            TextField("Y", text: $cursorYText)
+                .frame(width: 70)
+                .textFieldStyle(.roundedBorder)
+            Button {
+                store.setImageExplorerCursor(
+                    x: Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                    y: Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                    datasetID: datasetID
+                )
+            } label: {
+                Label("Set Cursor", systemImage: "scope")
+            }
+            Spacer()
+        }
+    }
+
+    private var focusPicker: some View {
+        Picker("Focus", selection: Binding(
+            get: { explorerState?.focus ?? snapshot?.focus ?? "content" },
+            set: { store.setImageExplorerFocus($0, datasetID: datasetID) }
+        )) {
+            Text("Content").tag("content")
+            Text("Inspector").tag("inspector")
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 220)
+    }
+
+    private var planeModePicker: some View {
+        Picker("Plane", selection: Binding(
+            get: { explorerState?.planeContentMode ?? "raster" },
+            set: { store.setImageExplorerPlaneContentMode($0, datasetID: datasetID) }
+        )) {
+            Text("Raster").tag("raster")
+            Text("Spreadsheet").tag("spreadsheet")
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 250)
+    }
+
+    private var displayParameterControls: some View {
+        Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
+            GridRow {
+                TextField("BLC", text: $parameters.blc)
+                TextField("TRC", text: $parameters.trc)
+                TextField("INC", text: $parameters.inc)
+                stretchPicker
+                autoscalePicker
+                TextField("Clip low", text: $parameters.clipLow)
+                TextField("Clip high", text: $parameters.clipHigh)
+                Button {
+                    store.setImageExplorerParameters(parameters, datasetID: datasetID)
+                } label: {
+                    Label("Apply", systemImage: "slider.horizontal.3")
+                }
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+    }
+
+    private var stretchPicker: some View {
+        Picker("Stretch", selection: $parameters.stretch) {
+            Text("Percentile 99").tag("percentile99")
+            Text("Percentile 95").tag("percentile95")
+            Text("Min/Max").tag("minmax")
+            Text("ZScale").tag("zscale")
+            Text("Manual").tag("manual")
+        }
+    }
+
+    private var autoscalePicker: some View {
+        Picker("Autoscale", selection: $parameters.autoscale) {
+            Text("Per plane").tag("per_plane")
+            Text("Frozen").tag("frozen")
+        }
+    }
+
+    @ViewBuilder
+    private var nonDisplayAxisControls: some View {
+        if let axes = snapshot?.nonDisplayAxes, !axes.isEmpty {
+            HStack(spacing: 8) {
+                ForEach(axes) { axis in
+                    nonDisplayAxisControl(axis)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private func nonDisplayAxisControl(_ axis: ImageExplorerSnapshot.NonDisplayAxis) -> some View {
+        HStack(spacing: 4) {
+            Button {
+                store.stepImageExplorerNonDisplayAxis(axis: axis.axis, delta: -1, datasetID: datasetID)
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            Text("\(axis.label): \(axis.index + 1)/\(axis.length)")
+                .workbenchFont(.caption)
+                .frame(minWidth: 130, alignment: .leading)
+            Button {
+                store.stepImageExplorerNonDisplayAxis(axis: axis.axis, delta: 1, datasetID: datasetID)
+            } label: {
+                Image(systemName: "chevron.right")
+            }
+            Button {
+                store.setImageExplorerSelectedProfileAxis(axis.axis, datasetID: datasetID)
+            } label: {
+                Image(systemName: "waveform.path.ecg")
+            }
+            .help("Use this axis for the linked profile plot")
+        }
+        .controlSize(.small)
+    }
+
+    private var regionMaskControls: some View {
+        HStack(spacing: 8) {
+            Button {
+                store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: datasetID)
+            } label: {
+                Label("Start Region", systemImage: "pencil.and.outline")
+            }
+            Button {
+                let cursor = currentCursor()
+                store.appendImageExplorerRegionCommand(
+                    .appendRegionVertex(x: cursor.x, y: cursor.y),
+                    datasetID: datasetID
+                )
+            } label: {
+                Label("Add Cursor", systemImage: "plus")
+            }
+            Button {
+                store.appendImageExplorerRegionCommand(.closeRegionShape, datasetID: datasetID)
+            } label: {
+                Label("Close", systemImage: "checkmark")
+            }
+            Button {
+                store.appendImageExplorerRegionCommand(.undoRegionVertex, datasetID: datasetID)
+            } label: {
+                Label("Undo", systemImage: "arrow.uturn.backward")
+            }
+            Button {
+                store.appendImageExplorerRegionCommand(.cancelRegionShape, datasetID: datasetID)
+            } label: {
+                Label("Cancel", systemImage: "xmark")
+            }
+            Button {
+                store.clearImageExplorerRegionCommands(datasetID: datasetID)
+            } label: {
+                Label("Clear", systemImage: "trash")
+            }
+            Menu("Regions") {
+                Button("Save current") {
+                    store.runImageExplorerCommandOnce(.saveRegionDefinition, datasetID: datasetID)
+                }
+                Button("Load next") {
+                    store.runImageExplorerCommandOnce(.loadNextRegionDefinition, datasetID: datasetID)
+                }
+                ForEach(snapshot?.savedRegionNames ?? [], id: \.self) { name in
+                    Button("Load \(name)") {
+                        store.runImageExplorerCommandOnce(.loadRegionDefinition(name: name), datasetID: datasetID)
+                    }
+                    Button("Delete \(name)") {
+                        store.runImageExplorerCommandOnce(.deleteRegionDefinition(name: name), datasetID: datasetID)
+                    }
+                }
+            }
+            Menu("Masks") {
+                Button("Write region mask") {
+                    store.runImageExplorerCommandOnce(.writeRegionMask(name: nil, setDefault: true), datasetID: datasetID)
+                }
+                Button("Unset default") {
+                    store.runImageExplorerCommandOnce(.unsetDefaultMask, datasetID: datasetID)
+                }
+                ForEach(snapshot?.maskNames ?? [], id: \.self) { name in
+                    Button("Set \(name) default") {
+                        store.runImageExplorerCommandOnce(.setDefaultMask(name: name), datasetID: datasetID)
+                    }
+                    Button("Delete \(name)") {
+                        store.runImageExplorerCommandOnce(.deleteMask(name: name), datasetID: datasetID)
+                    }
+                }
+            }
+            Spacer()
+        }
+        .controlSize(.small)
+    }
+
+    private func currentCursor() -> (x: Int, y: Int) {
+        (
+            Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor?.pixelX ?? 0,
+            Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor?.pixelY ?? 0
+        )
+    }
+}
+
 private struct ImageExplorerSnapshotView: View {
     let snapshot: ImageExplorerSnapshot
 
@@ -507,9 +752,9 @@ private struct ImageExplorerSnapshotView: View {
                     Text("Plane")
                         .workbenchFont(.headline)
                     if let plane = snapshot.plane {
-                        ImagePlaneRasterView(plane: plane)
+                        ImagePlaneRasterView(plane: plane, cursor: snapshot.planeCursor, region: snapshot.region)
                             .frame(minHeight: 280)
-                        Text("\(plane.width)x\(plane.height), clip \(plane.clipMin.formatted())...\(plane.clipMax.formatted()) \(plane.valueUnit)")
+                        Text(planeCaption(plane))
                             .workbenchFont(.caption)
                             .foregroundStyle(.secondary)
                     } else {
@@ -523,12 +768,15 @@ private struct ImageExplorerSnapshotView: View {
                         title: "Session",
                         values: [
                             "View: \(snapshot.activeView)",
+                            "Focus: \(snapshot.focus ?? "content")",
                             "Shape: \(formatShape(snapshot.shape.map(UInt64.init)))",
                             "Plane: \(snapshot.capabilities.renderablePlane ? "renderable" : "unavailable")",
-                            "World coordinates: \(snapshot.capabilities.worldCoordsAvailable ? "available" : "pixel-only")"
+                            "World coordinates: \(snapshot.capabilities.worldCoordsAvailable ? "available" : "pixel-only")",
+                            "Complex images: \(snapshot.capabilities.complexUnsupported == true ? "unsupported" : "supported")"
                         ]
                     )
-                    SummaryBox(title: "Inspector", values: snapshot.inspectorLines)
+                    SummaryBox(title: "Probe", values: probeValues(snapshot: snapshot))
+                    SummaryBox(title: "Timing", values: timingValues(snapshot: snapshot))
                 }
             }
 
@@ -553,16 +801,92 @@ private struct ImageExplorerSnapshotView: View {
                     values: maskRegionValues(snapshot: snapshot)
                 )
             }
+
+            GridRow {
+                SummaryBox(title: "Display Axes", values: displayAxisValues(snapshot: snapshot))
+                SummaryBox(title: "Inspector", values: snapshot.inspectorLines)
+            }
         }
         .accessibilityIdentifier("imageExplorer.snapshot")
     }
 
+    private func planeCaption(_ plane: ImageExplorerSnapshot.Plane) -> String {
+        var parts = [
+            "\(plane.width)x\(plane.height)",
+            "clip \(plane.clipMin.formatted())...\(plane.clipMax.formatted()) \(plane.valueUnit)",
+            "data \(plane.dataMin.formatted())...\(plane.dataMax.formatted())"
+        ]
+        if plane.maskedOrNonFiniteCount > 0 {
+            parts.append("\(plane.maskedOrNonFiniteCount) masked/non-finite")
+        }
+        if plane.noFiniteValues == true {
+            parts.append("no finite values")
+        }
+        if let bins = plane.histogramBins, !bins.isEmpty {
+            parts.append("\(bins.count) histogram bins")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private func displayAxisValues(snapshot: ImageExplorerSnapshot) -> [String] {
+        let axisLines = (snapshot.displayAxes ?? []).map { axis in
+            let increment = axis.worldIncrement.map { ", d=\($0.formatted()) \(axis.unit)" } ?? ""
+            return "\(axis.name): \(axis.blc)...\(axis.trc) inc \(axis.inc), sampled \(axis.sampledLen)\(increment)"
+        }
+        let nonDisplay = (snapshot.nonDisplayAxes ?? []).map { axis in
+            "\(axis.label): index \(axis.index + 1)/\(axis.length), pixel \(axis.pixel)"
+        }
+        return axisLines + nonDisplay
+    }
+
+    private func probeValues(snapshot: ImageExplorerSnapshot) -> [String] {
+        var values: [String] = []
+        if let cursor = snapshot.planeCursor {
+            values.append("Cursor: sampled \(cursor.sampledX),\(cursor.sampledY); pixel \(cursor.pixelX),\(cursor.pixelY)")
+        }
+        if let probe = snapshot.probe {
+            let status = probe.masked ? "masked" : (probe.finite ? "finite" : "non-finite")
+            values.append("Value: \(probe.value.formatted()) (\(status))")
+            values.append(contentsOf: probe.pixelAxes.map { "\($0.name): \($0.value.formatted()) \($0.unit)" })
+            values.append(contentsOf: probe.worldAxes.map { "\($0.name): \($0.value.formatted()) \($0.unit)" })
+        }
+        return values.isEmpty ? ["No probe for current cursor."] : values
+    }
+
+    private func timingValues(snapshot: ImageExplorerSnapshot) -> [String] {
+        guard let timing = snapshot.backendTiming else {
+            return ["Backend timing disabled."]
+        }
+        return [
+            "Plane cache: \(timing.planeCacheResult)",
+            "Plane total: \(formatNanoseconds(timing.totalPlaneNs))",
+            "Extract: \(formatNanoseconds(timing.planeExtractNs))",
+            "Stats: \(formatNanoseconds(timing.statCollectionNs))",
+            "Histogram: \(formatNanoseconds(timing.histogramNs))",
+            "Rasterize: \(formatNanoseconds(timing.rasterizeNs))",
+            "Profile: \(formatNanoseconds(timing.profileExtractTotalNs ?? 0))"
+        ]
+    }
+
     private func maskRegionValues(snapshot: ImageExplorerSnapshot) -> [String] {
         var values: [String] = []
+        if let defaultMask = snapshot.defaultMaskName {
+            values.append("Default mask: \(defaultMask)")
+        }
         values.append("Masks: \(snapshot.maskNames.isEmpty ? "none" : snapshot.maskNames.joined(separator: ", "))")
+        if let activeRegion = snapshot.activeRegionDefinitionName {
+            values.append("Active region: \(activeRegion)")
+        }
         values.append("Saved regions: \(snapshot.savedRegionNames.isEmpty ? "none" : snapshot.savedRegionNames.joined(separator: ", "))")
         if let region = snapshot.region {
             values.append("\(region.label): \(region.shapeCount) shape(s), \(region.closedShapeCount) closed")
+            if let vertices = region.activeShapeVertices {
+                values.append("Active shape vertices: \(vertices)")
+            }
+            if let stats = region.stats {
+                values.append("Region pixels: \(stats.pixelCount)")
+                values.append("Mean: \(stats.mean.formatted()) \(stats.valueUnit), rms: \(stats.rms.formatted())")
+            }
             values.append(region.editing ? "Region edit active" : "Region edit inactive")
         }
         return values
@@ -570,8 +894,10 @@ private struct ImageExplorerSnapshotView: View {
 
     private func profilePlotDocument(_ profile: ImageExplorerSnapshot.Profile) -> WorkbenchPlotDocument {
         let points = profile.samples
-            .filter(\.finite)
-            .map { WorkbenchPlotPoint(x: Double($0.sampleIndex), y: $0.value) }
+            .filter { $0.finite && $0.masked != true }
+            .map { sample in
+                WorkbenchPlotPoint(x: sample.worldAxis?.value ?? Double(sample.sampleIndex), y: sample.value)
+            }
         let layer = WorkbenchPlotLayer(
             id: "profile-\(profile.axis)",
             title: "\(profile.axisName) profile",
@@ -595,7 +921,7 @@ private struct ImageExplorerSnapshotView: View {
             title: "\(profile.axisName) Profile",
             subtitle: "\(profile.valueUnit) vs \(profile.axisUnit)",
             axes: [
-                WorkbenchPlotAxis(id: "sample", label: profile.axisName, unit: profile.axisUnit, range: expandedRange(xRange)),
+                WorkbenchPlotAxis(id: "sample", label: profile.axisName, unit: profile.samples.first?.worldAxis?.unit ?? profile.axisUnit, range: expandedRange(xRange)),
                 WorkbenchPlotAxis(id: "value", label: "Value", unit: profile.valueUnit, range: expandedRange(yRange))
             ],
             layers: [layer]
@@ -608,10 +934,22 @@ private struct ImageExplorerSnapshotView: View {
         }
         return WorkbenchPlotRange(lower: range.lower - 0.5, upper: range.upper + 0.5)
     }
+
+    private func formatNanoseconds(_ nanoseconds: UInt64) -> String {
+        if nanoseconds >= 1_000_000 {
+            return String(format: "%.2f ms", Double(nanoseconds) / 1_000_000.0)
+        }
+        if nanoseconds >= 1_000 {
+            return String(format: "%.2f us", Double(nanoseconds) / 1_000.0)
+        }
+        return "\(nanoseconds) ns"
+    }
 }
 
 private struct ImagePlaneRasterView: View {
     let plane: ImageExplorerSnapshot.Plane
+    let cursor: ImageExplorerSnapshot.PlaneCursor?
+    let region: ImageExplorerSnapshot.Region?
     @State private var image: NSImage?
 
     var body: some View {
@@ -621,6 +959,9 @@ private struct ImagePlaneRasterView: View {
                     .resizable()
                     .interpolation(.none)
                     .scaledToFit()
+                    .overlay(alignment: .topLeading) {
+                        planeOverlay
+                    }
             } else {
                 Color(nsColor: .windowBackgroundColor)
             }
@@ -630,6 +971,49 @@ private struct ImagePlaneRasterView: View {
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.18)))
         .onAppear(perform: updateImage)
         .onChange(of: plane.pixelsU8) { _ in updateImage() }
+    }
+
+    @ViewBuilder
+    private var planeOverlay: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                if let region {
+                    ForEach(Array((region.overlayShapes ?? []).enumerated()), id: \.offset) { _, shape in
+                        Path { path in
+                            for (index, vertex) in shape.vertices.enumerated() {
+                                let point = overlayPoint(vertex.sampledX, vertex.sampledY, geometry: geometry)
+                                if index == 0 {
+                                    path.move(to: point)
+                                } else {
+                                    path.addLine(to: point)
+                                }
+                            }
+                            if shape.closed {
+                                path.closeSubpath()
+                            }
+                        }
+                        .stroke(Color.yellow.opacity(0.85), lineWidth: 1.5)
+                    }
+                }
+                if let cursor {
+                    let point = overlayPoint(Double(cursor.sampledX), Double(cursor.sampledY), geometry: geometry)
+                    Path { path in
+                        path.move(to: CGPoint(x: point.x - 6, y: point.y))
+                        path.addLine(to: CGPoint(x: point.x + 6, y: point.y))
+                        path.move(to: CGPoint(x: point.x, y: point.y - 6))
+                        path.addLine(to: CGPoint(x: point.x, y: point.y + 6))
+                    }
+                    .stroke(Color.cyan.opacity(0.95), lineWidth: 1.2)
+                }
+            }
+        }
+    }
+
+    private func overlayPoint(_ x: Double, _ y: Double, geometry: GeometryProxy) -> CGPoint {
+        CGPoint(
+            x: geometry.size.width * x / Double(max(plane.width - 1, 1)),
+            y: geometry.size.height * y / Double(max(plane.height - 1, 1))
+        )
     }
 
     private func updateImage() {
