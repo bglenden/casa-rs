@@ -1307,15 +1307,108 @@ public final class WorkbenchStore: ObservableObject {
     public func stepImageExplorerNonDisplayAxis(axis: Int, delta: Int, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         var indices = explorerState.nonDisplayIndices
-        let snapshotAxis = explorerState.snapshot?.nonDisplayAxes?.first { $0.axis == axis }
-        let currentIndex = snapshotAxis?.index ?? indices[safe: axis] ?? 0
+        let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
+        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
+        let currentIndex = snapshotAxis?.index
+            ?? axisPosition.flatMap { indices[safe: $0] }
+            ?? indices[safe: axis]
+            ?? 0
         let length = max(snapshotAxis?.length ?? currentIndex + 1, 1)
         let nextIndex = min(max(currentIndex + delta, 0), length - 1)
-        while indices.count <= axis {
-            indices.append(0)
+        if let axisPosition {
+            indices = normalizedNonDisplayIndices(from: indices, axes: snapshotAxes)
+            indices[axisPosition] = nextIndex
+        } else {
+            while indices.count <= axis {
+                indices.append(0)
+            }
+            indices[axis] = nextIndex
         }
-        indices[axis] = nextIndex
         explorerState.nonDisplayIndices = indices
+        explorerState.selectedProfileAxis = axis
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func startImageExplorerMovie(axis: Int, framesPerSecond: Double?, loop: Bool, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.moviePlaying = true
+        explorerState.movieAxis = axis
+        if let framesPerSecond {
+            explorerState.movieFramesPerSecond = Self.clampedMovieFramesPerSecond(framesPerSecond)
+        }
+        explorerState.movieLoop = loop
+        explorerState.selectedProfileAxis = axis
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func stopImageExplorerMovie(datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.moviePlaying = false
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func setImageExplorerMovieFramesPerSecond(_ framesPerSecond: Double, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.movieFramesPerSecond = Self.clampedMovieFramesPerSecond(framesPerSecond)
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func setImageExplorerMovieLoop(_ loop: Bool, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.movieLoop = loop
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func advanceImageExplorerMovieFrame(datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        guard explorerState.moviePlaying else {
+            return
+        }
+        let axis = explorerState.movieAxis
+            ?? explorerState.snapshot?.nonDisplayAxes?.first?.axis
+            ?? explorerState.nonDisplayIndices.indices.first
+        guard let axis else {
+            explorerState.moviePlaying = false
+            state.imageExplorers[datasetID] = explorerState
+            return
+        }
+
+        var indices = explorerState.nonDisplayIndices
+        let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
+        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
+        let currentIndex = snapshotAxis?.index
+            ?? axisPosition.flatMap { indices[safe: $0] }
+            ?? indices[safe: axis]
+            ?? 0
+        let length = max(snapshotAxis?.length ?? currentIndex + 1, 1)
+        let proposedIndex = currentIndex + 1
+        let nextIndex: Int
+        if proposedIndex >= length {
+            if explorerState.movieLoop {
+                nextIndex = 0
+            } else {
+                explorerState.moviePlaying = false
+                state.imageExplorers[datasetID] = explorerState
+                return
+            }
+        } else {
+            nextIndex = proposedIndex
+        }
+
+        if let axisPosition {
+            indices = normalizedNonDisplayIndices(from: indices, axes: snapshotAxes)
+            indices[axisPosition] = nextIndex
+        } else {
+            while indices.count <= axis {
+                indices.append(0)
+            }
+            indices[axis] = nextIndex
+        }
+        explorerState.nonDisplayIndices = indices
+        explorerState.movieAxis = axis
         explorerState.selectedProfileAxis = axis
         state.imageExplorers[datasetID] = explorerState
         refreshImageExplorer(datasetID: datasetID)
@@ -1696,6 +1789,22 @@ public final class WorkbenchStore: ObservableObject {
             lastError: nil,
             snapshot: nil
         )
+    }
+
+    private static func clampedMovieFramesPerSecond(_ framesPerSecond: Double) -> Double {
+        guard framesPerSecond.isFinite else {
+            return 6.0
+        }
+        return min(max(framesPerSecond, 0.2), 60.0)
+    }
+
+    private func normalizedNonDisplayIndices(
+        from indices: [Int],
+        axes: [ImageExplorerSnapshot.NonDisplayAxis]
+    ) -> [Int] {
+        axes.enumerated().map { position, axis in
+            indices[safe: position] ?? axis.index
+        }
     }
 
     private func measurementSetPlotState(for datasetID: String) -> MeasurementSetExplorerPlotState {

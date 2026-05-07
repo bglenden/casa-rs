@@ -563,6 +563,31 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.selectedView, "spectrum")
         XCTAssertEqual(imageClient.requests.map(\.selectedView), ["plane", "spectrum"])
 
+        store.stepImageExplorerNonDisplayAxis(axis: 2, delta: 1, datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [1])
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.nonDisplayIndices, [1])
+
+        store.startImageExplorerMovie(axis: 2, framesPerSecond: 12, loop: true, datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.moviePlaying, true)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.movieAxis, 2)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.movieFramesPerSecond, 12)
+        XCTAssertEqual(store.debugSnapshot().imageExplorers[imageDataset.id]?.moviePlaying, true)
+        store.advanceImageExplorerMovieFrame(datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [2])
+        for expectedIndex in 3...7 {
+            store.advanceImageExplorerMovieFrame(datasetID: imageDataset.id)
+            XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [expectedIndex])
+        }
+        store.advanceImageExplorerMovieFrame(datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [0])
+        store.setImageExplorerMovieLoop(false, datasetID: imageDataset.id)
+        for expectedIndex in 1...7 {
+            store.advanceImageExplorerMovieFrame(datasetID: imageDataset.id)
+            XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [expectedIndex])
+        }
+        store.advanceImageExplorerMovieFrame(datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.moviePlaying, false)
+
         store.setImageExplorerFocus("inspector", datasetID: imageDataset.id)
         store.setImageExplorerPlaneContentMode("spreadsheet", datasetID: imageDataset.id)
         store.setImageExplorerCursor(x: 2, y: 3, datasetID: imageDataset.id)
@@ -1733,6 +1758,8 @@ private final class StubImageExplorerClient: ImageExplorerClient {
         var parameters: ImageExplorerParameters
         var cursorX: Int?
         var cursorY: Int?
+        var selectedProfileAxis: Int?
+        var nonDisplayIndices: [Int]
         var commands: [ImageExplorerCommand]
         var transientCommands: [ImageExplorerCommand]
     }
@@ -1756,11 +1783,32 @@ private final class StubImageExplorerClient: ImageExplorerClient {
                 parameters: request.parameters,
                 cursorX: request.cursorX,
                 cursorY: request.cursorY,
+                selectedProfileAxis: request.selectedProfileAxis,
+                nonDisplayIndices: request.nonDisplayIndices,
                 commands: request.commands,
                 transientCommands: request.transientCommands
             )
         )
-        return snapshot
+        var nextSnapshot = snapshot
+        if let x = request.cursorX, let y = request.cursorY {
+            nextSnapshot.planeCursor = ImageExplorerSnapshot.PlaneCursor(
+                sampledX: x,
+                sampledY: y,
+                pixelX: x,
+                pixelY: y
+            )
+        }
+        nextSnapshot.nonDisplayAxes = snapshot.nonDisplayAxes?.map { axis in
+            var nextAxis = axis
+            if let position = snapshot.nonDisplayAxes?.firstIndex(where: { $0.axis == axis.axis }),
+               request.nonDisplayIndices.indices.contains(position)
+            {
+                nextAxis.index = request.nonDisplayIndices[position]
+                nextAxis.pixel = request.nonDisplayIndices[position]
+            }
+            return nextAxis
+        }
+        return nextSnapshot
     }
 }
 
@@ -1830,7 +1878,7 @@ private func makeDemoProjectProbe(rootPath: String) -> ProjectFixtureProbe {
     )
 }
 
-private func makeImageExplorerSnapshot() -> ImageExplorerSnapshot {
+private func makeImageExplorerSnapshot(nonDisplayIndex: Int = 0) -> ImageExplorerSnapshot {
     ImageExplorerSnapshot(
         statusLine: "Browsing restored.image.",
         activeView: "plane",
@@ -1858,6 +1906,16 @@ private func makeImageExplorerSnapshot() -> ImageExplorerSnapshot {
                 ImageExplorerSnapshot.Profile.Sample(sampleIndex: 1, pixelIndex: 1, value: 2.0, finite: true)
             ]
         ),
+        planeCursor: ImageExplorerSnapshot.PlaneCursor(sampledX: 1, sampledY: 1, pixelX: 1, pixelY: 1),
+        nonDisplayAxes: [
+            ImageExplorerSnapshot.NonDisplayAxis(
+                axis: 2,
+                label: "Frequency",
+                index: nonDisplayIndex,
+                length: 8,
+                pixel: nonDisplayIndex
+            )
+        ],
         region: ImageExplorerSnapshot.Region(label: "active region", shapeCount: 1, closedShapeCount: 1, editing: false),
         savedRegionNames: ["source"],
         maskNames: ["mask0"],

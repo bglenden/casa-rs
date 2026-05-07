@@ -23,8 +23,11 @@ let package = Package(
             dependencies: ["CasarsFrontendServicesFFI"],
             linkerSettings: [
                 .unsafeFlags([
+                    "-L", "../../target/release",
                     "-L", "../../target/debug",
                     "-lcasars_frontend_services",
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", "../../target/release",
                     "-Xlinker", "-rpath",
                     "-Xlinker", "../../target/debug"
                 ])

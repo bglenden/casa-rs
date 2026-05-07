@@ -317,6 +317,42 @@ struct DatasetExplorerPanel: View {
 
             SummaryBox(title: "Probe Notes", values: [dataset.notes] + dataset.diagnostics)
         }
+        .task(id: imageExplorerMovieTaskID(datasetID: dataset.id, state: explorerState)) {
+            await runImageExplorerMovie(datasetID: dataset.id)
+        }
+    }
+
+    private func imageExplorerMovieTaskID(datasetID: String, state: ImageExplorerSessionState?) -> String {
+        guard let state else {
+            return "\(datasetID)-movie-none"
+        }
+        return [
+            datasetID,
+            state.moviePlaying ? "playing" : "stopped",
+            String(state.movieAxis ?? -1),
+            String(format: "%.3f", state.movieFramesPerSecond),
+            state.movieLoop ? "loop" : "once"
+        ].joined(separator: ":")
+    }
+
+    @MainActor
+    private func runImageExplorerMovie(datasetID: String) async {
+        while !Task.isCancelled {
+            guard let explorerState = store.state.imageExplorers[datasetID], explorerState.moviePlaying else {
+                return
+            }
+            let framesPerSecond = min(max(explorerState.movieFramesPerSecond, 0.2), 60.0)
+            let nanoseconds = UInt64((1.0 / framesPerSecond) * 1_000_000_000.0)
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            store.advanceImageExplorerMovieFrame(datasetID: datasetID)
+        }
     }
 
     @ViewBuilder
@@ -513,6 +549,7 @@ private struct ImageExplorerControlsView: View {
     @State private var parameters: ImageExplorerParameters
     @State private var cursorXText: String
     @State private var cursorYText: String
+    @State private var movieFPSText: String
 
     init(
         store: WorkbenchStore,
@@ -528,12 +565,14 @@ private struct ImageExplorerControlsView: View {
         _parameters = State(initialValue: parameters)
         _cursorXText = State(initialValue: String(explorerState?.cursorX ?? snapshot?.planeCursor?.pixelX ?? 0))
         _cursorYText = State(initialValue: String(explorerState?.cursorY ?? snapshot?.planeCursor?.pixelY ?? 0))
+        _movieFPSText = State(initialValue: Self.formatMovieFramesPerSecond(explorerState?.movieFramesPerSecond ?? 6.0))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             modeAndCursorControls
             displayParameterControls
+            movieControls
             nonDisplayAxisControls
             regionMaskControls
         }
@@ -625,6 +664,43 @@ private struct ImageExplorerControlsView: View {
     }
 
     @ViewBuilder
+    private var movieControls: some View {
+        if let axes = snapshot?.nonDisplayAxes, !axes.isEmpty {
+            HStack(spacing: 8) {
+                Label("Movie", systemImage: "film")
+                TextField("FPS", text: $movieFPSText)
+                    .frame(width: 64)
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    if let framesPerSecond = Double(movieFPSText.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                        store.setImageExplorerMovieFramesPerSecond(framesPerSecond, datasetID: datasetID)
+                        movieFPSText = Self.formatMovieFramesPerSecond(framesPerSecond)
+                    }
+                } label: {
+                    Label("Set FPS", systemImage: "speedometer")
+                }
+                Toggle("Loop", isOn: Binding(
+                    get: { explorerState?.movieLoop ?? true },
+                    set: { store.setImageExplorerMovieLoop($0, datasetID: datasetID) }
+                ))
+                .toggleStyle(.checkbox)
+                if explorerState?.moviePlaying == true {
+                    Button {
+                        store.stopImageExplorerMovie(datasetID: datasetID)
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                }
+                Text(movieStatusText(axes: axes))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
     private var nonDisplayAxisControls: some View {
         if let axes = snapshot?.nonDisplayAxes, !axes.isEmpty {
             HStack(spacing: 8) {
@@ -638,6 +714,12 @@ private struct ImageExplorerControlsView: View {
 
     private func nonDisplayAxisControl(_ axis: ImageExplorerSnapshot.NonDisplayAxis) -> some View {
         HStack(spacing: 4) {
+            Button {
+                toggleMovie(axis: axis.axis)
+            } label: {
+                Image(systemName: isMoviePlaying(axis: axis.axis) ? "pause.fill" : "play.fill")
+            }
+            .help(isMoviePlaying(axis: axis.axis) ? "Pause movie playback" : "Play this axis as a movie")
             Button {
                 store.stepImageExplorerNonDisplayAxis(axis: axis.axis, delta: -1, datasetID: datasetID)
             } label: {
@@ -659,6 +741,47 @@ private struct ImageExplorerControlsView: View {
             .help("Use this axis for the linked profile plot")
         }
         .controlSize(.small)
+    }
+
+    private func isMoviePlaying(axis: Int) -> Bool {
+        explorerState?.moviePlaying == true && explorerState?.movieAxis == axis
+    }
+
+    private func toggleMovie(axis: Int) {
+        if isMoviePlaying(axis: axis) {
+            store.stopImageExplorerMovie(datasetID: datasetID)
+            return
+        }
+        let framesPerSecond = Double(movieFPSText.trimmingCharacters(in: .whitespacesAndNewlines))
+            ?? explorerState?.movieFramesPerSecond
+            ?? 6.0
+        store.startImageExplorerMovie(
+            axis: axis,
+            framesPerSecond: framesPerSecond,
+            loop: explorerState?.movieLoop ?? true,
+            datasetID: datasetID
+        )
+        movieFPSText = Self.formatMovieFramesPerSecond(framesPerSecond)
+    }
+
+    private func movieStatusText(axes: [ImageExplorerSnapshot.NonDisplayAxis]) -> String {
+        guard explorerState?.moviePlaying == true else {
+            return "Stopped"
+        }
+        let axisID = explorerState?.movieAxis ?? axes.first?.axis
+        let axis = axes.first { $0.axis == axisID }
+        let label = axis?.label ?? "Axis \(axisID ?? 0)"
+        let index = (axis?.index ?? 0) + 1
+        let length = axis?.length ?? 1
+        return "\(label) \(index)/\(length) at \(Self.formatMovieFramesPerSecond(explorerState?.movieFramesPerSecond ?? 6.0)) fps"
+    }
+
+    private static func formatMovieFramesPerSecond(_ framesPerSecond: Double) -> String {
+        let clamped = min(max(framesPerSecond.isFinite ? framesPerSecond : 6.0, 0.2), 60.0)
+        if clamped.rounded() == clamped {
+            return String(Int(clamped))
+        }
+        return String(format: "%.1f", clamped)
     }
 
     private var regionMaskControls: some View {

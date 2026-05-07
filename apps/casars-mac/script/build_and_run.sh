@@ -20,8 +20,10 @@ APP_BINARY="$APP_MACOS/$APP_NAME"
 IMAGER_HELPER="$APP_MACOS/casars-imager"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 FRONTEND_DYLIB_NAME="libcasars_frontend_services.dylib"
-FRONTEND_DYLIB="$REPO_ROOT/target/debug/$FRONTEND_DYLIB_NAME"
-IMAGER_BINARY="$REPO_ROOT/target/debug/casars-imager"
+BUILD_CONFIGURATION="release"
+RUST_PROFILE_DIR="$REPO_ROOT/target/release"
+FRONTEND_DYLIB="$RUST_PROFILE_DIR/$FRONTEND_DYLIB_NAME"
+IMAGER_BINARY="$RUST_PROFILE_DIR/casars-imager"
 TUTORIAL_DATA_ROOT="${CASA_RS_TUTORIAL_DATA_ROOT:-$HOME/SoftwareProjects/casa-tutorial-data}"
 TUTORIAL_DEMO_ARCHIVE="$TUTORIAL_DATA_ROOT/tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar"
 FALLBACK_REAL_PROJECT_FIXTURE="$REPO_ROOT/crates/casa-ms/tests/fixtures/mssel_test_small_multifield_spw.ms.tgz"
@@ -122,14 +124,14 @@ schedule_temp_real_project_cleanup() {
 cd "$REPO_ROOT"
 stage_temp_real_project
 "$REPO_ROOT/scripts/generate-frontend-bindings.sh" "$REPO_ROOT/target/frontend-bindings"
-cargo build -p casars-imager
+cargo build --release -p casars-frontend-services -p casars-imager
 
 cd "$ROOT_DIR"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
-swift build
-BUILD_BINARY="$(swift build --show-bin-path)/$APP_NAME"
+swift build -c "$BUILD_CONFIGURATION"
+BUILD_BINARY="$(swift build -c "$BUILD_CONFIGURATION" --show-bin-path)/$APP_NAME"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS"

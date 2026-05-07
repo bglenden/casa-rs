@@ -1281,6 +1281,10 @@ public struct ImageExplorerSessionState: Codable, Equatable {
     public var cursorY: Int?
     public var selectedProfileAxis: Int?
     public var nonDisplayIndices: [Int] = []
+    public var moviePlaying: Bool = false
+    public var movieAxis: Int?
+    public var movieFramesPerSecond: Double = 6.0
+    public var movieLoop: Bool = true
     public var regionCommands: [ImageExplorerCommand] = []
     public var transientCommands: [ImageExplorerCommand] = []
     public var status: ExplorerSessionStatus
@@ -1837,6 +1841,9 @@ public struct DebugImageExplorerSnapshot: Codable, Equatable {
     public var status: ExplorerSessionStatus
     public var activeView: String?
     public var selectedView: String
+    public var moviePlaying: Bool
+    public var movieAxis: Int?
+    public var movieFramesPerSecond: Double
     public var shape: [Int]
     public var planeSize: String?
     public var profileSampleCount: Int?
@@ -1847,6 +1854,9 @@ public struct DebugImageExplorerSnapshot: Codable, Equatable {
     public init(state: ImageExplorerSessionState) {
         status = state.status
         selectedView = state.selectedView
+        moviePlaying = state.moviePlaying
+        movieAxis = state.movieAxis
+        movieFramesPerSecond = state.movieFramesPerSecond
         activeView = state.snapshot?.activeView
         shape = state.snapshot?.shape ?? []
         if let plane = state.snapshot?.plane {
