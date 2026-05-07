@@ -264,20 +264,7 @@ struct DatasetExplorerPanel: View {
     private func imageExplorerContent(for dataset: DatasetSummary) -> some View {
         let explorerState = store.state.imageExplorers[dataset.id]
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Picker("View", selection: Binding(
-                    get: { explorerState?.selectedView ?? "plane" },
-                    set: { store.setImageExplorerView($0, datasetID: dataset.id) }
-                )) {
-                    Text("Plane").tag("plane")
-                    Text("Spectrum").tag("spectrum")
-                    Text("Metadata").tag("metadata")
-                    Text("Coordinates").tag("coordinates")
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 360)
-                .accessibilityIdentifier("imageExplorer.view.\(dataset.id)")
-
+            HStack(spacing: 8) {
                 Button {
                     store.refreshImageExplorer(datasetID: dataset.id)
                 } label: {
@@ -564,7 +551,7 @@ private struct ImageExplorerControlsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             controlsSection("View") {
                 modeAndCursorControls
             }
@@ -602,7 +589,7 @@ private struct ImageExplorerControlsView: View {
         _ title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 5) {
             Text(title)
                 .workbenchFont(.caption, weight: .semibold)
                 .foregroundStyle(.secondary)
@@ -611,39 +598,24 @@ private struct ImageExplorerControlsView: View {
     }
 
     private var modeAndCursorControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            focusPicker
+        HStack(spacing: 8) {
             planeModePicker
-            HStack(spacing: 6) {
-                TextField("X", text: $cursorXText)
-                    .frame(width: 70)
-                    .textFieldStyle(.roundedBorder)
-                TextField("Y", text: $cursorYText)
-                    .frame(width: 70)
-                    .textFieldStyle(.roundedBorder)
-                Button {
-                    store.setImageExplorerCursor(
-                        x: Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)),
-                        y: Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)),
-                        datasetID: datasetID
-                    )
-                } label: {
-                    Label("Set", systemImage: "scope")
-                }
+            TextField("X", text: $cursorXText)
+                .frame(width: 54)
+                .textFieldStyle(.roundedBorder)
+            TextField("Y", text: $cursorYText)
+                .frame(width: 54)
+                .textFieldStyle(.roundedBorder)
+            Button {
+                store.setImageExplorerCursor(
+                    x: Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                    y: Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)),
+                    datasetID: datasetID
+                )
+            } label: {
+                Label("Set", systemImage: "scope")
             }
         }
-    }
-
-    private var focusPicker: some View {
-        Picker("Focus", selection: Binding(
-            get: { explorerState?.focus ?? snapshot?.focus ?? "content" },
-            set: { store.setImageExplorerFocus($0, datasetID: datasetID) }
-        )) {
-            Text("Content").tag("content")
-            Text("Inspector").tag("inspector")
-        }
-        .pickerStyle(.segmented)
-        .frame(maxWidth: .infinity)
     }
 
     private var planeModePicker: some View {
@@ -655,28 +627,27 @@ private struct ImageExplorerControlsView: View {
             Text("Spreadsheet").tag("spreadsheet")
         }
         .pickerStyle(.segmented)
-        .frame(maxWidth: .infinity)
+        .frame(width: 190)
     }
 
     private var displayParameterControls: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                TextField("BLC", text: $parameters.blc)
-                TextField("TRC", text: $parameters.trc)
-                TextField("INC", text: $parameters.inc)
-            }
-            HStack(spacing: 6) {
-                stretchPicker
-                autoscalePicker
-            }
-            HStack(spacing: 6) {
-                TextField("Clip low", text: $parameters.clipLow)
-                TextField("Clip high", text: $parameters.clipHigh)
-                Button {
-                    store.setImageExplorerParameters(parameters, datasetID: datasetID)
-                } label: {
-                    Label("Apply", systemImage: "slider.horizontal.3")
-                }
+        HStack(spacing: 6) {
+            TextField("BLC", text: $parameters.blc)
+                .frame(width: 76)
+            TextField("TRC", text: $parameters.trc)
+                .frame(width: 76)
+            TextField("INC", text: $parameters.inc)
+                .frame(width: 66)
+            stretchPicker
+            autoscalePicker
+            TextField("Low", text: $parameters.clipLow)
+                .frame(width: 72)
+            TextField("High", text: $parameters.clipHigh)
+                .frame(width: 72)
+            Button {
+                store.setImageExplorerParameters(parameters, datasetID: datasetID)
+            } label: {
+                Label("Apply", systemImage: "slider.horizontal.3")
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -691,7 +662,7 @@ private struct ImageExplorerControlsView: View {
             Text("Manual").tag("manual")
         }
         .pickerStyle(.menu)
-        .frame(maxWidth: .infinity)
+        .frame(width: 130)
     }
 
     private var autoscalePicker: some View {
@@ -700,7 +671,7 @@ private struct ImageExplorerControlsView: View {
             Text("Frozen").tag("frozen")
         }
         .pickerStyle(.menu)
-        .frame(maxWidth: .infinity)
+        .frame(width: 105)
     }
 
     @ViewBuilder
@@ -827,76 +798,70 @@ private struct ImageExplorerControlsView: View {
     }
 
     private var regionMaskControls: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Button {
-                    store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: datasetID)
-                } label: {
-                    Label("Start", systemImage: "pencil.and.outline")
+        HStack(spacing: 6) {
+            Button {
+                store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: datasetID)
+            } label: {
+                Label("Start", systemImage: "pencil.and.outline")
+            }
+            Button {
+                let cursor = currentCursor()
+                store.appendImageExplorerRegionCommand(
+                    .appendRegionVertex(x: cursor.x, y: cursor.y),
+                    datasetID: datasetID
+                )
+            } label: {
+                Label("Add Cursor", systemImage: "plus")
+            }
+            Button {
+                store.appendImageExplorerRegionCommand(.closeRegionShape, datasetID: datasetID)
+            } label: {
+                Label("Close", systemImage: "checkmark")
+            }
+            Button {
+                store.appendImageExplorerRegionCommand(.undoRegionVertex, datasetID: datasetID)
+            } label: {
+                Label("Undo", systemImage: "arrow.uturn.backward")
+            }
+            Button {
+                store.appendImageExplorerRegionCommand(.cancelRegionShape, datasetID: datasetID)
+            } label: {
+                Label("Cancel", systemImage: "xmark")
+            }
+            Button {
+                store.clearImageExplorerRegionCommands(datasetID: datasetID)
+            } label: {
+                Label("Clear", systemImage: "trash")
+            }
+            Menu("Regions") {
+                Button("Save current") {
+                    store.runImageExplorerCommandOnce(.saveRegionDefinition, datasetID: datasetID)
                 }
-                Button {
-                    let cursor = currentCursor()
-                    store.appendImageExplorerRegionCommand(
-                        .appendRegionVertex(x: cursor.x, y: cursor.y),
-                        datasetID: datasetID
-                    )
-                } label: {
-                    Label("Add Cursor", systemImage: "plus")
+                Button("Load next") {
+                    store.runImageExplorerCommandOnce(.loadNextRegionDefinition, datasetID: datasetID)
                 }
-                Button {
-                    store.appendImageExplorerRegionCommand(.closeRegionShape, datasetID: datasetID)
-                } label: {
-                    Label("Close", systemImage: "checkmark")
+                ForEach(snapshot?.savedRegionNames ?? [], id: \.self) { name in
+                    Button("Load \(name)") {
+                        store.runImageExplorerCommandOnce(.loadRegionDefinition(name: name), datasetID: datasetID)
+                    }
+                    Button("Delete \(name)") {
+                        store.runImageExplorerCommandOnce(.deleteRegionDefinition(name: name), datasetID: datasetID)
+                    }
                 }
             }
-            HStack(spacing: 6) {
-                Button {
-                    store.appendImageExplorerRegionCommand(.undoRegionVertex, datasetID: datasetID)
-                } label: {
-                    Label("Undo", systemImage: "arrow.uturn.backward")
+            Menu("Masks") {
+                Button("Write region mask") {
+                    store.runImageExplorerCommandOnce(.writeRegionMask(name: nil, setDefault: true), datasetID: datasetID)
                 }
-                Button {
-                    store.appendImageExplorerRegionCommand(.cancelRegionShape, datasetID: datasetID)
-                } label: {
-                    Label("Cancel", systemImage: "xmark")
+                Button("Unset default") {
+                    store.runImageExplorerCommandOnce(.unsetDefaultMask, datasetID: datasetID)
                 }
-                Button {
-                    store.clearImageExplorerRegionCommands(datasetID: datasetID)
-                } label: {
-                    Label("Clear", systemImage: "trash")
-                }
-            }
-            HStack(spacing: 6) {
-                Menu("Regions") {
-                    Button("Save current") {
-                        store.runImageExplorerCommandOnce(.saveRegionDefinition, datasetID: datasetID)
+                ForEach(snapshot?.maskNames ?? [], id: \.self) { name in
+                    Button("Set \(name) default") {
+                        store.runImageExplorerCommandOnce(.setDefaultMask(name: name), datasetID: datasetID)
                     }
-                    Button("Load next") {
-                        store.runImageExplorerCommandOnce(.loadNextRegionDefinition, datasetID: datasetID)
-                    }
-                    ForEach(snapshot?.savedRegionNames ?? [], id: \.self) { name in
-                        Button("Load \(name)") {
-                            store.runImageExplorerCommandOnce(.loadRegionDefinition(name: name), datasetID: datasetID)
-                        }
-                        Button("Delete \(name)") {
-                            store.runImageExplorerCommandOnce(.deleteRegionDefinition(name: name), datasetID: datasetID)
-                        }
-                    }
-                }
-                Menu("Masks") {
-                    Button("Write region mask") {
-                        store.runImageExplorerCommandOnce(.writeRegionMask(name: nil, setDefault: true), datasetID: datasetID)
-                    }
-                    Button("Unset default") {
-                        store.runImageExplorerCommandOnce(.unsetDefaultMask, datasetID: datasetID)
-                    }
-                    ForEach(snapshot?.maskNames ?? [], id: \.self) { name in
-                        Button("Set \(name) default") {
-                            store.runImageExplorerCommandOnce(.setDefaultMask(name: name), datasetID: datasetID)
-                        }
-                        Button("Delete \(name)") {
-                            store.runImageExplorerCommandOnce(.deleteMask(name: name), datasetID: datasetID)
-                        }
+                    Button("Delete \(name)") {
+                        store.runImageExplorerCommandOnce(.deleteMask(name: name), datasetID: datasetID)
                     }
                 }
             }
@@ -921,27 +886,45 @@ private struct ImageExplorerSnapshotView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            DisclosureGroup(isExpanded: $controlsExpanded) {
-                ImageExplorerControlsView(
-                    store: store,
-                    datasetID: datasetID,
-                    explorerState: explorerState,
-                    snapshot: snapshot
-                )
-                .padding(.top, 6)
-            } label: {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
-                    Label("Controls", systemImage: "slider.horizontal.3")
+                    Button {
+                        controlsExpanded.toggle()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: controlsExpanded ? "chevron.down" : "chevron.right")
+                            Image(systemName: "slider.horizontal.3")
+                            Text("Controls")
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(controlsExpanded ? "Hide display controls" : "Show display controls")
+
+                    quickMovieControls
+
                     Spacer()
+
                     Text(controlSummary)
                         .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+
+                if controlsExpanded {
+                    Divider()
+                    ImageExplorerControlsView(
+                        store: store,
+                        datasetID: datasetID,
+                        explorerState: explorerState,
+                        snapshot: snapshot
+                    )
+                    .padding(10)
+                }
             }
             .workbenchFont(.caption)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .controlSize(.small)
             .background(.regularMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 6))
 
@@ -953,6 +936,56 @@ private struct ImageExplorerSnapshotView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .accessibilityIdentifier("imageExplorer.snapshot")
+    }
+
+    private var quickMovieControls: some View {
+        HStack(spacing: 2) {
+            Button {
+                startQuickMovie()
+            } label: {
+                Image(systemName: "play.fill")
+            }
+            .disabled(!canStartQuickMovie)
+            .accessibilityLabel("Start movie")
+            .help(canStartQuickMovie ? "Start movie playback" : "No movie axis available")
+
+            Button {
+                store.stopImageExplorerMovie(datasetID: datasetID)
+            } label: {
+                Image(systemName: "stop.fill")
+            }
+            .disabled(explorerState?.moviePlaying != true)
+            .accessibilityLabel("Stop movie")
+            .help("Stop movie playback")
+        }
+        .buttonStyle(.borderless)
+    }
+
+    private var canStartQuickMovie: Bool {
+        quickMovieAxis != nil && explorerState?.moviePlaying != true
+    }
+
+    private var quickMovieAxis: Int? {
+        let axes = snapshot.nonDisplayAxes ?? []
+        if let movieAxis = explorerState?.movieAxis, axes.contains(where: { $0.axis == movieAxis }) {
+            return movieAxis
+        }
+        if let profileAxis = explorerState?.selectedProfileAxis, axes.contains(where: { $0.axis == profileAxis }) {
+            return profileAxis
+        }
+        return axes.first?.axis
+    }
+
+    private func startQuickMovie() {
+        guard let axis = quickMovieAxis else {
+            return
+        }
+        store.startImageExplorerMovie(
+            axis: axis,
+            framesPerSecond: explorerState?.movieFramesPerSecond ?? 6.0,
+            loop: explorerState?.movieLoop ?? true,
+            datasetID: datasetID
+        )
     }
 
     private var controlSummary: String {
@@ -1073,13 +1106,14 @@ private struct ImageProfilePanelView: View {
     }
 
     private func profilePlotDocument(_ profile: ImageExplorerSnapshot.Profile) -> WorkbenchPlotDocument {
+        let xAxisPresentation = profileXAxisPresentation(profile)
         let points = profile.samples
             .filter { $0.finite && $0.masked != true }
             .map { sample in
-                WorkbenchPlotPoint(x: sample.worldAxis?.value ?? Double(sample.sampleIndex), y: sample.value)
+                WorkbenchPlotPoint(x: xAxisPresentation.value(for: sample), y: sample.value)
             }
         let selectedSample = profile.samples.first { $0.sampleIndex == profile.selectedSampleIndex }
-        let selectedX = selectedSample.map { $0.worldAxis?.value ?? Double($0.sampleIndex) }
+        let selectedX = selectedSample.map { xAxisPresentation.value(for: $0) }
         let layer = WorkbenchPlotLayer(
             id: "profile-\(profile.axis)",
             title: "\(profile.axisName) profile",
@@ -1117,9 +1151,9 @@ private struct ImageProfilePanelView: View {
         return WorkbenchPlotDocument(
             id: "image-profile-\(profile.axis)",
             title: "\(profile.axisName) Profile",
-            subtitle: "\(profile.valueUnit) vs \(profile.axisUnit)",
+            subtitle: "\(profile.valueUnit) vs \(xAxisPresentation.unit)",
             axes: [
-                WorkbenchPlotAxis(id: "sample", label: profile.axisName, unit: profile.samples.first?.worldAxis?.unit ?? profile.axisUnit, range: expandedRange(xRange)),
+                WorkbenchPlotAxis(id: "sample", label: profile.axisName, unit: xAxisPresentation.unit, range: expandedRange(xRange)),
                 WorkbenchPlotAxis(id: "value", label: "Value", unit: profile.valueUnit, range: expandedRange(yRange))
             ],
             layers: layers,
@@ -1127,11 +1161,43 @@ private struct ImageProfilePanelView: View {
         )
     }
 
+    private func profileXAxisPresentation(_ profile: ImageExplorerSnapshot.Profile) -> ProfileXAxisPresentation {
+        let worldValues = profile.samples.compactMap { $0.worldAxis?.value }.filter { $0.isFinite }
+        let worldUnit = profile.samples.compactMap { $0.worldAxis?.unit }.first
+        let unit = worldUnit ?? profile.axisUnit
+        guard !worldValues.isEmpty, unit.compare("Hz", options: .caseInsensitive) == .orderedSame else {
+            return ProfileXAxisPresentation(scale: 1, unit: unit)
+        }
+        let maxAbs = worldValues.map(abs).max() ?? 0
+        if maxAbs >= 1e9 {
+            return ProfileXAxisPresentation(scale: 1e9, unit: "GHz")
+        }
+        if maxAbs >= 1e6 {
+            return ProfileXAxisPresentation(scale: 1e6, unit: "MHz")
+        }
+        if maxAbs >= 1e3 {
+            return ProfileXAxisPresentation(scale: 1e3, unit: "kHz")
+        }
+        return ProfileXAxisPresentation(scale: 1, unit: "Hz")
+    }
+
     private func expandedRange(_ range: WorkbenchPlotRange) -> WorkbenchPlotRange {
         guard range.lower == range.upper else {
             return range
         }
         return WorkbenchPlotRange(lower: range.lower - 0.5, upper: range.upper + 0.5)
+    }
+}
+
+private struct ProfileXAxisPresentation {
+    let scale: Double
+    let unit: String
+
+    func value(for sample: ImageExplorerSnapshot.Profile.Sample) -> Double {
+        guard let worldValue = sample.worldAxis?.value else {
+            return Double(sample.sampleIndex)
+        }
+        return worldValue / scale
     }
 }
 
