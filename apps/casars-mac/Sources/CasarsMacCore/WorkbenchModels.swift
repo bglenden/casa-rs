@@ -923,6 +923,34 @@ public struct WorkbenchState: Codable, Equatable {
     public static let minimumMeasurementSetPlotMaxPoints: UInt64 = 1_000
     public static let maximumMeasurementSetPlotMaxPoints: UInt64 = 5_000_000
 
+    public static func parseMeasurementSetPlotMaxPoints(_ text: String) -> UInt64? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let suffixScale: Double
+        let numericText: String
+        if let suffix = trimmed.last, suffix == "k" || suffix == "K" {
+            suffixScale = 1_000
+            numericText = String(trimmed.dropLast())
+        } else if let suffix = trimmed.last, suffix == "m" || suffix == "M" {
+            suffixScale = 1_000_000
+            numericText = String(trimmed.dropLast())
+        } else {
+            suffixScale = 1
+            numericText = trimmed
+        }
+
+        guard let value = Double(numericText.trimmingCharacters(in: .whitespacesAndNewlines)),
+              value.isFinite,
+              value > 0
+        else {
+            return nil
+        }
+        return UInt64((value * suffixScale).rounded())
+    }
+
     public var project: ProjectFixture
     public var dockMode: DockMode
     public var leftDockCollapsed: Bool

@@ -725,6 +725,7 @@ struct MeasurementSetPlotPanel: View {
     @State private var showingPlotControls = false
     @State private var plotDisplayMode: WorkbenchPlotDisplayMode = .automatic
     @State private var plotCharacterSizeOverride: Double?
+    @State private var maxPlotPointsText = ""
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -840,21 +841,16 @@ struct MeasurementSetPlotPanel: View {
                 HStack {
                     Text("Max plotted points")
                     Spacer()
-                    Text(Self.formatPointBudget(plotState.maxPlotPoints))
-                        .foregroundStyle(.secondary)
+                    TextField("250k", text: $maxPlotPointsText)
+                        .multilineTextAlignment(.trailing)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 96)
+                        .onSubmit {
+                            applyMaxPlotPointsText()
+                        }
                 }
-                Stepper(
-                    "Max plotted points",
-                    value: Binding(
-                        get: { Int(plotState.maxPlotPoints) },
-                        set: { store.setMeasurementSetPlotMaxPoints(UInt64($0), datasetID: dataset.id) }
-                    ),
-                    in: Int(WorkbenchState.minimumMeasurementSetPlotMaxPoints)...Int(WorkbenchState.maximumMeasurementSetPlotMaxPoints),
-                    step: 25_000
-                )
-                .labelsHidden()
                 .accessibilityIdentifier("msPlot.maxPlotPoints.\(dataset.id)")
-                Text("Display budget only; averaging controls will be added separately.")
+                Text("Accepts plain counts, k, or M. Display budget only; averaging controls will be added separately.")
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -864,6 +860,12 @@ struct MeasurementSetPlotPanel: View {
             plotMetadata
         }
         .padding(16)
+        .onAppear {
+            maxPlotPointsText = Self.formatPointBudget(plotState.maxPlotPoints)
+        }
+        .onDisappear {
+            applyMaxPlotPointsText()
+        }
     }
 
     private var plotSurface: some View {
@@ -995,6 +997,16 @@ struct MeasurementSetPlotPanel: View {
             return String(format: "%.0fk", Double(points) / 1_000.0)
         }
         return "\(points)"
+    }
+
+    private func applyMaxPlotPointsText() {
+        guard let maxPlotPoints = WorkbenchState.parseMeasurementSetPlotMaxPoints(maxPlotPointsText) else {
+            maxPlotPointsText = Self.formatPointBudget(plotState.maxPlotPoints)
+            return
+        }
+        store.setMeasurementSetPlotMaxPoints(maxPlotPoints, datasetID: dataset.id)
+        let clamped = store.state.measurementSetPlots[dataset.id]?.maxPlotPoints ?? plotState.maxPlotPoints
+        maxPlotPointsText = Self.formatPointBudget(clamped)
     }
 }
 

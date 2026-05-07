@@ -52,6 +52,16 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.activeTab, "")
     }
 
+    func testMeasurementSetPlotMaxPointParserAcceptsSuffixes() {
+        XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("250000"), 250_000)
+        XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("250k"), 250_000)
+        XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("2M"), 2_000_000)
+        XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("1.5m"), 1_500_000)
+        XCTAssertNil(WorkbenchState.parseMeasurementSetPlotMaxPoints(""))
+        XCTAssertNil(WorkbenchState.parseMeasurementSetPlotMaxPoints("many"))
+        XCTAssertNil(WorkbenchState.parseMeasurementSetPlotMaxPoints("-10k"))
+    }
+
     func testFixtureStateExposesInitialDebugSnapshot() throws {
         let store = WorkbenchStore.fixture()
 
