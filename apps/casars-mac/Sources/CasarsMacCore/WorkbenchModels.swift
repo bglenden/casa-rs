@@ -1349,41 +1349,478 @@ public struct TableBrowserSnapshot: Codable, Equatable {
         public var path: String
     }
 
+    public struct Capabilities: Codable, Equatable {
+        public var editable: Bool
+    }
+
+    public struct Viewport: Codable, Equatable {
+        public var width: Int
+        public var height: Int
+        public var inspectorHeight: Int
+
+        enum CodingKeys: String, CodingKey {
+            case width
+            case height
+            case inspectorHeight = "inspector_height"
+        }
+    }
+
+    public struct NavigationMetrics: Codable, Equatable {
+        public var selectedIndex: Int
+        public var totalItems: Int
+        public var viewportItems: Int
+
+        enum CodingKeys: String, CodingKey {
+            case selectedIndex = "selected_index"
+            case totalItems = "total_items"
+            case viewportItems = "viewport_items"
+        }
+    }
+
+    public struct SelectedAddress: Codable, Equatable {
+        public var kind: String
+        public var tablePath: String?
+        public var row: Int?
+        public var column: String?
+        public var keywordPath: [String]?
+        public var valuePath: [ValuePathSegment]?
+        public var source: String?
+        public var targetPath: String?
+
+        enum CodingKeys: String, CodingKey {
+            case kind
+            case tablePath = "table_path"
+            case row
+            case column
+            case keywordPath = "keyword_path"
+            case valuePath = "value_path"
+            case source
+            case targetPath = "target_path"
+        }
+    }
+
+    public struct ValuePathSegment: Codable, Equatable {
+        public var segment: String
+        public var name: String?
+        public var flatIndex: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case segment
+            case name
+            case flatIndex = "flat_index"
+        }
+    }
+
+    public enum ScalarValue: Codable, Equatable {
+        case bool(Bool)
+        case int(Int64)
+        case uint(UInt64)
+        case float(Double)
+        case complex(re: Double, im: Double)
+        case string(String)
+        case unknown(type: String, display: String)
+
+        enum CodingKeys: String, CodingKey {
+            case type
+            case value
+        }
+
+        enum ComplexCodingKeys: String, CodingKey {
+            case re
+            case im
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let type = try container.decode(String.self, forKey: .type)
+            switch type {
+            case "bool":
+                self = .bool(try container.decode(Bool.self, forKey: .value))
+            case "uint8", "uint16", "uint32":
+                self = .uint(try container.decode(UInt64.self, forKey: .value))
+            case "int16", "int32", "int64":
+                self = .int(try container.decode(Int64.self, forKey: .value))
+            case "float32", "float64":
+                self = .float(try container.decode(Double.self, forKey: .value))
+            case "complex32", "complex64":
+                let complex = try container.nestedContainer(keyedBy: ComplexCodingKeys.self, forKey: .value)
+                self = .complex(
+                    re: try complex.decode(Double.self, forKey: .re),
+                    im: try complex.decode(Double.self, forKey: .im)
+                )
+            case "string":
+                self = .string(try container.decode(String.self, forKey: .value))
+            default:
+                let display = (try? container.decode(String.self, forKey: .value)) ?? ""
+                self = .unknown(type: type, display: display)
+            }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case let .bool(value):
+                try container.encode("bool", forKey: .type)
+                try container.encode(value, forKey: .value)
+            case let .int(value):
+                try container.encode("int64", forKey: .type)
+                try container.encode(value, forKey: .value)
+            case let .uint(value):
+                try container.encode("uint32", forKey: .type)
+                try container.encode(value, forKey: .value)
+            case let .float(value):
+                try container.encode("float64", forKey: .type)
+                try container.encode(value, forKey: .value)
+            case let .complex(re, im):
+                try container.encode("complex64", forKey: .type)
+                var complex = container.nestedContainer(keyedBy: ComplexCodingKeys.self, forKey: .value)
+                try complex.encode(re, forKey: .re)
+                try complex.encode(im, forKey: .im)
+            case let .string(value):
+                try container.encode("string", forKey: .type)
+                try container.encode(value, forKey: .value)
+            case let .unknown(type, display):
+                try container.encode(type, forKey: .type)
+                try container.encode(display, forKey: .value)
+            }
+        }
+    }
+
+    public struct ArrayElement: Codable, Equatable {
+        public var flatIndex: Int
+        public var index: [Int]
+        public var value: ScalarValue
+        public var selected: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case flatIndex = "flat_index"
+            case index
+            case value
+            case selected
+        }
+    }
+
+    public struct RecordFieldSummary: Codable, Equatable {
+        public var name: String
+        public var kind: String
+        public var summary: String
+        public var expandable: Bool
+        public var openable: Bool
+        public var selected: Bool
+    }
+
+    public enum ValueNode: Codable, Equatable {
+        case undefined
+        case scalar(value: ScalarValue)
+        case array(primitive: String, shape: [Int], totalElements: Int, pageStart: Int, pageSize: Int, elements: [ArrayElement])
+        case record(totalFields: Int, pageStart: Int, pageSize: Int, fields: [RecordFieldSummary])
+        case tableRef(path: String, resolvedPath: String, openable: Bool)
+
+        enum CodingKeys: String, CodingKey {
+            case kind
+            case value
+            case primitive
+            case shape
+            case totalElements = "total_elements"
+            case pageStart = "page_start"
+            case pageSize = "page_size"
+            case elements
+            case totalFields = "total_fields"
+            case fields
+            case path
+            case resolvedPath = "resolved_path"
+            case openable
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let kind = try container.decode(String.self, forKey: .kind)
+            switch kind {
+            case "undefined":
+                self = .undefined
+            case "scalar":
+                self = .scalar(value: try container.decode(ScalarValue.self, forKey: .value))
+            case "array":
+                self = .array(
+                    primitive: try container.decode(String.self, forKey: .primitive),
+                    shape: try container.decode([Int].self, forKey: .shape),
+                    totalElements: try container.decode(Int.self, forKey: .totalElements),
+                    pageStart: try container.decode(Int.self, forKey: .pageStart),
+                    pageSize: try container.decode(Int.self, forKey: .pageSize),
+                    elements: try container.decode([ArrayElement].self, forKey: .elements)
+                )
+            case "record":
+                self = .record(
+                    totalFields: try container.decode(Int.self, forKey: .totalFields),
+                    pageStart: try container.decode(Int.self, forKey: .pageStart),
+                    pageSize: try container.decode(Int.self, forKey: .pageSize),
+                    fields: try container.decode([RecordFieldSummary].self, forKey: .fields)
+                )
+            case "table_ref":
+                self = .tableRef(
+                    path: try container.decode(String.self, forKey: .path),
+                    resolvedPath: try container.decode(String.self, forKey: .resolvedPath),
+                    openable: try container.decode(Bool.self, forKey: .openable)
+                )
+            default:
+                self = .undefined
+            }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .undefined:
+                try container.encode("undefined", forKey: .kind)
+            case let .scalar(value):
+                try container.encode("scalar", forKey: .kind)
+                try container.encode(value, forKey: .value)
+            case let .array(primitive, shape, totalElements, pageStart, pageSize, elements):
+                try container.encode("array", forKey: .kind)
+                try container.encode(primitive, forKey: .primitive)
+                try container.encode(shape, forKey: .shape)
+                try container.encode(totalElements, forKey: .totalElements)
+                try container.encode(pageStart, forKey: .pageStart)
+                try container.encode(pageSize, forKey: .pageSize)
+                try container.encode(elements, forKey: .elements)
+            case let .record(totalFields, pageStart, pageSize, fields):
+                try container.encode("record", forKey: .kind)
+                try container.encode(totalFields, forKey: .totalFields)
+                try container.encode(pageStart, forKey: .pageStart)
+                try container.encode(pageSize, forKey: .pageSize)
+                try container.encode(fields, forKey: .fields)
+            case let .tableRef(path, resolvedPath, openable):
+                try container.encode("table_ref", forKey: .kind)
+                try container.encode(path, forKey: .path)
+                try container.encode(resolvedPath, forKey: .resolvedPath)
+                try container.encode(openable, forKey: .openable)
+            }
+        }
+    }
+
+    public struct InspectorTrailEntry: Codable, Equatable {
+        public var label: String
+        public var summary: String
+    }
+
     public struct Inspector: Codable, Equatable {
         public var title: String
+        public var trail: [InspectorTrailEntry]
+        public var node: ValueNode
         public var renderedLines: [String]
 
         enum CodingKeys: String, CodingKey {
             case title
+            case trail
+            case node
             case renderedLines = "rendered_lines"
         }
     }
 
+    public var capabilities: Capabilities?
     public var view: String
     public var focus: String
     public var tablePath: String
     public var breadcrumb: [Breadcrumb]
+    public var viewport: Viewport?
     public var statusLine: String
     public var contentLines: [String]
+    public var verticalMetrics: NavigationMetrics?
+    public var horizontalMetrics: NavigationMetrics?
+    public var selectedAddress: SelectedAddress?
     public var inspector: Inspector?
 
     enum CodingKeys: String, CodingKey {
+        case capabilities
         case view
         case focus
         case tablePath = "table_path"
         case breadcrumb
+        case viewport
         case statusLine = "status_line"
         case contentLines = "content_lines"
+        case verticalMetrics = "vertical_metrics"
+        case horizontalMetrics = "horizontal_metrics"
+        case selectedAddress = "selected_address"
         case inspector
+    }
+}
+
+public enum TableBrowserCommand: Codable, Equatable {
+    case setFocus(String)
+    case cycleView(forward: Bool)
+    case moveUp(steps: Int)
+    case moveDown(steps: Int)
+    case moveLeft(steps: Int)
+    case moveRight(steps: Int)
+    case pageUp(pages: Int)
+    case pageDown(pages: Int)
+    case activate
+    case back
+    case escape
+
+    enum CodingKeys: String, CodingKey {
+        case command
+        case focus
+        case forward
+        case steps
+        case pages
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(String.self, forKey: .command) {
+        case "set_focus":
+            self = .setFocus(try container.decode(String.self, forKey: .focus))
+        case "cycle_view":
+            self = .cycleView(forward: try container.decode(Bool.self, forKey: .forward))
+        case "move_up":
+            self = .moveUp(steps: try container.decode(Int.self, forKey: .steps))
+        case "move_down":
+            self = .moveDown(steps: try container.decode(Int.self, forKey: .steps))
+        case "move_left":
+            self = .moveLeft(steps: try container.decode(Int.self, forKey: .steps))
+        case "move_right":
+            self = .moveRight(steps: try container.decode(Int.self, forKey: .steps))
+        case "page_up":
+            self = .pageUp(pages: try container.decode(Int.self, forKey: .pages))
+        case "page_down":
+            self = .pageDown(pages: try container.decode(Int.self, forKey: .pages))
+        case "activate":
+            self = .activate
+        case "back":
+            self = .back
+        case "escape":
+            self = .escape
+        default:
+            self = .escape
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .setFocus(focus):
+            try container.encode("set_focus", forKey: .command)
+            try container.encode(focus, forKey: .focus)
+        case let .cycleView(forward):
+            try container.encode("cycle_view", forKey: .command)
+            try container.encode(forward, forKey: .forward)
+        case let .moveUp(steps):
+            try container.encode("move_up", forKey: .command)
+            try container.encode(steps, forKey: .steps)
+        case let .moveDown(steps):
+            try container.encode("move_down", forKey: .command)
+            try container.encode(steps, forKey: .steps)
+        case let .moveLeft(steps):
+            try container.encode("move_left", forKey: .command)
+            try container.encode(steps, forKey: .steps)
+        case let .moveRight(steps):
+            try container.encode("move_right", forKey: .command)
+            try container.encode(steps, forKey: .steps)
+        case let .pageUp(pages):
+            try container.encode("page_up", forKey: .command)
+            try container.encode(pages, forKey: .pages)
+        case let .pageDown(pages):
+            try container.encode("page_down", forKey: .command)
+            try container.encode(pages, forKey: .pages)
+        case .activate:
+            try container.encode("activate", forKey: .command)
+        case .back:
+            try container.encode("back", forKey: .command)
+        case .escape:
+            try container.encode("escape", forKey: .command)
+        }
+    }
+}
+
+public struct TableBrowserSnapshotRequest: Codable, Equatable {
+    public var datasetPath: String
+    public var width: Int
+    public var height: Int
+    public var inspectorHeight: Int
+    public var selectedView: String
+    public var focus: String
+    public var commands: [TableBrowserCommand]
+    public var transientCommands: [TableBrowserCommand]
+
+    enum CodingKeys: String, CodingKey {
+        case datasetPath = "dataset_path"
+        case width
+        case height
+        case inspectorHeight = "inspector_height"
+        case selectedView = "selected_view"
+        case focus
+        case commands
+        case transientCommands = "transient_commands"
     }
 }
 
 public struct TableBrowserSessionState: Codable, Equatable {
     public var datasetID: String
     public var selectedView: String
+    public var focus: String = "main"
+    public var commands: [TableBrowserCommand] = []
+    public var transientCommands: [TableBrowserCommand] = []
     public var status: ExplorerSessionStatus
     public var lastError: String?
     public var snapshot: TableBrowserSnapshot?
+
+    enum CodingKeys: String, CodingKey {
+        case datasetID
+        case selectedView
+        case focus
+        case commands
+        case transientCommands
+        case status
+        case lastError
+        case snapshot
+    }
+
+    public init(
+        datasetID: String,
+        selectedView: String,
+        focus: String = "main",
+        commands: [TableBrowserCommand] = [],
+        transientCommands: [TableBrowserCommand] = [],
+        status: ExplorerSessionStatus,
+        lastError: String?,
+        snapshot: TableBrowserSnapshot?
+    ) {
+        self.datasetID = datasetID
+        self.selectedView = selectedView
+        self.focus = focus
+        self.commands = commands
+        self.transientCommands = transientCommands
+        self.status = status
+        self.lastError = lastError
+        self.snapshot = snapshot
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        datasetID = try container.decode(String.self, forKey: .datasetID)
+        selectedView = try container.decode(String.self, forKey: .selectedView)
+        focus = try container.decodeIfPresent(String.self, forKey: .focus) ?? "main"
+        commands = try container.decodeIfPresent([TableBrowserCommand].self, forKey: .commands) ?? []
+        transientCommands = try container.decodeIfPresent([TableBrowserCommand].self, forKey: .transientCommands) ?? []
+        status = try container.decode(ExplorerSessionStatus.self, forKey: .status)
+        lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
+        snapshot = try container.decodeIfPresent(TableBrowserSnapshot.self, forKey: .snapshot)
+    }
+
+    public func snapshotRequest(datasetPath: String) -> TableBrowserSnapshotRequest {
+        TableBrowserSnapshotRequest(
+            datasetPath: datasetPath,
+            width: 120,
+            height: 32,
+            inspectorHeight: 10,
+            selectedView: selectedView,
+            focus: focus,
+            commands: commands,
+            transientCommands: transientCommands
+        )
+    }
 }
 
 public extension MeasurementSetPlotResultSummary {

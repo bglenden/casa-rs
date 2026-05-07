@@ -1832,8 +1832,10 @@ private final class StubImageExplorerClient: ImageExplorerClient {
 
 private final class StubTableBrowserClient: TableBrowserClient {
     struct Request {
-        var datasetPath: String
-        var selectedView: String
+        var request: TableBrowserSnapshotRequest
+
+        var datasetPath: String { request.datasetPath }
+        var selectedView: String { request.selectedView }
     }
 
     private(set) var paths: [String] = []
@@ -1844,10 +1846,13 @@ private final class StubTableBrowserClient: TableBrowserClient {
         self.snapshot = snapshot
     }
 
-    func buildSnapshot(datasetPath: String, selectedView: String) throws -> TableBrowserSnapshot {
-        paths.append(datasetPath)
-        requests.append(Request(datasetPath: datasetPath, selectedView: selectedView))
-        return snapshot
+    func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot {
+        paths.append(request.datasetPath)
+        requests.append(Request(request: request))
+        var nextSnapshot = snapshot
+        nextSnapshot.view = request.selectedView
+        nextSnapshot.focus = request.focus
+        return nextSnapshot
     }
 }
 
@@ -1949,14 +1954,37 @@ private func makeImageExplorerSnapshot(nonDisplayIndex: Int = 0) -> ImageExplore
 
 private func makeTableBrowserSnapshot(path: String) -> TableBrowserSnapshot {
     TableBrowserSnapshot(
+        capabilities: TableBrowserSnapshot.Capabilities(editable: false),
         view: "overview",
         focus: "main",
         tablePath: path,
         breadcrumb: [TableBrowserSnapshot.Breadcrumb(label: "MAIN", path: path)],
+        viewport: TableBrowserSnapshot.Viewport(width: 120, height: 32, inspectorHeight: 10),
         statusLine: "Browsing \(path).",
         contentLines: ["Rows: 12", "Columns: TIME DATA FLAG"],
+        verticalMetrics: nil,
+        horizontalMetrics: nil,
+        selectedAddress: TableBrowserSnapshot.SelectedAddress(
+            kind: "column",
+            tablePath: path,
+            row: nil,
+            column: "DATA",
+            keywordPath: nil,
+            valuePath: nil,
+            source: nil,
+            targetPath: nil
+        ),
         inspector: TableBrowserSnapshot.Inspector(
             title: "Column DATA",
+            trail: [],
+            node: .array(
+                primitive: "complex64",
+                shape: [4, 2],
+                totalElements: 8,
+                pageStart: 0,
+                pageSize: 8,
+                elements: []
+            ),
             renderedLines: ["Array Complex64[4,2]", "Unit: Jy"]
         )
     )

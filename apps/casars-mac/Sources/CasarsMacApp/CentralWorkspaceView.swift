@@ -357,6 +357,20 @@ struct DatasetExplorerPanel: View {
                 .accessibilityIdentifier("tableBrowser.view.\(dataset.id)")
 
                 Button {
+                    store.runTableBrowserCommand(.setFocus("main"), datasetID: dataset.id)
+                } label: {
+                    Label("Main", systemImage: "rectangle.topthird.inset.filled")
+                }
+                .accessibilityIdentifier("tableBrowser.focusMain.\(dataset.id)")
+
+                Button {
+                    store.runTableBrowserCommand(.setFocus("inspector"), datasetID: dataset.id)
+                } label: {
+                    Label("Inspector", systemImage: "sidebar.right")
+                }
+                .accessibilityIdentifier("tableBrowser.focusInspector.\(dataset.id)")
+
+                Button {
                     store.refreshTableBrowser(datasetID: dataset.id)
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
@@ -393,7 +407,12 @@ struct DatasetExplorerPanel: View {
             }
 
             if let snapshot = browserState?.snapshot {
-                TableBrowserSnapshotView(snapshot: snapshot)
+                TableBrowserSnapshotView(
+                    snapshot: snapshot,
+                    commandHandler: { command in
+                        store.runTableBrowserCommand(command, datasetID: dataset.id)
+                    }
+                )
             } else {
                 TablePreviewSummary(dataset: dataset)
             }
@@ -2048,49 +2067,323 @@ private extension Array {
 
 private struct TableBrowserSnapshotView: View {
     let snapshot: TableBrowserSnapshot
+    let commandHandler: (TableBrowserCommand) -> Void
 
     var body: some View {
-        Grid(alignment: .topLeading, horizontalSpacing: 14, verticalSpacing: 14) {
-            GridRow {
-                SummaryBox(
-                    title: "Browser",
-                    values: [
-                        "View: \(snapshot.view)",
-                        "Focus: \(snapshot.focus)",
-                        "Breadcrumb: \(snapshot.breadcrumb.map(\.label).joined(separator: " / "))"
-                    ]
-                )
-                SummaryBox(title: "Inspector", values: inspectorValues)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text(snapshot.breadcrumb.map(\.label).joined(separator: " / "))
+                    .workbenchFont(.headline)
+                    .lineLimit(1)
+                Text(snapshot.focus == "inspector" ? "Inspector focus" : "Main focus")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.10), in: Capsule())
+                if snapshot.capabilities?.editable == false {
+                    Text("read-only")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let address = addressSummary {
+                    Text(address)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
-            GridRow {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Content")
-                        .workbenchFont(.headline)
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(snapshot.contentLines.prefix(32), id: \.self) { line in
-                            Text(line)
+            HStack(spacing: 8) {
+                commandButton("chevron.up", "Move up") { commandHandler(.moveUp(steps: 1)) }
+                commandButton("chevron.down", "Move down") { commandHandler(.moveDown(steps: 1)) }
+                commandButton("chevron.left", "Move left") { commandHandler(.moveLeft(steps: 1)) }
+                commandButton("chevron.right", "Move right") { commandHandler(.moveRight(steps: 1)) }
+                Divider().frame(height: 22)
+                commandButton("arrow.up.to.line", "Page up") { commandHandler(.pageUp(pages: 1)) }
+                commandButton("arrow.down.to.line", "Page down") { commandHandler(.pageDown(pages: 1)) }
+                Divider().frame(height: 22)
+                Button {
+                    commandHandler(.activate)
+                } label: {
+                    Label("Open", systemImage: "return")
+                }
+                Button {
+                    commandHandler(.back)
+                } label: {
+                    Label("Back", systemImage: "chevron.backward")
+                }
+                Button {
+                    commandHandler(.escape)
+                } label: {
+                    Label("Escape", systemImage: "escape")
+                }
+                Spacer()
+                metricsLabel(snapshot.verticalMetrics, axis: "rows")
+                metricsLabel(snapshot.horizontalMetrics, axis: "cols")
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                TableBrowserMainPane(snapshot: snapshot)
+                    .frame(minWidth: 520, maxWidth: .infinity, minHeight: 320, alignment: .topLeading)
+                TableBrowserInspectorPane(inspector: snapshot.inspector)
+                    .frame(width: 360, alignment: .topLeading)
+                    .frame(minHeight: 320, alignment: .topLeading)
+            }
+            Text(snapshot.statusLine)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .accessibilityIdentifier("tableBrowser.snapshot")
+        .onMoveCommand { direction in
+            switch direction {
+            case .up:
+                commandHandler(.moveUp(steps: 1))
+            case .down:
+                commandHandler(.moveDown(steps: 1))
+            case .left:
+                commandHandler(.moveLeft(steps: 1))
+            case .right:
+                commandHandler(.moveRight(steps: 1))
+            @unknown default:
+                break
+            }
+        }
+        .onExitCommand {
+            commandHandler(.escape)
+        }
+    }
+
+    private var addressSummary: String? {
+        guard let address = snapshot.selectedAddress else {
+            return nil
+        }
+        switch address.kind {
+        case "column":
+            return address.column.map { "column \($0)" }
+        case "cell":
+            let row = address.row.map(String.init) ?? "?"
+            return "row \(row) \(address.column ?? "")"
+        case "table_keyword":
+            return "keyword \(address.keywordPath?.joined(separator: ".") ?? "")"
+        case "column_keyword":
+            return "keyword \(address.column ?? ""):\(address.keywordPath?.joined(separator: ".") ?? "")"
+        case "subtable":
+            return "subtable \(address.targetPath ?? "")"
+        default:
+            return address.kind
+        }
+    }
+
+    @ViewBuilder
+    private func commandButton(_ systemImage: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .frame(width: 18, height: 18)
+        }
+        .help(label)
+    }
+
+    @ViewBuilder
+    private func metricsLabel(_ metrics: TableBrowserSnapshot.NavigationMetrics?, axis: String) -> some View {
+        if let metrics, metrics.totalItems > 0 {
+            Text("\(axis) \(metrics.selectedIndex + 1)/\(metrics.totalItems)")
+                .workbenchFont(.caption, design: .monospaced)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct TableBrowserMainPane: View {
+    let snapshot: TableBrowserSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(snapshot.view.capitalized)
+                .workbenchFont(.headline)
+            ScrollView([.horizontal, .vertical]) {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(mainLines.enumerated()), id: \.offset) { _, line in
+                        if snapshot.view == "cells", let row = TableBrowserRenderedRow(line: line) {
+                            TableBrowserRenderedRowView(row: row)
+                        } else {
+                            Text(line.isEmpty ? " " : line)
                                 .workbenchFont(.caption, design: .monospaced)
                                 .lineLimit(1)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.18)))
                 }
-                .gridCellColumns(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
             }
+            .background(Color(nsColor: .windowBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.18)))
         }
-        .accessibilityIdentifier("tableBrowser.snapshot")
     }
 
-    private var inspectorValues: [String] {
-        guard let inspector = snapshot.inspector else {
-            return ["No selected inspector payload"]
+    private var mainLines: [String] {
+        var lines = snapshot.contentLines
+        guard let inspector = snapshot.inspector?.renderedLines, !inspector.isEmpty, lines.count >= inspector.count else {
+            return lines
         }
-        return [inspector.title] + inspector.renderedLines
+        if Array(lines.suffix(inspector.count)) == inspector {
+            lines.removeLast(inspector.count)
+            if lines.last == "" {
+                lines.removeLast()
+            }
+        }
+        return lines
+    }
+}
+
+private struct TableBrowserRenderedRow: Equatable {
+    var selected: Bool
+    var cells: [String]
+
+    init?(line: String) {
+        guard line.contains("|") else {
+            return nil
+        }
+        selected = line.first == ">"
+        cells = line
+            .replacingOccurrences(of: ">", with: " ")
+            .split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !cells.isEmpty else {
+            return nil
+        }
+    }
+}
+
+private struct TableBrowserRenderedRowView: View {
+    let row: TableBrowserRenderedRow
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(row.cells.enumerated()), id: \.offset) { index, cell in
+                Text(cell.isEmpty ? " " : cell)
+                    .workbenchFont(.caption, design: .monospaced)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .frame(minWidth: index == 0 ? 52 : 92, alignment: .leading)
+                    .background(row.selected ? Color.accentColor.opacity(0.18) : Color.clear)
+                    .overlay(Rectangle().stroke(Color.secondary.opacity(0.16), lineWidth: 0.5))
+            }
+        }
+    }
+}
+
+private struct TableBrowserInspectorPane: View {
+    let inspector: TableBrowserSnapshot.Inspector?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(inspector?.title ?? "Inspector")
+                .workbenchFont(.headline)
+            if let inspector {
+                if !inspector.trail.isEmpty {
+                    Text(inspector.trail.map(\.label).joined(separator: " / "))
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                TableBrowserTypedInspector(node: inspector.node)
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(inspector.renderedLines.enumerated()), id: \.offset) { _, line in
+                            Text(line.isEmpty ? " " : line)
+                                .workbenchFont(.caption, design: .monospaced)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            } else {
+                Text("No selected value")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.18)))
+    }
+}
+
+private struct TableBrowserTypedInspector: View {
+    let node: TableBrowserSnapshot.ValueNode
+
+    var body: some View {
+        switch node {
+        case .undefined:
+            typedLine("Type", "undefined")
+        case let .scalar(value):
+            typedLine("Scalar", value.displayString)
+        case let .array(primitive, shape, totalElements, pageStart, pageSize, elements):
+            VStack(alignment: .leading, spacing: 4) {
+                typedLine("Array", "\(primitive) \(shape.map(String.init).joined(separator: " x "))")
+                typedLine("Elements", "\(pageStart + 1)-\(min(pageStart + pageSize, totalElements)) of \(totalElements)")
+                ForEach(Array(elements.prefix(4).enumerated()), id: \.offset) { _, element in
+                    Text("\(element.selected ? ">" : " ") [\(element.index.map(String.init).joined(separator: ","))] \(element.value.displayString)")
+                        .workbenchFont(.caption, design: .monospaced)
+                        .lineLimit(1)
+                }
+            }
+        case let .record(totalFields, pageStart, pageSize, fields):
+            VStack(alignment: .leading, spacing: 4) {
+                typedLine("Record", "\(pageStart + 1)-\(min(pageStart + pageSize, totalFields)) of \(totalFields) fields")
+                ForEach(Array(fields.prefix(5).enumerated()), id: \.offset) { _, field in
+                    Text("\(field.selected ? ">" : " ") \(field.name): \(field.summary)")
+                        .workbenchFont(.caption, design: .monospaced)
+                        .lineLimit(1)
+                }
+            }
+        case let .tableRef(path, resolvedPath, openable):
+            VStack(alignment: .leading, spacing: 4) {
+                typedLine("Table ref", path)
+                typedLine(openable ? "Openable" : "Unavailable", resolvedPath)
+            }
+        }
+    }
+
+    private func typedLine(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            Text(value)
+                .workbenchFont(.caption, design: .monospaced)
+                .lineLimit(1)
+        }
+    }
+}
+
+private extension TableBrowserSnapshot.ScalarValue {
+    var displayString: String {
+        switch self {
+        case let .bool(value):
+            return value ? "true" : "false"
+        case let .int(value):
+            return String(value)
+        case let .uint(value):
+            return String(value)
+        case let .float(value):
+            return String(format: "%.6g", value)
+        case let .complex(re, im):
+            return String(format: "%.6g%+.6gi", re, im)
+        case let .string(value):
+            return value
+        case let .unknown(type, display):
+            return display.isEmpty ? type : "\(type) \(display)"
+        }
     }
 }
 

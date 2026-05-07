@@ -367,20 +367,16 @@ public struct UniFFIImageExplorerClient: ImageExplorerClient {
 }
 
 public protocol TableBrowserClient {
-    func buildSnapshot(datasetPath: String, selectedView: String) throws -> TableBrowserSnapshot
+    func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot
 }
 
 public struct UniFFITableBrowserClient: TableBrowserClient {
     public init() {}
 
-    public func buildSnapshot(datasetPath: String, selectedView: String) throws -> TableBrowserSnapshot {
-        let json = try CasarsFrontendServices.buildTableBrowserSnapshotJson(
-            datasetPath: datasetPath,
-            width: 120,
-            height: 32,
-            inspectorHeight: 10,
-            view: selectedView
-        )
+    public func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot {
+        let requestData = try JSONEncoder().encode(request)
+        let requestJSON = String(decoding: requestData, as: UTF8.self)
+        let json = try CasarsFrontendServices.buildTableBrowserSnapshotFromRequestJson(requestJson: requestJSON)
         return try JSONDecoder().decode(TableBrowserSnapshot.self, from: Data(json.utf8))
     }
 }
@@ -1246,12 +1242,20 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Dataset \(dataset.name) is not a table")
             return
         }
-        let selectedView = state.tableBrowsers[datasetID]?.selectedView ?? "overview"
+        let browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
+            datasetID: datasetID,
+            selectedView: "overview",
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
         do {
-            let snapshot = try tableBrowserClient.buildSnapshot(datasetPath: dataset.path, selectedView: selectedView)
+            let snapshot = try tableBrowserClient.buildSnapshot(request: browserState.snapshotRequest(datasetPath: dataset.path))
             state.tableBrowsers[datasetID] = TableBrowserSessionState(
                 datasetID: datasetID,
-                selectedView: selectedView,
+                selectedView: snapshot.view,
+                focus: snapshot.focus,
+                commands: browserState.commands,
                 status: .ready,
                 lastError: nil,
                 snapshot: snapshot
@@ -1259,7 +1263,9 @@ public final class WorkbenchStore: ObservableObject {
         } catch {
             state.tableBrowsers[datasetID] = TableBrowserSessionState(
                 datasetID: datasetID,
-                selectedView: selectedView,
+                selectedView: browserState.selectedView,
+                focus: browserState.focus,
+                commands: browserState.commands,
                 status: .failed,
                 lastError: "\(error)",
                 snapshot: nil
@@ -1498,6 +1504,22 @@ public final class WorkbenchStore: ObservableObject {
             snapshot: nil
         )
         browserState.selectedView = view
+        browserState.focus = "main"
+        browserState.commands = []
+        browserState.transientCommands = []
+        state.tableBrowsers[datasetID] = browserState
+        refreshTableBrowser(datasetID: datasetID)
+    }
+
+    public func runTableBrowserCommand(_ command: TableBrowserCommand, datasetID: String) {
+        var browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
+            datasetID: datasetID,
+            selectedView: "overview",
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+        browserState.commands.append(command)
         state.tableBrowsers[datasetID] = browserState
         refreshTableBrowser(datasetID: datasetID)
     }

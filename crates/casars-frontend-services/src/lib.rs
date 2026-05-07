@@ -30,7 +30,7 @@ use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserPreviewRequest,
     ImagePlaneContentMode,
 };
-use casars_tablebrowser_protocol::{BrowserView, BrowserViewport};
+use casars_tablebrowser_protocol::{BrowserCommand, BrowserFocus, BrowserView, BrowserViewport};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -82,6 +82,25 @@ struct ImageExplorerSnapshotRequest {
     include_profile: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct TableBrowserSnapshotRequest {
+    dataset_path: String,
+    #[serde(default = "default_table_browser_width")]
+    width: u16,
+    #[serde(default = "default_table_browser_height")]
+    height: u16,
+    #[serde(default = "default_table_browser_inspector_height")]
+    inspector_height: u16,
+    #[serde(default)]
+    selected_view: Option<String>,
+    #[serde(default)]
+    focus: Option<String>,
+    #[serde(default)]
+    commands: Vec<BrowserCommand>,
+    #[serde(default)]
+    transient_commands: Vec<BrowserCommand>,
+}
+
 const fn default_image_browser_width() -> u16 {
     120
 }
@@ -104,6 +123,18 @@ const fn default_image_browser_plane_pixel_height() -> u16 {
 
 const fn default_include_image_profile() -> bool {
     true
+}
+
+const fn default_table_browser_width() -> u16 {
+    120
+}
+
+const fn default_table_browser_height() -> u16 {
+    32
+}
+
+const fn default_table_browser_inspector_height() -> u16 {
+    10
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -1079,6 +1110,75 @@ pub fn build_table_browser_snapshot_json(
         })
 }
 
+#[uniffi::export]
+pub fn build_table_browser_snapshot_from_request_json(
+    request_json: String,
+) -> FrontendResult<String> {
+    let request: TableBrowserSnapshotRequest =
+        serde_json::from_str(&request_json).map_err(|error| {
+            FrontendServiceError::TableExplorer {
+                reason: format!("decode table browser snapshot request: {error}"),
+            }
+        })?;
+    let dataset_path = PathBuf::from(&request.dataset_path);
+    if !dataset_path.exists() {
+        return Err(FrontendServiceError::InvalidPath {
+            reason: format!("{} does not exist", dataset_path.display()),
+        });
+    }
+    let mut browser =
+        TableBrowser::open(&dataset_path).map_err(|error| FrontendServiceError::TableExplorer {
+            reason: format!("open {}: {error}", dataset_path.display()),
+        })?;
+    let viewport = BrowserViewport::with_inspector_height(
+        request.width.max(20),
+        request.height.max(8),
+        request.inspector_height,
+    );
+    if let Some(view) = request.selected_view.as_deref() {
+        browser.set_view(
+            parse_table_browser_view(view)
+                .map_err(|reason| FrontendServiceError::TableExplorer { reason })?,
+        );
+    }
+    if let Some(focus) = parse_table_browser_focus(request.focus.as_deref())
+        .map_err(|reason| FrontendServiceError::TableExplorer { reason })?
+    {
+        browser
+            .apply(BrowserCommand::SetFocus {
+                focus,
+                viewport: Some(viewport),
+            })
+            .map_err(|error| FrontendServiceError::TableExplorer {
+                reason: format!("set focus {}: {error}", dataset_path.display()),
+            })?;
+    }
+    for command in request
+        .commands
+        .iter()
+        .chain(request.transient_commands.iter())
+        .cloned()
+    {
+        browser
+            .apply(command)
+            .map_err(|error| FrontendServiceError::TableExplorer {
+                reason: format!("apply command {}: {error}", dataset_path.display()),
+            })?;
+    }
+    browser
+        .apply(BrowserCommand::GetSnapshot {
+            viewport: Some(viewport),
+        })
+        .map_err(|error| FrontendServiceError::TableExplorer {
+            reason: format!("snapshot {}: {error}", dataset_path.display()),
+        })
+        .and_then(|snapshot| {
+            serde_json::to_string(&snapshot).map_err(|error| FrontendServiceError::TableExplorer {
+                reason: format!("encode snapshot {}: {error}", dataset_path.display()),
+            })
+        })
+}
+
 fn image_snapshot_for_requested_view(
     session: &mut ImageBrowserSession,
     active_view: Option<&str>,
@@ -1175,6 +1275,18 @@ fn parse_table_browser_view(value: &str) -> Result<BrowserView, String> {
         "cells" => Ok(BrowserView::Cells),
         "subtables" => Ok(BrowserView::Subtables),
         other => Err(format!("unknown table browser view {other:?}")),
+    }
+}
+
+fn parse_table_browser_focus(value: Option<&str>) -> Result<Option<BrowserFocus>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" => Ok(None),
+        "main" => Ok(Some(BrowserFocus::Main)),
+        "inspector" => Ok(Some(BrowserFocus::Inspector)),
+        other => Err(format!("unknown table browser focus {other:?}")),
     }
 }
 
@@ -3684,6 +3796,37 @@ mod tests {
                 .as_array()
                 .is_some_and(|lines| !lines.is_empty())
         );
+    }
+
+    #[test]
+    fn table_browser_request_json_replays_navigation_commands() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let table_path = dir.path().join("gain_table");
+        make_table(&table_path);
+
+        let request_json = serde_json::json!({
+            "dataset_path": table_path,
+            "selected_view": "columns",
+            "focus": "main",
+            "commands": [
+                { "command": "move_down", "steps": 1 }
+            ]
+        })
+        .to_string();
+        let snapshot_json = build_table_browser_snapshot_from_request_json(request_json)
+            .expect("table browser requested snapshot");
+        let snapshot: serde_json::Value =
+            serde_json::from_str(&snapshot_json).expect("snapshot json");
+        assert_eq!(snapshot["view"], "columns");
+        assert_eq!(snapshot["focus"], "main");
+        assert_eq!(
+            snapshot["vertical_metrics"]["selected_index"]
+                .as_u64()
+                .expect("selected index"),
+            1
+        );
+        assert!(snapshot["selected_address"].is_object());
+        assert!(snapshot["inspector"].is_object());
     }
 
     #[test]
