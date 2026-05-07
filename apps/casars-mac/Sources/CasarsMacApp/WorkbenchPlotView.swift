@@ -783,7 +783,8 @@ struct WorkbenchPlotView: View {
         for fraction in stride(from: 0.0, through: 1.0, by: 0.25) {
             let value = axisValue(at: fraction, axis: axis)
             let displayValue = value - timeAxisOffset(for: axis)
-            let text = Text(shortNumber(displayValue)).font(plotFont(.caption2))
+            let tickStep = abs(axis.range.span) / 4.0
+            let text = Text(axisTickLabel(displayValue, step: tickStep)).font(plotFont(.caption2))
             if horizontal {
                 let x = plotRect.minX + plotRect.width * fraction
                 context.draw(text, at: CGPoint(x: x, y: plotRect.maxY + 16), anchor: .center)
@@ -1109,14 +1110,43 @@ struct WorkbenchPlotView: View {
         }
     }
 
-    private func shortNumber(_ value: Double) -> String {
-        if abs(value) >= 100 {
+    private func axisTickLabel(_ value: Double, step: Double) -> String {
+        guard value.isFinite else {
+            return value.isNaN ? "NaN" : "Inf"
+        }
+        let decimals = tickFractionDigits(step: step)
+        guard decimals > 0 else {
             return String(format: "%.0f", value)
         }
-        if abs(value) >= 10 {
-            return String(format: "%.1f", value)
+        return trimTrailingZeros(String(format: "%.\(decimals)f", value))
+    }
+
+    private func tickFractionDigits(step: Double) -> Int {
+        guard step.isFinite, step > 0 else {
+            return 2
         }
-        return String(format: "%.2f", value)
+        if step >= 10 {
+            return 0
+        }
+        if step >= 1 {
+            return 1
+        }
+        let digits = Int(ceil(-log10(step))) + 1
+        return min(max(digits, 2), 6)
+    }
+
+    private func trimTrailingZeros(_ text: String) -> String {
+        guard text.contains(".") else {
+            return text
+        }
+        var trimmed = text
+        while trimmed.last == "0" {
+            trimmed.removeLast()
+        }
+        if trimmed.last == "." {
+            trimmed.removeLast()
+        }
+        return trimmed == "-0" ? "0" : trimmed
     }
 
     private func normalizedRasterValue(_ value: Double, raster: WorkbenchPlotRaster) -> Double {
