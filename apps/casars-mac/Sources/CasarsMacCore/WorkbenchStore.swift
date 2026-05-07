@@ -1331,6 +1331,29 @@ public final class WorkbenchStore: ObservableObject {
         refreshImageExplorer(datasetID: datasetID)
     }
 
+    public func setImageExplorerNonDisplayAxisIndex(axis: Int, index: Int, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        var indices = explorerState.nonDisplayIndices
+        let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
+        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
+        let length = max(snapshotAxis?.length ?? index + 1, 1)
+        let nextIndex = min(max(index, 0), length - 1)
+        if let axisPosition {
+            indices = normalizedNonDisplayIndices(from: indices, axes: snapshotAxes)
+            indices[axisPosition] = nextIndex
+        } else {
+            while indices.count <= axis {
+                indices.append(0)
+            }
+            indices[axis] = nextIndex
+        }
+        explorerState.nonDisplayIndices = indices
+        explorerState.selectedProfileAxis = axis
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
     public func startImageExplorerMovie(axis: Int, framesPerSecond: Double?, loop: Bool, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.moviePlaying = true

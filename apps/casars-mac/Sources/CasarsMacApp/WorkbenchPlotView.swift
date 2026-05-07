@@ -325,11 +325,15 @@ private struct PlotCanvasSizePreferenceKey: PreferenceKey {
     }
 }
 
-private enum WorkbenchPlotLayout {
-    static func plotRect(for size: CGSize, characterSize: Double = WorkbenchState.defaultInterfaceFontSize) -> CGRect {
+enum WorkbenchPlotLayout {
+    static func plotRect(
+        for size: CGSize,
+        characterSize: Double = WorkbenchState.defaultInterfaceFontSize,
+        reservedRightGutter: Double = 0
+    ) -> CGRect {
         let left = max(96.0, characterSize * 8.0)
         let top = max(26.0, characterSize * 2.0)
-        let right = 26.0
+        let right = 26.0 + max(0, reservedRightGutter)
         let bottom = max(56.0, characterSize * 4.3)
         return CGRect(
             x: left,
@@ -358,6 +362,7 @@ struct WorkbenchPlotView: View {
     let plot: WorkbenchPlotDocument
     var displayModeOverride: WorkbenchPlotDisplayMode?
     var characterSizeOverride: Double?
+    var reservedRightGutter: Double = 0
     @Environment(\.workbenchFontSize) private var workbenchFontSize
     @StateObject private var pointRasterCache = WorkbenchPointRasterCache()
 
@@ -388,7 +393,12 @@ struct WorkbenchPlotView: View {
                 context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(nsColor: .textBackgroundColor)))
                 for (index, panel) in plot.panels.enumerated() {
                     let bounds = panelBounds(index: index, count: plot.panels.count, size: size)
-                    let plotRect = WorkbenchPlotLayout.plotRect(for: bounds.size, characterSize: characterSize).offsetBy(dx: bounds.minX, dy: bounds.minY)
+                    let plotRect = WorkbenchPlotLayout.plotRect(
+                        for: bounds.size,
+                        characterSize: characterSize,
+                        reservedRightGutter: reservedRightGutter
+                    )
+                    .offsetBy(dx: bounds.minX, dy: bounds.minY)
                     drawPlot(
                         axes: panel.axes,
                         layers: panel.layers,
@@ -407,7 +417,11 @@ struct WorkbenchPlotView: View {
     }
 
     private func plotRect(for size: CGSize) -> CGRect {
-        WorkbenchPlotLayout.plotRect(for: size, characterSize: characterSize)
+        WorkbenchPlotLayout.plotRect(
+            for: size,
+            characterSize: characterSize,
+            reservedRightGutter: reservedRightGutter
+        )
     }
 
     private func panelBounds(index: Int, count: Int, size: CGSize) -> CGRect {

@@ -566,6 +566,10 @@ final class WorkbenchStoreTests: XCTestCase {
         store.stepImageExplorerNonDisplayAxis(axis: 2, delta: 1, datasetID: imageDataset.id)
         XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [1])
         XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.nonDisplayIndices, [1])
+        store.setImageExplorerNonDisplayAxisIndex(axis: 2, index: 5, datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [5])
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.nonDisplayIndices, [5])
+        store.setImageExplorerNonDisplayAxisIndex(axis: 2, index: 1, datasetID: imageDataset.id)
 
         store.startImageExplorerMovie(axis: 2, framesPerSecond: 12, loop: true, datasetID: imageDataset.id)
         XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.moviePlaying, true)
