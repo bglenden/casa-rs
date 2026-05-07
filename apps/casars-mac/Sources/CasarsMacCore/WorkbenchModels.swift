@@ -921,7 +921,7 @@ public struct WorkbenchState: Codable, Equatable {
     public static let maximumInterfaceFontSize = 22.0
     public static let defaultMeasurementSetPlotMaxPoints: UInt64 = 250_000
     public static let minimumMeasurementSetPlotMaxPoints: UInt64 = 1_000
-    public static let maximumMeasurementSetPlotMaxPoints: UInt64 = 5_000_000
+    public static let warningMeasurementSetPlotMaxPoints: UInt64 = 5_000_000
 
     public static func parseMeasurementSetPlotMaxPoints(_ text: String) -> UInt64? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -944,7 +944,8 @@ public struct WorkbenchState: Codable, Equatable {
 
         guard let value = Double(numericText.trimmingCharacters(in: .whitespacesAndNewlines)),
               value.isFinite,
-              value > 0
+              value > 0,
+              value <= Double(UInt64.max)
         else {
             return nil
         }

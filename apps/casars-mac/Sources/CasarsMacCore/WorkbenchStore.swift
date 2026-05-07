@@ -516,7 +516,7 @@ public final class WorkbenchStore: ObservableObject {
 
     public func setMeasurementSetPlotMaxPoints(_ maxPlotPoints: UInt64, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
-        plotState.maxPlotPoints = Self.clampedMeasurementSetPlotMaxPoints(maxPlotPoints)
+        plotState.maxPlotPoints = Self.minimumBoundedMeasurementSetPlotMaxPoints(maxPlotPoints)
         plotState.lastError = nil
         refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
@@ -1452,11 +1452,8 @@ public final class WorkbenchStore: ObservableObject {
         ].joined(separator: "|")
     }
 
-    private static func clampedMeasurementSetPlotMaxPoints(_ value: UInt64) -> UInt64 {
-        min(
-            WorkbenchState.maximumMeasurementSetPlotMaxPoints,
-            max(WorkbenchState.minimumMeasurementSetPlotMaxPoints, value)
-        )
+    private static func minimumBoundedMeasurementSetPlotMaxPoints(_ value: UInt64) -> UInt64 {
+        max(WorkbenchState.minimumMeasurementSetPlotMaxPoints, value)
     }
 
     private func defaultDirtyImagingParameters(for dataset: DatasetSummary) -> DirtyImagingTaskParameters {

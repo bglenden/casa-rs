@@ -844,15 +844,16 @@ struct MeasurementSetPlotPanel: View {
                     TextField("250k", text: $maxPlotPointsText)
                         .multilineTextAlignment(.trailing)
                         .textFieldStyle(.roundedBorder)
+                        .foregroundColor(maxPlotPointsTextIsWarning ? .yellow : .primary)
                         .frame(width: 96)
                         .onSubmit {
                             applyMaxPlotPointsText()
                         }
                 }
                 .accessibilityIdentifier("msPlot.maxPlotPoints.\(dataset.id)")
-                Text("Accepts plain counts, k, or M. Display budget only; averaging controls will be added separately.")
+                Text("Accepts plain counts, k, or M. Values above 5M are highlighted as expensive.")
                     .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(maxPlotPointsTextIsWarning ? .yellow : .secondary)
             }
 
             Divider()
@@ -997,6 +998,13 @@ struct MeasurementSetPlotPanel: View {
             return String(format: "%.0fk", Double(points) / 1_000.0)
         }
         return "\(points)"
+    }
+
+    private var maxPlotPointsTextIsWarning: Bool {
+        guard let maxPlotPoints = WorkbenchState.parseMeasurementSetPlotMaxPoints(maxPlotPointsText) else {
+            return plotState.maxPlotPoints > WorkbenchState.warningMeasurementSetPlotMaxPoints
+        }
+        return maxPlotPoints > WorkbenchState.warningMeasurementSetPlotMaxPoints
     }
 
     private func applyMaxPlotPointsText() {

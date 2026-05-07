@@ -57,6 +57,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("250k"), 250_000)
         XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("2M"), 2_000_000)
         XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("1.5m"), 1_500_000)
+        XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("12M"), 12_000_000)
         XCTAssertNil(WorkbenchState.parseMeasurementSetPlotMaxPoints(""))
         XCTAssertNil(WorkbenchState.parseMeasurementSetPlotMaxPoints("many"))
         XCTAssertNil(WorkbenchState.parseMeasurementSetPlotMaxPoints("-10k"))
@@ -1290,6 +1291,11 @@ final class WorkbenchStoreTests: XCTestCase {
             snapshot.measurementSetPlots[probedDataset.id]?.maxPlotPoints,
             WorkbenchState.minimumMeasurementSetPlotMaxPoints
         )
+
+        store.setMeasurementSetPlotMaxPoints(12_000_000, datasetID: probedDataset.id)
+
+        snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.maxPlotPoints, 12_000_000)
     }
 
     func testMeasurementSetPlotJobDoesNotBlockUnrelatedWorkbenchActions() {
