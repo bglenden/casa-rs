@@ -567,6 +567,28 @@ public final class WorkbenchStore: ObservableObject {
         openExplorer(for: dataset)
     }
 
+    public func openDatasetTableBrowser(_ datasetID: String) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        guard canBrowseAsTable(dataset) else {
+            state.lastErrors.append("Dataset \(dataset.name) is not a casacore table")
+            return
+        }
+
+        state.selectedDatasetID = datasetID
+        refreshTableBrowser(datasetID: datasetID)
+        openTab(
+            WorkbenchTab(
+                id: tableBrowserTabID(for: dataset.id),
+                title: "Table: \(dataset.name)",
+                kind: .tableBrowser,
+                datasetID: dataset.id
+            )
+        )
+    }
+
     public func openRunProduct(runID: String, productID: String) {
         guard let group = state.runProductGroups.first(where: { $0.runID == runID }) else {
             state.lastErrors.append("Unknown run \(runID)")
@@ -936,6 +958,12 @@ public final class WorkbenchStore: ObservableObject {
         switch kind {
         case .datasetExplorer:
             openSelectedDatasetExplorer()
+        case .tableBrowser:
+            guard let dataset = state.selectedDataset else {
+                state.lastErrors.append("No selected dataset to browse")
+                return
+            }
+            openDatasetTableBrowser(dataset.id)
         case .task:
             if state.isDemoProject {
                 openTab(WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: state.selectedDatasetID))
@@ -1238,8 +1266,8 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Unknown dataset \(datasetID)")
             return
         }
-        guard dataset.kind == .table || dataset.kind == .calibrationTable else {
-            state.lastErrors.append("Dataset \(dataset.name) is not a table")
+        guard canBrowseAsTable(dataset) else {
+            state.lastErrors.append("Dataset \(dataset.name) is not a casacore table")
             return
         }
         let browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
@@ -1761,6 +1789,14 @@ public final class WorkbenchStore: ObservableObject {
         let prefix = "tab-explorer-"
         guard tabID.hasPrefix(prefix) else { return nil }
         return String(tabID.dropFirst(prefix.count))
+    }
+
+    private func tableBrowserTabID(for datasetID: String) -> String {
+        "tab-tablebrowser-\(datasetID)"
+    }
+
+    private func canBrowseAsTable(_ dataset: DatasetSummary) -> Bool {
+        dataset.kind == .measurementSet || dataset.kind == .table || dataset.kind == .calibrationTable
     }
 
     private func activeTaskTabID(parameters: DirtyImagingTaskParameters) -> String {

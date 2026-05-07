@@ -216,6 +216,7 @@ public extension ProjectSource {
 
 public enum WorkbenchTabKind: String, Codable, Equatable {
     case datasetExplorer
+    case tableBrowser
     case task
     case plotSamples
     case aiChat

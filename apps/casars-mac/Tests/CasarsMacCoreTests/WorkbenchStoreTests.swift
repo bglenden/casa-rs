@@ -666,6 +666,41 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(tableClient.requests.map(\.selectedView), ["overview", "columns"])
     }
 
+    func testMeasurementSetCanOpenInDedicatedTableBrowserTab() throws {
+        let msDataset = DatasetSummary(
+            id: "/data/example.ms",
+            name: "example.ms",
+            path: "/data/example.ms",
+            kind: .measurementSet,
+            size: "12 rows, 3 columns",
+            units: "Jy, Hz, seconds",
+            columns: ["TIME", "DATA", "FLAG"],
+            subtables: ["ANTENNA"],
+            shape: [12],
+            notes: "Recognized by Rust probe."
+        )
+        let tableClient = StubTableBrowserClient(snapshot: makeTableBrowserSnapshot(path: msDataset.path))
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [msDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            tableBrowserClient: tableClient
+        )
+
+        store.openProject(path: "/data")
+        store.openDatasetTableBrowser(msDataset.id)
+
+        XCTAssertEqual(store.state.activeTabID, "tab-tablebrowser-\(msDataset.id)")
+        XCTAssertEqual(store.state.tabs.last?.kind, .tableBrowser)
+        XCTAssertEqual(store.state.tabs.last?.title, "Table: example.ms")
+        XCTAssertEqual(tableClient.paths, [msDataset.path])
+        XCTAssertEqual(store.state.tableBrowsers[msDataset.id]?.status, .ready)
+    }
+
     func testExplorerTabsExposeTypedRealDatasetRoutesInDebugSnapshot() {
         let msDataset = DatasetSummary(
             id: "/data/probed.ms",

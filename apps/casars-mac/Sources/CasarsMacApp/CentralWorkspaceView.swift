@@ -99,6 +99,8 @@ struct CentralWorkspaceView: View {
             switch tab.kind {
             case .datasetExplorer:
                 DatasetExplorerPanel(store: store, datasetID: tab.datasetID)
+            case .tableBrowser:
+                DatasetExplorerPanel(store: store, datasetID: tab.datasetID, forceTableBrowser: true)
             case .task:
                 TaskPanel(store: store)
             case .plotSamples:
@@ -118,6 +120,7 @@ struct CentralWorkspaceView: View {
     private func icon(for kind: WorkbenchTabKind) -> String {
         switch kind {
         case .datasetExplorer: "chart.xyaxis.line"
+        case .tableBrowser: "tablecells"
         case .task: "slider.horizontal.3"
         case .plotSamples: "chart.xyaxis.line"
         case .aiChat: "sparkles"
@@ -170,11 +173,14 @@ struct EmptyWorkbenchPanel: View {
 struct DatasetExplorerPanel: View {
     @ObservedObject var store: WorkbenchStore
     let datasetID: String?
+    var forceTableBrowser: Bool = false
 
     var body: some View {
         Group {
             if let dataset {
-                if dataset.kind == .measurementSet && !store.state.isDemoProject {
+                if forceTableBrowser && !store.state.isDemoProject {
+                    tableBrowserRoot(for: dataset)
+                } else if dataset.kind == .measurementSet && !store.state.isDemoProject {
                     MeasurementSetPlotPanel(store: store, dataset: dataset)
                 } else if dataset.kind == .imageCube && !store.state.isDemoProject {
                     VStack(alignment: .leading, spacing: 10) {
@@ -214,6 +220,19 @@ struct DatasetExplorerPanel: View {
             }
         }
         .accessibilityIdentifier("panel.datasetExplorer")
+    }
+
+    private func tableBrowserRoot(for dataset: DatasetSummary) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                PanelHeader(title: "Table Browser", subtitle: explorerSubtitle(for: dataset))
+                tableExplorerContent(for: dataset)
+                Text(dataset.path)
+                    .workbenchFont(.caption, design: .monospaced)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(20)
+        }
     }
 
     private var dataset: DatasetSummary? {

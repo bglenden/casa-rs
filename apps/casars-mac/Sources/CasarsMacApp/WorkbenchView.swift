@@ -201,6 +201,16 @@ struct LeftDockView: View {
                                     }
                                 )
                             }
+                            .contextMenu {
+                                Button("Open Explorer") {
+                                    store.openDatasetExplorer(dataset.id)
+                                }
+                                if dataset.kind == .measurementSet || dataset.kind == .table || dataset.kind == .calibrationTable {
+                                    Button("Open in Table Browser") {
+                                        store.openDatasetTableBrowser(dataset.id)
+                                    }
+                                }
+                            }
                             .accessibilityIdentifier("dataset.row.\(dataset.id)")
                     }
                 }
