@@ -22,16 +22,17 @@ use casa_coordinates::{
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
 use casa_imaging::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
-    CompatibilityMode, CubeChannelRequest, CubeImagingDiagnostics, CubeImagingRequest,
-    CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
-    GaussianUvTaper, GridderMode, HogbomIterationMode, ImageGeometry, ImagingDiagnostics,
-    ImagingError, ImagingRequest, ImagingResult, ImagingStageTimings, MinorCycleTrace,
-    MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
-    ResidualRefreshDiagnostics, RestoringBeamMode, StandardMfsModelPredictor, UvTaperSize,
-    VisibilityBatch, VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason, WTermMode,
-    WeightDensityMode, WeightingMode, run_cube, run_imaging, run_mtmfs,
-    trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
-    trace_cube_channel_w_project_plan, trace_w_project_plan,
+    CompatibilityMode, CubeAutoMultiThresholdConfig, CubeChannelRequest, CubeImagingDiagnostics,
+    CubeImagingRequest, CubeImagingResult, CubeModelChannelContribution,
+    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode, HogbomIterationMode,
+    ImageGeometry, ImagingDiagnostics, ImagingError, ImagingRequest, ImagingResult,
+    ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch,
+    PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
+    StandardMfsModelPredictor, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
+    WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, run_cube,
+    run_imaging, run_mtmfs, trace_cube_channel_residual_refresh,
+    trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
+    trace_w_project_plan,
 };
 use casa_ms::MeasurementSet;
 #[cfg(test)]
@@ -157,6 +158,24 @@ impl Default for AutoMultiThresholdConfig {
             do_grow_prune: true,
             min_percent_change: -1.0,
             fast_noise: true,
+        }
+    }
+}
+
+impl From<AutoMultiThresholdConfig> for CubeAutoMultiThresholdConfig {
+    fn from(value: AutoMultiThresholdConfig) -> Self {
+        Self {
+            sidelobe_threshold: value.sidelobe_threshold,
+            noise_threshold: value.noise_threshold,
+            low_noise_threshold: value.low_noise_threshold,
+            negative_threshold: value.negative_threshold,
+            smooth_factor: value.smooth_factor,
+            min_beam_frac: value.min_beam_frac,
+            cut_threshold: value.cut_threshold,
+            grow_iterations: value.grow_iterations,
+            do_grow_prune: value.do_grow_prune,
+            min_percent_change: value.min_percent_change,
+            fast_noise: value.fast_noise,
         }
     }
 }
@@ -999,6 +1018,8 @@ pub fn build_cube_channel_w_project_trace_from_config(
             &config.mask_boxes,
             config.mask_image.as_deref(),
         )?,
+        channel_clean_mask: None,
+        auto_mask: None,
         psf_cutoff: config.psf_cutoff,
         w_term_mode: config.w_term_mode,
         w_project_planes: config.w_project_planes,
@@ -1307,7 +1328,7 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
                         })
                         .map_err(|error| error.to_string())?,
                     ),
-                    user_clean_mask,
+                    user_clean_mask.map(EffectiveCleanMask::Plane),
                 )
             } else {
                 let mut clean_mask = user_clean_mask;
@@ -1350,13 +1371,16 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
                     } else {
                         run_imaging(&common_request).map_err(|error| error.to_string())?
                     };
-                    (RunProducts::Mfs(result), clean_mask)
+                    (
+                        RunProducts::Mfs(result),
+                        clean_mask.map(EffectiveCleanMask::Plane),
+                    )
                 } else {
                     let mut request = common_request;
                     request.clean_mask = clean_mask.clone();
                     (
                         RunProducts::Mfs(run_imaging(&request).map_err(|error| error.to_string())?),
-                        clean_mask,
+                        clean_mask.map(EffectiveCleanMask::Plane),
                     )
                 }
             }
@@ -1374,56 +1398,65 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
                 max_psf_fraction: config.max_psf_fraction,
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             };
-            let mut clean_mask = build_clean_mask(
+            let clean_mask = build_clean_mask(
                 config.imsize,
                 &config.mask_boxes,
                 config.mask_image.as_deref(),
             )?;
+            let mut channel_clean_mask = None::<Array4<bool>>;
             let mut dirty_seed = None;
-            if config.use_mask == CleanMaskMode::AutoMultiThreshold {
+            let standard_cube = cube
+                .gridder_modes
+                .iter()
+                .all(|mode| matches!(mode, GridderMode::Standard));
+            if config.use_mask == CleanMaskMode::AutoMultiThreshold && !standard_cube {
                 let dirty = run_frontend_cube(
                     geometry,
                     cube.clone(),
                     config,
                     frontend_dirty_clean_config(clean.psf_cutoff),
                     clean_mask.clone(),
+                    None,
                 )?;
-                let max_psf_sidelobe = dirty
-                    .result
-                    .diagnostics
-                    .channel_diagnostics
-                    .iter()
-                    .map(|diagnostics| diagnostics.max_psf_sidelobe_level)
-                    .fold(0.0f32, f32::max);
-                let beam = dirty.result.beams.iter().copied().flatten().next();
-                clean_mask = Some(build_auto_multithresh_clean_mask(
+                let cube_mask = build_auto_multithresh_cube_clean_mask(
                     geometry,
-                    &dirty.result.residual,
-                    max_psf_sidelobe,
-                    beam,
+                    &dirty.result,
+                    config.restoring_beam_mode,
                     clean_mask.as_ref(),
                     &config.auto_mask,
-                )?);
+                )?;
+                channel_clean_mask = Some(cube_mask);
                 dirty_seed = Some(dirty);
             }
             if clean.niter == 0 {
                 let result = if let Some(dirty) = dirty_seed {
                     dirty
                 } else {
-                    run_frontend_cube(geometry, cube, config, clean, clean_mask.clone())?
+                    run_frontend_cube(geometry, cube, config, clean, clean_mask.clone(), None)?
                 };
-                (RunProducts::Cube(result), clean_mask)
+                let effective_clean_mask = result
+                    .result
+                    .clean_mask
+                    .clone()
+                    .map(EffectiveCleanMask::Cube)
+                    .or_else(|| clean_mask.clone().map(EffectiveCleanMask::Plane));
+                (RunProducts::Cube(result), effective_clean_mask)
             } else {
-                (
-                    RunProducts::Cube(run_frontend_cube(
-                        geometry,
-                        cube,
-                        config,
-                        clean,
-                        clean_mask.clone(),
-                    )?),
-                    clean_mask,
-                )
+                let result = run_frontend_cube(
+                    geometry,
+                    cube,
+                    config,
+                    clean,
+                    clean_mask.clone(),
+                    channel_clean_mask,
+                )?;
+                let effective_clean_mask = result
+                    .result
+                    .clean_mask
+                    .clone()
+                    .map(EffectiveCleanMask::Cube)
+                    .or_else(|| clean_mask.clone().map(EffectiveCleanMask::Plane));
+                (RunProducts::Cube(result), effective_clean_mask)
             }
         }
     };
@@ -1614,6 +1647,8 @@ pub fn trace_cube_channel_residual_refresh_from_config(
             &config.mask_boxes,
             config.mask_image.as_deref(),
         )?,
+        channel_clean_mask: None,
+        auto_mask: None,
         psf_cutoff: config.psf_cutoff,
         w_term_mode: config.w_term_mode,
         w_project_planes: config.w_project_planes,
@@ -1675,6 +1710,8 @@ pub fn trace_cube_channel_residual_refresh_from_config_with_model_cube(
             &config.mask_boxes,
             config.mask_image.as_deref(),
         )?,
+        channel_clean_mask: None,
+        auto_mask: None,
         psf_cutoff: config.psf_cutoff,
         w_term_mode: config.w_term_mode,
         w_project_planes: config.w_project_planes,
@@ -1739,6 +1776,8 @@ pub fn trace_cube_channel_residual_refresh_from_config_with_model_cube_model_cha
             &config.mask_boxes,
             config.mask_image.as_deref(),
         )?,
+        channel_clean_mask: None,
+        auto_mask: None,
         psf_cutoff: config.psf_cutoff,
         w_term_mode: config.w_term_mode,
         w_project_planes: config.w_project_planes,
@@ -3286,6 +3325,7 @@ fn run_frontend_cube(
     config: &CliConfig,
     clean: CleanConfig,
     clean_mask: Option<Array2<bool>>,
+    channel_clean_mask: Option<Array4<bool>>,
 ) -> Result<CubeRunProducts, String> {
     if cube.gridder_modes.len() != cube.channels.len() {
         return Err(format!(
@@ -3329,6 +3369,9 @@ fn run_frontend_cube(
             small_scale_bias: config.small_scale_bias,
             clean,
             clean_mask,
+            channel_clean_mask,
+            auto_mask: (config.use_mask == CleanMaskMode::AutoMultiThreshold && clean.niter > 0)
+                .then_some(config.auto_mask.into()),
             psf_cutoff: config.psf_cutoff,
             w_term_mode: config.w_term_mode,
             w_project_planes: config.w_project_planes,
@@ -3354,6 +3397,12 @@ fn run_frontend_cube(
     let started = Instant::now();
     let [nx, ny] = geometry.image_shape;
     let nchan = channels.len();
+    let clean_masks_by_channel = frontend_channel_clean_masks(
+        geometry,
+        nchan,
+        clean_mask.as_ref(),
+        channel_clean_mask.as_ref(),
+    )?;
     let channel_frequencies_hz = channels
         .iter()
         .map(|channel| channel.channel_frequency_hz)
@@ -3392,6 +3441,7 @@ fn run_frontend_cube(
             .zip(gridder_modes.iter().cloned())
             .enumerate()
         {
+            let channel_clean_mask = clean_masks_by_channel[channel_index].clone();
             let request = ImagingRequest {
                 geometry,
                 visibility_batches: channel.visibility_batches.clone(),
@@ -3404,14 +3454,15 @@ fn run_frontend_cube(
                 multiscale_scales: config.multiscale_scales.clone(),
                 small_scale_bias: config.small_scale_bias,
                 clean: frontend_dirty_clean_config(clean.psf_cutoff),
-                clean_mask: clean_mask.clone(),
+                clean_mask: channel_clean_mask.clone(),
                 w_term_mode: config.w_term_mode,
                 w_project_planes: config.w_project_planes,
                 compatibility: CompatibilityMode::CasaStandardMfs,
             };
             match run_imaging(&request) {
                 Ok(plane) => {
-                    let plane_peak = frontend_peak_abs_masked(&plane.residual, clean_mask.as_ref());
+                    let plane_peak =
+                        frontend_peak_abs_masked(&plane.residual, channel_clean_mask.as_ref());
                     global_peak = global_peak.max(plane_peak);
                     max_psf_sidelobe =
                         max_psf_sidelobe.max(plane.diagnostics.max_psf_sidelobe_level);
@@ -3467,7 +3518,7 @@ fn run_frontend_cube(
                     multiscale_scales: config.multiscale_scales.clone(),
                     small_scale_bias: config.small_scale_bias,
                     clean,
-                    clean_mask: clean_mask.clone(),
+                    clean_mask: clean_masks_by_channel[channel_index].clone(),
                     w_term_mode: config.w_term_mode,
                     w_project_planes: config.w_project_planes,
                     compatibility: CompatibilityMode::CasaStandardMfs,
@@ -3488,15 +3539,17 @@ fn run_frontend_cube(
             multiscale_scales: config.multiscale_scales.clone(),
             small_scale_bias: config.small_scale_bias,
             clean,
-            clean_mask: clean_mask.clone(),
+            clean_mask: clean_masks_by_channel[channel_index].clone(),
             w_term_mode: config.w_term_mode,
             w_project_planes: config.w_project_planes,
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
         let plane = if let Some((threshold, _)) = clean_threshold_override.as_ref() {
             if let Some(FrontendCubePlaneSeed::Plane(dirty_plane)) = dirty_seed {
-                let dirty_peak =
-                    frontend_peak_abs_masked(&dirty_plane.residual, clean_mask.as_ref());
+                let dirty_peak = frontend_peak_abs_masked(
+                    &dirty_plane.residual,
+                    clean_masks_by_channel[channel_index].as_ref(),
+                );
                 if dirty_peak <= *threshold {
                     if frontend_progress_enabled() {
                         eprintln!(
@@ -3626,6 +3679,7 @@ fn run_frontend_cube(
             model,
             image,
             sumwt,
+            clean_mask: final_cube_clean_mask_from_channel_masks(&clean_masks_by_channel, nx, ny),
             restored_beams,
             beams,
             diagnostics: CubeImagingDiagnostics {
@@ -8036,18 +8090,29 @@ fn pb_support_mask_product(pb: &Array4<f32>, pb_limit: f32) -> ArrayD<bool> {
         .into_dyn()
 }
 
-fn clean_mask_product(mask: &Array2<bool>, result: &RunProducts) -> Array4<f32> {
-    let channel_count = result.channel_frequencies_hz().len().max(1);
-    let (nx, ny) = mask.dim();
-    let mut product = Array4::<f32>::zeros((nx, ny, 1, channel_count));
-    for channel_index in 0..channel_count {
-        for x in 0..nx {
-            for y in 0..ny {
-                product[(x, y, 0, channel_index)] = if mask[(x, y)] { 1.0 } else { 0.0 };
+#[derive(Debug, Clone)]
+enum EffectiveCleanMask {
+    Plane(Array2<bool>),
+    Cube(Array4<bool>),
+}
+
+fn clean_mask_product(mask: &EffectiveCleanMask, result: &RunProducts) -> Array4<f32> {
+    match mask {
+        EffectiveCleanMask::Plane(mask) => {
+            let channel_count = result.channel_frequencies_hz().len().max(1);
+            let (nx, ny) = mask.dim();
+            let mut product = Array4::<f32>::zeros((nx, ny, 1, channel_count));
+            for channel_index in 0..channel_count {
+                for x in 0..nx {
+                    for y in 0..ny {
+                        product[(x, y, 0, channel_index)] = if mask[(x, y)] { 1.0 } else { 0.0 };
+                    }
+                }
             }
+            product
         }
+        EffectiveCleanMask::Cube(mask) => mask.mapv(|value| if value { 1.0 } else { 0.0 }),
     }
-    product
 }
 
 fn pb_limited_product(pb: &Array4<f32>, pb_limit: f32) -> Array4<f32> {
@@ -8064,7 +8129,7 @@ fn write_products(
     config: &CliConfig,
     coords: &CoordinateSystem,
     result: &RunProducts,
-    clean_mask: Option<&Array2<bool>>,
+    clean_mask: Option<&EffectiveCleanMask>,
 ) -> Result<(), String> {
     let base = config.imagename.to_string_lossy().to_string();
     let channel_frequencies_hz = result.channel_frequencies_hz();
@@ -9222,6 +9287,7 @@ fn build_auto_multithresh_clean_mask(
         ));
     }
     let min_region_pixels = auto_mask_min_region_pixels(geometry, beam, config);
+    let beam_shape = auto_mask_beam_shape(geometry, beam, config);
     let mut mask = user_mask
         .cloned()
         .unwrap_or_else(|| Array2::<bool>::from_elem((geometry.nx(), geometry.ny()), false));
@@ -9234,12 +9300,79 @@ fn build_auto_multithresh_clean_mask(
                 &plane,
                 max_psf_sidelobe_level,
                 min_region_pixels,
+                beam_shape,
                 config,
             );
             Zip::from(&mut mask)
                 .and(&plane_mask)
                 .for_each(|out, generated| *out = *out || *generated);
         }
+    }
+    Ok(mask)
+}
+
+fn build_auto_multithresh_cube_clean_mask(
+    geometry: ImageGeometry,
+    dirty: &CubeImagingResult,
+    restoring_beam_mode: RestoringBeamMode,
+    user_mask: Option<&Array2<bool>>,
+    config: &AutoMultiThresholdConfig,
+) -> Result<Array4<bool>, String> {
+    let residual = &dirty.residual;
+    let shape = residual.shape();
+    if shape.len() != 4 {
+        return Err(format!(
+            "auto-multithresh residual product must be rank-4, found shape {shape:?}"
+        ));
+    }
+    if shape[0] != geometry.nx() || shape[1] != geometry.ny() {
+        return Err(format!(
+            "auto-multithresh residual shape {:?} does not match image geometry {:?}",
+            &shape[0..2],
+            geometry.image_shape
+        ));
+    }
+    let nstokes = shape[2];
+    let nchan = shape[3];
+    let result_channel_count = dirty.compatibility.channel_frequencies_hz.len();
+    if result_channel_count != nchan {
+        return Err(format!(
+            "auto-multithresh residual channel count {nchan} does not match result channel count {}",
+            result_channel_count
+        ));
+    }
+    let mask_beams = select_frontend_restored_cube_beams(&dirty.beams, restoring_beam_mode)?;
+    let mut mask = Array4::<bool>::from_elem((geometry.nx(), geometry.ny(), 1, nchan), false);
+    for channel_index in 0..nchan {
+        let mut channel_mask = user_mask
+            .cloned()
+            .unwrap_or_else(|| Array2::<bool>::from_elem((geometry.nx(), geometry.ny()), false));
+        let max_psf_sidelobe_level = dirty
+            .diagnostics
+            .channel_diagnostics
+            .get(channel_index)
+            .map(|diagnostics| diagnostics.max_psf_sidelobe_level)
+            .unwrap_or(0.0);
+        let beam = mask_beams.get(channel_index).copied().flatten();
+        let min_region_pixels = auto_mask_min_region_pixels(geometry, beam, config);
+        let beam_shape = auto_mask_beam_shape(geometry, beam, config);
+        for stokes_index in 0..nstokes {
+            let plane = residual
+                .slice(s![.., .., stokes_index, channel_index])
+                .to_owned();
+            let plane_mask = auto_multithresh_plane_mask(
+                &plane,
+                max_psf_sidelobe_level,
+                min_region_pixels,
+                beam_shape,
+                config,
+            );
+            Zip::from(&mut channel_mask)
+                .and(&plane_mask)
+                .for_each(|out, generated| *out = *out || *generated);
+        }
+        mask.slice_mut(s![.., .., 0, channel_index])
+            .assign(&channel_mask);
     }
     Ok(mask)
 }
@@ -9267,10 +9400,49 @@ fn auto_mask_min_region_pixels(
     ((config.min_beam_frac as f64 * beam_area / cell_area).ceil() as usize).max(1)
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AutoMaskBeamShape {
+    sigma_x_pixels: f64,
+    sigma_y_pixels: f64,
+    position_angle_rad: f64,
+}
+
+fn auto_mask_beam_shape(
+    geometry: ImageGeometry,
+    beam: Option<BeamFit>,
+    config: &AutoMultiThresholdConfig,
+) -> Option<AutoMaskBeamShape> {
+    let beam = beam?;
+    if config.smooth_factor <= 0.0 {
+        return None;
+    }
+    let cell_x = geometry.cell_size_rad[0].abs();
+    let cell_y = geometry.cell_size_rad[1].abs();
+    if !(cell_x.is_finite() && cell_x > 0.0 && cell_y.is_finite() && cell_y > 0.0) {
+        return None;
+    }
+    let sigma_from_fwhm = |fwhm_rad: f64, cell_rad: f64| {
+        config.smooth_factor as f64 * fwhm_rad.abs()
+            / (2.0 * (2.0 * std::f64::consts::LN_2).sqrt() * cell_rad)
+    };
+    let sigma_x_pixels = sigma_from_fwhm(beam.minor_fwhm_rad, cell_x);
+    let sigma_y_pixels = sigma_from_fwhm(beam.major_fwhm_rad, cell_y);
+    (sigma_x_pixels.is_finite()
+        && sigma_x_pixels > 0.0
+        && sigma_y_pixels.is_finite()
+        && sigma_y_pixels > 0.0)
+        .then_some(AutoMaskBeamShape {
+            sigma_x_pixels,
+            sigma_y_pixels,
+            position_angle_rad: beam.position_angle_rad,
+        })
+}
+
 fn auto_multithresh_plane_mask(
     residual: &Array2<f32>,
     max_psf_sidelobe_level: f32,
     min_region_pixels: usize,
+    beam_shape: Option<AutoMaskBeamShape>,
     config: &AutoMultiThresholdConfig,
 ) -> Array2<bool> {
     let Some(stats) = robust_plane_stats(residual) else {
@@ -9285,7 +9457,7 @@ fn auto_multithresh_plane_mask(
     let main_threshold = sidelobe_threshold.max(noise_threshold);
     let mut initial = threshold_positive_mask(residual, main_threshold);
     prune_small_regions(&mut initial, min_region_pixels);
-    let mut grown = initial.clone();
+    let mut grown = smooth_and_cut_mask(&initial, beam_shape, config.cut_threshold);
     if config.grow_iterations > 0 {
         let constraint = threshold_positive_mask(residual, low_noise_threshold);
         grow_mask_constrained(&mut grown, &constraint, config.grow_iterations);
@@ -9299,6 +9471,7 @@ fn auto_multithresh_plane_mask(
                 .max(config.negative_threshold * stats.robust_rms);
         let mut negative = threshold_negative_mask(residual, negative_threshold);
         prune_small_regions(&mut negative, min_region_pixels);
+        negative = smooth_and_cut_mask(&negative, beam_shape, config.cut_threshold);
         Zip::from(&mut grown)
             .and(&negative)
             .for_each(|out, generated| *out = *out || *generated);
@@ -9352,11 +9525,58 @@ fn sorted_median(values: &[f32]) -> f32 {
 }
 
 fn threshold_positive_mask(residual: &Array2<f32>, threshold: f32) -> Array2<bool> {
-    residual.mapv(|value| value.is_finite() && value >= threshold)
+    residual.mapv(|value| value.is_finite() && value > threshold)
 }
 
 fn threshold_negative_mask(residual: &Array2<f32>, threshold: f32) -> Array2<bool> {
-    residual.mapv(|value| value.is_finite() && value <= threshold)
+    residual.mapv(|value| value.is_finite() && value < threshold)
+}
+
+fn smooth_and_cut_mask(
+    mask: &Array2<bool>,
+    beam_shape: Option<AutoMaskBeamShape>,
+    cut_threshold: f32,
+) -> Array2<bool> {
+    let Some(beam_shape) = beam_shape else {
+        return mask.clone();
+    };
+    let (nx, ny) = mask.dim();
+    let radius_x = (beam_shape.sigma_x_pixels * 4.0).ceil().max(1.0) as isize;
+    let radius_y = (beam_shape.sigma_y_pixels * 4.0).ceil().max(1.0) as isize;
+    let cos_pa = beam_shape.position_angle_rad.cos();
+    let sin_pa = beam_shape.position_angle_rad.sin();
+    let mut smoothed = Array2::<f32>::zeros((nx, ny));
+    for ((x, y), value) in mask.indexed_iter() {
+        if !*value {
+            continue;
+        }
+        let x = x as isize;
+        let y = y as isize;
+        for dx in -radius_x..=radius_x {
+            let xx = x + dx;
+            if !(0..nx as isize).contains(&xx) {
+                continue;
+            }
+            for dy in -radius_y..=radius_y {
+                let yy = y + dy;
+                if !(0..ny as isize).contains(&yy) {
+                    continue;
+                }
+                let rotated_x = dx as f64 * cos_pa + dy as f64 * sin_pa;
+                let rotated_y = -dx as f64 * sin_pa + dy as f64 * cos_pa;
+                let exponent = -0.5
+                    * ((rotated_x / beam_shape.sigma_x_pixels).powi(2)
+                        + (rotated_y / beam_shape.sigma_y_pixels).powi(2));
+                smoothed[(xx as usize, yy as usize)] += exponent.exp() as f32;
+            }
+        }
+    }
+    let peak = smoothed.iter().copied().fold(0.0f32, f32::max);
+    if !(peak.is_finite() && peak > 0.0) {
+        return Array2::<bool>::from_elem((nx, ny), false);
+    }
+    let threshold = cut_threshold.max(0.0) * peak;
+    smoothed.mapv(|value| value.is_finite() && value > threshold)
 }
 
 fn grow_mask_constrained(
@@ -9513,6 +9733,55 @@ fn frontend_peak_abs_masked(cube: &Array4<f32>, clean_mask: Option<&Array2<bool>
         }
     }
     peak
+}
+
+fn frontend_channel_clean_masks(
+    geometry: ImageGeometry,
+    nchan: usize,
+    shared_mask: Option<&Array2<bool>>,
+    channel_mask: Option<&Array4<bool>>,
+) -> Result<Vec<Option<Array2<bool>>>, String> {
+    let Some(channel_mask) = channel_mask else {
+        return Ok(vec![shared_mask.cloned(); nchan]);
+    };
+    let expected = (geometry.nx(), geometry.ny(), 1, nchan);
+    if channel_mask.dim() != expected {
+        return Err(format!(
+            "channel clean mask shape {:?} does not match cube image shape {:?}",
+            channel_mask.dim(),
+            expected
+        ));
+    }
+    let mut masks = Vec::with_capacity(nchan);
+    for channel_index in 0..nchan {
+        let mut plane = channel_mask.slice(s![.., .., 0, channel_index]).to_owned();
+        if let Some(shared_mask) = shared_mask {
+            Zip::from(&mut plane)
+                .and(shared_mask)
+                .for_each(|out, shared| *out = *out && *shared);
+        }
+        masks.push(Some(plane));
+    }
+    Ok(masks)
+}
+
+fn final_cube_clean_mask_from_channel_masks(
+    masks: &[Option<Array2<bool>>],
+    nx: usize,
+    ny: usize,
+) -> Option<Array4<bool>> {
+    if !masks.iter().any(Option::is_some) {
+        return None;
+    }
+    let mut cube_mask = Array4::<bool>::from_elem((nx, ny, 1, masks.len()), false);
+    for (channel_index, mask) in masks.iter().enumerate() {
+        if let Some(mask) = mask {
+            cube_mask
+                .slice_mut(s![.., .., 0, channel_index])
+                .assign(mask);
+        }
+    }
+    Some(cube_mask)
 }
 
 fn select_frontend_restored_cube_beams(
@@ -13297,11 +13566,100 @@ mod tests {
             ..AutoMultiThresholdConfig::default()
         };
 
-        let mask = auto_multithresh_plane_mask(&residual, 0.0, 2, &config);
+        let mask = auto_multithresh_plane_mask(&residual, 0.0, 2, None, &config);
         assert!(mask[(4, 4)]);
         assert!(mask[(4, 5)]);
         assert!(mask[(5, 4)]);
         assert!(!mask[(0, 0)], "single-pixel island should be pruned");
+    }
+
+    #[test]
+    fn auto_multithresh_cube_mask_keeps_channels_separate() {
+        let geometry = ImageGeometry {
+            image_shape: [9, 9],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let mut residual = Array4::<f32>::zeros((9, 9, 1, 2));
+        residual[(4, 4, 0, 0)] = 10.0;
+        residual[(1, 7, 0, 1)] = 10.0;
+        let diagnostics = |max_psf_sidelobe_level| ImagingDiagnostics {
+            warnings: Vec::new(),
+            gridded_samples: 0,
+            skipped_samples: 0,
+            major_cycles: 0,
+            minor_iterations: 0,
+            clean_stop_reason: None,
+            minor_cycle_traces: Vec::new(),
+            initial_residual_peak_jy_per_beam: 0.0,
+            final_residual_peak_jy_per_beam: 0.0,
+            max_abs_w_lambda: 0.0,
+            fractional_bandwidth: 0.0,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: 0.0,
+            clean_mask_pixels: 0,
+            beam_fit_attempts: 0,
+            beam_fit_cutoff_used: None,
+            beam_fit_debug: None,
+            mosaic_weight_image: None,
+            stage_timings: ImagingStageTimings::default(),
+        };
+        let dirty = CubeImagingResult {
+            psf: Array4::<f32>::zeros((9, 9, 1, 2)),
+            residual,
+            model: Array4::<f32>::zeros((9, 9, 1, 2)),
+            image: Array4::<f32>::zeros((9, 9, 1, 2)),
+            sumwt: Array4::<f32>::zeros((1, 1, 1, 2)),
+            clean_mask: None,
+            beams: vec![None, None],
+            restored_beams: vec![None, None],
+            diagnostics: CubeImagingDiagnostics {
+                warnings: Vec::new(),
+                gridded_samples: 0,
+                skipped_samples: 0,
+                major_cycles: 0,
+                minor_iterations: 0,
+                clean_stop_reason: None,
+                channel_diagnostics: vec![diagnostics(0.1), diagnostics(0.1)],
+                stage_timings: ImagingStageTimings::default(),
+            },
+            compatibility: CompatibilityMetadata {
+                axis_order: [
+                    AxisKind::RightAscension,
+                    AxisKind::Declination,
+                    AxisKind::Stokes,
+                    AxisKind::Frequency,
+                ],
+                plane_stokes: PlaneStokes::I,
+                reffreq_hz: 1.5,
+                channel_frequencies_hz: vec![1.0, 2.0],
+                psf_units: String::new(),
+                residual_units: "Jy/beam".to_string(),
+                model_units: "Jy/pixel".to_string(),
+                image_units: "Jy/beam".to_string(),
+            },
+        };
+        let config = AutoMultiThresholdConfig {
+            sidelobe_threshold: 0.5,
+            noise_threshold: 0.0,
+            low_noise_threshold: 0.0,
+            min_beam_frac: 0.0,
+            grow_iterations: 0,
+            ..AutoMultiThresholdConfig::default()
+        };
+
+        let mask = build_auto_multithresh_cube_clean_mask(
+            geometry,
+            &dirty,
+            RestoringBeamMode::PerPlane,
+            None,
+            &config,
+        )
+        .unwrap();
+
+        assert!(mask[(4, 4, 0, 0)]);
+        assert!(!mask[(4, 4, 0, 1)]);
+        assert!(mask[(1, 7, 0, 1)]);
+        assert!(!mask[(1, 7, 0, 0)]);
     }
 
     #[test]
@@ -17969,6 +18327,8 @@ mod tests {
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: config.psf_cutoff,
             w_term_mode: config.w_term_mode,
             w_project_planes: None,
@@ -18404,6 +18764,8 @@ mod tests {
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: config.psf_cutoff,
             w_term_mode: config.w_term_mode,
             w_project_planes: None,
@@ -18521,6 +18883,8 @@ mod tests {
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: config.psf_cutoff,
             w_term_mode,
             w_project_planes: None,
@@ -18609,6 +18973,8 @@ mod tests {
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: config.psf_cutoff,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -18749,6 +19115,8 @@ mod tests {
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: config.psf_cutoff,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -18960,6 +19328,8 @@ mod tests {
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: config.psf_cutoff,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -19111,6 +19481,8 @@ mod tests {
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: config.psf_cutoff,
             w_term_mode: WTermMode::None,
             w_project_planes: None,

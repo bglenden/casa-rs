@@ -956,6 +956,52 @@ impl ImagingRequest {
     }
 }
 
+/// CASA `auto-multithresh` controls used by the cube CLEAN controller.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CubeAutoMultiThresholdConfig {
+    /// Sidelobe threshold factor multiplied by the PSF sidelobe level.
+    pub sidelobe_threshold: f32,
+    /// Noise threshold factor multiplied by the robust residual RMS.
+    pub noise_threshold: f32,
+    /// Lower noise threshold factor used when growing an existing mask.
+    pub low_noise_threshold: f32,
+    /// Negative-feature threshold factor; zero disables negative masks.
+    pub negative_threshold: f32,
+    /// Smoothing factor, in restoring-beam units, for CASA's mask smoothing
+    /// stage.
+    pub smooth_factor: f32,
+    /// Minimum connected-region size as a fraction of the fitted beam area.
+    pub min_beam_frac: f32,
+    /// Fraction of the smoothed-mask peak used to cut mask edges.
+    pub cut_threshold: f32,
+    /// Maximum constrained binary-dilation iterations for later mask updates.
+    pub grow_iterations: usize,
+    /// Whether grown masks are pruned after dilation.
+    pub do_grow_prune: bool,
+    /// CASA percent-change stop control for later automask updates.
+    pub min_percent_change: f32,
+    /// Use CASA's fast-noise statistics path.
+    pub fast_noise: bool,
+}
+
+impl Default for CubeAutoMultiThresholdConfig {
+    fn default() -> Self {
+        Self {
+            sidelobe_threshold: 3.0,
+            noise_threshold: 5.0,
+            low_noise_threshold: 1.5,
+            negative_threshold: 0.0,
+            smooth_factor: 1.0,
+            min_beam_frac: 0.3,
+            cut_threshold: 0.01,
+            grow_iterations: 75,
+            do_grow_prune: true,
+            min_percent_change: -1.0,
+            fast_noise: true,
+        }
+    }
+}
+
 /// Top-level request consumed by the pure imaging engine for spectral cubes.
 ///
 /// Each output spectral plane is imaged independently through the same core
@@ -999,6 +1045,20 @@ pub struct CubeImagingRequest {
     /// Optional image-plane clean mask shared by every spectral plane. `true`
     /// pixels are eligible for component picks.
     pub clean_mask: Option<Array2<bool>>,
+    /// Optional CASA-style cube clean mask with shape `(nx, ny, 1, nchan)`.
+    ///
+    /// This represents masks that differ by output spectral channel, matching
+    /// CASA image-mask semantics. When both [`Self::clean_mask`] and this
+    /// field are present, a pixel must be true in both masks to be eligible.
+    pub channel_clean_mask: Option<Array4<bool>>,
+    /// Optional CASA `auto-multithresh` mask updates run inside the cube CLEAN
+    /// controller.
+    ///
+    /// The initial mask is generated from the first residual before any minor
+    /// iterations. Later major-cycle residual refreshes update the positive
+    /// mask and may grow existing mask regions, matching CASA's
+    /// `iterdone > 0` growth gate.
+    pub auto_mask: Option<CubeAutoMultiThresholdConfig>,
     /// Restoring-beam fit cutoff used for each channel PSF.
     pub psf_cutoff: f32,
     /// Requested `w`-term handling mode.
@@ -1042,6 +1102,21 @@ impl CubeImagingRequest {
                     "clean mask shape {:?} does not match image shape {:?}",
                     mask.dim(),
                     (self.geometry.nx(), self.geometry.ny())
+                )));
+            }
+        }
+        if let Some(mask) = &self.channel_clean_mask {
+            let expected = (
+                self.geometry.nx(),
+                self.geometry.ny(),
+                1,
+                self.channels.len(),
+            );
+            if mask.dim() != expected {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "channel clean mask shape {:?} does not match cube image shape {:?}",
+                    mask.dim(),
+                    expected
                 )));
             }
         }
@@ -1687,6 +1762,9 @@ pub struct CubeImagingResult {
     pub image: Array4<f32>,
     /// CASA-style `sumwt` product with one scalar per spectral plane.
     pub sumwt: Array4<f32>,
+    /// Final clean mask cube used by the controller, if CLEAN was run with an
+    /// explicit or generated mask.
+    pub clean_mask: Option<Array4<bool>>,
     /// Beam fitted from each per-plane PSF, in spectral order.
     pub beams: Vec<Option<BeamFit>>,
     /// Restoring beam actually applied to each restored image plane.

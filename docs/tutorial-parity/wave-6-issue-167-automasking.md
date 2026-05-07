@@ -1,8 +1,8 @@
 # Wave 6B Issue 167 Automasking Guide
 
 Truth class: current descriptive
-Last reality check: 2026-05-06
-Verification: `cargo test -p casars-imager`; `just quick`; `scripts/test-python-package.sh`; `just docs-check`; `CASA_RS_TUTORIAL_DATA_ROOT=/Volumes/GLENDENNING/casa-rs/tutorial-data scripts/run-wave6-issue167-automasking.sh target/wave6-issue167-automasking`
+Last reality check: 2026-05-07
+Verification: `cargo test -p casa-imaging --lib`; `cargo test -p casars-imager --lib`; `just quick`; `just verify`; `CASA_RS_TUTORIAL_DATA_ROOT=/Volumes/GLENDENNING/casa-rs/tutorial-data scripts/run-wave6-issue167-automasking.sh target/wave6-issue167-automasking`
 
 Wave issue: #167
 Parent wave: #143 / #127
@@ -33,7 +33,8 @@ Source-backed automask ownership for this wave:
 
 - `casatools/src/code/synthesis/ImagerObjects/SynthesisDeconvolver.cc`: maps `maskType == "auto-multithresh"` to the `multithresh` automask algorithm.
 - `casatools/src/code/synthesis/ImagerObjects/SynthesisUtilMethods.cc`: validates and records the public `sidelobethreshold`, `noisethreshold`, `lownoisethreshold`, `negativethreshold`, `minbeamfrac`, and `growiterations` fields into deconvolver parameters.
-- `casatools/src/code/synthesis/ImagerObjects/SDMaskHandler.cc`: applies the CASA algorithm by computing median/MAD-derived noise, max sidelobe/noise thresholds, pruning regions smaller than `minbeamfrac * beam area`, constrained binary dilation with `lownoisethreshold`, optional grown-mask pruning, optional negative masks, and final mask union.
+- `casatools/src/code/synthesis/ImagerObjects/SDMaskHandler.cc`: applies the CASA algorithm by computing median/MAD-derived noise, max sidelobe/noise thresholds, pruning regions smaller than `minbeamfrac * beam area`, beam-smoothed mask cuts, constrained binary dilation with `lownoisethreshold` only after `iterdone > 0`, optional grown-mask pruning, optional negative masks, zero-channel skip flags, and final mask union.
+- `casatasks/src/private/imagerhelpers/_gclean.py`: runs an initial `niter=0` deconvolution pass for automask creation, then asks the deconvolver for mask updates after major-cycle residual refreshes when convergence has not yet been reached.
 
 ## casa-rs Implementation Scope
 
@@ -53,9 +54,10 @@ Implemented as the #167-owned slice, not as a #196 sub-ticket:
 - `--no-fastnoise`
 - canonical JSON task request fields `use_mask` and `auto_mask`
 - Python `casars.tasks.imager.mfs(..., use_mask=..., auto_mask=...)`
-- `.mask` product writing for effective clean masks
+- CASA-style cube clean masks in `CubeImagingRequest` with shape `(nx, ny, 1, nchan)`, so generated or supplied masks can differ by output channel
+- `.mask` product writing for effective clean masks, including channel-specific cube masks
 
-The native mask generator currently builds a deterministic initial automask from the dirty residual product and applies it to the clean run. It source-aligns with CASA's threshold, pruning, constrained growth, and negative-feature controls, but the same-input Automasking Guide evidence below shows that the cube path is not yet CASA-equivalent for channel-specific mask behavior.
+The native cube controller now owns standard-gridder `auto-multithresh` updates across major cycles. Initial masks use CASA's no-growth `iterdone == 0` path; later major-cycle residual refreshes may grow existing positive masks and stop channels that remain empty under a noise threshold.
 
 ## Same-Input Evidence
 
@@ -69,23 +71,27 @@ Timing comparison from the same extracted MeasurementSet:
 
 | Case | CASA C++ | casa-rs | Notes |
 | --- | ---: | ---: | --- |
-| dirty cube | 1.282 s | 2.048 s | release binary built before timing |
-| base `auto-multithresh` cube | 5.776 s | 1.689 s | CASA guide base parameters |
-| dirty + base automask total | 7.058 s | 3.737 s | comparable bounded guide slice |
+| dirty cube | 1.170 s | 1.832 s | release binary built before timing |
+| base `auto-multithresh` cube | 5.726 s | 1.294 s | CASA guide base parameters |
+| dirty + base automask total | 6.896 s | 3.126 s | comparable bounded guide slice |
 
 The dirty cube path originally measured `3.775 s` for the casa-rs CLI leg. A
 follow-up cache for row-local cube source-frequency conversions reduced the
-same CLI leg to `2.048 s`; an instrumented dirty run reports `0.735 s` inside
-the frontend/imaging/write path itself, with `0.560 s` in preparation,
-`0.147 s` in the imaging core, and `0.021 s` writing products.
+same CLI leg below two seconds in repeated runs. The final same-input evidence
+keeps the full CLI product write path in the timing.
 
 Correctness comparison:
 
 | Product | Result |
 | --- | --- |
 | dirty `.image` / `.residual` | strong parity: maximum channel RMS diff / CASA RMS is `8.44e-7`; maximum abs diff / CASA peak is `1.09e-6` |
-| base automask `.image` | not parity-complete: maximum channel RMS diff / CASA RMS is `8.18e-2`; maximum abs diff / CASA peak is `3.38e-1` |
-| base automask `.residual` | not parity-complete: maximum channel RMS diff / CASA RMS is `7.28e-2`; maximum abs diff / CASA peak is `2.70e-1` |
-| base automask `.mask` | not parity-complete: CASA masks only channels 5 and 7 in this run; casa-rs writes 223 mask pixels in every channel |
+| base automask `.image` | guide-level parity: maximum channel RMS diff / CASA RMS is `7.29e-3`; maximum abs diff / CASA peak is `1.57e-2` |
+| base automask `.residual` | guide-level parity: maximum channel RMS diff / CASA RMS is `7.90e-3`; maximum abs diff / CASA peak is `3.25e-2` |
+| base automask `.mask` | channel-specific masks now match the CASA active-channel surface: CASA masks only channels 5 and 7; casa-rs masks only channels 5 and 7, with channel 5 Jaccard `0.997` and channel 7 Jaccard `0.990` |
 
-The current parity gap is channel-specific cube mask ownership. CASA's base Automasking Guide run produces per-channel masks, while the native cube path currently reduces generated detections to one 2D mask and applies/writes it across every channel. This PR should stay draft until #167 either implements per-channel cube automasks or records that exact parity as deferred scope.
+Mask detail for the active guide channels:
+
+| Channel | CASA pixels | casa-rs pixels | Intersection | CASA-only | casa-rs-only |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 | 872 | 873 | 871 | 1 | 2 |
+| 7 | 702 | 709 | 702 | 0 | 7 |

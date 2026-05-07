@@ -83,13 +83,14 @@ pub use trace::{
 pub use error::ImagingError;
 pub use types::{
     AxisKind, BeamFit, BeamFitDebugSummary, CleanConfig, CleanStopReason, CompatibilityMetadata,
-    CompatibilityMode, CubeChannelRequest, CubeImagingDiagnostics, CubeImagingRequest,
-    CubeImagingResult, CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver,
-    GaussianUvTaper, GridderMode, HogbomIterationMode, ImageGeometry, ImagingDiagnostics,
-    ImagingRequest, ImagingResult, ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig,
-    MtmfsRequest, MtmfsResult, ParallelHandBatch, PlaneStokes, PrimaryBeamModel, PsfBeamFitResult,
-    ResidualRefreshDiagnostics, ResidualSampleDiagnostics, RestoringBeamMode, UvTaperSize,
-    VisibilityBatch, VisibilityMetadataBatch, WProjectDiagnostics, WProjectKernelDiagnostics,
+    CompatibilityMode, CubeAutoMultiThresholdConfig, CubeChannelRequest, CubeImagingDiagnostics,
+    CubeImagingRequest, CubeImagingResult, CubeModelChannelContribution,
+    CubeModelInterpolationBatch, Deconvolver, GaussianUvTaper, GridderMode, HogbomIterationMode,
+    ImageGeometry, ImagingDiagnostics, ImagingRequest, ImagingResult, ImagingStageTimings,
+    MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, MtmfsResult, ParallelHandBatch,
+    PlaneStokes, PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics,
+    ResidualSampleDiagnostics, RestoringBeamMode, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, WProjectDiagnostics, WProjectKernelDiagnostics,
     WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
     WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
 };
@@ -5942,7 +5943,7 @@ mod tests {
         cpp_convolve_gridder_predict_visibility_2d,
     };
     use casa_test_support::hogbom_interop::cpp_hogbom_clean_minor_cycle_2d;
-    use ndarray::{Array2, s};
+    use ndarray::{Array2, Array4, s};
     use num_complex::Complex32;
     use serial_test::serial;
 
@@ -6586,6 +6587,8 @@ mod tests {
             small_scale_bias: 0.0,
             clean: dirty_clean_config(0.35),
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -6666,6 +6669,8 @@ mod tests {
             small_scale_bias: 0.0,
             clean: dirty_clean_config(0.35),
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::WProject,
             w_project_planes: Some(8),
@@ -6755,6 +6760,8 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -6842,6 +6849,8 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -7682,6 +7691,8 @@ mod tests {
             small_scale_bias: 0.0,
             clean: dirty_clean_config(0.35),
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -7752,6 +7763,8 @@ mod tests {
             small_scale_bias: 0.0,
             clean: dirty_clean_config(0.35),
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -7822,6 +7835,8 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -7846,6 +7861,87 @@ mod tests {
         assert!(
             result.diagnostics.channel_diagnostics[1].major_cycles > 0,
             "expected cube plane 1 to refresh residuals"
+        );
+    }
+
+    #[test]
+    fn cube_channel_clean_mask_restricts_only_selected_channels() {
+        let geometry = ImageGeometry {
+            image_shape: [48, 48],
+            cell_size_rad: [1.2e-4, 1.2e-4],
+        };
+        let samples = [(25.0, -12.0, 0.0), (-18.0, 21.0, 0.0), (8.0, 11.0, 0.0)];
+        let channel_a = cube_channel_request_identity(
+            1.40e9,
+            vec![point_source_visibilities(
+                &samples,
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (24.0, 24.0),
+                1.0,
+            )],
+            0,
+        );
+        let channel_b = cube_channel_request_identity(
+            1.41e9,
+            vec![point_source_visibilities(
+                &samples,
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (26.0, 22.0),
+                1.5,
+            )],
+            1,
+        );
+        let mut channel_mask = Array4::<bool>::from_elem((48, 48, 1, 2), false);
+        channel_mask[(24, 24, 0, 0)] = true;
+
+        let result = run_cube(&CubeImagingRequest {
+            geometry,
+            channels: vec![channel_a, channel_b],
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            weight_density_mode: WeightDensityMode::Combined,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 8,
+                gain: 0.1,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 2,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.05,
+                max_psf_fraction: 0.8,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            },
+            clean_mask: None,
+            channel_clean_mask: Some(channel_mask),
+            auto_mask: None,
+            psf_cutoff: 0.35,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .unwrap();
+
+        assert!(peak_abs_value(&result.model.slice(s![.., .., 0, 0]).to_owned()) > 1.0e-3);
+        assert_eq!(
+            peak_abs_value(&result.model.slice(s![.., .., 0, 1]).to_owned()),
+            0.0,
+            "channel 1 should not clean from channel 0's mask"
+        );
+        assert_eq!(
+            result.diagnostics.channel_diagnostics[0].clean_mask_pixels,
+            1
+        );
+        assert_eq!(
+            result.diagnostics.channel_diagnostics[1].clean_mask_pixels,
+            0
         );
     }
 
@@ -7897,6 +7993,8 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -7963,6 +8061,8 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -8038,6 +8138,8 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
@@ -8129,6 +8231,8 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            channel_clean_mask: None,
+            auto_mask: None,
             psf_cutoff: 0.35,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
