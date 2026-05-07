@@ -223,15 +223,20 @@ struct DatasetExplorerPanel: View {
     }
 
     private func tableBrowserRoot(for dataset: DatasetSummary) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                PanelHeader(title: "Table Browser", subtitle: explorerSubtitle(for: dataset))
-                tableExplorerContent(for: dataset)
-                Text(dataset.path)
-                    .workbenchFont(.caption, design: .monospaced)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            tableBrowserToolbar(for: dataset)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            Divider()
+            tableExplorerContent(for: dataset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            let selectedView = store.state.tableBrowsers[dataset.id]?.selectedView
+            if selectedView != nil && !Self.tableBrowserDisplayViews.contains(selectedView ?? "") {
+                store.setTableBrowserView("cells", datasetID: dataset.id)
             }
-            .padding(20)
         }
     }
 
@@ -359,84 +364,89 @@ struct DatasetExplorerPanel: View {
     @ViewBuilder
     private func tableExplorerContent(for dataset: DatasetSummary) -> some View {
         let browserState = store.state.tableBrowsers[dataset.id]
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Picker("View", selection: Binding(
-                    get: { browserState?.selectedView ?? "overview" },
-                    set: { store.setTableBrowserView($0, datasetID: dataset.id) }
-                )) {
-                    Text("Overview").tag("overview")
-                    Text("Columns").tag("columns")
-                    Text("Keywords").tag("keywords")
-                    Text("Cells").tag("cells")
-                    Text("Subtables").tag("subtables")
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 460)
-                .accessibilityIdentifier("tableBrowser.view.\(dataset.id)")
-
-                Button {
-                    store.runTableBrowserCommand(.setFocus("main"), datasetID: dataset.id)
-                } label: {
-                    Label("Main", systemImage: "rectangle.topthird.inset.filled")
-                }
-                .accessibilityIdentifier("tableBrowser.focusMain.\(dataset.id)")
-
-                Button {
-                    store.runTableBrowserCommand(.setFocus("inspector"), datasetID: dataset.id)
-                } label: {
-                    Label("Inspector", systemImage: "sidebar.right")
-                }
-                .accessibilityIdentifier("tableBrowser.focusInspector.\(dataset.id)")
-
-                Button {
-                    store.refreshTableBrowser(datasetID: dataset.id)
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .accessibilityIdentifier("tableBrowser.refresh.\(dataset.id)")
-
-                if let snapshot = browserState?.snapshot {
-                    Text(snapshot.statusLine)
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else if let error = browserState?.lastError {
-                    Text(error)
-                        .workbenchFont(.caption)
-                        .foregroundStyle(.red)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-            }
-
-            HStack(alignment: .top, spacing: 16) {
-                SummaryBox(
-                    title: "Table",
-                    values: [
-                        dataset.size,
-                        "Type: \(dataset.units.isEmpty ? "casacore table" : dataset.units)",
-                        "Rows: \(dataset.shape.first.map(String.init) ?? "Unknown")",
-                        "Bytes: \(byteCount(dataset.sizeBytes))"
-                    ]
-                )
-                SummaryBox(title: "Columns", values: dataset.columns)
-                SummaryBox(title: "Subtables", values: dataset.subtables)
-            }
-
+        Group {
             if let snapshot = browserState?.snapshot {
                 TableBrowserSnapshotView(
                     snapshot: snapshot,
-                    commandHandler: { command in
-                        store.runTableBrowserCommand(command, datasetID: dataset.id)
+                    selectMainItem: { index in store.selectTableBrowserMainItem(index: index, datasetID: dataset.id) },
+                    selectCell: { rowIndex, selectedVisibleColumn, targetVisibleColumn in
+                        store.selectTableBrowserVisibleCell(
+                            rowIndex: rowIndex,
+                            selectedVisibleColumn: selectedVisibleColumn,
+                            targetVisibleColumn: targetVisibleColumn,
+                            datasetID: dataset.id
+                        )
+                    },
+                    openSelectedSubtable: {
+                        store.openSelectedTableBrowserSubtable(datasetID: dataset.id)
                     }
                 )
             } else {
                 TablePreviewSummary(dataset: dataset)
             }
-            SummaryBox(title: "Probe Notes", values: [dataset.notes] + dataset.diagnostics)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func tableBrowserToolbar(for dataset: DatasetSummary) -> some View {
+        let browserState = store.state.tableBrowsers[dataset.id]
+        return HStack(spacing: 10) {
+            Picker("View", selection: Binding(
+                get: { Self.tableBrowserViewSelection(browserState?.selectedView) },
+                set: { store.setTableBrowserView($0, datasetID: dataset.id) }
+            )) {
+                Text("Cells").tag("cells")
+                Text("Keywords").tag("keywords")
+                Text("Subtables").tag("subtables")
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 260)
+            .labelsHidden()
+            .accessibilityIdentifier("tableBrowser.view.\(dataset.id)")
+
+            Button {
+                store.refreshTableBrowser(datasetID: dataset.id)
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Refresh table")
+            .accessibilityIdentifier("tableBrowser.refresh.\(dataset.id)")
+
+            if let snapshot = browserState?.snapshot {
+                Text(snapshot.breadcrumb.map(\.label).joined(separator: " / "))
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if let address = tableBrowserAddressSummary(snapshot.selectedAddress) {
+                    Text(address)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            } else if let error = browserState?.lastError {
+                Text(error)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+            } else {
+                Text(dataset.path)
+                    .workbenchFont(.caption, design: .monospaced)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private static let tableBrowserDisplayViews = ["cells", "keywords", "subtables"]
+
+    private static func tableBrowserViewSelection(_ view: String?) -> String {
+        guard let view, tableBrowserDisplayViews.contains(view) else {
+            return "cells"
+        }
+        return view
     }
 
     private func productExplorerContent(for dataset: DatasetSummary) -> some View {
@@ -2084,125 +2094,58 @@ private extension Array {
     }
 }
 
+func tableBrowserAddressSummary(_ address: TableBrowserSnapshot.SelectedAddress?) -> String? {
+    guard let address else {
+        return nil
+    }
+    switch address.kind {
+    case "column":
+        return address.column.map { "column \($0)" }
+    case "cell":
+        let row = address.row.map(String.init) ?? "?"
+        return "row \(row) \(address.column ?? "")"
+    case "table_keyword":
+        return "keyword \(address.keywordPath?.joined(separator: ".") ?? "")"
+    case "column_keyword":
+        return "keyword \(address.column ?? ""):\(address.keywordPath?.joined(separator: ".") ?? "")"
+    case "subtable":
+        return "subtable \(address.targetPath ?? "")"
+    default:
+        return address.kind
+    }
+}
+
 private struct TableBrowserSnapshotView: View {
     let snapshot: TableBrowserSnapshot
-    let commandHandler: (TableBrowserCommand) -> Void
+    let selectMainItem: (Int) -> Void
+    let selectCell: (_ rowIndex: Int?, _ selectedVisibleColumn: Int?, _ targetVisibleColumn: Int?) -> Void
+    let openSelectedSubtable: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
-                Text(snapshot.breadcrumb.map(\.label).joined(separator: " / "))
-                    .workbenchFont(.headline)
-                    .lineLimit(1)
-                Text(snapshot.focus == "inspector" ? "Inspector focus" : "Main focus")
-                    .workbenchFont(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.10), in: Capsule())
                 if snapshot.capabilities?.editable == false {
                     Text("read-only")
                         .workbenchFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let address = addressSummary {
-                    Text(address)
-                        .workbenchFont(.caption, design: .monospaced)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-
-            HStack(spacing: 8) {
-                commandButton("chevron.up", "Move up") { commandHandler(.moveUp(steps: 1)) }
-                commandButton("chevron.down", "Move down") { commandHandler(.moveDown(steps: 1)) }
-                commandButton("chevron.left", "Move left") { commandHandler(.moveLeft(steps: 1)) }
-                commandButton("chevron.right", "Move right") { commandHandler(.moveRight(steps: 1)) }
-                Divider().frame(height: 22)
-                commandButton("arrow.up.to.line", "Page up") { commandHandler(.pageUp(pages: 1)) }
-                commandButton("arrow.down.to.line", "Page down") { commandHandler(.pageDown(pages: 1)) }
-                Divider().frame(height: 22)
-                Button {
-                    commandHandler(.activate)
-                } label: {
-                    Label("Open", systemImage: "return")
-                }
-                Button {
-                    commandHandler(.back)
-                } label: {
-                    Label("Back", systemImage: "chevron.backward")
-                }
-                Button {
-                    commandHandler(.escape)
-                } label: {
-                    Label("Escape", systemImage: "escape")
-                }
-                Spacer()
                 metricsLabel(snapshot.verticalMetrics, axis: "rows")
                 metricsLabel(snapshot.horizontalMetrics, axis: "cols")
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
 
-            HStack(alignment: .top, spacing: 14) {
-                TableBrowserMainPane(snapshot: snapshot)
-                    .frame(minWidth: 520, maxWidth: .infinity, minHeight: 320, alignment: .topLeading)
-                TableBrowserInspectorPane(inspector: snapshot.inspector)
-                    .frame(width: 360, alignment: .topLeading)
-                    .frame(minHeight: 320, alignment: .topLeading)
-            }
-            Text(snapshot.statusLine)
-                .workbenchFont(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            TableBrowserMainPane(
+                snapshot: snapshot,
+                selectMainItem: selectMainItem,
+                selectCell: selectCell,
+                openSelectedSubtable: openSelectedSubtable
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .accessibilityIdentifier("tableBrowser.snapshot")
-        .onMoveCommand { direction in
-            switch direction {
-            case .up:
-                commandHandler(.moveUp(steps: 1))
-            case .down:
-                commandHandler(.moveDown(steps: 1))
-            case .left:
-                commandHandler(.moveLeft(steps: 1))
-            case .right:
-                commandHandler(.moveRight(steps: 1))
-            @unknown default:
-                break
-            }
-        }
-        .onExitCommand {
-            commandHandler(.escape)
-        }
-    }
-
-    private var addressSummary: String? {
-        guard let address = snapshot.selectedAddress else {
-            return nil
-        }
-        switch address.kind {
-        case "column":
-            return address.column.map { "column \($0)" }
-        case "cell":
-            let row = address.row.map(String.init) ?? "?"
-            return "row \(row) \(address.column ?? "")"
-        case "table_keyword":
-            return "keyword \(address.keywordPath?.joined(separator: ".") ?? "")"
-        case "column_keyword":
-            return "keyword \(address.column ?? ""):\(address.keywordPath?.joined(separator: ".") ?? "")"
-        case "subtable":
-            return "subtable \(address.targetPath ?? "")"
-        default:
-            return address.kind
-        }
-    }
-
-    @ViewBuilder
-    private func commandButton(_ systemImage: String, _ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .frame(width: 18, height: 18)
-        }
-        .help(label)
     }
 
     @ViewBuilder
@@ -2217,30 +2160,34 @@ private struct TableBrowserSnapshotView: View {
 
 private struct TableBrowserMainPane: View {
     let snapshot: TableBrowserSnapshot
+    let selectMainItem: (Int) -> Void
+    let selectCell: (_ rowIndex: Int?, _ selectedVisibleColumn: Int?, _ targetVisibleColumn: Int?) -> Void
+    let openSelectedSubtable: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(snapshot.view.capitalized)
-                .workbenchFont(.headline)
-            ScrollView([.horizontal, .vertical]) {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(mainLines.enumerated()), id: \.offset) { _, line in
-                        if snapshot.view == "cells", let row = TableBrowserRenderedRow(line: line) {
-                            TableBrowserRenderedRowView(row: row)
-                        } else {
-                            Text(line.isEmpty ? " " : line)
-                                .workbenchFont(.caption, design: .monospaced)
-                                .lineLimit(1)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
+        Group {
+            switch snapshot.view {
+            case "keywords":
+                TableBrowserKeyValueGrid(
+                    lines: mainLines,
+                    selectedIndex: snapshot.verticalMetrics?.selectedIndex,
+                    selectMainItem: selectMainItem
+                )
+            case "subtables":
+                TableBrowserSubtableGrid(
+                    lines: mainLines,
+                    selectMainItem: selectMainItem,
+                    openSelectedSubtable: openSelectedSubtable
+                )
+            default:
+                TableBrowserCellsGrid(
+                    table: TableBrowserRenderedCellTable(lines: mainLines),
+                    selectCell: selectCell
+                )
             }
-            .background(Color(nsColor: .windowBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.18)))
         }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(Rectangle().stroke(Color.secondary.opacity(0.20), lineWidth: 0.5))
     }
 
     private var mainLines: [String] {
@@ -2258,40 +2205,310 @@ private struct TableBrowserMainPane: View {
     }
 }
 
-private struct TableBrowserRenderedRow: Equatable {
-    var selected: Bool
-    var cells: [String]
+private struct TableBrowserRenderedCellTable {
+    var headers: [String]
+    var rows: [TableBrowserRenderedCellRow]
 
-    init?(line: String) {
-        guard line.contains("|") else {
-            return nil
+    init(lines: [String]) {
+        var headers: [String] = []
+        var rows: [TableBrowserRenderedCellRow] = []
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("Cells ") {
+                continue
+            }
+            guard line.contains("|") else {
+                continue
+            }
+            let fields = TableBrowserRenderedCellTable.splitFields(line)
+            guard !fields.isEmpty else {
+                continue
+            }
+            if fields[0].trimmingCharacters(in: .whitespaces).lowercased() == "row" {
+                headers = fields
+                continue
+            }
+            if let row = TableBrowserRenderedCellRow(fields: fields, rawLine: line) {
+                rows.append(row)
+            }
         }
-        selected = line.first == ">"
-        cells = line
-            .replacingOccurrences(of: ">", with: " ")
+        self.headers = headers
+        self.rows = rows
+    }
+
+    private static func splitFields(_ line: String) -> [String] {
+        line
             .split(separator: "|", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        guard !cells.isEmpty else {
+    }
+}
+
+private struct TableBrowserRenderedCellRow: Identifiable, Equatable {
+    var id: Int { rowIndex ?? fallbackID }
+    var rowIndex: Int?
+    var fallbackID: Int
+    var selectedRow: Bool
+    var cells: [TableBrowserRenderedCell]
+
+    init?(fields: [String], rawLine: String) {
+        guard !fields.isEmpty else {
             return nil
+        }
+        let rawRow = fields[0]
+            .replacingOccurrences(of: ">", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        rowIndex = Int(rawRow)
+        fallbackID = rawLine.hashValue
+        selectedRow = rawLine.first == ">"
+        cells = fields.dropFirst().map { TableBrowserRenderedCell(raw: $0) }
+    }
+}
+
+private struct TableBrowserRenderedCell: Equatable {
+    var text: String
+    var selected: Bool
+
+    init(raw: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        selected = trimmed.hasPrefix(">") && trimmed.contains("<")
+        text = trimmed
+            .replacingOccurrences(of: ">", with: "")
+            .replacingOccurrences(of: "<", with: "")
+    }
+}
+
+private struct TableBrowserCellsGrid: View {
+    let table: TableBrowserRenderedCellTable
+    let selectCell: (_ rowIndex: Int?, _ selectedVisibleColumn: Int?, _ targetVisibleColumn: Int?) -> Void
+
+    var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 0) {
+                    ForEach(Array(table.headers.enumerated()), id: \.offset) { index, header in
+                        gridText(header.isEmpty ? " " : header, header: true)
+                            .frame(width: index == 0 ? 56 : columnWidth(for: header), alignment: .leading)
+                    }
+                }
+                ForEach(table.rows) { row in
+                    HStack(spacing: 0) {
+                        gridText(row.rowIndex.map(String.init) ?? "", selected: row.selectedRow)
+                            .frame(width: 56, alignment: .trailing)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                selectCell(row.rowIndex, selectedVisibleColumn, selectedVisibleColumn)
+                            }
+                        ForEach(Array(row.cells.enumerated()), id: \.offset) { index, cell in
+                            gridText(cell.text.isEmpty ? " " : cell.text, selected: cell.selected || row.selectedRow)
+                                .frame(width: columnWidth(for: table.headers[safe: index + 1] ?? cell.text), alignment: .leading)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    selectCell(row.rowIndex, selectedVisibleColumn, index)
+                                }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var selectedVisibleColumn: Int? {
+        table.rows
+            .compactMap { row in row.cells.firstIndex(where: \.selected) }
+            .first
+    }
+
+    private func columnWidth(for text: String) -> CGFloat {
+        CGFloat(min(max(text.count, 10), 30)) * 8.0 + 18.0
+    }
+
+    private func gridText(_ text: String, header: Bool = false, selected: Bool = false) -> some View {
+        Text(text)
+            .workbenchFont(.caption, weight: header ? .semibold : .regular, design: .monospaced)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(selected ? Color.accentColor.opacity(0.18) : (header ? Color.secondary.opacity(0.10) : Color.clear))
+            .overlay(Rectangle().stroke(Color.secondary.opacity(0.18), lineWidth: 0.5))
+    }
+}
+
+private struct TableBrowserKeyValueGrid: View {
+    let lines: [String]
+    let selectedIndex: Int?
+    let selectMainItem: (Int) -> Void
+
+    var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            VStack(alignment: .leading, spacing: 0) {
+                headerRow(["Owner", "Keyword", "Value"])
+                ForEach(keywordRows) { row in
+                    HStack(spacing: 0) {
+                        gridText(row.owner, selected: row.selected).frame(width: 150, alignment: .leading)
+                        gridText(row.name, selected: row.selected).frame(width: 240, alignment: .leading)
+                        gridText(row.value, selected: row.selected).frame(width: 420, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectMainItem(row.index)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var keywordRows: [KeywordRow] {
+        let visibleRows = lines.compactMap(KeywordRow.init(line:))
+        return Self.assignAbsoluteIndexes(visibleRows, selectedIndex: selectedIndex)
+    }
+
+    private static func assignAbsoluteIndexes(_ rows: [KeywordRow], selectedIndex: Int?) -> [KeywordRow] {
+        guard let selectedIndex,
+              let selectedVisibleOffset = rows.firstIndex(where: \.selected)
+        else {
+            return rows.enumerated().map { offset, row in
+                var row = row
+                row.index = offset
+                return row
+            }
+        }
+        let firstIndex = selectedIndex - selectedVisibleOffset
+        return rows.enumerated().map { offset, row in
+            var row = row
+            row.index = max(0, firstIndex + offset)
+            return row
+        }
+    }
+
+    private func headerRow(_ labels: [String]) -> some View {
+        HStack(spacing: 0) {
+            gridText(labels[0], header: true).frame(width: 150, alignment: .leading)
+            gridText(labels[1], header: true).frame(width: 240, alignment: .leading)
+            gridText(labels[2], header: true).frame(width: 420, alignment: .leading)
+        }
+    }
+
+    private func gridText(_ text: String, header: Bool = false, selected: Bool = false) -> some View {
+        Text(text.isEmpty ? " " : text)
+            .workbenchFont(.caption, weight: header ? .semibold : .regular, design: .monospaced)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(selected ? Color.accentColor.opacity(0.18) : (header ? Color.secondary.opacity(0.10) : Color.clear))
+            .overlay(Rectangle().stroke(Color.secondary.opacity(0.18), lineWidth: 0.5))
+    }
+
+    private struct KeywordRow: Identifiable {
+        var id: Int { index }
+        var index: Int
+        var selected: Bool
+        var owner: String
+        var name: String
+        var value: String
+
+        init?(line: String) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("Keywords "), !trimmed.hasPrefix("--") else {
+                return nil
+            }
+            selected = trimmed.hasPrefix(">")
+            let markerStripped = trimmed.dropFirst(selected ? 1 : 0).trimmingCharacters(in: .whitespaces)
+            let parts = markerStripped.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard let lhs = parts.first else {
+                return nil
+            }
+            value = parts.dropFirst().first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+            let ownerParts = lhs.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+            owner = ownerParts.first.map(String.init) ?? ""
+            name = ownerParts.dropFirst().first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+            index = 0
         }
     }
 }
 
-private struct TableBrowserRenderedRowView: View {
-    let row: TableBrowserRenderedRow
+private struct TableBrowserSubtableGrid: View {
+    let lines: [String]
+    let selectMainItem: (Int) -> Void
+    let openSelectedSubtable: () -> Void
 
     var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            VStack(alignment: .leading, spacing: 0) {
+                headerRow
+                ForEach(subtableRows) { row in
+                    HStack(spacing: 0) {
+                        gridText(String(row.index), selected: row.selected).frame(width: 64, alignment: .trailing)
+                        gridText(row.label, selected: row.selected).frame(width: 260, alignment: .leading)
+                        gridText(row.source, selected: row.selected).frame(width: 420, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectMainItem(row.index)
+                    }
+                    .onTapGesture(count: 2) {
+                        selectMainItem(row.index)
+                        openSelectedSubtable()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var headerRow: some View {
         HStack(spacing: 0) {
-            ForEach(Array(row.cells.enumerated()), id: \.offset) { index, cell in
-                Text(cell.isEmpty ? " " : cell)
-                    .workbenchFont(.caption, design: .monospaced)
-                    .lineLimit(1)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .frame(minWidth: index == 0 ? 52 : 92, alignment: .leading)
-                    .background(row.selected ? Color.accentColor.opacity(0.18) : Color.clear)
-                    .overlay(Rectangle().stroke(Color.secondary.opacity(0.16), lineWidth: 0.5))
+            gridText("#", header: true).frame(width: 64, alignment: .trailing)
+            gridText("Subtable", header: true).frame(width: 260, alignment: .leading)
+            gridText("Source", header: true).frame(width: 420, alignment: .leading)
+        }
+    }
+
+    private var subtableRows: [SubtableRow] {
+        lines.compactMap(SubtableRow.init(line:))
+    }
+
+    private func gridText(_ text: String, header: Bool = false, selected: Bool = false) -> some View {
+        Text(text.isEmpty ? " " : text)
+            .workbenchFont(.caption, weight: header ? .semibold : .regular, design: .monospaced)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(selected ? Color.accentColor.opacity(0.18) : (header ? Color.secondary.opacity(0.10) : Color.clear))
+            .overlay(Rectangle().stroke(Color.secondary.opacity(0.18), lineWidth: 0.5))
+    }
+
+    private struct SubtableRow: Identifiable {
+        var id: Int { index }
+        var index: Int
+        var selected: Bool
+        var label: String
+        var source: String
+
+        init?(line: String) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("Subtables "), !trimmed.hasPrefix("--") else {
+                return nil
+            }
+            guard let openBracket = trimmed.firstIndex(of: "["),
+                  let closeBracket = trimmed.firstIndex(of: "]")
+            else {
+                return nil
+            }
+            selected = trimmed.hasPrefix(">")
+            let indexText = trimmed[trimmed.index(after: openBracket)..<closeBracket]
+            guard let parsedIndex = Int(indexText) else {
+                return nil
+            }
+            index = parsedIndex
+            let rest = trimmed[trimmed.index(after: closeBracket)...].trimmingCharacters(in: .whitespaces)
+            if let sourceStart = rest.lastIndex(of: "("), rest.hasSuffix(")") {
+                label = String(rest[..<sourceStart]).trimmingCharacters(in: .whitespaces)
+                source = String(rest[rest.index(after: sourceStart)..<rest.index(before: rest.endIndex)])
+            } else {
+                label = rest
+                source = ""
             }
         }
     }

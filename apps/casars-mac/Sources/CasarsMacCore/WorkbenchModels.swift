@@ -1813,9 +1813,9 @@ public struct TableBrowserSessionState: Codable, Equatable {
     public func snapshotRequest(datasetPath: String) -> TableBrowserSnapshotRequest {
         TableBrowserSnapshotRequest(
             datasetPath: datasetPath,
-            width: 120,
-            height: 32,
-            inspectorHeight: 10,
+            width: 180,
+            height: 48,
+            inspectorHeight: 12,
             selectedView: selectedView,
             focus: focus,
             commands: commands,

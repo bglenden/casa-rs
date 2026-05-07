@@ -655,15 +655,15 @@ final class WorkbenchStoreTests: XCTestCase {
 
         let state = try XCTUnwrap(store.state.tableBrowsers[tableDataset.id])
         XCTAssertEqual(state.status, .ready)
-        XCTAssertEqual(state.selectedView, "overview")
-        XCTAssertEqual(state.snapshot?.view, "overview")
-        XCTAssertEqual(state.snapshot?.contentLines.first, "Rows: 12")
+        XCTAssertEqual(state.selectedView, "cells")
+        XCTAssertEqual(state.snapshot?.view, "cells")
+        XCTAssertEqual(state.snapshot?.contentLines.first, "Cells  row=1/12  col=1/3  focus=Main")
         XCTAssertEqual(tableClient.paths, ["/data/MAIN"])
         XCTAssertEqual(store.debugSnapshot().tableBrowsers[tableDataset.id]?.inspectorTitle, "Column DATA")
 
-        store.setTableBrowserView("columns", datasetID: tableDataset.id)
-        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.selectedView, "columns")
-        XCTAssertEqual(tableClient.requests.map(\.selectedView), ["overview", "columns"])
+        store.setTableBrowserView("keywords", datasetID: tableDataset.id)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.selectedView, "keywords")
+        XCTAssertEqual(tableClient.requests.map(\.selectedView), ["cells", "keywords"])
     }
 
     func testMeasurementSetCanOpenInDedicatedTableBrowserTab() throws {
@@ -699,6 +699,53 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.tabs.last?.title, "Table: example.ms")
         XCTAssertEqual(tableClient.paths, [msDataset.path])
         XCTAssertEqual(store.state.tableBrowsers[msDataset.id]?.status, .ready)
+    }
+
+    func testSelectedSubtableOpensInNewTableBrowserTab() throws {
+        let msDataset = DatasetSummary(
+            id: "/data/example.ms",
+            name: "example.ms",
+            path: "/data/example.ms",
+            kind: .measurementSet,
+            size: "12 rows, 3 columns",
+            units: "Jy, Hz, seconds",
+            columns: ["TIME", "DATA", "FLAG"],
+            subtables: ["ANTENNA"],
+            shape: [12],
+            notes: "Recognized by Rust probe."
+        )
+        var snapshot = makeTableBrowserSnapshot(path: msDataset.path)
+        snapshot.view = "subtables"
+        snapshot.selectedAddress = TableBrowserSnapshot.SelectedAddress(
+            kind: "subtable",
+            tablePath: msDataset.path,
+            row: nil,
+            column: nil,
+            keywordPath: nil,
+            valuePath: nil,
+            source: "table keyword",
+            targetPath: "/data/example.ms/ANTENNA"
+        )
+        let tableClient = StubTableBrowserClient(snapshot: snapshot)
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [msDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            tableBrowserClient: tableClient
+        )
+
+        store.openProject(path: "/data")
+        store.openDatasetTableBrowser(msDataset.id)
+        store.openSelectedTableBrowserSubtable(datasetID: msDataset.id)
+
+        XCTAssertEqual(store.state.activeTabID, "tab-tablebrowser-/data/example.ms/ANTENNA")
+        XCTAssertEqual(store.state.tabs.last?.title, "Table: ANTENNA")
+        XCTAssertEqual(store.state.project.datasets.last?.path, "/data/example.ms/ANTENNA")
+        XCTAssertEqual(tableClient.paths, [msDataset.path, "/data/example.ms/ANTENNA"])
     }
 
     func testExplorerTabsExposeTypedRealDatasetRoutesInDebugSnapshot() {
@@ -1990,15 +2037,28 @@ private func makeImageExplorerSnapshot(nonDisplayIndex: Int = 0) -> ImageExplore
 private func makeTableBrowserSnapshot(path: String) -> TableBrowserSnapshot {
     TableBrowserSnapshot(
         capabilities: TableBrowserSnapshot.Capabilities(editable: false),
-        view: "overview",
+        view: "cells",
         focus: "main",
         tablePath: path,
         breadcrumb: [TableBrowserSnapshot.Breadcrumb(label: "MAIN", path: path)],
-        viewport: TableBrowserSnapshot.Viewport(width: 120, height: 32, inspectorHeight: 10),
+        viewport: TableBrowserSnapshot.Viewport(width: 180, height: 48, inspectorHeight: 12),
         statusLine: "Browsing \(path).",
-        contentLines: ["Rows: 12", "Columns: TIME DATA FLAG"],
-        verticalMetrics: nil,
-        horizontalMetrics: nil,
+        contentLines: [
+            "Cells  row=1/12  col=1/3  focus=Main",
+            "row | TIME<f64>[s] | DATA<c64[4x2]> | FLAG<bool> |",
+            ">  0 | 0.0 | >[1+0i, ...]< | false |",
+            "   1 | 1.0 | [1+1i, ...] | false |"
+        ],
+        verticalMetrics: TableBrowserSnapshot.NavigationMetrics(
+            selectedIndex: 0,
+            totalItems: 12,
+            viewportItems: 46
+        ),
+        horizontalMetrics: TableBrowserSnapshot.NavigationMetrics(
+            selectedIndex: 1,
+            totalItems: 3,
+            viewportItems: 3
+        ),
         selectedAddress: TableBrowserSnapshot.SelectedAddress(
             kind: "column",
             tablePath: path,

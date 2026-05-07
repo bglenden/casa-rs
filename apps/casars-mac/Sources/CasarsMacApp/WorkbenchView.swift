@@ -438,6 +438,7 @@ struct InspectorView: View {
     @State private var showColumns = false
     @State private var showSubtables = false
     @State private var showImageLiveDetails = true
+    @State private var showTableBrowserLiveDetails = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -526,6 +527,9 @@ struct InspectorView: View {
             )
             InfoRow(label: "Correlations", value: compactList(dataset.correlations))
             InfoRow(label: "Data", value: compactList(dataset.dataColumns))
+            if let snapshot = store.state.tableBrowsers[dataset.id]?.snapshot {
+                tableBrowserLiveDetails(snapshot)
+            }
 
             DisclosureGroup("Columns (\(dataset.columns.count))", isExpanded: $showColumns) {
                 valueList(dataset.columns)
@@ -553,6 +557,9 @@ struct InspectorView: View {
             if !dataset.shape.isEmpty {
                 InfoRow(label: "Shape", value: formatShape(dataset.shape))
             }
+            if let snapshot = store.state.tableBrowsers[dataset.id]?.snapshot {
+                tableBrowserLiveDetails(snapshot)
+            }
             if !dataset.columns.isEmpty {
                 DisclosureGroup("Columns (\(dataset.columns.count))", isExpanded: $showColumns) {
                     valueList(dataset.columns)
@@ -566,6 +573,51 @@ struct InspectorView: View {
                 .workbenchFont(.caption)
             }
         }
+    }
+
+    private func tableBrowserLiveDetails(_ snapshot: TableBrowserSnapshot) -> some View {
+        DisclosureGroup("Table browser", isExpanded: $showTableBrowserLiveDetails) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(tableBrowserLiveRows(snapshot)) { row in
+                    CompactInfoRow(label: row.label, value: row.value)
+                }
+                if let inspector = snapshot.inspector {
+                    Divider()
+                    Text(inspector.title)
+                        .workbenchFont(.caption, weight: .semibold)
+                    ForEach(Array(inspector.renderedLines.prefix(8).enumerated()), id: \.offset) { _, line in
+                        Text(line.isEmpty ? " " : line)
+                            .workbenchFont(.caption, design: .monospaced)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+            }
+            .padding(.top, 4)
+        }
+        .workbenchFont(.caption)
+    }
+
+    private func tableBrowserLiveRows(_ snapshot: TableBrowserSnapshot) -> [InspectorDynamicLine] {
+        var rows: [InspectorDynamicLine] = [
+            InspectorDynamicLine(label: "View", value: snapshot.view.capitalized)
+        ]
+        if let address = tableBrowserAddressSummary(snapshot.selectedAddress) {
+            rows.append(InspectorDynamicLine(label: "Selection", value: address))
+        }
+        if let vertical = snapshot.verticalMetrics {
+            rows.append(InspectorDynamicLine(
+                label: "Rows",
+                value: "\(vertical.selectedIndex + 1)/\(vertical.totalItems)"
+            ))
+        }
+        if let horizontal = snapshot.horizontalMetrics {
+            rows.append(InspectorDynamicLine(
+                label: "Columns",
+                value: "\(horizontal.selectedIndex + 1)/\(horizontal.totalItems)"
+            ))
+        }
+        return rows
     }
 
     private func imageExplorerLiveDetails(_ snapshot: ImageExplorerSnapshot) -> some View {

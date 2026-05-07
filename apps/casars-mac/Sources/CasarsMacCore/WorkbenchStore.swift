@@ -589,6 +589,26 @@ public final class WorkbenchStore: ObservableObject {
         )
     }
 
+    public func openTableBrowserPath(_ path: String, sourceDatasetID: String? = nil) {
+        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        if !state.project.datasets.contains(where: { $0.id == normalizedPath }) {
+            let sourceName = sourceDatasetID
+                .flatMap { id in state.project.datasets.first { $0.id == id }?.name }
+            state.project.datasets.append(
+                DatasetSummary(
+                    id: normalizedPath,
+                    name: URL(fileURLWithPath: normalizedPath).lastPathComponent,
+                    path: normalizedPath,
+                    kind: .table,
+                    size: "casacore table",
+                    units: "",
+                    notes: sourceName.map { "Opened from \($0)." } ?? "Opened from tablebrowser."
+                )
+            )
+        }
+        openDatasetTableBrowser(normalizedPath)
+    }
+
     public func openRunProduct(runID: String, productID: String) {
         guard let group = state.runProductGroups.first(where: { $0.runID == runID }) else {
             state.lastErrors.append("Unknown run \(runID)")
@@ -914,13 +934,19 @@ public final class WorkbenchStore: ObservableObject {
         if !state.tabs.contains(where: { $0.id == tab.id }) {
             state.tabs.append(tab)
         }
+        if tab.kind == .tableBrowser, let datasetID = tab.datasetID {
+            state.selectedDatasetID = datasetID
+        }
         state.activeTabID = tab.id
     }
 
     public func activateTab(_ tabID: String) {
-        guard state.tabs.contains(where: { $0.id == tabID }) else {
+        guard let tab = state.tabs.first(where: { $0.id == tabID }) else {
             state.lastErrors.append("Unknown tab \(tabID)")
             return
+        }
+        if tab.kind == .tableBrowser, let datasetID = tab.datasetID {
+            state.selectedDatasetID = datasetID
         }
         state.activeTabID = tabID
     }
@@ -1272,7 +1298,7 @@ public final class WorkbenchStore: ObservableObject {
         }
         let browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
             datasetID: datasetID,
-            selectedView: "overview",
+            selectedView: Self.canonicalTableBrowserView(nil),
             status: .idle,
             lastError: nil,
             snapshot: nil
@@ -1526,12 +1552,12 @@ public final class WorkbenchStore: ObservableObject {
     public func setTableBrowserView(_ view: String, datasetID: String) {
         var browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
             datasetID: datasetID,
-            selectedView: "overview",
+            selectedView: Self.canonicalTableBrowserView(nil),
             status: .idle,
             lastError: nil,
             snapshot: nil
         )
-        browserState.selectedView = view
+        browserState.selectedView = Self.canonicalTableBrowserView(view)
         browserState.focus = "main"
         browserState.commands = []
         browserState.transientCommands = []
@@ -1542,7 +1568,7 @@ public final class WorkbenchStore: ObservableObject {
     public func runTableBrowserCommand(_ command: TableBrowserCommand, datasetID: String) {
         var browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
             datasetID: datasetID,
-            selectedView: "overview",
+            selectedView: Self.canonicalTableBrowserView(nil),
             status: .idle,
             lastError: nil,
             snapshot: nil
@@ -1550,6 +1576,60 @@ public final class WorkbenchStore: ObservableObject {
         browserState.commands.append(command)
         state.tableBrowsers[datasetID] = browserState
         refreshTableBrowser(datasetID: datasetID)
+    }
+
+    public func selectTableBrowserMainItem(index: Int, datasetID: String) {
+        guard index >= 0 else {
+            return
+        }
+        var browserState = tableBrowserState(datasetID: datasetID)
+        guard let selectedIndex = browserState.snapshot?.verticalMetrics?.selectedIndex else {
+            return
+        }
+        guard appendTableBrowserMove(from: selectedIndex, to: index, into: &browserState) else {
+            return
+        }
+        state.tableBrowsers[datasetID] = browserState
+        refreshTableBrowser(datasetID: datasetID)
+    }
+
+    public func selectTableBrowserVisibleCell(
+        rowIndex: Int?,
+        selectedVisibleColumn: Int?,
+        targetVisibleColumn: Int?,
+        datasetID: String
+    ) {
+        var browserState = tableBrowserState(datasetID: datasetID)
+        var changed = false
+        if let rowIndex, rowIndex >= 0, let selectedIndex = browserState.snapshot?.verticalMetrics?.selectedIndex {
+            changed = appendTableBrowserMove(from: selectedIndex, to: rowIndex, into: &browserState) || changed
+        }
+        if let selectedVisibleColumn, let targetVisibleColumn {
+            let delta = targetVisibleColumn - selectedVisibleColumn
+            if delta > 0 {
+                browserState.commands.append(.moveRight(steps: delta))
+                changed = true
+            } else if delta < 0 {
+                browserState.commands.append(.moveLeft(steps: -delta))
+                changed = true
+            }
+        }
+        guard changed else {
+            return
+        }
+        state.tableBrowsers[datasetID] = browserState
+        refreshTableBrowser(datasetID: datasetID)
+    }
+
+    public func openSelectedTableBrowserSubtable(datasetID: String) {
+        guard let snapshot = state.tableBrowsers[datasetID]?.snapshot,
+              snapshot.selectedAddress?.kind == "subtable",
+              let targetPath = snapshot.selectedAddress?.targetPath
+        else {
+            state.lastErrors.append("No subtable is selected")
+            return
+        }
+        openTableBrowserPath(targetPath, sourceDatasetID: datasetID)
     }
 
     public func rejectAIProposal(_ proposalID: String) {
@@ -1797,6 +1877,45 @@ public final class WorkbenchStore: ObservableObject {
 
     private func canBrowseAsTable(_ dataset: DatasetSummary) -> Bool {
         dataset.kind == .measurementSet || dataset.kind == .table || dataset.kind == .calibrationTable
+    }
+
+    private func tableBrowserState(datasetID: String) -> TableBrowserSessionState {
+        state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
+            datasetID: datasetID,
+            selectedView: Self.canonicalTableBrowserView(nil),
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+    }
+
+    private static func canonicalTableBrowserView(_ view: String?) -> String {
+        switch view?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "keywords":
+            "keywords"
+        case "subtables":
+            "subtables"
+        default:
+            "cells"
+        }
+    }
+
+    @discardableResult
+    private func appendTableBrowserMove(
+        from selectedIndex: Int,
+        to targetIndex: Int,
+        into browserState: inout TableBrowserSessionState
+    ) -> Bool {
+        let delta = targetIndex - selectedIndex
+        if delta > 0 {
+            browserState.commands.append(.moveDown(steps: delta))
+            return true
+        }
+        if delta < 0 {
+            browserState.commands.append(.moveUp(steps: -delta))
+            return true
+        }
+        return false
     }
 
     private func activeTaskTabID(parameters: DirtyImagingTaskParameters) -> String {
