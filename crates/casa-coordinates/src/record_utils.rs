@@ -142,3 +142,105 @@ fn array_to_i32_vec(array: &ArrayValue) -> Result<Vec<i32>, &'static str> {
         _ => Err("expected integer array"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_types::{RecordField, ScalarValue};
+
+    fn record(fields: Vec<(&str, Value)>) -> RecordValue {
+        RecordValue::new(
+            fields
+                .into_iter()
+                .map(|(name, value)| RecordField::new(name, value))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn optional_scalar_helpers_accept_numeric_and_string_shapes() {
+        let rec = record(vec![
+            (
+                "name",
+                Value::Scalar(ScalarValue::String("J2000".to_string())),
+            ),
+            ("double", Value::Scalar(ScalarValue::Float64(12.5))),
+            ("single", Value::Array(ArrayValue::from_f32_vec(vec![2.25]))),
+            ("int", Value::Scalar(ScalarValue::UInt16(7))),
+            ("int_array", Value::Array(ArrayValue::from_i64_vec(vec![8]))),
+            ("bad", Value::Scalar(ScalarValue::Bool(true))),
+        ]);
+
+        assert_eq!(get_optional_string(&rec, "name").as_deref(), Some("J2000"));
+        assert_eq!(get_optional_f64(&rec, "double"), Some(12.5));
+        assert_eq!(get_optional_f64(&rec, "single"), Some(2.25));
+        assert_eq!(
+            get_required_f64(&rec, "double").expect("required f64"),
+            12.5
+        );
+        assert_eq!(get_optional_i32(&rec, "int"), Some(7));
+        assert_eq!(get_optional_i32(&rec, "int_array"), Some(8));
+        assert_eq!(get_optional_f64(&rec, "bad"), None);
+        assert!(get_required_f64(&rec, "missing").is_err());
+    }
+
+    #[test]
+    fn vector_helpers_accept_scalars_arrays_and_report_type_errors() {
+        let rec = record(vec![
+            (
+                "f64s",
+                Value::Array(ArrayValue::from_i32_vec(vec![1, 2, 3])),
+            ),
+            ("f64_scalar", Value::Scalar(ScalarValue::UInt8(4))),
+            ("i32s", Value::Array(ArrayValue::from_u16_vec(vec![5, 6]))),
+            ("i32_scalar", Value::Scalar(ScalarValue::Int16(-7))),
+            (
+                "strings",
+                Value::Array(ArrayValue::from_string_vec(vec![
+                    "XX".to_string(),
+                    "YY".to_string(),
+                ])),
+            ),
+            (
+                "string_scalar",
+                Value::Scalar(ScalarValue::String("I".to_string())),
+            ),
+            (
+                "bad_numeric",
+                Value::Array(ArrayValue::from_string_vec(vec!["nope".to_string()])),
+            ),
+            (
+                "bad_i32",
+                Value::Array(ArrayValue::from_u32_vec(vec![u32::MAX])),
+            ),
+        ]);
+
+        assert_eq!(
+            get_required_vec_f64(&rec, "f64s").expect("numeric array"),
+            vec![1.0, 2.0, 3.0]
+        );
+        assert_eq!(
+            get_optional_vec_f64(&rec, "f64_scalar").expect("numeric scalar"),
+            vec![4.0]
+        );
+        assert_eq!(
+            get_required_vec_i32(&rec, "i32s").expect("integer array"),
+            vec![5, 6]
+        );
+        assert_eq!(
+            get_required_vec_i32(&rec, "i32_scalar").expect("integer scalar"),
+            vec![-7]
+        );
+        assert_eq!(
+            get_optional_vec_string(&rec, "strings").expect("string array"),
+            vec!["XX".to_string(), "YY".to_string()]
+        );
+        assert_eq!(
+            get_optional_vec_string(&rec, "string_scalar").expect("string scalar"),
+            vec!["I".to_string()]
+        );
+        assert!(get_required_vec_f64(&rec, "bad_numeric").is_err());
+        assert!(get_required_vec_i32(&rec, "bad_i32").is_err());
+        assert!(get_required_vec_i32(&rec, "missing").is_err());
+    }
+}
