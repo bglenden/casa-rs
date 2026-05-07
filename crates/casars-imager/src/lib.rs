@@ -88,6 +88,85 @@ pub use task_contract::{
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const DEFAULT_BATCH_SIZE: usize = 65_536;
+const OUTLIER_IMAGE_FIELDS: &[&str] = &[
+    "imagename",
+    "imsize",
+    "cell",
+    "phasecenter",
+    "startmodel",
+    "mask",
+    "specmode",
+    "nchan",
+    "start",
+    "width",
+    "nterms",
+    "reffreq",
+    "gridder",
+    "deconvolver",
+    "wprojplanes",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OutlierFileDefinition {
+    image_name: Option<String>,
+    imsize: Option<Vec<usize>>,
+    cell: Option<Vec<String>>,
+    phasecenter: Option<String>,
+    startmodel: Option<String>,
+    mask: Option<String>,
+    specmode: Option<String>,
+    nchan: Option<usize>,
+    start: Option<String>,
+    width: Option<String>,
+    nterms: Option<usize>,
+    reffreq: Option<String>,
+    gridder: Option<String>,
+    deconvolver: Option<String>,
+    wprojplanes: Option<usize>,
+    ignored_fields: Vec<String>,
+}
+
+impl OutlierFileDefinition {
+    fn empty() -> Self {
+        Self {
+            image_name: None,
+            imsize: None,
+            cell: None,
+            phasecenter: None,
+            startmodel: None,
+            mask: None,
+            specmode: None,
+            nchan: None,
+            start: None,
+            width: None,
+            nterms: None,
+            reffreq: None,
+            gridder: None,
+            deconvolver: None,
+            wprojplanes: None,
+            ignored_fields: Vec::new(),
+        }
+    }
+
+    fn has_any_field(&self) -> bool {
+        self.image_name.is_some()
+            || self.imsize.is_some()
+            || self.cell.is_some()
+            || self.phasecenter.is_some()
+            || self.startmodel.is_some()
+            || self.mask.is_some()
+            || self.specmode.is_some()
+            || self.nchan.is_some()
+            || self.start.is_some()
+            || self.width.is_some()
+            || self.nterms.is_some()
+            || self.reffreq.is_some()
+            || self.gridder.is_some()
+            || self.deconvolver.is_some()
+            || self.wprojplanes.is_some()
+            || !self.ignored_fields.is_empty()
+    }
+}
 
 /// Spectral imaging mode for the CLI frontend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -955,6 +1034,7 @@ pub fn build_w_project_trace_from_config(
             &config.mask_boxes,
             config.mask_image.as_deref(),
         )?,
+        initial_model: None,
         w_term_mode: config.w_term_mode,
         w_project_planes: config.w_project_planes,
         compatibility: CompatibilityMode::CasaStandardMfs,
@@ -1212,6 +1292,8 @@ pub fn write_prepare_plane_oracle_bundle_from_config_with_overrides(
 /// Execute the imager using an already-parsed configuration.
 pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
     validate_save_model_request(config)?;
+    validate_start_model_request(config)?;
+    validate_outlier_file_request(config)?;
     validate_auto_mask_config(config.use_mask, &config.auto_mask)?;
     let total_start = Instant::now();
     let stage_start = Instant::now();
@@ -1286,6 +1368,7 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
     let prepared_input = prepared;
     let (run_result, effective_clean_mask) = match prepared_input {
         PreparedInput::Mfs(plane) => {
+            let start_model = load_start_model_image(config, geometry, &plane.gridder_mode)?;
             let clean = CleanConfig {
                 niter: if config.dirty_only { 0 } else { config.niter },
                 gain: config.gain,
@@ -1345,6 +1428,7 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
                     small_scale_bias: config.small_scale_bias,
                     clean,
                     clean_mask: clean_mask.clone(),
+                    initial_model: start_model,
                     w_term_mode: config.w_term_mode,
                     w_project_planes: config.w_project_planes,
                     compatibility: CompatibilityMode::CasaStandardMfs,
@@ -1532,6 +1616,250 @@ fn validate_save_model_request(config: &CliConfig) -> Result<(), String> {
         return Err("savemodel=modelcolumn does not yet support deconvolver='mtmfs'".to_string());
     }
     Ok(())
+}
+
+fn validate_start_model_request(config: &CliConfig) -> Result<(), String> {
+    let Some(start_model) = config.start_model.as_ref() else {
+        return Ok(());
+    };
+    if config.spectral_mode != SpectralMode::Mfs {
+        return Err("startmodel currently supports only specmode='mfs'".to_string());
+    }
+    if config.deconvolver == Deconvolver::Mtmfs {
+        return Err(
+            "startmodel currently supports only single-term deconvolvers; mtmfs uses multi-term startmodel images"
+                .to_string(),
+        );
+    }
+    if !start_model.exists() {
+        return Err(format!(
+            "startmodel image {} does not exist",
+            start_model.display()
+        ));
+    }
+    let mut output_model = config.imagename.as_os_str().to_os_string();
+    output_model.push(".model");
+    let output_model = PathBuf::from(output_model);
+    if output_model.exists() {
+        return Err(format!(
+            "imagename.model {} already exists; unset startmodel or remove the existing model image",
+            output_model.display()
+        ));
+    }
+    Ok(())
+}
+
+fn validate_outlier_file_request(config: &CliConfig) -> Result<(), String> {
+    let Some(outlier_file) = config.outlier_file.as_ref() else {
+        return Ok(());
+    };
+    let definitions = parse_outlier_file(outlier_file)?;
+    let ignored_fields = definitions
+        .iter()
+        .flat_map(|definition| definition.ignored_fields.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    let ignored_text = if ignored_fields.is_empty() {
+        "none".to_string()
+    } else {
+        ignored_fields.into_iter().collect::<Vec<_>>().join(",")
+    };
+    Err(format!(
+        "outlierfile {} defines {} outlier image(s), but casa-rs currently preserves a single-image frontend boundary; parsed CASA outlier fields are [{}], ignored fields are [{}], and multi-image/outlier-field orchestration is not implemented",
+        outlier_file.display(),
+        definitions.len(),
+        OUTLIER_IMAGE_FIELDS.join(","),
+        ignored_text
+    ))
+}
+
+fn parse_outlier_file(path: &Path) -> Result<Vec<OutlierFileDefinition>, String> {
+    let text = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "Cannot find or read outlier file {}: {error}",
+            path.display()
+        )
+    })?;
+    let mut definitions = Vec::<OutlierFileDefinition>::new();
+    let mut current = OutlierFileDefinition::empty();
+    for (line_index, raw_line) in text.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((raw_key, raw_value)) = line.split_once('=') else {
+            return Err(format!(
+                "Error in outlier file {} line {}: expected parameter=value, got {raw_line:?}",
+                path.display(),
+                line_index + 1
+            ));
+        };
+        if raw_value.contains('=') {
+            return Err(format!(
+                "Error in outlier file {} line {}: expected one parameter=value pair, got {raw_line:?}",
+                path.display(),
+                line_index + 1
+            ));
+        }
+        let key = raw_key.trim();
+        let value = raw_value.trim();
+        if key == "imagename" && current.has_any_field() {
+            definitions.push(current);
+            current = OutlierFileDefinition::empty();
+        }
+        apply_outlier_parameter(&mut current, key, value, path, line_index + 1)?;
+    }
+    if current.has_any_field() {
+        definitions.push(current);
+    }
+    Ok(definitions)
+}
+
+fn apply_outlier_parameter(
+    definition: &mut OutlierFileDefinition,
+    key: &str,
+    value: &str,
+    path: &Path,
+    line_number: usize,
+) -> Result<(), String> {
+    match key {
+        "imagename" => definition.image_name = Some(trim_outlier_string(value).to_string()),
+        "imsize" => {
+            definition.imsize = Some(parse_outlier_usize_vec(value, key, path, line_number)?)
+        }
+        "cell" => definition.cell = Some(parse_outlier_string_vec(value)),
+        "phasecenter" => definition.phasecenter = Some(trim_outlier_string(value).to_string()),
+        "startmodel" => definition.startmodel = Some(trim_outlier_string(value).to_string()),
+        "mask" => definition.mask = Some(trim_outlier_string(value).to_string()),
+        "specmode" => definition.specmode = Some(trim_outlier_string(value).to_string()),
+        "nchan" => definition.nchan = Some(parse_outlier_usize(value, key, path, line_number)?),
+        "start" => definition.start = Some(trim_outlier_string(value).to_string()),
+        "width" => definition.width = Some(trim_outlier_string(value).to_string()),
+        "nterms" => definition.nterms = Some(parse_outlier_usize(value, key, path, line_number)?),
+        "reffreq" => definition.reffreq = Some(trim_outlier_string(value).to_string()),
+        "gridder" => definition.gridder = Some(trim_outlier_string(value).to_string()),
+        "deconvolver" => definition.deconvolver = Some(trim_outlier_string(value).to_string()),
+        "wprojplanes" => {
+            definition.wprojplanes = Some(parse_outlier_usize(value, key, path, line_number)?)
+        }
+        other => definition.ignored_fields.push(other.to_string()),
+    }
+    Ok(())
+}
+
+fn parse_outlier_usize(
+    value: &str,
+    key: &str,
+    path: &Path,
+    line_number: usize,
+) -> Result<usize, String> {
+    trim_outlier_string(value)
+        .parse::<usize>()
+        .map_err(|error| {
+            format!(
+                "Cannot evaluate outlier field parameter {key:?} in {} line {}: {error}",
+                path.display(),
+                line_number
+            )
+        })
+}
+
+fn parse_outlier_usize_vec(
+    value: &str,
+    key: &str,
+    path: &Path,
+    line_number: usize,
+) -> Result<Vec<usize>, String> {
+    parse_outlier_list(value)
+        .into_iter()
+        .map(|part| {
+            part.parse::<usize>().map_err(|error| {
+                format!(
+                    "Cannot evaluate outlier field parameter {key:?} in {} line {}: {error}",
+                    path.display(),
+                    line_number
+                )
+            })
+        })
+        .collect()
+}
+
+fn parse_outlier_string_vec(value: &str) -> Vec<String> {
+    parse_outlier_list(value)
+}
+
+fn parse_outlier_list(value: &str) -> Vec<String> {
+    let trimmed = value
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    trimmed
+        .split(',')
+        .map(trim_outlier_string)
+        .map(str::to_string)
+        .collect()
+}
+
+fn trim_outlier_string(value: &str) -> &str {
+    value
+        .trim()
+        .trim_matches(',')
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+}
+
+fn load_start_model_image(
+    config: &CliConfig,
+    geometry: ImageGeometry,
+    gridder_mode: &GridderMode,
+) -> Result<Option<Array2<f32>>, String> {
+    let Some(path) = config.start_model.as_ref() else {
+        return Ok(None);
+    };
+    if matches!(gridder_mode, GridderMode::Mosaic(_)) {
+        return Err("startmodel does not yet support mosaic gridder runs".to_string());
+    }
+    let image =
+        PagedImage::<f32>::open(path).map_err(|error| format!("open startmodel image: {error}"))?;
+    let shape = image.shape().to_vec();
+    let [nx, ny] = geometry.image_shape;
+    match shape.as_slice() {
+        [sx, sy] if *sx == nx && *sy == ny => {}
+        [sx, sy, stokes, channel] if *sx == nx && *sy == ny && *stokes == 1 && *channel == 1 => {}
+        _ => {
+            return Err(format!(
+                "startmodel image {} has shape {:?}; expected [{nx}, {ny}] or [{nx}, {ny}, 1, 1]",
+                path.display(),
+                shape
+            ));
+        }
+    }
+    let pixels = image
+        .get_slice(&vec![0; shape.len()], &shape)
+        .map_err(|error| format!("read startmodel image {}: {error}", path.display()))?;
+    let mut model = Array2::<f32>::zeros((nx, ny));
+    for x in 0..nx {
+        for y in 0..ny {
+            let value = match shape.len() {
+                2 => pixels[IxDyn(&[x, y])],
+                4 => pixels[IxDyn(&[x, y, 0, 0])],
+                _ => unreachable!("validated startmodel shape"),
+            };
+            if !value.is_finite() {
+                return Err(format!(
+                    "startmodel image {} contains non-finite pixel at [{x}, {y}]",
+                    path.display()
+                ));
+            }
+            model[(x, y)] = value;
+        }
+    }
+    Ok(Some(model))
 }
 
 fn measurement_set_paths(config: &CliConfig) -> Result<Vec<PathBuf>, String> {
@@ -1821,6 +2149,10 @@ pub struct CliConfig {
     pub datacolumn: Option<String>,
     /// CASA-style model persistence mode.
     pub save_model: SaveModelMode,
+    /// Optional CASA image used to seed the initial model product.
+    pub start_model: Option<PathBuf>,
+    /// Optional CASA outlier-field definition file.
+    pub outlier_file: Option<PathBuf>,
     /// Optional explicit scalar-plane override.
     ///
     /// Raw-correlation overrides use `XX`, `YY`, `RR`, or `LL`. Stokes-plane
@@ -1908,6 +2240,8 @@ impl CliConfig {
         let mut channel_count = None::<usize>;
         let mut datacolumn = None::<String>;
         let mut save_model = SaveModelMode::None;
+        let mut start_model = None::<PathBuf>;
+        let mut outlier_file = None::<PathBuf>;
         let mut correlation = None::<String>;
         let mut spectral_mode = SpectralMode::Mfs;
         let mut cube_axis = CubeAxisConfig::default();
@@ -2026,6 +2360,14 @@ impl CliConfig {
                 }
                 "--savemodel" => {
                     save_model = parse_save_model_mode(&next_value(&mut args, "--savemodel")?)?;
+                    continue;
+                }
+                "--startmodel" => {
+                    start_model = Some(next_path(&mut args, "--startmodel")?);
+                    continue;
+                }
+                "--outlierfile" => {
+                    outlier_file = Some(next_path(&mut args, "--outlierfile")?);
                     continue;
                 }
                 "--corr" | "--stokes" => {
@@ -2347,6 +2689,8 @@ impl CliConfig {
             channel_count,
             datacolumn,
             save_model,
+            start_model,
+            outlier_file,
             correlation,
             spectral_mode,
             cube_axis,
@@ -3455,6 +3799,7 @@ fn run_frontend_cube(
                 small_scale_bias: config.small_scale_bias,
                 clean: frontend_dirty_clean_config(clean.psf_cutoff),
                 clean_mask: channel_clean_mask.clone(),
+                initial_model: None,
                 w_term_mode: config.w_term_mode,
                 w_project_planes: config.w_project_planes,
                 compatibility: CompatibilityMode::CasaStandardMfs,
@@ -3519,6 +3864,7 @@ fn run_frontend_cube(
                     small_scale_bias: config.small_scale_bias,
                     clean,
                     clean_mask: clean_masks_by_channel[channel_index].clone(),
+                    initial_model: None,
                     w_term_mode: config.w_term_mode,
                     w_project_planes: config.w_project_planes,
                     compatibility: CompatibilityMode::CasaStandardMfs,
@@ -3540,6 +3886,7 @@ fn run_frontend_cube(
             small_scale_bias: config.small_scale_bias,
             clean,
             clean_mask: clean_masks_by_channel[channel_index].clone(),
+            initial_model: None,
             w_term_mode: config.w_term_mode,
             w_project_planes: config.w_project_planes,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -11644,6 +11991,7 @@ Options:
   --channel-count N         number of selected channels
   --datacolumn NAME         DATA, CORRECTED_DATA, or MODEL_DATA
   --savemodel MODE          none or modelcolumn
+  --startmodel PATH         CASA image used as the initial model for single-image MFS
   --corr XX|YY|RR|LL        explicit raw-correlation imaging
   --stokes I|Q|U|V          explicit scalar Stokes-plane imaging
   --specmode MODE           mfs, cube, or cubedata
@@ -12204,6 +12552,7 @@ mod tests {
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: config.w_term_mode,
             w_project_planes: config.w_project_planes,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -12396,6 +12745,7 @@ mod tests {
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: config.w_term_mode,
             w_project_planes: config.w_project_planes,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -12538,6 +12888,7 @@ mod tests {
                 hogbom_iteration_mode: config.hogbom_iteration_mode,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: config.w_term_mode,
             w_project_planes: config.w_project_planes,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -12902,6 +13253,8 @@ mod tests {
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -12963,6 +13316,8 @@ mod tests {
             channel_count: Some(20),
             datacolumn: Some("DATA".to_string()),
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig::default(),
@@ -13022,6 +13377,8 @@ mod tests {
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -13081,6 +13438,8 @@ mod tests {
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -13140,6 +13499,8 @@ mod tests {
             channel_count: Some(10),
             datacolumn: Some("DATA".to_string()),
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -13202,6 +13563,8 @@ mod tests {
             channel_count: Some(8),
             datacolumn: Some("DATA".to_string()),
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -13261,6 +13624,8 @@ mod tests {
             channel_count: Some(20),
             datacolumn: Some("DATA".to_string()),
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig::default(),
@@ -14753,6 +15118,177 @@ mod tests {
     }
 
     #[test]
+    fn start_model_image_loads_single_plane_seed() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("seed.model");
+        let coords = CoordinateSystem::default();
+        let mut image = PagedImage::<f32>::create(vec![4, 4, 1, 1], coords, &path).unwrap();
+        let mut data = Array4::<f32>::zeros((4, 4, 1, 1));
+        data[(1, 2, 0, 0)] = 0.25;
+        image.put_slice(&data.into_dyn(), &[0, 0, 0, 0]).unwrap();
+        image.save().unwrap();
+
+        let mut config =
+            minimal_start_model_config(tmp.path().join("tiny.ms"), tmp.path().join("out"));
+        config.imsize = 4;
+        config.start_model = Some(path);
+        let model = load_start_model_image(
+            &config,
+            ImageGeometry {
+                image_shape: [4, 4],
+                cell_size_rad: [arcsec_to_rad(), arcsec_to_rad()],
+            },
+            &GridderMode::Standard,
+        )
+        .unwrap()
+        .expect("loaded startmodel");
+        assert_eq!(model[(1, 2)], 0.25);
+        assert_eq!(model[(0, 0)], 0.0);
+    }
+
+    #[test]
+    fn start_model_image_rejects_shape_mismatch() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("seed.model");
+        let coords = CoordinateSystem::default();
+        let mut image = PagedImage::<f32>::create(vec![2, 4, 1, 1], coords, &path).unwrap();
+        image.save().unwrap();
+
+        let mut config =
+            minimal_start_model_config(tmp.path().join("tiny.ms"), tmp.path().join("out"));
+        config.imsize = 4;
+        config.start_model = Some(path);
+        let error = load_start_model_image(
+            &config,
+            ImageGeometry {
+                image_shape: [4, 4],
+                cell_size_rad: [arcsec_to_rad(), arcsec_to_rad()],
+            },
+            &GridderMode::Standard,
+        )
+        .unwrap_err();
+        assert!(error.contains("expected [4, 4]"));
+    }
+
+    #[test]
+    fn outlier_file_parser_inventories_casa_new_format_fields() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("outliers.txt");
+        fs::write(
+            &path,
+            r#"
+# CASA outlier-field definitions.
+imagename=tst1
+imsize=[80,80]
+cell=[8.0arcsec,8.0arcsec]
+phasecenter=J2000 19:58:40.895 +40.55.58.543
+mask=circle[[40pix,40pix],10pix]
+unknown=ignored
+
+imagename=tst2
+nchan=4
+nterms=2
+wprojplanes=16
+gridder=wproject
+deconvolver=mtmfs
+"#,
+        )
+        .unwrap();
+
+        let definitions = parse_outlier_file(&path).unwrap();
+        assert_eq!(definitions.len(), 2);
+        assert_eq!(definitions[0].image_name.as_deref(), Some("tst1"));
+        assert_eq!(definitions[0].imsize.as_deref(), Some([80, 80].as_slice()));
+        assert_eq!(
+            definitions[0].cell.as_deref(),
+            Some(["8.0arcsec".to_string(), "8.0arcsec".to_string()].as_slice())
+        );
+        assert_eq!(
+            definitions[0].phasecenter.as_deref(),
+            Some("J2000 19:58:40.895 +40.55.58.543")
+        );
+        assert_eq!(definitions[0].ignored_fields, vec!["unknown"]);
+        assert_eq!(definitions[1].image_name.as_deref(), Some("tst2"));
+        assert_eq!(definitions[1].nchan, Some(4));
+        assert_eq!(definitions[1].nterms, Some(2));
+        assert_eq!(definitions[1].wprojplanes, Some(16));
+        assert_eq!(definitions[1].gridder.as_deref(), Some("wproject"));
+        assert_eq!(definitions[1].deconvolver.as_deref(), Some("mtmfs"));
+    }
+
+    #[test]
+    fn outlier_file_request_rejects_multi_image_boundary_with_inventory() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("outliers.txt");
+        fs::write(
+            &path,
+            "imagename=tst1\nimsize=[80,80]\nphasecenter=J2000 0deg 0deg\n",
+        )
+        .unwrap();
+
+        let mut config =
+            minimal_start_model_config(tmp.path().join("tiny.ms"), tmp.path().join("out"));
+        config.outlier_file = Some(path);
+        let error = validate_outlier_file_request(&config).unwrap_err();
+        assert!(error.contains("defines 1 outlier image"));
+        assert!(error.contains("single-image frontend boundary"));
+        assert!(error.contains("imagename,imsize,cell,phasecenter,startmodel"));
+    }
+
+    fn minimal_start_model_config(ms: PathBuf, imagename: PathBuf) -> CliConfig {
+        CliConfig {
+            ms,
+            imagename,
+            imsize: 4,
+            cell_arcsec: 1.0,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            datacolumn: None,
+            save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
+            correlation: None,
+            spectral_mode: SpectralMode::Mfs,
+            cube_axis: CubeAxisConfig::default(),
+            weighting: WeightingMode::Natural,
+            per_channel_weight_density: false,
+            use_pointing: false,
+            uv_taper: None,
+            restoring_beam_mode: RestoringBeamMode::PerPlane,
+            deconvolver: Deconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.2,
+            pbcor: false,
+            minor_cycle_length: 8,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.05,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: HogbomIterationMode::Strict,
+            use_mask: CleanMaskMode::User,
+            auto_mask: AutoMultiThresholdConfig::default(),
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: true,
+        }
+    }
+
+    #[test]
     fn weight_spectrum_takes_precedence_over_weight() {
         let weight_row =
             ArrayValue::Float32(ArrayD::from_shape_vec(vec![2], vec![1.0f32, 2.0]).unwrap());
@@ -15001,6 +15537,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -15097,6 +15635,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -15189,6 +15729,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -15333,6 +15875,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -15457,6 +16001,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -15534,6 +16080,8 @@ mod tests {
             channel_count: Some(1),
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -15643,6 +16191,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -15747,6 +16297,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -15833,6 +16385,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -15973,6 +16527,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -16065,6 +16621,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -16158,6 +16716,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("Q".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -16246,6 +16806,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("U".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -16336,6 +16898,8 @@ mod tests {
             channel_count: Some(1),
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -16454,6 +17018,8 @@ mod tests {
             channel_count: Some(2),
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cubedata,
             cube_axis: CubeAxisConfig {
@@ -16537,6 +17103,8 @@ mod tests {
             channel_count: Some(1),
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -16783,6 +17351,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -16885,6 +17455,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -17004,6 +17576,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::ModelColumn,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -17140,6 +17714,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -17243,6 +17819,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig::default(),
@@ -17346,6 +17924,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::ModelColumn,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig::default(),
@@ -17468,6 +18048,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -17605,6 +18187,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -17720,6 +18304,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -17820,6 +18406,8 @@ mod tests {
             channel_count: Some(1),
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Cube,
             cube_axis: CubeAxisConfig {
@@ -17926,6 +18514,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("XX".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -18012,6 +18602,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some("Q".to_string()),
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -18099,6 +18691,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),
@@ -18189,6 +18783,8 @@ mod tests {
             channel_count: None,
             datacolumn: None,
             save_model: SaveModelMode::ModelColumn,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: SpectralMode::Mfs,
             cube_axis: CubeAxisConfig::default(),

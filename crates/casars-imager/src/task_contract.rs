@@ -837,6 +837,12 @@ pub struct ImagerRunTaskRequest {
     /// Model persistence mode.
     #[serde(default)]
     pub save_model: ImagerSaveModel,
+    /// Optional CASA image used to seed the initial model product.
+    #[serde(default)]
+    pub start_model: Option<PathBuf>,
+    /// Optional CASA outlier-field definition file.
+    #[serde(default)]
+    pub outlier_file: Option<PathBuf>,
     /// Optional explicit scalar plane or raw correlation.
     #[serde(default)]
     pub correlation: Option<ImagerPlaneSelection>,
@@ -952,6 +958,8 @@ impl ImagerRunTaskRequest {
             channel_count: config.channel_count,
             data_column: config.datacolumn.clone(),
             save_model: config.save_model.into(),
+            start_model: config.start_model.clone(),
+            outlier_file: config.outlier_file.clone(),
             correlation: config
                 .correlation
                 .as_deref()
@@ -1008,6 +1016,16 @@ impl ImagerRunTaskRequest {
         if self.nterms == 0 {
             return Err("nterms must be at least 1".to_string());
         }
+        if self.start_model.is_some() {
+            if spectral_mode != SpectralMode::Mfs {
+                return Err("start_model currently supports only spectral_mode='mfs'".to_string());
+            }
+            if deconvolver == Deconvolver::Mtmfs {
+                return Err(
+                    "start_model currently supports only single-term deconvolvers".to_string(),
+                );
+            }
+        }
         if !(self.mosaic_pb_limit.is_finite() && self.mosaic_pb_limit > 0.0) {
             return Err("mosaic_pb_limit must be finite and > 0".to_string());
         }
@@ -1052,6 +1070,8 @@ impl ImagerRunTaskRequest {
             channel_count: self.channel_count,
             datacolumn: self.data_column.clone(),
             save_model: self.save_model.into(),
+            start_model: self.start_model.clone(),
+            outlier_file: self.outlier_file.clone(),
             correlation: self
                 .correlation
                 .map(|value| value.as_cli_text().to_string()),
@@ -1561,7 +1581,7 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
 mod tests {
     use std::ffi::OsString;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use casa_imaging::{
         CleanStopReason, Deconvolver, GaussianUvTaper, RestoringBeamMode, UvTaperSize, WTermMode,
@@ -1736,6 +1756,8 @@ mod tests {
             channel_count: None,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: Default::default(),
             cube_axis: Default::default(),
@@ -1792,6 +1814,8 @@ mod tests {
             channel_count: None,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: Default::default(),
             cube_axis: Default::default(),
@@ -2031,6 +2055,8 @@ mod tests {
             channel_count: None,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),
@@ -2187,6 +2213,8 @@ mod tests {
             channel_count: None,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some(ImagerPlaneSelection::CorrXX),
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),
@@ -2310,6 +2338,75 @@ mod tests {
         assert_eq!(config.datacolumn.as_deref(), Some("DATA"));
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: 0.5 });
         assert!(config.dirty_only);
+    }
+
+    #[test]
+    fn task_request_roundtrips_start_model_path() {
+        let request = ImagerRunTaskRequest {
+            measurement_set: PathBuf::from("demo.ms"),
+            image_name: PathBuf::from("out/demo"),
+            image_size: 64,
+            cell_arcsec: 1.5,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            data_column: None,
+            save_model: ImagerSaveModel::None,
+            start_model: Some(PathBuf::from("seed.model")),
+            outlier_file: Some(PathBuf::from("outliers.txt")),
+            correlation: None,
+            spectral_mode: ImagerSpectralMode::Mfs,
+            cube_axis: Default::default(),
+            weighting: Default::default(),
+            per_channel_weight_density: false,
+            use_pointing: false,
+            uv_taper: None,
+            restoring_beam_mode: Default::default(),
+            deconvolver: ImagerDeconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.2,
+            pbcor: false,
+            minor_cycle_length: 8,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.05,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: Default::default(),
+            use_mask: Default::default(),
+            auto_mask: Default::default(),
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: Default::default(),
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: true,
+        };
+
+        let config = request.to_cli_config().expect("restore CLI config");
+        assert_eq!(config.start_model.as_deref(), Some(Path::new("seed.model")));
+        assert_eq!(
+            config.outlier_file.as_deref(),
+            Some(Path::new("outliers.txt"))
+        );
+        let restored = ImagerRunTaskRequest::from_cli_config(&config);
+        assert_eq!(
+            restored.start_model.as_deref(),
+            Some(Path::new("seed.model"))
+        );
+        assert_eq!(
+            restored.outlier_file.as_deref(),
+            Some(Path::new("outliers.txt"))
+        );
     }
 
     #[test]

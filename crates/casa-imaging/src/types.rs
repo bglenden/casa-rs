@@ -884,6 +884,8 @@ pub struct ImagingRequest {
     pub clean: CleanConfig,
     /// Optional image-plane clean mask. `true` pixels are eligible for component picks.
     pub clean_mask: Option<Array2<bool>>,
+    /// Optional starting model image used to seed the CLEAN model plane.
+    pub initial_model: Option<Array2<f32>>,
     /// Requested `w`-term handling mode.
     pub w_term_mode: WTermMode,
     /// Optional explicit `wproject` plane budget.
@@ -918,6 +920,21 @@ impl ImagingRequest {
             ));
         }
         self.clean.validate()?;
+        if let Some(initial_model) = self.initial_model.as_ref() {
+            let expected = (self.geometry.image_shape[0], self.geometry.image_shape[1]);
+            if initial_model.dim() != expected {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "initial_model shape {:?} does not match requested image shape {:?}",
+                    initial_model.dim(),
+                    expected
+                )));
+            }
+            if initial_model.iter().any(|value| !value.is_finite()) {
+                return Err(ImagingError::InvalidRequest(
+                    "initial_model contains non-finite pixels".to_string(),
+                ));
+            }
+        }
         for scale in &self.multiscale_scales {
             if !(scale.is_finite() && *scale >= 0.0) {
                 return Err(ImagingError::InvalidRequest(

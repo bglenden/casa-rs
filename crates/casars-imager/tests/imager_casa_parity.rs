@@ -252,6 +252,126 @@ fn savemodel_modelcolumn_writes_casa_comparable_model_data() {
 }
 
 #[test]
+fn startmodel_seeds_single_image_model_like_casa() {
+    if !parity_available() {
+        eprintln!("{}", skip_reason());
+        return;
+    }
+
+    let ms_path = ngc5921_ms_path().expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let rust_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "rust-ngc5921.ms").expect("stage rust ms");
+    let casa_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "casa-ngc5921.ms").expect("stage casa ms");
+    let seed_prefix = temp.path().join("seed-ngc5921");
+    let no_start_prefix = temp.path().join("rust-ngc5921-no-startmodel");
+    let rust_prefix = temp.path().join("rust-ngc5921-startmodel");
+    let casa_prefix = temp.path().join("casa-ngc5921-startmodel");
+
+    run_casa_tclean(&casa_ms_path, &seed_prefix, 4).expect("create CASA startmodel seed");
+    let seed_model = PathBuf::from(format!("{}.model", seed_prefix.display()));
+
+    run_rust_imager_startmodel(&rust_ms_path, &no_start_prefix, None, 0)
+        .expect("run rust no-start");
+    let rust_start = Instant::now();
+    run_rust_imager_startmodel(&rust_ms_path, &rust_prefix, Some(&seed_model), 0)
+        .expect("run rust startmodel");
+    let rust_elapsed = rust_start.elapsed();
+    let casa_start = Instant::now();
+    run_casa_tclean_startmodel(&casa_ms_path, &casa_prefix, &seed_model, 0)
+        .expect("run CASA startmodel");
+    let casa_elapsed = casa_start.elapsed();
+
+    let no_start_model = read_image(&rust_product(&no_start_prefix, "model"));
+    let rust_model = read_image(&rust_product(&rust_prefix, "model"));
+    let casa_model = read_image(&casa_product(&casa_prefix, "model"));
+    let stats = image_difference_stats(&rust_model, &casa_model);
+    let rust_peak = max_abs_image(&rust_model);
+    let no_start_peak = max_abs_image(&no_start_model);
+    let casa_peak = max_abs_image(&casa_model);
+    eprintln!(
+        "startmodel parity: rust_elapsed={:.3}s casa_elapsed={:.3}s no_start_peak={:.6e} rust_peak={:.6e} casa_peak={:.6e} model_rms={:.6e} model_max_abs={:.6e} model_corr={:.6e}",
+        duration_seconds(rust_elapsed),
+        duration_seconds(casa_elapsed),
+        no_start_peak,
+        rust_peak,
+        casa_peak,
+        stats.rms,
+        stats.max_abs,
+        stats.correlation
+    );
+    assert!(
+        no_start_peak <= 1.0e-8,
+        "niter=0 without startmodel should leave model empty: {no_start_peak}"
+    );
+    assert!(
+        rust_peak > 0.0 && casa_peak > 0.0,
+        "startmodel should seed non-zero model products"
+    );
+    assert!(
+        stats.rms <= 1.0e-6 && stats.max_abs <= 1.0e-5,
+        "Rust and CASA startmodel products diverged: {stats:?}"
+    );
+}
+
+#[test]
+fn startmodel_continues_deconvolution_from_seed_like_casa() {
+    if !parity_available() {
+        eprintln!("{}", skip_reason());
+        return;
+    }
+
+    let ms_path = ngc5921_ms_path().expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let rust_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "rust-ngc5921.ms").expect("stage rust ms");
+    let casa_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "casa-ngc5921.ms").expect("stage casa ms");
+    let seed_prefix = temp.path().join("seed-ngc5921");
+    let rust_prefix = temp.path().join("rust-ngc5921-startmodel-clean");
+    let casa_prefix = temp.path().join("casa-ngc5921-startmodel-clean");
+
+    run_casa_tclean(&casa_ms_path, &seed_prefix, 4).expect("create CASA startmodel seed");
+    let seed_model_path = PathBuf::from(format!("{}.model", seed_prefix.display()));
+    let seed_model = read_image(&seed_model_path);
+
+    let rust_start = Instant::now();
+    run_rust_imager_startmodel(&rust_ms_path, &rust_prefix, Some(&seed_model_path), 2)
+        .expect("run rust startmodel clean");
+    let rust_elapsed = rust_start.elapsed();
+    let casa_start = Instant::now();
+    run_casa_tclean_startmodel(&casa_ms_path, &casa_prefix, &seed_model_path, 2)
+        .expect("run CASA startmodel clean");
+    let casa_elapsed = casa_start.elapsed();
+
+    let rust_model = read_image(&rust_product(&rust_prefix, "model"));
+    let casa_model = read_image(&casa_product(&casa_prefix, "model"));
+    let model_stats = image_difference_stats(&rust_model, &casa_model);
+    let rust_seed_delta = image_difference_stats(&rust_model, &seed_model);
+    let casa_seed_delta = image_difference_stats(&casa_model, &seed_model);
+    eprintln!(
+        "startmodel clean parity: rust_elapsed={:.3}s casa_elapsed={:.3}s rust_seed_delta_max={:.6e} casa_seed_delta_max={:.6e} model_rms={:.6e} model_max_abs={:.6e} model_corr={:.6e}",
+        duration_seconds(rust_elapsed),
+        duration_seconds(casa_elapsed),
+        rust_seed_delta.max_abs,
+        casa_seed_delta.max_abs,
+        model_stats.rms,
+        model_stats.max_abs,
+        model_stats.correlation
+    );
+
+    assert!(
+        rust_seed_delta.max_abs > 0.0 && casa_seed_delta.max_abs > 0.0,
+        "startmodel niter>0 should continue CLEAN beyond the seed model"
+    );
+    assert!(
+        model_stats.rms <= 1.0e-6 && model_stats.max_abs <= 1.0e-5,
+        "Rust and CASA startmodel niter>0 products diverged: {model_stats:?}"
+    );
+}
+
+#[test]
 fn multi_channel_dirty_products_track_casa_headers_and_pixels() {
     let case = ParityCase {
         dataset_rel: "measurementset/vla/refim_twochan.ms",
@@ -5179,6 +5299,8 @@ fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
         channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode: casars_imager::SpectralMode::Cube,
         cube_axis,
@@ -5412,6 +5534,8 @@ fn hogbom_cube_nsigma_same_model_residual_refresh_tracks_casa_restart() {
         channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode: casars_imager::SpectralMode::Cube,
         cube_axis,
@@ -5540,6 +5664,8 @@ fn hogbom_cube_nsigma_internal_model_residual_refresh_matches_captured_state() {
         channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode: casars_imager::SpectralMode::Cube,
         cube_axis,
@@ -5687,6 +5813,8 @@ fn hogbom_cube_nsigma_full_cube_model_context_explains_late_restart_gap() {
         channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode: casars_imager::SpectralMode::Cube,
         cube_axis,
@@ -5920,6 +6048,8 @@ fn hogbom_cube_nsigma_block0_channel9_nearest_vs_linear_dirty_against_casa() {
             channel_count: case.channel_count_option(),
             datacolumn: Some("DATA".to_string()),
             save_model: casars_imager::SaveModelMode::None,
+            start_model: None,
+            outlier_file: None,
             correlation: case.correlation.map(str::to_string),
             spectral_mode: casars_imager::SpectralMode::Cube,
             cube_axis,
@@ -6080,6 +6210,8 @@ fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam()
         channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode: casars_imager::SpectralMode::Cubedata,
         cube_axis: cubedata_axis,
@@ -8480,6 +8612,8 @@ fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<()
         channel_count: Some(1),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: None,
         spectral_mode: casars_imager::SpectralMode::Mfs,
         cube_axis: casa_ms::CubeAxisConfig::default(),
@@ -8533,6 +8667,8 @@ fn run_rust_imager_savemodel(ms_path: &Path, prefix: &Path) -> Result<(), String
         channel_count: Some(1),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::ModelColumn,
+        start_model: None,
+        outlier_file: None,
         correlation: None,
         spectral_mode: casars_imager::SpectralMode::Mfs,
         cube_axis: casa_ms::CubeAxisConfig::default(),
@@ -8546,6 +8682,66 @@ fn run_rust_imager_savemodel(ms_path: &Path, prefix: &Path) -> Result<(), String
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 4,
+        gain: 0.1,
+        threshold_jy: 0.0,
+        nsigma: 0.0,
+        psf_cutoff: 0.35,
+        mosaic_pb_limit: 0.1,
+        pbcor: false,
+        minor_cycle_length: 2,
+        cyclefactor: 1.0,
+        min_psf_fraction: 0.1,
+        max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+        use_mask: Default::default(),
+        auto_mask: Default::default(),
+        mask_boxes: Vec::new(),
+        mask_image: None,
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        dirty_only: false,
+        write_preview_pngs: false,
+    })
+    .map(|_| ())
+}
+
+fn run_rust_imager_startmodel(
+    ms_path: &Path,
+    prefix: &Path,
+    start_model: Option<&Path>,
+    niter: usize,
+) -> Result<(), String> {
+    let _ = (casa_source_root(), casacore_source_root());
+    run_from_config(&CliConfig {
+        ms: ms_path.to_path_buf(),
+        imagename: prefix.to_path_buf(),
+        imsize: 128,
+        cell_arcsec: 30.0,
+        field_ids: Some(vec![0]),
+        phasecenter_field: Some(0),
+        phasecenter: None,
+        ddid: None,
+        spw: Some(0),
+        spw_selector: None,
+        channel_start: Some(0),
+        channel_count: Some(1),
+        datacolumn: Some("DATA".to_string()),
+        save_model: casars_imager::SaveModelMode::None,
+        start_model: start_model.map(Path::to_path_buf),
+        outlier_file: None,
+        correlation: None,
+        spectral_mode: casars_imager::SpectralMode::Mfs,
+        cube_axis: casa_ms::CubeAxisConfig::default(),
+        weighting: WeightingMode::Natural,
+        per_channel_weight_density: false,
+        use_pointing: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter,
         gain: 0.1,
         threshold_jy: 0.0,
         nsigma: 0.0,
@@ -8668,6 +8864,8 @@ fn run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
         channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode: casars_imager::SpectralMode::Mfs,
         cube_axis: casa_ms::CubeAxisConfig::default(),
@@ -8731,6 +8929,8 @@ fn run_rust_imager_case_with_solver_and_w_term_mode(
         channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode: casars_imager::SpectralMode::Mfs,
         cube_axis: casa_ms::CubeAxisConfig::default(),
@@ -8791,6 +8991,8 @@ fn run_rust_imager_case_with_mtmfs(
         channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode: casars_imager::SpectralMode::Mfs,
         cube_axis: casa_ms::CubeAxisConfig::default(),
@@ -8926,6 +9128,8 @@ fn run_rust_imager_cube_task_default_case_with_clean_controls(
         channel_count: None,
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode: casars_imager::SpectralMode::Cube,
         cube_axis,
@@ -9025,6 +9229,8 @@ fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
         channel_count: case.channel_count_option(),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode,
         cube_axis: casa_ms::CubeAxisConfig {
@@ -9175,6 +9381,8 @@ fn run_rust_imager_spectral_cube_case_with_options_and_weighting(
         channel_count: Some(options.nchan),
         datacolumn: Some("DATA".to_string()),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: case.correlation.map(str::to_string),
         spectral_mode,
         cube_axis: casa_ms::CubeAxisConfig {
@@ -9337,6 +9545,73 @@ tclean(
     if !output.status.success() {
         return Err(format!(
             "casa tclean savemodel failed with status {}:\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+fn run_casa_tclean_startmodel(
+    ms_path: &Path,
+    prefix: &Path,
+    start_model: &Path,
+    niter: usize,
+) -> Result<(), String> {
+    let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
+    let casa = discover_casa_python().ok_or_else(skip_reason)?;
+    let prefix_text = prefix
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 imagename prefix {}", prefix.display()))?;
+    let start_model_text = start_model
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 startmodel {}", start_model.display()))?;
+    let script = r#"
+import os
+from casatasks import tclean
+tclean(
+    vis=os.environ["CASA_VIS"],
+    imagename=os.environ["CASA_IMAGENAME"],
+    datacolumn="data",
+    field="0",
+    spw="0:0",
+    specmode="mfs",
+    gridder="standard",
+    weighting="natural",
+    deconvolver="hogbom",
+    imsize=128,
+    cell="30arcsec",
+    startmodel=os.environ["CASA_STARTMODEL"],
+    niter=int(os.environ["CASA_NITER"]),
+    cycleniter=2,
+    gain=0.1,
+    threshold="0Jy",
+    restoration=True,
+    calcpsf=True,
+    calcres=True,
+    restart=True,
+    interactive=False,
+    parallel=False,
+    pbcor=False,
+    usemask="user",
+    mask="",
+    savemodel="none",
+    psfcutoff=0.35,
+)
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_IMAGENAME", prefix_text)
+        .env("CASA_STARTMODEL", start_model_text)
+        .env("CASA_NITER", niter.to_string())
+        .output()
+        .map_err(|error| format!("spawn casa tclean startmodel: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "casa tclean startmodel failed with status {}:\nstdout:\n{}\nstderr:\n{}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
@@ -11665,6 +11940,12 @@ fn read_scalar_image(path: &Path) -> f32 {
         .get_slice(&[0, 0, 0, 0], image.shape())
         .expect("read image slice");
     slice[IxDyn(&[0, 0, 0, 0])]
+}
+
+fn max_abs_image(image: &ArrayD<f32>) -> f32 {
+    image
+        .iter()
+        .fold(0.0f32, |max_value, value| max_value.max(value.abs()))
 }
 
 fn sample(array: &ArrayD<f32>, x: usize, y: usize) -> f32 {

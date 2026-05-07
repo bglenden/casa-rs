@@ -480,6 +480,8 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         channel_count: None,
         datacolumn: None,
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: None,
         spectral_mode,
         cube_axis: CubeAxisConfig::default(),
