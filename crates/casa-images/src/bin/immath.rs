@@ -95,5 +95,5 @@ fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: immath --imagename <image0> --imagename <image1> --expr 'IM0 * IM1|IM0 / IM1' --outfile <path> [--overwrite] | immath --json-run <SOURCE>".to_string()
+    "usage: immath --imagename <image0> [--imagename <image1>] --expr 'IM0 * IM1|IM0 / IM1|scalar*IM0' --outfile <path> [--overwrite] | immath --json-run <SOURCE>".to_string()
 }

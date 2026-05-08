@@ -4,8 +4,8 @@ use std::env;
 use std::path::Path;
 
 use casa_test_support::{
-    CasaTestDataTier, TUTORIAL_DATASETS, casa_tutorial_data_root, casatestdata_root_for_tier,
-    tutorial_dataset, tutorial_dataset_path,
+    CasaTestDataTier, TUTORIAL_DATASETS, casa_tutorial_data_root,
+    casatestdata_root_for_tier_with_required_paths, tutorial_dataset, tutorial_dataset_path,
 };
 
 fn main() {
@@ -54,7 +54,7 @@ fn main() {
         return;
     }
 
-    let root = casatestdata_root_for_tier(tier);
+    let root = casatestdata_root_for_tier_with_required_paths(tier, &required_paths);
     if root.is_none() && required_registry_keys.is_empty() {
         eprintln!(
             "casatestdata preflight failed: no {} root found; set CASA_RS_TESTDATA_ROOT or stage ../casatestdata",

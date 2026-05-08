@@ -10,7 +10,8 @@ mod task_contract;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::env;
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -29,8 +30,9 @@ use casa_imaging::{
     ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch,
     PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
     StandardMfsModelPredictor, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode, run_cube,
-    run_imaging, run_mtmfs, trace_cube_channel_residual_refresh,
+    WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
+    estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern, restore_standard_mfs_model,
+    run_cube, run_imaging, run_mtmfs, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
     trace_w_project_plan,
 };
@@ -88,12 +90,14 @@ pub use task_contract::{
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const DEFAULT_BATCH_SIZE: usize = 65_536;
+const JOINT_HOGBOM_PEAK_RELATIVE_TOLERANCE: f32 = 1.0e-3;
 const OUTLIER_IMAGE_FIELDS: &[&str] = &[
     "imagename",
     "imsize",
     "cell",
     "phasecenter",
     "startmodel",
+    "usemask",
     "mask",
     "specmode",
     "nchan",
@@ -113,6 +117,7 @@ struct OutlierFileDefinition {
     cell: Option<Vec<String>>,
     phasecenter: Option<String>,
     startmodel: Option<String>,
+    use_mask: Option<String>,
     mask: Option<String>,
     specmode: Option<String>,
     nchan: Option<usize>,
@@ -134,6 +139,7 @@ impl OutlierFileDefinition {
             cell: None,
             phasecenter: None,
             startmodel: None,
+            use_mask: None,
             mask: None,
             specmode: None,
             nchan: None,
@@ -154,6 +160,7 @@ impl OutlierFileDefinition {
             || self.cell.is_some()
             || self.phasecenter.is_some()
             || self.startmodel.is_some()
+            || self.use_mask.is_some()
             || self.mask.is_some()
             || self.specmode.is_some()
             || self.nchan.is_some()
@@ -557,6 +564,14 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
         config.small_scale_bias.to_string(),
     );
     manifest.insert("niter".to_string(), config.niter.to_string());
+    manifest.insert(
+        "nmajor".to_string(),
+        config
+            .nmajor
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-1".to_string()),
+    );
+    manifest.insert("fullsummary".to_string(), config.fullsummary.to_string());
     manifest.insert("gain".to_string(), config.gain.to_string());
     manifest.insert("threshold_jy".to_string(), config.threshold_jy.to_string());
     manifest.insert("nsigma".to_string(), config.nsigma.to_string());
@@ -1019,6 +1034,7 @@ pub fn build_w_project_trace_from_config(
         small_scale_bias: config.small_scale_bias,
         clean: CleanConfig {
             niter: if config.dirty_only { 0 } else { config.niter },
+            major_cycle_limit: config.nmajor,
             gain: config.gain,
             threshold_jy_per_beam: config.threshold_jy,
             nsigma: config.nsigma,
@@ -1083,6 +1099,7 @@ pub fn build_cube_channel_w_project_trace_from_config(
         small_scale_bias: config.small_scale_bias,
         clean: CleanConfig {
             niter: if config.dirty_only { 0 } else { config.niter },
+            major_cycle_limit: config.nmajor,
             gain: config.gain,
             threshold_jy_per_beam: config.threshold_jy,
             nsigma: config.nsigma,
@@ -1291,9 +1308,22 @@ pub fn write_prepare_plane_oracle_bundle_from_config_with_overrides(
 
 /// Execute the imager using an already-parsed configuration.
 pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
+    if config.outlier_file.is_some() {
+        return run_outlier_file_from_config(config);
+    }
+    run_single_image_from_config(config)
+}
+
+fn run_single_image_from_config(config: &CliConfig) -> Result<RunSummary, String> {
+    run_single_image_from_config_with_gridder_override(config, false)
+}
+
+fn run_single_image_from_config_with_gridder_override(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+) -> Result<RunSummary, String> {
     validate_save_model_request(config)?;
     validate_start_model_request(config)?;
-    validate_outlier_file_request(config)?;
     validate_auto_mask_config(config.use_mask, &config.auto_mask)?;
     let total_start = Instant::now();
     let stage_start = Instant::now();
@@ -1321,7 +1351,8 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
     let stage_start = Instant::now();
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
     let (prepared, model_trace) = if config.save_model == SaveModelMode::ModelColumn {
-        let (prepared, trace) = prepare_plane_input_with_trace(&ms, config, data_column)?;
+        let (prepared, trace) =
+            prepare_inputs_for_measurement_set_with_trace(&ms, config, data_column)?;
         (prepared, Some(trace))
     } else {
         let mut prepared_inputs = vec![merge_prepared_inputs_for_same_measurement_set(
@@ -1365,12 +1396,29 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
         PreparedInput::Mfs(plane) => plane.freq_ref,
         PreparedInput::Cube(cube) => cube.freq_ref,
     };
-    let prepared_input = prepared;
+    let prepared_input = if force_standard_gridder {
+        force_standard_gridder_mode(prepared)
+    } else {
+        prepared
+    };
+    let single_field_pb_context = if needs_single_field_primary_beam_products(config) {
+        Some(single_field_primary_beam_context(
+            &ms,
+            phase_center.angles_rad,
+            model_trace
+                .as_ref()
+                .map(|trace| trace.samples.as_slice())
+                .unwrap_or(&[]),
+        )?)
+    } else {
+        None
+    };
     let (run_result, effective_clean_mask) = match prepared_input {
         PreparedInput::Mfs(plane) => {
             let start_model = load_start_model_image(config, geometry, &plane.gridder_mode)?;
             let clean = CleanConfig {
                 niter: if config.dirty_only { 0 } else { config.niter },
+                major_cycle_limit: config.nmajor,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -1405,6 +1453,10 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
                             reffreq_hz: plane.reffreq_hz,
                             selected_frequency_range_hz: plane.selected_frequency_range_hz,
                             nterms: config.nterms,
+                            multiscale_scales: config.multiscale_scales.clone(),
+                            small_scale_bias: config.small_scale_bias,
+                            w_term_mode: config.w_term_mode,
+                            w_project_planes: config.w_project_planes,
                             clean,
                             clean_mask: user_clean_mask.clone(),
                             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -1472,6 +1524,7 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
         PreparedInput::Cube(cube) => {
             let clean = CleanConfig {
                 niter: if config.dirty_only { 0 } else { config.niter },
+                major_cycle_limit: config.nmajor,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -1581,7 +1634,13 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
             total_start.elapsed(),
         );
     }
-    write_products(config, &coords, &run_result, effective_clean_mask.as_ref())?;
+    write_products(
+        config,
+        &coords,
+        &run_result,
+        effective_clean_mask.as_ref(),
+        single_field_pb_context,
+    )?;
     let write_products_time = stage_start.elapsed();
     maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
 
@@ -1591,6 +1650,7 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
         major_cycles: run_result.major_cycles(),
         minor_iterations: run_result.minor_iterations(),
         clean_stop_reason: run_result.clean_stop_reason(),
+        minor_cycle_traces: run_result.minor_cycle_traces(),
         channel_summaries: run_result.channel_summaries(),
         stage_timings: run_result.stage_timings(),
         frontend_timings: FrontendStageTimings {
@@ -1605,15 +1665,883 @@ pub fn run_from_config(config: &CliConfig) -> Result<RunSummary, String> {
     })
 }
 
+fn run_outlier_file_from_config(config: &CliConfig) -> Result<RunSummary, String> {
+    let total_start = Instant::now();
+    let outlier_file = config
+        .outlier_file
+        .as_ref()
+        .ok_or_else(|| "internal error: missing outlierfile".to_string())?;
+    let definitions = parse_outlier_file(outlier_file)?;
+    validate_outlier_execution_request(config, &definitions)?;
+
+    let mut configs = Vec::<CliConfig>::with_capacity(definitions.len() + 1);
+    let mut main_config = config.clone();
+    main_config.outlier_file = None;
+    configs.push(main_config);
+    for definition in &definitions {
+        configs.push(outlier_config_from_definition(
+            config,
+            definition,
+            outlier_file,
+        )?);
+    }
+
+    if config.niter > 0 {
+        return run_joint_outlier_clean_from_configs(
+            config,
+            &configs,
+            &definitions,
+            outlier_file,
+            total_start,
+        );
+    }
+
+    let mut summaries = configs
+        .iter()
+        .map(|field_config| run_single_image_from_config_with_gridder_override(field_config, true))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut summary = summaries
+        .drain(..1)
+        .next()
+        .ok_or_else(|| "internal error: outlierfile run produced no main summary".to_string())?;
+    summary.warnings.push(format!(
+        "outlierfile {} wrote {} CASA-style dirty outlier image set(s)",
+        outlier_file.display(),
+        definitions.len()
+    ));
+    for (index, (definition, outlier_summary)) in definitions.iter().zip(summaries).enumerate() {
+        let image_name = definition.image_name.as_deref().unwrap_or("<missing>");
+        summary.warnings.extend(
+            outlier_summary
+                .warnings
+                .into_iter()
+                .map(|warning| format!("outlier image {index} ({image_name}): {warning}")),
+        );
+        summary.gridded_samples += outlier_summary.gridded_samples;
+        summary.major_cycles += outlier_summary.major_cycles;
+        summary.minor_iterations += outlier_summary.minor_iterations;
+        summary
+            .channel_summaries
+            .extend(outlier_summary.channel_summaries);
+        add_stage_timings(&mut summary.stage_timings, outlier_summary.stage_timings);
+        add_frontend_timings(
+            &mut summary.frontend_timings,
+            outlier_summary.frontend_timings,
+        );
+    }
+    summary.frontend_timings.total = total_start.elapsed();
+    Ok(summary)
+}
+
+fn force_standard_gridder_mode(mut prepared: PreparedInput) -> PreparedInput {
+    match &mut prepared {
+        PreparedInput::Mfs(plane) => {
+            plane.gridder_mode = GridderMode::Standard;
+        }
+        PreparedInput::Cube(cube) => {
+            for mode in &mut cube.gridder_modes {
+                *mode = GridderMode::Standard;
+            }
+        }
+    }
+    prepared
+}
+
+struct JointOutlierField {
+    config: CliConfig,
+    request: ImagingRequest,
+    trace: PreparedVisibilityTraceBundle,
+    dirty: ImagingResult,
+    model: Array2<f32>,
+    residual: Array2<f32>,
+    minor_iterations: usize,
+    phase_center: PhaseCenter,
+    freq_ref: FrequencyRef,
+}
+
+fn run_joint_outlier_clean_from_configs(
+    config: &CliConfig,
+    configs: &[CliConfig],
+    definitions: &[OutlierFileDefinition],
+    outlier_file: &Path,
+    total_start: Instant,
+) -> Result<RunSummary, String> {
+    if measurement_set_paths(config)?.len() != 1 {
+        return Err("outlierfile niter>0 currently supports exactly one --ms input".to_string());
+    }
+    let stage_start = Instant::now();
+    let ms = MeasurementSet::open(&config.ms).map_err(|error| format!("open MS: {error}"))?;
+    let open_measurement_set = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "open_measurement_set",
+        open_measurement_set,
+        total_start.elapsed(),
+    );
+
+    let stage_start = Instant::now();
+    let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
+    let outlier_definitions = std::iter::once(None)
+        .chain(definitions.iter().map(Some))
+        .collect::<Vec<_>>();
+    let mut fields = configs
+        .iter()
+        .zip(outlier_definitions.iter())
+        .map(|(field_config, definition)| {
+            prepare_joint_outlier_field(&ms, field_config, data_column, *definition)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_joint_outlier_traces(&fields)?;
+    let prepare_plane_time = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "prepare_plane_input",
+        prepare_plane_time,
+        total_start.elapsed(),
+    );
+
+    let stage_start = Instant::now();
+    run_joint_outlier_hogbom(config, &mut fields)?;
+    let run_imaging_time = stage_start.elapsed();
+    maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
+
+    if config.save_model == SaveModelMode::ModelColumn {
+        let stage_start = Instant::now();
+        let mut ms = MeasurementSet::open(&config.ms)
+            .map_err(|error| format!("open MS for MODEL_DATA write: {error}"))?;
+        let written = write_joint_outlier_model_column(&mut ms, &fields)?;
+        maybe_log_frontend_progress(
+            "write_model_column",
+            stage_start.elapsed(),
+            total_start.elapsed(),
+        );
+        maybe_log_frontend_progress(
+            &format!("write_model_column/written_samples/{written}"),
+            stage_start.elapsed(),
+            total_start.elapsed(),
+        );
+    }
+
+    let mut summary = None::<RunSummary>;
+    let mut write_products_time = Duration::ZERO;
+    for (index, field) in fields.into_iter().enumerate() {
+        let stage_start = Instant::now();
+        let result = finish_joint_outlier_field_result(config, &field)?;
+        let coords = build_coordinate_system(CoordinateSystemBuild {
+            imsize: field.config.imsize,
+            phase_center: field.phase_center.angles_rad,
+            cell_arcsec: field.config.cell_arcsec,
+            freq_ref: field.freq_ref,
+            direction_ref: field.phase_center.reference,
+            plane_stokes: result.compatibility.plane_stokes,
+            channel_frequencies_hz: &result.compatibility.channel_frequencies_hz,
+            requested_rest_frequency_hz: field.config.cube_axis.rest_frequency_hz,
+        });
+        let effective_clean_mask = field
+            .request
+            .clean_mask
+            .clone()
+            .map(EffectiveCleanMask::Plane);
+        let single_field_pb_context = if needs_single_field_primary_beam_products(&field.config) {
+            Some(single_field_primary_beam_context(
+                &ms,
+                field.phase_center.angles_rad,
+                &field.trace.samples,
+            )?)
+        } else {
+            None
+        };
+        write_products(
+            &field.config,
+            &coords,
+            &RunProducts::Mfs(result.clone()),
+            effective_clean_mask.as_ref(),
+            single_field_pb_context,
+        )?;
+        let elapsed = stage_start.elapsed();
+        write_products_time += elapsed;
+        maybe_log_frontend_progress("write_products", elapsed, total_start.elapsed());
+
+        let mut field_summary = RunSummary {
+            warnings: result.diagnostics.warnings.clone(),
+            gridded_samples: result.diagnostics.gridded_samples,
+            major_cycles: result.diagnostics.major_cycles,
+            minor_iterations: result.diagnostics.minor_iterations,
+            clean_stop_reason: result.diagnostics.clean_stop_reason,
+            minor_cycle_traces: result.diagnostics.minor_cycle_traces.clone(),
+            channel_summaries: Vec::new(),
+            stage_timings: result.diagnostics.stage_timings,
+            frontend_timings: FrontendStageTimings {
+                open_measurement_set: if index == 0 {
+                    open_measurement_set
+                } else {
+                    Duration::ZERO
+                },
+                prepare_plane_input: if index == 0 {
+                    prepare_plane_time
+                } else {
+                    Duration::ZERO
+                },
+                extract_phase_center: Duration::ZERO,
+                run_imaging: if index == 0 {
+                    run_imaging_time
+                } else {
+                    Duration::ZERO
+                },
+                build_coordinate_system: Duration::ZERO,
+                write_products: elapsed,
+                total: total_start.elapsed(),
+            },
+        };
+        if index == 0 {
+            field_summary.warnings.push(format!(
+                "outlierfile {} wrote {} CASA-style joint CLEAN image set(s)",
+                outlier_file.display(),
+                configs.len().saturating_sub(1)
+            ));
+            summary = Some(field_summary);
+        } else if let Some(summary) = summary.as_mut() {
+            for warning in field_summary.warnings {
+                summary
+                    .warnings
+                    .push(format!("outlier image {}: {warning}", index - 1));
+            }
+            summary.gridded_samples += field_summary.gridded_samples;
+            summary.major_cycles = summary.major_cycles.max(field_summary.major_cycles);
+            summary.minor_iterations += field_summary.minor_iterations;
+            summary
+                .minor_cycle_traces
+                .extend(field_summary.minor_cycle_traces);
+            add_stage_timings(&mut summary.stage_timings, field_summary.stage_timings);
+            add_frontend_timings(
+                &mut summary.frontend_timings,
+                field_summary.frontend_timings,
+            );
+        }
+    }
+    let mut summary = summary
+        .ok_or_else(|| "internal error: joint outlierfile produced no fields".to_string())?;
+    summary.frontend_timings.write_products = write_products_time;
+    summary.frontend_timings.total = total_start.elapsed();
+    Ok(summary)
+}
+
+fn prepare_joint_outlier_field(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    outlier_definition: Option<&OutlierFileDefinition>,
+) -> Result<JointOutlierField, String> {
+    let (prepared, trace) = prepare_plane_input_with_trace(ms, config, data_column)?;
+    let phase_center = prepared.phase_center().clone();
+    let PreparedInput::Mfs(plane) = prepared else {
+        return Err("outlierfile niter>0 currently supports only MFS imaging".to_string());
+    };
+    let geometry = ImageGeometry {
+        image_shape: [config.imsize, config.imsize],
+        cell_size_rad: [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let clean = CleanConfig {
+        niter: config.niter,
+        major_cycle_limit: config.nmajor,
+        gain: config.gain,
+        threshold_jy_per_beam: config.threshold_jy,
+        nsigma: config.nsigma,
+        psf_cutoff: config.psf_cutoff,
+        minor_cycle_length: config.minor_cycle_length,
+        cyclefactor: config.cyclefactor,
+        min_psf_fraction: config.min_psf_fraction,
+        max_psf_fraction: config.max_psf_fraction,
+        hogbom_iteration_mode: config.hogbom_iteration_mode,
+    };
+    let gridder_mode = GridderMode::Standard;
+    let start_model = load_start_model_image(config, geometry, &gridder_mode)?;
+    let clean_mask = build_joint_outlier_clean_mask(config, outlier_definition)?;
+    let request = ImagingRequest {
+        geometry,
+        visibility_batches: plane.batches,
+        gridder_mode,
+        plane_stokes: plane.plane_stokes,
+        weighting: config.weighting,
+        reffreq_hz: plane.reffreq_hz,
+        selected_frequency_range_hz: plane.selected_frequency_range_hz,
+        deconvolver: config.deconvolver,
+        multiscale_scales: config.multiscale_scales.clone(),
+        small_scale_bias: config.small_scale_bias,
+        clean,
+        clean_mask,
+        initial_model: None,
+        w_term_mode: config.w_term_mode,
+        w_project_planes: config.w_project_planes,
+        compatibility: CompatibilityMode::CasaStandardMfs,
+    };
+    let mut dirty_request = request.clone();
+    dirty_request.clean = frontend_dirty_clean_config(clean.psf_cutoff);
+    let dirty = run_imaging(&dirty_request).map_err(|error| error.to_string())?;
+    let [nx, ny] = request.geometry.image_shape;
+    let model = start_model.unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
+    let residual = extract_mfs_plane(&dirty.residual);
+    Ok(JointOutlierField {
+        config: config.clone(),
+        request,
+        trace,
+        dirty,
+        model,
+        residual,
+        minor_iterations: 0,
+        phase_center,
+        freq_ref: plane.freq_ref,
+    })
+}
+
+fn validate_joint_outlier_traces(fields: &[JointOutlierField]) -> Result<(), String> {
+    let Some(first) = fields.first() else {
+        return Err("internal error: outlierfile has no image fields".to_string());
+    };
+    let first_rows = first
+        .trace
+        .samples
+        .iter()
+        .map(joint_sample_key)
+        .collect::<Vec<_>>();
+    for (field_index, field) in fields.iter().enumerate().skip(1) {
+        let rows = field
+            .trace
+            .samples
+            .iter()
+            .map(joint_sample_key)
+            .collect::<Vec<_>>();
+        if rows != first_rows {
+            return Err(format!(
+                "outlier image {} selects a different visibility sample stream; niter>0 currently requires all outlier images to share the main image selection",
+                field_index - 1
+            ));
+        }
+    }
+    for field in fields {
+        let batch_samples = field
+            .request
+            .visibility_batches
+            .iter()
+            .map(VisibilityBatch::len)
+            .sum::<usize>();
+        if batch_samples != field.trace.samples.len() {
+            return Err(format!(
+                "internal error: prepared trace sample count {} does not match visibility batch count {} for {}",
+                field.trace.samples.len(),
+                batch_samples,
+                field.config.imagename.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn joint_sample_key(sample: &PreparedVisibilitySampleTrace) -> (usize, usize, usize, Vec<usize>) {
+    (
+        sample.row_index,
+        sample.ddid,
+        sample.output_channel_index.unwrap_or(0),
+        sample.correlation_indices.clone(),
+    )
+}
+
+fn run_joint_outlier_hogbom(
+    config: &CliConfig,
+    fields: &mut [JointOutlierField],
+) -> Result<(), String> {
+    refresh_joint_outlier_residuals(fields)?;
+    let clean = CleanConfig {
+        niter: config.niter,
+        major_cycle_limit: config.nmajor,
+        gain: config.gain,
+        threshold_jy_per_beam: config.threshold_jy,
+        nsigma: config.nsigma,
+        psf_cutoff: config.psf_cutoff,
+        minor_cycle_length: config.minor_cycle_length,
+        cyclefactor: config.cyclefactor,
+        min_psf_fraction: config.min_psf_fraction,
+        max_psf_fraction: config.max_psf_fraction,
+        hogbom_iteration_mode: config.hogbom_iteration_mode,
+    };
+    let max_psf_sidelobe = fields
+        .iter()
+        .map(|field| field.dirty.diagnostics.max_psf_sidelobe_level)
+        .fold(0.0f32, f32::max);
+    loop {
+        let cycle_peak = fields
+            .iter()
+            .filter_map(|field| {
+                joint_peak_location_masked(&field.residual, field.request.clean_mask.as_ref())
+                    .map(|(_, value)| value.abs())
+            })
+            .fold(0.0f32, f32::max);
+        let cycle_threshold = frontend_cycle_threshold(cycle_peak, max_psf_sidelobe, clean);
+        let mut updated_any_field = false;
+        for (field_index, field) in fields.iter_mut().enumerate() {
+            if field.minor_iterations >= clean.niter {
+                continue;
+            }
+            let Some((_, peak_value)) =
+                joint_peak_location_masked(&field.residual, field.request.clean_mask.as_ref())
+            else {
+                continue;
+            };
+            let cycle_peak = peak_value.abs();
+            if cycle_peak <= clean.threshold_jy_per_beam {
+                continue;
+            }
+            let cycle_limit = (clean.niter - field.minor_iterations).min(clean.minor_cycle_length);
+            let outcome = run_joint_hogbom_minor_cycle(
+                field,
+                field_index,
+                clean,
+                cycle_limit,
+                cycle_threshold,
+            );
+            field.minor_iterations += outcome.reported_updates;
+            updated_any_field |= outcome.actual_updates > 0;
+        }
+        if !updated_any_field {
+            break;
+        }
+        refresh_joint_outlier_residuals(fields)?;
+        if fields
+            .iter()
+            .any(|field| field.minor_iterations >= clean.niter)
+        {
+            break;
+        }
+    }
+    refresh_joint_outlier_residuals(fields)?;
+    Ok(())
+}
+
+fn run_joint_hogbom_minor_cycle(
+    field: &mut JointOutlierField,
+    field_index: usize,
+    clean: CleanConfig,
+    cycle_limit: usize,
+    cycle_threshold: f32,
+) -> JointMinorCycleOutcome {
+    let psf = extract_mfs_plane(&field.dirty.psf);
+    let cycle_component_budget = match clean.hogbom_iteration_mode {
+        HogbomIterationMode::CasaInclusive => cycle_limit.saturating_add(1),
+        HogbomIterationMode::Strict => cycle_limit,
+    };
+    let mut updates = 0usize;
+    let mut stopped_by_limit = false;
+    while updates < cycle_component_budget {
+        let Some(((peak_x, peak_y), peak_value)) =
+            joint_peak_location_masked(&field.residual, field.request.clean_mask.as_ref())
+        else {
+            break;
+        };
+        let peak_abs = peak_value.abs();
+        if peak_abs <= clean.threshold_jy_per_beam || peak_abs <= cycle_threshold {
+            break;
+        }
+        let component = clean.gain * peak_value;
+        append_joint_outlier_trace(format!(
+            "{{\"event\":\"component\",\"field_index\":{},\"imagename\":\"{}\",\"cycle_update\":{},\"x\":{},\"y\":{},\"peak\":{:.17e},\"component\":{:.17e},\"cycle_threshold\":{:.17e}}}",
+            field_index,
+            field.config.imagename.display(),
+            updates,
+            peak_x,
+            peak_y,
+            peak_value,
+            component,
+            cycle_threshold,
+        ));
+        field.model[(peak_x, peak_y)] += component;
+        subtract_joint_shifted_psf(&mut field.residual, &psf, (peak_x, peak_y), component);
+        updates += 1;
+    }
+    if updates >= cycle_component_budget && cycle_component_budget > 0 {
+        stopped_by_limit = true;
+    }
+    let reported_updates =
+        if clean.hogbom_iteration_mode == HogbomIterationMode::CasaInclusive && stopped_by_limit {
+            updates.min(cycle_limit)
+        } else {
+            updates
+        };
+    JointMinorCycleOutcome {
+        actual_updates: updates,
+        reported_updates,
+    }
+}
+
+fn append_joint_outlier_trace(line: String) {
+    let Some(path) = env::var_os("CASA_RS_OUTLIER_HOGBOM_TRACE") else {
+        return;
+    };
+    match OpenOptions::new().create(true).append(true).open(path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "{line}");
+        }
+        Err(error) => {
+            eprintln!("failed to append CASA_RS_OUTLIER_HOGBOM_TRACE: {error}");
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct JointMinorCycleOutcome {
+    actual_updates: usize,
+    reported_updates: usize,
+}
+
+fn refresh_joint_outlier_residuals(fields: &mut [JointOutlierField]) -> Result<(), String> {
+    let predictors = fields
+        .iter()
+        .map(|field| StandardMfsModelPredictor::new(field.request.geometry, &field.model))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let source_batches = fields
+        .iter()
+        .map(|field| flatten_visibility_batch_coordinates(&field.request.visibility_batches))
+        .collect::<Vec<_>>();
+
+    for target_index in 0..fields.len() {
+        let mut sample_cursor = 0usize;
+        let mut residual_batches = fields[target_index].request.visibility_batches.clone();
+        for batch in &mut residual_batches {
+            for sample_index in 0..batch.len() {
+                let target_sample = &fields[target_index].trace.samples[sample_cursor];
+                let mut predicted = Complex32::new(0.0, 0.0);
+                for source_index in 0..fields.len() {
+                    let source_sample = &fields[source_index].trace.samples[sample_cursor];
+                    let (u_lambda, v_lambda) = source_batches[source_index][sample_cursor];
+                    let source_prediction = predictors[source_index].predict(u_lambda, v_lambda);
+                    let rotated = phase_rotate_visibility(
+                        source_prediction,
+                        target_sample.phase_shift_m - source_sample.phase_shift_m,
+                        target_sample.output_frequency_hz,
+                    );
+                    predicted += rotated;
+                }
+                batch.visibility[sample_index] -= predicted;
+                sample_cursor += 1;
+            }
+        }
+        let mut residual_request = fields[target_index].request.clone();
+        residual_request.visibility_batches = residual_batches;
+        residual_request.clean = frontend_dirty_clean_config(residual_request.clean.psf_cutoff);
+        residual_request.initial_model = None;
+        let residual = run_imaging(&residual_request).map_err(|error| error.to_string())?;
+        fields[target_index].residual = extract_mfs_plane(&residual.residual);
+    }
+    Ok(())
+}
+
+fn flatten_visibility_batch_coordinates(batches: &[VisibilityBatch]) -> Vec<(f64, f64)> {
+    batches
+        .iter()
+        .flat_map(|batch| {
+            batch
+                .u_lambda
+                .iter()
+                .copied()
+                .zip(batch.v_lambda.iter().copied())
+        })
+        .collect()
+}
+
+fn finish_joint_outlier_field_result(
+    config: &CliConfig,
+    field: &JointOutlierField,
+) -> Result<ImagingResult, String> {
+    let psf = extract_mfs_plane(&field.dirty.psf);
+    let beam_fit = casa_imaging::fit_restoring_beam_from_psf(
+        &psf,
+        field.request.geometry.cell_size_rad,
+        config.psf_cutoff,
+    );
+    let restored_model = restore_standard_mfs_model(
+        &field.model,
+        field.request.geometry.cell_size_rad,
+        beam_fit.beam,
+    );
+    let image = &restored_model + &field.residual;
+    let mut warnings = field.dirty.diagnostics.warnings.clone();
+    warnings.extend(beam_fit.warnings);
+    let initial_peak =
+        frontend_peak_abs_masked(&field.dirty.residual, field.request.clean_mask.as_ref());
+    let final_peak = joint_peak_abs_masked(&field.residual, field.request.clean_mask.as_ref());
+    let max_abs_w_lambda = field
+        .request
+        .visibility_batches
+        .iter()
+        .flat_map(|batch| batch.w_lambda.iter())
+        .fold(0.0f64, |max_value, value| max_value.max(value.abs()));
+    let fractional_bandwidth = (field.request.selected_frequency_range_hz[1]
+        - field.request.selected_frequency_range_hz[0])
+        / field.request.reffreq_hz;
+    let psf_sidelobe = estimate_psf_sidelobe_from_psf(
+        &psf,
+        field.request.geometry.cell_size_rad,
+        config.psf_cutoff,
+    );
+    let stage_timings = field.dirty.diagnostics.stage_timings;
+    let nmajordone = if config.niter > 0 { 2 } else { 0 };
+    Ok(ImagingResult {
+        psf: field.dirty.psf.clone(),
+        residual: expand_joint_plane(&field.residual),
+        model: expand_joint_plane(&field.model),
+        image: expand_joint_plane(&image),
+        sumwt: field.dirty.sumwt.clone(),
+        beam: beam_fit.beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: field.dirty.diagnostics.gridded_samples,
+            skipped_samples: field.dirty.diagnostics.skipped_samples,
+            major_cycles: nmajordone,
+            minor_iterations: field.minor_iterations,
+            clean_stop_reason: Some(CleanStopReason::IterationLimitReached),
+            minor_cycle_traces: Vec::new(),
+            initial_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: final_peak,
+            max_abs_w_lambda,
+            fractional_bandwidth,
+            max_psf_sidelobe_level: psf_sidelobe,
+            final_cycle_threshold_jy_per_beam: frontend_cycle_threshold(
+                final_peak,
+                psf_sidelobe,
+                field.request.clean,
+            ),
+            clean_mask_pixels: field
+                .request
+                .clean_mask
+                .as_ref()
+                .map(count_clean_mask_pixels)
+                .unwrap_or(field.config.imsize * field.config.imsize),
+            beam_fit_attempts: beam_fit.attempts,
+            beam_fit_cutoff_used: beam_fit.cutoff_used,
+            beam_fit_debug: beam_fit.debug,
+            mosaic_weight_image: None,
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: field.request.plane_stokes,
+            reffreq_hz: field.request.reffreq_hz,
+            channel_frequencies_hz: vec![field.request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
+fn extract_mfs_plane(cube: &Array4<f32>) -> Array2<f32> {
+    cube.slice(s![.., .., 0, 0]).to_owned()
+}
+
+fn expand_joint_plane(plane: &Array2<f32>) -> Array4<f32> {
+    let (nx, ny) = plane.dim();
+    let mut expanded = Array4::<f32>::zeros((nx, ny, 1, 1));
+    expanded.slice_mut(s![.., .., 0, 0]).assign(plane);
+    expanded
+}
+
+fn joint_peak_abs_masked(image: &Array2<f32>, clean_mask: Option<&Array2<bool>>) -> f32 {
+    joint_peak_location_masked(image, clean_mask)
+        .map(|(_, value)| value.abs())
+        .unwrap_or(0.0)
+}
+
+fn joint_peak_location_masked(
+    image: &Array2<f32>,
+    clean_mask: Option<&Array2<bool>>,
+) -> Option<((usize, usize), f32)> {
+    let (nx, ny) = image.dim();
+    let mut best = None;
+    for y in 0..ny {
+        for x in 0..nx {
+            if clean_mask.is_some_and(|mask| !mask[(x, y)]) {
+                continue;
+            }
+            let value = image[(x, y)];
+            if !value.is_finite() {
+                continue;
+            }
+            match best {
+                None => best = Some(((x, y), value)),
+                Some((_, best_value))
+                    if value.abs()
+                        > best_value.abs() * (1.0 + JOINT_HOGBOM_PEAK_RELATIVE_TOLERANCE) =>
+                {
+                    best = Some(((x, y), value));
+                }
+                _ => {}
+            }
+        }
+    }
+    best
+}
+
+fn count_clean_mask_pixels(mask: &Array2<bool>) -> usize {
+    mask.iter().filter(|value| **value).count()
+}
+
+fn subtract_joint_shifted_psf(
+    residual: &mut Array2<f32>,
+    psf: &Array2<f32>,
+    peak_index: (usize, usize),
+    component: f32,
+) {
+    let kernel_center = (psf.shape()[0] / 2, psf.shape()[1] / 2);
+    for x in 0..residual.shape()[0] {
+        for y in 0..residual.shape()[1] {
+            let kernel_x = x as isize - peak_index.0 as isize + kernel_center.0 as isize;
+            let kernel_y = y as isize - peak_index.1 as isize + kernel_center.1 as isize;
+            if !(0..psf.shape()[0] as isize).contains(&kernel_x)
+                || !(0..psf.shape()[1] as isize).contains(&kernel_y)
+            {
+                continue;
+            }
+            residual[(x, y)] -= component * psf[(kernel_x as usize, kernel_y as usize)];
+        }
+    }
+}
+
+fn add_stage_timings(target: &mut ImagingStageTimings, extra: ImagingStageTimings) {
+    target.controller_overhead += extra.controller_overhead;
+    target.weighting += extra.weighting;
+    target.psf_grid += extra.psf_grid;
+    target.psf_fft += extra.psf_fft;
+    target.psf_normalize += extra.psf_normalize;
+    target.model_fft += extra.model_fft;
+    target.residual_degrid_grid += extra.residual_degrid_grid;
+    target.residual_fft += extra.residual_fft;
+    target.residual_normalize += extra.residual_normalize;
+    target.minor_cycle += extra.minor_cycle;
+    target.minor_cycle_solve += extra.minor_cycle_solve;
+    target.major_cycle_refresh += extra.major_cycle_refresh;
+    target.beam_fit += extra.beam_fit;
+    target.restore += extra.restore;
+    target.total += extra.total;
+}
+
+fn add_frontend_timings(target: &mut FrontendStageTimings, extra: FrontendStageTimings) {
+    target.open_measurement_set += extra.open_measurement_set;
+    target.prepare_plane_input += extra.prepare_plane_input;
+    target.extract_phase_center += extra.extract_phase_center;
+    target.run_imaging += extra.run_imaging;
+    target.build_coordinate_system += extra.build_coordinate_system;
+    target.write_products += extra.write_products;
+}
+
+fn write_joint_outlier_model_column(
+    ms: &mut MeasurementSet,
+    fields: &[JointOutlierField],
+) -> Result<usize, String> {
+    let Some(first) = fields.first() else {
+        return Ok(0);
+    };
+    let predictors = fields
+        .iter()
+        .map(|field| StandardMfsModelPredictor::new(field.request.geometry, &field.model))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let created_model_data_column = ensure_model_data_column(ms)?;
+    let mut rows = first
+        .trace
+        .selected_rows
+        .iter()
+        .map(|row| {
+            zero_model_row_like_data(ms, row.row_index).map(|model_row| (row.row_index, model_row))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let mut written_samples = 0usize;
+    for sample_index in 0..first.trace.samples.len() {
+        let target_sample = &first.trace.samples[sample_index];
+        if !target_sample.gridable {
+            continue;
+        }
+        let row_shape = rows
+            .get(&target_sample.row_index)
+            .ok_or_else(|| {
+                format!(
+                    "prepared sample row {} was not present in selected rows",
+                    target_sample.row_index
+                )
+            })?
+            .shape()
+            .to_vec();
+        let row_model = rows
+            .get_mut(&target_sample.row_index)
+            .expect("row model shape was just read");
+        for (field, predictor) in fields.iter().zip(predictors.iter()) {
+            let source_sample = &field.trace.samples[sample_index];
+            if source_sample.source_contributions.is_empty() {
+                continue;
+            }
+            for contribution in &source_sample.source_contributions {
+                let lambda_scale = contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                let predicted = predictor.predict(
+                    source_sample.imaging_uvw_m[0] * lambda_scale,
+                    source_sample.imaging_uvw_m[1] * lambda_scale,
+                );
+                let predicted = phase_rotate_visibility(
+                    predicted,
+                    -source_sample.phase_shift_m,
+                    contribution.source_frequency_hz,
+                );
+                for &corr_index in &source_sample.correlation_indices {
+                    if corr_index >= row_shape[0]
+                        || contribution.source_channel_index >= row_shape[1]
+                    {
+                        continue;
+                    }
+                    row_model[[corr_index, contribution.source_channel_index]] += predicted;
+                    written_samples += 1;
+                }
+            }
+        }
+    }
+
+    let changed_rows = rows.keys().copied().collect::<Vec<_>>();
+    for (row_index, row_model) in rows {
+        ms.main_table_mut()
+            .column_accessor_mut(VisibilityDataColumn::ModelData.name())
+            .and_then(|mut column| {
+                column.set_array_assuming_valid(row_index, ArrayValue::Complex32(row_model))
+            })
+            .map_err(|error| format!("write MODEL_DATA row {row_index}: {error}"))?;
+    }
+    let ms_path = ms
+        .path()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<memory>".to_string());
+    if created_model_data_column {
+        ms.save_main_table_only_assuming_valid()
+            .map_err(|error| format!("save MODEL_DATA updates to {ms_path}: {error}"))?;
+    } else {
+        ms.main_table()
+            .save_selected_rows_in_place_assuming_valid(
+                &[VisibilityDataColumn::ModelData.name()],
+                &changed_rows,
+            )
+            .map_err(|error| format!("save MODEL_DATA updates to {ms_path}: {error}"))?;
+    }
+    Ok(written_samples)
+}
+
 fn validate_save_model_request(config: &CliConfig) -> Result<(), String> {
     if config.save_model == SaveModelMode::ModelColumn && measurement_set_paths(config)?.len() > 1 {
         return Err("savemodel=modelcolumn currently supports exactly one --ms input".to_string());
     }
     if config.save_model != SaveModelMode::ModelColumn {
         return Ok(());
-    }
-    if config.deconvolver == Deconvolver::Mtmfs {
-        return Err("savemodel=modelcolumn does not yet support deconvolver='mtmfs'".to_string());
     }
     Ok(())
 }
@@ -1649,27 +2577,343 @@ fn validate_start_model_request(config: &CliConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_outlier_file_request(config: &CliConfig) -> Result<(), String> {
-    let Some(outlier_file) = config.outlier_file.as_ref() else {
-        return Ok(());
-    };
-    let definitions = parse_outlier_file(outlier_file)?;
+fn validate_outlier_execution_request(
+    config: &CliConfig,
+    definitions: &[OutlierFileDefinition],
+) -> Result<(), String> {
+    if definitions.is_empty() {
+        return Err("outlierfile did not define any outlier images".to_string());
+    }
+    if config.spectral_mode != SpectralMode::Mfs {
+        return Err("outlierfile currently supports only specmode='mfs'".to_string());
+    }
+    if config.deconvolver != Deconvolver::Hogbom && config.deconvolver != Deconvolver::Multiscale {
+        return Err(
+            "outlierfile currently supports only deconvolver='hogbom' or deconvolver='multiscale'"
+                .to_string(),
+        );
+    }
+    if config.nterms != 1 {
+        return Err("outlierfile currently supports only nterms=1".to_string());
+    }
+    if config.use_mask == CleanMaskMode::AutoMultiThreshold {
+        return Err("outlierfile does not yet support usemask='auto-multithresh'".to_string());
+    }
+    if config.w_term_mode != WTermMode::None || config.w_project_planes.is_some() {
+        return Err(
+            "outlierfile currently supports only standard gridder dirty imaging".to_string(),
+        );
+    }
     let ignored_fields = definitions
         .iter()
         .flat_map(|definition| definition.ignored_fields.iter().map(String::as_str))
         .collect::<BTreeSet<_>>();
-    let ignored_text = if ignored_fields.is_empty() {
-        "none".to_string()
-    } else {
-        ignored_fields.into_iter().collect::<Vec<_>>().join(",")
+    if !ignored_fields.is_empty() {
+        return Err(format!(
+            "outlierfile contains unsupported field(s): {}; recognized CASA outlier fields are [{}]",
+            ignored_fields.into_iter().collect::<Vec<_>>().join(","),
+            OUTLIER_IMAGE_FIELDS.join(",")
+        ));
+    }
+    for (index, definition) in definitions.iter().enumerate() {
+        validate_outlier_definition(index, definition)?;
+    }
+    Ok(())
+}
+
+fn validate_outlier_definition(
+    index: usize,
+    definition: &OutlierFileDefinition,
+) -> Result<(), String> {
+    if definition.image_name.as_deref().unwrap_or("").is_empty() {
+        return Err(format!(
+            "outlier image {index} is missing required imagename"
+        ));
+    }
+    if let Some(imsize) = definition.imsize.as_ref() {
+        validate_outlier_imsize(index, imsize)?;
+    }
+    if let Some(cell) = definition.cell.as_ref() {
+        parse_outlier_cell_arcsec(cell)
+            .map_err(|error| format!("outlier image {index}: {error}"))?;
+    }
+    if let Some(use_mask) = definition.use_mask.as_deref() {
+        let use_mask = use_mask.to_ascii_lowercase();
+        if !use_mask.is_empty() && use_mask != "user" {
+            return Err(format!(
+                "outlier image {index} uses usemask={use_mask:?}; only user masks are supported for outlierfile images"
+            ));
+        }
+    }
+    if let Some(mask) = definition.mask.as_deref().filter(|mask| !mask.is_empty()) {
+        parse_outlier_circle_pixel_mask(mask)
+            .map_err(|error| format!("outlier image {index}: {error}"))?;
+    }
+    if let Some(specmode) = definition.specmode.as_deref() {
+        let specmode = specmode.to_ascii_lowercase();
+        if specmode != "mfs" && specmode != "cont" {
+            return Err(format!(
+                "outlier image {index} uses specmode={specmode:?}; only mfs/cont is supported"
+            ));
+        }
+    }
+    if definition.nchan.is_some_and(|nchan| nchan != 1) {
+        return Err(format!(
+            "outlier image {index} sets nchan other than 1; cube outlier imaging is not implemented yet"
+        ));
+    }
+    if definition
+        .start
+        .as_deref()
+        .is_some_and(|start| !start.is_empty())
+        || definition
+            .width
+            .as_deref()
+            .is_some_and(|width| !width.is_empty())
+        || definition
+            .reffreq
+            .as_deref()
+            .is_some_and(|reffreq| !reffreq.is_empty())
+    {
+        return Err(format!(
+            "outlier image {index} sets spectral-axis fields; cube/MTMFS outlier imaging is not implemented yet"
+        ));
+    }
+    if definition.nterms.is_some_and(|nterms| nterms != 1) {
+        return Err(format!(
+            "outlier image {index} sets nterms other than 1; MTMFS outlier imaging is not implemented yet"
+        ));
+    }
+    if let Some(gridder) = definition.gridder.as_deref() {
+        let gridder = gridder.to_ascii_lowercase();
+        if gridder != "standard" && gridder != "gridft" && gridder != "ft" {
+            return Err(format!(
+                "outlier image {index} uses gridder={gridder:?}; only standard gridder is supported"
+            ));
+        }
+    }
+    if let Some(deconvolver) = definition.deconvolver.as_deref() {
+        let deconvolver = deconvolver.to_ascii_lowercase();
+        if deconvolver != "hogbom" {
+            return Err(format!(
+                "outlier image {index} uses deconvolver={deconvolver:?}; only hogbom is supported"
+            ));
+        }
+    }
+    if definition.wprojplanes.is_some_and(|planes| planes != 1) {
+        return Err(format!(
+            "outlier image {index} sets wprojplanes other than 1; w-projection outlier imaging is not implemented yet"
+        ));
+    }
+    Ok(())
+}
+
+fn build_joint_outlier_clean_mask(
+    config: &CliConfig,
+    definition: Option<&OutlierFileDefinition>,
+) -> Result<Option<Array2<bool>>, String> {
+    let mut clean_mask = build_clean_mask(
+        config.imsize,
+        &config.mask_boxes,
+        config.mask_image.as_deref(),
+    )?;
+    let Some(mask_text) = definition
+        .and_then(|definition| definition.mask.as_deref())
+        .filter(|mask| !mask.is_empty())
+    else {
+        return Ok(clean_mask);
     };
-    Err(format!(
-        "outlierfile {} defines {} outlier image(s), but casa-rs currently preserves a single-image frontend boundary; parsed CASA outlier fields are [{}], ignored fields are [{}], and multi-image/outlier-field orchestration is not implemented",
-        outlier_file.display(),
-        definitions.len(),
-        OUTLIER_IMAGE_FIELDS.join(","),
-        ignored_text
-    ))
+    let circle = parse_outlier_circle_pixel_mask(mask_text)?;
+    let mask = clean_mask
+        .get_or_insert_with(|| Array2::<bool>::from_elem((config.imsize, config.imsize), false));
+    merge_circle_pixel_mask(mask, circle)
+        .map_err(|error| format!("outlier mask {mask_text:?}: {error}"))?;
+    Ok(clean_mask)
+}
+
+fn outlier_config_from_definition(
+    base: &CliConfig,
+    definition: &OutlierFileDefinition,
+    outlier_file: &Path,
+) -> Result<CliConfig, String> {
+    let mut config = base.clone();
+    config.outlier_file = None;
+    config.imagename = outlier_path_from_definition(definition, outlier_file)?;
+    if let Some(imsize) = definition.imsize.as_ref() {
+        config.imsize = validate_outlier_imsize(0, imsize)?;
+    }
+    if let Some(cell) = definition.cell.as_ref() {
+        config.cell_arcsec = parse_outlier_cell_arcsec(cell)?;
+    }
+    if let Some(phasecenter) = definition.phasecenter.as_ref() {
+        config.phasecenter = Some(phasecenter.clone());
+        config.phasecenter_field = None;
+    }
+    if let Some(startmodel) = definition
+        .startmodel
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        config.start_model = Some(PathBuf::from(startmodel));
+    } else {
+        config.start_model = None;
+    }
+    Ok(config)
+}
+
+fn outlier_path_from_definition(
+    definition: &OutlierFileDefinition,
+    outlier_file: &Path,
+) -> Result<PathBuf, String> {
+    let image_name = definition
+        .image_name
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "outlier image is missing required imagename".to_string())?;
+    let path = PathBuf::from(image_name);
+    if path.is_absolute() {
+        Ok(path)
+    } else if let Some(parent) = outlier_file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        Ok(parent.join(path))
+    } else {
+        Ok(path)
+    }
+}
+
+fn validate_outlier_imsize(index: usize, imsize: &[usize]) -> Result<usize, String> {
+    match imsize {
+        [size] if *size > 0 => Ok(*size),
+        [nx, ny] if *nx > 0 && nx == ny => Ok(*nx),
+        [nx, ny] if *nx > 0 && *ny > 0 => Err(format!(
+            "outlier image {index} requests non-square imsize [{nx},{ny}], but the current frontend supports square image sizes only"
+        )),
+        _ => Err(format!(
+            "outlier image {index} imsize must be a positive scalar or two equal positive values"
+        )),
+    }
+}
+
+fn parse_outlier_cell_arcsec(cell: &[String]) -> Result<f64, String> {
+    let values = match cell {
+        [one] => vec![parse_outlier_cell_component_arcsec(one)?],
+        [x, y] => vec![
+            parse_outlier_cell_component_arcsec(x)?,
+            parse_outlier_cell_component_arcsec(y)?,
+        ],
+        _ => {
+            return Err("outlier cell must be a scalar or two equal arcsec quantities".to_string());
+        }
+    };
+    if values.len() == 2 && (values[0] - values[1]).abs() > f64::EPSILON {
+        return Err(format!(
+            "outlier cell requests non-square pixels [{},{}] arcsec, but the current frontend supports square pixels only",
+            values[0], values[1]
+        ));
+    }
+    let cell = values[0];
+    if !(cell.is_finite() && cell > 0.0) {
+        return Err("outlier cell must be finite and > 0".to_string());
+    }
+    Ok(cell)
+}
+
+fn parse_outlier_cell_component_arcsec(value: &str) -> Result<f64, String> {
+    let text = trim_outlier_string(value);
+    let lower = text.to_ascii_lowercase();
+    if let Some(number) = lower.strip_suffix("arcsec") {
+        return number
+            .trim()
+            .parse::<f64>()
+            .map_err(|error| format!("parse outlier cell {value:?}: {error}"));
+    }
+    text.parse::<f64>()
+        .map_err(|error| format!("parse outlier cell {value:?}: {error}; expected arcsec units"))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OutlierCirclePixelMask {
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+}
+
+fn parse_outlier_circle_pixel_mask(text: &str) -> Result<OutlierCirclePixelMask, String> {
+    let compact = trim_outlier_string(text)
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let lower = compact.to_ascii_lowercase();
+    let body = lower
+        .strip_prefix("circle[[")
+        .and_then(|text| text.strip_suffix(']'))
+        .ok_or_else(|| {
+            format!("outlier mask {text:?} is not supported; expected circle[[xpix,ypix],rpix]")
+        })?;
+    let (center_text, radius_text) = body.split_once("],").ok_or_else(|| {
+        format!("outlier mask {text:?} is not supported; expected circle[[xpix,ypix],rpix]")
+    })?;
+    let (x_text, y_text) = center_text.split_once(',').ok_or_else(|| {
+        format!("outlier mask {text:?} is not supported; expected circle[[xpix,ypix],rpix]")
+    })?;
+    let center_x = parse_outlier_pixel_quantity(x_text, "mask center x")?;
+    let center_y = parse_outlier_pixel_quantity(y_text, "mask center y")?;
+    let radius = parse_outlier_pixel_quantity(radius_text, "mask radius")?;
+    if !(radius.is_finite() && radius >= 0.0) {
+        return Err(format!(
+            "outlier mask radius must be finite and >= 0, got {radius}"
+        ));
+    }
+    Ok(OutlierCirclePixelMask {
+        center_x,
+        center_y,
+        radius,
+    })
+}
+
+fn parse_outlier_pixel_quantity(text: &str, label: &str) -> Result<f64, String> {
+    let value = text
+        .strip_suffix("pix")
+        .ok_or_else(|| format!("{label} {text:?} must use pix units"))?
+        .parse::<f64>()
+        .map_err(|error| format!("parse {label} {text:?}: {error}"))?;
+    if !value.is_finite() {
+        return Err(format!("{label} must be finite, got {text:?}"));
+    }
+    Ok(value)
+}
+
+fn merge_circle_pixel_mask(
+    mask: &mut Array2<bool>,
+    circle: OutlierCirclePixelMask,
+) -> Result<(), String> {
+    let (nx, ny) = mask.dim();
+    if circle.center_x < 0.0
+        || circle.center_y < 0.0
+        || circle.center_x >= nx as f64
+        || circle.center_y >= ny as f64
+    {
+        return Err(format!(
+            "circle center [{:.3}pix,{:.3}pix] exceeds image bounds 0..{},0..{}",
+            circle.center_x,
+            circle.center_y,
+            nx.saturating_sub(1),
+            ny.saturating_sub(1)
+        ));
+    }
+    let radius2 = circle.radius * circle.radius;
+    for x in 0..nx {
+        for y in 0..ny {
+            let dx = x as f64 - circle.center_x;
+            let dy = y as f64 - circle.center_y;
+            if dx * dx + dy * dy <= radius2 {
+                mask[(x, y)] = true;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_outlier_file(path: &Path) -> Result<Vec<OutlierFileDefinition>, String> {
@@ -1729,6 +2973,7 @@ fn apply_outlier_parameter(
         "cell" => definition.cell = Some(parse_outlier_string_vec(value)),
         "phasecenter" => definition.phasecenter = Some(trim_outlier_string(value).to_string()),
         "startmodel" => definition.startmodel = Some(trim_outlier_string(value).to_string()),
+        "usemask" => definition.use_mask = Some(trim_outlier_string(value).to_string()),
         "mask" => definition.mask = Some(trim_outlier_string(value).to_string()),
         "specmode" => definition.specmode = Some(trim_outlier_string(value).to_string()),
         "nchan" => definition.nchan = Some(parse_outlier_usize(value, key, path, line_number)?),
@@ -1960,6 +3205,7 @@ pub fn trace_cube_channel_residual_refresh_from_config(
         small_scale_bias: config.small_scale_bias,
         clean: CleanConfig {
             niter: if config.dirty_only { 0 } else { config.niter },
+            major_cycle_limit: config.nmajor,
             gain: config.gain,
             threshold_jy_per_beam: config.threshold_jy,
             nsigma: config.nsigma,
@@ -2023,6 +3269,7 @@ pub fn trace_cube_channel_residual_refresh_from_config_with_model_cube(
         small_scale_bias: config.small_scale_bias,
         clean: CleanConfig {
             niter: if config.dirty_only { 0 } else { config.niter },
+            major_cycle_limit: config.nmajor,
             gain: config.gain,
             threshold_jy_per_beam: config.threshold_jy,
             nsigma: config.nsigma,
@@ -2089,6 +3336,7 @@ pub fn trace_cube_channel_residual_refresh_from_config_with_model_cube_model_cha
         small_scale_bias: config.small_scale_bias,
         clean: CleanConfig {
             niter: if config.dirty_only { 0 } else { config.niter },
+            major_cycle_limit: config.nmajor,
             gain: config.gain,
             threshold_jy_per_beam: config.threshold_jy,
             nsigma: config.nsigma,
@@ -2183,6 +3431,10 @@ pub struct CliConfig {
     pub small_scale_bias: f32,
     /// Minor-cycle iteration count.
     pub niter: usize,
+    /// CASA-style major-cycle limit. `None` corresponds to `nmajor=-1`.
+    pub nmajor: Option<usize>,
+    /// Include the CASA-compatible long-form `summaryminor` task report.
+    pub fullsummary: bool,
     /// Minor-cycle loop gain.
     pub gain: f32,
     /// Absolute CLEAN stopping threshold in `Jy/beam`.
@@ -2256,6 +3508,8 @@ impl CliConfig {
         let mut small_scale_bias = 0.0f32;
         let mut robust = 0.5f32;
         let mut niter = 0usize;
+        let mut nmajor = None::<usize>;
+        let mut fullsummary = false;
         let mut gain = 0.1f32;
         let mut threshold_jy = 0.0f32;
         let mut nsigma = 0.0f32;
@@ -2479,6 +3733,14 @@ impl CliConfig {
                         .map_err(|error| format!("parse --niter: {error}"))?;
                     continue;
                 }
+                "--nmajor" => {
+                    nmajor = parse_nmajor(&next_value(&mut args, "--nmajor")?)?;
+                    continue;
+                }
+                "--fullsummary" => {
+                    fullsummary = true;
+                    continue;
+                }
                 "--gain" => {
                     gain = next_value(&mut args, "--gain")?
                         .parse()
@@ -2667,8 +3929,8 @@ impl CliConfig {
         if nterms == 0 {
             return Err("--nterms must be at least 1".to_string());
         }
-        if !(mosaic_pb_limit.is_finite() && mosaic_pb_limit > 0.0) {
-            return Err("--pblimit must be finite and > 0".to_string());
+        if !(mosaic_pb_limit.is_finite() && mosaic_pb_limit != 0.0) {
+            return Err("--pblimit must be finite and non-zero".to_string());
         }
         validate_auto_mask_config(use_mask, &auto_mask)?;
 
@@ -2704,6 +3966,8 @@ impl CliConfig {
             multiscale_scales,
             small_scale_bias,
             niter,
+            nmajor,
+            fullsummary,
             gain,
             threshold_jy,
             nsigma,
@@ -2743,6 +4007,8 @@ pub struct RunSummary {
     pub minor_iterations: usize,
     /// Final reason why the CLEAN controller stopped, when CLEAN was requested.
     pub clean_stop_reason: Option<CleanStopReason>,
+    /// Per-block minor-cycle trace for MFS-like runs.
+    pub minor_cycle_traces: Vec<MinorCycleTrace>,
     /// Per-channel cube diagnostics when running cube-like spectral modes,
     /// empty for MFS runs.
     pub channel_summaries: Vec<ChannelRunSummary>,
@@ -3296,6 +4562,14 @@ impl RunProducts {
             Self::Mfs(result) => result.diagnostics.clean_stop_reason,
             Self::Mtmfs(result) => result.diagnostics.clean_stop_reason,
             Self::Cube(products) => products.result.diagnostics.clean_stop_reason,
+        }
+    }
+
+    fn minor_cycle_traces(&self) -> Vec<MinorCycleTrace> {
+        match self {
+            Self::Mfs(result) => result.diagnostics.minor_cycle_traces.clone(),
+            Self::Mtmfs(result) => result.diagnostics.minor_cycle_traces.clone(),
+            Self::Cube(_) => Vec::new(),
         }
     }
 
@@ -4941,6 +6215,69 @@ fn prepare_inputs_for_measurement_set(
             prepare_plane_input(ms, &ddid_config, data_column_kind)
         })
         .collect()
+}
+
+fn prepare_inputs_for_measurement_set_with_trace(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+) -> Result<(PreparedInput, PreparedVisibilityTraceBundle), String> {
+    if has_explicit_spectral_selection(config) {
+        return prepare_plane_input_with_trace(ms, config, data_column_kind);
+    }
+    let prepared_with_traces =
+        selected_data_desc_ids_for_unrestricted_spectral_selection(ms, config)?
+            .into_iter()
+            .map(|ddid| {
+                let mut ddid_config = config.clone();
+                ddid_config.ddid = Some(ddid);
+                prepare_plane_input_with_trace(ms, &ddid_config, data_column_kind)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+    merge_prepared_inputs_with_trace(prepared_with_traces)
+}
+
+fn merge_prepared_inputs_with_trace(
+    prepared_with_traces: Vec<(PreparedInput, PreparedVisibilityTraceBundle)>,
+) -> Result<(PreparedInput, PreparedVisibilityTraceBundle), String> {
+    if prepared_with_traces.is_empty() {
+        return Err("selection resolved to no DDID".to_string());
+    }
+    let (prepared_inputs, traces): (Vec<_>, Vec<_>) = prepared_with_traces.into_iter().unzip();
+    let prepared = merge_prepared_inputs_for_same_measurement_set(prepared_inputs)?;
+    let mut trace_iter = traces.into_iter();
+    let mut merged_trace = trace_iter
+        .next()
+        .ok_or_else(|| "selection resolved to no DDID".to_string())?;
+    for trace in trace_iter {
+        merged_trace
+            .source_channel_indices
+            .extend(trace.source_channel_indices);
+        merged_trace
+            .source_channel_frequencies_hz
+            .extend(trace.source_channel_frequencies_hz);
+        merged_trace
+            .source_channel_widths_hz
+            .extend(trace.source_channel_widths_hz);
+        merged_trace
+            .output_channel_frequencies_hz
+            .extend(trace.output_channel_frequencies_hz);
+        merged_trace.selected_rows.extend(trace.selected_rows);
+        merged_trace.samples.extend(trace.samples);
+        merged_trace.rejected_samples.extend(trace.rejected_samples);
+    }
+    merged_trace.selected_rows.sort_by_key(|row| row.row_index);
+    merged_trace.samples.sort_by_key(|sample| {
+        (
+            sample.row_index,
+            sample.ddid,
+            sample.output_channel_index.unwrap_or(0),
+        )
+    });
+    merged_trace
+        .rejected_samples
+        .sort_by_key(|sample| (sample.row_index, sample.ddid));
+    Ok((prepared, merged_trace))
 }
 
 fn has_explicit_spectral_selection(config: &CliConfig) -> bool {
@@ -8437,6 +9774,114 @@ fn pb_support_mask_product(pb: &Array4<f32>, pb_limit: f32) -> ArrayD<bool> {
         .into_dyn()
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PrimaryBeamProductContext {
+    phase_center_direction_rad: [f64; 2],
+    primary_beam_model: PrimaryBeamModel,
+}
+
+fn needs_single_field_primary_beam_products(config: &CliConfig) -> bool {
+    config.pbcor || config.mosaic_pb_limit < 0.0
+}
+
+fn single_field_primary_beam_context(
+    ms: &MeasurementSet,
+    phase_center_direction_rad: [f64; 2],
+    samples: &[PreparedVisibilitySampleTrace],
+) -> Result<PrimaryBeamProductContext, String> {
+    Ok(PrimaryBeamProductContext {
+        phase_center_direction_rad,
+        primary_beam_model: infer_primary_beam_model(ms, samples)?,
+    })
+}
+
+fn single_field_primary_beam_product(
+    coords: &CoordinateSystem,
+    shape: (usize, usize, usize, usize),
+    channel_frequencies_hz: &[f64],
+    context: PrimaryBeamProductContext,
+) -> Result<Array4<f32>, String> {
+    let (nx, ny, nstokes, nchan) = shape;
+    let mut pb = Array4::<f32>::zeros(shape);
+    let pixel_axis_count = coords.n_pixel_axes();
+    if pixel_axis_count < 2 {
+        return Err("primary-beam product requires at least two direction pixel axes".to_string());
+    }
+    let fallback_frequency_hz = channel_frequencies_hz
+        .iter()
+        .copied()
+        .find(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
+        .ok_or_else(|| {
+            "primary-beam product requires a finite positive image frequency".to_string()
+        })?;
+    for channel_index in 0..nchan {
+        let frequency_hz = channel_frequencies_hz
+            .get(channel_index)
+            .copied()
+            .filter(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
+            .unwrap_or(fallback_frequency_hz);
+        let mut pixel = vec![0.0; pixel_axis_count];
+        if pixel_axis_count > 3 {
+            pixel[3] = channel_index as f64;
+        }
+        for x in 0..nx {
+            pixel[0] = x as f64;
+            for y in 0..ny {
+                pixel[1] = y as f64;
+                let world = coords
+                    .to_world(&pixel)
+                    .map_err(|error| format!("convert PB pixel ({x}, {y}) to world: {error}"))?;
+                if world.len() < 2 {
+                    return Err(
+                        "primary-beam product requires two direction world axes".to_string()
+                    );
+                }
+                let radius_rad = direction_separation_rad(
+                    [world[0], world[1]],
+                    context.phase_center_direction_rad,
+                );
+                let value = primary_beam_voltage_pattern(
+                    context.primary_beam_model,
+                    radius_rad,
+                    frequency_hz,
+                );
+                for stokes_index in 0..nstokes {
+                    pb[(x, y, stokes_index, channel_index)] = value;
+                }
+            }
+        }
+    }
+    Ok(pb)
+}
+
+fn single_field_primary_beam_alpha_product(
+    coords: &CoordinateSystem,
+    shape: (usize, usize, usize, usize),
+    reference_frequency_hz: f64,
+    context: PrimaryBeamProductContext,
+) -> Result<Array4<f32>, String> {
+    if !(reference_frequency_hz.is_finite() && reference_frequency_hz > 0.0) {
+        return Err(
+            "primary-beam alpha product requires a finite positive reference frequency".to_string(),
+        );
+    }
+    let lower_frequency_hz = reference_frequency_hz * 0.995;
+    let upper_frequency_hz = reference_frequency_hz * 1.005;
+    let log_frequency_ratio = (upper_frequency_hz / lower_frequency_hz).ln();
+    let lower = single_field_primary_beam_product(coords, shape, &[lower_frequency_hz], context)?;
+    let upper = single_field_primary_beam_product(coords, shape, &[upper_frequency_hz], context)?;
+    let mut alpha = Array4::<f32>::zeros(shape);
+    Zip::from(&mut alpha).and(&lower).and(&upper).for_each(
+        |alpha_value, lower_value, upper_value| {
+            if *lower_value > 0.0 && *upper_value > 0.0 {
+                *alpha_value =
+                    ((*upper_value as f64 / *lower_value as f64).ln() / log_frequency_ratio) as f32;
+            }
+        },
+    );
+    Ok(alpha)
+}
+
 #[derive(Debug, Clone)]
 enum EffectiveCleanMask {
     Plane(Array2<bool>),
@@ -8477,6 +9922,7 @@ fn write_products(
     coords: &CoordinateSystem,
     result: &RunProducts,
     clean_mask: Option<&EffectiveCleanMask>,
+    single_field_pb_context: Option<PrimaryBeamProductContext>,
 ) -> Result<(), String> {
     let base = config.imagename.to_string_lossy().to_string();
     let channel_frequencies_hz = result.channel_frequencies_hz();
@@ -8588,6 +10034,77 @@ fn write_products(
                 reffreq_hz,
             )?;
         }
+        if let (Some(context), Some(image_tt0)) =
+            (single_field_pb_context, result.image_terms.first())
+        {
+            let pb_product = single_field_primary_beam_product(
+                coords,
+                image_tt0.dim(),
+                channel_frequencies_hz,
+                context,
+            )?;
+            let limited_pb_product = pb_limited_product(&pb_product, config.mosaic_pb_limit);
+            let support_mask = pb_support_mask_product(&pb_product, config.mosaic_pb_limit);
+            write_single_product_inner(SingleProductWrite {
+                path: &PathBuf::from(format!("{base}.pb.tt0")),
+                data: &limited_pb_product,
+                coords,
+                units: "",
+                beam_set: ImageBeamSet::default(),
+                role: "pb",
+                plane_stokes,
+                channel_frequencies_hz,
+                reffreq_hz,
+                mask: Some(&support_mask),
+            })?;
+            if config.pbcor {
+                let pbcor_product =
+                    pb_correct_image_product(image_tt0, &pb_product, config.mosaic_pb_limit);
+                write_single_product_inner(SingleProductWrite {
+                    path: &PathBuf::from(format!("{base}.pbcor.image.tt0")),
+                    data: &pbcor_product,
+                    coords,
+                    units: result.compatibility.image_units.as_str(),
+                    beam_set: ImageBeamSet::default(),
+                    role: "pbcor.image",
+                    plane_stokes,
+                    channel_frequencies_hz,
+                    reffreq_hz,
+                    mask: Some(&support_mask),
+                })?;
+                if let Some(alpha) = result.alpha.as_ref() {
+                    let pb_alpha = single_field_primary_beam_alpha_product(
+                        coords,
+                        alpha.dim(),
+                        reffreq_hz,
+                        context,
+                    )?;
+                    let mut corrected_alpha = alpha.clone();
+                    Zip::from(&mut corrected_alpha)
+                        .and(&pb_alpha)
+                        .and(&pb_product)
+                        .for_each(|alpha_value, pb_alpha_value, pb_value| {
+                            if pb_value.is_finite() && *pb_value > config.mosaic_pb_limit {
+                                *alpha_value -= *pb_alpha_value;
+                            } else {
+                                *alpha_value = 0.0;
+                            }
+                        });
+                    write_single_product_inner(SingleProductWrite {
+                        path: &PathBuf::from(format!("{base}.pbcor.image.alpha")),
+                        data: &corrected_alpha,
+                        coords,
+                        units: "",
+                        beam_set: ImageBeamSet::default(),
+                        role: "pbcor.image.alpha",
+                        plane_stokes,
+                        channel_frequencies_hz,
+                        reffreq_hz,
+                        mask: Some(&support_mask),
+                    })?;
+                }
+            }
+        }
         if config.write_preview_pngs {
             if let Some(psf_tt0) = result.psf_terms.first() {
                 write_preview_png(&PathBuf::from(format!("{base}.psf.tt0.png")), psf_tt0)?;
@@ -8679,9 +10196,29 @@ fn write_products(
     let mosaic_pb_product = debug_weight_product
         .as_ref()
         .map(mosaic_pb_product_from_weight_product);
+    let single_field_pb_product = if debug_weight_product.is_none() {
+        if let Some(context) = single_field_pb_context {
+            Some(single_field_primary_beam_product(
+                coords,
+                image.dim(),
+                channel_frequencies_hz,
+                context,
+            )?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let mosaic_support_mask = mosaic_pb_product
         .as_ref()
         .map(|pb| pb_support_mask_product(pb, config.mosaic_pb_limit));
+    let single_field_support_mask = single_field_pb_product
+        .as_ref()
+        .map(|pb| pb_support_mask_product(pb, config.mosaic_pb_limit));
+    let output_support_mask = mosaic_support_mask
+        .as_ref()
+        .or(single_field_support_mask.as_ref());
     write_single_product(
         &PathBuf::from(format!("{base}.psf")),
         psf,
@@ -8703,7 +10240,7 @@ fn write_products(
         plane_stokes,
         channel_frequencies_hz,
         reffreq_hz,
-        mask: mosaic_support_mask.as_ref(),
+        mask: output_support_mask,
     })?;
     write_single_product(
         &PathBuf::from(format!("{base}.model")),
@@ -8726,7 +10263,7 @@ fn write_products(
         plane_stokes,
         channel_frequencies_hz,
         reffreq_hz,
-        mask: mosaic_support_mask.as_ref(),
+        mask: output_support_mask,
     })?;
     write_single_product(
         &PathBuf::from(format!("{base}.sumwt")),
@@ -8796,6 +10333,36 @@ fn write_products(
             })?;
         }
     }
+    if let Some(pb_product) = single_field_pb_product.as_ref() {
+        let limited_pb_product = pb_limited_product(pb_product, config.mosaic_pb_limit);
+        write_single_product_inner(SingleProductWrite {
+            path: &PathBuf::from(format!("{base}.pb")),
+            data: &limited_pb_product,
+            coords,
+            units: "",
+            beam_set: ImageBeamSet::default(),
+            role: "pb",
+            plane_stokes,
+            channel_frequencies_hz,
+            reffreq_hz,
+            mask: single_field_support_mask.as_ref(),
+        })?;
+        if config.pbcor {
+            let pbcor_product = pb_correct_image_product(image, pb_product, config.mosaic_pb_limit);
+            write_single_product_inner(SingleProductWrite {
+                path: &PathBuf::from(format!("{base}.image.pbcor")),
+                data: &pbcor_product,
+                coords,
+                units: image_units,
+                beam_set: ImageBeamSet::default(),
+                role: "image.pbcor",
+                plane_stokes,
+                channel_frequencies_hz,
+                reffreq_hz,
+                mask: single_field_support_mask.as_ref(),
+            })?;
+        }
+    }
 
     if config.write_preview_pngs {
         write_preview_png(&PathBuf::from(format!("{base}.psf.png")), psf)?;
@@ -8819,6 +10386,21 @@ fn write_products(
                 )?;
             }
         }
+        if let Some(pb_product) = single_field_pb_product.as_ref() {
+            let limited_pb_product = pb_limited_product(pb_product, config.mosaic_pb_limit);
+            write_preview_png(
+                &PathBuf::from(format!("{base}.pb.png")),
+                &limited_pb_product,
+            )?;
+            if config.pbcor {
+                let pbcor_product =
+                    pb_correct_image_product(image, pb_product, config.mosaic_pb_limit);
+                write_preview_png(
+                    &PathBuf::from(format!("{base}.image.pbcor.png")),
+                    &pbcor_product,
+                )?;
+            }
+        }
     }
 
     Ok(())
@@ -8830,16 +10412,6 @@ fn write_model_column(
     result: &RunProducts,
     trace: &PreparedVisibilityTraceBundle,
 ) -> Result<usize, String> {
-    let model_cube = match result {
-        RunProducts::Mfs(result) => result.model.clone(),
-        RunProducts::Mtmfs(_) => {
-            return Err(
-                "savemodel=modelcolumn does not yet support deconvolver='mtmfs'".to_string(),
-            );
-        }
-        RunProducts::Cube(products) => products.result.model.clone(),
-    };
-    let (_, _, _, model_channel_count) = model_cube.dim();
     let geometry = ImageGeometry {
         image_shape: [config.imsize, config.imsize],
         cell_size_rad: [
@@ -8847,14 +10419,7 @@ fn write_model_column(
             config.cell_arcsec * arcsec_to_rad(),
         ],
     };
-    let predictors = (0..model_channel_count)
-        .map(|channel_index| {
-            let model_plane = model_cube.slice(s![.., .., 0, channel_index]).to_owned();
-            StandardMfsModelPredictor::new(geometry, &model_plane).map_err(|error| {
-                format!("prepare MODEL_DATA predictor for channel {channel_index}: {error}")
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let predictors = ModelColumnPredictors::new(geometry, result)?;
     let created_model_data_column = ensure_model_data_column(ms)?;
 
     let mut rows = trace
@@ -8885,16 +10450,14 @@ fn write_model_column(
         let row_model = rows
             .get_mut(&sample.row_index)
             .expect("row model shape was just read");
-        let model_channel_index = sample.output_channel_index.unwrap_or(0);
-        let Some(predictor) = predictors.get(model_channel_index) else {
-            continue;
-        };
         for contribution in &sample.source_contributions {
             let lambda_scale = contribution.source_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-            let predicted = predictor.predict(
+            let predicted = predictors.predict(
+                sample.output_channel_index.unwrap_or(0),
+                contribution.source_frequency_hz,
                 sample.imaging_uvw_m[0] * lambda_scale,
                 sample.imaging_uvw_m[1] * lambda_scale,
-            );
+            )?;
             let predicted = phase_rotate_visibility(
                 predicted,
                 -sample.phase_shift_m,
@@ -8940,6 +10503,96 @@ fn write_model_column(
             })?;
     }
     Ok(written_samples)
+}
+
+enum ModelColumnPredictors {
+    Channel(Vec<StandardMfsModelPredictor>),
+    Taylor {
+        reffreq_hz: f64,
+        terms: Vec<StandardMfsModelPredictor>,
+    },
+}
+
+impl ModelColumnPredictors {
+    fn new(geometry: ImageGeometry, result: &RunProducts) -> Result<Self, String> {
+        match result {
+            RunProducts::Mfs(result) => Ok(Self::Channel(model_cube_predictors(
+                geometry,
+                &result.model,
+            )?)),
+            RunProducts::Cube(products) => Ok(Self::Channel(model_cube_predictors(
+                geometry,
+                &products.result.model,
+            )?)),
+            RunProducts::Mtmfs(result) => {
+                let terms = result
+                    .model_terms
+                    .iter()
+                    .enumerate()
+                    .map(|(term_index, model_term)| {
+                        let model_plane = model_term.slice(s![.., .., 0, 0]).to_owned();
+                        StandardMfsModelPredictor::new(geometry, &model_plane).map_err(|error| {
+                            format!("prepare MODEL_DATA MTMFS term {term_index}: {error}")
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Self::Taylor {
+                    reffreq_hz: result.compatibility.reffreq_hz,
+                    terms,
+                })
+            }
+        }
+    }
+
+    fn predict(
+        &self,
+        model_channel_index: usize,
+        frequency_hz: f64,
+        u_lambda: f64,
+        v_lambda: f64,
+    ) -> Result<Complex32, String> {
+        match self {
+            Self::Channel(predictors) => {
+                let Some(predictor) = predictors.get(model_channel_index) else {
+                    return Ok(Complex32::new(0.0, 0.0));
+                };
+                Ok(predictor.predict(u_lambda, v_lambda))
+            }
+            Self::Taylor { reffreq_hz, terms } => {
+                if !(frequency_hz.is_finite() && frequency_hz > 0.0) {
+                    return Ok(Complex32::new(0.0, 0.0));
+                }
+                if !(*reffreq_hz > 0.0 && reffreq_hz.is_finite()) {
+                    return Err(
+                        "MTMFS MODEL_DATA prediction requires finite positive reffreq".to_string(),
+                    );
+                }
+                let x = (frequency_hz - *reffreq_hz) / *reffreq_hz;
+                let mut scale = 1.0f32;
+                let mut predicted = Complex32::new(0.0, 0.0);
+                for term in terms {
+                    predicted += term.predict(u_lambda, v_lambda) * scale;
+                    scale *= x as f32;
+                }
+                Ok(predicted)
+            }
+        }
+    }
+}
+
+fn model_cube_predictors(
+    geometry: ImageGeometry,
+    model_cube: &Array4<f32>,
+) -> Result<Vec<StandardMfsModelPredictor>, String> {
+    let (_, _, _, model_channel_count) = model_cube.dim();
+    (0..model_channel_count)
+        .map(|channel_index| {
+            let model_plane = model_cube.slice(s![.., .., 0, channel_index]).to_owned();
+            StandardMfsModelPredictor::new(geometry, &model_plane).map_err(|error| {
+                format!("prepare MODEL_DATA predictor for channel {channel_index}: {error}")
+            })
+        })
+        .collect()
 }
 
 fn ensure_model_data_column(ms: &mut MeasurementSet) -> Result<bool, String> {
@@ -9437,6 +11090,16 @@ fn parse_hogbom_iteration_mode(text: &str) -> Result<HogbomIterationMode, String
             "unsupported --hogbom-iteration-mode value {text:?}; expected strict or casa"
         )),
     }
+}
+
+fn parse_nmajor(text: &str) -> Result<Option<usize>, String> {
+    let value = text
+        .parse::<isize>()
+        .map_err(|error| format!("parse --nmajor: {error}"))?;
+    if value < -1 {
+        return Err("invalid --nmajor value; expected -1 or a non-negative integer".to_string());
+    }
+    Ok((value >= 0).then_some(value as usize))
 }
 
 fn parse_multiscale_scales(text: &str) -> Result<Vec<f32>, String> {
@@ -10041,6 +11704,7 @@ fn gaussian_to_beamfit(beam: GaussianBeam) -> BeamFit {
 fn frontend_dirty_clean_config(psf_cutoff: f32) -> CleanConfig {
     CleanConfig {
         niter: 0,
+        major_cycle_limit: None,
         gain: 0.1,
         threshold_jy_per_beam: 0.0,
         nsigma: 0.0,
@@ -11992,6 +13656,7 @@ Options:
   --datacolumn NAME         DATA, CORRECTED_DATA, or MODEL_DATA
   --savemodel MODE          none or modelcolumn
   --startmodel PATH         CASA image used as the initial model for single-image MFS
+  --outlierfile PATH        CASA outlier-field definitions for supported dirty MFS image sets
   --corr XX|YY|RR|LL        explicit raw-correlation imaging
   --stokes I|Q|U|V          explicit scalar Stokes-plane imaging
   --specmode MODE           mfs, cube, or cubedata
@@ -12006,11 +13671,13 @@ Options:
   --smallscalebias VALUE    CASA multiscale bias in [-1, 1] (default 0.0)
   --robust VALUE            Briggs robust value in [-2, 2]
   --niter N                 minor-cycle iteration count
+  --nmajor N                major-cycle limit (-1 for unlimited; default -1)
+  --fullsummary             include long-form CASA-compatible summaryminor rows
   --gain VALUE              minor-cycle gain (default 0.1)
   --threshold-jy VALUE      absolute CLEAN threshold in Jy/beam
   --nsigma VALUE            robust-RMS stopping multiplier (default 0.0)
   --psfcutoff VALUE         PSF beam-fit cutoff fraction (default 0.35)
-  --pblimit VALUE           mosaic primary-beam cutoff for flat-noise normalization (default 0.2)
+  --pblimit VALUE           primary-beam cutoff; negative keeps PB products unmasked (default 0.2)
   --pbcor                   write mosaic primary-beam-corrected image products
   --minor-cycle-length N    residual refresh cadence (default 8)
   --cycleniter N            alias for --minor-cycle-length
@@ -12541,6 +14208,7 @@ mod tests {
             small_scale_bias: config.small_scale_bias,
             clean: CleanConfig {
                 niter: 0,
+                major_cycle_limit: None,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -12734,6 +14402,7 @@ mod tests {
             small_scale_bias: config.small_scale_bias,
             clean: CleanConfig {
                 niter: 0,
+                major_cycle_limit: None,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -12877,6 +14546,7 @@ mod tests {
             small_scale_bias: config.small_scale_bias,
             clean: CleanConfig {
                 niter: config.niter,
+                major_cycle_limit: None,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -13278,6 +14948,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -13331,6 +15003,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -13400,6 +15074,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -13461,6 +15137,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -13525,6 +15203,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -13586,6 +15266,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -13639,6 +15321,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -14210,6 +15894,7 @@ mod tests {
     fn frontend_cube_fixed_cycle_threshold_uses_casa_controller_threshold() {
         let clean = CleanConfig {
             niter: 32,
+            major_cycle_limit: None,
             gain: 0.1,
             threshold_jy_per_beam: 0.005,
             nsigma: 0.0,
@@ -14277,6 +15962,26 @@ mod tests {
     }
 
     #[test]
+    fn cli_accepts_negative_pblimit_for_unmasked_pb_products() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/demo"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+            OsString::from("--pblimit"),
+            OsString::from("-0.01"),
+        ])
+        .unwrap();
+
+        assert_eq!(config.mosaic_pb_limit, -0.01);
+        assert!(needs_single_field_primary_beam_products(&config));
+    }
+
+    #[test]
     fn pbcor_products_apply_primary_beam_cutoff() {
         let weight = Array2::from_shape_vec((2, 2), vec![4.0, 1.0, 0.04, 0.0]).unwrap();
         let pb = mosaic_pb_product_from_weight(&weight);
@@ -14302,6 +16007,39 @@ mod tests {
         assert!(support[[0, 1, 0, 0]]);
         assert!(!support[[1, 0, 0, 0]]);
         assert!(!support[[1, 1, 0, 0]]);
+    }
+
+    #[test]
+    fn single_field_primary_beam_product_uses_image_coordinates() {
+        let coords = build_coordinate_system(CoordinateSystemBuild {
+            imsize: 5,
+            phase_center: [1.0, 0.5],
+            cell_arcsec: 8.0,
+            freq_ref: FrequencyRef::LSRK,
+            direction_ref: DirectionRef::J2000,
+            plane_stokes: PlaneStokes::I,
+            channel_frequencies_hz: &[1.5e9],
+            requested_rest_frequency_hz: None,
+        });
+        let center_world = coords.to_world(&[2.0, 2.0, 0.0, 0.0]).unwrap();
+        let context = PrimaryBeamProductContext {
+            phase_center_direction_rad: [center_world[0], center_world[1]],
+            primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
+        };
+
+        let pb =
+            single_field_primary_beam_product(&coords, (5, 5, 1, 1), &[1.5e9], context).unwrap();
+        let pb_alpha =
+            single_field_primary_beam_alpha_product(&coords, (5, 5, 1, 1), 1.5e9, context).unwrap();
+
+        assert!(pb[[2, 2, 0, 0]] > 0.999);
+        assert!(pb[[0, 0, 0, 0]] > 0.0);
+        assert!(pb[[0, 0, 0, 0]] < pb[[2, 2, 0, 0]]);
+        assert!(pb_alpha[[0, 0, 0, 0]] < 0.0);
+        assert_eq!(
+            pb_limited_product(&pb, -0.01)[[0, 0, 0, 0]],
+            pb[[0, 0, 0, 0]]
+        );
     }
 
     #[test]
@@ -15217,22 +16955,70 @@ deconvolver=mtmfs
     }
 
     #[test]
-    fn outlier_file_request_rejects_multi_image_boundary_with_inventory() {
+    fn outlier_file_request_accepts_supported_dirty_mfs_slice() {
         let tmp = tempdir().unwrap();
         let path = tmp.path().join("outliers.txt");
         fs::write(
             &path,
-            "imagename=tst1\nimsize=[80,80]\nphasecenter=J2000 0deg 0deg\n",
+            "imagename=tst1\nimsize=[80,80]\ncell=[2.5arcsec,2.5arcsec]\nphasecenter=J2000 0deg 0deg\n",
         )
         .unwrap();
 
         let mut config =
             minimal_start_model_config(tmp.path().join("tiny.ms"), tmp.path().join("out"));
         config.outlier_file = Some(path);
-        let error = validate_outlier_file_request(&config).unwrap_err();
-        assert!(error.contains("defines 1 outlier image"));
-        assert!(error.contains("single-image frontend boundary"));
-        assert!(error.contains("imagename,imsize,cell,phasecenter,startmodel"));
+        let definitions = parse_outlier_file(config.outlier_file.as_deref().unwrap()).unwrap();
+        validate_outlier_execution_request(&config, &definitions).unwrap();
+        let outlier_config = outlier_config_from_definition(
+            &config,
+            &definitions[0],
+            config.outlier_file.as_deref().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(outlier_config.imagename, tmp.path().join("tst1"));
+        assert_eq!(outlier_config.imsize, 80);
+        assert_eq!(outlier_config.cell_arcsec, 2.5);
+        assert_eq!(
+            outlier_config.phasecenter.as_deref(),
+            Some("J2000 0deg 0deg")
+        );
+        assert_eq!(outlier_config.outlier_file, None);
+    }
+
+    #[test]
+    fn outlier_file_request_accepts_supported_joint_clean_slice() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("outliers.txt");
+        fs::write(&path, "imagename=tst1\nimsize=[80,80]\n").unwrap();
+
+        let mut config =
+            minimal_start_model_config(tmp.path().join("tiny.ms"), tmp.path().join("out"));
+        config.outlier_file = Some(path);
+        config.niter = 1;
+        let definitions = parse_outlier_file(config.outlier_file.as_deref().unwrap()).unwrap();
+        validate_outlier_execution_request(&config, &definitions).unwrap();
+    }
+
+    #[test]
+    fn outlier_file_request_accepts_vla_imaging_multiscale_modelcolumn_slice() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("outliers.txt");
+        fs::write(
+            &path,
+            "imagename=Outlier1\nimsize=[320,320]\nphasecenter=J2000 19:23:27.693 22.37.37.180\n",
+        )
+        .unwrap();
+
+        let mut config =
+            minimal_start_model_config(tmp.path().join("tiny.ms"), tmp.path().join("out"));
+        config.outlier_file = Some(path);
+        config.niter = 1000;
+        config.deconvolver = Deconvolver::Multiscale;
+        config.multiscale_scales = vec![0.0, 6.0, 10.0, 30.0, 60.0];
+        config.small_scale_bias = 0.9;
+        config.save_model = SaveModelMode::ModelColumn;
+        let definitions = parse_outlier_file(config.outlier_file.as_deref().unwrap()).unwrap();
+        validate_outlier_execution_request(&config, &definitions).unwrap();
     }
 
     fn minimal_start_model_config(ms: PathBuf, imagename: PathBuf) -> CliConfig {
@@ -15266,6 +17052,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -15552,6 +17340,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -15650,6 +17440,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -15744,6 +17536,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -15890,6 +17684,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -16016,6 +17812,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -16095,6 +17893,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -16206,6 +18006,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -16312,6 +18114,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -16400,6 +18204,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -16542,6 +18348,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -16636,6 +18444,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -16731,6 +18541,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -16821,6 +18633,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -16927,6 +18741,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -17041,6 +18857,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -17132,6 +18950,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -17366,6 +19186,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -17470,6 +19292,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -17591,6 +19415,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 4,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.2,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -17729,6 +19555,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 2,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.2,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -17834,6 +19662,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -17939,6 +19769,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 4,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.2,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -18063,6 +19895,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 6,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -18202,6 +20036,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 4,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.2,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -18319,6 +20155,8 @@ deconvolver=mtmfs
             multiscale_scales: vec![0.0, 3.0],
             small_scale_bias: 0.6,
             niter: 4,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.2,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -18435,6 +20273,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -18529,6 +20369,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -18617,6 +20459,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -18706,6 +20550,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -18798,6 +20644,8 @@ deconvolver=mtmfs
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 4,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.2,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -19026,6 +20874,7 @@ deconvolver=mtmfs
             small_scale_bias: config.small_scale_bias,
             clean: CleanConfig {
                 niter: 0,
+                major_cycle_limit: None,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -19463,6 +21312,7 @@ deconvolver=mtmfs
             small_scale_bias: config.small_scale_bias,
             clean: CleanConfig {
                 niter: 10,
+                major_cycle_limit: None,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -19582,6 +21432,7 @@ deconvolver=mtmfs
             small_scale_bias: config.small_scale_bias,
             clean: CleanConfig {
                 niter: 0,
+                major_cycle_limit: None,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -19672,6 +21523,7 @@ deconvolver=mtmfs
             small_scale_bias: config.small_scale_bias,
             clean: CleanConfig {
                 niter: 0,
+                major_cycle_limit: None,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -19814,6 +21666,7 @@ deconvolver=mtmfs
             small_scale_bias: config.small_scale_bias,
             clean: CleanConfig {
                 niter: config.niter,
+                major_cycle_limit: None,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -20027,6 +21880,7 @@ deconvolver=mtmfs
             small_scale_bias: config.small_scale_bias,
             clean: CleanConfig {
                 niter: config.niter,
+                major_cycle_limit: None,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,
@@ -20180,6 +22034,7 @@ deconvolver=mtmfs
             small_scale_bias: config.small_scale_bias,
             clean: CleanConfig {
                 niter: config.niter,
+                major_cycle_limit: None,
                 gain: config.gain,
                 threshold_jy_per_beam: config.threshold_jy,
                 nsigma: config.nsigma,

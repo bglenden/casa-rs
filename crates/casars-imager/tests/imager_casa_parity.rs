@@ -17,15 +17,16 @@ use casa_imaging::{
 use casa_ms::MeasurementSet;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_test_support::{
-    casa_source_root, casacore_source_root, casatestdata_path, discover_casa_python,
-    git_head_commit, gridder_interop::cpp_convolve_gridder_make_dirty_image_2d,
+    CasaTestDataTier, casa_source_root, casacore_source_root, casatestdata_path_for_tier,
+    discover_casa_python, git_head_commit,
+    gridder_interop::cpp_convolve_gridder_make_dirty_image_2d,
     hogbom_interop::cpp_hogbom_clean_minor_cycle_2d,
 };
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, ScalarValue};
 use casars_imager::{
-    CliConfig, RunSummary, build_prepare_plane_trace_from_config, run_from_config,
-    trace_cube_channel_residual_refresh_from_config,
+    CliConfig, ImagerRunTaskRequest, RunSummary, build_prepare_plane_trace_from_config,
+    run_from_config, trace_cube_channel_residual_refresh_from_config,
     trace_cube_channel_residual_refresh_from_config_with_model_cube,
     trace_cube_channel_residual_refresh_from_config_with_model_cube_model_channel_lambda,
 };
@@ -186,6 +187,235 @@ fn dirty_products_track_casa_headers_and_pixels() {
     assert!(
         casa_sumwt.is_finite() && casa_sumwt > 0.0,
         "expected positive CASA sumwt"
+    );
+}
+
+#[test]
+fn outlierfile_dirty_mfs_writes_main_and_outlier_products_like_casa() {
+    if !refim_twopoints_outlier_parity_available() {
+        eprintln!("{}", refim_twopoints_outlier_skip_reason());
+        return;
+    }
+
+    let ms_path = refim_twopoints_twochan_ms_path().expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "refim_twopoints_twochan.ms")
+        .expect("stage ms");
+    let rust_prefix = temp.path().join("rust-tst");
+    let rust_outlier_prefix = temp.path().join("rust-tst1");
+    let casa_prefix = temp.path().join("casa-tst");
+    let casa_outlier_prefix = temp.path().join("casa-tst1");
+    let rust_outlierfile = temp.path().join("rust-outliers.txt");
+    let casa_outlierfile = temp.path().join("casa-outliers.txt");
+    fs::write(
+        &rust_outlierfile,
+        casa_multifield_outlier_text(&rust_outlier_prefix),
+    )
+    .unwrap();
+    fs::write(
+        &casa_outlierfile,
+        casa_multifield_outlier_text(&casa_outlier_prefix),
+    )
+    .unwrap();
+
+    let rust_start = Instant::now();
+    run_rust_imager_outlierfile(&staged_ms_path, &rust_prefix, &rust_outlierfile)
+        .expect("run rust outlierfile imager");
+    let rust_elapsed = rust_start.elapsed();
+    let casa_start = Instant::now();
+    run_casa_tclean_outlierfile(&staged_ms_path, &casa_prefix, &casa_outlierfile)
+        .expect("run CASA outlierfile tclean");
+    let casa_elapsed = casa_start.elapsed();
+
+    compare_image_headers(
+        &rust_product(&rust_prefix, "residual"),
+        &casa_product(&casa_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+    compare_image_headers(
+        &rust_product(&rust_outlier_prefix, "residual"),
+        &casa_product(&casa_outlier_prefix, "residual"),
+        "Jy/beam",
+        true,
+    );
+
+    let rust_main_residual =
+        extract_channel_plane(&read_image(&rust_product(&rust_prefix, "residual")), 0);
+    let casa_main_residual =
+        extract_channel_plane(&read_image(&casa_product(&casa_prefix, "residual")), 0);
+    let rust_outlier_residual = extract_channel_plane(
+        &read_image(&rust_product(&rust_outlier_prefix, "residual")),
+        0,
+    );
+    let casa_outlier_residual = extract_channel_plane(
+        &read_image(&casa_product(&casa_outlier_prefix, "residual")),
+        0,
+    );
+    let main_stats = plane_difference_stats(&rust_main_residual, &casa_main_residual);
+    let outlier_stats = plane_difference_stats(&rust_outlier_residual, &casa_outlier_residual);
+    eprintln!(
+        "outlierfile dirty parity: rust_elapsed={:.3}s casa_elapsed={:.3}s main_rms={:.6e} main_max_abs={:.6e} main_corr={:.6e} outlier_rms={:.6e} outlier_max_abs={:.6e} outlier_corr={:.6e}",
+        rust_elapsed.as_secs_f64(),
+        casa_elapsed.as_secs_f64(),
+        main_stats.rms,
+        main_stats.max_abs,
+        main_stats.correlation,
+        outlier_stats.rms,
+        outlier_stats.max_abs,
+        outlier_stats.correlation,
+    );
+    assert_close(
+        casa_main_residual[(50, 50)],
+        1.04,
+        8.0e-2,
+        8.0e-2,
+        "CASA dirty peakres reference",
+    );
+    assert!(
+        main_stats.rms <= 5.0e-4 && main_stats.max_abs <= 5.0e-3,
+        "main outlierfile residual diverged: {main_stats:?}"
+    );
+    assert!(
+        outlier_stats.rms <= 2.0e-2
+            && outlier_stats.max_abs <= 1.5e-1
+            && outlier_stats.correlation >= 9.99e-1,
+        "outlier residual diverged: {outlier_stats:?}"
+    );
+}
+
+#[test]
+fn outlierfile_clean_mfs_updates_main_and_outlier_models_like_casa() {
+    if !refim_twopoints_outlier_parity_available() {
+        eprintln!("{}", refim_twopoints_outlier_skip_reason());
+        return;
+    }
+
+    let ms_path = refim_twopoints_twochan_ms_path().expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path = stage_measurement_set(&ms_path, temp.path(), "refim_twopoints_twochan.ms")
+        .expect("stage ms");
+    let rust_prefix = temp.path().join("rust-tst-clean");
+    let rust_outlier_prefix = temp.path().join("rust-tst-clean1");
+    let casa_prefix = temp.path().join("casa-tst-clean");
+    let casa_outlier_prefix = temp.path().join("casa-tst-clean1");
+    let rust_outlierfile = temp.path().join("rust-clean-outliers.txt");
+    let casa_outlierfile = temp.path().join("casa-clean-outliers.txt");
+    fs::write(
+        &rust_outlierfile,
+        casa_multifield_outlier_text(&rust_outlier_prefix),
+    )
+    .unwrap();
+    fs::write(
+        &casa_outlierfile,
+        casa_multifield_outlier_text(&casa_outlier_prefix),
+    )
+    .unwrap();
+
+    let rust_start = Instant::now();
+    let rust_summary = run_rust_imager_outlierfile_with_niter(
+        &staged_ms_path,
+        &rust_prefix,
+        &rust_outlierfile,
+        10,
+    )
+    .expect("run rust clean outlierfile imager");
+    let rust_elapsed = rust_start.elapsed();
+    let casa_start = Instant::now();
+    run_casa_tclean_outlierfile_with_niter(&staged_ms_path, &casa_prefix, &casa_outlierfile, 10)
+        .expect("run CASA clean outlierfile tclean");
+    let casa_elapsed = casa_start.elapsed();
+
+    let rust_main_model =
+        extract_channel_plane(&read_image(&rust_product(&rust_prefix, "model")), 0);
+    let casa_main_model =
+        extract_channel_plane(&read_image(&casa_product(&casa_prefix, "model")), 0);
+    let rust_outlier_model =
+        extract_channel_plane(&read_image(&rust_product(&rust_outlier_prefix, "model")), 0);
+    let casa_outlier_model =
+        extract_channel_plane(&read_image(&casa_product(&casa_outlier_prefix, "model")), 0);
+    let main_stats = plane_difference_stats(&rust_main_model, &casa_main_model);
+    let outlier_stats = plane_difference_stats(&rust_outlier_model, &casa_outlier_model);
+    let rust_main_image = read_image(&rust_product(&rust_prefix, "image"));
+    let casa_main_image = read_image(&casa_product(&casa_prefix, "image"));
+    let rust_outlier_image = read_image(&rust_product(&rust_outlier_prefix, "image"));
+    let casa_outlier_image = read_image(&casa_product(&casa_outlier_prefix, "image"));
+    let rust_main_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_main_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    eprintln!(
+        "outlierfile clean parity: rust_elapsed={:.3}s casa_elapsed={:.3}s rust_minor={} rust_major={} main_image_50_50={:.6e}/{:.6e} outlier_image_40_40={:.6e}/{:.6e} main_residual_30_18={:.6e}/{:.6e} main_model_rms={:.6e} main_model_max_abs={:.6e} outlier_model_rms={:.6e} outlier_model_max_abs={:.6e}",
+        rust_elapsed.as_secs_f64(),
+        casa_elapsed.as_secs_f64(),
+        rust_summary.minor_iterations,
+        rust_summary.major_cycles,
+        sample(&rust_main_image, 50, 50),
+        sample(&casa_main_image, 50, 50),
+        sample(&rust_outlier_image, 40, 40),
+        sample(&casa_outlier_image, 40, 40),
+        sample(&rust_main_residual, 30, 18),
+        sample(&casa_main_residual, 30, 18),
+        main_stats.rms,
+        main_stats.max_abs,
+        outlier_stats.rms,
+        outlier_stats.max_abs,
+    );
+    assert_close(
+        sample(&casa_main_image, 50, 50),
+        1.075,
+        2.0e-1,
+        2.0e-1,
+        "CASA multifield main image reference",
+    );
+    assert_close(
+        sample(&casa_outlier_image, 40, 40),
+        5.590,
+        5.0e-1,
+        5.0e-1,
+        "CASA multifield outlier image reference",
+    );
+    assert_close(
+        sample(&casa_main_residual, 30, 18),
+        0.04,
+        2.0e-1,
+        2.0e-1,
+        "CASA multifield main residual reference",
+    );
+    assert_close(
+        sample(&rust_main_image, 50, 50),
+        sample(&casa_main_image, 50, 50),
+        2.0e-2,
+        2.0e-2,
+        "Rust/CASA multifield main image",
+    );
+    assert_close(
+        sample(&rust_outlier_image, 40, 40),
+        sample(&casa_outlier_image, 40, 40),
+        2.0e-2,
+        2.0e-2,
+        "Rust/CASA multifield outlier image",
+    );
+    assert_close(
+        sample(&rust_main_residual, 30, 18),
+        sample(&casa_main_residual, 30, 18),
+        2.0e-2,
+        2.0e-2,
+        "Rust/CASA multifield main residual",
+    );
+    assert!(
+        main_stats.rms <= 5.0e-3,
+        "main outlierfile model diverged: {main_stats:?}"
+    );
+    assert!(
+        main_stats.max_abs <= 1.0e-5,
+        "main outlierfile model max delta diverged: {main_stats:?}"
+    );
+    assert!(
+        outlier_stats.rms <= 5.0e-3,
+        "outlier model diverged: {outlier_stats:?}"
+    );
+    assert!(
+        outlier_stats.max_abs <= 2.0e-3,
+        "outlier model max delta diverged: {outlier_stats:?}"
     );
 }
 
@@ -408,6 +638,279 @@ fn multi_channel_dirty_products_track_casa_headers_and_pixels() {
         0.08,
         0.1,
         true,
+    );
+}
+
+#[test]
+fn hogbom_mfs_nmajor_fullsummary_task_return_tracks_casa_on_refim_twochan() {
+    let case = ParityCase {
+        dataset_rel: "unittest/tclean/refim_twochan.ms",
+        field_ids: &[0],
+        phasecenter_field: Some(0),
+        spw: 0,
+        channel_start: 0,
+        channel_count: 2,
+        correlation: None,
+        weighting: WeightingMode::Natural,
+        imsize: 100,
+        cell_arcsec: 10.0,
+    };
+    if !parity_case_available(case) {
+        eprintln!("{}", skip_reason_for_case(case));
+        return;
+    }
+
+    let ms_path = dataset_path(case.dataset_rel).expect("dataset");
+    let temp = tempdir().expect("tempdir");
+    let staged_ms_path =
+        stage_measurement_set(&ms_path, temp.path(), "refim_twochan.ms").expect("stage ms");
+    let rust_prefix = temp.path().join("rust-refim-twochan-nmajor");
+    let casa_prefix = temp.path().join("casa-refim-twochan-nmajor");
+    let niter = 100usize;
+    let cycleniter = 10usize;
+    let nmajor = 3usize;
+    let threshold_jy = 0.01f32;
+
+    let config = CliConfig {
+        ms: staged_ms_path.clone(),
+        imagename: rust_prefix.clone(),
+        imsize: case.imsize,
+        cell_arcsec: case.cell_arcsec,
+        field_ids: Some(case.field_ids.to_vec()),
+        phasecenter_field: case.phasecenter_field,
+        phasecenter: None,
+        ddid: None,
+        spw: Some(case.spw),
+        spw_selector: Some(case.spw.to_string()),
+        channel_start: None,
+        channel_count: None,
+        datacolumn: Some("DATA".to_string()),
+        save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
+        correlation: case.correlation.map(str::to_string),
+        spectral_mode: casars_imager::SpectralMode::Mfs,
+        cube_axis: casa_ms::CubeAxisConfig::default(),
+        weighting: case.weighting,
+        per_channel_weight_density: false,
+        use_pointing: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter,
+        nmajor: Some(nmajor),
+        fullsummary: true,
+        gain: 0.1,
+        threshold_jy: threshold_jy,
+        nsigma: 0.0,
+        psf_cutoff: 0.35,
+        mosaic_pb_limit: 0.1,
+        pbcor: false,
+        minor_cycle_length: cycleniter,
+        cyclefactor: 1.0,
+        min_psf_fraction: 0.1,
+        max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::Strict,
+        use_mask: Default::default(),
+        auto_mask: Default::default(),
+        mask_boxes: Vec::new(),
+        mask_image: None,
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        dirty_only: false,
+        write_preview_pngs: false,
+    };
+
+    let rust_start = Instant::now();
+    let rust_result = ImagerRunTaskRequest::from_cli_config(&config)
+        .execute()
+        .expect("run Rust nmajor task");
+    let rust_elapsed = rust_start.elapsed();
+    let casa_start = Instant::now();
+    let casa_summary = run_casa_tclean_mfs_summary_with_nmajor(
+        case,
+        &staged_ms_path,
+        &casa_prefix,
+        niter,
+        cycleniter,
+        nmajor,
+        threshold_jy,
+        true,
+    )
+    .expect("run CASA nmajor task");
+    let casa_elapsed = casa_start.elapsed();
+
+    assert_eq!(rust_result.run.nmajordone, nmajor + 1);
+    assert_eq!(
+        casa_summary["nmajordone"].as_u64(),
+        Some((nmajor + 1) as u64)
+    );
+    assert_eq!(
+        rust_result.run.nmajordone as u64,
+        casa_summary["nmajordone"].as_u64().unwrap()
+    );
+    assert_eq!(rust_result.run.stopcode, 9);
+    assert_eq!(casa_summary["stopcode"].as_i64(), Some(9));
+    assert_eq!(
+        rust_result.run.iterdone as u64,
+        casa_summary["iterdone"].as_u64().unwrap()
+    );
+
+    let casa_traces = extract_casa_cube_minor_cycle_traces(&casa_summary).expect("CASA traces");
+    let casa_mfs_traces = casa_traces.first().cloned().unwrap_or_default();
+    assert_eq!(rust_result.run.summaryminor.len(), casa_mfs_traces.len());
+    for (rust_trace, casa_trace) in rust_result
+        .run
+        .summaryminor
+        .iter()
+        .zip(casa_mfs_traces.iter())
+    {
+        assert_eq!(rust_trace.channel_index, casa_trace.channel_index);
+        assert_eq!(rust_trace.iter_done, casa_trace.reported_updates);
+        assert_close(
+            rust_trace.start_peak_res_jy_per_beam.unwrap_or_default(),
+            casa_trace.start_peak_residual_jy_per_beam,
+            0.04,
+            0.08,
+            "nmajor fullsummary startPeakRes",
+        );
+        assert_close(
+            rust_trace.peak_res_jy_per_beam,
+            casa_trace.end_peak_residual_jy_per_beam,
+            0.04,
+            0.08,
+            "nmajor fullsummary peakRes",
+        );
+        assert_close(
+            rust_trace.cycle_threshold_jy_per_beam,
+            casa_trace.cycle_threshold_jy_per_beam,
+            0.04,
+            0.08,
+            "nmajor fullsummary cycleThresh",
+        );
+    }
+
+    let rust_model = read_image(&rust_product(&rust_prefix, "model"));
+    let casa_model = read_image(&casa_product(&casa_prefix, "model"));
+    let model_stats = image_difference_stats(&rust_model, &casa_model);
+    let rust_model_peak = peak_location(&rust_model).expect("rust model peak");
+    let casa_model_peak = peak_location(&casa_model).expect("casa model peak");
+    let rust_model_components = top_abs_components(&rust_model, 1.0e-6, 12);
+    let casa_model_components = top_abs_components(&casa_model, 1.0e-6, 12);
+    let rust_model_component_count = count_nonzero_pixels(&rust_model, 1.0e-6);
+    let casa_model_component_count = count_nonzero_pixels(&casa_model, 1.0e-6);
+    let rust_model_flux = sum_image(&rust_model);
+    let casa_model_flux = sum_image(&casa_model);
+    assert_eq!(
+        rust_model_peak, casa_model_peak,
+        "nmajor model peak component moved"
+    );
+    for (component_index, (rust_component, casa_component)) in rust_model_components
+        .iter()
+        .zip(casa_model_components.iter())
+        .take(6)
+        .enumerate()
+    {
+        assert_eq!(
+            (rust_component.x, rust_component.y, rust_component.channel),
+            (casa_component.x, casa_component.y, casa_component.channel),
+            "nmajor model component {component_index} moved"
+        );
+        assert_close(
+            rust_component.value,
+            casa_component.value,
+            1.0e-5,
+            1.0e-5,
+            &format!("nmajor model component {component_index} amplitude"),
+        );
+    }
+    assert_close(
+        rust_model_flux,
+        casa_model_flux,
+        3.0e-2,
+        3.0e-2,
+        "nmajor model integrated flux",
+    );
+    assert!(
+        model_stats.rms <= 2.0e-4
+            && model_stats.max_abs <= 1.0e-2
+            && model_stats.correlation >= 0.999,
+        "nmajor model image diverged: {model_stats:?}"
+    );
+
+    let rust_residual = read_image(&rust_product(&rust_prefix, "residual"));
+    let casa_residual = read_image(&casa_product(&casa_prefix, "residual"));
+    let residual_stats = image_difference_stats(&rust_residual, &casa_residual);
+    let rust_residual_peak = peak_location(&rust_residual).expect("rust residual peak");
+    let casa_residual_peak = peak_location(&casa_residual).expect("casa residual peak");
+    let rust_residual_peak_value =
+        sample(&rust_residual, rust_residual_peak.0, rust_residual_peak.1);
+    let casa_residual_peak_value =
+        sample(&casa_residual, casa_residual_peak.0, casa_residual_peak.1);
+    assert!(
+        residual_stats.correlation >= 0.995,
+        "nmajor residual correlation too low: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.rms <= 8.0e-3,
+        "nmajor residual RMS diff too large: {residual_stats:?}"
+    );
+    assert!(
+        residual_stats.max_abs <= 1.0e-1,
+        "nmajor residual max diff too large: {residual_stats:?}"
+    );
+
+    let rust_image = read_image(&rust_product(&rust_prefix, "image"));
+    let casa_image = read_image(&casa_product(&casa_prefix, "image"));
+    let image_stats = image_difference_stats(&rust_image, &casa_image);
+    assert!(
+        image_stats.correlation >= 0.995,
+        "nmajor restored image correlation too low: {image_stats:?}"
+    );
+    assert!(
+        image_stats.rms <= 8.0e-3,
+        "nmajor restored image RMS diff too large: {image_stats:?}"
+    );
+    assert!(
+        image_stats.max_abs <= 1.0e-1,
+        "nmajor restored image max diff too large: {image_stats:?}"
+    );
+    eprintln!(
+        "nmajor/fullsummary parity: rust iterdone={} nmajordone={} stopcode={} summaryminor={} elapsed={:.3}s; casa iterdone={} nmajordone={} stopcode={} summaryminor={} elapsed={:.3}s; model_rms={:.6e} model_max_abs={:.6e} model_corr={:.6e} model_flux={:.6e}/{:.6e} model_nonzero={}/{} model_peak={:?}/{:?} model_top={:?}/{:?}; residual_rms={:.6e} residual_max_abs={:.6e} residual_corr={:.6e} residual_peak={:?}/{:?} residual_peak_value={:.6e}/{:.6e}; image_rms={:.6e} image_max_abs={:.6e} image_corr={:.6e}",
+        rust_result.run.iterdone,
+        rust_result.run.nmajordone,
+        rust_result.run.stopcode,
+        rust_result.run.summaryminor.len(),
+        rust_elapsed.as_secs_f64(),
+        casa_summary["iterdone"].as_u64().unwrap_or_default(),
+        casa_summary["nmajordone"].as_u64().unwrap_or_default(),
+        casa_summary["stopcode"].as_i64().unwrap_or_default(),
+        casa_mfs_traces.len(),
+        casa_elapsed.as_secs_f64(),
+        model_stats.rms,
+        model_stats.max_abs,
+        model_stats.correlation,
+        rust_model_flux,
+        casa_model_flux,
+        rust_model_component_count,
+        casa_model_component_count,
+        rust_model_peak,
+        casa_model_peak,
+        rust_model_components,
+        casa_model_components,
+        residual_stats.rms,
+        residual_stats.max_abs,
+        residual_stats.correlation,
+        rust_residual_peak,
+        casa_residual_peak,
+        rust_residual_peak_value,
+        casa_residual_peak_value,
+        image_stats.rms,
+        image_stats.max_abs,
+        image_stats.correlation,
     );
 }
 
@@ -5314,6 +5817,8 @@ fn hogbom_cube_nsigma_late_block_inputs_track_casa_minor_cycle_snapshots() {
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 1_000_000,
+        nmajor: None,
+        fullsummary: false,
         gain: clean.gain,
         threshold_jy: clean.threshold_jy,
         nsigma: clean.nsigma,
@@ -5549,6 +6054,8 @@ fn hogbom_cube_nsigma_same_model_residual_refresh_tracks_casa_restart() {
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 1_000_000,
+        nmajor: None,
+        fullsummary: false,
         gain: clean.gain,
         threshold_jy: clean.threshold_jy,
         nsigma: clean.nsigma,
@@ -5679,6 +6186,8 @@ fn hogbom_cube_nsigma_internal_model_residual_refresh_matches_captured_state() {
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 1_000_000,
+        nmajor: None,
+        fullsummary: false,
         gain: clean.gain,
         threshold_jy: clean.threshold_jy,
         nsigma: clean.nsigma,
@@ -5828,6 +6337,8 @@ fn hogbom_cube_nsigma_full_cube_model_context_explains_late_restart_gap() {
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 1_000_000,
+        nmajor: None,
+        fullsummary: false,
         gain: clean.gain,
         threshold_jy: clean.threshold_jy,
         nsigma: clean.nsigma,
@@ -6063,6 +6574,8 @@ fn hogbom_cube_nsigma_block0_channel9_nearest_vs_linear_dirty_against_casa() {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: clean.gain,
             threshold_jy: clean.threshold_jy,
             nsigma: clean.nsigma,
@@ -6225,6 +6738,8 @@ fn hogbom_cube_nsigma_block0_channel9_casa_regridded_ms_isolates_spectral_seam()
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 0,
+        nmajor: None,
+        fullsummary: false,
         gain: clean.gain,
         threshold_jy: clean.threshold_jy,
         nsigma: clean.nsigma,
@@ -8393,6 +8908,11 @@ fn parity_case_available(case: ParityCase<'_>) -> bool {
         && dataset_path(case.dataset_rel).is_some()
 }
 
+fn refim_twopoints_outlier_parity_available() -> bool {
+    discover_casa_python().is_some_and(|python| python.tclean_available)
+        && refim_twopoints_twochan_ms_path().is_some()
+}
+
 fn skip_reason() -> String {
     match (discover_casa_python(), ngc5921_ms_path()) {
         (None, _) => {
@@ -8403,9 +8923,26 @@ fn skip_reason() -> String {
             python.program.display()
         ),
         (_, None) => {
-            "CASA imaging parity skipped: missing measurementset/vla/ngc5921.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, or ~/SoftwareProjects/casatestdata".to_string()
+            "CASA imaging parity skipped: missing measurementset/vla/ngc5921.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, ~/SoftwareProjects/casatestdata, or slow-parity /Volumes/home/casatestdata".to_string()
         }
         _ => "CASA imaging parity skipped".to_string(),
+    }
+}
+
+fn refim_twopoints_outlier_skip_reason() -> String {
+    match (discover_casa_python(), refim_twopoints_twochan_ms_path()) {
+        (None, _) => {
+            "CASA multifield outlier parity skipped: no CASA-capable python with tclean was found"
+                .to_string()
+        }
+        (Some(python), _) if !python.tclean_available => format!(
+            "CASA multifield outlier parity skipped: {} can import casatasks but does not expose tclean",
+            python.program.display()
+        ),
+        (_, None) => {
+            "CASA multifield outlier parity skipped: missing unittest/tclean/refim_twopoints_twochan.ms or measurementset/vla/refim_twopoints_twochan.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, ~/SoftwareProjects/casatestdata, or slow-parity /Volumes/home/casatestdata".to_string()
+        }
+        _ => "CASA multifield outlier parity skipped".to_string(),
     }
 }
 
@@ -8419,7 +8956,7 @@ fn skip_reason_for_case(case: ParityCase<'_>) -> String {
             python.program.display()
         ),
         (_, None) => format!(
-            "CASA imaging parity skipped: missing {} under CASA_RS_TESTDATA_ROOT, ../casatestdata, or ~/SoftwareProjects/casatestdata",
+            "CASA imaging parity skipped: missing {} under CASA_RS_TESTDATA_ROOT, ../casatestdata, ~/SoftwareProjects/casatestdata, or slow-parity /Volumes/home/casatestdata",
             case.dataset_rel
         ),
         _ => "CASA imaging parity skipped".to_string(),
@@ -8427,7 +8964,12 @@ fn skip_reason_for_case(case: ParityCase<'_>) -> String {
 }
 
 fn ngc5921_ms_path() -> Option<PathBuf> {
-    casatestdata_path("measurementset/vla/ngc5921.ms").filter(|path| path.exists())
+    slow_casatestdata_path("measurementset/vla/ngc5921.ms").filter(|path| path.exists())
+}
+
+fn refim_twopoints_twochan_ms_path() -> Option<PathBuf> {
+    dataset_path("measurementset/vla/refim_twopoints_twochan.ms")
+        .or_else(|| dataset_path("unittest/tclean/refim_twopoints_twochan.ms"))
 }
 
 fn dataset_path(relative: &str) -> Option<PathBuf> {
@@ -8437,17 +8979,29 @@ fn dataset_path(relative: &str) -> Option<PathBuf> {
 }
 
 fn dataset_candidates(relative: &str) -> Vec<PathBuf> {
-    let mut candidates = casatestdata_path(relative).into_iter().collect::<Vec<_>>();
+    let mut candidates = slow_casatestdata_path(relative)
+        .into_iter()
+        .collect::<Vec<_>>();
     if relative == "unittest/tclean/refim_eptwochan.ms" {
-        candidates.extend(casatestdata_path("measurementset/evla/refim_eptwochan.ms"));
+        candidates.extend(slow_casatestdata_path(
+            "measurementset/evla/refim_eptwochan.ms",
+        ));
+    } else if relative == "unittest/tclean/refim_twopoints_twochan.ms" {
+        candidates.extend(slow_casatestdata_path(
+            "measurementset/vla/refim_twopoints_twochan.ms",
+        ));
     } else if relative == "unittest/tclean/refim_point.ms" {
-        candidates.extend(casatestdata_path("measurementset/vla/refim_point.ms"));
+        candidates.extend(slow_casatestdata_path("measurementset/vla/refim_point.ms"));
     } else if relative == "unittest/tclean/refim_point_descendingfreqs.ms" {
-        candidates.extend(casatestdata_path(
+        candidates.extend(slow_casatestdata_path(
             "measurementset/vla/refim_point_descendingfreqs.ms",
         ));
     }
     candidates
+}
+
+fn slow_casatestdata_path(relative: &str) -> Option<PathBuf> {
+    casatestdata_path_for_tier(CasaTestDataTier::SlowParity, relative)
 }
 
 fn stage_measurement_set(ms_path: &Path, temp_root: &Path, name: &str) -> Result<PathBuf, String> {
@@ -8627,6 +9181,8 @@ fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<()
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 4,
+        nmajor: None,
+        fullsummary: false,
         gain: 0.1,
         threshold_jy: 0.0,
         nsigma: 0.0,
@@ -8648,6 +9204,82 @@ fn run_rust_imager(ms_path: &Path, prefix: &Path, dirty_only: bool) -> Result<()
         write_preview_pngs: false,
     })
     .map(|_| ())
+}
+
+fn run_rust_imager_outlierfile(
+    ms_path: &Path,
+    prefix: &Path,
+    outlierfile: &Path,
+) -> Result<RunSummary, String> {
+    run_rust_imager_outlierfile_with_niter(ms_path, prefix, outlierfile, 0)
+}
+
+fn casa_multifield_outlier_text(prefix: &Path) -> String {
+    format!(
+        "imagename={}\nnchan=1\nimsize=[80,80]\ncell=[8.0arcsec,8.0arcsec]\nphasecenter=J2000 19:58:40.895 +40.55.58.543\nusemask=user\nmask=circle[[40pix,40pix],10pix]\n",
+        prefix.display()
+    )
+}
+
+fn run_rust_imager_outlierfile_with_niter(
+    ms_path: &Path,
+    prefix: &Path,
+    outlierfile: &Path,
+    niter: usize,
+) -> Result<RunSummary, String> {
+    let _ = (casa_source_root(), casacore_source_root());
+    run_from_config(&CliConfig {
+        ms: ms_path.to_path_buf(),
+        imagename: prefix.to_path_buf(),
+        imsize: 100,
+        cell_arcsec: 8.0,
+        field_ids: None,
+        phasecenter_field: None,
+        phasecenter: Some("J2000 19:59:28.500 +40.44.01.50".to_string()),
+        ddid: None,
+        spw: None,
+        spw_selector: None,
+        channel_start: None,
+        channel_count: None,
+        datacolumn: None,
+        save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: Some(outlierfile.to_path_buf()),
+        correlation: None,
+        spectral_mode: casars_imager::SpectralMode::Mfs,
+        cube_axis: casa_ms::CubeAxisConfig::default(),
+        weighting: WeightingMode::Natural,
+        per_channel_weight_density: false,
+        use_pointing: false,
+        uv_taper: None,
+        restoring_beam_mode: RestoringBeamMode::PerPlane,
+        deconvolver: Deconvolver::Hogbom,
+        nterms: 1,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        niter,
+        nmajor: None,
+        fullsummary: false,
+        gain: 0.1,
+        threshold_jy: 0.0,
+        nsigma: 0.0,
+        psf_cutoff: 0.35,
+        mosaic_pb_limit: 0.1,
+        pbcor: false,
+        minor_cycle_length: niter.max(1),
+        cyclefactor: 1.0,
+        min_psf_fraction: 0.1,
+        max_psf_fraction: 0.8,
+        hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+        use_mask: Default::default(),
+        auto_mask: Default::default(),
+        mask_boxes: Vec::new(),
+        mask_image: None,
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        dirty_only: false,
+        write_preview_pngs: false,
+    })
 }
 
 fn run_rust_imager_savemodel(ms_path: &Path, prefix: &Path) -> Result<(), String> {
@@ -8682,6 +9314,8 @@ fn run_rust_imager_savemodel(ms_path: &Path, prefix: &Path) -> Result<(), String
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 4,
+        nmajor: None,
+        fullsummary: false,
         gain: 0.1,
         threshold_jy: 0.0,
         nsigma: 0.0,
@@ -8742,6 +9376,8 @@ fn run_rust_imager_startmodel(
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter,
+        nmajor: None,
+        fullsummary: false,
         gain: 0.1,
         threshold_jy: 0.0,
         nsigma: 0.0,
@@ -8879,6 +9515,8 @@ fn run_rust_imager_case_with_explicit_phasecenter_and_w_term_mode(
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter,
+        nmajor: None,
+        fullsummary: false,
         gain: 0.1,
         threshold_jy: 0.0,
         nsigma: 0.0,
@@ -8944,6 +9582,8 @@ fn run_rust_imager_case_with_solver_and_w_term_mode(
         multiscale_scales: multiscale_scales.to_vec(),
         small_scale_bias: 0.0,
         niter,
+        nmajor: None,
+        fullsummary: false,
         gain: 0.1,
         threshold_jy: 0.0,
         nsigma: 0.0,
@@ -9006,6 +9646,8 @@ fn run_rust_imager_case_with_mtmfs(
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter,
+        nmajor: None,
+        fullsummary: false,
         gain: 0.1,
         threshold_jy: 0.0,
         nsigma: 0.0,
@@ -9143,6 +9785,8 @@ fn run_rust_imager_cube_task_default_case_with_clean_controls(
         multiscale_scales: multiscale_scales.to_vec(),
         small_scale_bias,
         niter,
+        nmajor: None,
+        fullsummary: false,
         gain: clean.gain,
         threshold_jy: clean.threshold_jy,
         nsigma: clean.nsigma,
@@ -9255,6 +9899,8 @@ fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
         multiscale_scales: multiscale_scales.to_vec(),
         small_scale_bias,
         niter,
+        nmajor: None,
+        fullsummary: false,
         gain: 0.1,
         threshold_jy,
         nsigma: 0.0,
@@ -9417,6 +10063,8 @@ fn run_rust_imager_spectral_cube_case_with_options_and_weighting(
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter,
+        nmajor: None,
+        fullsummary: false,
         gain: 0.1,
         threshold_jy: 0.0,
         nsigma: 0.0,
@@ -9486,6 +10134,72 @@ tclean(
         .map_err(|error| format!("spawn casa tclean: {error}"))?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    if let (Some(casa_root), Some(casacore_root)) = (casa_source_root(), casacore_source_root()) {
+        eprintln!(
+            "CASA imaging parity used casa={} casacore={}",
+            git_head_commit(&casa_root).unwrap_or_else(|| "unknown".to_string()),
+            git_head_commit(&casacore_root).unwrap_or_else(|| "unknown".to_string())
+        );
+    }
+    Ok(())
+}
+
+fn run_casa_tclean_outlierfile(
+    ms_path: &Path,
+    prefix: &Path,
+    outlierfile: &Path,
+) -> Result<(), String> {
+    run_casa_tclean_outlierfile_with_niter(ms_path, prefix, outlierfile, 0)
+}
+
+fn run_casa_tclean_outlierfile_with_niter(
+    ms_path: &Path,
+    prefix: &Path,
+    outlierfile: &Path,
+    niter: usize,
+) -> Result<(), String> {
+    let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
+    let casa = discover_casa_python().ok_or_else(skip_reason)?;
+    let prefix_text = prefix
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 imagename prefix {}", prefix.display()))?;
+    let outlierfile_text = outlierfile
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 outlierfile {}", outlierfile.display()))?;
+    let script = r#"
+import os
+from casatasks import tclean
+tclean(
+    vis=os.environ["CASA_VIS"],
+    imagename=os.environ["CASA_IMAGENAME"],
+    imsize=100,
+    cell="8.0arcsec",
+    phasecenter="J2000 19:59:28.500 +40.44.01.50",
+    outlierfile=os.environ["CASA_OUTLIERFILE"],
+    niter=int(os.environ["CASA_NITER"]),
+    deconvolver="hogbom",
+    parallel=False,
+    fullsummary=os.environ["CASA_FULLSUMMARY"] == "1",
+)
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_IMAGENAME", prefix_text)
+        .env("CASA_OUTLIERFILE", outlierfile_text)
+        .env("CASA_NITER", niter.to_string())
+        .env("CASA_FULLSUMMARY", if niter == 0 { "1" } else { "0" })
+        .output()
+        .map_err(|error| format!("spawn casa tclean outlierfile: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "casa tclean outlierfile failed with status {}:\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     if let (Some(casa_root), Some(casacore_root)) = (casa_source_root(), casacore_source_root()) {
         eprintln!(
@@ -9860,6 +10574,106 @@ fn run_casa_tclean_case(
     niter: usize,
 ) -> Result<(), String> {
     run_casa_tclean_case_with_solver(case, ms_path, prefix, niter, "hogbom", &[])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_casa_tclean_mfs_summary_with_nmajor(
+    case: ParityCase<'_>,
+    ms_path: &Path,
+    prefix: &Path,
+    niter: usize,
+    cycleniter: usize,
+    nmajor: usize,
+    threshold_jy: f32,
+    fullsummary: bool,
+) -> Result<Value, String> {
+    let _guard = casa_tclean_lock().lock().expect("lock CASA tclean");
+    let casa = discover_casa_python().ok_or_else(|| skip_reason_for_case(case))?;
+    let prefix_text = prefix
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 imagename prefix {}", prefix.display()))?;
+    let script = r#"
+import json
+import os
+from casatasks import tclean
+ret = tclean(
+    vis=os.environ["CASA_VIS"],
+    imagename=os.environ["CASA_IMAGENAME"],
+    datacolumn="data",
+    field=os.environ["CASA_FIELD"],
+    phasecenter=int(os.environ["CASA_PHASECENTER"]),
+    spw=os.environ["CASA_SPW"],
+    stokes=os.environ["CASA_STOKES"],
+    specmode="mfs",
+    gridder="standard",
+    weighting=os.environ["CASA_WEIGHTING"],
+    deconvolver="hogbom",
+    nterms=1,
+    imsize=int(os.environ["CASA_IMSIZE"]),
+    cell=f'{os.environ["CASA_CELL_ARCSEC"]}arcsec',
+    niter=int(os.environ["CASA_NITER"]),
+    nmajor=int(os.environ["CASA_NMAJOR"]),
+    cycleniter=int(os.environ["CASA_CYCLENITER"]),
+    robust=float(os.environ["CASA_ROBUST"]),
+    gain=0.1,
+    threshold=os.environ["CASA_THRESHOLD"],
+    cyclefactor=1.0,
+    minpsffraction=0.1,
+    maxpsffraction=0.8,
+    restoration=True,
+    calcpsf=True,
+    calcres=True,
+    restart=True,
+    interactive=False,
+    parallel=False,
+    pbcor=False,
+    usemask="user",
+    mask="",
+    savemodel="none",
+    psfcutoff=0.35,
+    fullsummary=os.environ["CASA_FULLSUMMARY"] == "1",
+)
+print(json.dumps({
+    "iterdone": int(ret.get("iterdone", 0)),
+    "nmajordone": int(ret.get("nmajordone", 0)),
+    "stopcode": int(ret.get("stopcode", 0)),
+    "summaryminor": ret.get("summaryminor"),
+}))
+"#;
+    let output = Command::new(&casa.program)
+        .arg("-c")
+        .arg(script)
+        .env("CASA_VIS", ms_path)
+        .env("CASA_IMAGENAME", prefix_text)
+        .env("CASA_FIELD", case.field_selector())
+        .env(
+            "CASA_PHASECENTER",
+            case.default_phasecenter_field().to_string(),
+        )
+        .env("CASA_SPW", case.spw.to_string())
+        .env("CASA_STOKES", case.stokes())
+        .env("CASA_WEIGHTING", case.casa_weighting())
+        .env("CASA_ROBUST", case.robust().unwrap_or(0.5).to_string())
+        .env("CASA_IMSIZE", case.imsize.to_string())
+        .env("CASA_CELL_ARCSEC", case.cell_arcsec.to_string())
+        .env("CASA_NITER", niter.to_string())
+        .env("CASA_NMAJOR", nmajor.to_string())
+        .env("CASA_CYCLENITER", cycleniter.to_string())
+        .env("CASA_THRESHOLD", format!("{threshold_jy}Jy"))
+        .env("CASA_FULLSUMMARY", if fullsummary { "1" } else { "0" })
+        .output()
+        .map_err(|error| format!("spawn casa tclean: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let summary_line = stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "missing CASA mfs tclean JSON summary".to_string())?;
+    serde_json::from_str(summary_line)
+        .map_err(|error| format!("decode casa mfs tclean summary: {error}; stdout={stdout}"))
 }
 
 fn run_casa_tclean_case_with_deconvolver(
@@ -12186,6 +13000,47 @@ fn image_difference_stats(left: &ArrayD<f32>, right: &ArrayD<f32>) -> ImageDiffe
 
 fn count_nonzero_pixels(image: &ArrayD<f32>, threshold: f32) -> usize {
     image.iter().filter(|value| value.abs() > threshold).count()
+}
+
+fn sum_image(image: &ArrayD<f32>) -> f32 {
+    image.iter().copied().sum()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ModelComponent {
+    x: usize,
+    y: usize,
+    channel: usize,
+    value: f32,
+}
+
+fn top_abs_components(image: &ArrayD<f32>, threshold: f32, limit: usize) -> Vec<ModelComponent> {
+    let mut components = image
+        .indexed_iter()
+        .filter_map(|(index, value)| {
+            if value.abs() <= threshold {
+                return None;
+            }
+            Some(ModelComponent {
+                x: index[0],
+                y: index[1],
+                channel: index[3],
+                value: *value,
+            })
+        })
+        .collect::<Vec<_>>();
+    components.sort_by(|left, right| {
+        right
+            .value
+            .abs()
+            .partial_cmp(&left.value.abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.x.cmp(&right.x))
+            .then_with(|| left.y.cmp(&right.y))
+            .then_with(|| left.channel.cmp(&right.channel))
+    });
+    components.truncate(limit);
+    components
 }
 
 fn peak_location(image: &ArrayD<f32>) -> Option<(usize, usize)> {

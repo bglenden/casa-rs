@@ -920,8 +920,8 @@ pub struct ImmathRequest {
     pub imagename: Vec<PathBuf>,
     /// Output CASA image path.
     pub outfile: PathBuf,
-    /// Expression to evaluate. This implementation supports the M100 tutorial
-    /// forms `IM0 * IM1` and `IM0 / IM1`.
+    /// Expression to evaluate. This implementation supports tutorial forms
+    /// `IM0 * IM1`, `IM0 / IM1`, and scalar multiples of `IM0`.
     pub expr: String,
     /// Replace an existing output image.
     #[serde(default)]
@@ -1392,24 +1392,47 @@ pub fn imsubimage(request: &ImsubimageRequest) -> Result<ImageSubimageSummary, I
 
 /// Evaluate a tutorial-scoped CASA `immath(..., mode="evalexpr")` expression.
 pub fn immath(request: &ImmathRequest) -> Result<ImageMathSummary, ImageError> {
-    if request.imagename.len() != 2 {
-        return Err(ImageError::InvalidMetadata(
-            "immath tutorial support currently requires exactly two input images".to_string(),
-        ));
-    }
-    let lhs = AnyPagedImage::open(&request.imagename[0])?;
-    let rhs = AnyPagedImage::open(&request.imagename[1])?;
-    match (&lhs, &rhs) {
-        (AnyPagedImage::Float32(lhs), AnyPagedImage::Float32(rhs)) => {
-            immath_typed(lhs, rhs, request)
+    let op = parse_tutorial_immath_expr(&request.expr)?;
+    match request.imagename.len() {
+        1 => {
+            let lhs = AnyPagedImage::open(&request.imagename[0])?;
+            match (&lhs, op) {
+                (AnyPagedImage::Float32(lhs), TutorialMathOp::Scale(factor)) => {
+                    immath_unary_typed(lhs, request, factor)
+                }
+                (AnyPagedImage::Float64(lhs), TutorialMathOp::Scale(factor)) => {
+                    immath_unary_typed(lhs, request, factor)
+                }
+                (_, TutorialMathOp::Multiply | TutorialMathOp::Divide) => {
+                    Err(ImageError::InvalidMetadata(
+                        "binary immath expressions require two input images".to_string(),
+                    ))
+                }
+                _ => Err(ImageError::InvalidMetadata(
+                    "immath tutorial support currently requires real-valued pixel types"
+                        .to_string(),
+                )),
+            }
         }
-        (AnyPagedImage::Float64(lhs), AnyPagedImage::Float64(rhs)) => {
-            immath_typed(lhs, rhs, request)
+        2 => {
+            let lhs = AnyPagedImage::open(&request.imagename[0])?;
+            let rhs = AnyPagedImage::open(&request.imagename[1])?;
+            match (&lhs, &rhs, op) {
+                (AnyPagedImage::Float32(lhs), AnyPagedImage::Float32(rhs), op) => {
+                    immath_typed(lhs, rhs, request, op)
+                }
+                (AnyPagedImage::Float64(lhs), AnyPagedImage::Float64(rhs), op) => {
+                    immath_typed(lhs, rhs, request, op)
+                }
+                _ => Err(ImageError::InvalidMetadata(
+                    "immath tutorial support currently requires matching real-valued pixel types"
+                        .to_string(),
+                )),
+            }
         }
-        _ => Err(ImageError::InvalidMetadata(
-            "immath tutorial support currently requires matching real-valued pixel types"
-                .to_string(),
-        )),
+        count => Err(ImageError::InvalidMetadata(format!(
+            "immath tutorial support currently requires one or two input images, got {count}"
+        ))),
     }
 }
 
@@ -1708,6 +1731,32 @@ impl PixelTypeLabel for PagedImage<f64> {
     fn pixel_type_label(&self) -> String {
         "Float64".to_string()
     }
+}
+
+/// Apply the CASA tutorial-supported `imhead(..., mode="put")` metadata update.
+pub fn imhead_put(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: impl Into<String>,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    let hdkey = hdkey.trim();
+    let hdvalue = hdvalue.into();
+    if !hdkey.eq_ignore_ascii_case("bunit") {
+        return Err(ImageError::InvalidMetadata(format!(
+            "imhead mode='put' only supports hdkey='bunit' for this tutorial slice, got {hdkey:?}"
+        )));
+    }
+
+    let mut image = AnyPagedImage::open(path)?;
+    match &mut image {
+        AnyPagedImage::Float32(image) => image.set_units(hdvalue)?,
+        AnyPagedImage::Float64(image) => image.set_units(hdvalue)?,
+        AnyPagedImage::Complex32(image) => image.set_units(hdvalue)?,
+        AnyPagedImage::Complex64(image) => image.set_units(hdvalue)?,
+    }
+    image.save()?;
+    imhead(path)
 }
 
 fn imhead_typed<T>(
@@ -2362,6 +2411,7 @@ fn immath_typed<T>(
     lhs: &PagedImage<T>,
     rhs: &PagedImage<T>,
     request: &ImmathRequest,
+    op: TutorialMathOp,
 ) -> Result<ImageMathSummary, ImageError>
 where
     T: ImagePixel + Into<f64> + From<f32> + Copy,
@@ -2383,7 +2433,6 @@ where
             )));
         }
     }
-    let op = parse_tutorial_immath_expr(&request.expr)?;
     let shape = lhs.shape().to_vec();
     let origin = vec![0; lhs.ndim()];
     let left = lhs.get_slice(&origin, &shape)?;
@@ -2408,6 +2457,7 @@ where
                         lhs / rhs
                     }
                 }
+                TutorialMathOp::Scale(_) => unreachable!("scale expressions use unary immath"),
             };
             *valid = value.is_finite();
             *out = T::from(value as f32);
@@ -2450,10 +2500,77 @@ where
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+fn immath_unary_typed<T>(
+    image: &PagedImage<T>,
+    request: &ImmathRequest,
+    factor: f64,
+) -> Result<ImageMathSummary, ImageError>
+where
+    T: ImagePixel + Into<f64> + From<f32> + Copy,
+{
+    if request.outfile.exists() {
+        if request.overwrite {
+            fs::remove_dir_all(&request.outfile)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+        } else {
+            return Err(ImageError::Io(format!(
+                "immath output already exists: {}",
+                request.outfile.display()
+            )));
+        }
+    }
+    let shape = image.shape().to_vec();
+    let origin = vec![0; image.ndim()];
+    let input = image.get_slice(&origin, &shape)?;
+    let input_mask = image.get_mask_slice(&origin, &shape, &vec![1; image.ndim()])?;
+    let mut data = ArrayD::from_elem(IxDyn(&shape), T::from(0.0));
+    let mut valid = ndarray::ArrayD::from_elem(IxDyn(&shape), true);
+    Zip::from(&mut data)
+        .and(&mut valid)
+        .and(&input)
+        .for_each(|out, valid, input| {
+            let value = (*input).into() * factor;
+            *valid = value.is_finite();
+            *out = T::from(value as f32);
+        });
+    if let Some(mask) = input_mask {
+        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
+            *valid = *valid && *mask;
+        });
+    }
+    let mut output = TempImage::<T>::new(shape.clone(), image.coordinates().clone())?;
+    let legacy_coordinates = image.table().keywords().get("coords").cloned();
+    output.set_units(image.units())?;
+    output.set_image_info(&image.image_info()?)?;
+    output.set_misc_info(image.misc_info())?;
+    output.put_slice(&data, &vec![0; output.ndim()])?;
+    if valid.iter().any(|pixel| !*pixel) {
+        output.put_mask("mask0", &valid)?;
+        output.set_default_mask("mask0")?;
+    }
+    output.save_as(&request.outfile)?;
+    if let Some(Value::Record(coords)) = legacy_coordinates {
+        patch_saved_coords_keyword(&request.outfile, coords)?;
+    }
+    Ok(ImageMathSummary {
+        imagename: request
+            .imagename
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        outfile: request.outfile.display().to_string(),
+        expr: request.expr.clone(),
+        shape,
+        units: image.units().to_string(),
+        valid_pixels: valid.iter().filter(|pixel| **pixel).count(),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum TutorialMathOp {
     Multiply,
     Divide,
+    Scale(f64),
 }
 
 fn parse_tutorial_immath_expr(expr: &str) -> Result<TutorialMathOp, ImageError> {
@@ -2465,9 +2582,101 @@ fn parse_tutorial_immath_expr(expr: &str) -> Result<TutorialMathOp, ImageError> 
     match normalized.as_str() {
         "IM0*IM1" => Ok(TutorialMathOp::Multiply),
         "IM0/IM1" => Ok(TutorialMathOp::Divide),
+        _ if normalized.contains("IM0") && !normalized.contains("IM1") => {
+            let factor_expr = normalized.replace("IM0", "1");
+            parse_scalar_factor_expr(&factor_expr).map(TutorialMathOp::Scale)
+        }
         _ => Err(ImageError::InvalidMetadata(format!(
-            "unsupported tutorial immath expression {expr:?}; supported forms are IM0 * IM1 and IM0 / IM1"
+            "unsupported tutorial immath expression {expr:?}; supported forms are IM0 * IM1, IM0 / IM1, and scalar multiples of IM0"
         ))),
+    }
+}
+
+fn parse_scalar_factor_expr(expr: &str) -> Result<f64, ImageError> {
+    let mut parser = ScalarFactorParser { text: expr, pos: 0 };
+    let value = parser.parse_expr()?;
+    if parser.pos != parser.text.len() {
+        return Err(ImageError::InvalidMetadata(format!(
+            "unsupported scalar immath expression {expr:?}"
+        )));
+    }
+    Ok(value)
+}
+
+struct ScalarFactorParser<'a> {
+    text: &'a str,
+    pos: usize,
+}
+
+impl ScalarFactorParser<'_> {
+    fn parse_expr(&mut self) -> Result<f64, ImageError> {
+        let mut value = self.parse_power()?;
+        while let Some(op) = self.peek_char().filter(|ch| *ch == '*' || *ch == '/') {
+            self.pos += 1;
+            let rhs = self.parse_power()?;
+            if op == '*' {
+                value *= rhs;
+            } else {
+                value /= rhs;
+            }
+        }
+        Ok(value)
+    }
+
+    fn parse_power(&mut self) -> Result<f64, ImageError> {
+        let mut value = self.parse_primary()?;
+        if self.peek_char() == Some('^') {
+            self.pos += 1;
+            value = value.powf(self.parse_power()?);
+        }
+        Ok(value)
+    }
+
+    fn parse_primary(&mut self) -> Result<f64, ImageError> {
+        if self.peek_char() == Some('(') {
+            self.pos += 1;
+            let value = self.parse_expr()?;
+            if self.peek_char() != Some(')') {
+                return Err(ImageError::InvalidMetadata(
+                    "unterminated scalar immath expression".to_string(),
+                ));
+            }
+            self.pos += 1;
+            return Ok(value);
+        }
+        self.parse_number()
+    }
+
+    fn parse_number(&mut self) -> Result<f64, ImageError> {
+        let start = self.pos;
+        if self.peek_char().is_some_and(|ch| ch == '+' || ch == '-') {
+            self.pos += 1;
+        }
+        while self
+            .peek_char()
+            .is_some_and(|ch| ch.is_ascii_digit() || ch == '.')
+        {
+            self.pos += 1;
+        }
+        if self.peek_char().is_some_and(|ch| ch == 'E') {
+            self.pos += 1;
+            if self.peek_char().is_some_and(|ch| ch == '+' || ch == '-') {
+                self.pos += 1;
+            }
+            while self.peek_char().is_some_and(|ch| ch.is_ascii_digit()) {
+                self.pos += 1;
+            }
+        }
+        self.text[start..self.pos].parse::<f64>().map_err(|error| {
+            ImageError::InvalidMetadata(format!(
+                "parse scalar immath number {:?}: {error}",
+                &self.text[start..self.pos]
+            ))
+        })
+    }
+
+    fn peek_char(&self) -> Option<char> {
+        self.text[self.pos..].chars().next()
     }
 }
 
@@ -4114,6 +4323,30 @@ mod tests {
         assert_eq!(math.valid_pixels, 4);
         let product_image = PagedImage::<f32>::open(&product_path).unwrap();
         assert_eq!(product_image.shape(), &[1, 2, 2]);
+
+        let scaled_path = temp.path().join("scaled.image");
+        let scaled_result =
+            run_image_analysis_task(ImageAnalysisTaskRequest::Immath(ImmathRequest {
+                imagename: vec![subimage_path.clone()],
+                outfile: scaled_path.clone(),
+                expr: "1.222e6*IM0/1.579^2/(29.30*29.03)".to_string(),
+                overwrite: false,
+            }))
+            .unwrap();
+        let ImageAnalysisTaskResult::Immath(scaled) = scaled_result else {
+            panic!("expected scalar immath result");
+        };
+        assert_eq!(scaled.shape, vec![1, 2, 2]);
+        assert_eq!(scaled.valid_pixels, 4);
+        let scaled_image = PagedImage::<f32>::open(&scaled_path).unwrap();
+        let subimage_input = subimage_image.get_slice(&[0, 0, 0], &[1, 1, 1]).unwrap();
+        let scaled_data = scaled_image.get_slice(&[0, 0, 0], &[1, 1, 1]).unwrap();
+        let factor = 1.222e6 / 1.579_f64.powi(2) / (29.30 * 29.03);
+        let expected = f64::from(subimage_input[[0, 0, 0]]) * factor;
+        assert!((f64::from(scaled_data[[0, 0, 0]]) - expected).abs() < 1.0e-3);
+        let put_header = imhead_put(&scaled_path, "bunit", "K").unwrap();
+        assert_eq!(put_header.units, "K");
+        assert_eq!(PagedImage::<f32>::open(&scaled_path).unwrap().units(), "K");
 
         run_image_analysis_task(ImageAnalysisTaskRequest::Exportfits(ExportFitsRequest {
             imagename: source_path.clone(),

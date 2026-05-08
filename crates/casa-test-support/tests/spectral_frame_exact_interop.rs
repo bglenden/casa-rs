@@ -5,10 +5,10 @@ use casa_ms::MeasurementSet;
 use casa_ms::columns::main_ids;
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::derived::engine::MsCalEngine;
-use casa_test_support::casatestdata_path;
 use casa_test_support::measures_interop::{
     cpp_frequency_convert, cpp_frequency_convert_between_frames, cpp_radvel_convert,
 };
+use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::measures::PositionRef;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::epoch::EpochRef;
@@ -16,7 +16,11 @@ use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
 
 fn refim_cband_g37line_ms_path() -> Option<std::path::PathBuf> {
-    casatestdata_path("measurementset/evla/refim_Cband.G37line.ms").filter(|path| path.exists())
+    casatestdata_path_for_tier(
+        CasaTestDataTier::SlowParity,
+        "measurementset/evla/refim_Cband.G37line.ms",
+    )
+    .filter(|path| path.exists())
 }
 
 #[test]

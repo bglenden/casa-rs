@@ -7,7 +7,7 @@ use std::sync::{Mutex, OnceLock};
 
 use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode};
 use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation, CubeSpecMode};
-use casa_test_support::{casatestdata_path, discover_casa_python};
+use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier, discover_casa_python};
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casars_imager::{
@@ -495,6 +495,8 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         multiscale_scales: Vec::new(),
         small_scale_bias: 0.0,
         niter: 0,
+        nmajor: None,
+        fullsummary: false,
         gain: 0.1,
         threshold_jy: 0.0,
         nsigma: 0.0,
@@ -518,7 +520,7 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
 }
 
 fn dataset_path(relative: &str) -> Option<PathBuf> {
-    casatestdata_path(relative).filter(|path| path.exists())
+    casatestdata_path_for_tier(CasaTestDataTier::SlowParity, relative).filter(|path| path.exists())
 }
 
 fn stage_measurement_set(ms_path: &Path, temp_root: &Path, name: &str) -> Result<PathBuf, String> {

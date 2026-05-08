@@ -899,6 +899,19 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
         );
     }
     while total_reported_minor_iterations < request.clean.niter {
+        if request
+            .clean
+            .major_cycle_limit
+            .is_some_and(|limit| cube_major_cycle_blocks >= limit)
+        {
+            cube_clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
+            for plane in &mut planes {
+                plane
+                    .clean_stop_reason
+                    .get_or_insert(CleanStopReason::MajorCycleLimitReached);
+            }
+            break;
+        }
         let global_peak = planes
             .iter()
             .filter(|plane| !plane.is_blank)

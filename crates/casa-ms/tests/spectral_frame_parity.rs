@@ -5,11 +5,15 @@
 use casa_ms::MeasurementSet;
 use casa_ms::columns::time_columns::TimeColumn;
 use casa_ms::derived::engine::MsCalEngine;
-use casa_test_support::casatestdata_path;
+use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 fn refim_point_ms_path() -> Option<std::path::PathBuf> {
-    casatestdata_path("measurementset/vla/refim_point.ms").filter(|path| path.exists())
+    casatestdata_path_for_tier(
+        CasaTestDataTier::SlowParity,
+        "measurementset/vla/refim_point.ms",
+    )
+    .filter(|path| path.exists())
 }
 
 #[test]

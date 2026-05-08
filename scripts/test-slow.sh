@@ -27,7 +27,9 @@ run_timed_step() {
 script_started_at="$(date +%s)"
 cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
   --tier slow-parity \
-  --require measurementset/vla/ngc5921.ms
+  --require measurementset/vla/ngc5921.ms \
+  --require unittest/tclean/refim_twochan.ms \
+  --require unittest/tclean/refim_point.ms
 run_timed_step \
   "Running slow msexplore CASA parity suite" \
   cargo test -p casa-ms --features slow-tests --test msexplore_casa_parity
