@@ -43,6 +43,24 @@ persistent data while preserving on-disk interoperability.
   `wdad-ci-failure-diagnosis`, `wdad-stabilization-wave`, and
   `wdad-planning-board-audit`.
 
+## WDAD Scope Contract
+
+Once a wave or issue is approved, its outcome, included issues, acceptance
+checks, and stop conditions are the approved scope contract.
+
+- Follow-up issues are allowed for newly discovered adjacent work.
+- Approved outcome, included issues, or acceptance checks may be moved to a
+  follow-up, deferral, non-goal, or out-of-scope bucket only after explicit user
+  signoff.
+- If approved work cannot be completed in the current wave, stop and ask before
+  changing the scope contract.
+- Any approved-scope deferral must record where the user signoff is documented
+  in the issue closeout and PR.
+- Review and Done are blocked when approved scope was deferred without explicit
+  user signoff.
+- Parked is invalid for approved-scope deferral unless the deferral reason and
+  user signoff are both recorded.
+
 ## PR Linkage
 
 Issue-driven wave PRs must include:
@@ -61,6 +79,8 @@ Use `Closes #N` only for issues that should auto-close on merge.
 - changing public APIs, persisted formats, provider-contract bundles, or other external contracts
 - adding substantial dependencies
 - changing dependency direction, runtime model, concurrency, or major performance algorithms
+- moving approved outcome, included issues, or acceptance checks into
+  follow-up tickets, deferrals, non-goals, or out-of-scope language
 - weakening or deleting tests without replacement
 - editing accepted ADRs except to add explicitly requested supersession metadata
 - committing directly to `main`
@@ -115,5 +135,6 @@ Use `Closes #N` only for issues that should auto-close on merge.
 
 A wave is done only after relevant tests pass, `just verify` passes or exclusions
 are recorded, issue closeout records the actual result, docs/ADRs are updated
-when reality changed, and medium/high-risk work gets the needed architecture,
-test-adversary, or reality-sync review.
+when reality changed, any approved-scope deferral records explicit user signoff,
+and medium/high-risk work gets the needed architecture, test-adversary, or
+reality-sync review.

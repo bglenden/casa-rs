@@ -26,7 +26,8 @@ Read-only/planning mode.
 2. Look for happy-path-only tests.
 3. Look for tautological or over-mocked tests.
 4. Identify missing regression, integration, or edge-case coverage.
-5. Recommend the smallest meaningful additions.
+5. Treat acceptance checks moved to follow-up, deferral, non-goal, or out-of-scope language without explicit user signoff as not covered.
+6. Recommend the smallest meaningful additions.
 
 ## Output
 

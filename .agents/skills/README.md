@@ -20,3 +20,7 @@ Scaled skills:
 Durable policy belongs in `AGENTS.md`, `ARCHITECTURE.md`, `TESTING.md`,
 accepted ADRs, tests, and CI. Skills are reusable procedures, not hidden
 sources of truth.
+
+The repo-level WDAD scope contract in `AGENTS.md` applies to all skills:
+approved outcome, included issues, and acceptance checks cannot be deferred or
+descoped without explicit user signoff.

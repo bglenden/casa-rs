@@ -25,8 +25,9 @@ Read-only/planning mode first.
 
 1. Identify what actually changed.
 2. Compare those changes to the maintained docs.
-3. Classify drift as doc update, ADR update, generated-artifact refresh, follow-up issue, or no action.
-4. Propose the smallest honest follow-up.
+3. Check whether any maintained doc now treats approved outcome, included issues, or acceptance checks as deferred, follow-up, non-goal, or out-of-scope.
+4. Classify drift as doc update, ADR update, generated-artifact refresh, follow-up issue, or no action. Follow-ups are valid for newly discovered adjacent work; approved-scope deferrals require explicit user signoff.
+5. Propose the smallest honest follow-up.
 
 ## Output
 

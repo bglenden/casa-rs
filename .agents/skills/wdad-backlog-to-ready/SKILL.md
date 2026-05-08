@@ -34,6 +34,7 @@ Planning/read-only mode. Do not edit code.
 10. Identify architecture/test impact and stop conditions.
 11. Identify the verification path: `quick`, `verify` before `In Progress -> Review`, and any release-only checks.
 12. Draft closeout expectations and follow-up hooks.
+13. State that once approved, outcome, included issues, and acceptance checks cannot be deferred or descoped without explicit user signoff.
 
 ## Output
 
@@ -46,6 +47,7 @@ Planning/read-only mode. Do not edit code.
 - architecture/test impact
 - stop conditions
 - closeout expectations
+- approved-scope deferral signoff expectation
 
 ## Do not
 

@@ -27,6 +27,7 @@ Planning first. Implementation only after scope is approved.
 3. Prefer improvements to `quick`, `verify`, docs, or local structure over broad cleanup.
 4. Define acceptance checks in operational terms.
 5. Stop if the work expands into a hidden redesign.
+6. Stop if approved outcome, included issues, or acceptance checks would be deferred or descoped without explicit user signoff.
 
 ## Output
 

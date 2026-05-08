@@ -26,17 +26,18 @@ This is a write-capable housekeeping skill. Invoking it authorizes final review,
 
 1. Confirm the PR targets `main` and comes from a wave branch, not direct work on `main`.
 2. Review the PR against the wave outcome, non-goals, acceptance checks, and stop conditions.
-3. Confirm the latest `verify` result and any release-only evidence required for this wave.
-4. Decide whether deeper review is warranted:
+3. Confirm that any follow-up, deferral, non-goal, or out-of-scope classification is either newly discovered adjacent work or has explicit user signoff when it moves approved outcome, included issues, or acceptance checks out of the wave.
+4. Confirm the latest `verify` result and any release-only evidence required for this wave.
+5. Decide whether deeper review is warranted:
    - architecture-review style checks for boundaries, dependencies, contracts, or public surfaces
    - test-adversary style checks when test evidence looks thin or the wave is medium/high risk
    - reality-sync style checks when durable docs or policy may now drift from reality
-5. If serious issues are found, leave detailed PR comments and stop without merging.
-6. If ready, merge the PR to `main`.
-7. Close the PR and linked issues. Do not delete issues.
-8. Prune the merged branch.
-9. Delete the temporary worktree used for the wave, if one exists and is safe to remove.
-10. Report what merged, which issues closed, which branch was pruned, which worktree was deleted, and what remains open.
+6. If serious issues are found, leave detailed PR comments and stop without merging.
+7. If ready, merge the PR to `main`.
+8. Close the PR and linked issues. Do not delete issues.
+9. Prune the merged branch.
+10. Delete the temporary worktree used for the wave, if one exists and is safe to remove.
+11. Report what merged, which issues closed, which branch was pruned, which worktree was deleted, what remains open, and where approved-scope deferral signoff is documented if any exists.
 
 ## Output
 
@@ -47,10 +48,12 @@ This is a write-capable housekeeping skill. Invoking it authorizes final review,
 - branch pruning result
 - worktree cleanup result
 - follow-up issues or risks left open
+- approved-scope deferrals and signoff location, if any
 
 ## Do not
 
 - merge if acceptance checks, verification, or closeout evidence is missing
+- merge if approved outcome, included issues, or acceptance checks were moved to follow-up, deferral, non-goal, or out-of-scope language without explicit user signoff
 - delete issues
 - delete a worktree unless it is clearly temporary for this wave
 - hide serious issues behind follow-up cleanup

@@ -77,6 +77,8 @@ For each wave:
 - changed behavior has matching tests or explicit justified exclusions
 - medium/high-risk work gets architecture review and test-adversary review
 - reality-sync happens when docs, interfaces, or boundaries changed
+- approved outcome, included issues, and acceptance checks are not deferred or
+  descoped without explicit user signoff recorded in the issue or PR
 - release work also runs the smoke gate, the blocking C++ interop gate, plus the suite-install and CI-like coverage gates
 - ordinary non-release merges stay on `just verify` plus targeted tests unless the user explicitly asks to exercise release/tag-only heavy gates
 - release performance evidence is informational by default and becomes blocking only when `CASA_RS_ENFORCE_PERF=1`
@@ -90,3 +92,4 @@ A wave is not done until:
 - tests cover the claimed behavior
 - reviewers checked for shallow or tautological tests on medium/high-risk work
 - docs or ADRs were updated if reality changed
+- any approved-scope deferral records explicit user signoff

@@ -15,6 +15,8 @@ Review status on the WDAD board assumes this PR exists and carries the current v
 - Architecture concerns:
 - Doc or policy drift:
 - Known weaknesses:
+- Approved-scope deferrals:
+- User signoff for approved-scope deferrals:
 - Human decisions still needed:
 
 ## Verification
@@ -26,6 +28,7 @@ Review status on the WDAD board assumes this PR exists and carries the current v
 ## Closeout
 
 - [ ] issue closeout updated
+- [ ] any approved-scope deferral records explicit user signoff
 - [ ] branch cleanup done or explicitly deferred
 - [ ] worktree cleanup done or explicitly deferred
 - [ ] follow-up issues created where needed

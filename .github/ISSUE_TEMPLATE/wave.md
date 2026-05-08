@@ -29,6 +29,13 @@ Relevant behavior, constraints, and context.
 - [ ] Integration or contract:
 - [ ] Performance / UX / GUI expectation, if relevant:
 
+## Scope-change rule
+
+Once this wave is approved, its outcome, included issues, and acceptance checks
+must not be moved to follow-up tickets, deferrals, non-goals, or out-of-scope
+language without explicit user signoff. Follow-up issues are still allowed for
+newly discovered adjacent work.
+
 ## Architecture / test impact
 
 - Main area:
@@ -48,6 +55,8 @@ Relevant behavior, constraints, and context.
 Implemented:
 Changed from plan:
 Deferred / follow-ups:
+Approved-scope deferrals:
+User signoff for approved-scope deferrals:
 Verification run:
 PR:
 Branch / worktree cleanup:

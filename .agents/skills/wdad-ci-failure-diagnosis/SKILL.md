@@ -26,7 +26,8 @@ Read-only first. Do not guess blindly.
 2. Identify whether it belongs to `quick`, `verify`, or `release/scheduled`.
 3. Narrow the likely root cause.
 4. Decide whether the fix belongs in the current wave or a follow-up.
-5. Recommend the smallest safe next step.
+5. If the failure blocks an approved outcome, included issue, or acceptance check, do not recommend deferring it without explicit user signoff.
+6. Recommend the smallest safe next step.
 
 ## Output
 
