@@ -398,7 +398,9 @@ public final class WorkbenchStore: ObservableObject {
     private let tableBrowserClient: TableBrowserClient
     private let dirtyImagingClient: DirtyImagingTaskClient
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
+    private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
     private var activeTaskExecutions: [String: DirtyImagingTaskExecution] = [:]
+    private var tableBrowserCellWindowGenerations: [String: Int] = [:]
     private var temporaryDemoProjectRoot: String?
 
     public init(
@@ -1661,8 +1663,12 @@ public final class WorkbenchStore: ObservableObject {
         browserState.cellWindowRowLimit = max(1, min(rowLimit, 512))
         browserState.cellWindowColumnStart = max(0, columnStart)
         browserState.cellWindowColumnLimit = max(1, min(columnLimit, 128))
-        refreshTableBrowserCellWindowIfNeeded(dataset: dataset, browserState: &browserState, force: true)
         state.tableBrowsers[datasetID] = browserState
+        scheduleTableBrowserCellWindowLoad(
+            datasetID: datasetID,
+            dataset: dataset,
+            request: browserState.cellWindowRequest(datasetPath: dataset.path)
+        )
     }
 
     public func openSelectedTableBrowserSubtable(datasetID: String) {
@@ -1943,12 +1949,43 @@ public final class WorkbenchStore: ObservableObject {
         {
             return
         }
-        do {
-            browserState.cellWindow = try tableBrowserClient.buildCellWindow(request: request)
-            browserState.lastError = nil
-        } catch {
-            browserState.lastError = "\(error)"
-            state.lastErrors.append("Load table cells for \(dataset.name): \(error)")
+        scheduleTableBrowserCellWindowLoad(
+            datasetID: browserState.datasetID,
+            dataset: dataset,
+            request: request
+        )
+    }
+
+    private func scheduleTableBrowserCellWindowLoad(
+        datasetID: String,
+        dataset: DatasetSummary,
+        request: TableBrowserCellWindowRequest
+    ) {
+        let generation = (tableBrowserCellWindowGenerations[datasetID] ?? 0) + 1
+        tableBrowserCellWindowGenerations[datasetID] = generation
+        tableBrowserQueue.async { [tableBrowserClient] in
+            let result = Result {
+                try tableBrowserClient.buildCellWindow(request: request)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.tableBrowserCellWindowGenerations[datasetID] == generation,
+                      var browserState = self.state.tableBrowsers[datasetID],
+                      browserState.cellWindowRequest(datasetPath: dataset.path) == request
+                else {
+                    return
+                }
+
+                switch result {
+                case let .success(window):
+                    browserState.cellWindow = window
+                    browserState.lastError = nil
+                case let .failure(error):
+                    browserState.lastError = "\(error)"
+                    self.state.lastErrors.append("Load table cells for \(dataset.name): \(error)")
+                }
+                self.state.tableBrowsers[datasetID] = browserState
+            }
         }
     }
 

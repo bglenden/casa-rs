@@ -1269,7 +1269,7 @@ fn build_table_browser_cell_window(
         .enumerate()
         .map(|(index, name)| {
             let header = table_browser_cell_column_header(table, name);
-            let width = table_browser_cell_column_width(table, name, &header);
+            let width = table_browser_cell_column_width(&header);
             TableBrowserCellWindowColumn {
                 index: index as u64,
                 name: name.clone(),
@@ -1293,9 +1293,7 @@ fn build_table_browser_cell_window(
     for row_index in row_start..row_end {
         let mut cells = Vec::with_capacity(visible_columns.len());
         for column in visible_columns {
-            let value = table
-                .cell_accessor(row_index, &column.name)
-                .and_then(|cell| cell.value())
+            let (display, defined) = table_browser_cell_display(table, row_index, &column.name)
                 .map_err(|error| FrontendServiceError::TableExplorer {
                     reason: format!(
                         "read {} row {} column {}: {error}",
@@ -1306,8 +1304,8 @@ fn build_table_browser_cell_window(
                 })?;
             cells.push(TableBrowserCellWindowCell {
                 column_index: column.index,
-                display: format_table_browser_cell_value(value),
-                defined: value.is_some(),
+                display,
+                defined,
             });
         }
         rows.push(TableBrowserCellWindowRow {
@@ -1369,23 +1367,59 @@ fn table_browser_cell_column_summary(table: &Table, name: &str) -> String {
         .unwrap_or_else(|| "Dynamic".to_string())
 }
 
-fn table_browser_cell_column_width(table: &Table, name: &str, header: &str) -> usize {
-    let mut width = header.chars().count().max(8);
-    let sample_limit = table.row_count().min(32);
-    for row_index in 0..sample_limit {
-        if let Ok(value) = table
-            .cell_accessor(row_index, name)
-            .and_then(|cell| cell.value())
-        {
-            width = width.max(
-                format_table_browser_cell_value(value)
-                    .chars()
-                    .count()
-                    .min(40),
-            );
+fn table_browser_cell_column_width(header: &str) -> usize {
+    header.chars().count().clamp(8, 32)
+}
+
+fn table_browser_cell_display(
+    table: &Table,
+    row_index: usize,
+    name: &str,
+) -> Result<(String, bool), casa_tables::TableError> {
+    if let Some(column) = table.schema().and_then(|schema| schema.column(name)) {
+        match column.column_type() {
+            ColumnType::Array(_) => {
+                return Ok((format_table_browser_schema_array(column), true));
+            }
+            ColumnType::Record => {
+                return Ok(("record".to_string(), true));
+            }
+            ColumnType::Scalar => {}
         }
     }
-    width.clamp(8, 40)
+
+    let value = table.cell_accessor(row_index, name)?.value()?;
+    Ok((format_table_browser_cell_value(value), value.is_some()))
+}
+
+fn format_table_browser_schema_array(column: &casa_tables::ColumnSchema) -> String {
+    let primitive = column
+        .data_type()
+        .map(table_browser_short_primitive_name)
+        .unwrap_or("dyn");
+    match column.column_type() {
+        ColumnType::Array(ArrayShapeContract::Fixed { shape }) => {
+            format!("array<{primitive}>[{}]", table_browser_shape_label(shape))
+        }
+        ColumnType::Array(ArrayShapeContract::Variable { ndim: Some(ndim) }) => {
+            format!("array<{primitive}>[{ndim}d]")
+        }
+        ColumnType::Array(ArrayShapeContract::Variable { ndim: None }) => {
+            format!("array<{primitive}>[]")
+        }
+        ColumnType::Scalar | ColumnType::Record => primitive.to_string(),
+    }
+}
+
+fn table_browser_shape_label(shape: &[usize]) -> String {
+    if shape.is_empty() {
+        return "scalar".to_string();
+    }
+    shape
+        .iter()
+        .map(|extent| extent.to_string())
+        .collect::<Vec<_>>()
+        .join("x")
 }
 
 fn table_browser_cell_column_type_label(column: &casa_tables::ColumnSchema) -> String {
@@ -3650,6 +3684,7 @@ mod tests {
     use casa_types::measures::frequency::FrequencyRef;
     use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
     use flate2::read::GzDecoder;
+    use ndarray::ArrayD;
     use tempfile::TempDir;
 
     fn unpack_small_ms() -> (TempDir, PathBuf) {
@@ -4244,6 +4279,45 @@ mod tests {
         );
         assert_eq!(window["rows"][0]["cells"][0]["display"], "\"gain\"");
         assert_eq!(window["rows"][0]["cells"][0]["defined"], true);
+    }
+
+    #[test]
+    fn table_browser_cell_window_summarizes_schema_array_without_preview_values() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let table_path = dir.path().join("array_table");
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "DATA",
+            PrimitiveType::Float32,
+            vec![2, 2],
+        )])
+        .expect("schema");
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "DATA",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]).expect("array"),
+                )),
+            )]))
+            .expect("row");
+        table
+            .save(TableOptions::new(&table_path))
+            .expect("save table");
+
+        let request_json = serde_json::json!({
+            "dataset_path": table_path,
+            "row_start": 0,
+            "row_limit": 1,
+            "column_start": 0,
+            "column_limit": 1
+        })
+        .to_string();
+        let window_json =
+            build_table_browser_cell_window_json(request_json).expect("table browser cell window");
+        let window: serde_json::Value =
+            serde_json::from_str(&window_json).expect("cell window json");
+
+        assert_eq!(window["rows"][0]["cells"][0]["display"], "array<f32>[2x2]");
     }
 
     #[test]

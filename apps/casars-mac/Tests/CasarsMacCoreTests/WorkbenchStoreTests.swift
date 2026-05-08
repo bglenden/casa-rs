@@ -698,6 +698,9 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.tabs.last?.kind, .tableBrowser)
         XCTAssertEqual(store.state.tabs.last?.title, "Table: example.ms")
         XCTAssertEqual(tableClient.paths, [msDataset.path])
+        waitFor("initial table cell window") {
+            store.state.tableBrowsers[msDataset.id]?.cellWindow?.rowCount == 12
+        }
         XCTAssertEqual(tableClient.cellWindowRequests.map(\.datasetPath), [msDataset.path])
         XCTAssertEqual(store.state.tableBrowsers[msDataset.id]?.status, .ready)
         XCTAssertEqual(store.state.tableBrowsers[msDataset.id]?.cellWindow?.rowCount, 12)
@@ -740,6 +743,9 @@ final class WorkbenchStoreTests: XCTestCase {
             datasetID: tableDataset.id
         )
 
+        waitFor("requested table cell window") {
+            store.state.tableBrowsers[tableDataset.id]?.cellWindow?.rowStart == 8
+        }
         XCTAssertEqual(tableClient.requests.count, snapshotRequestCount)
         XCTAssertEqual(tableClient.cellWindowRequests.last?.rowStart, 8)
         XCTAssertEqual(tableClient.cellWindowRequests.last?.columnStart, 2)

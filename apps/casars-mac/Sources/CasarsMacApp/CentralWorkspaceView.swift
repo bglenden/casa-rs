@@ -2346,6 +2346,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         context.coordinator.tableView = tableView
         context.coordinator.attach(to: scrollView)
         context.coordinator.syncColumns()
+        context.coordinator.reloadDataIfNeeded()
         return scrollView
     }
 
@@ -2356,7 +2357,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         context.coordinator.selectCell = selectCell
         context.coordinator.requestCellWindow = requestCellWindow
         context.coordinator.syncColumns()
-        context.coordinator.tableView?.reloadData()
+        context.coordinator.reloadDataIfNeeded()
         context.coordinator.restoreSelection()
         context.coordinator.requestVisibleWindowIfNeeded()
     }
@@ -2375,6 +2376,9 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         private weak var scrollView: NSScrollView?
         private var lastColumnIDs: [String] = []
         private var lastRequestedWindow: String?
+        private var pendingRequestWorkItem: DispatchWorkItem?
+        private var lastReloadSignature: String?
+        private var cellValues: [String: String] = [:]
         private let cellIdentifier = NSUserInterfaceItemIdentifier("TableBrowserCell")
 
         init(
@@ -2404,6 +2408,8 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         }
 
         func detach() {
+            pendingRequestWorkItem?.cancel()
+            pendingRequestWorkItem = nil
             if let scrollView {
                 NotificationCenter.default.removeObserver(
                     self,
@@ -2412,6 +2418,37 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
                 )
             }
             scrollView = nil
+        }
+
+        func reloadDataIfNeeded() {
+            let signature = [
+                grid.tablePath,
+                "\(grid.rowCount)",
+                "\(grid.columnCount)",
+                "\(grid.rowStart)",
+                "\(grid.rows.count)",
+                "\(grid.columnStart)",
+                "\(grid.rows.first?.cells.count ?? 0)",
+                "\(selectedRow ?? -1)",
+                "\(selectedColumn ?? -1)"
+            ].joined(separator: ":")
+            guard signature != lastReloadSignature else {
+                return
+            }
+            lastReloadSignature = signature
+            rebuildCellLookup()
+            tableView?.reloadData()
+        }
+
+        private func rebuildCellLookup() {
+            var values: [String: String] = [:]
+            values.reserveCapacity(grid.rows.reduce(0) { $0 + $1.cells.count })
+            for row in grid.rows {
+                for cell in row.cells {
+                    values["\(row.index):\(cell.columnIndex)"] = cell.display
+                }
+            }
+            cellValues = values
         }
 
         func syncColumns() {
@@ -2473,7 +2510,6 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             guard let tableColumn else {
                 return nil
             }
-            requestWindowFor(row: row, tableColumn: tableColumn)
             let cellView = tableView.makeView(withIdentifier: cellIdentifier, owner: self) as? NSTableCellView
                 ?? makeCellView()
             cellView.textField?.stringValue = displayValue(for: tableColumn, row: row)
@@ -2534,21 +2570,6 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             )
         }
 
-        private func requestWindowFor(row: Int, tableColumn: NSTableColumn) {
-            let columnIndex = columnIndex(for: tableColumn)
-            guard row >= 0, let columnIndex else {
-                return
-            }
-            if grid.cell(row: row, column: columnIndex) == nil {
-                requestWindowIfNeeded(
-                    rowStart: max(0, row - 32),
-                    rowLimit: 96,
-                    columnStart: max(0, columnIndex - 4),
-                    columnLimit: 24
-                )
-            }
-        }
-
         private func requestWindowIfNeeded(rowStart: Int, rowLimit: Int, columnStart: Int, columnLimit: Int) {
             if grid.contains(rowStart: rowStart, rowLimit: rowLimit, columnStart: columnStart, columnLimit: columnLimit) {
                 lastRequestedWindow = nil
@@ -2559,9 +2580,12 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
                 return
             }
             lastRequestedWindow = key
-            DispatchQueue.main.async { [weak self] in
+            pendingRequestWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
                 self?.requestCellWindow(rowStart, rowLimit, columnStart, columnLimit)
             }
+            pendingRequestWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
         }
 
         private func columnIndex(for tableColumn: NSTableColumn) -> Int? {
@@ -2579,7 +2603,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             guard let columnIndex = columnIndex(for: tableColumn) else {
                 return ""
             }
-            return grid.cell(row: row, column: columnIndex)?.display ?? ""
+            return cellValues["\(row):\(columnIndex)"] ?? ""
         }
 
         private func makeCellView() -> NSTableCellView {
