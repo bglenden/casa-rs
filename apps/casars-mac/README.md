@@ -20,6 +20,7 @@ swift build
 swift run casars-mac --dump-debug-state --simulate-main-flow
 ./script/build_and_run.sh
 ./script/build_and_run.sh --verify
+./script/install-local-gui.sh --force
 ./script/build_and_run.sh --project /path/to/project
 ./script/build_and_run.sh --empty
 ```
@@ -48,3 +49,9 @@ exit so cleanup is deterministic. Pass `--project` to inspect an existing
 project directory, or `--empty` to start without opening a project. `swift run
 casars-mac` is reserved for non-interactive debug-state commands and low-level
 executable diagnosis.
+
+Use `./script/install-local-gui.sh --force` to install the staged app under
+`~/.local/opt/casa-rs/<version>/Applications/casars-mac.app` and update the
+`~/.local/bin/casars-mac` launcher. From the repository root, `just
+install-local` installs both the CLI/TUI/Python suite and this Swift GUI app on
+macOS; `just install-local-gui` installs only the GUI.

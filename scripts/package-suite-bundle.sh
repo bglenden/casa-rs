@@ -12,40 +12,12 @@ Creates release bundle archives for one supported platform:
   - casa-rs-binaries-<version>-<platform>.tar.gz
 
 The suite bundle contains:
-  - bin/casars
-  - bin/calibrate
-  - bin/casars-importvla
-  - bin/msexplore
-  - bin/mstransform
-  - bin/casars-imager
-  - bin/imexplore
-  - bin/immoments
-  - bin/impv
-  - bin/imsubimage
-  - bin/immath
-  - bin/imregrid
-  - bin/feather
-  - bin/exportfits
-  - bin/importfits
+  - bin/* entries selected by resources/task-catalog.json include_in_suite=true
   - wheels/*.whl
   - bundle-manifest.json
 
 The binaries bundle contains:
-  - bin/casars
-  - bin/calibrate
-  - bin/casars-importvla
-  - bin/msexplore
-  - bin/mstransform
-  - bin/casars-imager
-  - bin/imexplore
-  - bin/immoments
-  - bin/impv
-  - bin/imsubimage
-  - bin/immath
-  - bin/imregrid
-  - bin/feather
-  - bin/exportfits
-  - bin/importfits
+  - bin/* entries selected by resources/task-catalog.json include_in_suite=true
 EOF
 }
 
@@ -101,23 +73,11 @@ done
 
 [[ -d "$wheel_dir" ]] || die "wheel directory does not exist: $wheel_dir"
 
-binaries=(
-  casars
-  calibrate
-  casars-importvla
-  msexplore
-  mstransform
-  casars-imager
-  imexplore
-  immoments
-  impv
-  imsubimage
-  immath
-  imregrid
-  feather
-  exportfits
-  importfits
-)
+repo_root="$(git rev-parse --show-toplevel)"
+binaries=()
+while IFS= read -r binary; do
+  [[ -n "$binary" ]] && binaries+=( "$binary" )
+done < <("$repo_root/scripts/list-suite-binaries.py")
 
 for binary in "${binaries[@]}"; do
   [[ -x "$bin_dir/$binary" ]] || die "missing executable $bin_dir/$binary"
@@ -170,7 +130,7 @@ cat >"$manifest_path" <<EOF
   "version": "$version",
   "platform": "$platform",
   "channel": "$channel",
-  "binaries": ["casars", "calibrate", "casars-importvla", "msexplore", "mstransform", "casars-imager", "imexplore", "immoments", "impv", "imsubimage", "immath", "imregrid", "feather", "exportfits", "importfits"],
+  "binaries": [$(printf '%s\n' "${binaries[@]}" | python3 -c 'import json,sys; print(",".join(json.dumps(line.strip()) for line in sys.stdin if line.strip()))')],
   "wheel_files": [${wheel_json}]
 }
 EOF

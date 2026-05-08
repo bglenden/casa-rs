@@ -101,8 +101,9 @@ cleanup() {
 trap cleanup EXIT
 
 echo "==> Building release binaries for local suite install"
-cargo build --release -p casars --bin casars
-cargo build --release -p casa-calibration --bin calibrate
+while read -r package binary; do
+  cargo build --release -p "$package" --bin "$binary"
+done < <("$repo_root/scripts/list-suite-binaries.py" --package-binary)
 
 echo "==> Building Python distribution artifacts"
 "$repo_root/scripts/build-python-dist.sh" "$dist_root"

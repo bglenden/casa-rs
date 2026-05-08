@@ -312,6 +312,50 @@ public enum TaskRunState: String, Codable, Equatable {
     case cancelled
 }
 
+public struct TaskCatalogEnvelope: Codable, Equatable {
+    public var schemaVersion: UInt64
+    public var tasks: [TaskCatalogEntry]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case tasks
+    }
+}
+
+public struct TaskCatalogEntry: Codable, Equatable, Identifiable {
+    public var id: String
+    public var category: String
+    public var displayName: String
+    public var binaryName: String
+    public var cargoPackage: String
+    public var overrideEnv: String
+    public var shellKind: String
+    public var interaction: String
+    public var browserKind: String?
+    public var datasetKinds: [String]
+    public var schemaSource: String
+    public var showInTUI: Bool
+    public var showInSwift: Bool
+    public var includeInSuite: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case category
+        case displayName = "display_name"
+        case binaryName = "binary_name"
+        case cargoPackage = "cargo_package"
+        case overrideEnv = "override_env"
+        case shellKind = "shell_kind"
+        case interaction
+        case browserKind = "browser_kind"
+        case datasetKinds = "dataset_kinds"
+        case schemaSource = "schema_source"
+        case showInTUI = "show_in_tui"
+        case showInSwift = "show_in_swift"
+        case includeInSuite = "include_in_suite"
+    }
+}
+
 public struct TaskParameters: Codable, Equatable {
     public var taskName: String
     public var selectedField: String
@@ -2124,6 +2168,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var jobs: [String: WorkbenchJob]
     public var activeJobIDsByTab: [String: String]
     public var runProductGroups: [RunProductGroup]
+    public var taskCatalog: [TaskCatalogEntry]
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -2152,6 +2197,7 @@ public struct WorkbenchState: Codable, Equatable {
         jobs: [String: WorkbenchJob] = [:],
         activeJobIDsByTab: [String: String] = [:],
         runProductGroups: [RunProductGroup] = [],
+        taskCatalog: [TaskCatalogEntry] = [],
         history: [ProcessingHistoryEvent],
         commandQuery: String,
         lastErrors: [String],
@@ -2179,6 +2225,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.jobs = jobs
         self.activeJobIDsByTab = activeJobIDsByTab
         self.runProductGroups = runProductGroups
+        self.taskCatalog = taskCatalog
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors
@@ -2259,6 +2306,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var taskRequest: DirtyImagingTaskParameters?
     public var taskDiagnostics: [String]
     public var taskOutputPaths: [String]
+    public var taskCatalog: [TaskCatalogEntry]
     public var aiProposalStates: [String: AIProposalState]
     public var pythonOwner: PythonOwner
     public var measurementSetPlots: [String: DebugMeasurementSetPlotSnapshot]
@@ -2294,6 +2342,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         taskRequest = state.dirtyImagingTaskParameters
         taskDiagnostics = state.taskRun.diagnostics
         taskOutputPaths = state.taskRun.outputPaths
+        taskCatalog = state.taskCatalog
         aiProposalStates = Dictionary(
             uniqueKeysWithValues: state.aiProposals.map { ($0.id, $0.state) }
         )

@@ -3654,6 +3654,12 @@ public func probeProject(path: String)throws  -> ProjectProbe  {
     )
 })
 }
+public func taskCatalogJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_task_catalog_json($0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -3701,6 +3707,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_probe_project() != 9335) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_task_catalog_json() != 57208) {
         return InitializationResult.apiChecksumMismatch
     }
 
