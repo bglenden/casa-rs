@@ -13,7 +13,7 @@ This directory holds stable project documentation.
     workbench
 - [`mac-native-gui-mockups.md`](mac-native-gui-mockups.md)
   - visual mockups and layout agreement notes for the native macOS workbench
-- [`../apps/casars-mac/README.md`](../apps/casars-mac/README.md)
+- [`apps/casars-mac/README.md`](https://github.com/bglenden/casa-rs/blob/main/apps/casars-mac/README.md)
   - SwiftPM commands for the fixture-backed native macOS clickable prototype
 - [`casars-tui-framework.md`](casars-tui-framework.md)
   - architecture and app-authoring rules for the shell family
