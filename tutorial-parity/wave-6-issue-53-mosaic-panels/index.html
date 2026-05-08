@@ -1,0 +1,964 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Wave 6 Issue 53 Mosaic Panels - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#wave-6-issue-53-mosaic-panels" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Wave 6 Issue 53 Mosaic Panels
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tutorial-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tutorial Inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Current Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#alma-antennae" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ALMA Antennae
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vla-3c391" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VLA 3C391
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Interpretation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="wave-6-issue-53-mosaic-panels">Wave 6 Issue 53 Mosaic Panels<a class="headerlink" href="#wave-6-issue-53-mosaic-panels" title="Permanent link">&para;</a></h1>
+<p>Truth class: current evidence
+Last reality check: 2026-05-02
+Verification:
+- <code>cargo test -p casa-imaging mosaic_clean_reduces_residual_peak_and_tracks_pb_weight_image</code>
+- <code>cargo test -p casars-imager cli_parses_weighting_mask_and_wterm</code>
+- <code>cargo test -p casars-imager pbcor_products_apply_primary_beam_cutoff</code>
+- <code>cargo test -p casars-imager frequency_range_hz_accepts_descending_spectral_windows</code>
+- <code>cargo test -p casars-imager selected_weight_spectrum_missing_cells_fall_back_to_weight</code>
+- <code>cargo test -p casars-imager task_contract</code>
+- <code>CASA_RS_WAVE6_DATASET=alma scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels</code>
+- <code>CASA_RS_WAVE6_DATASET=vla scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels</code>
+- <code>CASA_RS_WAVE6_SKIP_CASA=1 scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels</code>
+- <code>CASA_RS_WAVE6_SKIP_IMAGING=1 scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels</code></p>
+<h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
+<p>Issue #53 is the Wave 6 mosaic-first tclean capability ticket. Its visible
+proof must not be control-surface plumbing alone: the repository needs tutorial
+data products that can be inspected beside CASA Guide figures and CASA C++
+products.</p>
+<p>The reproducible panel runner is:</p>
+<div class="codehilite"><pre><span></span><code>scripts/run-wave6-issue53-mosaic-panels.sh<span class="w"> </span>target/wave6-issue53-mosaic-panels
+</code></pre></div>
+
+<p>Set <code>CASA_RS_FETCH_TUTORIAL_DATA=1</code> to download missing official tutorial data.
+Set <code>CASA_RS_WAVE6_DATASET=alma</code> or <code>CASA_RS_WAVE6_DATASET=vla</code> to run one
+dataset while preserving the same panel format.
+Each panel run writes immutable stamped filenames using a
+<code>YYYYMMDDTHHMMSS-0600</code>-style local-time stamp with signed UTC offset, records
+the same stamp in the image footer and summary JSON, and also refreshes
+non-stamped <code>*-panel.png</code> convenience aliases. The stamped <code>panel_png</code> paths in
+<code>target/wave6-issue53-mosaic-panels/wave6-issue53-mosaic-panel-summary.json</code>
+are the review artifacts to avoid stale image-cache confusion.</p>
+<p>Each panel contains four columns:</p>
+<ul>
+<li>CASA Guide figure from the tutorial page</li>
+<li>CASA C++ product generated locally</li>
+<li>casa-rs product generated locally</li>
+<li><code>casa-rs - CASA C++</code> difference image</li>
+</ul>
+<p>The CASA C++ products apply the primary-beam support mask to <code>.image</code>,
+<code>.residual</code>, <code>.pb</code>, and <code>.image.pbcor</code> products. The casa-rs writer now attaches
+the same kind of default image mask using its own <code>pb &gt; --pblimit</code> support. Panel
+statistics are computed only on the shared valid support mask, and masked pixels
+are rendered in gray. The panel images include labeled colorbars plus the RMS,
+difference, valid-pixel, and wall-clock timing metrics needed for visual review.</p>
+<h2 id="tutorial-inputs">Tutorial Inputs<a class="headerlink" href="#tutorial-inputs" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Dataset</th>
+<th>Tutorial source</th>
+<th>Local data product</th>
+<th>Products compared</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ALMA Antennae Band 7 North</td>
+<td><a href="https://casaguides.nrao.edu/index.php/AntennaeBand7_Imaging_6.6.6">https://casaguides.nrao.edu/index.php/AntennaeBand7_Imaging_6.6.6</a></td>
+<td><code>Antennae_Band7_CalibratedData/Antennae_North.cal.ms</code></td>
+<td><code>.residual</code>, <code>.image.pbcor</code></td>
+</tr>
+<tr>
+<td>VLA 3C391 continuum mosaic</td>
+<td><a href="https://casaguides.nrao.edu/index.php/VLA_Continuum_Tutorial_3C391-CASA6.7.2">https://casaguides.nrao.edu/index.php/VLA_Continuum_Tutorial_3C391-CASA6.7.2</a> and <a href="https://casaguides.nrao.edu/index.php/Advanced_Topics_3C391_-_CASA4.1">https://casaguides.nrao.edu/index.php/Advanced_Topics_3C391_-_CASA4.1</a></td>
+<td><code>VLA_3C391_FinalCalibratedMosaicMS/3c391_ctm_mosaic_spw0.ms</code></td>
+<td><code>.image</code>, <code>.image.pbcor</code></td>
+</tr>
+</tbody>
+</table>
+<p>The ALMA archive is downloaded from:</p>
+<p><a href="https://bulk.cv.nrao.edu/almadata/public/casaguides/Antennae_Band7_6.6.6/Antennae_Band7_CalibratedData.tgz">https://bulk.cv.nrao.edu/almadata/public/casaguides/Antennae_Band7_6.6.6/Antennae_Band7_CalibratedData.tgz</a></p>
+<p>The VLA imaging-input archive is downloaded from:</p>
+<p><a href="https://casa.nrao.edu/Data/EVLA/3C391/EVLA_3C391_FinalCalibratedMosaicMS.tgz">https://casa.nrao.edu/Data/EVLA/3C391/EVLA_3C391_FinalCalibratedMosaicMS.tgz</a></p>
+<p>The VLA final-calibrated mosaic MS is used because issue #53 is the imager
+capability ticket. The raw <code>3c391_ctm_mosaic_10s_spw0.ms.tgz</code> path exercises
+upstream calibration and split/statwt work before it reaches the tclean mosaic
+surface.</p>
+<h2 id="current-results">Current Results<a class="headerlink" href="#current-results" title="Permanent link">&para;</a></h2>
+<p>Current panel-only refresh stamp: <code>20260502T164801-0600</code>, generated
+<code>2026-05-02 16:48:01 -0600</code>.</p>
+<h3 id="alma-antennae">ALMA Antennae<a class="headerlink" href="#alma-antennae" title="Permanent link">&para;</a></h3>
+<p>The Antennae North run completed against local CASA C++ and casa-rs products.
+It uses the tutorial SPW selection <code>0:1~50;120~164</code>, <code>gridder='mosaic'</code>,
+<code>niter=32</code>, <code>threshold='0.4mJy'</code>, and PB-corrected output. The casa-rs run
+reported <code>7058235</code> gridded samples, <code>2</code> major cycles, and <code>33</code> minor
+iterations. The residual panel uses the tutorial residual screenshot as the
+original reference column. The PB-corrected image panel uses the tutorial
+continuum-image figure as the original visual reference because the guide does
+not publish a separate continuum <code>.image.pbcor</code> figure.</p>
+<p>Wall-clock timing on the local tutorial run:</p>
+<table>
+<thead>
+<tr>
+<th>Runner</th>
+<th style="text-align: right;">Seconds</th>
+<th style="text-align: right;">Relative</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CASA C++</td>
+<td style="text-align: right;"><code>13.730</code></td>
+<td style="text-align: right;"><code>1.00x</code></td>
+</tr>
+<tr>
+<td>casa-rs</td>
+<td style="text-align: right;"><code>55.821</code></td>
+<td style="text-align: right;"><code>4.07x CASA</code></td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Panel</th>
+<th style="text-align: right;">Shared valid pixels</th>
+<th style="text-align: right;">CASA valid pixels</th>
+<th style="text-align: right;">casa-rs valid pixels</th>
+<th style="text-align: right;">Rust-only valid</th>
+<th style="text-align: right;">CASA-only valid</th>
+<th style="text-align: right;">CASA RMS</th>
+<th style="text-align: right;">casa-rs RMS</th>
+<th style="text-align: right;">Difference RMS</th>
+<th style="text-align: right;">Diff/CASA RMS</th>
+<th style="text-align: right;">Difference max abs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alma-antennae-north-cont-clean-residual-panel.png</code></td>
+<td style="text-align: right;"><code>134322 / 250000</code></td>
+<td style="text-align: right;"><code>134322</code></td>
+<td style="text-align: right;"><code>134378</code></td>
+<td style="text-align: right;"><code>56</code></td>
+<td style="text-align: right;"><code>0</code></td>
+<td style="text-align: right;"><code>0.0004842421539966355</code></td>
+<td style="text-align: right;"><code>0.00048387927411415444</code></td>
+<td style="text-align: right;"><code>4.2211890958799533e-7</code></td>
+<td style="text-align: right;"><code>0.0008717103748694464</code></td>
+<td style="text-align: right;"><code>2.6238849386572838e-6</code></td>
+</tr>
+<tr>
+<td><code>alma-antennae-north-cont-clean-image.pbcor-panel.png</code></td>
+<td style="text-align: right;"><code>134322 / 250000</code></td>
+<td style="text-align: right;"><code>134322</code></td>
+<td style="text-align: right;"><code>134378</code></td>
+<td style="text-align: right;"><code>56</code></td>
+<td style="text-align: right;"><code>0</code></td>
+<td style="text-align: right;"><code>0.0010904309546444929</code></td>
+<td style="text-align: right;"><code>0.0010882589706488754</code></td>
+<td style="text-align: right;"><code>2.330101509614948e-6</code></td>
+<td style="text-align: right;"><code>0.0021368629528447473</code></td>
+<td style="text-align: right;"><code>2.0388048142194748e-5</code></td>
+</tr>
+</tbody>
+</table>
+<p>Source-region peak-relative differences use shared valid pixels with
+<code>abs(CASA) &gt;= 25%</code> of the CASA peak.</p>
+<table>
+<thead>
+<tr>
+<th>Panel</th>
+<th style="text-align: right;">CASA peak abs</th>
+<th style="text-align: right;">abs(diff at CASA peak) / peak</th>
+<th style="text-align: right;">source p90 abs(diff) / peak</th>
+<th style="text-align: right;">source max abs(diff) / peak</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alma-antennae-north-cont-clean-residual-panel.png</code></td>
+<td style="text-align: right;"><code>0.001685870112851262</code></td>
+<td style="text-align: right;"><code>0.0005867480430568241</code></td>
+<td style="text-align: right;"><code>0.0005840204276983746</code></td>
+<td style="text-align: right;"><code>0.001556398039597241</code></td>
+</tr>
+<tr>
+<td><code>alma-antennae-north-cont-clean-image.pbcor-panel.png</code></td>
+<td style="text-align: right;"><code>0.008220789022743702</code></td>
+<td style="text-align: right;"><code>0.0018307455360000362</code></td>
+<td style="text-align: right;"><code>0.0012526729054758664</code></td>
+<td style="text-align: right;"><code>0.0024800597711228216</code></td>
+</tr>
+</tbody>
+</table>
+<p>Inspectable artifacts:</p>
+<ul>
+<li><code>target/wave6-issue53-mosaic-panels/alma-antennae-north-cont-clean-residual-20260502T164801-0600-panel.png</code></li>
+<li><code>target/wave6-issue53-mosaic-panels/alma-antennae-north-cont-clean-image.pbcor-20260502T164801-0600-panel.png</code></li>
+<li><code>target/wave6-issue53-mosaic-panels/wave6-issue53-mosaic-panel-summary.json</code></li>
+</ul>
+<h3 id="vla-3c391">VLA 3C391<a class="headerlink" href="#vla-3c391" title="Permanent link">&para;</a></h3>
+<p>The 3C391 run completed against the official final-calibrated mosaic MS. It
+uses <code>gridder='mosaic'</code>, <code>deconvolver='multiscale'</code>, scales <code>[0, 5, 15, 45]</code>,
+Briggs <code>robust=0.5</code>, <code>niter=500</code>, <code>threshold='1.0mJy'</code>, and PB-corrected
+output. The casa-rs run reported <code>32039616</code> gridded samples, <code>3</code> major cycles,
+and <code>499</code> minor iterations.</p>
+<p>Wall-clock timing on the local tutorial run:</p>
+<table>
+<thead>
+<tr>
+<th>Runner</th>
+<th style="text-align: right;">Seconds</th>
+<th style="text-align: right;">Relative</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CASA C++</td>
+<td style="text-align: right;"><code>72.850</code></td>
+<td style="text-align: right;"><code>1.00x</code></td>
+</tr>
+<tr>
+<td>casa-rs</td>
+<td style="text-align: right;"><code>199.787</code></td>
+<td style="text-align: right;"><code>2.74x CASA</code></td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Panel</th>
+<th style="text-align: right;">Shared valid pixels</th>
+<th style="text-align: right;">CASA valid pixels</th>
+<th style="text-align: right;">casa-rs valid pixels</th>
+<th style="text-align: right;">Rust-only valid</th>
+<th style="text-align: right;">CASA-only valid</th>
+<th style="text-align: right;">CASA RMS</th>
+<th style="text-align: right;">casa-rs RMS</th>
+<th style="text-align: right;">Difference RMS</th>
+<th style="text-align: right;">Diff/CASA RMS</th>
+<th style="text-align: right;">Difference max abs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vla-3c391-multiscale-image-panel.png</code></td>
+<td style="text-align: right;"><code>115741 / 230400</code></td>
+<td style="text-align: right;"><code>115741</code></td>
+<td style="text-align: right;"><code>115863</code></td>
+<td style="text-align: right;"><code>122</code></td>
+<td style="text-align: right;"><code>0</code></td>
+<td style="text-align: right;"><code>0.009522959519475125</code></td>
+<td style="text-align: right;"><code>0.009452154271988065</code></td>
+<td style="text-align: right;"><code>0.00024029965477125512</code></td>
+<td style="text-align: right;"><code>0.02523371587160749</code></td>
+<td style="text-align: right;"><code>0.0011738985776901245</code></td>
+</tr>
+<tr>
+<td><code>vla-3c391-multiscale-image.pbcor-panel.png</code></td>
+<td style="text-align: right;"><code>115741 / 230400</code></td>
+<td style="text-align: right;"><code>115741</code></td>
+<td style="text-align: right;"><code>115863</code></td>
+<td style="text-align: right;"><code>122</code></td>
+<td style="text-align: right;"><code>0</code></td>
+<td style="text-align: right;"><code>0.011692938714363256</code></td>
+<td style="text-align: right;"><code>0.011715722851676892</code></td>
+<td style="text-align: right;"><code>0.00046985084698270084</code></td>
+<td style="text-align: right;"><code>0.04018244330704907</code></td>
+<td style="text-align: right;"><code>0.0025981832295656204</code></td>
+</tr>
+</tbody>
+</table>
+<p>Source-region peak-relative differences use shared valid pixels with
+<code>abs(CASA) &gt;= 25%</code> of the CASA peak.</p>
+<table>
+<thead>
+<tr>
+<th>Panel</th>
+<th style="text-align: right;">CASA peak abs</th>
+<th style="text-align: right;">abs(diff at CASA peak) / peak</th>
+<th style="text-align: right;">source p90 abs(diff) / peak</th>
+<th style="text-align: right;">source max abs(diff) / peak</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vla-3c391-multiscale-image-panel.png</code></td>
+<td style="text-align: right;"><code>0.13652297854423523</code></td>
+<td style="text-align: right;"><code>0.005085625233712389</code></td>
+<td style="text-align: right;"><code>0.006757079479784874</code></td>
+<td style="text-align: right;"><code>0.008299750423001687</code></td>
+</tr>
+<tr>
+<td><code>vla-3c391-multiscale-image.pbcor-panel.png</code></td>
+<td style="text-align: right;"><code>0.15053795278072357</code></td>
+<td style="text-align: right;"><code>0.005148463770749833</code></td>
+<td style="text-align: right;"><code>0.006609384414503797</code></td>
+<td style="text-align: right;"><code>0.00820752945503909</code></td>
+</tr>
+</tbody>
+</table>
+<p>Inspectable artifacts:</p>
+<ul>
+<li><code>target/wave6-issue53-mosaic-panels/vla-3c391-multiscale-image-20260502T164801-0600-panel.png</code></li>
+<li><code>target/wave6-issue53-mosaic-panels/vla-3c391-multiscale-image.pbcor-20260502T164801-0600-panel.png</code></li>
+<li><code>target/wave6-issue53-mosaic-panels/wave6-issue53-mosaic-panel-summary.json</code></li>
+</ul>
+<h2 id="current-interpretation">Current Interpretation<a class="headerlink" href="#current-interpretation" title="Permanent link">&para;</a></h2>
+<p>This lands the tutorial-data proof for #53:</p>
+<ul>
+<li><code>gridder='mosaic'</code> now runs with <code>niter &gt; 0</code> instead of stopping at dirty-only
+  products.</li>
+<li>The product writer emits <code>.weight</code>, <code>.pb</code>, and optional <code>.image.pbcor</code> for
+  mosaic MFS runs.</li>
+<li>PB correction uses explicit cutoff semantics through the existing
+  <code>--pblimit</code> value, and the CASA image products now carry default masks for
+  the PB support region.</li>
+<li>Descending-frequency SPWs, as present in the Antennae dataset, now produce an
+  ordered positive frequency range for imaging requests.</li>
+<li>Present-but-missing <code>WEIGHT_SPECTRUM</code> cells, as present in the 3C391 MS, now
+  fall back to scalar <code>WEIGHT</code> instead of aborting the imager.</li>
+</ul>
+<p>The current mosaic CLEAN implementation uses image-domain PSF residual
+refreshes during minor-cycle blocks but now finishes each mosaic residual
+refresh through the visibility-domain mosaic path. The CASA C++ vs casa-rs
+tutorial products are now within the sub-percent source-region target when
+measured as <code>abs(diff) / CASA peak</code> over pixels with <code>abs(CASA) &gt;= 25%</code> of the
+CASA peak.</p>
+<p>The casa-rs PB support mask is still marginally broader than CASA C++ at the
+same nominal <code>pblimit=0.1</code>: 56 ALMA pixels and 122 VLA pixels are Rust-valid
+only, with zero CASA-only valid pixels. The panels now render each product with
+its native mask and compute image differences on the shared valid support, so
+large PB-support mismatches cannot be hidden in the visual evidence.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

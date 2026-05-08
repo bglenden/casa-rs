@@ -1,0 +1,1235 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Wave 6 Issue 163 M100 Band 3 Combine Evidence - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#wave-6-issue-163-m100-band-3-combine-evidence" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Wave 6 Issue 163 M100 Band 3 Combine Evidence
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#current-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implemented-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implemented Surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casa-source-semantics-to-preserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA Source Semantics To Preserve
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deferred-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deferred Surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="wave-6-issue-163-m100-band-3-combine-evidence">Wave 6 Issue 163 M100 Band 3 Combine Evidence<a class="headerlink" href="#wave-6-issue-163-m100-band-3-combine-evidence" title="Permanent link">&para;</a></h1>
+<p>Truth class: current descriptive
+Last reality check: 2026-05-05
+Verification: <code>CASA_RS_TUTORIAL_DATA_ROOT=/Volumes/GLENDENNING/casa-rs/tutorial-data scripts/run-wave6-issue163-m100-combine.sh</code>; <code>CASA_RS_TUTORIAL_DATA_ROOT=/Volumes/GLENDENNING/casa-rs/tutorial-data scripts/run-wave6-issue163-m100-raw-preflight.sh</code>; <code>CASA_RS_TUTORIAL_DATA_ROOT=/Volumes/GLENDENNING/casa-rs/tutorial-data scripts/run-wave6-issue163-m100-split-parity.sh /Volumes/GLENDENNING/casa-rs/tutorial-data/tutorial-parity/alma/m100/band3-combine/work/split-parity-20260504T132927Z</code>; <code>cargo test -p casa-ms --test transform</code>; <code>cargo test -p casa-images --lib -- image_analysis_schema_and_ui_surfaces_advertise_task_contracts</code>; <code>cargo test -p casa-imaging alma_aca_airy_voltage_uses_wide_casa_support</code>; <code>cargo test -p casa-imaging hetarray_screen_size_follows_casa_support_scale</code>; <code>cargo test -p casa-imaging mosaic</code>; <code>cargo build --release -p casars-imager --bin casars-imager</code>; <code>MPLCONFIGDIR=target/wave6-issue163-combine-70chan-floatround-compare-20260505T153447Z/matplotlib /Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python scripts/compare-wave6-issue163-raw-dirty.py target/wave6-issue163-combine-70chan-floatround-compare-20260505T153447Z --prefix M100_combine_CO_cube_dirty_70chan --panel-channels 0,1,10,26,35,61</code></p>
+<p>Wave issue: #143
+Child issue: #163</p>
+<p>This slice covers the image-domain products from the M100 Band 3 data
+combination tutorial using the official ALMA science-verification reference
+image archive:</p>
+<ul>
+<li>registry key: <code>alma/m100/band3-combine/reference-images</code></li>
+<li>artifact: <code>M100_Band3_DataComb_ReferenceImages_5.1.tgz</code></li>
+<li>SHA-256:
+  <code>04e3e88f1393e93c18eab7fd4a9ae5c57e768dbb8be85259c3006ae9d4c7634b</code></li>
+</ul>
+<p>The runner writes CASA Guide / CASA C++ / casa-rs / difference panels with
+labeled colorbars and numeric residual metrics.</p>
+<h2 id="current-evidence">Current Evidence<a class="headerlink" href="#current-evidence" title="Permanent link">&para;</a></h2>
+<p>Image-domain artifacts from the latest local run:</p>
+<ul>
+<li>summary JSON:
+  <code>target/wave6-issue163-m100-combine-20260504T165138Z/wave6-issue163-summary.json</code></li>
+<li>PB subimage panel:
+  <code>target/wave6-issue163-m100-combine-20260504T165138Z/pb-subim-panel.png</code></li>
+<li>12m+7m masked moment-0 PB-corrected panel:
+  <code>target/wave6-issue163-m100-combine-20260504T165138Z/combine-mom0-pbcor-panel.png</code></li>
+<li>12m+7m masked moment-1 panel:
+  <code>target/wave6-issue163-m100-combine-20260504T165138Z/combine-mom1-panel.png</code></li>
+<li>TP regrid panel:
+  <code>target/wave6-issue163-m100-combine-20260504T165138Z/tp-regrid-panel.png</code></li>
+<li>feathered PB-corrected channel panel:
+  <code>target/wave6-issue163-m100-combine-20260504T165138Z/feather-pbcor-chan26-panel.png</code></li>
+<li>feathered cube panel:
+  <code>target/wave6-issue163-m100-combine-20260504T165138Z/feather-cube-panel.png</code></li>
+<li>feather moment-0 panel:
+  <code>target/wave6-issue163-m100-combine-20260504T165138Z/feather-mom0-panel.png</code></li>
+<li>feather moment-1 panel:
+  <code>target/wave6-issue163-m100-combine-20260504T165138Z/feather-mom1-panel.png</code></li>
+</ul>
+<p>Same-input CASA C++ versus casa-rs metrics from that run:</p>
+<table>
+<thead>
+<tr>
+<th>Product</th>
+<th style="text-align: right;">Shape</th>
+<th style="text-align: right;">Mask mismatches</th>
+<th style="text-align: right;">p99 abs diff</th>
+<th style="text-align: right;">p99 diff / CASA peak</th>
+<th style="text-align: right;">Max diff / CASA peak</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>M100_combine_CO_cube.pb.subim</code></td>
+<td style="text-align: right;"><code>[394, 432, 1, 70]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">0.0</td>
+</tr>
+<tr>
+<td><code>M100_combine_CO_cube.image.mom0.pbcor</code></td>
+<td style="text-align: right;"><code>[800, 800, 1, 1]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">0.0</td>
+</tr>
+<tr>
+<td><code>M100_combine_CO_cube.image.mom1</code></td>
+<td style="text-align: right;"><code>[800, 800, 1, 1]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">0.0</td>
+<td style="text-align: right;">0.0</td>
+</tr>
+<tr>
+<td><code>M100_TP_CO_cube.regrid</code></td>
+<td style="text-align: right;"><code>[800, 800, 1, 70]</code></td>
+<td style="text-align: right;">1,615,123</td>
+<td style="text-align: right;">0.001099</td>
+<td style="text-align: right;">0.0001249</td>
+<td style="text-align: right;">0.0002707</td>
+</tr>
+<tr>
+<td><code>M100_Feather_CO.image</code></td>
+<td style="text-align: right;"><code>[394, 432, 1, 70]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.0001279</td>
+<td style="text-align: right;">0.0001760</td>
+<td style="text-align: right;">0.0003457</td>
+</tr>
+<tr>
+<td><code>M100_Feather_CO.image.pbcor</code></td>
+<td style="text-align: right;"><code>[394, 432, 1, 70]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.0001396</td>
+<td style="text-align: right;">0.0001868</td>
+<td style="text-align: right;">0.0003403</td>
+</tr>
+<tr>
+<td><code>M100_Feather_CO.image.mom0</code></td>
+<td style="text-align: right;"><code>[394, 432, 1, 1]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.01965</td>
+<td style="text-align: right;">0.0004186</td>
+<td style="text-align: right;">0.0004771</td>
+</tr>
+<tr>
+<td><code>M100_Feather_CO.image.mom1</code></td>
+<td style="text-align: right;"><code>[394, 432, 1, 1]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">571.55</td>
+<td style="text-align: right;">0.0001303</td>
+<td style="text-align: right;">2.8147</td>
+</tr>
+</tbody>
+</table>
+<p>Raw-input preflight artifacts from the latest local run:</p>
+<ul>
+<li>raw preflight Markdown:
+  <code>target/wave6-issue163-m100-raw-preflight-20260504T024950Z/raw-preflight.md</code></li>
+<li>raw preflight JSON:
+  <code>target/wave6-issue163-m100-raw-preflight-20260504T024950Z/raw-preflight-summary.json</code></li>
+<li>exact tutorial task sequence JSON:
+  <code>target/wave6-issue163-m100-raw-preflight-20260504T024950Z/tutorial-sequence.json</code></li>
+<li>CASA <code>listobs</code> outputs for the extracted 12m and 7m MS:
+  <code>target/wave6-issue163-m100-raw-preflight-20260504T024950Z/m100_12m_ms.listobs</code>
+  and
+  <code>target/wave6-issue163-m100-raw-preflight-20260504T024950Z/m100_7m_ms.listobs</code></li>
+<li>casa-rs <code>msexplore</code> JSON summary for the extracted 12m MS:
+  <code>target/wave6-issue163-raw-preflight-20260503T235049Z/m100-12m-msexplore-summary.json</code></li>
+<li>CASA-vs-casa-rs split parity report:
+  <code>/Volumes/GLENDENNING/casa-rs/tutorial-data/tutorial-parity/alma/m100/band3-combine/work/split-parity-20260504T132927Z/split-parity.md</code></li>
+<li>CASA-vs-casa-rs split parity JSON:
+  <code>/Volumes/GLENDENNING/casa-rs/tutorial-data/tutorial-parity/alma/m100/band3-combine/work/split-parity-20260504T132927Z/split-parity-summary.json</code></li>
+</ul>
+<p>Raw-input status from that run:</p>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>12m calibrated MS</td>
+<td>archive verified with SHA-256 <code>cc44820a6f1b6262b909aade2f9c13eafa4956e7de34949e8e0599a2adac35d1</code>; extracted; 273,441 MAIN rows, 48 FIELD rows, 4 SPWs, 23 ANTENNA rows, first <code>DATA</code> cell shape <code>[2, 3840]</code>; casa-rs <code>msexplore</code> row-referenced summary reports 47 fields, 22 antennas plus 23 ANTENNA-table rows, and 204 scans</td>
+</tr>
+<tr>
+<td>7m calibrated MS</td>
+<td>extracted; 177,120 MAIN rows, 24 FIELD rows, 6 SPWs, 10 ANTENNA rows, first <code>DATA</code> cell shape <code>[2, 4080]</code></td>
+</tr>
+<tr>
+<td>TP guide image <code>M100_TP_CO_cube.spw3.image.bl</code></td>
+<td>extracted from ACA reference archive verified with SHA-256 <code>e6bdeb95c2f2847f0e917c894d887f2ebe4803662981b4db71a2a1c6c54bf2ba</code>; shape <code>[90, 90, 1, 70]</code>, rest frequency <code>115271203999.99998 Hz</code></td>
+</tr>
+<tr>
+<td>TP calibrated-data archive</td>
+<td>optional for this guide route when the ACA reference TP image is present; useful only for reproducing TP calibration rather than the data-combination tutorial itself</td>
+</tr>
+</tbody>
+</table>
+<p>The external GLENDENNING downloader for these archives is
+<code>/Volumes/GLENDENNING/casa-rs/tutorial-data/download-wave6-datasets.sh</code>.
+Running it with no arguments prints status only. Use <code>download issue-163</code> for
+the #163 group or <code>download all-known</code> for every concrete Wave 6 URL currently
+known to the downloader.</p>
+<p>Latest observed GLENDENNING status during this pass:</p>
+<table>
+<thead>
+<tr>
+<th>Archive</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>m100-12m</code></td>
+<td>complete, <code>15580494468/15580494468</code> bytes</td>
+</tr>
+<tr>
+<td><code>m100-7m</code></td>
+<td>complete, <code>9774558254/9774558254</code> bytes</td>
+</tr>
+<tr>
+<td><code>m100-tp</code></td>
+<td>partial, <code>13061938779/14372792248</code> bytes</td>
+</tr>
+<tr>
+<td><code>m100-aca-reference</code></td>
+<td>complete, <code>24775689/24775689</code> bytes</td>
+</tr>
+<tr>
+<td><code>m100-data-comb-reference</code></td>
+<td>complete, <code>411602337/411602337</code> bytes</td>
+</tr>
+</tbody>
+</table>
+<p>CASA <code>split</code> versus casa-rs <code>mstransform --no-keepflags</code> evidence:</p>
+<table>
+<thead>
+<tr>
+<th>Product</th>
+<th style="text-align: right;">CASA rows</th>
+<th style="text-align: right;">casa-rs rows</th>
+<th style="text-align: right;">Row delta</th>
+<th>CASA first <code>DATA</code> shape</th>
+<th>casa-rs first <code>DATA</code> shape</th>
+<th>Remaining structural delta</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>12m CO split</td>
+<td style="text-align: right;">69,020</td>
+<td style="text-align: right;">69,020</td>
+<td style="text-align: right;">0</td>
+<td><code>[2, 3840]</code></td>
+<td><code>[2, 3840]</code></td>
+<td>none in checked row/DDID/SPW/DD dimensions</td>
+</tr>
+<tr>
+<td>7m CO split</td>
+<td style="text-align: right;">24,975</td>
+<td style="text-align: right;">24,975</td>
+<td style="text-align: right;">0</td>
+<td><code>[2, 4080]</code></td>
+<td><code>[2, 4080]</code></td>
+<td>none in checked row/DDID/SPW/DD dimensions</td>
+</tr>
+</tbody>
+</table>
+<p>Raw split same-input <code>tclean</code> probe evidence:</p>
+<ul>
+<li>CASA C++ trace and products:
+  <code>target/wave6-issue163-debug-combine-instrumented-20260505T033309Z/</code></li>
+<li>Latest casa-rs products and panels:
+  <code>target/wave6-issue163-debug-combine-rustfix-20260505T041727Z/</code></li>
+<li>Release-mode casa-rs products and panels:
+  <code>target/wave6-issue163-debug-combine-release-20260505T043929Z/</code></li>
+<li>Release-mode 70-channel casa-rs scale-up:
+  <code>target/wave6-issue163-combine-release-70chan-20260505T044125Z/</code></li>
+<li>Latest focused high-channel casa-rs products and panels after CASA-float
+  Briggs lookup rounding:
+  <code>target/wave6-issue163-debug-combine-highch-panel-floatround-20260505T145415Z/</code></li>
+<li>Latest full 70-channel same-input comparison after CASA-float Briggs lookup
+  rounding:
+  <code>target/wave6-issue163-combine-70chan-floatround-compare-20260505T153447Z/</code></li>
+<li>Latest full 70-channel casa-rs release-mode products:
+  <code>target/wave6-issue163-combine-release-70chan-floatround-20260505T152523Z/</code></li>
+<li>Product summary JSON:
+  <code>target/wave6-issue163-debug-combine-rustfix-20260505T041727Z/combined-raw-dirty-summary.json</code></li>
+<li>Release-mode product summary JSON:
+  <code>target/wave6-issue163-debug-combine-release-20260505T043929Z/combined-raw-dirty-summary.json</code></li>
+<li>Latest high-channel product summary JSON:
+  <code>target/wave6-issue163-debug-combine-highch-panel-floatround-20260505T145415Z/combined-raw-dirty-summary.json</code></li>
+<li>Grid-dump comparison:
+  <code>target/wave6-issue163-debug-combine-rustfix-20260505T041727Z/grid-dump-comparison.md</code></li>
+</ul>
+<p>The same split 12m+7m inputs were imaged with a focused two-channel dirty cube
+probe matching the tutorial's combined mosaic setup:
+<code>gridder="mosaic"</code>, <code>weighting="briggsbwtaper"</code>, <code>robust=0.5</code>,
+<code>perchanweightdensity=True</code>, <code>pblimit=0.2</code>, <code>niter=0</code>, <code>pbcor=True</code>,
+<code>start="1725km/s"</code>, <code>width="5km/s"</code>, and <code>nchan=2</code>.</p>
+<p>The last visible non-noise-like patch was traced to 12m MAIN row <code>31561</code>.
+CASA's <code>BriggsCubeWeightor::getWeightUniform</code> casts channel-scaled <code>u,v</code> to
+<code>Float</code> before rounding the lookup cell; this puts the row/channel on
+<code>vcell=385</code>, where the per-channel density is zero. The Rust lookup used final
+<code>f64</code> arithmetic and rounded to <code>384</code>, picking up a nonzero density. The Rust
+Briggs lookup now uses CASA-like float rounding. In the targeted
+<code>(470,385)</code> cell / <code>114606011019.5368 Hz</code> trace, the prior unmatched Rust
+contribution <code>[-0.004422, -0.002717]</code> is gone: CASA has 2083 collapsed samples,
+casa-rs has 2083 samples, and the greedy unmatched Rust count is 0.</p>
+<table>
+<thead>
+<tr>
+<th>Product</th>
+<th style="text-align: right;">Shape</th>
+<th style="text-align: right;">Mask mismatches</th>
+<th style="text-align: right;">p99 diff / CASA peak</th>
+<th style="text-align: right;">Max diff / CASA peak</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.image</code> channel 0</td>
+<td style="text-align: right;"><code>[800, 800, 1, 2]</code></td>
+<td style="text-align: right;">316 total image mask pixels</td>
+<td style="text-align: right;">0.002850</td>
+<td style="text-align: right;">0.006066</td>
+<td>same as <code>.residual</code> for <code>niter=0</code></td>
+</tr>
+<tr>
+<td><code>.image</code> channel 1</td>
+<td style="text-align: right;"><code>[800, 800, 1, 2]</code></td>
+<td style="text-align: right;">316 total image mask pixels</td>
+<td style="text-align: right;">0.003269</td>
+<td style="text-align: right;">0.007081</td>
+<td>same as <code>.residual</code> for <code>niter=0</code>; prior visible patch removed</td>
+</tr>
+<tr>
+<td><code>.image.pbcor</code> channel 0</td>
+<td style="text-align: right;"><code>[800, 800, 1, 2]</code></td>
+<td style="text-align: right;">316 total PB-corrected mask pixels</td>
+<td style="text-align: right;">0.002613</td>
+<td style="text-align: right;">0.008913</td>
+<td>panel has CASA, casa-rs, and difference colorbars</td>
+</tr>
+<tr>
+<td><code>.image.pbcor</code> channel 1</td>
+<td style="text-align: right;"><code>[800, 800, 1, 2]</code></td>
+<td style="text-align: right;">316 total PB-corrected mask pixels</td>
+<td style="text-align: right;">0.002601</td>
+<td style="text-align: right;">0.007850</td>
+<td>panel has CASA, casa-rs, and difference colorbars</td>
+</tr>
+<tr>
+<td><code>.pb</code> channel 0</td>
+<td style="text-align: right;"><code>[800, 800, 1, 2]</code></td>
+<td style="text-align: right;">316 total PB mask pixels</td>
+<td style="text-align: right;">0.000923</td>
+<td style="text-align: right;">0.001307</td>
+<td>PB support follows CASA mask extent</td>
+</tr>
+<tr>
+<td><code>.pb</code> channel 1</td>
+<td style="text-align: right;"><code>[800, 800, 1, 2]</code></td>
+<td style="text-align: right;">316 total PB mask pixels</td>
+<td style="text-align: right;">0.001124</td>
+<td style="text-align: right;">0.001480</td>
+<td>PB support follows CASA mask extent</td>
+</tr>
+<tr>
+<td><code>.psf</code> channel 0</td>
+<td style="text-align: right;"><code>[800, 800, 1, 2]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.000036</td>
+<td style="text-align: right;">0.000206</td>
+<td>sub-0.03% max PSF delta</td>
+</tr>
+<tr>
+<td><code>.psf</code> channel 1</td>
+<td style="text-align: right;"><code>[800, 800, 1, 2]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.000032</td>
+<td style="text-align: right;">0.000206</td>
+<td>sub-0.03% max PSF delta</td>
+</tr>
+<tr>
+<td><code>.weight</code> channel 0</td>
+<td style="text-align: right;"><code>[800, 800, 1, 2]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.001838</td>
+<td style="text-align: right;">0.002610</td>
+<td>sky-coverage image corrected from the earlier 14-16% mismatch</td>
+</tr>
+<tr>
+<td><code>.weight</code> channel 1</td>
+<td style="text-align: right;"><code>[800, 800, 1, 2]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.001840</td>
+<td style="text-align: right;">0.002612</td>
+<td>sky-coverage image corrected from the earlier 14-16% mismatch</td>
+</tr>
+<tr>
+<td><code>.sumwt</code> channel 0</td>
+<td style="text-align: right;"><code>[1, 1, 1, 2]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;"><code>4.71e-6</code></td>
+<td style="text-align: right;"><code>4.71e-6</code></td>
+<td>CASA/casa-rs differ by <code>0.18359375</code></td>
+</tr>
+<tr>
+<td><code>.sumwt</code> channel 1</td>
+<td style="text-align: right;"><code>[1, 1, 1, 2]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;"><code>5.01e-7</code></td>
+<td style="text-align: right;"><code>5.01e-7</code></td>
+<td>CASA/casa-rs differ by <code>0.01953125</code></td>
+</tr>
+</tbody>
+</table>
+<p>The full 70-channel raw dirty cube now runs with the tutorial spectral setup:
+<code>start="1400km/s"</code>, <code>width="5km/s"</code>, <code>nchan=70</code>. The CASA C++ oracle is
+<code>target/wave6-issue163-combine-casa70-20260505T045249Z/casa/</code>; the matching
+casa-rs products are from the 2026-05-05 15:25:23Z release-mode rerun.</p>
+<table>
+<thead>
+<tr>
+<th>Product</th>
+<th style="text-align: right;">Shape</th>
+<th style="text-align: right;">Mask mismatches</th>
+<th style="text-align: right;">Worst-channel p99 diff / CASA peak</th>
+<th style="text-align: right;">Worst-channel max diff / CASA peak</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.image</code></td>
+<td style="text-align: right;"><code>[800, 800, 1, 70]</code></td>
+<td style="text-align: right;">9,654</td>
+<td style="text-align: right;">0.004767</td>
+<td style="text-align: right;">0.008886</td>
+<td>same as <code>.residual</code> for <code>niter=0</code></td>
+</tr>
+<tr>
+<td><code>.image.pbcor</code></td>
+<td style="text-align: right;"><code>[800, 800, 1, 70]</code></td>
+<td style="text-align: right;">9,654</td>
+<td style="text-align: right;">0.003730</td>
+<td style="text-align: right;">0.011152</td>
+<td>global max is at PB <code>0.2185</code>; inside the tutorial <code>PB&gt;0.3</code> analysis region max is <code>0.007295</code></td>
+</tr>
+<tr>
+<td><code>.pb</code></td>
+<td style="text-align: right;"><code>[800, 800, 1, 70]</code></td>
+<td style="text-align: right;">9,654</td>
+<td style="text-align: right;">0.001461</td>
+<td style="text-align: right;">0.001750</td>
+<td>PB support and mask extent match CASA to small edge differences</td>
+</tr>
+<tr>
+<td><code>.psf</code></td>
+<td style="text-align: right;"><code>[800, 800, 1, 70]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.0000538</td>
+<td style="text-align: right;">0.000247</td>
+<td>PSF parity remains sub-0.03%</td>
+</tr>
+<tr>
+<td><code>.weight</code></td>
+<td style="text-align: right;"><code>[800, 800, 1, 70]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.001835</td>
+<td style="text-align: right;">0.002617</td>
+<td>sky-coverage image corrected from the earlier 10% class mismatch</td>
+</tr>
+<tr>
+<td><code>.sumwt</code></td>
+<td style="text-align: right;"><code>[1, 1, 1, 70]</code></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;"><code>1.3246e-5</code></td>
+<td style="text-align: right;"><code>1.3246e-5</code></td>
+<td>scalar sum-weight product matches to roundoff-scale relative error</td>
+</tr>
+</tbody>
+</table>
+<p>Selected full-cube visual panels with labeled colorbars were generated for
+channels <code>0,1,10,26,35,61</code> under
+<code>target/wave6-issue163-combine-70chan-floatround-compare-20260505T153447Z/</code>.
+For example:</p>
+<ul>
+<li><code>image-pbcor-chan26-panel.png</code></li>
+<li><code>image-pbcor-chan35-panel.png</code></li>
+<li><code>image-chan26-panel.png</code></li>
+<li><code>pb-chan35-panel.png</code></li>
+<li><code>psf-chan35-panel.png</code></li>
+<li><code>weight-chan35-panel.png</code></li>
+</ul>
+<p>Release-mode performance for the same two-channel casa-rs probe:</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th style="text-align: right;">Time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>total wall-clock reported by <code>casars-imager</code></td>
+<td style="text-align: right;">33.757 s</td>
+</tr>
+<tr>
+<td><code>prepare_plane_input</code></td>
+<td style="text-align: right;">20.027 s</td>
+</tr>
+<tr>
+<td>12m sample adaptation</td>
+<td style="text-align: right;">7.865 s</td>
+</tr>
+<tr>
+<td>7m sample adaptation, first chunk</td>
+<td style="text-align: right;">2.209 s</td>
+</tr>
+<tr>
+<td>7m sample adaptation, second chunk</td>
+<td style="text-align: right;">0.594 s</td>
+</tr>
+<tr>
+<td><code>run_imaging</code></td>
+<td style="text-align: right;">13.629 s</td>
+</tr>
+<tr>
+<td><code>write_products</code></td>
+<td style="text-align: right;">0.081 s</td>
+</tr>
+</tbody>
+</table>
+<p>The earlier 952.567 s debug build was therefore not representative of release
+performance. The same release products reproduce the sub-percent CASA deltas in
+the table above.</p>
+<p>Release-mode performance for the latest 70-channel casa-rs scale-up:</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th style="text-align: right;">Time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>total wall-clock reported by <code>casars-imager</code></td>
+<td style="text-align: right;">552.409 s</td>
+</tr>
+<tr>
+<td><code>prepare_plane_input</code></td>
+<td style="text-align: right;">67.155 s</td>
+</tr>
+<tr>
+<td><code>run_imaging</code></td>
+<td style="text-align: right;">479.390 s</td>
+</tr>
+<tr>
+<td><code>write_products</code></td>
+<td style="text-align: right;">5.845 s</td>
+</tr>
+<tr>
+<td>gridded samples</td>
+<td style="text-align: right;">19,620,351</td>
+</tr>
+</tbody>
+</table>
+<p>This scale-up used the same split 12m+7m inputs and tutorial cube setup as the
+CASA C++ oracle. It completed successfully in release mode and has a
+same-input CASA 70-channel comparison with selected review panels.</p>
+<p>The main corrected defects found by the instrumentation were:</p>
+<ul>
+<li>CASA builds the HetArray convolution screen from the larger of <code>imsize/10</code>
+  and the primary-beam support diameter. casa-rs was using only <code>imsize/10</code>,
+  which truncated the ALMA mosaic screen and pushed <code>.weight</code>/<code>.pb</code> errors to
+  order 10%.</li>
+<li>CASA uses a support-12, oversampling-10 12m convolution function for this
+  combined M100 probe. casa-rs now chooses the same support for the 12m groups;
+  7m groups keep support 8, with the extra global CASA loop support landing on
+  near-zero taps.</li>
+<li>The ALMA/ACA Airy table extent remains the wide CASA-compatible table used by
+  the earlier #53 PB-mask fix; the support-screen size, not the voltage-table
+  extent, was the missing piece for this #163 divergence.</li>
+</ul>
+<h2 id="implemented-surface">Implemented Surface<a class="headerlink" href="#implemented-surface" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>imsubimage</code> task binary and JSON task protocol.</li>
+<li><code>imregrid</code> task binary and JSON task protocol for linear direction/spectral
+  image-template regridding.</li>
+<li><code>feather</code> task binary and JSON task protocol using CASA's Fourier-domain
+  high-pass weighting and low-resolution beam scaling semantics.</li>
+<li><code>immath</code> task binary and JSON task protocol for tutorial expressions
+  <code>IM0 * IM1</code> and <code>IM0 / IM1</code>.</li>
+<li><code>immoments</code> support for CASA Guide image-threshold mask expressions such as
+  <code>M100_combine_CO_cube.pb&gt;0.3</code>, combined with channel selection and
+  <code>includepix</code> thresholds.</li>
+<li>Python task wrappers for <code>imsubimage</code>, <code>immath</code>, and the <code>immoments</code> mask
+  parameter used by this tutorial.</li>
+<li>CASA-openable metadata preservation for <code>imsubimage</code>, <code>immath</code>, and
+  <code>immoments</code> products derived from native CASA images.</li>
+<li>M100 reference-image dataset registry entry and repeatable evidence runner.</li>
+<li>Raw M100 12m, 7m, TP, and ACA-reference artifact registry entries plus
+  <code>scripts/stage-wave6-issue163-m100-raw.sh</code> for status, verification,
+  ordinary resumable staging, and extraction under
+  <code>CASA_RS_TUTORIAL_DATA_ROOT</code>.</li>
+<li>Raw preflight runner
+  <code>scripts/run-wave6-issue163-m100-raw-preflight.sh</code> records the exact guide
+  sequence, emits CASA <code>listobs</code>/image-header probes for available extracted
+  inputs, and reports missing raw inputs without touching partial downloads.</li>
+<li>Split parity runner <code>scripts/run-wave6-issue163-m100-split-parity.sh</code>
+  compares CASA tutorial <code>split(..., keepflags=False)</code> with native casa-rs
+  <code>mstransform --no-keepflags</code> on the extracted M100 12m and 7m raw inputs.</li>
+<li>Native multi-MS mosaic dirty cube imaging for the combined M100 12m+7m split
+  products, including CASA-style HetArray screen sizing, ALMA/ACA Airy PB
+  masks, per-channel Briggs density merging, and visible CASA/casa-rs/difference
+  panels with colorbars.</li>
+<li><code>mstransform --no-keepflags</code> support for CASA <code>split(keepflags=False)</code>
+  row filtering, including rows marked by <code>FLAG_ROW</code> and rows whose selected
+  <code>FLAG</code> cube is fully true.</li>
+<li><code>mstransform</code> handling for optional <code>WEIGHT_SPECTRUM</code> cells in real ALMA
+  MeasurementSets where the column exists but selected rows may have undefined
+  cells.</li>
+<li><code>mstransform</code> compact split-style <code>SPECTRAL_WINDOW</code> and
+  <code>DATA_DESCRIPTION</code> output for selected SPWs, including <code>DATA_DESC_ID</code>
+  remapping in MAIN rows and channel-selection metadata updates on compacted
+  SPWs.</li>
+</ul>
+<h2 id="casa-source-semantics-to-preserve">CASA Source Semantics To Preserve<a class="headerlink" href="#casa-source-semantics-to-preserve" title="Permanent link">&para;</a></h2>
+<p>The raw M100 path should follow these inspected CASA implementation points:</p>
+<ul>
+<li><code>casatasks/src/private/task_imregrid.py</code>: <code>template="get"</code> returns a
+  coordinate-system record plus shape; an image template infers axes by
+  coordinate type when <code>axes=[-1]</code>; the actual operation calls
+  <code>image.regrid(..., method=interpolation, decimate=decimate,
+  replicate=replicate)</code>.</li>
+<li><code>casatasks/xml/imregrid.xml</code>: when an image template is used, output shape
+  follows the template on regridded axes and the input on untouched axes;
+  Stokes axes are not regridded; direction/spectral axes can be selected
+  explicitly via <code>axes</code>.</li>
+<li><code>casatasks/src/private/task_feather.py</code>: task <code>feather</code> sets VP defaults and
+  SD scale options on the imager tool, then calls <code>imager.feather</code>.</li>
+<li><code>casatools/src/code/synthesis/MeasurementEquations/Imager.cc</code>: <code>feather</code>
+  creates the output image with the high-resolution image shape and
+  coordinates, and if either input has per-plane beams, it loops per
+  polarization/channel plane.</li>
+<li><code>casatools/src/code/synthesis/MeasurementEquations/Feather.cc</code>: the low-res
+  beam comes from the low-res image if present, otherwise from the low PSF or
+  default PB lookup; <code>sdfactor</code>, <code>effdishdiam</code>, and <code>lowpassfiltersd</code> change
+  Fourier-domain weighting behavior.</li>
+</ul>
+<h2 id="deferred-surface">Deferred Surface<a class="headerlink" href="#deferred-surface" title="Permanent link">&para;</a></h2>
+<p>The M100 guide route used for #163 starts from the published 12m/7m calibrated
+MS products plus the guide TP image. Reproducing the TP calibration archive
+itself remains outside this child issue because the guide data-combination
+steps consume <code>M100_TP_CO_cube.spw3.image.bl</code>; the native <code>imregrid</code>, PB
+weighting, <code>feather</code>, and moment products from that image are covered above.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FlagDataAction","FlagDataColumn","FlagDataMode","FlagMerge","FlaggingError","QuackMode"],"fn":["delete_flag_version","flagdata","flagdata_path","list_flag_versions","rename_flag_version","restore_flag_version","save_flag_version"],"struct":["FlagDataReport","FlagDataRequest","FlagVersionEntry"]};

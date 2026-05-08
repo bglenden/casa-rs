@@ -1,0 +1,1645 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Mac-Native GUI Product Spec - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#mac-native-gui-product-spec" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Mac-Native GUI Product Spec
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#product-thesis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Product Thesis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#target-user" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target User
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relationship-to-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship To CASA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#product-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Product Goals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#non-goals-for-the-first-product-slice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-Goals For The First Product Slice
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workbench-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workbench Model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workbench Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#workbench-job-runtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workbench Job Runtime
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#core-panels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Panels
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Panels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#project-explorer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Project Explorer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspector-versus-explorer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspector Versus Explorer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-explorers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset Explorers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#processing-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Processing History
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#task-panels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Task Panels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-and-matplotlib-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python And Matplotlib Panel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#radio-astronomy-oracle-panel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Radio Astronomy Oracle Panel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ai-assistant-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI Assistant Surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#safety-and-trust-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Safety And Trust Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture-direction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture Direction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technology-stack-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technology Stack Decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testability-and-debuggability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testability And Debuggability
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#protocol-expansion-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Protocol Expansion Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#macos-native-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        macOS Native Shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ui-first-implementation-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UI-First Implementation Strategy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context Index
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#first-product-slice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First Product Slice
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-product-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Product Questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation Gates
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="mac-native-gui-product-spec">Mac-Native GUI Product Spec<a class="headerlink" href="#mac-native-gui-product-spec" title="Permanent link">&para;</a></h1>
+<p>Truth class: proposed product spec
+Last reality check: 2026-05-03
+Verification: not implemented</p>
+<h2 id="product-thesis">Product Thesis<a class="headerlink" href="#product-thesis" title="Permanent link">&para;</a></h2>
+<p>The mac-native <code>casa-rs</code> GUI should be an AI-enhanced desktop workbench for
+radio astronomy data processing.</p>
+<p>The useful analogy is "VS Code for radio astronomy data": a project-oriented
+application where datasets, derived products, task runs, plots, scripts,
+notebooks, and domain help are all visible in one coherent workspace. The app
+is not a simple GUI wrapper around command-line flags. It should understand the
+open project, the datasets in that project, the currently selected data product,
+the available task contracts, and the user's analysis conversation.</p>
+<p>The first durable differentiator over <code>casars</code> is native AI integration:</p>
+<ul>
+<li>AI can inspect project context and dataset summaries.</li>
+<li>AI can fill or revise task parameters with user approval.</li>
+<li>AI can drive Python exploration and explain the resulting plots.</li>
+<li>AI can answer radio astronomy and casa-rs questions through a local Radio
+  Astronomy Oracle panel.</li>
+<li>AI actions are visible, reversible where practical, and recorded in run or
+  conversation history.</li>
+</ul>
+<h2 id="target-user">Target User<a class="headerlink" href="#target-user" title="Permanent link">&para;</a></h2>
+<p>The primary user is a radio astronomer who wants a convenient local interface
+for understanding and processing casa-rs data products.</p>
+<p>The app should support users who understand radio astronomy reduction concepts
+but do not want to spend all day switching between terminals, Python shells,
+image viewers, plotting scripts, documentation, and scattered output
+directories. It should also help less frequent users recover the right task
+parameters from the actual dataset in front of them.</p>
+<h2 id="relationship-to-casa">Relationship To CASA<a class="headerlink" href="#relationship-to-casa" title="Permanent link">&para;</a></h2>
+<p>This is a user interface for <code>casa-rs</code>.</p>
+<p>CASA is an inspiration and a compatibility reference, not the product identity
+or runtime implementation. The GUI should not present itself as a CASA frontend
+and should not depend on CASA for normal execution. <code>casa-rs</code> shares no CASA
+runtime code; CASA/casacore may still appear in interoperability language,
+testing, comparison evidence, or format compatibility notes.</p>
+<p>Product copy rules:</p>
+<ul>
+<li>product identity is <code>casa-rs</code></li>
+<li>use "casacore-compatible" or "CASA-compatible format" only for data-format
+  interoperability</li>
+<li>keep CASA comparisons in diagnostics, testing, and evidence views</li>
+<li>avoid UI labels that imply CASA runtime execution or CASA task compatibility
+  unless that capability is actually implemented</li>
+</ul>
+<h2 id="product-goals">Product Goals<a class="headerlink" href="#product-goals" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Make project data discoverable.</li>
+<li>Make each dataset type inspectable through a type-aware viewer.</li>
+<li>Make common processing tasks easier to configure correctly.</li>
+<li>Keep arbitrary Python and matplotlib exploration close to the data.</li>
+<li>Preserve reproducibility through explicit task requests, run manifests,
+  products, logs, and AI action history.</li>
+<li>Use and extend the provider-contract model so CLI, TUI, Python, native GUI,
+  AI, and future MCP surfaces do not drift.</li>
+<li>Prefer native macOS interaction patterns: sidebars, inspectors, toolbars,
+  command menus, keyboard shortcuts, multiple windows, drag/drop, and standard
+  file panels.</li>
+</ul>
+<h2 id="non-goals-for-the-first-product-slice">Non-Goals For The First Product Slice<a class="headerlink" href="#non-goals-for-the-first-product-slice" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Building a branded frontend for another runtime or making another runtime the
+  primary execution backend.</li>
+<li>Building an IDE for Rust development.</li>
+<li>Exposing every historical task surface before product need.</li>
+<li>Forking GUI-only task semantics. Expanding canonical provider protocols for a
+  first-rate GUI is explicitly in scope.</li>
+<li>Freezing pixel layouts or app-specific controls into provider schemas.</li>
+<li>Creating a new top-level app family without explicit implementation approval.</li>
+</ul>
+<h2 id="workbench-model">Workbench Model<a class="headerlink" href="#workbench-model" title="Permanent link">&para;</a></h2>
+<p>The app is organized around a project workspace. A project is a local directory
+with casa-rs-readable datasets, derived products, and run artifacts. The user
+can open a folder, open a specific dataset, or create a lightweight project
+wrapper around existing files.</p>
+<p>The default window should use a native macOS workbench layout:</p>
+<ul>
+<li>left activity/sidebar for project explorer and major work areas</li>
+<li>central editor/detail area for data viewers, task panels, Python notebooks,
+  plots, and run products</li>
+<li>right inspector for selected dataset metadata, task context, AI suggestions,
+  and provenance</li>
+<li>bottom panel for Python, logs, task output, diagnostics, and problems</li>
+<li>command palette for task, data, and AI actions</li>
+</ul>
+<p>The app should support multiple tabs or editor panes because users naturally
+compare an MS summary, a visibility plot, a task request, an image plane, and a
+Python plot while reducing data.</p>
+<h3 id="workbench-job-runtime">Workbench Job Runtime<a class="headerlink" href="#workbench-job-runtime" title="Permanent link">&para;</a></h3>
+<p>Slow work in a tab is represented as workbench jobs owned by the originating
+tab. Jobs expose a durable in-memory lifecycle for pending, running, succeeded,
+failed, and cancelled work, plus owner, progress, log lines, result summaries,
+errors, cancellation-request state, and last event text.</p>
+<p>The first implemented job kinds are MeasurementSet plot rendering and dirty
+imaging task execution. Plot rendering runs off the main thread through the
+Swift workbench and updates the visible plot state only if the originating job
+is still current for its tab. Dirty imaging remains a supervised short-lived
+<code>casars-imager --json-run</code> process, but its run state is now also keyed by job
+ID so cancellation and completion do not clear unrelated work.</p>
+<p>The first coordinator rule is one active job per tab: starting a new job for the
+same tab cancels or supersedes the previous active job for that tab, while other
+tabs keep their own active jobs. The coordinator is deliberately Swift-side and
+in-memory for this product slice. It is not a provider daemon, project-history
+storage format, or broad task scheduler.</p>
+<p>GUI-Wave-5 keeps generated-product relationships in the same in-memory
+workbench state. A dirty-imaging completion creates a run-product group keyed by
+the run ID, links each recognized artifact to the probed <code>DatasetSummary</code>, and
+routes product opens through the normal type-aware explorer tab path. This is a
+debuggable GUI state model, not a persisted run manifest; a durable project
+history/cache remains future work.</p>
+<h2 id="core-panels">Core Panels<a class="headerlink" href="#core-panels" title="Permanent link">&para;</a></h2>
+<h3 id="project-explorer">Project Explorer<a class="headerlink" href="#project-explorer" title="Permanent link">&para;</a></h3>
+<p>The project explorer discovers radio astronomy data products in the open folder.</p>
+<p>It should group files by semantic type rather than showing only raw filesystem
+layout:</p>
+<ul>
+<li>MeasurementSets</li>
+<li>persistent images</li>
+<li>calibration tables</li>
+<li>FITS files</li>
+<li>task run directories</li>
+<li>generated plots</li>
+<li>manifests and logs</li>
+<li>scripts and notebooks</li>
+</ul>
+<p>Each item should expose quick actions:</p>
+<ul>
+<li>open type-aware explorer</li>
+<li>reveal on disk</li>
+<li>inspect metadata</li>
+<li>use as input to a task</li>
+<li>ask AI about this dataset</li>
+<li>open in Python context</li>
+</ul>
+<p>The explorer should keep enough filesystem truth visible that users can still
+reason about paths and interoperability.</p>
+<h3 id="inspector-versus-explorer">Inspector Versus Explorer<a class="headerlink" href="#inspector-versus-explorer" title="Permanent link">&para;</a></h3>
+<p>The app should distinguish lightweight inspectors from full explorers.</p>
+<p>An inspector is a compact side-panel view for basic facts about the selected
+object:</p>
+<ul>
+<li>path, type, size, and freshness</li>
+<li>axes, units, shapes, columns, or product role</li>
+<li>quick provenance and warnings</li>
+<li>compatible actions and task inputs</li>
+<li>links to richer explorers</li>
+</ul>
+<p>An explorer is a full workbench surface for deep interaction:</p>
+<ul>
+<li>MeasurementSet plots and table navigation</li>
+<li>image plane viewing, cube slicing, movies, masks, and region statistics</li>
+<li>calibration table inspection and diagnostic plots</li>
+<li>linked selections across plots, tables, and images</li>
+<li>larger controls that do not fit in an inspector</li>
+</ul>
+<p>Inspectors should stay fast and always useful. They are selection-scoped,
+read-mostly, cache-backed, and latency-bounded. Inspectors may show stale/cache
+status, but they should not trigger expensive materialization without explicit
+user action.</p>
+<p>Explorers can be large, stateful, and feature-rich. AI suggestions, task
+preparation, and long-running provider calls belong in explorers, task panels,
+or AI panels rather than turning the inspector into a slow mini-workbench.</p>
+<h3 id="dataset-explorers">Dataset Explorers<a class="headerlink" href="#dataset-explorers" title="Permanent link">&para;</a></h3>
+<p>Clicking a dataset opens the best available type-aware explorer.</p>
+<p>Initial explorer targets:</p>
+<ul>
+<li>MeasurementSet explorer using the existing <code>msexplore</code> and table browser
+  surfaces.</li>
+<li>Image explorer using the existing <code>imexplore</code> session surface.</li>
+<li>Table/calibration-table explorer using the existing <code>tablebrowser</code> session
+  surface.</li>
+</ul>
+<p>The explorer should show a summary first, then let the user move into richer
+views:</p>
+<ul>
+<li>metadata and shape</li>
+<li>fields, spectral windows, scans, antennas, correlations, and data columns</li>
+<li>table structure and typed cell inspection</li>
+<li>image axes, coordinate system, masks, statistics, slices, and moments</li>
+<li>plots relevant to the selected product</li>
+<li>provenance and generated products</li>
+</ul>
+<p>For large datasets, the UI must distinguish slow open/materialization work from
+rendering. The user should see progress and cancellability rather than a blank
+or apparently frozen panel.</p>
+<p>The desired MeasurementSet explorer is stateful enough that it probably should
+not be forced through a one-shot task surface. Before real provider integration,
+choose one of these approaches:</p>
+<ul>
+<li>keep <code>msexplore</code> as a one-shot summary/plot generator and add a separate
+  MeasurementSet session or object surface for the workbench</li>
+<li>expand <code>msexplore</code> with a versioned <code>--session</code> protocol</li>
+</ul>
+<p>The UI-first prototype may use a fixture-backed MeasurementSet explorer before
+that decision is implemented, but the fixture protocol must be marked
+experimental.</p>
+<h3 id="processing-history">Processing History<a class="headerlink" href="#processing-history" title="Permanent link">&para;</a></h3>
+<p>The workbench should provide a high-level history of data processing activity:
+what happened, when it happened, what data it affected, and why it was done.</p>
+<p>The history should show:</p>
+<ul>
+<li>imported or discovered datasets</li>
+<li>task runs and AI-assisted actions</li>
+<li>Python explorations that produced saved snippets, plots, or products</li>
+<li>generated products and changed persistent data</li>
+<li>parameter diffs, user approvals, and run reasons</li>
+<li>warnings, failures, retries, and downstream stale products</li>
+</ul>
+<p>The underlying persistent data structures are not intrinsically versioned, so
+the history must be honest about what can and cannot be reconstructed.</p>
+<p>The first version is an append-only provenance timeline, not a restoration
+system:</p>
+<ul>
+<li>event records for task runs, Python actions, and user annotations</li>
+<li>before/after metadata snapshots where cheap enough</li>
+<li>file fingerprints, mtimes, sizes, and product roles</li>
+<li>links from timeline events to affected products and generated diagnostics</li>
+<li>replayable canonical requests when full data restoration is not available</li>
+</ul>
+<p>Reserve "time machine" for a future snapshot/restore feature with explicit
+pre-change snapshots and restore semantics. Fixture/demo history must be
+clearly labeled and must never be mixed into real project history as if it were
+observed fact.</p>
+<p>The first version should let a user answer: "What did I do to this project,
+why, and what changed?"</p>
+<h3 id="task-panels">Task Panels<a class="headerlink" href="#task-panels" title="Permanent link">&para;</a></h3>
+<p>Task panels configure and execute casa-rs processing tasks.</p>
+<p>The first real task family is dirty imaging through <code>casars-imager --json-run</code>,
+the casa-rs equivalent of a common <code>tclean(..., niter=0)</code> pass. This was chosen
+because imaging is one of the two dominant radio astronomy workflows, the task
+takes a selected MeasurementSet as input, it produces visible image products,
+and it can exercise the run/provenance/debug spine without mutating the input
+science data.</p>
+<p>Future task families should still be chosen with a small decision matrix:</p>
+<ul>
+<li>provider maturity</li>
+<li>dataset-aware parameter richness</li>
+<li>write-safety profile</li>
+<li>demo value for AI assistance</li>
+<li>output product clarity</li>
+<li>validation needs</li>
+<li>provenance and run-manifest needs</li>
+</ul>
+<p>Calibration is the next primary task family to expose, but it should enter as a
+real <code>gaincal</code>/<code>bandpass</code>-class vertical rather than a rare prior-calibration
+task used only because it is easy to wire.</p>
+<p>Task panels are projected from provider schema bundles. The GUI may add native
+layout and interaction, but it must not invent a separate semantic schema.
+When current provider bundles are not expressive enough for a first-rate native
+UI, the right fix is to expand the canonical provider protocol rather than
+work around it locally in the app.</p>
+<p>Task parameters should be context-sensitive:</p>
+<ul>
+<li>dataset picker constrained to compatible inputs</li>
+<li>source/field and phase-center defaults populated from the selected
+  MeasurementSet</li>
+<li>spw/channel/correlation choices populated from the selected MeasurementSet</li>
+<li>output paths defaulted relative to the project</li>
+<li>advanced parameters hidden until requested</li>
+<li>validation errors tied to both schema rules and dataset-specific facts</li>
+<li>previews or estimated products shown when available</li>
+</ul>
+<p>Execution should produce a durable run record:</p>
+<ul>
+<li>canonical JSON request</li>
+<li>resolved dataset context</li>
+<li>command or provider protocol/version</li>
+<li>stdout/stderr</li>
+<li>generated products</li>
+<li>diagnostics</li>
+<li>AI suggestions that affected the request</li>
+<li>user approvals</li>
+</ul>
+<h3 id="python-and-matplotlib-panel">Python And Matplotlib Panel<a class="headerlink" href="#python-and-matplotlib-panel" title="Permanent link">&para;</a></h3>
+<p>The app should include an interactive Python panel for arbitrary exploration.</p>
+<p>The Python environment should understand the current project and selected
+datasets:</p>
+<ul>
+<li>expose selected paths as Python variables or snippets</li>
+<li>import <code>casars</code> Python package helpers</li>
+<li>provide convenient loaders for tables, images, and MeasurementSets</li>
+<li>capture matplotlib output into native plot tabs</li>
+<li>allow AI to propose or run Python only with clear user-visible intent</li>
+</ul>
+<p>Python is both an expert escape hatch and an AI execution substrate. The app
+should make it easy to move from a plot or table selection into a short Python
+exploration, then preserve useful snippets in the project history.</p>
+<p>The Python terminal should be dual-ported. Both the user and AI can write into
+the same terminal surface, but only one actor owns input at a time.</p>
+<p>Required behavior:</p>
+<ul>
+<li>visible ownership state: user-controlled, AI-controlled, running, or paused</li>
+<li>AI-generated input appears in the terminal before execution</li>
+<li>while AI controls the terminal, user typing is locked out except for stop or
+  reclaim-control actions</li>
+<li>the user can interrupt a running command or revoke AI control</li>
+<li>executed code, output, plots, and ownership changes are recorded in project
+  history</li>
+<li>AI must not execute hidden Python outside this visible terminal or an
+  equivalently audited execution surface</li>
+</ul>
+<p>Minimum Python execution policy before real execution:</p>
+<ul>
+<li>read roots are explicit and visible to the user</li>
+<li>default writes go under a project-managed output directory</li>
+<li>in-place persistent data mutation requires separate approval</li>
+<li>subprocess and network access require explicit approval</li>
+<li>environment variables and secrets are hidden from AI context packs by default</li>
+<li>package imports are recorded and unresolved imports produce visible guidance</li>
+<li>kernel lifetime, reset, interrupt, and kill behavior are explicit</li>
+<li>long-running or background work is visible in the workbench</li>
+<li>audit records distinguish read-only code, file-writing code, subprocess code,
+  networked code, and in-place mutation</li>
+</ul>
+<h3 id="radio-astronomy-oracle-panel">Radio Astronomy Oracle Panel<a class="headerlink" href="#radio-astronomy-oracle-panel" title="Permanent link">&para;</a></h3>
+<p>The Oracle panel answers radio astronomy and casa-rs questions in the context
+of the current project.</p>
+<p>It should be able to use:</p>
+<ul>
+<li>selected dataset metadata</li>
+<li>active task parameters</li>
+<li>run manifests and logs</li>
+<li>generated plots and image statistics</li>
+<li>local Radio Astronomy Oracle corpus retrieval</li>
+<li>casa-rs provider schema descriptions</li>
+<li>relevant user conversation</li>
+</ul>
+<p>Oracle answers should cite their evidence when they come from documentation or
+local corpus sources. When an answer affects processing parameters, the app
+should turn that into an explicit suggestion rather than silently mutating a
+task panel.</p>
+<h3 id="ai-assistant-surface">AI Assistant Surface<a class="headerlink" href="#ai-assistant-surface" title="Permanent link">&para;</a></h3>
+<p>AI should be integrated across panels, but the workbench also needs a
+first-class AI chat terminal/tab. Inline suggestions are one AI output mode,
+not the whole AI surface.</p>
+<p>The AI chat tab is a central workspace tab. It can reference selected datasets,
+open task tabs, Python output, processing history, and active explorer state.
+It should support ordinary conversation, planning, command preparation, and
+follow-up questions without requiring the user to leave the workbench.</p>
+<p>Useful first capabilities:</p>
+<ul>
+<li>explain the selected dataset or plot</li>
+<li>answer questions in a persistent AI chat tab</li>
+<li>recommend task parameter defaults from dataset context</li>
+<li>fill a task panel from a conversation</li>
+<li>compare two candidate task requests</li>
+<li>generate Python exploration snippets</li>
+<li>run Python snippets after user approval</li>
+<li>summarize task output and errors</li>
+<li>suggest next diagnostic plots</li>
+<li>open the relevant Oracle answer when the user asks conceptual questions</li>
+</ul>
+<p>The assistant should operate on an explicit context pack:</p>
+<ul>
+<li>selected project</li>
+<li>selected dataset or product</li>
+<li>active explorer state</li>
+<li>active task schema and current request</li>
+<li>recent run history</li>
+<li>Python snippets and plots marked as relevant</li>
+<li>user conversation</li>
+</ul>
+<p>The AI should report what context it used. When context is missing, it should
+ask for the missing dataset or panel selection instead of hallucinating a
+reduction workflow.</p>
+<p>AI chat output that changes workbench state should become explicit proposals:</p>
+<ul>
+<li>task parameter diffs</li>
+<li>Python snippets</li>
+<li>task requests</li>
+<li>dataset or tab navigation actions</li>
+<li>processing-history annotations</li>
+</ul>
+<p>Those proposals must still go through the approval and audit model before they
+execute or mutate state.</p>
+<h2 id="safety-and-trust-model">Safety And Trust Model<a class="headerlink" href="#safety-and-trust-model" title="Permanent link">&para;</a></h2>
+<p>AI can suggest, draft, and prepare actions. User approval is required before:</p>
+<ul>
+<li>executing a task that writes products</li>
+<li>editing or deleting data products</li>
+<li>running arbitrary Python that writes files or invokes subprocesses</li>
+<li>changing task parameters after a user has reviewed them</li>
+<li>applying flags or calibration changes to an existing MeasurementSet</li>
+</ul>
+<p>The default first slice should be read-mostly except for task runs that write
+new products under a project-managed output directory. In-place mutation should
+be a later, explicitly designed capability.</p>
+<p>Every AI-assisted state change should leave an audit trail:</p>
+<ul>
+<li>prompt or user instruction</li>
+<li>context pack summary</li>
+<li>proposed diff or command</li>
+<li>user approval</li>
+<li>execution result</li>
+</ul>
+<p>First-slice AI privacy defaults:</p>
+<ul>
+<li>AI context packs are explicit, previewable, and auditable.</li>
+<li>Cloud model use is opt-in.</li>
+<li>Raw data, logs, local paths, and Python snippets are redacted or individually
+  approved before transmission to a cloud model.</li>
+<li>The project history records the model/provider, context-pack summary, and
+  whether raw or redacted context was used.</li>
+<li>Local-only AI can be supported later, but the UI should not imply local-only
+  execution unless that is actually true.</li>
+</ul>
+<h2 id="architecture-direction">Architecture Direction<a class="headerlink" href="#architecture-direction" title="Permanent link">&para;</a></h2>
+<p>The GUI belongs at the apps/runtimes layer. It depends on boundary contracts,
+domain libraries, and existing provider binaries or libraries. It must not
+become a second source of truth for task semantics.</p>
+<p>This does not mean the GUI is constrained to the current provider protocols.
+The native workbench and AI surfaces are legitimate drivers for protocol
+expansion. If the UI needs richer progress, dataset-specific choices,
+preview/dry-run output, structured provenance, cancellable long-running
+operations, or AI-readable context, those should become canonical protocol
+capabilities that other consumers can also use.</p>
+<p>Candidate shape:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">flowchart</span><span class="w"> </span><span class="n">LR</span>
+<span class="w">  </span><span class="n">GUI</span><span class="p">[</span><span class="s">&quot;macOS SwiftUI Workbench&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Context</span><span class="p">[</span><span class="s">&quot;Project Context Index&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="n">AI</span><span class="p">[</span><span class="s">&quot;AI Orchestrator&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Python</span><span class="p">[</span><span class="s">&quot;Python Kernel&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Oracle</span><span class="p">[</span><span class="s">&quot;Radio Astronomy Oracle&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Tasks</span><span class="p">[</span><span class="s">&quot;Task Providers&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Sessions</span><span class="p">[</span><span class="s">&quot;Session Providers&quot;</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Data</span><span class="p">[</span><span class="s">&quot;casa-rs Data Products&quot;</span><span class="p">]</span>
+
+<span class="w">  </span><span class="n">GUI</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">Context</span>
+<span class="w">  </span><span class="n">GUI</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">AI</span>
+<span class="w">  </span><span class="n">GUI</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">Python</span>
+<span class="w">  </span><span class="n">GUI</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">Tasks</span>
+<span class="w">  </span><span class="n">GUI</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">Sessions</span>
+<span class="w">  </span><span class="n">GUI</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">Oracle</span>
+<span class="w">  </span><span class="n">Context</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="kt">Data</span>
+<span class="w">  </span><span class="n">AI</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">Context</span>
+<span class="w">  </span><span class="n">AI</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">Tasks</span>
+<span class="w">  </span><span class="n">AI</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">Python</span>
+<span class="w">  </span><span class="n">AI</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">Oracle</span>
+<span class="w">  </span><span class="n">Tasks</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="kt">Data</span>
+<span class="w">  </span><span class="n">Sessions</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="kt">Data</span>
+<span class="w">  </span><span class="n">Python</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="kt">Data</span>
+</code></pre></div>
+
+<p>Provider integration should follow existing contracts:</p>
+<ul>
+<li>task surfaces use <code>--protocol-info</code>, <code>--json-schema</code>, and <code>--json-run</code></li>
+<li>session surfaces use <code>--protocol-info</code>, <code>--json-schema</code>, and a stateful
+  <code>--session</code> transport</li>
+<li>object surfaces should use handle-based access where direct in-process access
+  is the right model</li>
+</ul>
+<p>The native app should read provider schemas and project them into SwiftUI
+controls with coarse presentation hints. Dataset-specific choices should come
+from casa-rs summaries and session/object queries, not hard-coded GUI lists.</p>
+<p>For v0 task execution, the native app should supervise provider subprocesses
+over JSON and JSON Lines protocols. Lightweight read-only project and dataset
+probing is allowed through <code>casars-frontend-services</code>, a Rust-owned UniFFI
+boundary that can generate Swift and Python bindings from one source API. Broad
+direct Rust object access, mutation, threading, lifetimes, and cancellation
+remain separate design work. Long-running operations need explicit cancellation
+semantics:</p>
+<ul>
+<li>provider-level cancel request when the protocol supports it</li>
+<li>process signal fallback when cancellation is not yet protocol-native</li>
+<li>timeout behavior</li>
+<li>partial-result and partial-diagnostic handling</li>
+</ul>
+<h2 id="technology-stack-decisions">Technology Stack Decisions<a class="headerlink" href="#technology-stack-decisions" title="Permanent link">&para;</a></h2>
+<p>These choices should be made before the first clickable prototype:</p>
+<ul>
+<li>Native macOS app shell: SwiftUI.</li>
+<li>AppKit only for escape hatches SwiftUI does not model cleanly.</li>
+<li>Package-first testable core: keep workbench models, actions, fixture
+  providers, and debug state in SwiftPM library targets that can run under
+  <code>swift test</code>.</li>
+<li>The GUI prototype may use a SwiftPM runnable target or an Xcode app target,
+  but the reusable state and provider logic must remain package-testable.</li>
+<li>Use <code>WindowGroup</code> for the primary workbench window.</li>
+<li>Use explicit desktop affordances: menus, commands, keyboard shortcuts,
+  split views, inspectors, tabs, settings, and native file panels.</li>
+<li>Preserve standard macOS window behavior for the primary workbench, including
+  full-screen Space support. SwiftPM GUI prototypes should be staged and
+  launched as <code>.app</code> bundles for interactive inspection rather than run as raw
+  executables.</li>
+<li>Any collapsible shell pane, especially the inspector, must have a persistent
+  restore path through visible chrome, a menu command, and debug-state coverage;
+  collapsed panes must not reserve split-view content width.</li>
+<li>The left dock/sidebar and the inspector are separate shell regions. The main
+  window toolbar owns the left dock collapse/restore affordance. The left dock
+  header owns the inspector collapse/restore affordance when the dock is
+  visible.</li>
+<li>Reserve a global command/search surface early so dataset, task, AI, and
+  navigation actions do not become disconnected panel-local affordances.</li>
+<li>Start with fixture providers, static plot/image assets, and narrow real
+  dataset-discovery and MeasurementSet plotting probes.</li>
+<li>Do not start with Electron, Tauri, or a webview UI.</li>
+<li>Use UniFFI as the primary binding mechanism for new frontend service APIs
+  that should be available to both Swift and Python. Existing PyO3 Python
+  bindings may remain temporarily, but they should be consolidated later so the
+  project does not keep two long-term binding systems for the same frontend
+  capabilities.</li>
+<li>Defer general charting, image rendering, Python kernel, and real AI provider
+  library choices until panel behavior proves what is needed.</li>
+<li>For the first real MeasurementSet explorer plotting slice, render plots in
+  Rust through the existing <code>casa-ms</code> <code>msexplore</code> plotting path and pass a PNG
+  plus typed axis, series, selection, sampling, and renderer metadata through
+  UniFFI. SwiftUI owns controls and native layout; it does not reimplement
+  scientific plotting semantics.</li>
+<li>This PNG-first rendering is a first useful artifact, not the final
+  interaction model. The durable boundary is that Rust owns scientific data
+  extraction, MS selection semantics, averaging, decimation, and point
+  provenance. Swift should eventually be able to render and adjust plots
+  interactively from bounded typed point arrays returned by Rust, with the PNG
+  retained as a preview/export artifact when useful.</li>
+</ul>
+<p>The key architectural requirement is not just "native SwiftUI." It is
+"native SwiftUI over a headlessly testable workbench core."</p>
+<p>GUI-Wave-0 implements this in <code>apps/casars-mac</code> as a SwiftPM package with a
+<code>CasarsMacCore</code> library and <code>casars-mac</code> SwiftUI executable. GUI-Wave-1 adds
+<code>casars-frontend-services</code> for read-only real project/dataset probing. GUI-Wave-3
+adds a first real MeasurementSet plot API through the same frontend-service
+boundary. GUI-Wave-4 adds the first real task run by supervising a short-lived
+<code>casars-imager --json-run</code> dirty-imaging process from the Swift workbench,
+recording request/result/log artifacts in processing history, and surfacing run
+state through debug JSON. GUI-Wave-5 adds the first native explorer spine for
+real MeasurementSets, CASA images, and CASA tables: Rust/frontend-service probes
+remain the source of scientific metadata, while Swift routes datasets and
+generated products into typed tabs and projects shallow summaries. Deep image
+viewing, table cell browsing, Python execution, and AI behavior remain future
+work unless separately approved.</p>
+<h2 id="testability-and-debuggability">Testability And Debuggability<a class="headerlink" href="#testability-and-debuggability" title="Permanent link">&para;</a></h2>
+<p>The GUI must be testable without relying on manual screenshot exchange.</p>
+<p>Required from the beginning:</p>
+<ul>
+<li>Put durable state in a pure Swift workbench model/store, not scattered
+  view-local <code>@State</code>.</li>
+<li>Drive behavior through explicit actions such as <code>openProject</code>,
+  <code>selectDockMode</code>, <code>selectDataset</code>, <code>openTab</code>, <code>collapseInspector</code>,
+  <code>applyAISuggestion</code>, <code>appendAIChatMessage</code>, and <code>runTask</code>.</li>
+<li>Keep fixture providers deterministic and injectable.</li>
+<li>Unit-test model, provider, and action behavior headlessly with SwiftPM.</li>
+<li>Add stable accessibility identifiers for every important control and state:
+  dock mode buttons, central tabs, tab <code>+</code>, inspector collapse, task <code>Run</code> /
+  <code>Stop</code>, AI chat input, Python ownership state, selected dataset, and history
+  rows.</li>
+<li>Add UI tests for the main flows once a runnable app shell exists.</li>
+<li>Use screenshots for visual polish review, not as the only way to understand
+  behavior.</li>
+</ul>
+<p>The prototype should also include a debug-only introspection surface. It may be
+a localhost-only JSON endpoint, Unix-domain socket, or test-only in-process API.
+The exact transport can be chosen during implementation, but the exposed state
+should include:</p>
+<ul>
+<li>active project</li>
+<li>active left-dock mode</li>
+<li>left-dock collapsed/expanded state</li>
+<li>selected dataset</li>
+<li>inspector collapsed/expanded state</li>
+<li>open central tabs</li>
+<li>typed explorer tabs and their dataset paths</li>
+<li>active central tab</li>
+<li>command/search query state when present</li>
+<li>task run states</li>
+<li>current task request, diagnostics, logs, and output paths</li>
+<li>generated product groups keyed by task run</li>
+<li>AI chat messages and proposal states</li>
+<li>Python terminal ownership state</li>
+<li>processing-history events</li>
+<li>last errors and logs</li>
+</ul>
+<p>This debug surface is for local automation and troubleshooting. It must not
+become a public provider contract unless deliberately promoted later.</p>
+<h2 id="protocol-expansion-requirements">Protocol Expansion Requirements<a class="headerlink" href="#protocol-expansion-requirements" title="Permanent link">&para;</a></h2>
+<p>Protocol expansion is a product feature, not just plumbing. A first-rate native
+GUI likely needs protocol capabilities that are broader than today's CLI/TUI
+surfaces.</p>
+<p>Candidate expansions:</p>
+<ul>
+<li>project and dataset discovery APIs that classify casa-rs-readable products</li>
+<li>lightweight dataset summaries suitable for sidebars and AI context packs</li>
+<li>context-dependent parameter option queries, such as legal fields, spectral
+  windows, scans, antennas, correlations, image axes, and output-product roles</li>
+<li>structured validation that can explain schema errors and dataset-specific
+  incompatibilities before execution</li>
+<li>dry-run or preview modes that return expected products, output paths,
+  warnings, and recommended diagnostic plots</li>
+<li>streaming progress events with phase names, percent or unit progress where
+  meaningful, cancellability, and partial diagnostics</li>
+<li>durable run-manifest schema shared by task panels, AI history, and project
+  explorer provenance</li>
+<li>plot and image-view protocols that can return typed data, bitmap previews,
+  linked selections, and reusable Python snippets</li>
+<li>AI action protocols for proposed parameter diffs, proposed Python snippets,
+  context-pack summaries, approval records, and execution results</li>
+<li>typed error envelopes with stable codes, user-facing recovery suggestions,
+  and debug details</li>
+</ul>
+<p>Rules for expansion:</p>
+<ul>
+<li>The canonical protocol changes first for real provider integration; the
+  SwiftUI surface projects from it.</li>
+<li>New capabilities are versioned and discoverable through protocol metadata.</li>
+<li>GUI annotations remain hints; semantic meaning lives in the provider
+  contract.</li>
+<li>Protocol changes should be useful to at least one non-GUI consumer where
+  practical, such as Python, MCP, tests, or <code>casars</code>.</li>
+<li>Long-running operations must have an explicit progress, cancellation, and
+  result model rather than relying on stdout scraping.</li>
+<li>AI-facing context must be explicit and auditable, not an implicit capture of
+  hidden UI state.</li>
+<li>Read-only file/dataset probes should interrogate the data with casa-rs
+  libraries rather than infer type from filename suffixes. Probe results should
+  carry enough freshness metadata, such as path, modification time, and probe
+  time, to support a future cache without making the underlying data structures
+  appear intrinsically versioned.</li>
+</ul>
+<p>Prototype exception:</p>
+<ul>
+<li>UI fixture schemas may precede canonical provider protocols only when they
+  are marked experimental.</li>
+<li>Experimental schemas must map each field or event to a proposed provider
+  capability.</li>
+<li>Experimental schemas must be blocked from real provider integration until the
+  canonical contract, versioning, and drift tests exist.</li>
+</ul>
+<h2 id="macos-native-shape">macOS Native Shape<a class="headerlink" href="#macos-native-shape" title="Permanent link">&para;</a></h2>
+<p>The app should feel like a serious desktop tool, not a web app in a window.</p>
+<p>Expected macOS conventions:</p>
+<ul>
+<li><code>NavigationSplitView</code>-style source list for project/workbench navigation</li>
+<li>toolbar actions for open, run, stop, plot, ask, and compare</li>
+<li>command palette for datasets, tasks, and AI actions</li>
+<li>inspectors for metadata, schema help, and provenance</li>
+<li>standard settings window for model, Python, data-root, and execution settings</li>
+<li>multiple windows or tabs where useful</li>
+<li>drag and drop for opening datasets</li>
+<li>keyboard shortcuts for common expert actions</li>
+<li>native file panels and recent projects</li>
+</ul>
+<p>The first implementation should prefer SwiftUI. Use AppKit only for behaviors
+SwiftUI does not model cleanly, such as specialized panels, responder-chain
+integration, or lower-level window control.</p>
+<h2 id="ui-first-implementation-strategy">UI-First Implementation Strategy<a class="headerlink" href="#ui-first-implementation-strategy" title="Permanent link">&para;</a></h2>
+<p>The first implementation should prioritize UI shape and interaction quality,
+even when provider functionality is stubbed or fake.</p>
+<p>The reason is practical: once a lot of backend code and provider assumptions
+are baked into the UI, changing the user experience becomes expensive. Early
+work should validate the workbench model with believable data and fake
+providers before treating current protocol limitations as product constraints.</p>
+<p>Allowed early scaffolding:</p>
+<ul>
+<li>static project fixtures</li>
+<li>real read-only dataset discovery through <code>casars-frontend-services</code></li>
+<li>fake MeasurementSet, image, calibration-table, and run-output inventories</li>
+<li>mocked task schemas and context-dependent parameter options</li>
+<li>fake task execution timelines, logs, progress, products, and failures</li>
+<li>stubbed AI suggestions and parameter diffs</li>
+<li>stubbed Python terminal ownership states and captured plot examples</li>
+<li>generated or fixture-backed image cube/movie views</li>
+</ul>
+<p>The fake layer should be shaped like the desired protocol contracts, but it
+must be labeled as fixture or demo data in the UI. When the UI proves that a
+protocol capability is needed, the canonical provider protocol should be
+expanded to match the product need before real provider integration.</p>
+<p>Long-term architecture decisions can change for the health of the project.
+There are no real users yet to preserve compatibility for. Existing ADRs and
+layering rules are important starting points, but if the native workbench
+exposes a better long-term architecture, the right path is to propose and
+supersede decisions deliberately rather than contort the UI around old
+assumptions.</p>
+<h2 id="context-index">Context Index<a class="headerlink" href="#context-index" title="Permanent link">&para;</a></h2>
+<p>The app needs a project context index so panels and AI can share facts without
+rescanning everything independently.</p>
+<p>The index should track:</p>
+<ul>
+<li>discovered dataset paths and semantic types</li>
+<li>lightweight metadata summaries</li>
+<li>known relationships between inputs, runs, and products</li>
+<li>provider compatibility with each dataset</li>
+<li>slow-to-compute summaries and their freshness</li>
+<li>user labels or notes</li>
+</ul>
+<p>The index is not a replacement for on-disk data. It is a cache and navigation
+aid. Scientific truth remains in casa-rs-readable persistent data and durable
+run artifacts.</p>
+<h2 id="first-product-slice">First Product Slice<a class="headerlink" href="#first-product-slice" title="Permanent link">&para;</a></h2>
+<p>A credible first slice should demonstrate the new product value without trying
+to cover all radio astronomy workflows.</p>
+<p>Suggested v0 demo spine:</p>
+<ol>
+<li>Open a project folder and show a project explorer with real or fixture
+   MeasurementSet discovery.</li>
+<li>Open one MeasurementSet explorer with summary, field/spw/scan views, and a
+   small set of visibility plots.</li>
+<li>Open an AI chat tab that can discuss the selected dataset and prepare a
+   proposed task change.</li>
+<li>Open one task panel backed by either the selected first real task contract or
+   a clearly marked fixture task contract.</li>
+<li>Show one AI parameter suggestion as a visible proposed diff against the task
+   request.</li>
+<li>Require user approval before applying the AI suggestion or running the task.</li>
+<li>Run or simulate the task into a project-managed output directory and show a
+   durable run record.</li>
+<li>Show a provenance timeline for that run with affected paths, run reason,
+   request summary, approvals, logs, products, and warnings.</li>
+<li>Verify the flow through headless model tests plus a debug-state query of the
+   running app.</li>
+</ol>
+<p>Fixture-only or v0.x follow-ons:</p>
+<ul>
+<li>image explorer with cube slicing or movie playback</li>
+<li>full Python terminal and matplotlib capture</li>
+<li>Oracle panel backed by local corpus retrieval</li>
+<li>broad project discovery across all supported product types</li>
+<li>rich linked selections across plots, tables, and images</li>
+<li>snapshot/restore time-machine behavior</li>
+</ul>
+<p>This slice should be strong enough to answer: "What can AI do here that the
+current <code>casars</code> TUI cannot?"</p>
+<h2 id="open-product-questions">Open Product Questions<a class="headerlink" href="#open-product-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Which first task best demonstrates context-aware AI: calibration or imaging?</li>
+<li>Should the Python panel be a simple REPL first, a notebook-like surface, or a
+  script editor with captured plots?</li>
+<li>Should AI execution be local-only initially, cloud-model backed, or support
+  both through a model settings abstraction?</li>
+<li>Should project metadata be stored in a <code>.casa-rs/</code> directory, sidecar JSON,
+  or only memory/cache for the first slice?</li>
+<li>How much interoperability language should be visible in the product UI,
+  versus kept in diagnostics and developer evidence?</li>
+<li>Should optional comparison backends exist only for testing/evidence, or should
+  any comparison workflow be user-visible?</li>
+<li>What is the minimum acceptable image viewer: static planes, cube slicing,
+  region statistics, or linked plot/image selection?</li>
+<li>What is the minimum acceptable MeasurementSet visibility-plot interaction for
+  the first explorer?</li>
+<li>What is the first durable MeasurementSet explorer protocol:
+  <code>msexplore --session</code>, a separate session provider, or an object surface?</li>
+<li>What is the first durable processing-history model: event history only,
+  before/after metadata snapshots, or opt-in file snapshots for write actions?</li>
+</ul>
+<h2 id="implementation-gates">Implementation Gates<a class="headerlink" href="#implementation-gates" title="Permanent link">&para;</a></h2>
+<p>Before implementation, this spec should become a shaped issue or wave with:</p>
+<ul>
+<li>GUI-specific issue title and board naming, such as <code>GUI-Wave-1</code>, to avoid
+  collision with tutorial-parity wave numbers</li>
+<li>explicit first task choice</li>
+<li>explicit write-safety boundary</li>
+<li>selected provider surfaces</li>
+<li>MeasurementSet explorer surface decision</li>
+<li>first-task decision matrix result</li>
+<li>AI provider and privacy assumptions</li>
+<li>Python execution sandbox expectations</li>
+<li>dual-ported Python terminal ownership model</li>
+<li>expected project metadata format</li>
+<li>expected processing-history persistence model</li>
+<li>prototype schema governance and fixture-labeling rules</li>
+<li>v0 transport/runtime model and cancellation behavior</li>
+<li>SwiftUI / SwiftPM testability plan</li>
+<li>debug introspection bridge plan</li>
+<li>accessibility identifier plan</li>
+<li>browser/manual verification plan for the native GUI</li>
+<li><code>just quick</code> and <code>just verify</code> expectations, or recorded exclusions</li>
+</ul>
+<p>Any implementation that creates a new top-level crate, package, app family,
+provider contract, runtime model, or substantial dependency requires explicit
+approval under the repo operating contract.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

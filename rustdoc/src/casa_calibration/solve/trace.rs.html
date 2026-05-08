@@ -374,99 +374,101 @@
 <a href=#374 id=374 data-nosnippet>374</a>                    antenna_id: <span class="number">2</span>,
 <a href=#375 id=375 data-nosnippet>375</a>                    scan_number: <span class="number">6</span>,
 <a href=#376 id=376 data-nosnippet>376</a>                    observation_id: <span class="number">5</span>,
-<a href=#377 id=377 data-nosnippet>377</a>                    gains: <span class="macro">vec!</span>[Complex32::new(<span class="number">0.5</span>, <span class="number">0.25</span>)],
-<a href=#378 id=378 data-nosnippet>378</a>                    flags: <span class="macro">vec!</span>[<span class="bool-val">false</span>],
-<a href=#379 id=379 data-nosnippet>379</a>                    param_errors: <span class="macro">vec!</span>[<span class="number">0.1</span>],
-<a href=#380 id=380 data-nosnippet>380</a>                    snrs: <span class="macro">vec!</span>[<span class="number">12.0</span>],
-<a href=#381 id=381 data-nosnippet>381</a>                    weights: <span class="macro">vec!</span>[<span class="number">99.0</span>],
-<a href=#382 id=382 data-nosnippet>382</a>                },
-<a href=#383 id=383 data-nosnippet>383</a>                SolutionRow {
-<a href=#384 id=384 data-nosnippet>384</a>                    time_seconds: <span class="number">20.0</span>,
-<a href=#385 id=385 data-nosnippet>385</a>                    interval_seconds: <span class="number">4.0</span>,
-<a href=#386 id=386 data-nosnippet>386</a>                    field_id: <span class="number">3</span>,
-<a href=#387 id=387 data-nosnippet>387</a>                    spw_id: <span class="number">4</span>,
-<a href=#388 id=388 data-nosnippet>388</a>                    antenna_id: <span class="number">1</span>,
-<a href=#389 id=389 data-nosnippet>389</a>                    scan_number: <span class="number">6</span>,
-<a href=#390 id=390 data-nosnippet>390</a>                    observation_id: <span class="number">5</span>,
-<a href=#391 id=391 data-nosnippet>391</a>                    gains: <span class="macro">vec!</span>[Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>)],
-<a href=#392 id=392 data-nosnippet>392</a>                    flags: <span class="macro">vec!</span>[<span class="bool-val">true</span>],
-<a href=#393 id=393 data-nosnippet>393</a>                    param_errors: <span class="macro">vec!</span>[<span class="number">0.0</span>],
-<a href=#394 id=394 data-nosnippet>394</a>                    snrs: <span class="macro">vec!</span>[<span class="number">0.0</span>],
-<a href=#395 id=395 data-nosnippet>395</a>                    weights: <span class="macro">vec!</span>[<span class="number">0.0</span>],
-<a href=#396 id=396 data-nosnippet>396</a>                },
-<a href=#397 id=397 data-nosnippet>397</a>            ],
-<a href=#398 id=398 data-nosnippet>398</a>            <span class="kw-2">&amp;</span>request,
-<a href=#399 id=399 data-nosnippet>399</a>            <span class="number">0</span>,
-<a href=#400 id=400 data-nosnippet>400</a>        );
-<a href=#401 id=401 data-nosnippet>401</a>
-<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">let </span>antenna_ids = BTreeSet::from([<span class="number">0</span>, <span class="number">1</span>]);
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">let </span>step = PhaseStepTrace {
-<a href=#404 id=404 data-nosnippet>404</a>            x0: <span class="number">0.0</span>,
-<a href=#405 id=405 data-nosnippet>405</a>            x1: <span class="number">0.5</span>,
-<a href=#406 id=406 data-nosnippet>406</a>            x2: <span class="number">1.0</span>,
-<a href=#407 id=407 data-nosnippet>407</a>            step: <span class="number">0.25</span>,
-<a href=#408 id=408 data-nosnippet>408</a>            opt_factor: <span class="number">0.75</span>,
-<a href=#409 id=409 data-nosnippet>409</a>            expanded: <span class="bool-val">true</span>,
-<a href=#410 id=410 data-nosnippet>410</a>            iterations: <span class="number">3</span>,
-<a href=#411 id=411 data-nosnippet>411</a>        };
-<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">let </span>gains = HashMap::from([(<span class="number">1</span>, Complex64::new(<span class="number">0.0</span>, <span class="number">1.0</span>))]);
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>last_gains = HashMap::from([(<span class="number">1</span>, Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>))]);
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span>gradient = HashMap::from([(<span class="number">1</span>, Complex64::new(<span class="number">0.1</span>, -<span class="number">0.2</span>))]);
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>hessian = HashMap::from([(<span class="number">1</span>, <span class="number">2.0</span>)]);
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>delta = HashMap::from([(<span class="number">1</span>, Complex64::new(-<span class="number">0.01</span>, <span class="number">0.02</span>))]);
-<a href=#417 id=417 data-nosnippet>417</a>        trace_phase_solver_iteration(PhaseSolverTraceEvent {
-<a href=#418 id=418 data-nosnippet>418</a>            iteration: <span class="number">7</span>,
-<a href=#419 id=419 data-nosnippet>419</a>            refant_id: <span class="number">0</span>,
-<a href=#420 id=420 data-nosnippet>420</a>            chi_square: <span class="number">1.0</span>,
-<a href=#421 id=421 data-nosnippet>421</a>            last_chi_square: <span class="number">2.0</span>,
-<a href=#422 id=422 data-nosnippet>422</a>            delta_chi_square: -<span class="number">1.0</span>,
-<a href=#423 id=423 data-nosnippet>423</a>            fractional_delta: -<span class="number">0.5</span>,
-<a href=#424 id=424 data-nosnippet>424</a>            convergence_count: <span class="number">2</span>,
-<a href=#425 id=425 data-nosnippet>425</a>            step: <span class="kw-2">&amp;</span>step,
-<a href=#426 id=426 data-nosnippet>426</a>            antenna_ids: <span class="kw-2">&amp;</span>antenna_ids,
-<a href=#427 id=427 data-nosnippet>427</a>            last_gains: <span class="kw-2">&amp;</span>last_gains,
-<a href=#428 id=428 data-nosnippet>428</a>            gains: <span class="kw-2">&amp;</span>gains,
-<a href=#429 id=429 data-nosnippet>429</a>            gradient: <span class="kw-2">&amp;</span>gradient,
-<a href=#430 id=430 data-nosnippet>430</a>            hessian: <span class="kw-2">&amp;</span>hessian,
-<a href=#431 id=431 data-nosnippet>431</a>            delta: <span class="kw-2">&amp;</span>delta,
-<a href=#432 id=432 data-nosnippet>432</a>        });
-<a href=#433 id=433 data-nosnippet>433</a>
-<a href=#434 id=434 data-nosnippet>434</a>        TEST_TRACE_PATH.with(|path| <span class="kw-2">*</span>path.borrow_mut() = <span class="prelude-val">None</span>);
+<a href=#377 id=377 data-nosnippet>377</a>                    refant_id: <span class="number">0</span>,
+<a href=#378 id=378 data-nosnippet>378</a>                    gains: <span class="macro">vec!</span>[Complex32::new(<span class="number">0.5</span>, <span class="number">0.25</span>)],
+<a href=#379 id=379 data-nosnippet>379</a>                    flags: <span class="macro">vec!</span>[<span class="bool-val">false</span>],
+<a href=#380 id=380 data-nosnippet>380</a>                    param_errors: <span class="macro">vec!</span>[<span class="number">0.1</span>],
+<a href=#381 id=381 data-nosnippet>381</a>                    snrs: <span class="macro">vec!</span>[<span class="number">12.0</span>],
+<a href=#382 id=382 data-nosnippet>382</a>                    weights: <span class="macro">vec!</span>[<span class="number">99.0</span>],
+<a href=#383 id=383 data-nosnippet>383</a>                },
+<a href=#384 id=384 data-nosnippet>384</a>                SolutionRow {
+<a href=#385 id=385 data-nosnippet>385</a>                    time_seconds: <span class="number">20.0</span>,
+<a href=#386 id=386 data-nosnippet>386</a>                    interval_seconds: <span class="number">4.0</span>,
+<a href=#387 id=387 data-nosnippet>387</a>                    field_id: <span class="number">3</span>,
+<a href=#388 id=388 data-nosnippet>388</a>                    spw_id: <span class="number">4</span>,
+<a href=#389 id=389 data-nosnippet>389</a>                    antenna_id: <span class="number">1</span>,
+<a href=#390 id=390 data-nosnippet>390</a>                    scan_number: <span class="number">6</span>,
+<a href=#391 id=391 data-nosnippet>391</a>                    observation_id: <span class="number">5</span>,
+<a href=#392 id=392 data-nosnippet>392</a>                    refant_id: <span class="number">0</span>,
+<a href=#393 id=393 data-nosnippet>393</a>                    gains: <span class="macro">vec!</span>[Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>)],
+<a href=#394 id=394 data-nosnippet>394</a>                    flags: <span class="macro">vec!</span>[<span class="bool-val">true</span>],
+<a href=#395 id=395 data-nosnippet>395</a>                    param_errors: <span class="macro">vec!</span>[<span class="number">0.0</span>],
+<a href=#396 id=396 data-nosnippet>396</a>                    snrs: <span class="macro">vec!</span>[<span class="number">0.0</span>],
+<a href=#397 id=397 data-nosnippet>397</a>                    weights: <span class="macro">vec!</span>[<span class="number">0.0</span>],
+<a href=#398 id=398 data-nosnippet>398</a>                },
+<a href=#399 id=399 data-nosnippet>399</a>            ],
+<a href=#400 id=400 data-nosnippet>400</a>            <span class="kw-2">&amp;</span>request,
+<a href=#401 id=401 data-nosnippet>401</a>            <span class="number">0</span>,
+<a href=#402 id=402 data-nosnippet>402</a>        );
+<a href=#403 id=403 data-nosnippet>403</a>
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>antenna_ids = BTreeSet::from([<span class="number">0</span>, <span class="number">1</span>]);
+<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>step = PhaseStepTrace {
+<a href=#406 id=406 data-nosnippet>406</a>            x0: <span class="number">0.0</span>,
+<a href=#407 id=407 data-nosnippet>407</a>            x1: <span class="number">0.5</span>,
+<a href=#408 id=408 data-nosnippet>408</a>            x2: <span class="number">1.0</span>,
+<a href=#409 id=409 data-nosnippet>409</a>            step: <span class="number">0.25</span>,
+<a href=#410 id=410 data-nosnippet>410</a>            opt_factor: <span class="number">0.75</span>,
+<a href=#411 id=411 data-nosnippet>411</a>            expanded: <span class="bool-val">true</span>,
+<a href=#412 id=412 data-nosnippet>412</a>            iterations: <span class="number">3</span>,
+<a href=#413 id=413 data-nosnippet>413</a>        };
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span>gains = HashMap::from([(<span class="number">1</span>, Complex64::new(<span class="number">0.0</span>, <span class="number">1.0</span>))]);
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>last_gains = HashMap::from([(<span class="number">1</span>, Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>))]);
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>gradient = HashMap::from([(<span class="number">1</span>, Complex64::new(<span class="number">0.1</span>, -<span class="number">0.2</span>))]);
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span>hessian = HashMap::from([(<span class="number">1</span>, <span class="number">2.0</span>)]);
+<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>delta = HashMap::from([(<span class="number">1</span>, Complex64::new(-<span class="number">0.01</span>, <span class="number">0.02</span>))]);
+<a href=#419 id=419 data-nosnippet>419</a>        trace_phase_solver_iteration(PhaseSolverTraceEvent {
+<a href=#420 id=420 data-nosnippet>420</a>            iteration: <span class="number">7</span>,
+<a href=#421 id=421 data-nosnippet>421</a>            refant_id: <span class="number">0</span>,
+<a href=#422 id=422 data-nosnippet>422</a>            chi_square: <span class="number">1.0</span>,
+<a href=#423 id=423 data-nosnippet>423</a>            last_chi_square: <span class="number">2.0</span>,
+<a href=#424 id=424 data-nosnippet>424</a>            delta_chi_square: -<span class="number">1.0</span>,
+<a href=#425 id=425 data-nosnippet>425</a>            fractional_delta: -<span class="number">0.5</span>,
+<a href=#426 id=426 data-nosnippet>426</a>            convergence_count: <span class="number">2</span>,
+<a href=#427 id=427 data-nosnippet>427</a>            step: <span class="kw-2">&amp;</span>step,
+<a href=#428 id=428 data-nosnippet>428</a>            antenna_ids: <span class="kw-2">&amp;</span>antenna_ids,
+<a href=#429 id=429 data-nosnippet>429</a>            last_gains: <span class="kw-2">&amp;</span>last_gains,
+<a href=#430 id=430 data-nosnippet>430</a>            gains: <span class="kw-2">&amp;</span>gains,
+<a href=#431 id=431 data-nosnippet>431</a>            gradient: <span class="kw-2">&amp;</span>gradient,
+<a href=#432 id=432 data-nosnippet>432</a>            hessian: <span class="kw-2">&amp;</span>hessian,
+<a href=#433 id=433 data-nosnippet>433</a>            delta: <span class="kw-2">&amp;</span>delta,
+<a href=#434 id=434 data-nosnippet>434</a>        });
 <a href=#435 id=435 data-nosnippet>435</a>
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span>lines = std::fs::read_to_string(<span class="kw-2">&amp;</span>trace_file).expect(<span class="string">"trace file"</span>);
-<a href=#437 id=437 data-nosnippet>437</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"event\":\"rust_group\""</span>));
-<a href=#438 id=438 data-nosnippet>438</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"kind\":\"integration\""</span>));
-<a href=#439 id=439 data-nosnippet>439</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"sample_count\":9"</span>));
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"event\":\"rust_solution\""</span>));
-<a href=#441 id=441 data-nosnippet>441</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"kind\":\"seconds\""</span>));
-<a href=#442 id=442 data-nosnippet>442</a>        <span class="macro">assert!</span>(
-<a href=#443 id=443 data-nosnippet>443</a>            lines.find(<span class="string">"\"antenna_id\":1"</span>).expect(<span class="string">"antenna 1"</span>)
-<a href=#444 id=444 data-nosnippet>444</a>                &lt; lines.find(<span class="string">"\"antenna_id\":2"</span>).expect(<span class="string">"antenna 2"</span>)
-<a href=#445 id=445 data-nosnippet>445</a>        );
-<a href=#446 id=446 data-nosnippet>446</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"event\":\"rust_phase_solver_iteration\""</span>));
-<a href=#447 id=447 data-nosnippet>447</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"expanded\":true"</span>));
-<a href=#448 id=448 data-nosnippet>448</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"gradient_im\":-0.2"</span>));
-<a href=#449 id=449 data-nosnippet>449</a>    }
-<a href=#450 id=450 data-nosnippet>450</a>
-<a href=#451 id=451 data-nosnippet>451</a>    <span class="attr">#[test]
-<a href=#452 id=452 data-nosnippet>452</a>    </span><span class="kw">fn </span>trace_name_helpers_cover_public_request_enums() {
-<a href=#453 id=453 data-nosnippet>453</a>        <span class="macro">assert_eq!</span>(gain_type_name(GainType::G), <span class="string">"G"</span>);
-<a href=#454 id=454 data-nosnippet>454</a>        <span class="macro">assert_eq!</span>(gain_type_name(GainType::T), <span class="string">"T"</span>);
-<a href=#455 id=455 data-nosnippet>455</a>        <span class="macro">assert_eq!</span>(solve_mode_name(GainSolveMode::Phase), <span class="string">"p"</span>);
-<a href=#456 id=456 data-nosnippet>456</a>        <span class="macro">assert_eq!</span>(solve_mode_name(GainSolveMode::AmplitudePhase), <span class="string">"ap"</span>);
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="macro">assert_eq!</span>(
-<a href=#458 id=458 data-nosnippet>458</a>            base_key_json(<span class="kw-2">&amp;</span>SolveBaseKey {
-<a href=#459 id=459 data-nosnippet>459</a>                field_id: <span class="number">1</span>,
-<a href=#460 id=460 data-nosnippet>460</a>                spw_id: <span class="number">2</span>,
-<a href=#461 id=461 data-nosnippet>461</a>                observation_id: <span class="number">3</span>,
-<a href=#462 id=462 data-nosnippet>462</a>                scan_number: <span class="number">4</span>,
-<a href=#463 id=463 data-nosnippet>463</a>            })[<span class="string">"scan_number"</span>],
-<a href=#464 id=464 data-nosnippet>464</a>            <span class="number">4
-<a href=#465 id=465 data-nosnippet>465</a>        </span>);
-<a href=#466 id=466 data-nosnippet>466</a>        <span class="macro">assert_eq!</span>(
-<a href=#467 id=467 data-nosnippet>467</a>            bucket_key_json(<span class="kw-2">&amp;</span>SolveBucketKey::Infinite)[<span class="string">"kind"</span>],
-<a href=#468 id=468 data-nosnippet>468</a>            <span class="string">"infinite"
-<a href=#469 id=469 data-nosnippet>469</a>        </span>);
-<a href=#470 id=470 data-nosnippet>470</a>    }
-<a href=#471 id=471 data-nosnippet>471</a>}
+<a href=#436 id=436 data-nosnippet>436</a>        TEST_TRACE_PATH.with(|path| <span class="kw-2">*</span>path.borrow_mut() = <span class="prelude-val">None</span>);
+<a href=#437 id=437 data-nosnippet>437</a>
+<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">let </span>lines = std::fs::read_to_string(<span class="kw-2">&amp;</span>trace_file).expect(<span class="string">"trace file"</span>);
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"event\":\"rust_group\""</span>));
+<a href=#440 id=440 data-nosnippet>440</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"kind\":\"integration\""</span>));
+<a href=#441 id=441 data-nosnippet>441</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"sample_count\":9"</span>));
+<a href=#442 id=442 data-nosnippet>442</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"event\":\"rust_solution\""</span>));
+<a href=#443 id=443 data-nosnippet>443</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"kind\":\"seconds\""</span>));
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="macro">assert!</span>(
+<a href=#445 id=445 data-nosnippet>445</a>            lines.find(<span class="string">"\"antenna_id\":1"</span>).expect(<span class="string">"antenna 1"</span>)
+<a href=#446 id=446 data-nosnippet>446</a>                &lt; lines.find(<span class="string">"\"antenna_id\":2"</span>).expect(<span class="string">"antenna 2"</span>)
+<a href=#447 id=447 data-nosnippet>447</a>        );
+<a href=#448 id=448 data-nosnippet>448</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"event\":\"rust_phase_solver_iteration\""</span>));
+<a href=#449 id=449 data-nosnippet>449</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"expanded\":true"</span>));
+<a href=#450 id=450 data-nosnippet>450</a>        <span class="macro">assert!</span>(lines.contains(<span class="string">"\"gradient_im\":-0.2"</span>));
+<a href=#451 id=451 data-nosnippet>451</a>    }
+<a href=#452 id=452 data-nosnippet>452</a>
+<a href=#453 id=453 data-nosnippet>453</a>    <span class="attr">#[test]
+<a href=#454 id=454 data-nosnippet>454</a>    </span><span class="kw">fn </span>trace_name_helpers_cover_public_request_enums() {
+<a href=#455 id=455 data-nosnippet>455</a>        <span class="macro">assert_eq!</span>(gain_type_name(GainType::G), <span class="string">"G"</span>);
+<a href=#456 id=456 data-nosnippet>456</a>        <span class="macro">assert_eq!</span>(gain_type_name(GainType::T), <span class="string">"T"</span>);
+<a href=#457 id=457 data-nosnippet>457</a>        <span class="macro">assert_eq!</span>(solve_mode_name(GainSolveMode::Phase), <span class="string">"p"</span>);
+<a href=#458 id=458 data-nosnippet>458</a>        <span class="macro">assert_eq!</span>(solve_mode_name(GainSolveMode::AmplitudePhase), <span class="string">"ap"</span>);
+<a href=#459 id=459 data-nosnippet>459</a>        <span class="macro">assert_eq!</span>(
+<a href=#460 id=460 data-nosnippet>460</a>            base_key_json(<span class="kw-2">&amp;</span>SolveBaseKey {
+<a href=#461 id=461 data-nosnippet>461</a>                field_id: <span class="number">1</span>,
+<a href=#462 id=462 data-nosnippet>462</a>                spw_id: <span class="number">2</span>,
+<a href=#463 id=463 data-nosnippet>463</a>                observation_id: <span class="number">3</span>,
+<a href=#464 id=464 data-nosnippet>464</a>                scan_number: <span class="number">4</span>,
+<a href=#465 id=465 data-nosnippet>465</a>            })[<span class="string">"scan_number"</span>],
+<a href=#466 id=466 data-nosnippet>466</a>            <span class="number">4
+<a href=#467 id=467 data-nosnippet>467</a>        </span>);
+<a href=#468 id=468 data-nosnippet>468</a>        <span class="macro">assert_eq!</span>(
+<a href=#469 id=469 data-nosnippet>469</a>            bucket_key_json(<span class="kw-2">&amp;</span>SolveBucketKey::Infinite)[<span class="string">"kind"</span>],
+<a href=#470 id=470 data-nosnippet>470</a>            <span class="string">"infinite"
+<a href=#471 id=471 data-nosnippet>471</a>        </span>);
+<a href=#472 id=472 data-nosnippet>472</a>    }
+<a href=#473 id=473 data-nosnippet>473</a>}
 </code></pre></div></section></main></body></html>

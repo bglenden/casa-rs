@@ -1,0 +1,878 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Wave 6 Issue 169 VLA 3C391 - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#wave-6-issue-169-vla-3c391" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Wave 6 Issue 169 VLA 3C391
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tutorial-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tutorial Inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Current Results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#image-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image Metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspectable-panels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspectable Panels
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tutorial-figure-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tutorial Figure Coverage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Interpretation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="wave-6-issue-169-vla-3c391">Wave 6 Issue 169 VLA 3C391<a class="headerlink" href="#wave-6-issue-169-vla-3c391" title="Permanent link">&para;</a></h1>
+<p>Truth class: current evidence
+Last reality check: 2026-05-03
+Verification:
+- <code>bash -n scripts/run-wave6-issue169-3c391.sh</code>
+- <code>cargo test -p casa-test-support tutorial_dataset_registry_contains_first_wave_candidates</code>
+- <code>scripts/run-wave6-issue169-3c391.sh target/wave6-issue169-3c391</code></p>
+<p>Wave issue: #143
+Child issue: #169</p>
+<h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
+<p>Issue #169 is the Wave 6 VLA 3C391 continuum mosaic breadth slice. It keeps the
+3C391 proof separate from full Wave 6 closeout and reuses the #53 mosaic
+comparison path for the official final-calibrated 3C391 mosaic MS.</p>
+<p>The reproducible runner is:</p>
+<div class="codehilite"><pre><span></span><code>scripts/run-wave6-issue169-3c391.sh<span class="w"> </span>target/wave6-issue169-3c391
+</code></pre></div>
+
+<p>Set <code>CASA_RS_FETCH_TUTORIAL_DATA=1</code> to download missing official tutorial data.
+Each run writes stamped panel filenames and a machine-readable summary at:</p>
+<div class="codehilite"><pre><span></span><code>target/wave6-issue169-3c391/wave6-issue169-summary.json
+</code></pre></div>
+
+<p>Each reproduced image panel contains four columns:</p>
+<ul>
+<li>CASA Guide figure from the tutorial page</li>
+<li>CASA C++ product generated locally from the staged tutorial data</li>
+<li>casa-rs product generated locally from the same staged tutorial data</li>
+<li><code>casa-rs - CASA C++</code> difference image</li>
+</ul>
+<p>Image colorbars are labeled in Jy/beam, masked pixels render in gray, and
+metrics are computed on the shared valid CASA C++ and casa-rs image support.</p>
+<h2 id="tutorial-inputs">Tutorial Inputs<a class="headerlink" href="#tutorial-inputs" title="Permanent link">&para;</a></h2>
+<p>The issue body named a CASA 6.7.2 guide URL. The live guide currently resolves
+to the CASA 6.4.1 3C391 page, which says it was checked with CASA 6.5.4. The
+local registry records the live source page used for the current evidence.</p>
+<table>
+<thead>
+<tr>
+<th>Dataset</th>
+<th>Tutorial source</th>
+<th>Local data product</th>
+<th>Registry key</th>
+<th>Tier</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>3C391 raw 10s SPW0 MS</td>
+<td><a href="https://casaguides.nrao.edu/index.php?title=VLA_Continuum_Tutorial_3C391-CASA6.4.1">https://casaguides.nrao.edu/index.php?title=VLA_Continuum_Tutorial_3C391-CASA6.4.1</a></td>
+<td><code>tutorial-parity/vla/3c391/3c391_ctm_mosaic_10s_spw0.ms.tgz</code></td>
+<td><code>vla/3c391/raw-10s-spw0</code></td>
+<td>slow-parity</td>
+</tr>
+<tr>
+<td>3C391 final calibrated mosaic MS</td>
+<td><a href="https://casaguides.nrao.edu/index.php?title=VLA_Continuum_Tutorial_3C391-CASA6.4.1">https://casaguides.nrao.edu/index.php?title=VLA_Continuum_Tutorial_3C391-CASA6.4.1</a></td>
+<td><code>tutorial-parity/vla/3c391/EVLA_3C391_FinalCalibratedMosaicMS/3c391_ctm_mosaic_spw0.ms</code></td>
+<td><code>vla/3c391/final-calibrated-mosaic-ms</code></td>
+<td>tutorial-parity</td>
+</tr>
+</tbody>
+</table>
+<h2 id="current-results">Current Results<a class="headerlink" href="#current-results" title="Permanent link">&para;</a></h2>
+<p>The runner uses the official final-calibrated mosaic MS and the tutorial
+multiscale mosaic shape:</p>
+<div class="codehilite"><pre><span></span><code>tclean(gridder=&#39;mosaic&#39;, deconvolver=&#39;multiscale&#39;, scales=[0,5,15,45],
+       niter=500, gain=0.1, threshold=&#39;1.0mJy&#39;,
+       imsize=[480,480], cell=&#39;2.5arcsec&#39;,
+       weighting=&#39;briggs&#39;, robust=0.5, pbcor=True)
+</code></pre></div>
+
+<p>Current run stamp: <code>20260503T080756-0600</code>, generated
+<code>2026-05-03 08:07:56 -0600</code>.</p>
+<p>Wall-clock timing on the local tutorial run:</p>
+<table>
+<thead>
+<tr>
+<th>Runner</th>
+<th style="text-align: right;">Seconds</th>
+<th style="text-align: right;">Relative</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CASA C++</td>
+<td style="text-align: right;"><code>75.489</code></td>
+<td style="text-align: right;"><code>1.00x</code></td>
+</tr>
+<tr>
+<td>casa-rs</td>
+<td style="text-align: right;"><code>257.494</code></td>
+<td style="text-align: right;"><code>3.41x CASA</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="image-metrics">Image Metrics<a class="headerlink" href="#image-metrics" title="Permanent link">&para;</a></h3>
+<p>Source-region peak-relative differences use shared valid pixels with
+<code>abs(CASA) &gt;= 25%</code> of the CASA peak.</p>
+<table>
+<thead>
+<tr>
+<th>Panel</th>
+<th style="text-align: right;">Shared valid pixels</th>
+<th style="text-align: right;">CASA valid pixels</th>
+<th style="text-align: right;">casa-rs valid pixels</th>
+<th style="text-align: right;">Rust-only valid</th>
+<th style="text-align: right;">CASA-only valid</th>
+<th style="text-align: right;">CASA RMS</th>
+<th style="text-align: right;">Difference RMS</th>
+<th style="text-align: right;">Diff/CASA RMS</th>
+<th style="text-align: right;">source p90 abs(diff)/peak</th>
+<th style="text-align: right;">source max abs(diff)/peak</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.residual</code></td>
+<td style="text-align: right;"><code>115741 / 230400</code></td>
+<td style="text-align: right;"><code>115741</code></td>
+<td style="text-align: right;"><code>115869</code></td>
+<td style="text-align: right;"><code>128</code></td>
+<td style="text-align: right;"><code>0</code></td>
+<td style="text-align: right;"><code>0.0033734054058476024</code></td>
+<td style="text-align: right;"><code>0.00017944521708647393</code></td>
+<td style="text-align: right;"><code>0.05319408594514495</code></td>
+<td style="text-align: right;"><code>0.027870328200300703</code></td>
+<td style="text-align: right;"><code>0.08864399900146921</code></td>
+</tr>
+<tr>
+<td><code>.image</code></td>
+<td style="text-align: right;"><code>115741 / 230400</code></td>
+<td style="text-align: right;"><code>115741</code></td>
+<td style="text-align: right;"><code>115869</code></td>
+<td style="text-align: right;"><code>128</code></td>
+<td style="text-align: right;"><code>0</code></td>
+<td style="text-align: right;"><code>0.009522959519475125</code></td>
+<td style="text-align: right;"><code>0.0001280453840608434</code></td>
+<td style="text-align: right;"><code>0.013445965384918579</code></td>
+<td style="text-align: right;"><code>0.004870145958775808</code></td>
+<td style="text-align: right;"><code>0.008004669772717498</code></td>
+</tr>
+<tr>
+<td><code>.image.pbcor</code></td>
+<td style="text-align: right;"><code>115741 / 230400</code></td>
+<td style="text-align: right;"><code>115741</code></td>
+<td style="text-align: right;"><code>115869</code></td>
+<td style="text-align: right;"><code>128</code></td>
+<td style="text-align: right;"><code>0</code></td>
+<td style="text-align: right;"><code>0.011692938714363256</code></td>
+<td style="text-align: right;"><code>0.0002582965000849592</code></td>
+<td style="text-align: right;"><code>0.022089955860939862</code></td>
+<td style="text-align: right;"><code>0.004811594357833278</code></td>
+<td style="text-align: right;"><code>0.007869195048201764</code></td>
+</tr>
+</tbody>
+</table>
+<p>The restored-image and PB-corrected restored-image source-region p90 and max
+differences are below the sub-percent Wave 6 signoff threshold for #53-derived
+mosaic products. The residual panel is retained as a diagnostic product; its
+peak-normalized residual differences are larger because the residual peak is
+much smaller than the restored-image peak.</p>
+<h3 id="inspectable-panels">Inspectable Panels<a class="headerlink" href="#inspectable-panels" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>target/wave6-issue169-3c391/vla-3c391-multiscale-residual-20260503T080756-0600-panel.png</code></li>
+<li><code>target/wave6-issue169-3c391/vla-3c391-multiscale-image-20260503T080756-0600-panel.png</code></li>
+<li><code>target/wave6-issue169-3c391/vla-3c391-multiscale-image.pbcor-20260503T080756-0600-panel.png</code></li>
+<li><code>target/wave6-issue169-3c391/wave6-issue169-summary.json</code></li>
+</ul>
+<h2 id="tutorial-figure-coverage">Tutorial Figure Coverage<a class="headerlink" href="#tutorial-figure-coverage" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>CASA Guide visible product</th>
+<th>Current #169 status</th>
+<th>Evidence / blocker</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Antenna layout screenshot</td>
+<td>External display artifact</td>
+<td>Does not exercise casa-rs calculation; inventoried for guide completeness.</td>
+</tr>
+<tr>
+<td>Calibrator and target <code>plotms</code> visibility plots</td>
+<td>Inventoried, not reproduced in this imaging pass</td>
+<td>Raw calibration/diagnostic plot breadth is staged by the raw archive and remains separate from the final-calibrated mosaic image proof.</td>
+</tr>
+<tr>
+<td>Delay, bandpass, gain, fluxscale, corrected calibrator <code>plotms</code>/<code>plotcal</code> figures</td>
+<td>Explicitly deferred</td>
+<td>Requires raw <code>setjy</code>, <code>gencal</code>, <code>gaincal</code>, <code>bandpass</code>, <code>fluxscale</code>, <code>applycal</code>, <code>statwt</code>, and plotting replay. The raw archive is registered as slow parity for that follow-up.</td>
+</tr>
+<tr>
+<td>Final-calibrated mosaic amplitude vs UV wavelength plot</td>
+<td>Inventoried, not claimed as exact <code>uvwave</code> parity</td>
+<td>Existing <code>msexplore</code> parity covers <code>uvdist</code> and related axes; exact <code>plotms</code> <code>uvwave</code> display parity is not added in this #169 imaging slice.</td>
+</tr>
+<tr>
+<td>Multiscale restored image after 500 iterations</td>
+<td>Reproduced with panel and metrics</td>
+<td>Same-input CASA C++ and casa-rs products are generated from the official final-calibrated mosaic MS. Source p90 <code>0.676%</code>, source max <code>0.830%</code> of CASA peak.</td>
+</tr>
+<tr>
+<td>Multiscale residual image after 500 iterations</td>
+<td>Reproduced with panel and metrics</td>
+<td>Same-input CASA C++ and casa-rs <code>.residual</code> products are generated by the #169 runner. Source p90 is <code>2.787%</code> of the residual peak, so this remains a diagnostic rather than the restored-image correctness threshold.</td>
+</tr>
+<tr>
+<td>PB-corrected restored image</td>
+<td>Reproduced with panel and metrics</td>
+<td>Source p90 <code>0.481%</code>, source max <code>0.787%</code> of CASA peak. The current run has <code>128</code> rust-only valid edge pixels and <code>0</code> CASA-only valid pixels.</td>
+</tr>
+<tr>
+<td>Interactive clean-mask and polygon region screenshots</td>
+<td>Interactive display artifacts</td>
+<td>The runner uses noninteractive CLEAN for reproducible comparison and computes numeric image statistics on shared valid support.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="current-interpretation">Current Interpretation<a class="headerlink" href="#current-interpretation" title="Permanent link">&para;</a></h2>
+<p>This closes the #169 imaging breadth target: the 3C391 final-calibrated mosaic
+MS is registered, staged, imaged through CASA C++ and casa-rs with the same
+tutorial mosaic command shape, and produces human-reviewable original/CASA/Rust
+difference panels with source-region differences below 1% of the CASA peak.</p>
+<p>The raw calibration replay is intentionally classified as slow parity rather
+than claimed here. It is the right next place to implement VLA calibration
+breadth, but it is not required to prove that the tutorial final-calibrated
+mosaic image products can be duplicated.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

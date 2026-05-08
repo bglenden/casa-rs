@@ -4,8 +4,8 @@
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>std::path::Path;
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_test_support::{
-<a href=#7 id=7 data-nosnippet>7</a>    CasaTestDataTier, TUTORIAL_DATASETS, casa_tutorial_data_root, casatestdata_root_for_tier,
-<a href=#8 id=8 data-nosnippet>8</a>    tutorial_dataset, tutorial_dataset_path,
+<a href=#7 id=7 data-nosnippet>7</a>    CasaTestDataTier, TUTORIAL_DATASETS, casa_tutorial_data_root,
+<a href=#8 id=8 data-nosnippet>8</a>    casatestdata_root_for_tier_with_required_paths, tutorial_dataset, tutorial_dataset_path,
 <a href=#9 id=9 data-nosnippet>9</a>};
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">fn </span>main() {
@@ -54,7 +54,7 @@
 <a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">return</span>;
 <a href=#55 id=55 data-nosnippet>55</a>    }
 <a href=#56 id=56 data-nosnippet>56</a>
-<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">let </span>root = casatestdata_root_for_tier(tier);
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">let </span>root = casatestdata_root_for_tier_with_required_paths(tier, <span class="kw-2">&amp;</span>required_paths);
 <a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">if </span>root.is_none() &amp;&amp; required_registry_keys.is_empty() {
 <a href=#59 id=59 data-nosnippet>59</a>        <span class="macro">eprintln!</span>(
 <a href=#60 id=60 data-nosnippet>60</a>            <span class="string">"casatestdata preflight failed: no {} root found; set CASA_RS_TESTDATA_ROOT or stage ../casatestdata"</span>,

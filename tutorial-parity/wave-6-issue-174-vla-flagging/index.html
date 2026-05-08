@@ -1,0 +1,992 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Wave 6 Issue 174 VLA Flagging - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#wave-6-issue-174-vla-flagging" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Wave 6 Issue 174 VLA Flagging
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casa-sources-inspected" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA Sources Inspected
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tutorial-data-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tutorial Data State
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#real-tutorial-ms-parity-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Real Tutorial-MS Parity Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tfcroprflag-parity-findings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TFCrop/RFlag Parity Findings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#accepted-tfcrop-solver-difference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accepted TFCrop Solver Difference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#remaining-tutorial-parity-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remaining Tutorial-Parity Work
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="wave-6-issue-174-vla-flagging">Wave 6 Issue 174 VLA Flagging<a class="headerlink" href="#wave-6-issue-174-vla-flagging" title="Permanent link">&para;</a></h1>
+<p>Truth class: current descriptive
+Last reality check: 2026-05-06
+Verification: cargo test -p casa-ms --test flagging; cargo build --release -p casa-ms --bin flagdata; cargo check -p casa-ms --bins; just quick; just verify Rust/clippy/test/doctest stages plus rerun ./scripts/test-python-package.sh with network; just docs-check; gzip -t SNR_G55_10s.clean.tar.gz; CASA/casa-rs tutorial-MS spot checks</p>
+<p>Wave issue: #174
+Parent issue: #128
+Registry key: <code>vla/flagging</code></p>
+<h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
+<p>This issue covers the VLA CASA Flagging guide task surface that is fundamental
+to user parity, not only small manual flag edits. The implemented native slice
+adds <code>flagdata</code> and <code>flagmanager</code> Rust APIs plus command-line entry points in
+<code>casa-ms</code>.</p>
+<p>Implemented <code>flagdata</code> families:</p>
+<ul>
+<li><code>manual</code> selected-sample flag/unflag edits</li>
+<li><code>clip</code> with tutorial-relevant <code>clipzeros</code></li>
+<li><code>quack</code> begin/end scan-edge flagging</li>
+<li><code>tfcrop</code>-family robust time/frequency outlier flagging</li>
+<li><code>rflag</code>-family time/spectral robust threshold flagging</li>
+<li><code>extend</code> across polarization, time, and frequency thresholds</li>
+<li><code>summary</code> JSON counts</li>
+</ul>
+<p>Implemented <code>flagmanager</code> operations:</p>
+<ul>
+<li><code>list</code></li>
+<li><code>save</code></li>
+<li><code>restore</code></li>
+<li><code>delete</code></li>
+<li><code>rename</code></li>
+<li>merge modes <code>replace</code>, <code>or</code>, and <code>and</code></li>
+</ul>
+<h2 id="casa-sources-inspected">CASA Sources Inspected<a class="headerlink" href="#casa-sources-inspected" title="Permanent link">&para;</a></h2>
+<p>The implementation was shaped against the CASA 6.7 task/tool source paths
+instead of only the guide text:</p>
+<ul>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatasks/src/private/task_flagdata.py</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatasks/src/private/task_flagmanager.py</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatools/src/code/flagging/Flagging/FlagVersion.h</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatools/src/code/flagging/Flagging/FlagVersion.cc</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatools/src/code/flagging/Flagging/FlagAgentTimeFreqCrop.h</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatools/src/code/flagging/Flagging/FlagAgentTimeFreqCrop.cc</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatools/src/code/flagging/Flagging/FlagAgentRFlag.h</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatools/src/code/flagging/Flagging/FlagAgentRFlag.cc</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatasks/tests/tasks/test_task_flagdata.py</code></li>
+</ul>
+<p>Key semantics preserved:</p>
+<ul>
+<li><code>flagmanager</code> writes sibling <code>&lt;ms&gt;.flagversions</code> storage with
+  <code>FLAG_VERSION_LIST</code> and <code>flags.&lt;version&gt;</code> tables containing <code>FLAG</code> and
+  <code>FLAG_ROW</code>.</li>
+<li>Restores and saves support CASA-style <code>replace</code>, <code>or</code>, and <code>and</code> merge
+  behavior.</li>
+<li>Automatic flagging groups by field, SPW, scan, and baseline, then evaluates
+  time/frequency outliers per correlation.</li>
+</ul>
+<p>The <code>tfcrop</code> and <code>rflag</code> modes are native robust-statistics implementations of
+the CASA task families, not bindings to the CASA C++ agent classes and not yet
+claimed as bit-for-bit clones.</p>
+<h2 id="tutorial-data-state">Tutorial Data State<a class="headerlink" href="#tutorial-data-state" title="Permanent link">&para;</a></h2>
+<p>The official VLA flagging tutorial archive was restaged from:</p>
+<p><code>https://casa.nrao.edu/Data/EVLA/SNRG55/SNR_G55_10s.tar.gz</code></p>
+<p>The validated local copy is:</p>
+<p><code>/Volumes/GLENDENNING/casa-rs/tutorial-data/tutorial-parity/vla/flagging/SNR_G55_10s.clean.tar.gz</code></p>
+<p>Validation:</p>
+<div class="codehilite"><pre><span></span><code>stat<span class="w"> </span>-f<span class="w"> </span><span class="s1">&#39;%z bytes&#39;</span><span class="w"> </span>SNR_G55_10s.clean.tar.gz
+<span class="c1"># 5293196015 bytes</span>
+gzip<span class="w"> </span>-t<span class="w"> </span>SNR_G55_10s.clean.tar.gz
+tar<span class="w"> </span>-tzf<span class="w"> </span>SNR_G55_10s.clean.tar.gz
+</code></pre></div>
+
+<p>The archive extracts to a single <code>SNR_G55_10s.ms</code> MeasurementSet. Disposable
+copy-on-write clones for parity checks live under:</p>
+<p><code>/Volumes/GLENDENNING/casa-rs/tutorial-data/tutorial-parity/vla/flagging/parity-runs/20260505-clean/</code></p>
+<p>The older resumed <code>SNR_G55_10s.tar.gz</code> and salvage candidates in the same
+directory are known invalid and must not be used for parity evidence.</p>
+<h2 id="real-tutorial-ms-parity-evidence">Real Tutorial-MS Parity Evidence<a class="headerlink" href="#real-tutorial-ms-parity-evidence" title="Permanent link">&para;</a></h2>
+<p>CASA runs used:</p>
+<p><code>/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python</code></p>
+<p>The storage path is interoperable for the checked mutations: casa-rs summary
+reads CASA-written flags with the same post-CASA totals. Algorithm parity is
+achieved for the checked <code>clipzeros</code> and <code>rflag</code> counts. <code>tfcrop</code> is now within
+64 samples of the CASA count on the checked tutorial scan, with the remaining
+coordinate delta localized to SPW 2 and accepted as solver-numerics drift.</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Selection</th>
+<th style="text-align: right;">CASA 6.7.5-9</th>
+<th style="text-align: right;">casa-rs</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>clipzeros</code></td>
+<td>full MS</td>
+<td style="text-align: right;">2 flagged samples after 7.6 s</td>
+<td style="text-align: right;">2 flagged samples after 9.59 s, 5.06 s user CPU, release build</td>
+<td>count match; about 1.3x wall / 1.3x CPU</td>
+</tr>
+<tr>
+<td><code>tfcrop</code></td>
+<td><code>scan=251</code>, <code>DATA</code></td>
+<td style="text-align: right;">152,904 flagged samples after 0.82 s</td>
+<td style="text-align: right;">152,840 flagged samples after 0.84 s, 0.74 s user CPU, release build</td>
+<td>near match; about 1.0x wall / 0.9x CPU</td>
+</tr>
+<tr>
+<td><code>rflag</code></td>
+<td><code>scan=251</code>, <code>DATA</code></td>
+<td style="text-align: right;">189,624 flagged samples after 0.52 s</td>
+<td style="text-align: right;">189,624 flagged samples after 0.71 s, 0.61 s user CPU, release build</td>
+<td>exact <code>FLAG</code> cube match; about 1.4x wall / 1.2x CPU</td>
+</tr>
+</tbody>
+</table>
+<p>The CASA <code>clipzeros</code> samples were not bitwise zero when inspected through
+casatools after flagging; their amplitudes were approximately <code>1.1e-7</code>.
+The upstream <code>FlagAgentBase::isNaNOrZero(Float)</code> path treats zero, subnormal,
+NaN, infinity, and normal values <code>&lt;= FLT_EPSILON</code> as clip-zero samples. The
+native implementation now matches that checked behavior without widening to
+the 232 samples below <code>1e-6</code> in the tutorial MS.</p>
+<h2 id="tfcroprflag-parity-findings">TFCrop/RFlag Parity Findings<a class="headerlink" href="#tfcroprflag-parity-findings" title="Permanent link">&para;</a></h2>
+<p>The earlier <code>tfcrop</code> and <code>rflag</code> differences were too large to be explained by
+floating-point drift. Instrumentation showed that the native code was not
+executing the same decision algorithm as the CASA C++ agents. The current
+implementation has been reshaped against the CASA agent sources.</p>
+<p>For <code>rflag</code>, CASA <code>action="calculate"</code> reports field/SPW-specific thresholds
+for <code>scan=251</code>:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">SPW</th>
+<th style="text-align: right;">CASA <code>timedev</code></th>
+<th style="text-align: right;">CASA <code>freqdev</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.00271737629</td>
+<td style="text-align: right;">0.00241967238</td>
+</tr>
+<tr>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0.00104904500</td>
+<td style="text-align: right;">0.00095542112</td>
+</tr>
+<tr>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0.00363038148</td>
+<td style="text-align: right;">0.00282458808</td>
+</tr>
+<tr>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">0.00147350823</td>
+<td style="text-align: right;">0.00115331159</td>
+</tr>
+</tbody>
+</table>
+<p>The previous casa-rs <code>rflag</code> path computed one global pair:
+<code>timedev=0.006615205813706328</code> and
+<code>freqdev=0.007730504001694498</code>. The current path computes the same
+field/SPW-shaped threshold maps as CASA, then applies the default scale before
+flagging.</p>
+<p>Coordinate-level diagnostics also showed a correlation-handling mismatch. CASA
+adds an extension agent by default for <code>tfcrop</code> and <code>rflag</code>
+(<code>extendflags=True</code>, <code>extendpols=True</code>, <code>growtime=50</code>, <code>growfreq=80</code>), which
+produces identical counts across correlations within each SPW. casa-rs now
+runs that default post-extension for automatic modes.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Output</th>
+<th>SPW 0 counts by corr</th>
+<th>SPW 1 counts by corr</th>
+<th>SPW 2 counts by corr</th>
+<th>SPW 3 counts by corr</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tfcrop</code></td>
+<td>CASA</td>
+<td>18,323 / 18,323 / 18,323 / 18,323</td>
+<td>4,036 / 4,036 / 4,036 / 4,036</td>
+<td>12,188 / 12,188 / 12,188 / 12,188</td>
+<td>3,679 / 3,679 / 3,679 / 3,679</td>
+</tr>
+<tr>
+<td><code>tfcrop</code></td>
+<td>casa-rs</td>
+<td>18,322 / 18,322 / 18,322 / 18,322</td>
+<td>4,036 / 4,036 / 4,036 / 4,036</td>
+<td>12,173 / 12,173 / 12,173 / 12,173</td>
+<td>3,679 / 3,679 / 3,679 / 3,679</td>
+</tr>
+<tr>
+<td><code>rflag</code></td>
+<td>CASA</td>
+<td>19,052 / 19,052 / 19,052 / 19,052</td>
+<td>7,484 / 7,484 / 7,484 / 7,484</td>
+<td>18,095 / 18,095 / 18,095 / 18,095</td>
+<td>2,775 / 2,775 / 2,775 / 2,775</td>
+</tr>
+<tr>
+<td><code>rflag</code></td>
+<td>casa-rs</td>
+<td>19,052 / 19,052 / 19,052 / 19,052</td>
+<td>7,484 / 7,484 / 7,484 / 7,484</td>
+<td>18,095 / 18,095 / 18,095 / 18,095</td>
+<td>2,775 / 2,775 / 2,775 / 2,775</td>
+</tr>
+</tbody>
+</table>
+<p>Source inspection explained both differences:</p>
+<ul>
+<li>CASA <code>tfcrop</code> runs <code>FlagAgentTimeFreqCrop::fitBaseAndFlag()</code> in <code>freqtime</code>
+  order by default, averages across the opposite axis, fits a line or
+  piecewise polynomial baseline, divides by that fit, and iteratively flags
+  normalized residuals. casa-rs now follows that shape with CASA-like <code>Float</code>
+  working values and the default post-extension agent. The remaining tutorial
+  diff is 128 CASA-only samples and 64 casa-rs-only samples, all in SPW 2.</li>
+<li>Polynomial fitting uses the shared <code>casa_ms::least_squares</code> helper, which is
+  backed by <code>nalgebra</code>'s SVD solver. This is the same helper used by calibration
+  fitting paths; the old crate-private calibration duplicate was removed so
+  flagging does not carry an ad hoc least-squares implementation.</li>
+<li>CASA <code>rflag</code> computes threshold histograms per <code>(field, spw)</code>, then flags
+  complex real/imag variance and spectral deviations using a moving
+  <code>winsize=3</code> time window. casa-rs now matches the final CASA <code>FLAG</code> cube for
+  the checked tutorial scan.</li>
+<li>The full-scan runtime issue was mostly table access, not algorithm cost.
+  Selected-row bulk loads, lazy FLAG writes, skipping unchanged <code>FLAG_ROW</code>
+  writes, typed row scans, dense grouping, allocation-light RFlag median/MAD
+  evaluation, squared-norm clip-zero checks, allocation-free full-channel clip
+  scans, and mask-based automatic-mode application reduced the worst measured
+  release runs from minute-scale to CASA-level for checked one-scan automatic
+  modes and under 10 seconds for full-MS <code>clipzeros</code>.</li>
+</ul>
+<p>Diagnostic instrumentation is available with:</p>
+<div class="codehilite"><pre><span></span><code><span class="nv">CASA_RS_FLAGDATA_TRACE</span><span class="o">=</span>/path/to/trace.jsonl<span class="w"> </span>target/release/flagdata<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--vis<span class="w"> </span>&lt;clone.ms&gt;<span class="w"> </span>--mode<span class="w"> </span>tfcrop<span class="w"> </span>--scan<span class="w"> </span><span class="m">251</span><span class="w"> </span>--datacolumn<span class="w"> </span>DATA<span class="w"> </span>--no-flagbackup
+<span class="nv">CASA_RS_FLAGDATA_TRACE</span><span class="o">=</span>/path/to/trace.jsonl<span class="w"> </span>target/release/flagdata<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--vis<span class="w"> </span>&lt;clone.ms&gt;<span class="w"> </span>--mode<span class="w"> </span>rflag<span class="w"> </span>--scan<span class="w"> </span><span class="m">251</span><span class="w"> </span>--datacolumn<span class="w"> </span>DATA<span class="w"> </span>--no-flagbackup
+</code></pre></div>
+
+<p>The trace records native candidate counts, threshold maps, phase timings, and
+per-SPW/correlation decision counts so future algorithm changes can be checked
+against CASA before comparing only final totals.</p>
+<p>The final 2026-05-06 performance traces on clean copy-on-write tutorial clones
+reported:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th style="text-align: right;">Load</th>
+<th style="text-align: right;">Threshold</th>
+<th style="text-align: right;">Plan</th>
+<th style="text-align: right;">Apply</th>
+<th style="text-align: right;">Total before save</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tfcrop</code></td>
+<td style="text-align: right;">119 ms</td>
+<td style="text-align: right;">n/a</td>
+<td style="text-align: right;">599 ms</td>
+<td style="text-align: right;">30 ms</td>
+<td style="text-align: right;">748 ms</td>
+</tr>
+<tr>
+<td><code>rflag</code></td>
+<td style="text-align: right;">119 ms</td>
+<td style="text-align: right;">180 ms</td>
+<td style="text-align: right;">298 ms</td>
+<td style="text-align: right;">27 ms</td>
+<td style="text-align: right;">624 ms</td>
+</tr>
+</tbody>
+</table>
+<h2 id="accepted-tfcrop-solver-difference">Accepted TFCrop Solver Difference<a class="headerlink" href="#accepted-tfcrop-solver-difference" title="Permanent link">&para;</a></h2>
+<p>The remaining <code>tfcrop</code> coordinate delta is accepted for this wave. Instrumented
+CASA/C++ probes isolated it to a borderline polynomial fit group in SPW 2 where
+casacore <code>LinearFit</code>/<code>LSQFit</code> and casa-rs' shared <code>nalgebra</code> SVD-backed
+least-squares helper make slightly different threshold decisions. The accepted
+delta on the checked tutorial scan is:</p>
+<ul>
+<li>CASA: 152,904 final flagged samples.</li>
+<li>casa-rs: 152,840 final flagged samples.</li>
+<li>Coordinate diff: 128 CASA-only samples and 64 casa-rs-only samples, all in
+  SPW 2.</li>
+</ul>
+<p>We are not porting casacore's least-squares solver idiosyncrasies solely to
+remove this small TFCrop edge-case delta. The native implementation keeps the
+community-backed shared solver used by calibration and flagging, while
+preserving the CASA-shaped TFCrop control flow, residual iteration, and default
+post-extension behavior.</p>
+<h2 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h2>
+<p>Targeted checks:</p>
+<div class="codehilite"><pre><span></span><code>cargo<span class="w"> </span>fmt<span class="w"> </span>--all<span class="w"> </span>--<span class="w"> </span>--check
+cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-p<span class="w"> </span>casa-ms<span class="w"> </span>--test<span class="w"> </span>flagging
+cargo<span class="w"> </span>clippy<span class="w"> </span>-p<span class="w"> </span>casa-ms<span class="w"> </span>--all-targets<span class="w"> </span>--<span class="w"> </span>-D<span class="w"> </span>warnings
+cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>casa-ms<span class="w"> </span>--bin<span class="w"> </span>flagdata
+cargo<span class="w"> </span>check<span class="w"> </span>-p<span class="w"> </span>casa-ms<span class="w"> </span>--bins
+just<span class="w"> </span>verify
+just<span class="w"> </span>docs-check
+</code></pre></div>
+
+<p>The 2026-05-06 <code>just verify</code> run completed the Rust, clippy, test, and doctest
+stages, then failed at <code>./scripts/test-python-package.sh</code> because sandboxed
+pip could not reach PyPI for <code>maturin</code>. Rerunning that Python package step with
+network access passed: <code>47 passed</code>.</p>
+<p>Covered behavior:</p>
+<ul>
+<li><code>tfcrop</code> flags seeded time/frequency outliers in a persisted MS fixture.</li>
+<li><code>rflag</code> honors explicit <code>timedev</code> and <code>freqdev</code> thresholds and flags seeded
+  time/spectral outliers.</li>
+<li><code>clipzeros</code> persists CASA-style <code>FLT_EPSILON</code> clip-zero flags through the
+  path-based task entry point.</li>
+<li><code>flagmanager</code> save and restore round-trip the main <code>FLAG</code> state.</li>
+<li><code>flagdata</code> and <code>flagmanager</code> binaries emit JSON for summary/list paths.</li>
+</ul>
+<h2 id="remaining-tutorial-parity-work">Remaining Tutorial-Parity Work<a class="headerlink" href="#remaining-tutorial-parity-work" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Continue profiling algorithm planning overhead: release-build <code>tfcrop</code> is
+  now at CASA-level wall time on the checked scan, while <code>rflag</code> still has the
+  largest automatic-mode CPU ratio despite matching the CASA <code>FLAG</code> cube.</li>
+<li>Continue storage-path profiling for full-MS scans. <code>clipzeros</code> now avoids the
+  previous full main-table eager load, avoids per-row <code>FLAG</code> clones when rows
+  do not change, and writes only the changed <code>FLAG</code> cells, but it still scans
+  the full <code>DATA</code> and <code>FLAG</code> columns about 1.3x slower than CASA on the
+  tutorial MS.</li>
+<li>Extend the comparison beyond counts to <code>FLAG</code>/<code>FLAG_ROW</code> coordinate diffs,
+  <code>&lt;ms&gt;.flagversions</code>, and tutorial-visible diagnostics.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

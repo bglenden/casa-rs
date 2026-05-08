@@ -553,7 +553,7 @@
 
 <h1 id="casa-tutorial-capability-matrix">CASA Tutorial Capability Matrix<a class="headerlink" href="#casa-tutorial-capability-matrix" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-04-26
+Last reality check: 2026-05-05
 Verification: just docs-check</p>
 <p>Wave issue: #137
 Child issue: #116</p>
@@ -631,21 +631,21 @@ and oracle map; it does not add public APIs.</p>
 <td><code>tclean</code> MFS</td>
 <td>partial/available</td>
 <td><code>casa-imaging</code>, <code>casars-imager</code></td>
-<td><code>casars-imager</code>; Python projection incomplete</td>
-<td>tutorial parameter mapping, automasking, pbcor/outlier/startmodel tails</td>
-<td>CASA <code>tclean</code> image products</td>
+<td><code>casars-imager</code>; Python projection includes automask, <code>savemodel=modelcolumn</code>, single-plane <code>startmodel</code>, and supported MFS/Hogbom/multiscale <code>outlierfile</code> controls including CASA pixel-circle outlier masks</td>
+<td>tutorial parameter mapping, VLA imaging guide regular/multiscale/MTMFS/w-projection and primary-beam product coverage, plus wider outlier variants such as mask images and cubes</td>
+<td>CASA <code>tclean</code> image products plus MODEL_DATA comparisons for <code>savemodel=modelcolumn</code>, startmodel seeded model parity, #220 outlierfile dirty plus niter&gt;0 products on <code>refim_twopoints_twochan.ms</code>, and #175 VLA imaging products on <code>SNR_G55_10s.calib.ms</code></td>
 <td>imager parity scripts and tutorial timings</td>
-<td>#117, #127</td>
+<td>#117, #127, #167, #175, #196, #219, #220</td>
 </tr>
 <tr>
 <td><code>tclean</code> cube / spectral</td>
 <td>partial</td>
 <td><code>casa-imaging</code>, <code>casars-imager</code></td>
-<td><code>casars-imager</code>; Python projection incomplete</td>
-<td>cube seam coverage, spectral transform integration, large-cube controls</td>
+<td><code>casars-imager</code>; Python projection includes automask controls</td>
+<td>cube seam coverage, spectral transform integration, large-cube controls, mosaic cube gridding for Antennae Band 7 line products</td>
 <td>CASA <code>tclean</code> cube outputs</td>
 <td>cube parity scripts and tutorial timings</td>
-<td>#74, #76, #119, #123</td>
+<td>#74, #76, #119, #123, #161, #167</td>
 </tr>
 <tr>
 <td>legacy <code>clean</code></td>
@@ -759,23 +759,23 @@ and oracle map; it does not add public APIs.</p>
 </tr>
 <tr>
 <td><code>flagdata</code></td>
-<td>missing/partial</td>
+<td>partial</td>
 <td><code>casa-ms</code></td>
-<td>no tutorial task surface</td>
-<td>manual/list/rflag/tfcrop subsets used by VLA/ALMA breadth</td>
+<td><code>flagdata</code> CLI, Rust library</td>
+<td>manual, clip-zero, quack, tfcrop-family, rflag-family, extend, and summary exist; needs full same-input VLA flagging guide comparison once tutorial MS artifact is restaged</td>
 <td>CASA FLAG column deltas</td>
 <td>flagging timing on tutorial MS</td>
-<td>#121, #128</td>
+<td>#121, #128, #174</td>
 </tr>
 <tr>
 <td><code>flagmanager</code></td>
-<td>missing</td>
+<td>partial</td>
 <td><code>casa-ms</code></td>
-<td>none</td>
-<td>save/restore flag versions</td>
+<td><code>flagmanager</code> CLI, Rust library</td>
+<td>save/list/restore/delete/rename flag-version operations exist; needs CASA flag-version product comparison on the VLA flagging guide MS</td>
 <td>CASA flag version products</td>
 <td>VLA/ALMA breadth timing</td>
-<td>#127, #128</td>
+<td>#127, #128, #174</td>
 </tr>
 <tr>
 <td><code>statwt</code></td>
@@ -841,11 +841,11 @@ and oracle map; it does not add public APIs.</p>
 <td><code>imhead</code></td>
 <td>partial/available</td>
 <td><code>casa-images</code>, <code>casa-coordinates</code></td>
-<td><code>imexplore imhead</code>, <code>casars.tasks.image_analysis.imhead</code></td>
-<td>edit modes and long-tail metadata formatting</td>
+<td><code>imexplore imhead</code>, <code>casars.tasks.image_analysis.imhead</code>; VLA imaging slice includes <code>mode='put', hdkey='bunit'</code></td>
+<td>broader edit modes and long-tail metadata formatting</td>
 <td>CASA <code>imhead</code> output and image keywords</td>
 <td>image-analysis timing</td>
-<td>#120, #125</td>
+<td>#120, #125, #175</td>
 </tr>
 <tr>
 <td><code>imstat</code></td>
@@ -866,6 +866,26 @@ and oracle map; it does not add public APIs.</p>
 <td>CASA moment images</td>
 <td>image-analysis timing</td>
 <td>#120, #123</td>
+</tr>
+<tr>
+<td><code>impbcor</code></td>
+<td>partial/available</td>
+<td><code>casa-images</code>, <code>casars-imager</code></td>
+<td><code>immath</code> division for regular PB correction; <code>casars-imager --pbcor</code> for direct PB-corrected products</td>
+<td>CASA task-name compatibility is not a target; VLA imaging uses equivalent image/PB division with casa-rs-generated <code>.pb</code> products</td>
+<td>CASA <code>impbcor</code> image products</td>
+<td>image-analysis timing inside #175 runner</td>
+<td>#120, #163, #175</td>
+</tr>
+<tr>
+<td><code>widebandpbcor</code></td>
+<td>partial/available</td>
+<td><code>casars-imager</code>, <code>casa-images</code></td>
+<td><code>casars-imager --pbcor</code> writes MTMFS <code>.pbcor.image.tt0</code> plus PB spectral-index-corrected <code>.pbcor.image.alpha</code> for the VLA imaging guide</td>
+<td>broader CASA task-name and multi-action parameter surface</td>
+<td>CASA <code>widebandpbcor</code> products</td>
+<td>#175 runner timing</td>
+<td>#175</td>
 </tr>
 <tr>
 <td><code>exportfits</code></td>
@@ -899,13 +919,13 @@ and oracle map; it does not add public APIs.</p>
 </tr>
 <tr>
 <td><code>immath</code></td>
-<td>partial via expression work</td>
+<td>partial/available</td>
 <td><code>casa-images</code></td>
-<td>future task/Python projection</td>
-<td>expression syntax and image output parity</td>
+<td><code>immath</code>, <code>casars.tasks.image_analysis.immath</code></td>
+<td>broader CASA expression grammar beyond tutorial binary operations and scalar multiples of <code>IM0</code></td>
 <td>CASA image products</td>
 <td>breadth timing</td>
-<td>#120, #127</td>
+<td>#120, #127, #175</td>
 </tr>
 <tr>
 <td><code>imsubimage</code> / <code>imcollapse</code></td>
