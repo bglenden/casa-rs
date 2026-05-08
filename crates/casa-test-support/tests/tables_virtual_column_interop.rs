@@ -17,6 +17,14 @@ use casa_types::{
 };
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
+fn table_cell<'a>(
+    table: &'a Table,
+    row_index: usize,
+    column: &str,
+) -> Result<Option<&'a Value>, casa_tables::TableError> {
+    table.cell_accessor(row_index, column)?.value()
+}
+
 // ===================== ForwardColumnEngine =====================
 
 /// CC: C++ writes forward-column fixture → C++ verifies.
@@ -61,8 +69,7 @@ fn cr_forward_column() {
 
     let expected = [1.5, 2.5, 3.5];
     for (i, &exp) in expected.iter().enumerate() {
-        match table
-            .cell(i, "col_value")
+        match table_cell(&table, i, "col_value")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -171,8 +178,7 @@ fn rr_forward_column() {
 
     let expected = [1.5, 2.5, 3.5];
     for (i, &exp) in expected.iter().enumerate() {
-        match reopened
-            .cell(i, "col_value")
+        match table_cell(&reopened, i, "col_value")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -237,8 +243,7 @@ fn cr_scaled_array() {
     // Verify stored column values (Int32 arrays of shape [2]).
     let expected_stored: [[i32; 2]; 3] = [[1, 2], [3, 4], [5, 6]];
     for (i, exp) in expected_stored.iter().enumerate() {
-        match table
-            .cell(i, "stored_col")
+        match table_cell(&table, i, "stored_col")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -253,8 +258,7 @@ fn cr_scaled_array() {
     // Verify virtual column values: stored * 2.5 + 10.0.
     let expected_virtual: [[f64; 2]; 3] = [[12.5, 15.0], [17.5, 20.0], [22.5, 25.0]];
     for (i, exp) in expected_virtual.iter().enumerate() {
-        match table
-            .cell(i, "virtual_col")
+        match table_cell(&table, i, "virtual_col")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -367,8 +371,7 @@ fn rr_scaled_array() {
     // Verify stored column (Int32 arrays of shape [2]).
     let expected_stored: [[i32; 2]; 3] = [[1, 2], [3, 4], [5, 6]];
     for (i, exp) in expected_stored.iter().enumerate() {
-        match reopened
-            .cell(i, "stored_col")
+        match table_cell(&reopened, i, "stored_col")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -383,8 +386,7 @@ fn rr_scaled_array() {
     // Verify virtual column: stored * 2.5 + 10.0.
     let expected_virtual: [[f64; 2]; 3] = [[12.5, 15.0], [17.5, 20.0], [22.5, 25.0]];
     for (i, exp) in expected_virtual.iter().enumerate() {
-        match reopened
-            .cell(i, "virtual_col")
+        match table_cell(&reopened, i, "virtual_col")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -468,8 +470,7 @@ fn rr_scaled_complex() {
 
     // Verify stored column shape and values.
     for (i, exp) in stored_data.iter().enumerate() {
-        match reopened
-            .cell(i, "stored_col")
+        match table_cell(&reopened, i, "stored_col")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -499,8 +500,7 @@ fn rr_scaled_complex() {
         [(2.0, 3.5), (3.0, 4.0)],
     ];
     for (i, exp_row) in expected.iter().enumerate() {
-        match reopened
-            .cell(i, "virtual_col")
+        match table_cell(&reopened, i, "virtual_col")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -576,8 +576,7 @@ fn rr_forward_column_arrays() {
     assert_eq!(reopened.row_count(), 3);
     assert!(reopened.is_virtual_column("data"));
     for (i, exp) in arrays.iter().enumerate() {
-        match reopened
-            .cell(i, "data")
+        match table_cell(&reopened, i, "data")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -656,8 +655,7 @@ fn rr_forward_column_multi_type() {
     let expected_str = ["hello", "world", ""];
     let expected_f64 = [3.125, -99.5, 0.0];
     for i in 0..3 {
-        match reopened
-            .cell(i, "col_i32")
+        match table_cell(&reopened, i, "col_i32")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -666,8 +664,7 @@ fn rr_forward_column_multi_type() {
             }
             other => panic!("row {i}: expected Int32, got {other:?}"),
         }
-        match reopened
-            .cell(i, "col_str")
+        match table_cell(&reopened, i, "col_str")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -676,8 +673,7 @@ fn rr_forward_column_multi_type() {
             }
             other => panic!("row {i}: expected String, got {other:?}"),
         }
-        match reopened
-            .cell(i, "col_f64")
+        match table_cell(&reopened, i, "col_f64")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -733,8 +729,7 @@ fn rr_scaled_array_float_to_float() {
     // virtual = stored * 0.1 + 5.0
     let expected: [[f64; 3]; 3] = [[5.1, 5.2, 5.3], [6.0, 7.0, 8.0], [5.0, 4.5, 15.0]];
     for (i, exp) in expected.iter().enumerate() {
-        match reopened
-            .cell(i, "virtual_col")
+        match table_cell(&reopened, i, "virtual_col")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -788,8 +783,7 @@ fn rr_forward_column_bool() {
 
     let expected = [true, false, true];
     for (i, &exp) in expected.iter().enumerate() {
-        match reopened
-            .cell(i, "flag")
+        match table_cell(&reopened, i, "flag")
             .expect("cell lookup")
             .expect("cell exists")
         {
@@ -869,8 +863,7 @@ fn rr_scaled_complex_nonzero_imag() {
         [(0.0, 1.0), (0.0, 1.0), (0.0, 1.0)],
     ];
     for (i, exp_row) in expected.iter().enumerate() {
-        match reopened
-            .cell(i, "virtual_col")
+        match table_cell(&reopened, i, "virtual_col")
             .expect("cell lookup")
             .expect("cell exists")
         {

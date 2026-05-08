@@ -131,8 +131,14 @@ importvla(archivefiles=[sys.argv[1]], vis=sys.argv[2], frequencytol=150000.0)
 
     eprintln!("rust_spw_rows={}", rust_spw.row_count());
     for row_index in 0..rust_spw.row_count().min(8) {
-        let rust_row = rust_spw.row(row_index).expect("read rust spw row");
-        let casa_row = casa_spw.row(row_index).expect("read casa spw row");
+        let rust_row = rust_spw
+            .row_accessor()
+            .row(row_index)
+            .expect("read rust spw row");
+        let casa_row = casa_spw
+            .row_accessor()
+            .row(row_index)
+            .expect("read casa spw row");
         let rust_chan_freq = get_f64_array(rust_row, "CHAN_FREQ");
         let casa_chan_freq = get_f64_array(casa_row, "CHAN_FREQ");
         eprintln!("rust_spw_row[{row_index}]={rust_row:?}");
@@ -156,13 +162,19 @@ importvla(archivefiles=[sys.argv[1]], vis=sys.argv[2], frequencytol=150000.0)
 
     let mut rust_chan0 = (0..rust_spw.row_count())
         .map(|row_index| {
-            let row = rust_spw.row(row_index).expect("read rust spw row");
+            let row = rust_spw
+                .row_accessor()
+                .row(row_index)
+                .expect("read rust spw row");
             get_f64_array(row, "CHAN_FREQ")[0]
         })
         .collect::<Vec<_>>();
     let mut casa_chan0 = (0..casa_spw.row_count())
         .map(|row_index| {
-            let row = casa_spw.row(row_index).expect("read casa spw row");
+            let row = casa_spw
+                .row_accessor()
+                .row(row_index)
+                .expect("read casa spw row");
             get_f64_array(row, "CHAN_FREQ")[0]
         })
         .collect::<Vec<_>>();

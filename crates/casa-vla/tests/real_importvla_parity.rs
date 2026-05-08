@@ -110,8 +110,8 @@ fn assert_array_close(left: &[f64], right: &[f64], tolerance: f64, label: &str) 
 fn compare_table_rows(name: &str, rust: &Table, casa: &Table, columns: &[&str]) {
     assert_eq!(rust.row_count(), casa.row_count(), "{name} row count");
     for row_index in 0..rust.row_count() {
-        let rust_row = rust.row(row_index).expect("read Rust row");
-        let casa_row = casa.row(row_index).expect("read CASA row");
+        let rust_row = rust.row_accessor().row(row_index).expect("read Rust row");
+        let casa_row = casa.row_accessor().row(row_index).expect("read CASA row");
         compare_record_subset(name, row_index, rust_row, casa_row, columns);
     }
 }
@@ -438,8 +438,14 @@ fn assert_spectral_window_matches(rust: &MeasurementSet, casa: &MeasurementSet, 
     );
 
     for row_index in 0..rust_spw.row_count() {
-        let rust_row = rust_spw.row(row_index).expect("read Rust SPW row");
-        let casa_row = casa_spw.row(row_index).expect("read CASA SPW row");
+        let rust_row = rust_spw
+            .row_accessor()
+            .row(row_index)
+            .expect("read Rust SPW row");
+        let casa_row = casa_spw
+            .row_accessor()
+            .row(row_index)
+            .expect("read CASA SPW row");
         assert_eq!(
             get_string_scalar(rust_row, "NAME"),
             get_string_scalar(casa_row, "NAME"),

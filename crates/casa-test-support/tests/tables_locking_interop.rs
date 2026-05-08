@@ -100,7 +100,7 @@ fn cr_lock_file() {
     assert_eq!(table.row_count(), 1, "should see 1 row from C++");
 
     // Verify the data C++ wrote.
-    let row = table.row(0).expect("row 0 exists");
+    let row = table.row_accessor().row(0).expect("row 0 exists");
     let id = row.get("id").expect("id field");
     assert_eq!(id, &Value::Scalar(ScalarValue::Int32(42)));
     let name = row.get("name").expect("name field");
@@ -175,7 +175,7 @@ fn rr_lock_file() {
     reopened.lock(LockType::Read, 1).expect("acquire read lock");
 
     assert_eq!(reopened.row_count(), 1);
-    let row = reopened.row(0).expect("row 0 exists");
+    let row = reopened.row_accessor().row(0).expect("row 0 exists");
     let id = row.get("id").expect("id field");
     assert_eq!(id, &Value::Scalar(ScalarValue::Int32(42)));
 

@@ -88,7 +88,7 @@ fn cr_ref_table() {
     assert_eq!(table.row_count(), 2, "RefTable should have 2 rows");
 
     // Row 0 → parent row 0: (10, "alpha")
-    let row0 = table.row(0).expect("row 0 exists");
+    let row0 = table.row_accessor().row(0).expect("row 0 exists");
     assert_eq!(
         row0.get("id").expect("id field"),
         &Value::Scalar(ScalarValue::Int32(10))
@@ -99,7 +99,7 @@ fn cr_ref_table() {
     );
 
     // Row 1 → parent row 2: (30, "gamma")
-    let row1 = table.row(1).expect("row 1 exists");
+    let row1 = table.row_accessor().row(1).expect("row 1 exists");
     assert_eq!(
         row1.get("id").expect("id field"),
         &Value::Scalar(ScalarValue::Int32(30))
@@ -165,7 +165,7 @@ fn rr_ref_table() {
     assert_eq!(reopened.row_count(), 2, "RefTable should have 2 rows");
 
     // Row 0 → parent row 0: (10, "alpha")
-    let row0 = reopened.row(0).expect("row 0 exists");
+    let row0 = reopened.row_accessor().row(0).expect("row 0 exists");
     assert_eq!(
         row0.get("id").expect("id field"),
         &Value::Scalar(ScalarValue::Int32(10))
@@ -176,7 +176,7 @@ fn rr_ref_table() {
     );
 
     // Row 1 → parent row 2: (30, "gamma")
-    let row1 = reopened.row(1).expect("row 1 exists");
+    let row1 = reopened.row_accessor().row(1).expect("row 1 exists");
     assert_eq!(
         row1.get("id").expect("id field"),
         &Value::Scalar(ScalarValue::Int32(30))

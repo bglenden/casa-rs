@@ -412,8 +412,8 @@ fn assert_measurement_set_metadata_matches(rust: &MeasurementSet, cpp: &Measurem
 fn compare_table_rows(name: &str, rust: &Table, cpp: &Table, columns: &[&str]) {
     assert_eq!(rust.row_count(), cpp.row_count(), "{name} row count");
     for row_index in 0..rust.row_count() {
-        let rust_row = rust.row(row_index).expect("read rust row");
-        let cpp_row = cpp.row(row_index).expect("read cpp row");
+        let rust_row = rust.row_accessor().row(row_index).expect("read rust row");
+        let cpp_row = cpp.row_accessor().row(row_index).expect("read cpp row");
         compare_record_subset(name, row_index, rust_row, cpp_row, columns);
     }
 }

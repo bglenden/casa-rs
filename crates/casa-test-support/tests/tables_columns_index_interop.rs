@@ -23,6 +23,14 @@ use casa_test_support::{
 };
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
+fn table_cell<'a>(
+    table: &'a Table,
+    row_index: usize,
+    column: &str,
+) -> Result<Option<&'a Value>, casa_tables::TableError> {
+    table.cell_accessor(row_index, column)?.value()
+}
+
 // ── CR correctness ────────────────────────────────────────────────────────────
 
 /// C++ writes a 50-row table (antenna_id = row_index % 10).
@@ -51,8 +59,7 @@ fn cr_columns_index() {
     rows.sort_unstable();
     assert_eq!(rows.len(), 5, "antenna_id=3 should match 5 rows");
     for &r in &rows {
-        let val = table
-            .cell(r, "antenna_id")
+        let val = table_cell(&table, r, "antenna_id")
             .expect("cell lookup")
             .expect("cell exists");
         assert_eq!(val, &Value::Scalar(ScalarValue::Int32(3)));
@@ -81,8 +88,7 @@ fn cr_columns_index() {
     );
     assert_eq!(range.len(), 15, "antenna_id in [2,4] should yield 15 rows");
     for &r in &range {
-        let val = table
-            .cell(r, "antenna_id")
+        let val = table_cell(&table, r, "antenna_id")
             .expect("cell lookup")
             .expect("cell exists");
         if let Value::Scalar(ScalarValue::Int32(v)) = val {

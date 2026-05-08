@@ -392,6 +392,7 @@ fn digest_table_schema(table: &Table) -> StableDigest {
         }
     } else {
         let names: Vec<String> = table
+            .row_accessor()
             .row(0)
             .map(|row| {
                 row.fields()
@@ -421,6 +422,7 @@ fn append_table_schema_column_lines(manifest: &mut Vec<String>, table: &Table, l
             .collect()
     } else {
         table
+            .row_accessor()
             .row(0)
             .map(|row| {
                 row.fields()
@@ -468,6 +470,7 @@ fn digest_table_column_keywords(
             .collect()
     } else {
         table
+            .row_accessor()
             .row(0)
             .map(|row| {
                 row.fields()
@@ -517,7 +520,7 @@ fn write_row_digest_for_table(
     discovered_refs: &mut BTreeSet<PathBuf>,
 ) {
     let owner_path = normalize_existing_path(table.path().expect("disk-backed table path"));
-    let row = table.row(row_index).expect("row present");
+    let row = table.row_accessor().row(row_index).expect("row present");
     let mut column_names: Vec<String> = if let Some(schema) = table.schema() {
         schema
             .columns()
@@ -599,7 +602,7 @@ fn row_digest_for_table(table: &Table, row_index: usize, root_path: &Path) -> St
 
 fn row_field_manifest_for_table(table: &Table, row_index: usize, root_path: &Path) -> String {
     let owner_path = normalize_existing_path(table.path().expect("disk-backed table path"));
-    let row = table.row(row_index).expect("row present");
+    let row = table.row_accessor().row(row_index).expect("row present");
     let mut column_names: Vec<String> = if let Some(schema) = table.schema() {
         schema
             .columns()

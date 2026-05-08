@@ -17,6 +17,14 @@ use casa_test_support::{
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ShapeBuilder;
 
+fn table_cell<'a>(
+    table: &'a Table,
+    row_index: usize,
+    column: &str,
+) -> Result<Option<&'a Value>, casa_tables::TableError> {
+    table.cell_accessor(row_index, column)?.value()
+}
+
 // ---------------------------------------------------------------------------
 // Set algebra: Rust row_union/intersection/difference vs C++ Table::operator|/&/-
 // ---------------------------------------------------------------------------
@@ -308,13 +316,13 @@ fn bulk_scalar_io_100k_vs_cpp() {
     let table = Table::open(TableOptions::new(&rust_path)).unwrap();
     let mut sum: i64 = 0;
     for i in 0..table.row_count() {
-        if let Ok(Some(Value::Scalar(ScalarValue::Int32(v)))) = table.cell(i, "col_i32") {
+        if let Ok(Some(Value::Scalar(ScalarValue::Int32(v)))) = table_cell(&table, i, "col_i32") {
             sum += *v as i64;
         }
-        if let Ok(Some(Value::Scalar(ScalarValue::Float64(v)))) = table.cell(i, "col_f64") {
+        if let Ok(Some(Value::Scalar(ScalarValue::Float64(v)))) = table_cell(&table, i, "col_f64") {
             sum += *v as i64;
         }
-        if let Ok(Some(Value::Scalar(ScalarValue::String(s)))) = table.cell(i, "col_str") {
+        if let Ok(Some(Value::Scalar(ScalarValue::String(s)))) = table_cell(&table, i, "col_str") {
             sum += s.len() as i64;
         }
     }

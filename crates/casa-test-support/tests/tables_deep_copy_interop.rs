@@ -77,7 +77,10 @@ fn cr_deep_copy() {
 
     for i in 0..5 {
         let expected_id = ((i as i32) + 1) * 10;
-        let row = table.row(i).unwrap_or_else(|_| panic!("row {i} exists"));
+        let row = table
+            .row_accessor()
+            .row(i)
+            .unwrap_or_else(|_| panic!("row {i} exists"));
         assert_eq!(
             row.get("id").expect("id field"),
             &Value::Scalar(ScalarValue::Int32(expected_id)),
@@ -141,7 +144,10 @@ fn rr_deep_copy() {
 
     for i in 0..5 {
         let expected_id = ((i as i32) + 1) * 10;
-        let row = reopened.row(i).unwrap_or_else(|_| panic!("row {i} exists"));
+        let row = reopened
+            .row_accessor()
+            .row(i)
+            .unwrap_or_else(|_| panic!("row {i} exists"));
         assert_eq!(
             row.get("id").expect("id field"),
             &Value::Scalar(ScalarValue::Int32(expected_id)),
