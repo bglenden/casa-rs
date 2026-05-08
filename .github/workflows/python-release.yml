@@ -56,9 +56,9 @@ jobs:
           cargo build -q --release -p casars --bin casars
           cargo build -q --release -p casa-calibration --bin calibrate
           cargo build -q --release -p casars-importvla --bin casars-importvla
-          cargo build -q --release -p casa-ms --bin msexplore
+          cargo build -q --release -p casa-ms --bin msexplore --bin mstransform
           cargo build -q --release -p casars-imager --bin casars-imager
-          cargo build -q --release -p casa-images --bin imexplore --bin immoments --bin exportfits --bin importfits
+          cargo build -q --release -p casa-images --bin imexplore --bin immoments --bin impv --bin imsubimage --bin immath --bin imregrid --bin feather --bin exportfits --bin importfits
 
       - name: Smoke-test built wheel
         shell: bash
