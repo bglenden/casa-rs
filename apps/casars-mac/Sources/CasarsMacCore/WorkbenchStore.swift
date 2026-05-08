@@ -1635,24 +1635,18 @@ public final class WorkbenchStore: ObservableObject {
     ) {
         var browserState = tableBrowserState(datasetID: datasetID)
         var changed = false
-        if let rowIndex, rowIndex >= 0, let selectedIndex = browserState.snapshot?.verticalMetrics?.selectedIndex {
-            changed = appendTableBrowserMove(from: selectedIndex, to: rowIndex, into: &browserState) || changed
+        if let rowIndex, rowIndex >= 0 {
+            changed = browserState.selectedCellRow != rowIndex || changed
+            browserState.selectedCellRow = rowIndex
         }
-        if let selectedVisibleColumn, let targetVisibleColumn {
-            let delta = targetVisibleColumn - selectedVisibleColumn
-            if delta > 0 {
-                browserState.commands.append(.moveRight(steps: delta))
-                changed = true
-            } else if delta < 0 {
-                browserState.commands.append(.moveLeft(steps: -delta))
-                changed = true
-            }
+        if let targetVisibleColumn {
+            changed = browserState.selectedCellColumn != targetVisibleColumn || changed
+            browserState.selectedCellColumn = targetVisibleColumn
         }
         guard changed else {
             return
         }
         state.tableBrowsers[datasetID] = browserState
-        refreshTableBrowser(datasetID: datasetID)
     }
 
     public func requestTableBrowserCellWindow(

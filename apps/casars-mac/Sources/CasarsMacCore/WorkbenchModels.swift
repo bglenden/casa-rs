@@ -1910,6 +1910,8 @@ public struct TableBrowserSessionState: Codable, Equatable {
     public var cellWindowRowLimit: Int = 1024
     public var cellWindowColumnStart: Int = 0
     public var cellWindowColumnLimit: Int = 24
+    public var selectedCellRow: Int?
+    public var selectedCellColumn: Int?
     public var hiddenCellColumns: Set<Int> = []
     public var cellColumnArrayInlineLimits: [Int: Int] = [:]
     public var status: ExplorerSessionStatus
@@ -1927,6 +1929,8 @@ public struct TableBrowserSessionState: Codable, Equatable {
         case cellWindowRowLimit
         case cellWindowColumnStart
         case cellWindowColumnLimit
+        case selectedCellRow
+        case selectedCellColumn
         case hiddenCellColumns
         case cellColumnArrayInlineLimits
         case status
@@ -1945,6 +1949,8 @@ public struct TableBrowserSessionState: Codable, Equatable {
         cellWindowRowLimit: Int = 1024,
         cellWindowColumnStart: Int = 0,
         cellWindowColumnLimit: Int = 24,
+        selectedCellRow: Int? = nil,
+        selectedCellColumn: Int? = nil,
         hiddenCellColumns: Set<Int> = [],
         cellColumnArrayInlineLimits: [Int: Int] = [:],
         status: ExplorerSessionStatus,
@@ -1961,6 +1967,8 @@ public struct TableBrowserSessionState: Codable, Equatable {
         self.cellWindowRowLimit = cellWindowRowLimit
         self.cellWindowColumnStart = cellWindowColumnStart
         self.cellWindowColumnLimit = cellWindowColumnLimit
+        self.selectedCellRow = selectedCellRow
+        self.selectedCellColumn = selectedCellColumn
         self.hiddenCellColumns = hiddenCellColumns
         self.cellColumnArrayInlineLimits = cellColumnArrayInlineLimits
         self.status = status
@@ -1980,6 +1988,8 @@ public struct TableBrowserSessionState: Codable, Equatable {
         cellWindowRowLimit = try container.decodeIfPresent(Int.self, forKey: .cellWindowRowLimit) ?? 1024
         cellWindowColumnStart = try container.decodeIfPresent(Int.self, forKey: .cellWindowColumnStart) ?? 0
         cellWindowColumnLimit = try container.decodeIfPresent(Int.self, forKey: .cellWindowColumnLimit) ?? 24
+        selectedCellRow = try container.decodeIfPresent(Int.self, forKey: .selectedCellRow)
+        selectedCellColumn = try container.decodeIfPresent(Int.self, forKey: .selectedCellColumn)
         hiddenCellColumns = try container.decodeIfPresent(Set<Int>.self, forKey: .hiddenCellColumns) ?? []
         cellColumnArrayInlineLimits = try container.decodeIfPresent([Int: Int].self, forKey: .cellColumnArrayInlineLimits) ?? [:]
         status = try container.decode(ExplorerSessionStatus.self, forKey: .status)

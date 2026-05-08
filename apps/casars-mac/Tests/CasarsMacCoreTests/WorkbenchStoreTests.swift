@@ -751,6 +751,18 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(tableClient.cellWindowRequests.last?.columnStart, 2)
         XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.cellWindow?.rowStart, 8)
         XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.cellWindow?.columnStart, 2)
+
+        let cellWindowRequestCount = tableClient.cellWindowRequests.count
+        store.selectTableBrowserVisibleCell(
+            rowIndex: 9,
+            selectedVisibleColumn: nil,
+            targetVisibleColumn: 3,
+            datasetID: tableDataset.id
+        )
+        XCTAssertEqual(tableClient.requests.count, snapshotRequestCount)
+        XCTAssertEqual(tableClient.cellWindowRequests.count, cellWindowRequestCount)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.selectedCellRow, 9)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.selectedCellColumn, 3)
     }
 
     func testSelectedSubtableOpensInNewTableBrowserTab() throws {
