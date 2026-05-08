@@ -1465,6 +1465,12 @@ fn run_single_image_from_config_with_gridder_override(
                         })
                         .map_err(|error| error.to_string())?,
                         primary_beam_weight_samples,
+                        spectral_delta_hz: plane
+                            .spectral_frequency_edge_range_hz
+                            .and_then(spectral_delta_from_range)
+                            .or_else(|| {
+                                spectral_delta_from_range(plane.selected_frequency_range_hz)
+                            }),
                     }),
                     user_clean_mask.map(EffectiveCleanMask::Plane),
                 )
@@ -1612,6 +1618,7 @@ fn run_single_image_from_config_with_gridder_override(
         direction_ref: phase_center.reference,
         plane_stokes: run_result.plane_stokes(),
         channel_frequencies_hz: run_result.channel_frequencies_hz(),
+        spectral_delta_hz: run_result.spectral_delta_hz(),
         requested_rest_frequency_hz: config.cube_axis.rest_frequency_hz,
     });
     let build_coordinate_system = stage_start.elapsed();
@@ -1836,6 +1843,7 @@ fn run_joint_outlier_clean_from_configs(
             direction_ref: field.phase_center.reference,
             plane_stokes: result.compatibility.plane_stokes,
             channel_frequencies_hz: &result.compatibility.channel_frequencies_hz,
+            spectral_delta_hz: None,
             requested_rest_frequency_hz: field.config.cube_axis.rest_frequency_hz,
         });
         let effective_clean_mask = field
@@ -4125,6 +4133,7 @@ struct PlaneInput {
     freq_ref: FrequencyRef,
     reffreq_hz: f64,
     selected_frequency_range_hz: [f64; 2],
+    spectral_frequency_edge_range_hz: Option<[f64; 2]>,
     plane_stokes: PlaneStokes,
     batches: Vec<VisibilityBatch>,
     sample_frequency_batches_hz: Vec<Vec<f64>>,
@@ -4236,6 +4245,28 @@ fn merge_two_prepared_inputs(
                 left.selected_frequency_range_hz[0].min(right.selected_frequency_range_hz[0]),
                 left.selected_frequency_range_hz[1].max(right.selected_frequency_range_hz[1]),
             ];
+            left.spectral_frequency_edge_range_hz = merge_optional_frequency_ranges(
+                left.spectral_frequency_edge_range_hz,
+                right.spectral_frequency_edge_range_hz,
+            );
+            if let Some(range) = sample_frequency_batch_range_hz(
+                left.sample_frequency_batches_hz
+                    .iter()
+                    .chain(right.sample_frequency_batches_hz.iter()),
+            )? {
+                left.selected_frequency_range_hz = range;
+                left.freq_ref = FrequencyRef::LSRK;
+                if let Some(edge_range) = left.spectral_frequency_edge_range_hz {
+                    let edge_delta = edge_range[1] - edge_range[0];
+                    let center = 0.5
+                        * (left.selected_frequency_range_hz[0]
+                            + left.selected_frequency_range_hz[1]);
+                    left.spectral_frequency_edge_range_hz =
+                        Some([center - 0.5 * edge_delta, center + 0.5 * edge_delta]);
+                }
+            }
+            left.reffreq_hz =
+                0.5 * (left.selected_frequency_range_hz[0] + left.selected_frequency_range_hz[1]);
             left.batches.extend(right.batches);
             left.sample_frequency_batches_hz
                 .extend(right.sample_frequency_batches_hz);
@@ -4554,6 +4585,26 @@ fn frequencies_close(left: f64, right: f64) -> bool {
     (left - right).abs() <= scale * 1.0e-10
 }
 
+fn spectral_delta_from_range(range_hz: [f64; 2]) -> Option<f64> {
+    let delta_hz = range_hz[1] - range_hz[0];
+    if delta_hz.is_finite() && delta_hz.abs() > 0.0 {
+        Some(delta_hz)
+    } else {
+        None
+    }
+}
+
+fn merge_optional_frequency_ranges(
+    left: Option<[f64; 2]>,
+    right: Option<[f64; 2]>,
+) -> Option<[f64; 2]> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some([left[0].min(right[0]), left[1].max(right[1])]),
+        (Some(range), None) | (None, Some(range)) => Some(range),
+        (None, None) => None,
+    }
+}
+
 enum RunProducts {
     Mfs(casa_imaging::ImagingResult),
     Mtmfs(MtmfsRunProducts),
@@ -4563,6 +4614,7 @@ enum RunProducts {
 struct MtmfsRunProducts {
     result: casa_imaging::MtmfsResult,
     primary_beam_weight_samples: Vec<PrimaryBeamWeightSample>,
+    spectral_delta_hz: Option<f64>,
 }
 
 struct CubeRunProducts {
@@ -4584,6 +4636,13 @@ impl RunProducts {
             Self::Mfs(result) => &result.compatibility.channel_frequencies_hz,
             Self::Mtmfs(products) => &products.result.compatibility.channel_frequencies_hz,
             Self::Cube(products) => &products.result.compatibility.channel_frequencies_hz,
+        }
+    }
+
+    fn spectral_delta_hz(&self) -> Option<f64> {
+        match self {
+            Self::Mfs(_) | Self::Cube(_) => None,
+            Self::Mtmfs(products) => products.spectral_delta_hz,
         }
     }
 
@@ -7023,12 +7082,14 @@ struct PreparedSelection {
     source_channel_frequencies_hz: Vec<f64>,
     source_channel_widths_hz: Vec<f64>,
     selected_frequency_range_hz: [f64; 2],
+    selected_frequency_edge_range_hz: [f64; 2],
     reffreq_hz: f64,
     freq_ref: FrequencyRef,
     cube_spectral_setup: Option<CubeSpectralSetup>,
     cube_row_spectral_cache: HashMap<(u64, usize), Rc<CubeRowSpectralContributions>>,
     cube_row_source_frequency_cache: HashMap<(u64, usize), Rc<Vec<f64>>>,
     mfs_frequency_scale_cache: HashMap<(u64, usize), f64>,
+    mfs_output_frequency_edge_range_hz: Option<[f64; 2]>,
     casa_cube_grid_interpolation: bool,
     casa_cube_briggs_preweighting: Option<CasaCubeBriggsPreparedWeighting>,
     use_density_batches: bool,
@@ -7493,6 +7554,8 @@ impl PreparedSelection {
             let use_density_batches = config.weighting != WeightingMode::Natural;
             let use_model_interpolation_batches = !(config.dirty_only || config.niter == 0);
             let selected_frequency_range_hz = frequency_range_hz(&output_channel_frequencies_hz)?;
+            let selected_frequency_edge_range_hz =
+                frequency_edge_range_hz(&source_channel_frequencies_hz, &source_channel_widths_hz)?;
             let reffreq_hz =
                 0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
             let casa_cube_briggs_preweighting = (config.spectral_mode.is_cube_like()
@@ -7710,12 +7773,14 @@ impl PreparedSelection {
                 source_channel_frequencies_hz,
                 source_channel_widths_hz,
                 selected_frequency_range_hz,
+                selected_frequency_edge_range_hz,
                 reffreq_hz,
                 freq_ref: output_freq_ref,
                 cube_spectral_setup,
                 cube_row_spectral_cache: HashMap::new(),
                 cube_row_source_frequency_cache: HashMap::new(),
                 mfs_frequency_scale_cache: HashMap::new(),
+                mfs_output_frequency_edge_range_hz: None,
                 casa_cube_grid_interpolation: config.per_channel_weight_density,
                 casa_cube_briggs_preweighting,
                 use_density_batches,
@@ -7735,12 +7800,14 @@ impl PreparedSelection {
                 source_channel_frequencies_hz: Vec::new(),
                 source_channel_widths_hz: Vec::new(),
                 selected_frequency_range_hz: [0.0, 0.0],
+                selected_frequency_edge_range_hz: [0.0, 0.0],
                 reffreq_hz: 0.0,
                 freq_ref: FrequencyRef::TOPO,
                 cube_spectral_setup: None,
                 cube_row_spectral_cache: HashMap::new(),
                 cube_row_source_frequency_cache: HashMap::new(),
                 mfs_frequency_scale_cache: HashMap::new(),
+                mfs_output_frequency_edge_range_hz: None,
                 casa_cube_grid_interpolation: false,
                 casa_cube_briggs_preweighting: None,
                 use_density_batches: false,
@@ -7970,7 +8037,13 @@ impl PreparedSelection {
                 | PreparedState::PairedMfs { .. }
                 | PreparedState::CollapsedMfs { .. }
         ) {
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?
+            let scale = self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+            if self.mfs_output_frequency_edge_range_hz.is_none() {
+                self.mfs_output_frequency_edge_range_hz = Some(
+                    self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?,
+                );
+            }
+            scale
         } else {
             1.0
         };
@@ -9211,6 +9284,41 @@ impl PreparedSelection {
         Ok(scale)
     }
 
+    fn mfs_imaging_frequency_edge_range_for_row(
+        &self,
+        selected_row: &SelectedMainRow,
+        derived_engine: Option<&MsCalEngine>,
+    ) -> Result<[f64; 2], String> {
+        if self.freq_ref == FrequencyRef::LSRK {
+            return Ok(self.selected_frequency_edge_range_hz);
+        }
+        let derived_engine = derived_engine.ok_or_else(|| {
+            "internal error: missing derived engine for MFS frequency-frame conversion".to_string()
+        })?;
+        let row_time_mjd_sec = selected_row.time_mjd_seconds.ok_or_else(|| {
+            "internal error: missing row time for MFS frequency-frame conversion".to_string()
+        })?;
+        let low_hz = convert_frequency_to_frame(
+            self.freq_ref,
+            FrequencyRef::LSRK,
+            self.selected_frequency_edge_range_hz[0],
+            row_time_mjd_sec,
+            selected_row.field_id,
+            derived_engine,
+        )
+        .map_err(|error| error.to_string())?;
+        let high_hz = convert_frequency_to_frame(
+            self.freq_ref,
+            FrequencyRef::LSRK,
+            self.selected_frequency_edge_range_hz[1],
+            row_time_mjd_sec,
+            selected_row.field_id,
+            derived_engine,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok([low_hz.min(high_hz), low_hz.max(high_hz)])
+    }
+
     fn finish_standard_mfs_without_trace(self) -> Result<PreparedInput, String> {
         let PreparedSelection {
             initialization_error: _,
@@ -9218,12 +9326,14 @@ impl PreparedSelection {
             source_channel_frequencies_hz: _,
             source_channel_widths_hz: _,
             selected_frequency_range_hz,
+            selected_frequency_edge_range_hz,
             reffreq_hz,
             freq_ref,
             cube_spectral_setup: _,
             cube_row_spectral_cache: _,
             cube_row_source_frequency_cache: _,
             mfs_frequency_scale_cache: _,
+            mfs_output_frequency_edge_range_hz,
             casa_cube_grid_interpolation: _,
             casa_cube_briggs_preweighting: _,
             use_density_batches: _,
@@ -9244,6 +9354,8 @@ impl PreparedSelection {
                 freq_ref,
                 reffreq_hz,
                 selected_frequency_range_hz,
+                spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
+                    .or(Some(selected_frequency_edge_range_hz)),
                 plane_stokes,
                 batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
                 sample_frequency_batches_hz: Vec::new(),
@@ -9262,6 +9374,8 @@ impl PreparedSelection {
                     freq_ref,
                     reffreq_hz,
                     selected_frequency_range_hz,
+                    spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
+                        .or(Some(selected_frequency_edge_range_hz)),
                     plane_stokes,
                     batches: chunk_visibility_batch(collapsed, DEFAULT_BATCH_SIZE),
                     sample_frequency_batches_hz: Vec::new(),
@@ -9277,6 +9391,8 @@ impl PreparedSelection {
                 freq_ref,
                 reffreq_hz,
                 selected_frequency_range_hz,
+                spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
+                    .or(Some(selected_frequency_edge_range_hz)),
                 plane_stokes,
                 batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
                 sample_frequency_batches_hz: Vec::new(),
@@ -9293,12 +9409,14 @@ impl PreparedSelection {
             source_channel_frequencies_hz,
             source_channel_widths_hz: _,
             selected_frequency_range_hz: _,
+            selected_frequency_edge_range_hz: _,
             reffreq_hz: _,
             freq_ref,
             cube_spectral_setup,
             cube_row_spectral_cache: _,
             cube_row_source_frequency_cache: _,
             mfs_frequency_scale_cache: _,
+            mfs_output_frequency_edge_range_hz: _,
             casa_cube_grid_interpolation: _,
             casa_cube_briggs_preweighting,
             use_density_batches,
@@ -9477,12 +9595,14 @@ impl PreparedSelection {
             source_channel_frequencies_hz,
             source_channel_widths_hz,
             selected_frequency_range_hz,
-            reffreq_hz,
+            selected_frequency_edge_range_hz: _,
+            reffreq_hz: _,
             freq_ref,
             cube_spectral_setup,
             cube_row_spectral_cache: _,
             cube_row_source_frequency_cache: _,
             mfs_frequency_scale_cache: _,
+            mfs_output_frequency_edge_range_hz,
             casa_cube_grid_interpolation: _,
             casa_cube_briggs_preweighting,
             use_density_batches,
@@ -9526,12 +9646,27 @@ impl PreparedSelection {
             ) => {
                 let gridder_mode =
                     infer_mfs_gridder_mode(ms, &prepared_phase_center, &samples, mosaic_pb_limit)?;
+                let selected_frequency_range_hz = output_sample_frequency_range_hz(&samples)?
+                    .unwrap_or(selected_frequency_range_hz);
+                let spectral_frequency_edge_range_hz =
+                    if mfs_output_frequency_edge_range_hz.is_some() {
+                        mfs_output_frequency_edge_range_hz
+                    } else {
+                        output_selected_frequency_edge_range_hz(
+                            &samples,
+                            &source_channel_frequencies_hz,
+                            &source_channel_widths_hz,
+                        )?
+                    };
+                let reffreq_hz =
+                    0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
                 Ok((
                     PreparedInput::Mfs(PlaneInput {
                         phase_center: prepared_phase_center.clone(),
-                        freq_ref,
+                        freq_ref: FrequencyRef::LSRK,
                         reffreq_hz,
                         selected_frequency_range_hz,
+                        spectral_frequency_edge_range_hz,
                         plane_stokes,
                         batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
                         sample_frequency_batches_hz: chunk_sample_frequencies_hz_from_samples(
@@ -9558,12 +9693,27 @@ impl PreparedSelection {
                     collapse_pending_pair_traces(samples, transform, plane_stokes);
                 let gridder_mode =
                     infer_mfs_gridder_mode(ms, &prepared_phase_center, &accepted, mosaic_pb_limit)?;
+                let selected_frequency_range_hz = output_sample_frequency_range_hz(&accepted)?
+                    .unwrap_or(selected_frequency_range_hz);
+                let spectral_frequency_edge_range_hz =
+                    if mfs_output_frequency_edge_range_hz.is_some() {
+                        mfs_output_frequency_edge_range_hz
+                    } else {
+                        output_selected_frequency_edge_range_hz(
+                            &accepted,
+                            &source_channel_frequencies_hz,
+                            &source_channel_widths_hz,
+                        )?
+                    };
+                let reffreq_hz =
+                    0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
                 Ok((
                     PreparedInput::Mfs(PlaneInput {
                         phase_center: prepared_phase_center.clone(),
-                        freq_ref,
+                        freq_ref: FrequencyRef::LSRK,
                         reffreq_hz,
                         selected_frequency_range_hz,
+                        spectral_frequency_edge_range_hz,
                         plane_stokes,
                         batches: chunk_visibility_batch(collapsed, DEFAULT_BATCH_SIZE),
                         sample_frequency_batches_hz: chunk_sample_frequencies_hz_from_samples(
@@ -9820,10 +9970,11 @@ fn mosaic_pb_product_from_weight_product(weight_product: &Array4<f32>) -> Array4
 }
 
 fn pb_correct_image_product(image: &Array4<f32>, pb: &Array4<f32>, pb_limit: f32) -> Array4<f32> {
+    let pb_cutoff = pb_limit.abs();
     let mut corrected = Array4::<f32>::zeros(image.dim());
     Zip::from(&mut corrected).and(image).and(pb).for_each(
         |corrected_value, image_value, pb_value| {
-            if pb_value.is_finite() && *pb_value > pb_limit.max(0.0) {
+            if pb_value.is_finite() && *pb_value > pb_cutoff {
                 *corrected_value = *image_value / *pb_value;
             }
         },
@@ -9832,7 +9983,8 @@ fn pb_correct_image_product(image: &Array4<f32>, pb: &Array4<f32>, pb_limit: f32
 }
 
 fn pb_support_mask_product(pb: &Array4<f32>, pb_limit: f32) -> ArrayD<bool> {
-    pb.mapv(|value| value.is_finite() && value > pb_limit)
+    let pb_cutoff = pb_limit.abs();
+    pb.mapv(|value| value.is_finite() && value > pb_cutoff)
         .into_dyn()
 }
 
@@ -9913,6 +10065,7 @@ fn single_field_primary_beam_product(
                     radius_rad,
                     frequency_hz,
                 );
+                let value = value * value;
                 for stokes_index in 0..nstokes {
                     pb[(x, y, stokes_index, channel_index)] = value;
                 }
@@ -9929,7 +10082,16 @@ fn single_field_weighted_primary_beam_product(
     context: PrimaryBeamProductContext,
 ) -> Result<Array4<f32>, String> {
     let usable_samples = collapse_primary_beam_weight_samples(samples);
-    let highest_frequency_hz = usable_samples
+    let min_frequency_hz = usable_samples
+        .iter()
+        .map(|sample| sample.frequency_hz)
+        .filter(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
+        .reduce(f64::min)
+        .ok_or_else(|| {
+            "weighted primary-beam product requires at least one finite positive weighted sample"
+                .to_string()
+        })?;
+    let max_frequency_hz = usable_samples
         .iter()
         .map(|sample| sample.frequency_hz)
         .filter(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
@@ -9938,7 +10100,8 @@ fn single_field_weighted_primary_beam_product(
             "weighted primary-beam product requires at least one finite positive weighted sample"
                 .to_string()
         })?;
-    single_field_primary_beam_product(coords, shape, &[highest_frequency_hz], context)
+    let reference_frequency_hz = 0.5 * (min_frequency_hz + max_frequency_hz);
+    single_field_primary_beam_product(coords, shape, &[reference_frequency_hz], context)
 }
 
 fn collapse_primary_beam_weight_samples(
@@ -10102,8 +10265,9 @@ fn clean_mask_product(mask: &EffectiveCleanMask, result: &RunProducts) -> Array4
 }
 
 fn pb_limited_product(pb: &Array4<f32>, pb_limit: f32) -> Array4<f32> {
+    let pb_cutoff = pb_limit.abs();
     pb.mapv(|value| {
-        if value.is_finite() && value > pb_limit {
+        if value.is_finite() && value > pb_cutoff {
             value
         } else {
             0.0
@@ -11041,6 +11205,7 @@ struct CoordinateSystemBuild<'a> {
     direction_ref: DirectionRef,
     plane_stokes: PlaneStokes,
     channel_frequencies_hz: &'a [f64],
+    spectral_delta_hz: Option<f64>,
     requested_rest_frequency_hz: Option<f64>,
 }
 
@@ -11053,6 +11218,7 @@ fn build_coordinate_system(config: CoordinateSystemBuild<'_>) -> CoordinateSyste
         direction_ref,
         plane_stokes,
         channel_frequencies_hz,
+        spectral_delta_hz,
         requested_rest_frequency_hz,
     } = config;
     let cell_rad = cell_arcsec * arcsec_to_rad();
@@ -11070,6 +11236,7 @@ fn build_coordinate_system(config: CoordinateSystemBuild<'_>) -> CoordinateSyste
     coords.add_coordinate(Box::new(build_spectral_coordinate(
         freq_ref,
         channel_frequencies_hz,
+        spectral_delta_hz,
         requested_rest_frequency_hz,
     )));
     coords
@@ -11078,6 +11245,7 @@ fn build_coordinate_system(config: CoordinateSystemBuild<'_>) -> CoordinateSyste
 fn build_spectral_coordinate(
     freq_ref: FrequencyRef,
     channel_frequencies_hz: &[f64],
+    spectral_delta_hz: Option<f64>,
     requested_rest_frequency_hz: Option<f64>,
 ) -> SpectralCoordinate {
     let rest_frequency = requested_rest_frequency_hz.unwrap_or_else(|| {
@@ -11089,8 +11257,20 @@ fn build_spectral_coordinate(
         }
     });
     match channel_frequencies_hz {
-        [] => SpectralCoordinate::new(freq_ref, 0.0, 1.0, 0.0, rest_frequency),
-        [single] => SpectralCoordinate::new(freq_ref, *single, 1.0, 0.0, rest_frequency),
+        [] => SpectralCoordinate::new(
+            freq_ref,
+            0.0,
+            spectral_delta_hz.unwrap_or(1.0),
+            0.0,
+            rest_frequency,
+        ),
+        [single] => SpectralCoordinate::new(
+            freq_ref,
+            *single,
+            spectral_delta_hz.unwrap_or(1.0),
+            0.0,
+            rest_frequency,
+        ),
         frequencies => {
             let delta = frequencies[1] - frequencies[0];
             let is_linear = frequencies.windows(2).all(|window| {
@@ -11194,6 +11374,143 @@ fn frequency_range_hz(frequencies_hz: &[f64]) -> Result<[f64; 2], String> {
         return Err("channel selection resolved to zero frequencies".to_string());
     }
     Ok([min_hz, max_hz])
+}
+
+fn frequency_edge_range_hz(frequencies_hz: &[f64], widths_hz: &[f64]) -> Result<[f64; 2], String> {
+    if frequencies_hz.len() != widths_hz.len() {
+        return Err(format!(
+            "channel selection has {} frequencies but {} widths",
+            frequencies_hz.len(),
+            widths_hz.len()
+        ));
+    }
+    let mut min_hz = f64::INFINITY;
+    let mut max_hz = f64::NEG_INFINITY;
+    for (&frequency_hz, &width_hz) in frequencies_hz.iter().zip(widths_hz) {
+        if !frequency_hz.is_finite() || frequency_hz <= 0.0 {
+            return Err(
+                "channel selection resolved to a non-positive or non-finite frequency".to_string(),
+            );
+        }
+        if !width_hz.is_finite() || width_hz == 0.0 {
+            return Err(
+                "channel selection resolved to a non-finite or zero channel width".to_string(),
+            );
+        }
+        let half_width_hz = 0.5 * width_hz.abs();
+        min_hz = min_hz.min(frequency_hz - half_width_hz);
+        max_hz = max_hz.max(frequency_hz + half_width_hz);
+    }
+    if min_hz.is_infinite() {
+        return Err("channel selection resolved to zero frequencies".to_string());
+    }
+    Ok([min_hz, max_hz])
+}
+
+fn sample_frequency_batch_range_hz<'a>(
+    batches: impl Iterator<Item = &'a Vec<f64>>,
+) -> Result<Option<[f64; 2]>, String> {
+    let mut min_hz = f64::INFINITY;
+    let mut max_hz = f64::NEG_INFINITY;
+    let mut saw_frequency = false;
+    for batch in batches {
+        for &frequency_hz in batch {
+            if !frequency_hz.is_finite() || frequency_hz <= 0.0 {
+                return Err(
+                    "MFS sample trace resolved to a non-positive or non-finite frequency"
+                        .to_string(),
+                );
+            }
+            saw_frequency = true;
+            min_hz = min_hz.min(frequency_hz);
+            max_hz = max_hz.max(frequency_hz);
+        }
+    }
+    Ok(saw_frequency.then_some([min_hz, max_hz]))
+}
+
+fn output_sample_frequency_range_hz(
+    samples: &[PreparedVisibilitySampleTrace],
+) -> Result<Option<[f64; 2]>, String> {
+    let mut min_hz = f64::INFINITY;
+    let mut max_hz = f64::NEG_INFINITY;
+    let mut saw_frequency = false;
+    for sample in samples {
+        let frequency_hz = sample.output_frequency_hz;
+        if !frequency_hz.is_finite() || frequency_hz <= 0.0 {
+            return Err(
+                "MFS sample trace resolved to a non-positive or non-finite frequency".to_string(),
+            );
+        }
+        saw_frequency = true;
+        min_hz = min_hz.min(frequency_hz);
+        max_hz = max_hz.max(frequency_hz);
+    }
+    Ok(saw_frequency.then_some([min_hz, max_hz]))
+}
+
+fn output_selected_frequency_edge_range_hz(
+    samples: &[PreparedVisibilitySampleTrace],
+    source_channel_frequencies_hz: &[f64],
+    source_channel_widths_hz: &[f64],
+) -> Result<Option<[f64; 2]>, String> {
+    if source_channel_frequencies_hz.is_empty() {
+        return Ok(None);
+    }
+    let source_center_range = frequency_range_hz(source_channel_frequencies_hz)?;
+    let mut sample_source_min_hz = f64::INFINITY;
+    let mut sample_source_max_hz = f64::NEG_INFINITY;
+    for sample in samples {
+        for contribution in &sample.source_contributions {
+            let frequency_hz = contribution.source_frequency_hz;
+            if !frequency_hz.is_finite() || frequency_hz <= 0.0 {
+                return Err(
+                    "MFS sample trace resolved to a non-positive or non-finite source frequency"
+                        .to_string(),
+                );
+            }
+            sample_source_min_hz = sample_source_min_hz.min(frequency_hz);
+            sample_source_max_hz = sample_source_max_hz.max(frequency_hz);
+        }
+    }
+    let sample_source_center_delta_hz = sample_source_max_hz - sample_source_min_hz;
+    let mut min_edge_hz = f64::INFINITY;
+    let mut max_edge_hz = f64::NEG_INFINITY;
+    for (&frequency_hz, &width_hz) in source_channel_frequencies_hz
+        .iter()
+        .zip(source_channel_widths_hz)
+    {
+        if !(width_hz.is_finite() && width_hz != 0.0) {
+            return Err(
+                "channel selection resolved to a non-finite or zero channel width".to_string(),
+            );
+        }
+        let half_width_hz = 0.5 * width_hz.abs();
+        min_edge_hz = min_edge_hz.min(frequency_hz - half_width_hz);
+        max_edge_hz = max_edge_hz.max(frequency_hz + half_width_hz);
+    }
+    let Some(output_sample_range) = output_sample_frequency_range_hz(samples)? else {
+        return Ok(None);
+    };
+    let source_center_delta_hz = source_center_range[1] - source_center_range[0];
+    let scale_source_delta_hz =
+        if sample_source_center_delta_hz.is_finite() && sample_source_center_delta_hz.abs() > 0.0 {
+            sample_source_center_delta_hz
+        } else {
+            source_center_delta_hz
+        };
+    if !(scale_source_delta_hz.is_finite() && scale_source_delta_hz.abs() > 0.0) {
+        return Ok(None);
+    }
+    let output_sample_delta_hz = output_sample_range[1] - output_sample_range[0];
+    let frequency_scale = output_sample_delta_hz / scale_source_delta_hz;
+    if !(frequency_scale.is_finite() && frequency_scale > 0.0) {
+        return Ok(None);
+    }
+    Ok(Some([
+        min_edge_hz * frequency_scale,
+        max_edge_hz * frequency_scale,
+    ]))
 }
 
 fn fractional_bandwidth_from_range(frequency_range_hz: [f64; 2]) -> f64 {
@@ -13942,6 +14259,7 @@ mod tests {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     use std::path::{Path, PathBuf};
 
+    use casa_coordinates::Coordinate;
     use casa_images::PagedImage;
     use casa_ms::{MeasurementSetBuilder, OptionalMainColumn, SubtableId};
     use casa_tables::table_measures::{MeasureType, TableMeasDesc};
@@ -14114,6 +14432,7 @@ mod tests {
             freq_ref: FrequencyRef::TOPO,
             reffreq_hz: 115.0e9,
             selected_frequency_range_hz: [114.0e9, 115.0e9],
+            spectral_frequency_edge_range_hz: Some([113.9e9, 115.1e9]),
             plane_stokes: PlaneStokes::I,
             batches: vec![test_visibility_batch(10.0)],
             sample_frequency_batches_hz: vec![vec![114.5e9]],
@@ -14124,6 +14443,7 @@ mod tests {
             freq_ref: FrequencyRef::TOPO,
             reffreq_hz: 115.0e9,
             selected_frequency_range_hz: [115.0e9, 116.0e9],
+            spectral_frequency_edge_range_hz: Some([114.9e9, 116.1e9]),
             plane_stokes: PlaneStokes::I,
             batches: vec![test_visibility_batch(20.0)],
             sample_frequency_batches_hz: vec![vec![115.5e9]],
@@ -14136,7 +14456,13 @@ mod tests {
 
         assert_eq!(merged.batches.len(), 2);
         assert_eq!(merged.sample_frequency_batches_hz.len(), 2);
-        assert_eq!(merged.selected_frequency_range_hz, [114.0e9, 116.0e9]);
+        assert_eq!(merged.selected_frequency_range_hz, [114.5e9, 115.5e9]);
+        assert_eq!(
+            merged.spectral_frequency_edge_range_hz,
+            Some([113.9e9, 116.1e9])
+        );
+        assert_eq!(merged.reffreq_hz, 115.0e9);
+        assert_eq!(merged.freq_ref, FrequencyRef::LSRK);
         let GridderMode::Mosaic(gridder) = merged.gridder_mode else {
             panic!("expected merged mosaic gridder");
         };
@@ -14310,10 +14636,25 @@ mod tests {
         let coord = build_spectral_coordinate(
             FrequencyRef::LSRK,
             &[372_672_490_000.0, 372_671_868_449.0],
+            None,
             Some(372_672_490_000.0),
         );
 
         assert!((coord.rest_frequency() - 372_672_490_000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn mfs_spectral_coordinate_can_record_selected_bandwidth_delta() {
+        let coord = build_spectral_coordinate(
+            FrequencyRef::LSRK,
+            &[1.578_964_191_647_556_8e9],
+            Some(647_988_661.229_352_2),
+            None,
+        );
+
+        assert_eq!(coord.reference_value(), vec![1.578_964_191_647_556_8e9]);
+        assert_eq!(coord.increment(), vec![647_988_661.229_352_2]);
+        assert_eq!(coord.rest_frequency(), 1.578_964_191_647_556_8e9);
     }
 
     #[test]
@@ -16223,6 +16564,7 @@ mod tests {
         assert_eq!(corrected[[1, 0, 0, 0]], 0.0);
         assert_eq!(corrected[[1, 1, 0, 0]], 0.0);
         let negative_limit_corrected = pb_correct_image_product(&image, &pb, -0.01);
+        assert_eq!(negative_limit_corrected[[0, 0, 0, 0]], 2.0);
         assert_eq!(negative_limit_corrected[[1, 1, 0, 0]], 0.0);
 
         let support = pb_support_mask_product(&pb, 0.1);
@@ -16242,6 +16584,7 @@ mod tests {
             direction_ref: DirectionRef::J2000,
             plane_stokes: PlaneStokes::I,
             channel_frequencies_hz: &[1.5e9],
+            spectral_delta_hz: None,
             requested_rest_frequency_hz: None,
         });
         let center_world = coords.to_world(&[2.0, 2.0, 0.0, 0.0]).unwrap();
@@ -16275,6 +16618,7 @@ mod tests {
             direction_ref: DirectionRef::J2000,
             plane_stokes: PlaneStokes::I,
             channel_frequencies_hz: &[1.5e9],
+            spectral_delta_hz: None,
             requested_rest_frequency_hz: None,
         });
         let center_world = coords.to_world(&[2.0, 2.0, 0.0, 0.0]).unwrap();
@@ -16305,12 +16649,13 @@ mod tests {
         .unwrap();
 
         assert!(weighted[[2, 2, 0, 0]] > 0.999);
-        assert!(weighted[[0, 0, 0, 0]] < low[[0, 0, 0, 0]]);
-        assert!(weighted[[0, 0, 0, 0]] > high[[0, 0, 0, 0]]);
+        let weighted_power = weighted[[0, 0, 0, 0]].powi(2);
+        assert!(weighted_power < low[[0, 0, 0, 0]]);
+        assert!(weighted_power > high[[0, 0, 0, 0]]);
     }
 
     #[test]
-    fn single_field_weighted_primary_beam_uses_highest_frequency_bin() {
+    fn single_field_weighted_primary_beam_uses_reference_frequency() {
         let coords = build_coordinate_system(CoordinateSystemBuild {
             imsize: 5,
             phase_center: [1.0, 0.5],
@@ -16319,6 +16664,7 @@ mod tests {
             direction_ref: DirectionRef::J2000,
             plane_stokes: PlaneStokes::I,
             channel_frequencies_hz: &[1.5e9],
+            spectral_delta_hz: None,
             requested_rest_frequency_hz: None,
         });
         let center_world = coords.to_world(&[2.0, 2.0, 0.0, 0.0]).unwrap();
@@ -16327,8 +16673,8 @@ mod tests {
             primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
         };
 
-        let high =
-            single_field_primary_beam_product(&coords, (5, 5, 1, 1), &[2.0e9], context).unwrap();
+        let reference =
+            single_field_primary_beam_product(&coords, (5, 5, 1, 1), &[1.5e9], context).unwrap();
         let selected = single_field_weighted_primary_beam_product(
             &coords,
             (5, 5, 1, 1),
@@ -16346,7 +16692,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(selected, high);
+        assert_eq!(selected, reference);
     }
 
     #[test]
