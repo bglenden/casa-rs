@@ -397,6 +397,19 @@ struct DatasetExplorerPanel: View {
                     setArrayInlineLimit: { columnIndex, limit in
                         store.setTableBrowserArrayInlineLimit(columnIndex: columnIndex, limit: limit, datasetID: dataset.id)
                     },
+                    copyCellValue: { rowIndex, columnIndex in
+                        store.loadTableBrowserCellValue(
+                            rowIndex: rowIndex,
+                            columnIndex: columnIndex,
+                            datasetID: dataset.id
+                        ) { result in
+                            guard case let .success(value) = result else {
+                                return
+                            }
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(value, forType: .string)
+                        }
+                    },
                     openSelectedSubtable: {
                         store.openSelectedTableBrowserSubtable(datasetID: dataset.id)
                     }
@@ -2146,6 +2159,7 @@ private struct TableBrowserSnapshotView: View {
     let requestCellWindow: (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
     let setColumnHidden: (_ columnIndex: Int, _ hidden: Bool) -> Void
     let setArrayInlineLimit: (_ columnIndex: Int, _ limit: Int) -> Void
+    let copyCellValue: (_ rowIndex: Int, _ columnIndex: Int) -> Void
     let openSelectedSubtable: () -> Void
 
     var body: some View {
@@ -2174,6 +2188,7 @@ private struct TableBrowserSnapshotView: View {
                 requestCellWindow: requestCellWindow,
                 setColumnHidden: setColumnHidden,
                 setArrayInlineLimit: setArrayInlineLimit,
+                copyCellValue: copyCellValue,
                 openSelectedSubtable: openSelectedSubtable
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -2203,6 +2218,7 @@ private struct TableBrowserMainPane: View {
     let requestCellWindow: (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
     let setColumnHidden: (_ columnIndex: Int, _ hidden: Bool) -> Void
     let setArrayInlineLimit: (_ columnIndex: Int, _ limit: Int) -> Void
+    let copyCellValue: (_ rowIndex: Int, _ columnIndex: Int) -> Void
     let openSelectedSubtable: () -> Void
     @State private var inspectedColumn: TableBrowserCellWindowSnapshot.Column?
     @State private var inspectedCell: TableBrowserCellInspectorItem?
@@ -2212,7 +2228,7 @@ private struct TableBrowserMainPane: View {
             switch snapshot.view {
             case "keywords":
                 TableBrowserKeyValueGrid(
-                    lines: mainLines,
+                    lines: tableKeywordLines,
                     selectedIndex: snapshot.verticalMetrics?.selectedIndex,
                     selectMainItem: selectMainItem
                 )
@@ -2243,7 +2259,8 @@ private struct TableBrowserMainPane: View {
                             setColumnHidden: setColumnHidden,
                             setArrayInlineLimit: setArrayInlineLimit,
                             inspectColumn: { inspectedColumn = $0 },
-                            inspectCell: { inspectedCell = $0 }
+                            inspectCell: { inspectedCell = $0 },
+                            copyCellValue: copyCellValue
                         )
                     }
                     .sheet(item: $inspectedColumn) { column in
@@ -2276,6 +2293,23 @@ private struct TableBrowserMainPane: View {
             }
         }
         return lines
+    }
+
+    private var tableKeywordLines: [String] {
+        let lines = mainLines
+        guard !lines.isEmpty else {
+            return lines
+        }
+        var filtered = [lines[0].replacingOccurrences(of: "Keywords", with: "Table Keywords")]
+        filtered += lines.dropFirst().filter { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return trimmed.hasPrefix("table.")
+                || trimmed.hasPrefix("> table.")
+        }
+        if filtered.count == 1 {
+            filtered.append(" No table keywords")
+        }
+        return filtered
     }
 }
 
@@ -2505,6 +2539,28 @@ private final class TableBrowserHeaderView: NSTableHeaderView {
     }
 }
 
+private final class TableBrowserTableView: NSTableView {
+    var menuProvider: ((TableBrowserTableView, NSEvent) -> NSMenu?)?
+    var copyHandler: (() -> Void)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        menuProvider?(self, event) ?? super.menu(for: event)
+    }
+
+    @objc func copy(_ sender: Any?) {
+        copyHandler?()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
+           event.charactersIgnoringModifiers?.lowercased() == "c" {
+            copyHandler?()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
 private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
     let grid: TableBrowserCellWindowSnapshot
     let hiddenColumns: Set<Int>
@@ -2518,6 +2574,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
     let setArrayInlineLimit: (_ columnIndex: Int, _ limit: Int) -> Void
     let inspectColumn: (TableBrowserCellWindowSnapshot.Column) -> Void
     let inspectCell: (TableBrowserCellInspectorItem) -> Void
+    let copyCellValue: (_ rowIndex: Int, _ columnIndex: Int) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -2532,7 +2589,8 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             setColumnHidden: setColumnHidden,
             setArrayInlineLimit: setArrayInlineLimit,
             inspectColumn: inspectColumn,
-            inspectCell: inspectCell
+            inspectCell: inspectCell,
+            copyCellValue: copyCellValue
         )
     }
 
@@ -2546,7 +2604,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .windowBackgroundColor
 
-        let tableView = NSTableView()
+        let tableView = TableBrowserTableView()
         let headerView = TableBrowserHeaderView()
         headerView.menuProvider = { [weak coordinator = context.coordinator] headerView, event in
             coordinator?.headerMenu(for: headerView, event: event)
@@ -2559,12 +2617,19 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         tableView.allowsColumnReordering = false
         tableView.allowsMultipleSelection = false
         tableView.allowsEmptySelection = true
+        tableView.selectionHighlightStyle = .none
         tableView.columnAutoresizingStyle = .noColumnAutoresizing
         tableView.dataSource = context.coordinator
         tableView.delegate = context.coordinator
         tableView.target = context.coordinator
         tableView.action = #selector(Coordinator.tableCellClicked(_:))
         tableView.doubleAction = #selector(Coordinator.tableCellDoubleClicked(_:))
+        tableView.menuProvider = { [weak coordinator = context.coordinator] tableView, event in
+            coordinator?.cellMenu(for: tableView, event: event)
+        }
+        tableView.copyHandler = { [weak coordinator = context.coordinator] in
+            coordinator?.copySelectedCell()
+        }
         scrollView.documentView = tableView
 
         context.coordinator.tableView = tableView
@@ -2587,6 +2652,8 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         context.coordinator.setArrayInlineLimit = setArrayInlineLimit
         context.coordinator.inspectColumn = inspectColumn
         context.coordinator.inspectCell = inspectCell
+        context.coordinator.copyCellValue = copyCellValue
+        context.coordinator.syncLocalSelectionFromState()
         context.coordinator.tableView?.rowHeight = max(22, CGFloat(interfaceFontSize) + 8)
         context.coordinator.syncColumns()
         context.coordinator.reloadDataIfNeeded()
@@ -2611,6 +2678,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         var setArrayInlineLimit: (_ columnIndex: Int, _ limit: Int) -> Void
         var inspectColumn: (TableBrowserCellWindowSnapshot.Column) -> Void
         var inspectCell: (TableBrowserCellInspectorItem) -> Void
+        var copyCellValue: (_ rowIndex: Int, _ columnIndex: Int) -> Void
         weak var tableView: NSTableView?
         private weak var scrollView: NSScrollView?
         private var lastColumnIDs: [String] = []
@@ -2618,6 +2686,8 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
         private var pendingRequestWorkItem: DispatchWorkItem?
         private var lastReloadSignature: String?
         private var cellValues: [String: String] = [:]
+        private var localSelectedRow: Int?
+        private var localSelectedColumn: Int?
         private let cellIdentifier = NSUserInterfaceItemIdentifier("TableBrowserCell")
 
         init(
@@ -2632,7 +2702,8 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             setColumnHidden: @escaping (_ columnIndex: Int, _ hidden: Bool) -> Void,
             setArrayInlineLimit: @escaping (_ columnIndex: Int, _ limit: Int) -> Void,
             inspectColumn: @escaping (TableBrowserCellWindowSnapshot.Column) -> Void,
-            inspectCell: @escaping (TableBrowserCellInspectorItem) -> Void
+            inspectCell: @escaping (TableBrowserCellInspectorItem) -> Void,
+            copyCellValue: @escaping (_ rowIndex: Int, _ columnIndex: Int) -> Void
         ) {
             self.grid = grid
             self.hiddenColumns = hiddenColumns
@@ -2646,6 +2717,9 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             self.setArrayInlineLimit = setArrayInlineLimit
             self.inspectColumn = inspectColumn
             self.inspectCell = inspectCell
+            self.copyCellValue = copyCellValue
+            self.localSelectedRow = selectedRow
+            self.localSelectedColumn = selectedColumn
         }
 
         func attach(to scrollView: NSScrollView) {
@@ -2686,8 +2760,8 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
                 arrayInlineLimits.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ","),
                 grid.rows.flatMap { $0.cells }.map { "\($0.columnIndex)=\($0.display.count)" }.joined(separator: ","),
                 "\(interfaceFontSize)",
-                "\(selectedRow ?? -1)",
-                "\(selectedColumn ?? -1)"
+                "\(localSelectedRow ?? -1)",
+                "\(localSelectedColumn ?? -1)"
             ].joined(separator: ":")
             guard signature != lastReloadSignature else {
                 return
@@ -2785,9 +2859,11 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             cellView.textField?.font = NSFont.monospacedSystemFont(ofSize: CGFloat(interfaceFontSize), weight: .regular)
             cellView.textField?.textColor = .labelColor
             cellView.wantsLayer = true
-            if tableColumn.identifier.rawValue == "row", row == selectedRow {
+            if tableColumn.identifier.rawValue == "row", row == localSelectedRow {
                 cellView.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
-            } else if let columnIndex = columnIndex(for: tableColumn), row == selectedRow, columnIndex == selectedColumn {
+            } else if let columnIndex = columnIndex(for: tableColumn),
+                      row == localSelectedRow,
+                      columnIndex == localSelectedColumn {
                 cellView.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
             } else {
                 cellView.layer?.backgroundColor = NSColor.clear.cgColor
@@ -2818,10 +2894,51 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
                 return
             }
             let clickedColumn = tableView.clickedColumn
-            let targetColumn = clickedColumn >= 0 && clickedColumn < tableView.tableColumns.count
-                ? columnIndex(for: tableView.tableColumns[clickedColumn]) ?? selectedColumn
-                : selectedColumn
-            selectCell(row, selectedColumn, targetColumn)
+            selectCellAt(row: row, tableColumnIndex: clickedColumn)
+        }
+
+        private func selectCellAt(row: Int, tableColumnIndex: Int) {
+            guard let tableView else {
+                return
+            }
+            let targetColumn = tableColumnIndex >= 0 && tableColumnIndex < tableView.tableColumns.count
+                ? columnIndex(for: tableView.tableColumns[tableColumnIndex])
+                : localSelectedColumn
+            let previousRow = localSelectedRow
+            let previousColumn = localSelectedColumn
+            localSelectedRow = row
+            localSelectedColumn = targetColumn
+            reloadSelectionHighlights(previousRow: previousRow, previousColumn: previousColumn)
+            selectCell(row, previousColumn, targetColumn)
+        }
+
+        private func reloadSelectionHighlights(previousRow: Int?, previousColumn: Int?) {
+            guard let tableView else {
+                return
+            }
+            var rows = IndexSet()
+            for row in [previousRow, localSelectedRow].compactMap({ $0 }) where row >= 0 && row < grid.rowCount {
+                rows.insert(row)
+            }
+            var columns = IndexSet(integer: 0)
+            for column in [previousColumn, localSelectedColumn].compactMap({ $0 }) {
+                if let tableIndex = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == "column-\(column)" }) {
+                    columns.insert(tableIndex)
+                }
+            }
+            if !rows.isEmpty {
+                tableView.reloadData(forRowIndexes: rows, columnIndexes: columns)
+            }
+        }
+
+        func syncLocalSelectionFromState() {
+            if localSelectedRow != selectedRow || localSelectedColumn != selectedColumn {
+                let previousRow = localSelectedRow
+                let previousColumn = localSelectedColumn
+                localSelectedRow = selectedRow
+                localSelectedColumn = selectedColumn
+                reloadSelectionHighlights(previousRow: previousRow, previousColumn: previousColumn)
+            }
         }
 
         private func showCellValue(row: Int, tableColumnIndex: Int) {
@@ -2839,6 +2956,59 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
                 column: column,
                 value: displayValue(for: tableView.tableColumns[tableColumnIndex], row: row)
             ))
+        }
+
+        func cellMenu(for tableView: TableBrowserTableView, event: NSEvent) -> NSMenu? {
+            let location = tableView.convert(event.locationInWindow, from: nil)
+            let row = tableView.row(at: location)
+            let tableColumnIndex = tableView.column(at: location)
+            guard row >= 0,
+                  tableColumnIndex >= 0,
+                  tableColumnIndex < tableView.tableColumns.count,
+                  let columnIndex = columnIndex(for: tableView.tableColumns[tableColumnIndex])
+            else {
+                return nil
+            }
+            selectCellAt(row: row, tableColumnIndex: tableColumnIndex)
+            let menu = NSMenu(title: "Cell")
+            let copy = NSMenuItem(title: "Copy Cell", action: #selector(copyContextCell(_:)), keyEquivalent: "")
+            copy.target = self
+            copy.representedObject = ["row": row, "column": columnIndex]
+            menu.addItem(copy)
+            let show = NSMenuItem(title: "Show Cell Value", action: #selector(showContextCell(_:)), keyEquivalent: "")
+            show.target = self
+            show.representedObject = ["row": row, "tableColumn": tableColumnIndex]
+            menu.addItem(show)
+            return menu
+        }
+
+        func copySelectedCell() {
+            guard let row = localSelectedRow,
+                  let column = localSelectedColumn
+            else {
+                return
+            }
+            copyCellValue(row, column)
+        }
+
+        @objc private func copyContextCell(_ sender: NSMenuItem) {
+            guard let payload = sender.representedObject as? [String: Int],
+                  let row = payload["row"],
+                  let column = payload["column"]
+            else {
+                return
+            }
+            copyCellValue(row, column)
+        }
+
+        @objc private func showContextCell(_ sender: NSMenuItem) {
+            guard let payload = sender.representedObject as? [String: Int],
+                  let row = payload["row"],
+                  let tableColumn = payload["tableColumn"]
+            else {
+                return
+            }
+            showCellValue(row: row, tableColumnIndex: tableColumn)
         }
 
         func headerMenu(for headerView: NSTableHeaderView, event: NSEvent) -> NSMenu? {
@@ -2864,7 +3034,7 @@ private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
             menu.addItem(.separator())
 
             let keywords = NSMenuItem(
-                title: column.keywords.isEmpty ? "No Column Keywords" : "Show Column Keywords",
+                title: "Show Column Keywords",
                 action: #selector(showHeaderColumnKeywords(_:)),
                 keyEquivalent: ""
             )

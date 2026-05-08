@@ -1888,6 +1888,18 @@ public struct TableBrowserColumnDisplayOption: Codable, Equatable {
     }
 }
 
+public struct TableBrowserCellValueRequest: Codable, Equatable {
+    public var datasetPath: String
+    public var rowIndex: Int
+    public var columnIndex: Int
+
+    enum CodingKeys: String, CodingKey {
+        case datasetPath = "dataset_path"
+        case rowIndex = "row_index"
+        case columnIndex = "column_index"
+    }
+}
+
 public struct TableBrowserSessionState: Codable, Equatable {
     public var datasetID: String
     public var selectedView: String

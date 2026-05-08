@@ -123,6 +123,13 @@ struct TableBrowserCellColumnDisplayOption {
     array_inline_limit: u64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct TableBrowserCellValueRequest {
+    dataset_path: String,
+    row_index: u64,
+    column_index: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct TableBrowserCellWindowSnapshot {
     table_path: String,
@@ -1268,6 +1275,63 @@ pub fn build_table_browser_cell_window_json(request_json: String) -> FrontendRes
     })
 }
 
+#[uniffi::export]
+pub fn build_table_browser_cell_value_json(request_json: String) -> FrontendResult<String> {
+    let request: TableBrowserCellValueRequest =
+        serde_json::from_str(&request_json).map_err(|error| {
+            FrontendServiceError::TableExplorer {
+                reason: format!("decode table browser cell value request: {error}"),
+            }
+        })?;
+    let dataset_path = PathBuf::from(&request.dataset_path);
+    if !dataset_path.exists() {
+        return Err(FrontendServiceError::InvalidPath {
+            reason: format!("{} does not exist", dataset_path.display()),
+        });
+    }
+    let table = Table::open(TableOptions::new(&dataset_path)).map_err(|error| {
+        FrontendServiceError::TableExplorer {
+            reason: format!("open {}: {error}", dataset_path.display()),
+        }
+    })?;
+    let column_names = table_browser_cell_column_names(&table)?;
+    let column_name = column_names
+        .get(request.column_index as usize)
+        .ok_or_else(|| FrontendServiceError::TableExplorer {
+            reason: format!(
+                "column index {} is outside {} columns",
+                request.column_index,
+                column_names.len()
+            ),
+        })?;
+    let row_index = request.row_index as usize;
+    if row_index >= table.row_count() {
+        return Err(FrontendServiceError::TableExplorer {
+            reason: format!(
+                "row index {} is outside {} rows",
+                row_index,
+                table.row_count()
+            ),
+        });
+    }
+    let value = table
+        .cell_accessor(row_index, column_name)
+        .and_then(|accessor| accessor.value())
+        .map_err(|error| FrontendServiceError::TableExplorer {
+            reason: format!(
+                "read {} row {} column {}: {error}",
+                dataset_path.display(),
+                row_index,
+                column_name
+            ),
+        })?;
+    serde_json::to_string(&format_table_browser_copy_value(value)).map_err(|error| {
+        FrontendServiceError::TableExplorer {
+            reason: format!("encode cell value {}: {error}", dataset_path.display()),
+        }
+    })
+}
+
 fn build_table_browser_cell_window(
     table: &Table,
     table_path: &Path,
@@ -1373,11 +1437,7 @@ fn table_browser_cell_column_header(table: &Table, name: &str) -> String {
     let Some(schema) = table.schema().and_then(|schema| schema.column(name)) else {
         return name.to_string();
     };
-    let mut header = name.to_string();
-    header.push('<');
-    header.push_str(&table_browser_cell_column_type_label(schema));
-    header.push('>');
-    header
+    format!("{name} {}", table_browser_cell_column_type_label(schema))
 }
 
 fn table_browser_cell_column_summary(table: &Table, name: &str) -> String {
@@ -1451,11 +1511,7 @@ fn table_browser_expanded_array_display(
         return Ok(None);
     };
     if array.len() > array_inline_limit {
-        return Ok(Some(format!(
-            "array<{:?}>[{}]",
-            array.primitive_type(),
-            table_browser_shape_label(array.shape())
-        )));
+        return Ok(Some(table_browser_array_type_label(array)));
     }
     Ok(Some(format_table_browser_array_expanded(array)))
 }
@@ -1467,13 +1523,13 @@ fn format_table_browser_schema_array(column: &casa_tables::ColumnSchema) -> Stri
         .unwrap_or("dyn");
     match column.column_type() {
         ColumnType::Array(ArrayShapeContract::Fixed { shape }) => {
-            format!("array<{primitive}>[{}]", table_browser_shape_label(shape))
+            format!("{primitive}[{}]", table_browser_shape_label(shape))
         }
         ColumnType::Array(ArrayShapeContract::Variable { ndim: Some(ndim) }) => {
-            format!("array<{primitive}>[{ndim}d]")
+            format!("{primitive}[{ndim}d]")
         }
         ColumnType::Array(ArrayShapeContract::Variable { ndim: None }) => {
-            format!("array<{primitive}>[]")
+            format!("{primitive}[]")
         }
         ColumnType::Scalar | ColumnType::Record => primitive.to_string(),
     }
@@ -1605,6 +1661,13 @@ fn format_table_browser_cell_value(value: Option<&Value>) -> String {
     }
 }
 
+fn format_table_browser_copy_value(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::Array(array)) => table_browser_array_all_values(array),
+        other => format_table_browser_cell_value(other),
+    }
+}
+
 fn format_table_browser_scalar(scalar: &ScalarValue) -> String {
     match scalar {
         ScalarValue::Bool(value) => value.to_string(),
@@ -1627,19 +1690,21 @@ fn format_table_browser_array(array: &ArrayValue) -> String {
         return table_browser_array_preview(array);
     }
     format!(
-        "array<{:?}>{:?} {}",
-        array.primitive_type(),
-        array.shape(),
+        "{} {}",
+        table_browser_array_type_label(array),
         table_browser_array_preview(array)
     )
 }
 
 fn format_table_browser_array_expanded(array: &ArrayValue) -> String {
+    table_browser_array_all_values(array)
+}
+
+fn table_browser_array_type_label(array: &ArrayValue) -> String {
     format!(
-        "array<{:?}>[{}] {}",
-        array.primitive_type(),
-        table_browser_shape_label(array.shape()),
-        table_browser_array_all_values(array)
+        "{}[{}]",
+        table_browser_short_primitive_name(array.primitive_type()),
+        table_browser_shape_label(array.shape())
     )
 }
 
@@ -4428,7 +4493,7 @@ mod tests {
         assert_eq!(window["row_start"].as_u64(), Some(0));
         assert_eq!(window["column_start"].as_u64(), Some(1));
         assert_eq!(window["columns"][0]["name"], "id");
-        assert_eq!(window["columns"][1]["header"], "name<str>");
+        assert_eq!(window["columns"][1]["header"], "name str");
         assert_eq!(window["rows"][0]["index"].as_u64(), Some(0));
         assert_eq!(
             window["rows"][0]["cells"][0]["column_index"].as_u64(),
@@ -4493,8 +4558,19 @@ mod tests {
         );
         assert_eq!(
             window["rows"][0]["cells"][0]["display"],
-            "array<Float32>[2x2] [1.0000, 2.0000, 3.0000, 4.0000]"
+            "[1.0000, 2.0000, 3.0000, 4.0000]"
         );
+
+        let copy_request = serde_json::json!({
+            "dataset_path": table_path,
+            "row_index": 0,
+            "column_index": 0
+        })
+        .to_string();
+        let copy_json =
+            build_table_browser_cell_value_json(copy_request).expect("table browser cell value");
+        let copy_value: String = serde_json::from_str(&copy_json).expect("cell value json");
+        assert_eq!(copy_value, "[1.0000, 2.0000, 3.0000, 4.0000]");
     }
 
     #[test]

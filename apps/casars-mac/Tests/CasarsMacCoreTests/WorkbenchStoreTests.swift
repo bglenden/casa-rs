@@ -2000,6 +2000,10 @@ private final class StubTableBrowserClient: TableBrowserClient {
         nextWindow.columnStart = request.columnStart
         return nextWindow
     }
+
+    func buildCellValue(request: TableBrowserCellValueRequest) throws -> String {
+        "row \(request.rowIndex) column \(request.columnIndex)"
+    }
 }
 
 private func makeDemoProjectProbe(rootPath: String) -> ProjectFixtureProbe {

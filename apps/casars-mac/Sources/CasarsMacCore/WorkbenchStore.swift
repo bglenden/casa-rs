@@ -369,6 +369,7 @@ public struct UniFFIImageExplorerClient: ImageExplorerClient {
 public protocol TableBrowserClient {
     func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot
     func buildCellWindow(request: TableBrowserCellWindowRequest) throws -> TableBrowserCellWindowSnapshot
+    func buildCellValue(request: TableBrowserCellValueRequest) throws -> String
 }
 
 public struct UniFFITableBrowserClient: TableBrowserClient {
@@ -386,6 +387,13 @@ public struct UniFFITableBrowserClient: TableBrowserClient {
         let requestJSON = String(decoding: requestData, as: UTF8.self)
         let json = try CasarsFrontendServices.buildTableBrowserCellWindowJson(requestJson: requestJSON)
         return try JSONDecoder().decode(TableBrowserCellWindowSnapshot.self, from: Data(json.utf8))
+    }
+
+    public func buildCellValue(request: TableBrowserCellValueRequest) throws -> String {
+        let requestData = try JSONEncoder().encode(request)
+        let requestJSON = String(decoding: requestData, as: UTF8.self)
+        let json = try CasarsFrontendServices.buildTableBrowserCellValueJson(requestJson: requestJSON)
+        return try JSONDecoder().decode(String.self, from: Data(json.utf8))
     }
 }
 
@@ -1702,6 +1710,40 @@ public final class WorkbenchStore: ObservableObject {
             dataset: dataset,
             request: browserState.cellWindowRequest(datasetPath: dataset.path)
         )
+    }
+
+    public func loadTableBrowserCellValue(
+        rowIndex: Int,
+        columnIndex: Int,
+        datasetID: String,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            let error = NSError(
+                domain: "CasarsMacCore.WorkbenchStore",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Unknown dataset \(datasetID)"]
+            )
+            state.lastErrors.append(error.localizedDescription)
+            completion(.failure(error))
+            return
+        }
+        let request = TableBrowserCellValueRequest(
+            datasetPath: dataset.path,
+            rowIndex: rowIndex,
+            columnIndex: columnIndex
+        )
+        tableBrowserQueue.async { [tableBrowserClient] in
+            let result = Result {
+                try tableBrowserClient.buildCellValue(request: request)
+            }
+            DispatchQueue.main.async {
+                if case let .failure(error) = result {
+                    self.state.lastErrors.append("Copy table cell for \(dataset.name): \(error)")
+                }
+                completion(result)
+            }
+        }
     }
 
     public func openSelectedTableBrowserSubtable(datasetID: String) {
