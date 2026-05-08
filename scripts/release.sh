@@ -24,9 +24,9 @@ Default local release gates:
   - scripts/test-python-package.sh
   - scripts/test-smoke.sh
   - scripts/test-install-suite.sh
-  - scripts/run-coverage.sh --ci-like
 
 Use --full to additionally run:
+  - scripts/run-coverage.sh --ci-like
   - scripts/test-release-perf.sh
   - scripts/test-slow.sh
   - scripts/build-python-docs.sh
@@ -225,9 +225,9 @@ main() {
   run_timed_step "python package gate" scripts/test-python-package.sh
   run_timed_step "smoke gate" bash scripts/test-smoke.sh
   run_timed_step "suite install gate" scripts/test-install-suite.sh
-  run_timed_step "CI-like coverage gate" scripts/run-coverage.sh --ci-like
 
   if [[ "$run_full" == "true" ]]; then
+    run_timed_step "CI-like coverage gate" scripts/run-coverage.sh --ci-like
     run_timed_step "release performance suite" bash scripts/test-release-perf.sh
     run_timed_step "slow parity gate" scripts/test-slow.sh
     run_timed_step "python docs build" scripts/build-python-docs.sh

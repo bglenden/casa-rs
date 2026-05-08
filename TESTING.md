@@ -82,7 +82,7 @@ For each wave:
 - reality-sync happens when docs, interfaces, or boundaries changed
 - approved outcome, included issues, and acceptance checks are not deferred or
   descoped without explicit user signoff recorded in the issue or PR
-- release work also runs the smoke gate, the blocking C++ interop gate, plus the suite-install and CI-like coverage gates
+- release work also runs the smoke gate, the blocking C++ interop gate, and the suite-install gate; CI-like coverage remains a version-tag CI gate and is run locally only for `scripts/release.sh --full` or explicit coverage reproduction
 - ordinary non-release merges stay on `just verify` plus targeted tests unless the user explicitly asks to exercise release/tag-only heavy gates
 - release performance evidence is informational by default and becomes blocking only when `CASA_RS_ENFORCE_PERF=1`
 - slow CASA parity checks run when the wave touches those concerns

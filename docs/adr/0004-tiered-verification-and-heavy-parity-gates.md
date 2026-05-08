@@ -25,7 +25,8 @@ The repo uses tiered verification:
 - Python-facing scripts resolve Python `>=3.10` through a repo-level resolver instead of assuming the shell's `python3`
 - `scripts/test-release-cpp-interop.sh` is the blocking release gate for Rust/C++ interop suites and remains outside the default `cargo test --workspace` path
 - `scripts/test-release-perf.sh` is informational release evidence by default; perf thresholds only become blocking when `CASA_RS_ENFORCE_PERF=1`
-- `scripts/test-install-suite.sh` and `scripts/run-coverage.sh --ci-like` are release-oriented heavy gates kept outside `just verify` and run explicitly or by `scripts/release.sh`
+- `scripts/test-install-suite.sh` is a release-oriented heavy gate kept outside `just verify` and run by the default local release path
+- `scripts/run-coverage.sh --ci-like` is a release/tag-oriented heavy gate kept outside `just verify` and the default local release path; it runs in version-tag CI and by `scripts/release.sh --full`
 - GitHub pull requests run the lighter CI subset, while version-tag pushes run the release-oriented CI gates
 - `scripts/ci-local.sh` mirrors that split with explicit `pr` and `tag` reproduction commands instead of folding smoke or coverage work back into the default PR path
 - `scripts/test-slow.sh` is the explicit opt-in gate for heavy CASA parity suites
