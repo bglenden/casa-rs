@@ -595,7 +595,8 @@ interoperability and release confidence.</p>
 <li>Python-facing scripts resolve Python <code>&gt;=3.10</code> through a repo-level resolver instead of assuming the shell's <code>python3</code></li>
 <li><code>scripts/test-release-cpp-interop.sh</code> is the blocking release gate for Rust/C++ interop suites and remains outside the default <code>cargo test --workspace</code> path</li>
 <li><code>scripts/test-release-perf.sh</code> is informational release evidence by default; perf thresholds only become blocking when <code>CASA_RS_ENFORCE_PERF=1</code></li>
-<li><code>scripts/test-install-suite.sh</code> and <code>scripts/run-coverage.sh --ci-like</code> are release-oriented heavy gates kept outside <code>just verify</code> and run explicitly or by <code>scripts/release.sh</code></li>
+<li><code>scripts/test-install-suite.sh</code> is a release-oriented heavy gate kept outside <code>just verify</code> and run by the default local release path</li>
+<li><code>scripts/run-coverage.sh --ci-like</code> is a release/tag-oriented heavy gate kept outside <code>just verify</code> and the default local release path; it runs in version-tag CI and by <code>scripts/release.sh --full</code></li>
 <li>GitHub pull requests run the lighter CI subset, while version-tag pushes run the release-oriented CI gates</li>
 <li><code>scripts/ci-local.sh</code> mirrors that split with explicit <code>pr</code> and <code>tag</code> reproduction commands instead of folding smoke or coverage work back into the default PR path</li>
 <li><code>scripts/test-slow.sh</code> is the explicit opt-in gate for heavy CASA parity suites</li>
