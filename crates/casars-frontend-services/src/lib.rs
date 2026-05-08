@@ -3260,7 +3260,7 @@ fn probe_measurement_set_uv_range_inner(
     for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
         let uvw_values = selected_uvw_values(table, "UVW", row_chunk)?;
         let ddids = selected_i32_values(table, "DATA_DESC_ID", row_chunk)?;
-        for (uvw, ddid) in uvw_values.into_iter().zip(ddids.into_iter()) {
+        for (uvw, ddid) in uvw_values.into_iter().zip(ddids) {
             let uv_meters = uvw[0].hypot(uvw[1]);
             if !uv_meters.is_finite() {
                 continue;
