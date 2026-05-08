@@ -1,6 +1,6 @@
 # Wave 6 Issue 175 VLA Imaging
 
-Verification: `cargo test -p casa-imaging mtmfs --lib`; `cargo test -p casars-imager pblimit --lib`; `cargo test -p casars-imager single_field_primary_beam_product --lib`; `cargo test -p casars-imager outlier_file_request_accepts_vla_imaging_multiscale_modelcolumn_slice --lib`; `cargo test -p casa-images image_analysis_task_dispatch_roundtrips_real_image_products --lib`; `PYTHONPATH=crates/casars-python/python python -m pytest crates/casars-python/python/tests/test_image_analysis.py -q`; `cargo build --release -p casars-imager --bin casars-imager -p casa-images --bin immath -p casa-images --bin imexplore`; reduced CASA/Rust MT-MFS multiscale W-projection smoke on `SNR_G55_10s.calib.ms`.
+Verification: `cargo test -p casa-imaging mtmfs --lib`; `cargo test -p casars-imager pblimit --lib`; `cargo test -p casars-imager primary_beam --lib`; `cargo test -p casars-imager mtmfs --lib`; `cargo test -p casars-imager outlier_file_request_accepts_vla_imaging_multiscale_modelcolumn_slice --lib`; `cargo test -p casa-images image_analysis_task_dispatch_roundtrips_real_image_products --lib`; `PYTHONPATH=crates/casars-python/python python -m pytest crates/casars-python/python/tests/test_image_analysis.py -q`; `cargo build --release -p casars-imager --bin casars-imager -p casa-images --bin immath -p casa-images --bin imexplore`; reduced CASA/Rust MT-MFS multiscale W-projection smoke on `SNR_G55_10s.calib.ms`; full all-SPW `1280x1280` CASA/Rust dirty MT-MFS W-projection comparison on `SNR_G55_10s.calib.ms`.
 
 ## Scope
 
@@ -34,10 +34,16 @@ The registry key is `vla/imaging/calibrated-ms`.
 
 `casars-imager` now accepts the guide's negative `pblimit` policy, writes
 single-field `.pb` products for the VLA imaging paths, and writes PB-corrected
-regular and MT-MFS products when requested. MT-MFS now supports the tutorial
-combination of multiscale terms and W-projection, and `savemodel=modelcolumn`
-handles the multi-DDID VLA input by preparing per-DDID selections before merging
-the imaging inputs.
+regular and MT-MFS products when requested. For MT-MFS W-projection, the
+single-field PB product follows CASA's `SimplePBConvFunc` path: CASA builds
+multiple useful PB frequency planes but passes the highest useful
+weight-convolution plane downstream, and `SIImageStore::makePBFromWeight`
+persists `sqrt(weight) / peak` as `.pb.tt0`. Rust now derives the same
+high-frequency single-field PB sidecar and writes CASA-style
+`.image.ttN.pbcor` products for every Taylor term. MT-MFS now supports the
+tutorial combination of multiscale terms and W-projection, and
+`savemodel=modelcolumn` handles the multi-DDID VLA input by preparing per-DDID
+selections before merging the imaging inputs.
 
 `casa-images` now supports the guide's scalar `immath` expression and the
 tutorial `imhead(mode='put', hdkey='bunit')` operation. The Python image-analysis
@@ -77,3 +83,28 @@ Runtime for that reduced smoke:
 The reduced smoke is intentionally small enough for local review. The full
 1280-pixel tutorial sequence is scripted but not used as the default loop
 because it writes large products and takes substantially longer.
+
+Full same-parameter dirty MT-MFS W-projection comparison, all SPWs,
+`imsize=1280`, `niter=0`, `deconvolver='mtmfs'`, `nterms=2`,
+`gridder='wproject'`, `weighting='briggs'`, `robust=0`, `pbcor=True`:
+
+| Product | Correlation | RMS diff | Max abs diff | Rust max | CASA max |
+|---|---:|---:|---:|---:|---:|
+| `.residual.tt0` | `0.9985553291188731` | `2.382452398740843e-06` | `3.864080645143986e-05` | `0.00616470817476511` | `0.00616471515968442` |
+| `.psf.tt0` | `0.9995017901112907` | `6.970110357463363e-05` | `0.0005493692879099399` | `1.0` | `1.0` |
+| `.pb.tt0` | `0.9932302339549993` | `0.017897184394175668` | `0.1123141348361969` | `1.0` | `1.0` |
+| `.pb.tt1` | n/a | `0.0` | `0.0` | `0.0` | `0.0` |
+| `.image.tt0` | `0.9593725797797287` | `6.410001202215196e-05` | `0.005805458873510361` | `0.014294164255261421` | `0.00848870538175106` |
+| `.image.tt0.pbcor` | `0.2995803115226404` | `0.0006166417299453287` | `0.51712816208601` | `0.5627174377441406` | `0.06711091101169586` |
+
+Full dirty wall times:
+
+| Engine | Wall time |
+|---|---:|
+| CASA C++ | `132.44 s` |
+| casa-rs | `122.75 s` |
+
+Full comparison artifacts:
+
+- Metrics: `target/issue175-evidence/full-mtmfs-wproj-dirty-rust-pbfix6/comparison.json`
+- Figures: `target/issue175-evidence/full-mtmfs-wproj-dirty-rust-pbfix6/figures/`

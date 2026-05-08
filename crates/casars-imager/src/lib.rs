@@ -34,7 +34,7 @@ use casa_imaging::{
     estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern, restore_standard_mfs_model,
     run_cube, run_imaging, run_mtmfs, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
-    trace_w_project_plan,
+    trace_w_project_plan, trace_weighting,
 };
 use casa_ms::MeasurementSet;
 #[cfg(test)]
@@ -1441,9 +1441,11 @@ fn run_single_image_from_config_with_gridder_override(
                             .to_string(),
                     );
                 }
+                let primary_beam_weight_samples =
+                    primary_beam_weight_samples_for_mfs(geometry, &plane, config.weighting, clean)?;
                 (
-                    RunProducts::Mtmfs(
-                        run_mtmfs(&MtmfsRequest {
+                    RunProducts::Mtmfs(MtmfsRunProducts {
+                        result: run_mtmfs(&MtmfsRequest {
                             geometry,
                             visibility_batches: plane.batches,
                             sample_frequency_batches_hz: plane.sample_frequency_batches_hz,
@@ -1462,7 +1464,8 @@ fn run_single_image_from_config_with_gridder_override(
                             compatibility: CompatibilityMode::CasaStandardMfs,
                         })
                         .map_err(|error| error.to_string())?,
-                    ),
+                        primary_beam_weight_samples,
+                    }),
                     user_clean_mask.map(EffectiveCleanMask::Plane),
                 )
             } else {
@@ -2339,6 +2342,60 @@ fn finish_joint_outlier_field_result(
             image_units: "Jy/beam".to_string(),
         },
     })
+}
+
+fn primary_beam_weight_samples_for_mfs(
+    geometry: ImageGeometry,
+    plane: &PlaneInput,
+    weighting: WeightingMode,
+    clean: CleanConfig,
+) -> Result<Vec<PrimaryBeamWeightSample>, String> {
+    if plane.sample_frequency_batches_hz.is_empty() {
+        return Ok(Vec::new());
+    }
+    let request = ImagingRequest {
+        geometry,
+        visibility_batches: plane.batches.clone(),
+        gridder_mode: plane.gridder_mode.clone(),
+        plane_stokes: plane.plane_stokes,
+        weighting,
+        reffreq_hz: plane.reffreq_hz,
+        selected_frequency_range_hz: plane.selected_frequency_range_hz,
+        deconvolver: Deconvolver::Hogbom,
+        multiscale_scales: Vec::new(),
+        small_scale_bias: 0.0,
+        clean: frontend_dirty_clean_config(clean.psf_cutoff),
+        clean_mask: None,
+        initial_model: None,
+        w_term_mode: WTermMode::None,
+        w_project_planes: None,
+        compatibility: CompatibilityMode::CasaStandardMfs,
+    };
+    let weighting_trace = trace_weighting(&request).map_err(|error| error.to_string())?;
+    let mut samples = Vec::with_capacity(weighting_trace.samples.len());
+    for sample in weighting_trace.samples {
+        if !(sample.gridable && sample.output_weight.is_finite() && sample.output_weight > 0.0) {
+            continue;
+        }
+        let frequency_hz = plane
+            .sample_frequency_batches_hz
+            .get(sample.batch_index)
+            .and_then(|batch| batch.get(sample.sample_index))
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "missing MFS PB frequency for batch {} sample {}",
+                    sample.batch_index, sample.sample_index
+                )
+            })?;
+        if frequency_hz.is_finite() && frequency_hz > 0.0 {
+            samples.push(PrimaryBeamWeightSample {
+                frequency_hz,
+                weight: sample.output_weight,
+            });
+        }
+    }
+    Ok(samples)
 }
 
 fn extract_mfs_plane(cube: &Array4<f32>) -> Array2<f32> {
@@ -4499,8 +4556,13 @@ fn frequencies_close(left: f64, right: f64) -> bool {
 
 enum RunProducts {
     Mfs(casa_imaging::ImagingResult),
-    Mtmfs(casa_imaging::MtmfsResult),
+    Mtmfs(MtmfsRunProducts),
     Cube(CubeRunProducts),
+}
+
+struct MtmfsRunProducts {
+    result: casa_imaging::MtmfsResult,
+    primary_beam_weight_samples: Vec<PrimaryBeamWeightSample>,
 }
 
 struct CubeRunProducts {
@@ -4512,7 +4574,7 @@ impl RunProducts {
     fn plane_stokes(&self) -> PlaneStokes {
         match self {
             Self::Mfs(result) => result.compatibility.plane_stokes,
-            Self::Mtmfs(result) => result.compatibility.plane_stokes,
+            Self::Mtmfs(products) => products.result.compatibility.plane_stokes,
             Self::Cube(products) => products.result.compatibility.plane_stokes,
         }
     }
@@ -4520,7 +4582,7 @@ impl RunProducts {
     fn channel_frequencies_hz(&self) -> &[f64] {
         match self {
             Self::Mfs(result) => &result.compatibility.channel_frequencies_hz,
-            Self::Mtmfs(result) => &result.compatibility.channel_frequencies_hz,
+            Self::Mtmfs(products) => &products.result.compatibility.channel_frequencies_hz,
             Self::Cube(products) => &products.result.compatibility.channel_frequencies_hz,
         }
     }
@@ -4528,7 +4590,7 @@ impl RunProducts {
     fn warnings(&self) -> Vec<String> {
         match self {
             Self::Mfs(result) => result.diagnostics.warnings.clone(),
-            Self::Mtmfs(result) => result.diagnostics.warnings.clone(),
+            Self::Mtmfs(products) => products.result.diagnostics.warnings.clone(),
             Self::Cube(products) => products.result.diagnostics.warnings.clone(),
         }
     }
@@ -4536,7 +4598,7 @@ impl RunProducts {
     fn gridded_samples(&self) -> usize {
         match self {
             Self::Mfs(result) => result.diagnostics.gridded_samples,
-            Self::Mtmfs(result) => result.diagnostics.gridded_samples,
+            Self::Mtmfs(products) => products.result.diagnostics.gridded_samples,
             Self::Cube(products) => products.result.diagnostics.gridded_samples,
         }
     }
@@ -4544,7 +4606,7 @@ impl RunProducts {
     fn major_cycles(&self) -> usize {
         match self {
             Self::Mfs(result) => result.diagnostics.major_cycles,
-            Self::Mtmfs(result) => result.diagnostics.major_cycles,
+            Self::Mtmfs(products) => products.result.diagnostics.major_cycles,
             Self::Cube(products) => products.result.diagnostics.major_cycles,
         }
     }
@@ -4552,7 +4614,7 @@ impl RunProducts {
     fn minor_iterations(&self) -> usize {
         match self {
             Self::Mfs(result) => result.diagnostics.minor_iterations,
-            Self::Mtmfs(result) => result.diagnostics.minor_iterations,
+            Self::Mtmfs(products) => products.result.diagnostics.minor_iterations,
             Self::Cube(products) => products.result.diagnostics.minor_iterations,
         }
     }
@@ -4560,7 +4622,7 @@ impl RunProducts {
     fn clean_stop_reason(&self) -> Option<CleanStopReason> {
         match self {
             Self::Mfs(result) => result.diagnostics.clean_stop_reason,
-            Self::Mtmfs(result) => result.diagnostics.clean_stop_reason,
+            Self::Mtmfs(products) => products.result.diagnostics.clean_stop_reason,
             Self::Cube(products) => products.result.diagnostics.clean_stop_reason,
         }
     }
@@ -4568,7 +4630,7 @@ impl RunProducts {
     fn minor_cycle_traces(&self) -> Vec<MinorCycleTrace> {
         match self {
             Self::Mfs(result) => result.diagnostics.minor_cycle_traces.clone(),
-            Self::Mtmfs(result) => result.diagnostics.minor_cycle_traces.clone(),
+            Self::Mtmfs(products) => products.result.diagnostics.minor_cycle_traces.clone(),
             Self::Cube(_) => Vec::new(),
         }
     }
@@ -4601,7 +4663,7 @@ impl RunProducts {
     fn stage_timings(&self) -> ImagingStageTimings {
         match self {
             Self::Mfs(result) => result.diagnostics.stage_timings,
-            Self::Mtmfs(result) => result.diagnostics.stage_timings,
+            Self::Mtmfs(products) => products.result.diagnostics.stage_timings,
             Self::Cube(products) => products.result.diagnostics.stage_timings,
         }
     }
@@ -9761,7 +9823,7 @@ fn pb_correct_image_product(image: &Array4<f32>, pb: &Array4<f32>, pb_limit: f32
     let mut corrected = Array4::<f32>::zeros(image.dim());
     Zip::from(&mut corrected).and(image).and(pb).for_each(
         |corrected_value, image_value, pb_value| {
-            if pb_value.is_finite() && *pb_value > pb_limit {
+            if pb_value.is_finite() && *pb_value > pb_limit.max(0.0) {
                 *corrected_value = *image_value / *pb_value;
             }
         },
@@ -9778,6 +9840,12 @@ fn pb_support_mask_product(pb: &Array4<f32>, pb_limit: f32) -> ArrayD<bool> {
 struct PrimaryBeamProductContext {
     phase_center_direction_rad: [f64; 2],
     primary_beam_model: PrimaryBeamModel,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PrimaryBeamWeightSample {
+    frequency_hz: f64,
+    weight: f32,
 }
 
 fn needs_single_field_primary_beam_products(config: &CliConfig) -> bool {
@@ -9850,6 +9918,132 @@ fn single_field_primary_beam_product(
                 }
             }
         }
+    }
+    Ok(pb)
+}
+
+fn single_field_weighted_primary_beam_product(
+    coords: &CoordinateSystem,
+    shape: (usize, usize, usize, usize),
+    samples: &[PrimaryBeamWeightSample],
+    context: PrimaryBeamProductContext,
+) -> Result<Array4<f32>, String> {
+    let usable_samples = collapse_primary_beam_weight_samples(samples);
+    let highest_frequency_hz = usable_samples
+        .iter()
+        .map(|sample| sample.frequency_hz)
+        .filter(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
+        .reduce(f64::max)
+        .ok_or_else(|| {
+            "weighted primary-beam product requires at least one finite positive weighted sample"
+                .to_string()
+        })?;
+    single_field_primary_beam_product(coords, shape, &[highest_frequency_hz], context)
+}
+
+fn collapse_primary_beam_weight_samples(
+    samples: &[PrimaryBeamWeightSample],
+) -> Vec<PrimaryBeamWeightSample> {
+    const CASA_PB_FREQUENCY_BIN_FRACTION: f64 = 0.005;
+    let log_bin_width = (1.0 + CASA_PB_FREQUENCY_BIN_FRACTION).ln();
+    let mut by_frequency_bin = BTreeMap::<i64, (f64, f64)>::new();
+    for sample in samples {
+        if !(sample.frequency_hz.is_finite()
+            && sample.frequency_hz > 0.0
+            && sample.weight.is_finite()
+            && sample.weight > 0.0)
+        {
+            continue;
+        }
+        let key = (sample.frequency_hz.ln() / log_bin_width).round() as i64;
+        let weight = f64::from(sample.weight);
+        let entry = by_frequency_bin.entry(key).or_insert((0.0, 0.0));
+        entry.0 += sample.frequency_hz * weight;
+        entry.1 += weight;
+    }
+    by_frequency_bin
+        .into_values()
+        .filter_map(|(weighted_frequency_sum, weight)| {
+            (weight.is_finite() && weight > 0.0).then_some(PrimaryBeamWeightSample {
+                frequency_hz: weighted_frequency_sum / weight,
+                weight: weight as f32,
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn normalized_weighted_primary_beam_product(
+    coords: &CoordinateSystem,
+    shape: (usize, usize, usize, usize),
+    samples: &[PrimaryBeamWeightSample],
+    context: PrimaryBeamProductContext,
+) -> Result<Array4<f32>, String> {
+    let usable_samples = collapse_primary_beam_weight_samples(samples);
+    if usable_samples.is_empty() {
+        return Err(
+            "weighted primary-beam product requires at least one finite positive weighted sample"
+                .to_string(),
+        );
+    }
+
+    let (nx, ny, nstokes, nchan) = shape;
+    let mut pb = Array4::<f32>::zeros(shape);
+    let pixel_axis_count = coords.n_pixel_axes();
+    if pixel_axis_count < 2 {
+        return Err("primary-beam product requires at least two direction pixel axes".to_string());
+    }
+    let total_weight = usable_samples
+        .iter()
+        .map(|sample| f64::from(sample.weight))
+        .sum::<f64>();
+    if !(total_weight.is_finite() && total_weight > 0.0) {
+        return Err("weighted primary-beam product has non-positive total weight".to_string());
+    }
+
+    let mut peak = 0.0f32;
+    for channel_index in 0..nchan {
+        let mut pixel = vec![0.0; pixel_axis_count];
+        if pixel_axis_count > 3 {
+            pixel[3] = channel_index as f64;
+        }
+        for x in 0..nx {
+            pixel[0] = x as f64;
+            for y in 0..ny {
+                pixel[1] = y as f64;
+                let world = coords.to_world(&pixel).map_err(|error| {
+                    format!("convert weighted PB pixel ({x}, {y}) to world: {error}")
+                })?;
+                if world.len() < 2 {
+                    return Err(
+                        "primary-beam product requires two direction world axes".to_string()
+                    );
+                }
+                let radius_rad = direction_separation_rad(
+                    [world[0], world[1]],
+                    context.phase_center_direction_rad,
+                );
+                let weighted_power = usable_samples
+                    .iter()
+                    .map(|sample| {
+                        let voltage = primary_beam_voltage_pattern(
+                            context.primary_beam_model,
+                            radius_rad,
+                            sample.frequency_hz,
+                        ) as f64;
+                        f64::from(sample.weight) * voltage * voltage
+                    })
+                    .sum::<f64>();
+                let value = (weighted_power / total_weight).max(0.0).sqrt() as f32;
+                peak = peak.max(value);
+                for stokes_index in 0..nstokes {
+                    pb[(x, y, stokes_index, channel_index)] = value;
+                }
+            }
+        }
+    }
+    if peak > 0.0 {
+        pb.mapv_inplace(|value| value / peak);
     }
     Ok(pb)
 }
@@ -9932,7 +10126,8 @@ fn write_products(
     } else {
         0.5 * (channel_frequencies_hz[0] + channel_frequencies_hz[channel_frequencies_hz.len() - 1])
     };
-    if let RunProducts::Mtmfs(result) = result {
+    if let RunProducts::Mtmfs(products) = result {
+        let result = &products.result;
         let psf_beam_set = result
             .beam
             .map(beam_to_gaussian)
@@ -10037,12 +10232,21 @@ fn write_products(
         if let (Some(context), Some(image_tt0)) =
             (single_field_pb_context, result.image_terms.first())
         {
-            let pb_product = single_field_primary_beam_product(
-                coords,
-                image_tt0.dim(),
-                channel_frequencies_hz,
-                context,
-            )?;
+            let pb_product = if products.primary_beam_weight_samples.is_empty() {
+                single_field_primary_beam_product(
+                    coords,
+                    image_tt0.dim(),
+                    channel_frequencies_hz,
+                    context,
+                )?
+            } else {
+                single_field_weighted_primary_beam_product(
+                    coords,
+                    image_tt0.dim(),
+                    &products.primary_beam_weight_samples,
+                    context,
+                )?
+            };
             let limited_pb_product = pb_limited_product(&pb_product, config.mosaic_pb_limit);
             let support_mask = pb_support_mask_product(&pb_product, config.mosaic_pb_limit);
             write_single_product_inner(SingleProductWrite {
@@ -10057,21 +10261,37 @@ fn write_products(
                 reffreq_hz,
                 mask: Some(&support_mask),
             })?;
-            if config.pbcor {
-                let pbcor_product =
-                    pb_correct_image_product(image_tt0, &pb_product, config.mosaic_pb_limit);
-                write_single_product_inner(SingleProductWrite {
-                    path: &PathBuf::from(format!("{base}.pbcor.image.tt0")),
-                    data: &pbcor_product,
+            for term_index in 1..result.image_terms.len() {
+                let zero_pb_term = Array4::<f32>::zeros(image_tt0.dim());
+                write_single_product(
+                    &PathBuf::from(format!("{base}.pb.tt{term_index}")),
+                    &zero_pb_term,
                     coords,
-                    units: result.compatibility.image_units.as_str(),
-                    beam_set: ImageBeamSet::default(),
-                    role: "pbcor.image",
+                    "",
+                    ImageBeamSet::default(),
+                    "pb",
                     plane_stokes,
                     channel_frequencies_hz,
                     reffreq_hz,
-                    mask: Some(&support_mask),
-                })?;
+                )?;
+            }
+            if config.pbcor {
+                for (term_index, image_term) in result.image_terms.iter().enumerate() {
+                    let pbcor_product =
+                        pb_correct_image_product(image_term, &pb_product, config.mosaic_pb_limit);
+                    write_single_product_inner(SingleProductWrite {
+                        path: &PathBuf::from(format!("{base}.image.tt{term_index}.pbcor")),
+                        data: &pbcor_product,
+                        coords,
+                        units: result.compatibility.image_units.as_str(),
+                        beam_set: ImageBeamSet::default(),
+                        role: "pbcor.image",
+                        plane_stokes,
+                        channel_frequencies_hz,
+                        reffreq_hz,
+                        mask: Some(&support_mask),
+                    })?;
+                }
                 if let Some(alpha) = result.alpha.as_ref() {
                     let pb_alpha = single_field_primary_beam_alpha_product(
                         coords,
@@ -10091,7 +10311,7 @@ fn write_products(
                             }
                         });
                     write_single_product_inner(SingleProductWrite {
-                        path: &PathBuf::from(format!("{base}.pbcor.image.alpha")),
+                        path: &PathBuf::from(format!("{base}.alpha.pbcor")),
                         data: &corrected_alpha,
                         coords,
                         units: "",
@@ -10524,7 +10744,8 @@ impl ModelColumnPredictors {
                 geometry,
                 &products.result.model,
             )?)),
-            RunProducts::Mtmfs(result) => {
+            RunProducts::Mtmfs(products) => {
+                let result = &products.result;
                 let terms = result
                     .model_terms
                     .iter()
@@ -16001,6 +16222,8 @@ mod tests {
         assert_eq!(corrected[[0, 1, 0, 0]], 4.0);
         assert_eq!(corrected[[1, 0, 0, 0]], 0.0);
         assert_eq!(corrected[[1, 1, 0, 0]], 0.0);
+        let negative_limit_corrected = pb_correct_image_product(&image, &pb, -0.01);
+        assert_eq!(negative_limit_corrected[[1, 1, 0, 0]], 0.0);
 
         let support = pb_support_mask_product(&pb, 0.1);
         assert!(support[[0, 0, 0, 0]]);
@@ -16040,6 +16263,114 @@ mod tests {
             pb_limited_product(&pb, -0.01)[[0, 0, 0, 0]],
             pb[[0, 0, 0, 0]]
         );
+    }
+
+    #[test]
+    fn normalized_weighted_primary_beam_averages_frequency_power() {
+        let coords = build_coordinate_system(CoordinateSystemBuild {
+            imsize: 5,
+            phase_center: [1.0, 0.5],
+            cell_arcsec: 800.0,
+            freq_ref: FrequencyRef::LSRK,
+            direction_ref: DirectionRef::J2000,
+            plane_stokes: PlaneStokes::I,
+            channel_frequencies_hz: &[1.5e9],
+            requested_rest_frequency_hz: None,
+        });
+        let center_world = coords.to_world(&[2.0, 2.0, 0.0, 0.0]).unwrap();
+        let context = PrimaryBeamProductContext {
+            phase_center_direction_rad: [center_world[0], center_world[1]],
+            primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
+        };
+
+        let low =
+            single_field_primary_beam_product(&coords, (5, 5, 1, 1), &[1.0e9], context).unwrap();
+        let high =
+            single_field_primary_beam_product(&coords, (5, 5, 1, 1), &[2.0e9], context).unwrap();
+        let weighted = normalized_weighted_primary_beam_product(
+            &coords,
+            (5, 5, 1, 1),
+            &[
+                PrimaryBeamWeightSample {
+                    frequency_hz: 1.0e9,
+                    weight: 1.0,
+                },
+                PrimaryBeamWeightSample {
+                    frequency_hz: 2.0e9,
+                    weight: 1.0,
+                },
+            ],
+            context,
+        )
+        .unwrap();
+
+        assert!(weighted[[2, 2, 0, 0]] > 0.999);
+        assert!(weighted[[0, 0, 0, 0]] < low[[0, 0, 0, 0]]);
+        assert!(weighted[[0, 0, 0, 0]] > high[[0, 0, 0, 0]]);
+    }
+
+    #[test]
+    fn single_field_weighted_primary_beam_uses_highest_frequency_bin() {
+        let coords = build_coordinate_system(CoordinateSystemBuild {
+            imsize: 5,
+            phase_center: [1.0, 0.5],
+            cell_arcsec: 800.0,
+            freq_ref: FrequencyRef::LSRK,
+            direction_ref: DirectionRef::J2000,
+            plane_stokes: PlaneStokes::I,
+            channel_frequencies_hz: &[1.5e9],
+            requested_rest_frequency_hz: None,
+        });
+        let center_world = coords.to_world(&[2.0, 2.0, 0.0, 0.0]).unwrap();
+        let context = PrimaryBeamProductContext {
+            phase_center_direction_rad: [center_world[0], center_world[1]],
+            primary_beam_model: PrimaryBeamModel::EvlaLBandCommon,
+        };
+
+        let high =
+            single_field_primary_beam_product(&coords, (5, 5, 1, 1), &[2.0e9], context).unwrap();
+        let selected = single_field_weighted_primary_beam_product(
+            &coords,
+            (5, 5, 1, 1),
+            &[
+                PrimaryBeamWeightSample {
+                    frequency_hz: 1.0e9,
+                    weight: 100.0,
+                },
+                PrimaryBeamWeightSample {
+                    frequency_hz: 2.0e9,
+                    weight: 1.0,
+                },
+            ],
+            context,
+        )
+        .unwrap();
+
+        assert_eq!(selected, high);
+    }
+
+    #[test]
+    fn weighted_primary_beam_collapses_repeated_frequencies() {
+        let collapsed = collapse_primary_beam_weight_samples(&[
+            PrimaryBeamWeightSample {
+                frequency_hz: 1.0e9,
+                weight: 2.0,
+            },
+            PrimaryBeamWeightSample {
+                frequency_hz: 1.0e9,
+                weight: 3.0,
+            },
+            PrimaryBeamWeightSample {
+                frequency_hz: 2.0e9,
+                weight: 4.0,
+            },
+        ]);
+
+        assert_eq!(collapsed.len(), 2);
+        assert_eq!(collapsed[0].frequency_hz, 1.0e9);
+        assert_eq!(collapsed[0].weight, 5.0);
+        assert_eq!(collapsed[1].frequency_hz, 2.0e9);
+        assert_eq!(collapsed[1].weight, 4.0);
     }
 
     #[test]
