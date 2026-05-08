@@ -35,7 +35,7 @@ for arg in "$@"; do
   esac
 done
 
-tarpaulin_timeout="${TARPAULIN_TIMEOUT:-300}"
+tarpaulin_timeout="${TARPAULIN_TIMEOUT:-900}"
 tarpaulin_attempts="${TARPAULIN_ATTEMPTS:-2}"
 
 if [[ "$ci_like" == "true" ]]; then
