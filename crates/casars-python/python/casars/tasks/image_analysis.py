@@ -133,10 +133,22 @@ def importfits_schema(*, binary: StrPath | None = None) -> dict[str, Any]:
     return fetch_importfits_schema(binary=binary)
 
 
-def imhead(imagename: StrPath, *, binary: StrPath | None = None) -> dict[str, Any]:
+def imhead(
+    imagename: StrPath,
+    *,
+    mode: str = "summary",
+    hdkey: str | None = None,
+    hdvalue: str | None = None,
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
     """Run CASA-style ``imhead`` through ``imexplore imhead --json``."""
 
-    return invoke_imexplore_json_subcommand("imhead", [os.fspath(imagename)], binary=binary)
+    argv = [os.fspath(imagename), "--mode", mode]
+    if hdkey is not None:
+        argv.extend(["--hdkey", hdkey])
+    if hdvalue is not None:
+        argv.extend(["--hdvalue", hdvalue])
+    return invoke_imexplore_json_subcommand("imhead", argv, binary=binary)
 
 
 def imstat(
@@ -230,7 +242,7 @@ def imsubimage(
 
 
 def immath(
-    imagename: list[StrPath] | tuple[StrPath, ...],
+    imagename: StrPath | list[StrPath] | tuple[StrPath, ...],
     *,
     expr: str,
     outfile: StrPath,
@@ -239,8 +251,9 @@ def immath(
 ) -> TaskResult:
     """Run tutorial-scoped CASA-style ``immath`` through the Rust task binary."""
 
+    inputs = [imagename] if isinstance(imagename, (str, bytes, os.PathLike)) else list(imagename)
     request = {
-        "imagename": [os.fspath(path) for path in imagename],
+        "imagename": [os.fspath(path) for path in inputs],
         "outfile": os.fspath(outfile),
         "expr": expr,
         "overwrite": overwrite,

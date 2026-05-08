@@ -292,6 +292,8 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         channel_count: options.channel_count,
         datacolumn: options.datacolumn.clone(),
         save_model: casars_imager::SaveModelMode::None,
+        start_model: None,
+        outlier_file: None,
         correlation: options.correlation.clone(),
         spectral_mode: options.spectral_mode,
         cube_axis: CubeAxisConfig {
@@ -308,6 +310,8 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         multiscale_scales: options.multiscale_scales.clone(),
         small_scale_bias: options.small_scale_bias,
         niter: options.niter,
+        nmajor: None,
+        fullsummary: false,
         gain: options.gain,
         threshold_jy: options.threshold_jy,
         nsigma: options.nsigma,

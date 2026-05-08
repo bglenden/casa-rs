@@ -364,6 +364,17 @@ pub const TUTORIAL_DATASETS: &[TutorialDataset] = &[
         relative_path: "tutorial-parity/vla/3c391/EVLA_3C391_FinalCalibratedMosaicMS.tgz",
     },
     TutorialDataset {
+        key: "vla/imaging/calibrated-ms",
+        source_url: "https://casaguides.nrao.edu/index.php?title=VLA_CASA_Imaging-CASA6.5.4",
+        artifact_url: "https://casa.nrao.edu/Data/EVLA/SNRG55/SNR_G55_10s.calib.tar.gz",
+        expected_filename: "SNR_G55_10s.calib.tar.gz",
+        casa_guide_version: Some("6.5.4"),
+        expected_size_bytes: Some(1_250_616_054),
+        expected_sha256: Some("b79a63d1142674c89c4c3ae702a28625867728a420a3c156e0ec44078200bf6a"),
+        tier: CasaTestDataTier::TutorialParity,
+        relative_path: "tutorial-parity/vla/imaging/SNR_G55_10s.calib.tar.gz",
+    },
+    TutorialDataset {
         key: "simulation/vla-ppdisk/model-fits",
         source_url: "https://casaguides.nrao.edu/index.php?title=Protoplanetary_Disk_Simulation_-_VLA-CASA6.7.2",
         artifact_url: "https://casa.nrao.edu/Data/EVLA/simulation/ppdisk672_GHz_50pc.fits",
@@ -395,10 +406,26 @@ pub fn casatestdata_root_for_tier(tier: CasaTestDataTier) -> Option<PathBuf> {
         }
     }
 
-    casatestdata_root_candidates_for_tier(tier)
-        .into_iter()
-        .find(|path| path.exists())
-        .map(|path| normalize_existing_path(&path))
+    select_casatestdata_root(
+        casatestdata_root_candidates_for_tier(tier),
+        &[] as &[PathBuf],
+    )
+}
+
+/// Resolve the shared `casatestdata` checkout for a gate tier, preferring roots
+/// that contain all paths required by that gate.
+pub fn casatestdata_root_for_tier_with_required_paths(
+    tier: CasaTestDataTier,
+    required_paths: &[impl AsRef<Path>],
+) -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("CASA_RS_TESTDATA_ROOT") {
+        let path = PathBuf::from(root);
+        if path.exists() {
+            return Some(normalize_existing_path(&path));
+        }
+    }
+
+    select_casatestdata_root(casatestdata_root_candidates_for_tier(tier), required_paths)
 }
 
 /// Resolve a path relative to the shared `casatestdata` checkout.
@@ -411,7 +438,27 @@ pub fn casatestdata_path_for_tier(
     tier: CasaTestDataTier,
     relative: impl AsRef<Path>,
 ) -> Option<PathBuf> {
-    casatestdata_root_for_tier(tier).map(|root| root.join(relative.as_ref()))
+    let relative = relative.as_ref();
+    if let Some(root) = std::env::var_os("CASA_RS_TESTDATA_ROOT") {
+        let path = PathBuf::from(root);
+        if path.exists() {
+            return Some(normalize_existing_path(&path).join(relative));
+        }
+    }
+
+    let mut first_existing = None;
+    for candidate in casatestdata_root_candidates_for_tier(tier) {
+        if !candidate.exists() {
+            continue;
+        }
+        let root = normalize_existing_path(&candidate);
+        let path = root.join(relative);
+        if path.exists() {
+            return Some(path);
+        }
+        first_existing.get_or_insert(path);
+    }
+    first_existing
 }
 
 /// Resolve the local CASA tutorial data mirror used by tutorial-registry keys.
@@ -533,6 +580,27 @@ fn casatestdata_root_candidates_for_tier(tier: CasaTestDataTier) -> Vec<PathBuf>
         candidates.push(PathBuf::from("/Volumes/home/casatestdata"));
     }
     candidates
+}
+
+fn select_casatestdata_root(
+    candidates: Vec<PathBuf>,
+    required_paths: &[impl AsRef<Path>],
+) -> Option<PathBuf> {
+    let mut first_existing = None;
+    for candidate in candidates {
+        if !candidate.exists() {
+            continue;
+        }
+        let root = normalize_existing_path(&candidate);
+        first_existing.get_or_insert_with(|| root.clone());
+        if required_paths
+            .iter()
+            .all(|relative| root.join(relative.as_ref()).exists())
+        {
+            return Some(root);
+        }
+    }
+    first_existing
 }
 
 fn normalize_existing_path(path: &Path) -> PathBuf {
@@ -2782,6 +2850,44 @@ mod tests {
             slow_candidates
                 .iter()
                 .any(|path| path == Path::new("/Volumes/home/casatestdata"))
+        );
+    }
+
+    #[test]
+    fn long_gate_required_path_selection_skips_incomplete_earlier_root() {
+        let dir = tempdir().unwrap();
+        let incomplete = dir.path().join("incomplete");
+        let complete = dir.path().join("complete");
+        std::fs::create_dir_all(&incomplete).unwrap();
+        std::fs::create_dir_all(complete.join("measurementset/vla")).unwrap();
+        std::fs::write(
+            complete.join("measurementset/vla/refim_point.ms"),
+            b"fixture",
+        )
+        .unwrap();
+
+        let selected = select_casatestdata_root(
+            vec![incomplete, complete.clone()],
+            &[Path::new("measurementset/vla/refim_point.ms")],
+        );
+        assert_eq!(selected, Some(normalize_existing_path(&complete)));
+    }
+
+    #[test]
+    fn long_gate_path_lookup_falls_through_to_later_root_with_file() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("casatestdata");
+        std::fs::create_dir_all(root.join("unittest/tclean")).unwrap();
+        std::fs::write(root.join("unittest/tclean/refim_twochan.ms"), b"fixture").unwrap();
+
+        let selected = select_casatestdata_root(
+            vec![dir.path().join("empty"), root.clone()],
+            &[Path::new("unittest/tclean/refim_twochan.ms")],
+        )
+        .expect("selected root");
+        assert_eq!(
+            selected.join("unittest/tclean/refim_twochan.ms"),
+            normalize_existing_path(&root).join("unittest/tclean/refim_twochan.ms")
         );
     }
 

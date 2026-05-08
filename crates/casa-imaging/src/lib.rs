@@ -156,6 +156,19 @@ pub fn fit_restoring_beam_from_psf(
     }
 }
 
+/// Restore a standard MFS component model with an already-selected restoring beam.
+///
+/// Frontends that orchestrate more than one image plane can use this to build
+/// the same restored-image product that [`run_imaging`] writes after its
+/// internal Cotton-Schwab controller finishes.
+pub fn restore_standard_mfs_model(
+    model: &Array2<f32>,
+    cell_size_rad: [f64; 2],
+    beam: Option<BeamFit>,
+) -> Array2<f32> {
+    restore_model(model, cell_size_rad, beam)
+}
+
 /// Estimate the maximum absolute PSF sidelobe level outside the fitted main lobe.
 ///
 /// This exposes the same sidelobe-estimation path used internally by
@@ -193,8 +206,13 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     let weighted_batches = apply_weighting(request, &gridder)?;
     stage_timings.weighting += weighting_started.elapsed();
     let [nx, ny] = request.geometry.image_shape;
-    let mut model = Array2::<f32>::zeros((nx, ny));
+    let mut model = request
+        .initial_model
+        .clone()
+        .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
+    let has_initial_model = request.initial_model.is_some();
     let (psf_state, mut residual) = if request.clean.niter == 0
+        && !has_initial_model
         && matches!(request.w_term_mode, WTermMode::None)
     {
         compute_dirty_psf_and_residual_standard(&weighted_batches, &gridder, &mut stage_timings)?
@@ -370,12 +388,13 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
         reffreq_hz: request.reffreq_hz,
         selected_frequency_range_hz: request.selected_frequency_range_hz,
         deconvolver: Deconvolver::Hogbom,
-        multiscale_scales: Vec::new(),
-        small_scale_bias: 0.0,
+        multiscale_scales: request.multiscale_scales.clone(),
+        small_scale_bias: request.small_scale_bias,
         clean: request.clean,
         clean_mask: request.clean_mask.clone(),
-        w_term_mode: WTermMode::None,
-        w_project_planes: None,
+        initial_model: None,
+        w_term_mode: request.w_term_mode,
+        w_project_planes: request.w_project_planes,
         compatibility: request.compatibility,
     };
     let weighted_batches = apply_weighting(&weighting_request, &gridder)?;
@@ -420,6 +439,14 @@ pub fn run_mtmfs(request: &MtmfsRequest) -> Result<MtmfsResult, ImagingError> {
     let mut residual_needs_refresh = false;
 
     while reported_minor_iterations < request.clean.niter {
+        if request
+            .clean
+            .major_cycle_limit
+            .is_some_and(|limit| major_cycles >= limit)
+        {
+            clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
+            break;
+        }
         let Some((_, cycle_peak_value)) =
             peak_location_masked(&residual_terms[0], request.clean_mask.as_ref())
         else {
@@ -1662,6 +1689,7 @@ fn request_for_mosaic_clean_mask(
         small_scale_bias: request.small_scale_bias,
         clean: request.clean,
         clean_mask: Some(clean_mask),
+        initial_model: None,
         w_term_mode: request.w_term_mode,
         w_project_planes: request.w_project_planes,
         compatibility: request.compatibility,
@@ -2115,14 +2143,18 @@ fn evla_common_voltage_pattern(radius_rad: f64, frequency_hz: f64) -> f32 {
     {
         return 0.0;
     }
-    // Mirror CASA PBMath1DEVLA::nearestVPArray() + PBMath1DPoly::fillPBArray()
-    // for the EVLA common-PB model used by the current EVLA mosaic gates.
+    // Mirror CASA PBMath1DEVLA::nearestVPArray(), PBMath1DPoly::fillPBArray(),
+    // and PBMath1D::apply(): CASA samples 10,000 voltage-pattern entries and
+    // then uses integer-truncated radial lookup when applying the image PB.
     let coefficients = nearest_evla_common_coefficients(frequency_hz * 1.0e-6);
     let radius_arcmin_ghz = radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9);
     if radius_arcmin_ghz > 58.0 {
         return 0.0;
     }
-    let x2 = radius_arcmin_ghz * radius_arcmin_ghz;
+    let inverse_increment_radius = 9_999.0 / 58.0;
+    let sample_index = (radius_arcmin_ghz * inverse_increment_radius).floor();
+    let sampled_radius_arcmin_ghz = sample_index / inverse_increment_radius;
+    let x2 = sampled_radius_arcmin_ghz * sampled_radius_arcmin_ghz;
     let mut taper = 0.0f64;
     let mut power = 1.0f64;
     for coefficient in coefficients {
@@ -2244,6 +2276,7 @@ fn make_minor_cycle_trace(
         start_peak_residual_jy_per_beam,
         end_peak_residual_jy_per_beam: peak_abs_value(residual),
         cycle_threshold_jy_per_beam: outcome.final_cycle_threshold_jy_per_beam,
+        model_flux_jy: model.iter().copied().sum(),
         nsigma_threshold_jy_per_beam: outcome.final_nsigma_threshold_jy_per_beam,
         clean_stop_reason: outcome.stop_reason,
         initial_scale_pixels: probe.initial_scale_pixels,
@@ -2365,6 +2398,14 @@ fn run_mosaic_image_domain_controller(
     let mut divergence_warned = false;
     let mut residual_needs_refresh = false;
     while reported_minor_iterations < request.clean.niter {
+        if request
+            .clean
+            .major_cycle_limit
+            .is_some_and(|limit| major_cycles >= limit)
+        {
+            clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
+            break;
+        }
         let cycle_peak = match request.deconvolver {
             Deconvolver::Multiscale => multiscale_state.as_ref().map(|state| {
                 peak_abs_value_masked(&state.dirty_conv_scales[0], request.clean_mask.as_ref())
@@ -2584,6 +2625,14 @@ fn run_hogbom_cotton_schwab(
     let mut residual_needs_refresh = false;
 
     while reported_minor_iterations < request.clean.niter {
+        if request
+            .clean
+            .major_cycle_limit
+            .is_some_and(|limit| major_cycles >= limit)
+        {
+            clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
+            break;
+        }
         let Some((_, cycle_peak_value)) =
             peak_location_masked(&residual, request.clean_mask.as_ref())
         else {
@@ -3073,6 +3122,14 @@ fn run_clark_cotton_schwab(
     let mut residual_needs_refresh = false;
 
     while reported_minor_iterations < request.clean.niter {
+        if request
+            .clean
+            .major_cycle_limit
+            .is_some_and(|limit| major_cycles >= limit)
+        {
+            clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
+            break;
+        }
         let Some((_, cycle_peak_value)) =
             peak_location_masked(&residual, request.clean_mask.as_ref())
         else {
@@ -3212,6 +3269,14 @@ fn run_multiscale_cotton_schwab(
     let mut residual_needs_refresh = false;
 
     while reported_minor_iterations < request.clean.niter {
+        if request
+            .clean
+            .major_cycle_limit
+            .is_some_and(|limit| major_cycles >= limit)
+        {
+            clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
+            break;
+        }
         let Some(cycle_candidate) =
             select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
         else {
@@ -3760,6 +3825,9 @@ fn compute_mtmfs_psf_terms(
     gridder: &StandardGridder,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<MtmfsPsfState, ImagingError> {
+    if request.w_term_mode == WTermMode::WProject {
+        return compute_mtmfs_psf_terms_w_project(request, batches, gridder, stage_timings);
+    }
     let term_count = 2 * request.nterms - 1;
     let [nx, ny] = gridder.grid_shape();
     let mut psf_grids = (0..term_count)
@@ -3872,6 +3940,92 @@ fn compute_mtmfs_psf_terms(
 }
 
 #[allow(clippy::needless_range_loop)]
+fn compute_mtmfs_psf_terms_w_project(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<MtmfsPsfState, ImagingError> {
+    let prepare_started = Instant::now();
+    let prepared =
+        prepare_w_project_data(request.geometry, batches, gridder, request.w_project_planes)?;
+    let mut timings = PsfComputationTimings {
+        grid: prepare_started.elapsed(),
+        ..PsfComputationTimings::default()
+    };
+    let term_count = 2 * request.nterms - 1;
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grids = (0..term_count)
+        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+        .collect::<Vec<_>>();
+    let mut reported_sumwt_terms = vec![0.0f64; term_count];
+
+    let grid_started = Instant::now();
+    for sample in &prepared.samples {
+        let frequency_hz =
+            mtmfs_sample_frequency(request, sample.batch_index, sample.sample_index)?;
+        for order in 0..term_count {
+            let factor = mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, order);
+            let psf_weight = Complex32::new(sample.weight * factor, 0.0);
+            prepared.projector.grid_sample_planned(
+                &mut psf_grids[order],
+                &sample.positive_plan,
+                psf_weight,
+            );
+            reported_sumwt_terms[order] +=
+                f64::from(sample.weight) * f64::from(factor) * f64::from(sample.sumwt_factor);
+        }
+    }
+    timings.grid += grid_started.elapsed();
+
+    if prepared.normalization_sumwt <= 0.0
+        || !reported_sumwt_terms[0].is_finite()
+        || reported_sumwt_terms[0] <= 0.0
+    {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let fft_started = Instant::now();
+    let raw_terms = psf_grids.iter().map(centered_ifft2).collect::<Vec<_>>();
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut psf_terms = raw_terms
+        .iter()
+        .map(|raw| {
+            let mut corrected =
+                gridder.corrected_w_project_image_from_grid(raw, prepared.projector.sampling());
+            corrected.mapv_inplace(|value| 2.0 * value / prepared.normalization_sumwt);
+            corrected
+        })
+        .collect::<Vec<_>>();
+    let psf_peak = peak_abs_value(&psf_terms[0]);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "MTMFS W-projection PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    for psf_term in &mut psf_terms {
+        psf_term.mapv_inplace(|value| value / psf_peak);
+    }
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+
+    Ok(MtmfsPsfState {
+        psf_terms,
+        normalization_sumwt: prepared.normalization_sumwt,
+        reported_sumwt_terms: reported_sumwt_terms
+            .into_iter()
+            .map(|value| value as f32)
+            .collect(),
+        psf_peak,
+        gridded_samples: prepared.gridded_samples,
+        skipped_samples: prepared.skipped_samples.len(),
+    })
+}
+
+#[allow(clippy::needless_range_loop)]
 fn compute_mtmfs_residual_terms(
     request: &MtmfsRequest,
     batches: &[VisibilityBatch],
@@ -3880,6 +4034,16 @@ fn compute_mtmfs_residual_terms(
     psf_state: &MtmfsPsfState,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Vec<Array2<f32>>, ImagingError> {
+    if request.w_term_mode == WTermMode::WProject {
+        return compute_mtmfs_residual_terms_w_project(
+            request,
+            batches,
+            gridder,
+            model_terms,
+            psf_state,
+            stage_timings,
+        );
+    }
     let [nx, ny] = gridder.grid_shape();
     let mut residual_grids = (0..request.nterms)
         .map(|_| Array2::<Complex32>::zeros((nx, ny)))
@@ -3987,6 +4151,136 @@ fn compute_mtmfs_residual_terms(
     stage_timings.residual_fft += timings.fft;
     stage_timings.residual_normalize += timings.normalize;
     Ok(residual_terms)
+}
+
+#[allow(clippy::needless_range_loop)]
+fn compute_mtmfs_residual_terms_w_project(
+    request: &MtmfsRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model_terms: &[Array2<f32>],
+    psf_state: &MtmfsPsfState,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Vec<Array2<f32>>, ImagingError> {
+    let prepare_started = Instant::now();
+    let prepared =
+        prepare_w_project_data(request.geometry, batches, gridder, request.w_project_planes)?;
+    let mut timings = ResidualComputationTimings {
+        degrid_grid: prepare_started.elapsed(),
+        ..ResidualComputationTimings::default()
+    };
+    let [nx, ny] = gridder.grid_shape();
+    let mut residual_grids = (0..request.nterms)
+        .map(|_| Array2::<Complex32>::zeros((nx, ny)))
+        .collect::<Vec<_>>();
+    let model_grids = if model_terms
+        .iter()
+        .any(|term| term.iter().any(|value| value.abs() > 0.0))
+    {
+        let model_fft_started = Instant::now();
+        let grids = model_terms
+            .iter()
+            .map(|model_term| {
+                centered_fft2(
+                    &gridder.apodize_w_project_model(model_term, prepared.projector.sampling()),
+                )
+            })
+            .collect::<Vec<_>>();
+        timings.model_fft = model_fft_started.elapsed();
+        Some(grids)
+    } else {
+        None
+    };
+
+    let degrid_started = Instant::now();
+    for sample in &prepared.samples {
+        let frequency_hz =
+            mtmfs_sample_frequency(request, sample.batch_index, sample.sample_index)?;
+        let predicted_visibility_terms = if let Some(model_grids) = model_grids.as_ref() {
+            model_grids
+                .iter()
+                .map(|grid| {
+                    prepared
+                        .projector
+                        .degrid_sample_planned(grid, &sample.positive_plan)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![Complex32::new(0.0, 0.0); request.nterms]
+        };
+        for (residual_order, residual_grid) in
+            residual_grids.iter_mut().enumerate().take(request.nterms)
+        {
+            let observed_term = sample.visibility
+                * mtmfs_taylor_weight(frequency_hz, request.reffreq_hz, residual_order);
+            let mut predicted_term = Complex32::new(0.0, 0.0);
+            for (model_order, predicted_visibility) in predicted_visibility_terms
+                .iter()
+                .enumerate()
+                .take(request.nterms)
+            {
+                let factor = mtmfs_taylor_weight(
+                    frequency_hz,
+                    request.reffreq_hz,
+                    residual_order + model_order,
+                );
+                predicted_term += *predicted_visibility * factor;
+            }
+            let residual = (observed_term - predicted_term) * sample.weight;
+            prepared
+                .projector
+                .grid_sample_planned(residual_grid, &sample.positive_plan, residual);
+        }
+    }
+    timings.degrid_grid += degrid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw_terms = residual_grids
+        .iter()
+        .map(centered_ifft2)
+        .collect::<Vec<_>>();
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let residual_terms = raw_terms
+        .iter()
+        .map(|raw| {
+            let mut image =
+                gridder.corrected_w_project_image_from_grid(raw, prepared.projector.sampling());
+            image.mapv_inplace(|value| {
+                2.0 * value / psf_state.normalization_sumwt / psf_state.psf_peak
+            });
+            image
+        })
+        .collect::<Vec<_>>();
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+    Ok(residual_terms)
+}
+
+fn mtmfs_sample_frequency(
+    request: &MtmfsRequest,
+    batch_index: usize,
+    sample_index: usize,
+) -> Result<f64, ImagingError> {
+    let frequency_hz = request
+        .sample_frequency_batches_hz
+        .get(batch_index)
+        .and_then(|batch| batch.get(sample_index))
+        .copied()
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "missing MTMFS sample frequency for batch {batch_index} sample {sample_index}"
+            ))
+        })?;
+    if !(frequency_hz.is_finite() && frequency_hz > 0.0) {
+        return Err(ImagingError::InvalidRequest(format!(
+            "MTMFS sample frequency for batch {batch_index} sample {sample_index} must be finite and > 0 Hz"
+        )));
+    }
+    Ok(frequency_hz)
 }
 
 fn mtmfs_hessian(psf_terms: &[Array2<f32>], nterms: usize) -> Result<Vec<Vec<f32>>, ImagingError> {
@@ -4151,6 +4445,20 @@ fn run_mtmfs_minor_cycle(
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
 ) -> (HogbomMinorCycleOutcome, MinorCycleProbe) {
+    if !request.multiscale_scales.is_empty() {
+        return run_mtmfs_multiscale_minor_cycle(
+            request,
+            psf_terms,
+            hessian,
+            inv_hessian,
+            model_terms,
+            residual_terms,
+            cycle_reported_niter,
+            cycle_threshold_jy_per_beam,
+            nsigma_threshold_jy_per_beam,
+            stage_timings,
+        );
+    }
     let cycle_component_budget = hogbom_component_budget(cycle_reported_niter, request.clean);
     let mut cycle_component_updates = 0usize;
     let mut updated_model = false;
@@ -4216,6 +4524,190 @@ fn run_mtmfs_minor_cycle(
         },
         probe,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_mtmfs_multiscale_minor_cycle(
+    request: &MtmfsRequest,
+    psf_terms: &[Array2<f32>],
+    _hessian: &[Vec<f32>],
+    inv_hessian: &[Vec<f32>],
+    model_terms: &mut [Array2<f32>],
+    residual_terms: &mut [Array2<f32>],
+    cycle_reported_niter: usize,
+    cycle_threshold_jy_per_beam: f32,
+    nsigma_threshold_jy_per_beam: f32,
+    stage_timings: &mut ImagingStageTimings,
+) -> (HogbomMinorCycleOutcome, MinorCycleProbe) {
+    let scales = effective_mtmfs_multiscale_scales(request);
+    let mut principal_terms = principal_solution_terms(residual_terms, inv_hessian);
+    let mut multiscale_state = build_multiscale_state(
+        &principal_terms[0],
+        &psf_terms[0],
+        &scales,
+        request.small_scale_bias,
+    );
+    let Some(first_candidate) =
+        select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
+    else {
+        return (
+            HogbomMinorCycleOutcome {
+                updated_model: false,
+                actual_updates: 0,
+                reported_updates: 0,
+                stop_reason: Some(CleanStopReason::NoCleanablePixels),
+                final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+                final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+            },
+            MinorCycleProbe::default(),
+        );
+    };
+    let probe = MinorCycleProbe {
+        initial_scale_pixels: Some(scales[first_candidate.scale_index]),
+        initial_candidate_strength_jy_per_beam: Some(first_candidate.strength.abs()),
+        initial_candidate_position: Some([first_candidate.position.0, first_candidate.position.1]),
+    };
+    let initial_cycle_peak = peak_abs_value_masked(
+        &multiscale_state.dirty_conv_scales[0],
+        request.clean_mask.as_ref(),
+    );
+    if let Some(reason) = minor_cycle_stop_reason(
+        initial_cycle_peak,
+        request.clean.threshold_jy_per_beam,
+        cycle_threshold_jy_per_beam,
+        nsigma_threshold_jy_per_beam,
+    ) {
+        return (
+            HogbomMinorCycleOutcome {
+                updated_model: false,
+                actual_updates: 0,
+                reported_updates: 0,
+                stop_reason: Some(reason),
+                final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+                final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+            },
+            probe,
+        );
+    }
+
+    let cycle_component_budget = hogbom_component_budget(cycle_reported_niter, request.clean);
+    let psf_scale_terms = build_mtmfs_psf_scale_terms(psf_terms, &multiscale_state.scales);
+    let mut cycle_component_updates = 0usize;
+    let mut updated_model = false;
+    let mut stop_reason = None;
+    let minor_started = Instant::now();
+    while cycle_component_updates < cycle_component_budget {
+        let Some(candidate) =
+            select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
+        else {
+            stop_reason = Some(CleanStopReason::NoCleanablePixels);
+            break;
+        };
+        let peak_abs = peak_abs_value_masked(
+            &multiscale_state.dirty_conv_scales[0],
+            request.clean_mask.as_ref(),
+        );
+        if let Some(reason) = minor_cycle_stop_reason(
+            peak_abs,
+            request.clean.threshold_jy_per_beam,
+            cycle_threshold_jy_per_beam,
+            nsigma_threshold_jy_per_beam,
+        ) {
+            stop_reason = Some(reason);
+            break;
+        }
+        if cycle_component_updates > 0 && peak_abs > initial_cycle_peak * 1.5 {
+            stop_reason = Some(CleanStopReason::DivergenceDetected);
+            break;
+        }
+
+        let coeffs = mtmfs_multiscale_coefficients(
+            residual_terms,
+            &multiscale_state.scales[candidate.scale_index],
+            candidate.position,
+            inv_hessian,
+        );
+        for (term_index, coefficient) in coeffs.iter().enumerate().take(request.nterms) {
+            let component = request.clean.gain * *coefficient;
+            add_shifted_kernel(
+                &mut model_terms[term_index],
+                &multiscale_state.scales[candidate.scale_index],
+                candidate.position,
+                component,
+            );
+        }
+        for residual_order in 0..request.nterms {
+            for model_order in 0..request.nterms {
+                let component = request.clean.gain * coeffs[model_order];
+                subtract_shifted_kernel(
+                    &mut residual_terms[residual_order],
+                    &psf_scale_terms[residual_order + model_order][candidate.scale_index],
+                    candidate.position,
+                    component,
+                );
+            }
+        }
+        cycle_component_updates += 1;
+        updated_model = true;
+        principal_terms = principal_solution_terms(residual_terms, inv_hessian);
+        refresh_multiscale_dirty_conv_scales(&mut multiscale_state, &principal_terms[0]);
+    }
+    let minor_elapsed = minor_started.elapsed();
+    stage_timings.minor_cycle += minor_elapsed;
+    stage_timings.minor_cycle_solve += minor_elapsed;
+    let reported_updates = casa_multiscale_reported_updates(
+        cycle_component_updates,
+        cycle_reported_niter,
+        stop_reason,
+        updated_model,
+    );
+    (
+        HogbomMinorCycleOutcome {
+            updated_model,
+            actual_updates: cycle_component_updates,
+            reported_updates,
+            stop_reason,
+            final_cycle_threshold_jy_per_beam: cycle_threshold_jy_per_beam,
+            final_nsigma_threshold_jy_per_beam: nsigma_threshold_jy_per_beam,
+        },
+        probe,
+    )
+}
+
+fn effective_mtmfs_multiscale_scales(request: &MtmfsRequest) -> Vec<f32> {
+    if request.multiscale_scales.is_empty() {
+        vec![0.0]
+    } else {
+        request.multiscale_scales.clone()
+    }
+}
+
+fn build_mtmfs_psf_scale_terms(
+    psf_terms: &[Array2<f32>],
+    scale_kernels: &[Array2<f32>],
+) -> Vec<Vec<Array2<f32>>> {
+    psf_terms
+        .iter()
+        .map(|psf| {
+            scale_kernels
+                .iter()
+                .map(|scale| fft_convolve_real(psf, scale))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn mtmfs_multiscale_coefficients(
+    residual_terms: &[Array2<f32>],
+    scale_kernel: &Array2<f32>,
+    position: (usize, usize),
+    inv_hessian: &[Vec<f32>],
+) -> Vec<f32> {
+    let rhs = residual_terms
+        .iter()
+        .map(|term| fft_convolve_real(term, scale_kernel)[position])
+        .collect::<Vec<_>>();
+    solve_mtmfs_coefficients(&rhs, inv_hessian)
 }
 
 fn compute_mtmfs_alpha_products(
@@ -5890,6 +6382,7 @@ fn peak_abs_value(image: &Array2<f32>) -> f32 {
 fn dirty_clean_config(psf_cutoff: f32) -> CleanConfig {
     CleanConfig {
         niter: 0,
+        major_cycle_limit: None,
         gain: 0.1,
         threshold_jy_per_beam: 0.0,
         nsigma: 0.0,
@@ -6017,6 +6510,26 @@ mod tests {
             ),
             0.0
         );
+    }
+
+    #[test]
+    fn evla_primary_beam_uses_casa_sampled_radius_lookup() {
+        let frequency_hz = 1.578_964_191_647_556_8e9_f64;
+        let sample_index = 2_210.0_f64;
+        let sampled_radius_arcmin_ghz = sample_index / (9_999.0_f64 / 58.0);
+        let radius_arcmin_ghz = sampled_radius_arcmin_ghz + 0.75 / (9_999.0_f64 / 58.0);
+        let radius_rad = (radius_arcmin_ghz / 60.0_f64 / (frequency_hz / 1.0e9_f64)).to_radians();
+        let x2 = sampled_radius_arcmin_ghz * sampled_radius_arcmin_ghz;
+        let expected_power: f64 = 1.0 - 1.435e-3 * x2 + 7.54e-7 * x2 * x2 - 1.49e-10 * x2 * x2 * x2;
+        let expected_voltage = expected_power.sqrt() as f32;
+
+        let actual = super::primary_beam_voltage_pattern(
+            PrimaryBeamModel::EvlaLBandCommon,
+            radius_rad,
+            frequency_hz,
+        );
+
+        assert!((actual - expected_voltage).abs() < 1.0e-7);
     }
 
     #[test]
@@ -6307,6 +6820,7 @@ mod tests {
                 ..CleanConfig::default()
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -6418,6 +6932,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: dirty_clean_config(0.35),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -6458,6 +6973,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: dirty_clean_config(0.35),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -6537,6 +7053,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: dirty_clean_config(0.35),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -6936,6 +7453,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -7001,12 +7519,14 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 8,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 10.0,
                 nsigma: 0.0,
                 ..CleanConfig::default()
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -7048,6 +7568,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: dirty_clean_config(0.35),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -7086,6 +7607,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -7159,6 +7681,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -7215,6 +7738,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -7351,6 +7875,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -7530,6 +8055,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -7621,6 +8147,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -7639,6 +8166,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -7826,6 +8354,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 20,
+                major_cycle_limit: None,
                 gain: 0.1,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -7911,6 +8440,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 8,
+                major_cycle_limit: None,
                 gain: 0.1,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -7984,6 +8514,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 1,
+                major_cycle_limit: None,
                 gain: 0.1,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8052,6 +8583,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 4,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8129,6 +8661,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 20,
+                major_cycle_limit: None,
                 gain: 0.1,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8222,6 +8755,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 20,
+                major_cycle_limit: None,
                 gain: 0.1,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8330,16 +8864,21 @@ mod tests {
 
         let result = run_mtmfs(&MtmfsRequest {
             geometry,
-            visibility_batches: vec![batch],
-            sample_frequency_batches_hz: vec![frequencies_hz],
+            visibility_batches: vec![batch.clone()],
+            sample_frequency_batches_hz: vec![frequencies_hz.clone()],
             gridder_mode: GridderMode::Standard,
             plane_stokes: PlaneStokes::I,
             weighting: WeightingMode::Natural,
             reffreq_hz: 1.40e9,
             selected_frequency_range_hz: [1.39e9, 1.41e9],
             nterms: 2,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
             clean: CleanConfig {
                 niter: 6,
+                major_cycle_limit: None,
                 gain: 0.1,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8379,6 +8918,50 @@ mod tests {
                     .to_owned()
             ) > 1.0e-4
         );
+
+        let multiscale_wproject = run_mtmfs(&MtmfsRequest {
+            geometry,
+            visibility_batches: vec![batch],
+            sample_frequency_batches_hz: vec![frequencies_hz],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.40e9,
+            selected_frequency_range_hz: [1.39e9, 1.41e9],
+            nterms: 2,
+            multiscale_scales: vec![0.0, 3.0, 8.0],
+            small_scale_bias: 0.9,
+            w_term_mode: WTermMode::WProject,
+            w_project_planes: Some(4),
+            clean: CleanConfig {
+                niter: 4,
+                major_cycle_limit: None,
+                gain: 0.1,
+                threshold_jy_per_beam: 0.0,
+                nsigma: 0.0,
+                psf_cutoff: 0.35,
+                minor_cycle_length: 2,
+                cyclefactor: 1.0,
+                min_psf_fraction: 0.05,
+                max_psf_fraction: 0.8,
+                hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
+            },
+            clean_mask: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        })
+        .unwrap();
+
+        assert_eq!(multiscale_wproject.psf_terms.len(), 3);
+        assert_eq!(multiscale_wproject.model_terms.len(), 2);
+        assert!(multiscale_wproject.diagnostics.gridded_samples > 0);
+        assert!(multiscale_wproject.diagnostics.minor_iterations > 0);
+        assert!(
+            multiscale_wproject
+                .diagnostics
+                .minor_cycle_traces
+                .iter()
+                .any(|trace| trace.initial_scale_pixels.is_some_and(|scale| scale >= 0.0))
+        );
     }
 
     #[test]
@@ -8408,6 +8991,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8426,6 +9010,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 8,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8437,6 +9022,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8477,6 +9063,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 1,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8488,6 +9075,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8536,6 +9124,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 1,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8547,6 +9136,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8565,6 +9155,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 1,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8576,6 +9167,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8615,6 +9207,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 1,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8626,6 +9219,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8711,6 +9305,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 1,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8722,6 +9317,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8769,6 +9365,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 8,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8780,6 +9377,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: Some(mask),
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8818,12 +9416,14 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 8,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
                 ..CleanConfig::default()
             },
             clean_mask: Some(mask),
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8864,6 +9464,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 12,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8875,6 +9476,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8893,6 +9495,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 12,
+                major_cycle_limit: None,
                 gain: 0.2,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -8904,6 +9507,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -8956,6 +9560,7 @@ mod tests {
                 small_scale_bias: 0.0,
                 clean: CleanConfig::default(),
                 clean_mask: None,
+                initial_model: None,
                 w_term_mode,
                 w_project_planes: None,
                 compatibility: CompatibilityMode::CasaStandardMfs,
@@ -9006,6 +9611,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: dirty_clean_config(0.35),
             clean_mask: None,
+            initial_model: None,
             w_term_mode,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -9069,6 +9675,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: dirty_clean_config(0.35),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::WProject,
             w_project_planes: Some(8),
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -9195,6 +9802,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 1,
+                major_cycle_limit: None,
                 gain: 0.5,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -9206,6 +9814,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -9280,6 +9889,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig {
                 niter: 4,
+                major_cycle_limit: None,
                 gain: 0.5,
                 threshold_jy_per_beam: 0.0,
                 nsigma: 0.0,
@@ -9291,6 +9901,7 @@ mod tests {
                 hogbom_iteration_mode: HogbomIterationMode::CasaInclusive,
             },
             clean_mask: None,
+            initial_model: None,
             w_term_mode: WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,
@@ -9383,6 +9994,7 @@ mod tests {
     fn compute_cycle_threshold_uses_psf_fraction_only() {
         let clean = CleanConfig {
             niter: 10,
+            major_cycle_limit: None,
             gain: 0.1,
             threshold_jy_per_beam: 0.5,
             nsigma: 5.0,

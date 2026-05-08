@@ -8,7 +8,7 @@ use std::process;
 
 use casa_images::{
     ImageBrowserSession, ImmomentsRequest, ImpvRequest, imexplore_ui_schema_json, imhead,
-    immoments, impv, imstat,
+    imhead_put, immoments, impv, imstat,
 };
 use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserProtocolInfo, ImageBrowserRequestEnvelope,
@@ -57,9 +57,27 @@ fn run() -> Result<(), String> {
     }
     if args.peek().is_some_and(|arg| arg == "imhead") {
         args.next();
-        let image_path = parse_path_allowing_json(args)?;
-        let summary = imhead(&image_path.path).map_err(|error| error.to_string())?;
-        if image_path.json {
+        let imhead_args = parse_imhead_args(args)?;
+        let summary = match imhead_args.mode.as_str() {
+            "summary" | "list" => imhead(&imhead_args.path).map_err(|error| error.to_string())?,
+            "put" => {
+                let hdkey = imhead_args
+                    .hdkey
+                    .as_deref()
+                    .ok_or_else(|| "imexplore imhead --mode put requires --hdkey".to_string())?;
+                let hdvalue = imhead_args
+                    .hdvalue
+                    .as_deref()
+                    .ok_or_else(|| "imexplore imhead --mode put requires --hdvalue".to_string())?;
+                imhead_put(&imhead_args.path, hdkey, hdvalue).map_err(|error| error.to_string())?
+            }
+            other => {
+                return Err(format!(
+                    "unsupported imhead mode {other:?}; expected summary, list, or put"
+                ));
+            }
+        };
+        if imhead_args.json {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&summary)
@@ -166,25 +184,57 @@ fn run() -> Result<(), String> {
     run_snapshot(&image_path)
 }
 
-struct PathJson {
+struct ImheadArgs {
     path: PathBuf,
     json: bool,
+    mode: String,
+    hdkey: Option<String>,
+    hdvalue: Option<String>,
 }
 
-fn parse_path_allowing_json(args: impl IntoIterator<Item = String>) -> Result<PathJson, String> {
+fn parse_imhead_args(args: impl IntoIterator<Item = String>) -> Result<ImheadArgs, String> {
     let mut path = None;
     let mut json = false;
-    for arg in args {
+    let mut mode = "summary".to_string();
+    let mut hdkey = None;
+    let mut hdvalue = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--json" => json = true,
+            "--mode" => {
+                mode = args
+                    .next()
+                    .ok_or_else(|| "--mode requires a value".to_string())?
+                    .to_ascii_lowercase();
+            }
+            "--hdkey" => {
+                hdkey = Some(
+                    args.next()
+                        .ok_or_else(|| "--hdkey requires a value".to_string())?,
+                );
+            }
+            "--hdvalue" => {
+                hdvalue = Some(
+                    args.next()
+                        .ok_or_else(|| "--hdvalue requires a value".to_string())?,
+                );
+            }
             _ if path.is_none() => path = Some(PathBuf::from(arg)),
-            _ => return Err("usage: imexplore imhead <image-path> [--json]".to_string()),
+            _ => return Err(imhead_usage()),
         }
     }
-    Ok(PathJson {
-        path: path.ok_or_else(|| "usage: imexplore imhead <image-path> [--json]".to_string())?,
+    Ok(ImheadArgs {
+        path: path.ok_or_else(imhead_usage)?,
         json,
+        mode,
+        hdkey,
+        hdvalue,
     })
+}
+
+fn imhead_usage() -> String {
+    "usage: imexplore imhead <image-path> [--json] [--mode summary|list|put] [--hdkey bunit --hdvalue <value>]".to_string()
 }
 
 struct ImstatArgs {
@@ -395,7 +445,7 @@ fn parse_path(args: impl IntoIterator<Item = String>) -> Result<PathBuf, String>
     let args = args.into_iter().collect::<Vec<_>>();
     if args.len() != 1 {
         return Err(
-            "usage: imexplore <image-path> | imexplore imhead <image-path> [--json] | imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json] | imexplore immoments <image-path> --outfile <path> [--json] | imexplore impv <image-path> --outfile <path> --start x,y --end x,y [--json] | imexplore --session | imexplore --json-schema | imexplore --protocol-info | imexplore --ui-schema".into(),
+            "usage: imexplore <image-path> | imexplore imhead <image-path> [--json] [--mode summary|list|put] [--hdkey bunit --hdvalue <value>] | imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json] | imexplore immoments <image-path> --outfile <path> [--json] | imexplore impv <image-path> --outfile <path> --start x,y --end x,y [--json] | imexplore --session | imexplore --json-schema | imexplore --protocol-info | imexplore --ui-schema".into(),
         );
     }
     Ok(PathBuf::from(&args[0]))

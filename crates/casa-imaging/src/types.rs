@@ -227,9 +227,9 @@ impl MosaicGridderConfig {
             ));
         }
         self.primary_beam_model.validate()?;
-        if !(self.pb_limit.is_finite() && self.pb_limit > 0.0) {
+        if !(self.pb_limit.is_finite() && self.pb_limit != 0.0) {
             return Err(ImagingError::InvalidRequest(
-                "mosaic pb_limit must be finite and > 0".to_string(),
+                "mosaic pb_limit must be finite and non-zero".to_string(),
             ));
         }
         if self.metadata_batches.len() != visibility_batches.len() {
@@ -733,6 +733,9 @@ impl ParallelHandBatch {
 pub struct CleanConfig {
     /// Maximum number of reported minor-cycle iterations.
     pub niter: usize,
+    /// Maximum number of major-cycle residual refreshes after the initial
+    /// residual calculation. `None` follows CASA's default unlimited policy.
+    pub major_cycle_limit: Option<usize>,
     /// Loop gain applied to each selected component.
     pub gain: f32,
     /// Absolute stopping threshold in `Jy/beam`.
@@ -761,6 +764,7 @@ impl Default for CleanConfig {
     fn default() -> Self {
         Self {
             niter: 0,
+            major_cycle_limit: None,
             gain: 0.1,
             threshold_jy_per_beam: 0.0,
             nsigma: 0.0,
@@ -785,6 +789,8 @@ pub enum CleanStopReason {
     CycleThresholdReached,
     /// The requested total iteration budget was exhausted.
     IterationLimitReached,
+    /// The requested major-cycle budget was exhausted.
+    MajorCycleLimitReached,
     /// No cleanable masked pixel was available for the current request.
     NoCleanablePixels,
     /// The residual peak increased materially after prior progress.
@@ -884,6 +890,8 @@ pub struct ImagingRequest {
     pub clean: CleanConfig,
     /// Optional image-plane clean mask. `true` pixels are eligible for component picks.
     pub clean_mask: Option<Array2<bool>>,
+    /// Optional starting model image used to seed the CLEAN model plane.
+    pub initial_model: Option<Array2<f32>>,
     /// Requested `w`-term handling mode.
     pub w_term_mode: WTermMode,
     /// Optional explicit `wproject` plane budget.
@@ -918,6 +926,21 @@ impl ImagingRequest {
             ));
         }
         self.clean.validate()?;
+        if let Some(initial_model) = self.initial_model.as_ref() {
+            let expected = (self.geometry.image_shape[0], self.geometry.image_shape[1]);
+            if initial_model.dim() != expected {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "initial_model shape {:?} does not match requested image shape {:?}",
+                    initial_model.dim(),
+                    expected
+                )));
+            }
+            if initial_model.iter().any(|value| !value.is_finite()) {
+                return Err(ImagingError::InvalidRequest(
+                    "initial_model contains non-finite pixels".to_string(),
+                ));
+            }
+        }
         for scale in &self.multiscale_scales {
             if !(scale.is_finite() && *scale >= 0.0) {
                 return Err(ImagingError::InvalidRequest(
@@ -1175,6 +1198,9 @@ pub struct MinorCycleTrace {
     pub end_peak_residual_jy_per_beam: f32,
     /// CASA-style `cyclethreshold` supplied to this block.
     pub cycle_threshold_jy_per_beam: f32,
+    /// Sum of model pixel values after this block, matching CASA's
+    /// `summaryminor.modelFlux` scalar for single-plane deconvolution.
+    pub model_flux_jy: f32,
     /// CASA-style per-plane `nsigma` threshold supplied to this block.
     pub nsigma_threshold_jy_per_beam: f32,
     /// Final reason why this block stopped, when one is available.
@@ -1414,6 +1440,15 @@ pub struct MtmfsRequest {
     pub selected_frequency_range_hz: [f64; 2],
     /// Number of Taylor terms to solve for.
     pub nterms: usize,
+    /// Requested multiscale kernel sizes in pixels. An empty list selects
+    /// point-source MT-MFS minor-cycle updates.
+    pub multiscale_scales: Vec<f32>,
+    /// CASA-style multiscale selection bias used when `multiscale_scales` is not empty.
+    pub small_scale_bias: f32,
+    /// W-term correction mode used for MT-MFS gridding.
+    pub w_term_mode: WTermMode,
+    /// Optional W-projection plane count. `None` selects the automatic heuristic.
+    pub w_project_planes: Option<usize>,
     /// Deconvolver-independent CLEAN and major/minor-cycle controls.
     pub clean: CleanConfig,
     /// Optional image-plane clean mask. `true` pixels are eligible for component picks.
@@ -1443,6 +1478,23 @@ impl MtmfsRequest {
         if self.nterms == 0 {
             return Err(ImagingError::InvalidRequest(
                 "MTMFS requires nterms >= 1".to_string(),
+            ));
+        }
+        for scale in &self.multiscale_scales {
+            if !(scale.is_finite() && *scale >= 0.0) {
+                return Err(ImagingError::InvalidRequest(
+                    "MTMFS multiscale scales must be finite and >= 0".to_string(),
+                ));
+            }
+        }
+        if !(self.small_scale_bias.is_finite() && self.small_scale_bias >= 0.0) {
+            return Err(ImagingError::InvalidRequest(
+                "MTMFS small_scale_bias must be finite and >= 0".to_string(),
+            ));
+        }
+        if self.w_term_mode == WTermMode::Direct {
+            return Err(ImagingError::Unsupported(
+                "MTMFS currently supports WTermMode::None and WTermMode::WProject".to_string(),
             ));
         }
         self.clean.validate()?;

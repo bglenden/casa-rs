@@ -38,6 +38,25 @@ def test_imhead_wrapper_uses_imexplore_json_subcommand(tmp_path: Path) -> None:
 
     assert result["subcommand"] == "imhead"
     assert result["imagename"] == "twhya_cont.image"
+    assert result["mode"] == "summary"
+
+
+def test_imhead_wrapper_encodes_put_bunit(tmp_path: Path) -> None:
+    binary = _write_imexplore_stub(tmp_path / "bin" / "imexplore")
+
+    result = image_analysis.imhead(
+        "snr.image.tt0-Tb",
+        mode="put",
+        hdkey="bunit",
+        hdvalue="K",
+        binary=binary,
+    )
+
+    assert result["subcommand"] == "imhead"
+    assert result["imagename"] == "snr.image.tt0-Tb"
+    assert result["mode"] == "put"
+    assert result["hdkey"] == "bunit"
+    assert result["hdvalue"] == "K"
 
 
 def test_imstat_wrapper_encodes_box_and_channels(tmp_path: Path) -> None:
@@ -167,6 +186,22 @@ def test_immath_wrapper_encodes_task_request(tmp_path: Path) -> None:
     assert request["overwrite"] is True
 
 
+def test_immath_wrapper_accepts_single_input_scalar_expression(tmp_path: Path) -> None:
+    binary = _write_task_stub(tmp_path / "bin" / "immath", version="ok")
+
+    result = image_analysis.immath(
+        "SNR_G55_10s.ms.MTMFS.wProj.image.tt0",
+        expr="1.222e6*IM0/1.579^2/(29.30*29.03)",
+        outfile="SNR_G55_10s.ms.MTMFS.wProj.image.tt0-Tb",
+        overwrite=True,
+        binary=binary,
+    )
+
+    request = result["result"]["request"]
+    assert request["imagename"] == ["SNR_G55_10s.ms.MTMFS.wProj.image.tt0"]
+    assert request["expr"] == "1.222e6*IM0/1.579^2/(29.30*29.03)"
+
+
 def test_importfits_wrapper_encodes_task_request(tmp_path: Path) -> None:
     binary = _write_task_stub(tmp_path / "bin" / "importfits", version="ok")
 
@@ -209,6 +244,12 @@ def _write_imexplore_stub(path: Path) -> Path:
             payload["box"] = sys.argv[sys.argv.index("--box") + 1]
         if "--chans" in sys.argv:
             payload["chans"] = sys.argv[sys.argv.index("--chans") + 1]
+        if "--mode" in sys.argv:
+            payload["mode"] = sys.argv[sys.argv.index("--mode") + 1]
+        if "--hdkey" in sys.argv:
+            payload["hdkey"] = sys.argv[sys.argv.index("--hdkey") + 1]
+        if "--hdvalue" in sys.argv:
+            payload["hdvalue"] = sys.argv[sys.argv.index("--hdvalue") + 1]
         print(json.dumps(payload))
         """
     )

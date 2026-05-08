@@ -6,8 +6,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use casa_imaging::{
-    CleanStopReason, Deconvolver, GaussianUvTaper, HogbomIterationMode, RestoringBeamMode,
-    UvTaperSize, WTermMode, WeightingMode,
+    CleanStopReason, Deconvolver, GaussianUvTaper, HogbomIterationMode, MinorCycleTrace,
+    RestoringBeamMode, UvTaperSize, WTermMode, WeightingMode,
 };
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation,
@@ -837,6 +837,12 @@ pub struct ImagerRunTaskRequest {
     /// Model persistence mode.
     #[serde(default)]
     pub save_model: ImagerSaveModel,
+    /// Optional CASA image used to seed the initial model product.
+    #[serde(default)]
+    pub start_model: Option<PathBuf>,
+    /// Optional CASA outlier-field definition file.
+    #[serde(default)]
+    pub outlier_file: Option<PathBuf>,
     /// Optional explicit scalar plane or raw correlation.
     #[serde(default)]
     pub correlation: Option<ImagerPlaneSelection>,
@@ -876,6 +882,12 @@ pub struct ImagerRunTaskRequest {
     /// Minor-cycle iteration count.
     #[serde(default)]
     pub niter: usize,
+    /// CASA-style major-cycle limit. `None` corresponds to CASA `nmajor=-1`.
+    #[serde(default)]
+    pub nmajor: Option<usize>,
+    /// Include long-form CASA-compatible `summaryminor` fields.
+    #[serde(default)]
+    pub fullsummary: bool,
     /// Minor-cycle loop gain.
     #[serde(default = "default_gain")]
     pub gain: f32,
@@ -952,6 +964,8 @@ impl ImagerRunTaskRequest {
             channel_count: config.channel_count,
             data_column: config.datacolumn.clone(),
             save_model: config.save_model.into(),
+            start_model: config.start_model.clone(),
+            outlier_file: config.outlier_file.clone(),
             correlation: config
                 .correlation
                 .as_deref()
@@ -970,6 +984,8 @@ impl ImagerRunTaskRequest {
             multiscale_scales: config.multiscale_scales.clone(),
             small_scale_bias: config.small_scale_bias,
             niter: config.niter,
+            nmajor: config.nmajor,
+            fullsummary: config.fullsummary,
             gain: config.gain,
             threshold_jy: config.threshold_jy,
             nsigma: config.nsigma,
@@ -1008,8 +1024,18 @@ impl ImagerRunTaskRequest {
         if self.nterms == 0 {
             return Err("nterms must be at least 1".to_string());
         }
-        if !(self.mosaic_pb_limit.is_finite() && self.mosaic_pb_limit > 0.0) {
-            return Err("mosaic_pb_limit must be finite and > 0".to_string());
+        if self.start_model.is_some() {
+            if spectral_mode != SpectralMode::Mfs {
+                return Err("start_model currently supports only spectral_mode='mfs'".to_string());
+            }
+            if deconvolver == Deconvolver::Mtmfs {
+                return Err(
+                    "start_model currently supports only single-term deconvolvers".to_string(),
+                );
+            }
+        }
+        if !(self.mosaic_pb_limit.is_finite() && self.mosaic_pb_limit != 0.0) {
+            return Err("mosaic_pb_limit must be finite and non-zero".to_string());
         }
         for scale in &self.multiscale_scales {
             if !(scale.is_finite() && *scale >= 0.0) {
@@ -1052,6 +1078,8 @@ impl ImagerRunTaskRequest {
             channel_count: self.channel_count,
             datacolumn: self.data_column.clone(),
             save_model: self.save_model.into(),
+            start_model: self.start_model.clone(),
+            outlier_file: self.outlier_file.clone(),
             correlation: self
                 .correlation
                 .map(|value| value.as_cli_text().to_string()),
@@ -1067,6 +1095,8 @@ impl ImagerRunTaskRequest {
             multiscale_scales: self.multiscale_scales.clone(),
             small_scale_bias: self.small_scale_bias,
             niter: self.niter,
+            nmajor: self.nmajor,
+            fullsummary: self.fullsummary,
             gain: self.gain,
             threshold_jy: self.threshold_jy,
             nsigma: self.nsigma,
@@ -1112,6 +1142,8 @@ pub enum ImagerCleanStopReason {
     CycleThresholdReached,
     /// The requested total iteration budget was exhausted.
     IterationLimitReached,
+    /// The requested major-cycle budget was exhausted.
+    MajorCycleLimitReached,
     /// No cleanable masked pixel was available.
     NoCleanablePixels,
     /// The residual peak increased materially after prior progress.
@@ -1125,6 +1157,7 @@ impl From<CleanStopReason> for ImagerCleanStopReason {
             CleanStopReason::NsigmaThresholdReached => Self::NsigmaThresholdReached,
             CleanStopReason::CycleThresholdReached => Self::CycleThresholdReached,
             CleanStopReason::IterationLimitReached => Self::IterationLimitReached,
+            CleanStopReason::MajorCycleLimitReached => Self::MajorCycleLimitReached,
             CleanStopReason::NoCleanablePixels => Self::NoCleanablePixels,
             CleanStopReason::DivergenceDetected => Self::DivergenceDetected,
         }
@@ -1206,6 +1239,42 @@ pub struct ImagerChannelRunResult {
     pub beam_fit_available: bool,
 }
 
+/// One CASA-compatible minor-cycle summary row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerMinorCycleSummary {
+    /// Zero-based output channel index. MFS reports channel 0.
+    pub channel_index: usize,
+    /// Zero-based Stokes index. Current scalar-plane runs report Stokes 0.
+    pub stokes_index: usize,
+    /// Zero-based minor-cycle block index within this channel.
+    pub cycle_index: usize,
+    /// CASA `summaryminor.iterDone`: reported iterations consumed by this block.
+    pub iter_done: usize,
+    /// CASA `summaryminor.peakRes`: peak residual after this block.
+    pub peak_res_jy_per_beam: f32,
+    /// CASA `summaryminor.modelFlux`: model flux after this block.
+    pub model_flux_jy: f32,
+    /// CASA `summaryminor.cycleThresh`: cycle threshold for this block.
+    pub cycle_threshold_jy_per_beam: f32,
+    /// CASA deconvolver id. Current task reports a single deconvolver as 0.
+    pub deconvolver_id: usize,
+    /// CASA `summaryminor.cycleStartIter`, present when `fullsummary=true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cycle_start_iter: Option<usize>,
+    /// CASA `summaryminor.startIterDone`, present when `fullsummary=true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_iter_done: Option<usize>,
+    /// CASA `summaryminor.startPeakRes`, present when `fullsummary=true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_peak_res_jy_per_beam: Option<f32>,
+    /// CASA `summaryminor.peakResNM`, present when `fullsummary=true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_res_no_mask_jy_per_beam: Option<f32>,
+    /// CASA `summaryminor.stopCode`, present when `fullsummary=true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_code: Option<i32>,
+}
+
 /// Stable run metrics emitted after one successful imaging run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerRunReport {
@@ -1217,8 +1286,16 @@ pub struct ImagerRunReport {
     pub major_cycles: usize,
     /// Total minor-cycle component updates executed by the run.
     pub minor_iterations: usize,
+    /// CASA-compatible `iterdone` task-return value.
+    pub iterdone: usize,
+    /// CASA-compatible `nmajordone` task-return value.
+    pub nmajordone: usize,
+    /// CASA-compatible `stopcode` task-return value.
+    pub stopcode: i32,
     /// Final CLEAN stop reason when deconvolution ran.
     pub clean_stop_reason: Option<ImagerCleanStopReason>,
+    /// CASA-compatible minor-cycle summary rows.
+    pub summaryminor: Vec<ImagerMinorCycleSummary>,
     /// Timing breakdown reported by the pure imaging core.
     pub stage_timings: ImagerCoreStageTimings,
     /// Timing breakdown for the MeasurementSet-backed frontend.
@@ -1305,7 +1382,11 @@ impl ImagerRunTaskResult {
                 gridded_samples: summary.gridded_samples,
                 major_cycles: summary.major_cycles,
                 minor_iterations: summary.minor_iterations,
+                iterdone: summary.minor_iterations,
+                nmajordone: summary.major_cycles,
+                stopcode: casa_stop_code(summary.clean_stop_reason),
                 clean_stop_reason: summary.clean_stop_reason.map(Into::into),
+                summaryminor: build_summaryminor(summary, request.fullsummary),
                 stage_timings: core_stage_timings(&summary.stage_timings),
                 frontend_timings: frontend_stage_timings(summary.frontend_timings),
                 channels: summary
@@ -1452,6 +1533,62 @@ fn frontend_stage_timings(timings: FrontendStageTimings) -> ImagerFrontendStageT
     }
 }
 
+fn casa_stop_code(reason: Option<CleanStopReason>) -> i32 {
+    match reason {
+        Some(CleanStopReason::IterationLimitReached) => 1,
+        Some(CleanStopReason::GlobalThresholdReached) => 2,
+        Some(CleanStopReason::NsigmaThresholdReached) => 2,
+        Some(CleanStopReason::CycleThresholdReached) => 3,
+        Some(CleanStopReason::NoCleanablePixels) => 7,
+        Some(CleanStopReason::MajorCycleLimitReached) => 9,
+        Some(CleanStopReason::DivergenceDetected) => 10,
+        None => 0,
+    }
+}
+
+fn build_summaryminor(summary: &RunSummary, fullsummary: bool) -> Vec<ImagerMinorCycleSummary> {
+    if summary.channel_summaries.is_empty() {
+        return summary
+            .minor_cycle_traces
+            .iter()
+            .map(|trace| minor_cycle_summary(0, 0, trace, fullsummary))
+            .collect();
+    }
+    summary
+        .channel_summaries
+        .iter()
+        .flat_map(|channel| {
+            channel
+                .minor_cycle_traces
+                .iter()
+                .map(move |trace| minor_cycle_summary(channel.channel_index, 0, trace, fullsummary))
+        })
+        .collect()
+}
+
+fn minor_cycle_summary(
+    channel_index: usize,
+    stokes_index: usize,
+    trace: &MinorCycleTrace,
+    fullsummary: bool,
+) -> ImagerMinorCycleSummary {
+    ImagerMinorCycleSummary {
+        channel_index,
+        stokes_index,
+        cycle_index: trace.cycle_index,
+        iter_done: trace.reported_updates,
+        peak_res_jy_per_beam: trace.end_peak_residual_jy_per_beam,
+        model_flux_jy: trace.model_flux_jy,
+        cycle_threshold_jy_per_beam: trace.cycle_threshold_jy_per_beam,
+        deconvolver_id: 0,
+        cycle_start_iter: fullsummary.then_some(trace.start_reported_iteration),
+        start_iter_done: fullsummary.then_some(trace.start_reported_iteration),
+        start_peak_res_jy_per_beam: fullsummary.then_some(trace.start_peak_residual_jy_per_beam),
+        peak_res_no_mask_jy_per_beam: fullsummary.then_some(trace.end_peak_residual_jy_per_beam),
+        stop_code: fullsummary.then_some(casa_stop_code(trace.clean_stop_reason)),
+    }
+}
+
 fn channel_result(summary: &ChannelRunSummary) -> ImagerChannelRunResult {
     ImagerChannelRunResult {
         channel_index: summary.channel_index,
@@ -1561,7 +1698,7 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
 mod tests {
     use std::ffi::OsString;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use casa_imaging::{
         CleanStopReason, Deconvolver, GaussianUvTaper, RestoringBeamMode, UvTaperSize, WTermMode,
@@ -1736,6 +1873,8 @@ mod tests {
             channel_count: None,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: Default::default(),
             cube_axis: Default::default(),
@@ -1749,6 +1888,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -1792,6 +1933,8 @@ mod tests {
             channel_count: None,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: Default::default(),
             cube_axis: Default::default(),
@@ -1805,6 +1948,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -2031,6 +2176,8 @@ mod tests {
             channel_count: None,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            start_model: None,
+            outlier_file: None,
             correlation: None,
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),
@@ -2044,6 +2191,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -2187,6 +2336,8 @@ mod tests {
             channel_count: None,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            start_model: None,
+            outlier_file: None,
             correlation: Some(ImagerPlaneSelection::CorrXX),
             spectral_mode: ImagerSpectralMode::Mfs,
             cube_axis: Default::default(),
@@ -2200,6 +2351,8 @@ mod tests {
             multiscale_scales: Vec::new(),
             small_scale_bias: 0.0,
             niter: 0,
+            nmajor: None,
+            fullsummary: false,
             gain: 0.1,
             threshold_jy: 0.0,
             nsigma: 0.0,
@@ -2310,6 +2463,77 @@ mod tests {
         assert_eq!(config.datacolumn.as_deref(), Some("DATA"));
         assert_eq!(config.weighting, WeightingMode::Briggs { robust: 0.5 });
         assert!(config.dirty_only);
+    }
+
+    #[test]
+    fn task_request_roundtrips_start_model_path() {
+        let request = ImagerRunTaskRequest {
+            measurement_set: PathBuf::from("demo.ms"),
+            image_name: PathBuf::from("out/demo"),
+            image_size: 64,
+            cell_arcsec: 1.5,
+            field_ids: None,
+            phasecenter_field: None,
+            phasecenter: None,
+            ddid: None,
+            spw_selector: None,
+            channel_start: None,
+            channel_count: None,
+            data_column: None,
+            save_model: ImagerSaveModel::None,
+            start_model: Some(PathBuf::from("seed.model")),
+            outlier_file: Some(PathBuf::from("outliers.txt")),
+            correlation: None,
+            spectral_mode: ImagerSpectralMode::Mfs,
+            cube_axis: Default::default(),
+            weighting: Default::default(),
+            per_channel_weight_density: false,
+            use_pointing: false,
+            uv_taper: None,
+            restoring_beam_mode: Default::default(),
+            deconvolver: ImagerDeconvolver::Hogbom,
+            nterms: 1,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            niter: 0,
+            nmajor: None,
+            fullsummary: false,
+            gain: 0.1,
+            threshold_jy: 0.0,
+            nsigma: 0.0,
+            psf_cutoff: 0.35,
+            mosaic_pb_limit: 0.2,
+            pbcor: false,
+            minor_cycle_length: 8,
+            cyclefactor: 1.0,
+            min_psf_fraction: 0.05,
+            max_psf_fraction: 0.8,
+            hogbom_iteration_mode: Default::default(),
+            use_mask: Default::default(),
+            auto_mask: Default::default(),
+            mask_boxes: Vec::new(),
+            mask_image: None,
+            w_term_mode: Default::default(),
+            w_project_planes: None,
+            dirty_only: false,
+            write_preview_pngs: true,
+        };
+
+        let config = request.to_cli_config().expect("restore CLI config");
+        assert_eq!(config.start_model.as_deref(), Some(Path::new("seed.model")));
+        assert_eq!(
+            config.outlier_file.as_deref(),
+            Some(Path::new("outliers.txt"))
+        );
+        let restored = ImagerRunTaskRequest::from_cli_config(&config);
+        assert_eq!(
+            restored.start_model.as_deref(),
+            Some(Path::new("seed.model"))
+        );
+        assert_eq!(
+            restored.outlier_file.as_deref(),
+            Some(Path::new("outliers.txt"))
+        );
     }
 
     #[test]

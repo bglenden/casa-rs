@@ -105,9 +105,37 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 advanced: false,
             }),
             option_argument(OptionArgumentConfig {
+                id: "startmodel",
+                label: "Start Model",
+                order: 6,
+                flags: &["--startmodel"],
+                metavar: "PATH",
+                value_kind: UiValueKind::Path,
+                default: None,
+                choices: &[],
+                help: "CASA image used as the initial model for single-image MFS",
+                group: "Products",
+                required: false,
+                advanced: true,
+            }),
+            option_argument(OptionArgumentConfig {
+                id: "outlierfile",
+                label: "Outlier File",
+                order: 7,
+                flags: &["--outlierfile"],
+                metavar: "PATH",
+                value_kind: UiValueKind::Path,
+                default: None,
+                choices: &[],
+                help: "CASA outlier-field definitions for supported MFS/Hogbom image sets",
+                group: "Products",
+                required: false,
+                advanced: true,
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "field",
                 label: "Field IDs",
-                order: 6,
+                order: 8,
                 flags: &["--field"],
                 metavar: "IDS",
                 value_kind: UiValueKind::String,
@@ -121,7 +149,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "phasecenter_field",
                 label: "Phasecenter Field",
-                order: 7,
+                order: 8,
                 flags: &["--phasecenter-field"],
                 metavar: "ID",
                 value_kind: UiValueKind::String,
@@ -135,7 +163,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "phasecenter",
                 label: "Explicit Phasecenter",
-                order: 8,
+                order: 9,
                 flags: &["--phasecenter"],
                 metavar: "DIR",
                 value_kind: UiValueKind::String,
@@ -506,7 +534,7 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionArgumentConfig {
                 id: "gain",
                 label: "Loop Gain",
-                order: 34,
+                order: 36,
                 flags: &["--gain"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
@@ -518,9 +546,34 @@ pub fn command_schema(program_name: &str) -> UiCommandSchema {
                 advanced: false,
             }),
             option_argument(OptionArgumentConfig {
+                id: "nmajor",
+                label: "Major Cycles",
+                order: 34,
+                flags: &["--nmajor"],
+                metavar: "N",
+                value_kind: UiValueKind::String,
+                default: Some("-1"),
+                choices: &[],
+                help: "Major-cycle limit; -1 keeps CASA's unlimited default",
+                group: "Stage Parameters",
+                required: false,
+                advanced: false,
+            }),
+            toggle_argument(ToggleArgumentConfig {
+                id: "fullsummary",
+                label: "Full Summary",
+                order: 35,
+                true_flags: &["--fullsummary"],
+                false_flags: &[],
+                default: Some("false"),
+                help: "Include long-form CASA-compatible summaryminor rows",
+                group: "Stage Parameters",
+                advanced: true,
+            }),
+            option_argument(OptionArgumentConfig {
                 id: "threshold_jy",
                 label: "Threshold (Jy)",
-                order: 35,
+                order: 37,
                 flags: &["--threshold-jy"],
                 metavar: "VALUE",
                 value_kind: UiValueKind::Float,
@@ -965,6 +1018,28 @@ mod tests {
             panic!("savemodel should use an option parser");
         };
         assert!(choices.contains(&"modelcolumn".to_string()));
+
+        let startmodel = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "startmodel")
+            .expect("startmodel argument");
+        assert_eq!(startmodel.value_kind, UiValueKind::Path);
+        let UiArgumentParser::Option { flags, .. } = &startmodel.parser else {
+            panic!("startmodel should use an option parser");
+        };
+        assert!(flags.contains(&"--startmodel".to_string()));
+
+        let outlierfile = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "outlierfile")
+            .expect("outlierfile argument");
+        assert_eq!(outlierfile.value_kind, UiValueKind::Path);
+        let UiArgumentParser::Option { flags, .. } = &outlierfile.parser else {
+            panic!("outlierfile should use an option parser");
+        };
+        assert!(flags.contains(&"--outlierfile".to_string()));
 
         let polarization = schema
             .arguments

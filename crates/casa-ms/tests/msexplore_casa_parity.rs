@@ -14,7 +14,7 @@ use casa_ms::{
     build_msexplore_plot_payload, preview_msexplore_flag_edit,
     preview_msexplore_flag_edit_for_request,
 };
-use casa_test_support::casatestdata_path;
+use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::ArrayValue;
 use image::{GenericImageView, ImageReader};
 use ndarray::Ix2;
@@ -1869,7 +1869,11 @@ fn plotms_shared_dataset_available() -> bool {
 }
 
 fn ref_vlass_ms_path() -> Option<PathBuf> {
-    casatestdata_path("measurementset/vla/ref_vlass_wtsp_creation.ms").filter(|path| path.exists())
+    casatestdata_path_for_tier(
+        CasaTestDataTier::SlowParity,
+        "measurementset/vla/ref_vlass_wtsp_creation.ms",
+    )
+    .filter(|path| path.exists())
 }
 
 fn plotms_multi_spw_dataset_available() -> bool {

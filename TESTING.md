@@ -24,7 +24,10 @@ Verification: just verify
 - Tests and scripts that use shared CASA C++ datasets must use the shared
   resolver policy: default fixtures may search `CASA_RS_TESTDATA_ROOT`,
   `../casatestdata`, and `~/SoftwareProjects/casatestdata`; long gates may also
-  consider the shared `/Volumes/home/casatestdata` mirror after preflight.
+  consider the shared `/Volumes/home/casatestdata` mirror after preflight. When
+  a long gate declares required dataset paths, preflight should select the first
+  available root that contains those paths instead of stopping at an incomplete
+  earlier mirror.
 - Tutorial parity datasets are registry-backed and staged separately under
   `CASA_RS_TUTORIAL_DATA_ROOT/tutorial-parity/...` or
   `~/SoftwareProjects/casa-tutorial-data/tutorial-parity/...`; default gates

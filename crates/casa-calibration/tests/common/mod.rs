@@ -14,8 +14,6 @@ use casa_ms::schema::main_table::OptionalMainColumn;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::schema::{self as ms_schema, SubtableId};
 use casa_tables::{ColumnSchema, DataManagerKind, Table, TableInfo, TableOptions, TableSchema};
-#[cfg(feature = "slow-tests")]
-use casa_test_support::casatestdata_path;
 use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 #[cfg(feature = "slow-tests")]
@@ -2334,7 +2332,11 @@ pub fn discover_casa_python() -> Option<PathBuf> {
 
 #[cfg(feature = "slow-tests")]
 pub fn ngc5921_ms_path() -> Option<PathBuf> {
-    casatestdata_path("measurementset/vla/ngc5921.ms").filter(|path| path.exists())
+    casa_test_support::casatestdata_path_for_tier(
+        casa_test_support::CasaTestDataTier::SlowParity,
+        "measurementset/vla/ngc5921.ms",
+    )
+    .filter(|path| path.exists())
 }
 
 #[cfg(feature = "slow-tests")]
@@ -2344,7 +2346,7 @@ pub fn casa_skip_reason() -> String {
             "CASA calibration parity skipped: no CASA-capable python found via CASA_RS_CASA_PYTHON, CASA_PYTHON, python3, or python".to_string()
         }
         (_, None) => {
-            "CASA calibration parity skipped: missing ngc5921.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, or ~/SoftwareProjects/casatestdata".to_string()
+            "CASA calibration parity skipped: missing ngc5921.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, ~/SoftwareProjects/casatestdata, or slow-parity /Volumes/home/casatestdata".to_string()
         }
         _ => "CASA calibration parity skipped".to_string(),
     }

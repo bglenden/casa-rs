@@ -560,6 +560,7 @@ mod tests {
             small_scale_bias: 0.0,
             clean: CleanConfig::default(),
             clean_mask: None,
+            initial_model: None,
             w_term_mode: crate::WTermMode::None,
             w_project_planes: None,
             compatibility: CompatibilityMode::CasaStandardMfs,

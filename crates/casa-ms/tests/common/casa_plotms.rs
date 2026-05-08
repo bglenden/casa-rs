@@ -5,7 +5,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-use casa_test_support::casatestdata_path;
+use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 
 /// Resolved local CASA Python environment.
 #[derive(Debug, Clone)]
@@ -25,7 +25,11 @@ pub fn discover_casa_python() -> Option<CasaPython> {
 
 /// Resolve the shared `ngc5921.ms` MeasurementSet fixture.
 pub fn ngc5921_ms_path() -> Option<PathBuf> {
-    casatestdata_path("measurementset/vla/ngc5921.ms").filter(|path| path.exists())
+    casatestdata_path_for_tier(
+        CasaTestDataTier::SlowParity,
+        "measurementset/vla/ngc5921.ms",
+    )
+    .filter(|path| path.exists())
 }
 
 /// Return a human-readable skip reason for CASA parity tests.
@@ -42,7 +46,7 @@ pub fn skip_reason(require_plotms: bool) -> String {
             )
         }
         (_, None) => {
-            "CASA parity skipped: missing ngc5921.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, or ~/SoftwareProjects/casatestdata".to_string()
+            "CASA parity skipped: missing ngc5921.ms under CASA_RS_TESTDATA_ROOT, ../casatestdata, ~/SoftwareProjects/casatestdata, or slow-parity /Volumes/home/casatestdata".to_string()
         }
         _ => "CASA parity skipped".to_string(),
     }
