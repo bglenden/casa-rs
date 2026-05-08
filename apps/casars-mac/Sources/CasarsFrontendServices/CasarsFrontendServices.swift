@@ -3594,6 +3594,13 @@ public func buildMeasurementSetPlot(request: MeasurementSetPlotRequest)throws  -
     )
 })
 }
+public func buildTableBrowserCellWindowJson(requestJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_build_table_browser_cell_window_json(
+        FfiConverterString.lower(requestJson),$0
+    )
+})
+}
 public func buildTableBrowserSnapshotFromRequestJson(requestJson: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_build_table_browser_snapshot_from_request_json(
@@ -3663,6 +3670,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_measurement_set_plot() != 34309) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_build_table_browser_cell_window_json() != 22457) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_table_browser_snapshot_from_request_json() != 44113) {

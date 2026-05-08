@@ -1647,6 +1647,73 @@ public struct TableBrowserSnapshot: Codable, Equatable {
     }
 }
 
+public struct TableBrowserCellWindowSnapshot: Codable, Equatable {
+    public struct Column: Codable, Equatable {
+        public var index: Int
+        public var name: String
+        public var header: String
+        public var summary: String
+        public var width: Int
+    }
+
+    public struct Row: Codable, Equatable {
+        public var index: Int
+        public var cells: [Cell]
+    }
+
+    public struct Cell: Codable, Equatable {
+        public var columnIndex: Int
+        public var display: String
+        public var defined: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case columnIndex = "column_index"
+            case display
+            case defined
+        }
+    }
+
+    public var tablePath: String
+    public var rowCount: Int
+    public var columnCount: Int
+    public var rowStart: Int
+    public var columnStart: Int
+    public var columns: [Column]
+    public var rows: [Row]
+
+    enum CodingKeys: String, CodingKey {
+        case tablePath = "table_path"
+        case rowCount = "row_count"
+        case columnCount = "column_count"
+        case rowStart = "row_start"
+        case columnStart = "column_start"
+        case columns
+        case rows
+    }
+
+    public func row(_ index: Int) -> Row? {
+        rows.first { $0.index == index }
+    }
+
+    public func cell(row rowIndex: Int, column columnIndex: Int) -> Cell? {
+        row(rowIndex)?.cells.first { $0.columnIndex == columnIndex }
+    }
+
+    public func contains(rowStart requestedRowStart: Int, rowLimit: Int, columnStart requestedColumnStart: Int, columnLimit: Int) -> Bool {
+        guard rowLimit > 0, columnLimit > 0 else {
+            return true
+        }
+        let requestedRowEnd = min(requestedRowStart + rowLimit, rowCount)
+        let requestedColumnEnd = min(requestedColumnStart + columnLimit, columnCount)
+        let rowEnd = rowStart + rows.count
+        let columnEnd = columnStart + max(0, rows.first?.cells.count ?? 0)
+        return requestedRowStart >= rowStart
+            && requestedRowEnd <= rowEnd
+            && requestedColumnStart >= columnStart
+            && requestedColumnEnd <= columnEnd
+    }
+}
+
 public enum TableBrowserCommand: Codable, Equatable {
     case setFocus(String)
     case cycleView(forward: Bool)
@@ -1757,15 +1824,36 @@ public struct TableBrowserSnapshotRequest: Codable, Equatable {
     }
 }
 
+public struct TableBrowserCellWindowRequest: Codable, Equatable {
+    public var datasetPath: String
+    public var rowStart: Int
+    public var rowLimit: Int
+    public var columnStart: Int
+    public var columnLimit: Int
+
+    enum CodingKeys: String, CodingKey {
+        case datasetPath = "dataset_path"
+        case rowStart = "row_start"
+        case rowLimit = "row_limit"
+        case columnStart = "column_start"
+        case columnLimit = "column_limit"
+    }
+}
+
 public struct TableBrowserSessionState: Codable, Equatable {
     public var datasetID: String
     public var selectedView: String
     public var focus: String = "main"
     public var commands: [TableBrowserCommand] = []
     public var transientCommands: [TableBrowserCommand] = []
+    public var cellWindowRowStart: Int = 0
+    public var cellWindowRowLimit: Int = 96
+    public var cellWindowColumnStart: Int = 0
+    public var cellWindowColumnLimit: Int = 24
     public var status: ExplorerSessionStatus
     public var lastError: String?
     public var snapshot: TableBrowserSnapshot?
+    public var cellWindow: TableBrowserCellWindowSnapshot?
 
     enum CodingKeys: String, CodingKey {
         case datasetID
@@ -1773,9 +1861,14 @@ public struct TableBrowserSessionState: Codable, Equatable {
         case focus
         case commands
         case transientCommands
+        case cellWindowRowStart
+        case cellWindowRowLimit
+        case cellWindowColumnStart
+        case cellWindowColumnLimit
         case status
         case lastError
         case snapshot
+        case cellWindow
     }
 
     public init(
@@ -1784,18 +1877,28 @@ public struct TableBrowserSessionState: Codable, Equatable {
         focus: String = "main",
         commands: [TableBrowserCommand] = [],
         transientCommands: [TableBrowserCommand] = [],
+        cellWindowRowStart: Int = 0,
+        cellWindowRowLimit: Int = 96,
+        cellWindowColumnStart: Int = 0,
+        cellWindowColumnLimit: Int = 24,
         status: ExplorerSessionStatus,
         lastError: String?,
-        snapshot: TableBrowserSnapshot?
+        snapshot: TableBrowserSnapshot?,
+        cellWindow: TableBrowserCellWindowSnapshot? = nil
     ) {
         self.datasetID = datasetID
         self.selectedView = selectedView
         self.focus = focus
         self.commands = commands
         self.transientCommands = transientCommands
+        self.cellWindowRowStart = cellWindowRowStart
+        self.cellWindowRowLimit = cellWindowRowLimit
+        self.cellWindowColumnStart = cellWindowColumnStart
+        self.cellWindowColumnLimit = cellWindowColumnLimit
         self.status = status
         self.lastError = lastError
         self.snapshot = snapshot
+        self.cellWindow = cellWindow
     }
 
     public init(from decoder: Decoder) throws {
@@ -1805,9 +1908,14 @@ public struct TableBrowserSessionState: Codable, Equatable {
         focus = try container.decodeIfPresent(String.self, forKey: .focus) ?? "main"
         commands = try container.decodeIfPresent([TableBrowserCommand].self, forKey: .commands) ?? []
         transientCommands = try container.decodeIfPresent([TableBrowserCommand].self, forKey: .transientCommands) ?? []
+        cellWindowRowStart = try container.decodeIfPresent(Int.self, forKey: .cellWindowRowStart) ?? 0
+        cellWindowRowLimit = try container.decodeIfPresent(Int.self, forKey: .cellWindowRowLimit) ?? 96
+        cellWindowColumnStart = try container.decodeIfPresent(Int.self, forKey: .cellWindowColumnStart) ?? 0
+        cellWindowColumnLimit = try container.decodeIfPresent(Int.self, forKey: .cellWindowColumnLimit) ?? 24
         status = try container.decode(ExplorerSessionStatus.self, forKey: .status)
         lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
         snapshot = try container.decodeIfPresent(TableBrowserSnapshot.self, forKey: .snapshot)
+        cellWindow = try container.decodeIfPresent(TableBrowserCellWindowSnapshot.self, forKey: .cellWindow)
     }
 
     public func snapshotRequest(datasetPath: String) -> TableBrowserSnapshotRequest {
@@ -1820,6 +1928,16 @@ public struct TableBrowserSessionState: Codable, Equatable {
             focus: focus,
             commands: commands,
             transientCommands: transientCommands
+        )
+    }
+
+    public func cellWindowRequest(datasetPath: String) -> TableBrowserCellWindowRequest {
+        TableBrowserCellWindowRequest(
+            datasetPath: datasetPath,
+            rowStart: cellWindowRowStart,
+            rowLimit: cellWindowRowLimit,
+            columnStart: cellWindowColumnStart,
+            columnLimit: cellWindowColumnLimit
         )
     }
 }

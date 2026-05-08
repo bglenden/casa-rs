@@ -19,19 +19,19 @@ use casa_ms::{
     MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec,
     VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
-use casa_tables::{Table, TableBrowser, TableOptions};
-use casa_types::ScalarValue;
+use casa_tables::{ArrayShapeContract, ColumnType, Table, TableBrowser, TableOptions};
 use casa_types::measures::direction::{
     angular_increment_arcseconds, declination_increment_arcseconds, format_declination_labeled,
     format_right_ascension_labeled,
 };
+use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use casars_imagebrowser_protocol::ImageBrowserViewport;
 use casars_imagebrowser_protocol::{
     ImageBrowserCommand, ImageBrowserFocus, ImageBrowserParameters, ImageBrowserPreviewRequest,
     ImagePlaneContentMode,
 };
 use casars_tablebrowser_protocol::{BrowserCommand, BrowserFocus, BrowserView, BrowserViewport};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
@@ -101,6 +101,52 @@ struct TableBrowserSnapshotRequest {
     transient_commands: Vec<BrowserCommand>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct TableBrowserCellWindowRequest {
+    dataset_path: String,
+    #[serde(default)]
+    row_start: u64,
+    #[serde(default = "default_table_browser_cell_row_limit")]
+    row_limit: u64,
+    #[serde(default)]
+    column_start: u64,
+    #[serde(default = "default_table_browser_cell_column_limit")]
+    column_limit: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TableBrowserCellWindowSnapshot {
+    table_path: String,
+    row_count: u64,
+    column_count: u64,
+    row_start: u64,
+    column_start: u64,
+    columns: Vec<TableBrowserCellWindowColumn>,
+    rows: Vec<TableBrowserCellWindowRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TableBrowserCellWindowColumn {
+    index: u64,
+    name: String,
+    header: String,
+    summary: String,
+    width: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TableBrowserCellWindowRow {
+    index: u64,
+    cells: Vec<TableBrowserCellWindowCell>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TableBrowserCellWindowCell {
+    column_index: u64,
+    display: String,
+    defined: bool,
+}
+
 const fn default_image_browser_width() -> u16 {
     120
 }
@@ -135,6 +181,14 @@ const fn default_table_browser_height() -> u16 {
 
 const fn default_table_browser_inspector_height() -> u16 {
     10
+}
+
+const fn default_table_browser_cell_row_limit() -> u64 {
+    96
+}
+
+const fn default_table_browser_cell_column_limit() -> u64 {
+    24
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -1177,6 +1231,335 @@ pub fn build_table_browser_snapshot_from_request_json(
                 reason: format!("encode snapshot {}: {error}", dataset_path.display()),
             })
         })
+}
+
+#[uniffi::export]
+pub fn build_table_browser_cell_window_json(request_json: String) -> FrontendResult<String> {
+    let request: TableBrowserCellWindowRequest =
+        serde_json::from_str(&request_json).map_err(|error| {
+            FrontendServiceError::TableExplorer {
+                reason: format!("decode table browser cell window request: {error}"),
+            }
+        })?;
+    let dataset_path = PathBuf::from(&request.dataset_path);
+    if !dataset_path.exists() {
+        return Err(FrontendServiceError::InvalidPath {
+            reason: format!("{} does not exist", dataset_path.display()),
+        });
+    }
+    let table = Table::open(TableOptions::new(&dataset_path)).map_err(|error| {
+        FrontendServiceError::TableExplorer {
+            reason: format!("open {}: {error}", dataset_path.display()),
+        }
+    })?;
+    let snapshot = build_table_browser_cell_window(&table, &dataset_path, &request)?;
+    serde_json::to_string(&snapshot).map_err(|error| FrontendServiceError::TableExplorer {
+        reason: format!("encode cell window {}: {error}", dataset_path.display()),
+    })
+}
+
+fn build_table_browser_cell_window(
+    table: &Table,
+    table_path: &Path,
+    request: &TableBrowserCellWindowRequest,
+) -> FrontendResult<TableBrowserCellWindowSnapshot> {
+    let column_names = table_browser_cell_column_names(table)?;
+    let columns = column_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let header = table_browser_cell_column_header(table, name);
+            let width = table_browser_cell_column_width(table, name, &header);
+            TableBrowserCellWindowColumn {
+                index: index as u64,
+                name: name.clone(),
+                header,
+                summary: table_browser_cell_column_summary(table, name),
+                width: width as u64,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let row_count = table.row_count();
+    let row_start = (request.row_start as usize).min(row_count);
+    let row_limit = request.row_limit.clamp(1, 512) as usize;
+    let row_end = row_start.saturating_add(row_limit).min(row_count);
+    let column_count = columns.len();
+    let column_start = (request.column_start as usize).min(column_count);
+    let column_limit = request.column_limit.clamp(1, 128) as usize;
+    let column_end = column_start.saturating_add(column_limit).min(column_count);
+    let visible_columns = &columns[column_start..column_end];
+    let mut rows = Vec::with_capacity(row_end.saturating_sub(row_start));
+    for row_index in row_start..row_end {
+        let mut cells = Vec::with_capacity(visible_columns.len());
+        for column in visible_columns {
+            let value = table
+                .cell_accessor(row_index, &column.name)
+                .and_then(|cell| cell.value())
+                .map_err(|error| FrontendServiceError::TableExplorer {
+                    reason: format!(
+                        "read {} row {} column {}: {error}",
+                        table_path.display(),
+                        row_index,
+                        column.name
+                    ),
+                })?;
+            cells.push(TableBrowserCellWindowCell {
+                column_index: column.index,
+                display: format_table_browser_cell_value(value),
+                defined: value.is_some(),
+            });
+        }
+        rows.push(TableBrowserCellWindowRow {
+            index: row_index as u64,
+            cells,
+        });
+    }
+
+    Ok(TableBrowserCellWindowSnapshot {
+        table_path: table_path.display().to_string(),
+        row_count: row_count as u64,
+        column_count: column_count as u64,
+        row_start: row_start as u64,
+        column_start: column_start as u64,
+        columns,
+        rows,
+    })
+}
+
+fn table_browser_cell_column_names(table: &Table) -> FrontendResult<Vec<String>> {
+    if let Some(schema) = table.schema() {
+        return Ok(schema
+            .columns()
+            .iter()
+            .map(|column| column.name().to_string())
+            .collect());
+    }
+
+    let mut names = BTreeSet::new();
+    for row in table
+        .rows()
+        .map_err(|error| FrontendServiceError::TableExplorer {
+            reason: format!("read schema-free table rows: {error}"),
+        })?
+    {
+        for field in row.fields() {
+            names.insert(field.name.clone());
+        }
+    }
+    Ok(names.into_iter().collect())
+}
+
+fn table_browser_cell_column_header(table: &Table, name: &str) -> String {
+    let Some(schema) = table.schema().and_then(|schema| schema.column(name)) else {
+        return name.to_string();
+    };
+    let mut header = name.to_string();
+    header.push('<');
+    header.push_str(&table_browser_cell_column_type_label(schema));
+    header.push('>');
+    header
+}
+
+fn table_browser_cell_column_summary(table: &Table, name: &str) -> String {
+    table
+        .schema()
+        .and_then(|schema| schema.column(name))
+        .map(table_browser_cell_column_summary_label)
+        .unwrap_or_else(|| "Dynamic".to_string())
+}
+
+fn table_browser_cell_column_width(table: &Table, name: &str, header: &str) -> usize {
+    let mut width = header.chars().count().max(8);
+    let sample_limit = table.row_count().min(32);
+    for row_index in 0..sample_limit {
+        if let Ok(value) = table
+            .cell_accessor(row_index, name)
+            .and_then(|cell| cell.value())
+        {
+            width = width.max(
+                format_table_browser_cell_value(value)
+                    .chars()
+                    .count()
+                    .min(40),
+            );
+        }
+    }
+    width.clamp(8, 40)
+}
+
+fn table_browser_cell_column_type_label(column: &casa_tables::ColumnSchema) -> String {
+    match column.column_type() {
+        ColumnType::Scalar => column
+            .data_type()
+            .map(table_browser_short_primitive_name)
+            .unwrap_or("dyn")
+            .to_string(),
+        ColumnType::Array(ArrayShapeContract::Fixed { shape }) => format!(
+            "{}[{}]",
+            column
+                .data_type()
+                .map(table_browser_short_primitive_name)
+                .unwrap_or("dyn"),
+            shape
+                .iter()
+                .map(|extent| extent.to_string())
+                .collect::<Vec<_>>()
+                .join("x")
+        ),
+        ColumnType::Array(ArrayShapeContract::Variable { ndim: Some(ndim) }) => format!(
+            "{}[{}d]",
+            column
+                .data_type()
+                .map(table_browser_short_primitive_name)
+                .unwrap_or("dyn"),
+            ndim
+        ),
+        ColumnType::Array(ArrayShapeContract::Variable { ndim: None }) => format!(
+            "{}[]",
+            column
+                .data_type()
+                .map(table_browser_short_primitive_name)
+                .unwrap_or("dyn")
+        ),
+        ColumnType::Record => "record".to_string(),
+    }
+}
+
+fn table_browser_cell_column_summary_label(column: &casa_tables::ColumnSchema) -> String {
+    match column.column_type() {
+        ColumnType::Scalar => format!(
+            "Scalar {:?}",
+            column
+                .data_type()
+                .expect("scalar columns always carry a data type")
+        ),
+        ColumnType::Array(contract) => format!(
+            "Array<{:?}> {:?}",
+            column
+                .data_type()
+                .expect("array columns always carry a data type"),
+            contract
+        ),
+        ColumnType::Record => "Record".to_string(),
+    }
+}
+
+fn table_browser_short_primitive_name(primitive: PrimitiveType) -> &'static str {
+    match primitive {
+        PrimitiveType::Bool => "bool",
+        PrimitiveType::UInt8 => "u8",
+        PrimitiveType::UInt16 => "u16",
+        PrimitiveType::UInt32 => "u32",
+        PrimitiveType::Int16 => "i16",
+        PrimitiveType::Int32 => "i32",
+        PrimitiveType::Int64 => "i64",
+        PrimitiveType::Float32 => "f32",
+        PrimitiveType::Float64 => "f64",
+        PrimitiveType::Complex32 => "c32",
+        PrimitiveType::Complex64 => "c64",
+        PrimitiveType::String => "str",
+    }
+}
+
+fn format_table_browser_cell_value(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::Scalar(scalar)) => format_table_browser_scalar(scalar),
+        Some(Value::Array(array)) => format_table_browser_array(array),
+        Some(Value::Record(record)) => format!("record{{{}}}", record.fields().len()),
+        Some(Value::TableRef(path)) => format!("table({path})"),
+        None => "<undef>".to_string(),
+    }
+}
+
+fn format_table_browser_scalar(scalar: &ScalarValue) -> String {
+    match scalar {
+        ScalarValue::Bool(value) => value.to_string(),
+        ScalarValue::UInt8(value) => value.to_string(),
+        ScalarValue::UInt16(value) => value.to_string(),
+        ScalarValue::UInt32(value) => value.to_string(),
+        ScalarValue::Int16(value) => value.to_string(),
+        ScalarValue::Int32(value) => value.to_string(),
+        ScalarValue::Int64(value) => value.to_string(),
+        ScalarValue::Float32(value) => format!("{value:.6}"),
+        ScalarValue::Float64(value) => format!("{value:.6}"),
+        ScalarValue::Complex32(value) => format!("{:.4}+{:.4}i", value.re, value.im),
+        ScalarValue::Complex64(value) => format!("{:.4}+{:.4}i", value.re, value.im),
+        ScalarValue::String(value) => format!("{value:?}"),
+    }
+}
+
+fn format_table_browser_array(array: &ArrayValue) -> String {
+    if array.ndim() <= 1 && array.len() <= 3 {
+        return table_browser_array_preview(array);
+    }
+    format!(
+        "array<{:?}>{:?} {}",
+        array.primitive_type(),
+        array.shape(),
+        table_browser_array_preview(array)
+    )
+}
+
+fn table_browser_array_preview(array: &ArrayValue) -> String {
+    match array {
+        ArrayValue::Bool(values) => {
+            table_browser_preview_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::UInt8(values) => {
+            table_browser_preview_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::UInt16(values) => {
+            table_browser_preview_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::UInt32(values) => {
+            table_browser_preview_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::Int16(values) => {
+            table_browser_preview_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::Int32(values) => {
+            table_browser_preview_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::Int64(values) => {
+            table_browser_preview_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::Float32(values) => {
+            table_browser_preview_values(values.iter().map(|value| format!("{value:.4}")))
+        }
+        ArrayValue::Float64(values) => {
+            table_browser_preview_values(values.iter().map(|value| format!("{value:.4}")))
+        }
+        ArrayValue::Complex32(values) => table_browser_preview_values(
+            values
+                .iter()
+                .map(|value| format!("{:.3}+{:.3}i", value.re, value.im)),
+        ),
+        ArrayValue::Complex64(values) => table_browser_preview_values(
+            values
+                .iter()
+                .map(|value| format!("{:.3}+{:.3}i", value.re, value.im)),
+        ),
+        ArrayValue::String(values) => {
+            table_browser_preview_values(values.iter().map(|value| format!("{value:?}")))
+        }
+    }
+}
+
+fn table_browser_preview_values(values: impl Iterator<Item = String>) -> String {
+    let mut preview = Vec::new();
+    for value in values.take(4) {
+        preview.push(value);
+    }
+    if preview.is_empty() {
+        "[]".to_string()
+    } else {
+        format!(
+            "[{}{}]",
+            preview.join(", "),
+            if preview.len() == 4 { ", ..." } else { "" }
+        )
+    }
 }
 
 fn image_snapshot_for_requested_view(
@@ -3827,6 +4210,40 @@ mod tests {
         );
         assert!(snapshot["selected_address"].is_object());
         assert!(snapshot["inspector"].is_object());
+    }
+
+    #[test]
+    fn table_browser_cell_window_json_returns_typed_scroll_window() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let table_path = dir.path().join("gain_table");
+        make_table(&table_path);
+
+        let request_json = serde_json::json!({
+            "dataset_path": table_path,
+            "row_start": 0,
+            "row_limit": 4,
+            "column_start": 1,
+            "column_limit": 1
+        })
+        .to_string();
+        let window_json =
+            build_table_browser_cell_window_json(request_json).expect("table browser cell window");
+        let window: serde_json::Value =
+            serde_json::from_str(&window_json).expect("cell window json");
+
+        assert_eq!(window["row_count"].as_u64(), Some(1));
+        assert_eq!(window["column_count"].as_u64(), Some(2));
+        assert_eq!(window["row_start"].as_u64(), Some(0));
+        assert_eq!(window["column_start"].as_u64(), Some(1));
+        assert_eq!(window["columns"][0]["name"], "id");
+        assert_eq!(window["columns"][1]["header"], "name<str>");
+        assert_eq!(window["rows"][0]["index"].as_u64(), Some(0));
+        assert_eq!(
+            window["rows"][0]["cells"][0]["column_index"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(window["rows"][0]["cells"][0]["display"], "\"gain\"");
+        assert_eq!(window["rows"][0]["cells"][0]["defined"], true);
     }
 
     #[test]

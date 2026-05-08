@@ -698,7 +698,53 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.tabs.last?.kind, .tableBrowser)
         XCTAssertEqual(store.state.tabs.last?.title, "Table: example.ms")
         XCTAssertEqual(tableClient.paths, [msDataset.path])
+        XCTAssertEqual(tableClient.cellWindowRequests.map(\.datasetPath), [msDataset.path])
         XCTAssertEqual(store.state.tableBrowsers[msDataset.id]?.status, .ready)
+        XCTAssertEqual(store.state.tableBrowsers[msDataset.id]?.cellWindow?.rowCount, 12)
+    }
+
+    func testTableBrowserCellWindowRequestsDoNotRebuildWholeSnapshot() throws {
+        let tableDataset = DatasetSummary(
+            id: "/data/example.table",
+            name: "example.table",
+            path: "/data/example.table",
+            kind: .table,
+            size: "12 rows, 3 columns",
+            units: "Jy, Hz, seconds",
+            columns: ["TIME", "DATA", "FLAG"],
+            subtables: [],
+            shape: [12],
+            notes: "Recognized by Rust probe."
+        )
+        let tableClient = StubTableBrowserClient(snapshot: makeTableBrowserSnapshot(path: tableDataset.path))
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [tableDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            tableBrowserClient: tableClient
+        )
+
+        store.openProject(path: "/data")
+        store.openDatasetTableBrowser(tableDataset.id)
+        let snapshotRequestCount = tableClient.requests.count
+
+        store.requestTableBrowserCellWindow(
+            rowStart: 8,
+            rowLimit: 32,
+            columnStart: 2,
+            columnLimit: 12,
+            datasetID: tableDataset.id
+        )
+
+        XCTAssertEqual(tableClient.requests.count, snapshotRequestCount)
+        XCTAssertEqual(tableClient.cellWindowRequests.last?.rowStart, 8)
+        XCTAssertEqual(tableClient.cellWindowRequests.last?.columnStart, 2)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.cellWindow?.rowStart, 8)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.cellWindow?.columnStart, 2)
     }
 
     func testSelectedSubtableOpensInNewTableBrowserTab() throws {
@@ -1922,10 +1968,13 @@ private final class StubTableBrowserClient: TableBrowserClient {
 
     private(set) var paths: [String] = []
     private(set) var requests: [Request] = []
+    private(set) var cellWindowRequests: [TableBrowserCellWindowRequest] = []
     var snapshot: TableBrowserSnapshot
+    var cellWindow: TableBrowserCellWindowSnapshot
 
-    init(snapshot: TableBrowserSnapshot) {
+    init(snapshot: TableBrowserSnapshot, cellWindow: TableBrowserCellWindowSnapshot? = nil) {
         self.snapshot = snapshot
+        self.cellWindow = cellWindow ?? makeTableBrowserCellWindow(path: snapshot.tablePath)
     }
 
     func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot {
@@ -1935,6 +1984,15 @@ private final class StubTableBrowserClient: TableBrowserClient {
         nextSnapshot.view = request.selectedView
         nextSnapshot.focus = request.focus
         return nextSnapshot
+    }
+
+    func buildCellWindow(request: TableBrowserCellWindowRequest) throws -> TableBrowserCellWindowSnapshot {
+        cellWindowRequests.append(request)
+        var nextWindow = cellWindow
+        nextWindow.tablePath = request.datasetPath
+        nextWindow.rowStart = request.rowStart
+        nextWindow.columnStart = request.columnStart
+        return nextWindow
     }
 }
 
@@ -2082,6 +2140,33 @@ private func makeTableBrowserSnapshot(path: String) -> TableBrowserSnapshot {
             ),
             renderedLines: ["Array Complex64[4,2]", "Unit: Jy"]
         )
+    )
+}
+
+private func makeTableBrowserCellWindow(path: String) -> TableBrowserCellWindowSnapshot {
+    TableBrowserCellWindowSnapshot(
+        tablePath: path,
+        rowCount: 12,
+        columnCount: 3,
+        rowStart: 0,
+        columnStart: 0,
+        columns: [
+            TableBrowserCellWindowSnapshot.Column(index: 0, name: "TIME", header: "TIME<f64>[s]", summary: "Scalar Float64", width: 14),
+            TableBrowserCellWindowSnapshot.Column(index: 1, name: "DATA", header: "DATA<c64[4x2]>", summary: "Array<Complex64> fixed", width: 20),
+            TableBrowserCellWindowSnapshot.Column(index: 2, name: "FLAG", header: "FLAG<bool>", summary: "Scalar Bool", width: 10)
+        ],
+        rows: [
+            TableBrowserCellWindowSnapshot.Row(index: 0, cells: [
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 0, display: "0.0", defined: true),
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 1, display: "[1+0i, ...]", defined: true),
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 2, display: "false", defined: true)
+            ]),
+            TableBrowserCellWindowSnapshot.Row(index: 1, cells: [
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 0, display: "1.0", defined: true),
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 1, display: "[1+1i, ...]", defined: true),
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 2, display: "false", defined: true)
+            ])
+        ]
     )
 }
 

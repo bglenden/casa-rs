@@ -368,12 +368,22 @@ struct DatasetExplorerPanel: View {
             if let snapshot = browserState?.snapshot {
                 TableBrowserSnapshotView(
                     snapshot: snapshot,
+                    cellWindow: browserState?.cellWindow,
                     selectMainItem: { index in store.selectTableBrowserMainItem(index: index, datasetID: dataset.id) },
                     selectCell: { rowIndex, selectedVisibleColumn, targetVisibleColumn in
                         store.selectTableBrowserVisibleCell(
                             rowIndex: rowIndex,
                             selectedVisibleColumn: selectedVisibleColumn,
                             targetVisibleColumn: targetVisibleColumn,
+                            datasetID: dataset.id
+                        )
+                    },
+                    requestCellWindow: { rowStart, rowLimit, columnStart, columnLimit in
+                        store.requestTableBrowserCellWindow(
+                            rowStart: rowStart,
+                            rowLimit: rowLimit,
+                            columnStart: columnStart,
+                            columnLimit: columnLimit,
                             datasetID: dataset.id
                         )
                     },
@@ -2117,8 +2127,10 @@ func tableBrowserAddressSummary(_ address: TableBrowserSnapshot.SelectedAddress?
 
 private struct TableBrowserSnapshotView: View {
     let snapshot: TableBrowserSnapshot
+    let cellWindow: TableBrowserCellWindowSnapshot?
     let selectMainItem: (Int) -> Void
     let selectCell: (_ rowIndex: Int?, _ selectedVisibleColumn: Int?, _ targetVisibleColumn: Int?) -> Void
+    let requestCellWindow: (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
     let openSelectedSubtable: () -> Void
 
     var body: some View {
@@ -2138,8 +2150,10 @@ private struct TableBrowserSnapshotView: View {
 
             TableBrowserMainPane(
                 snapshot: snapshot,
+                cellWindow: cellWindow,
                 selectMainItem: selectMainItem,
                 selectCell: selectCell,
+                requestCellWindow: requestCellWindow,
                 openSelectedSubtable: openSelectedSubtable
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -2160,8 +2174,10 @@ private struct TableBrowserSnapshotView: View {
 
 private struct TableBrowserMainPane: View {
     let snapshot: TableBrowserSnapshot
+    let cellWindow: TableBrowserCellWindowSnapshot?
     let selectMainItem: (Int) -> Void
     let selectCell: (_ rowIndex: Int?, _ selectedVisibleColumn: Int?, _ targetVisibleColumn: Int?) -> Void
+    let requestCellWindow: (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
     let openSelectedSubtable: () -> Void
 
     var body: some View {
@@ -2180,10 +2196,20 @@ private struct TableBrowserMainPane: View {
                     openSelectedSubtable: openSelectedSubtable
                 )
             default:
-                TableBrowserCellsGrid(
-                    table: TableBrowserRenderedCellTable(lines: mainLines),
-                    selectCell: selectCell
-                )
+                if let cellWindow {
+                    TableBrowserNativeCellsGrid(
+                        grid: cellWindow,
+                        selectedRow: snapshot.verticalMetrics?.selectedIndex,
+                        selectedColumn: snapshot.horizontalMetrics?.selectedIndex,
+                        selectCell: selectCell,
+                        requestCellWindow: requestCellWindow
+                    )
+                } else {
+                    TableBrowserCellsGrid(
+                        table: TableBrowserRenderedCellTable(lines: mainLines),
+                        selectCell: selectCell
+                    )
+                }
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -2274,6 +2300,306 @@ private struct TableBrowserRenderedCell: Equatable {
         text = trimmed
             .replacingOccurrences(of: ">", with: "")
             .replacingOccurrences(of: "<", with: "")
+    }
+}
+
+private struct TableBrowserNativeCellsGrid: NSViewRepresentable {
+    let grid: TableBrowserCellWindowSnapshot
+    let selectedRow: Int?
+    let selectedColumn: Int?
+    let selectCell: (_ rowIndex: Int?, _ selectedVisibleColumn: Int?, _ targetVisibleColumn: Int?) -> Void
+    let requestCellWindow: (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            grid: grid,
+            selectedRow: selectedRow,
+            selectedColumn: selectedColumn,
+            selectCell: selectCell,
+            requestCellWindow: requestCellWindow
+        )
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = false
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .windowBackgroundColor
+
+        let tableView = NSTableView()
+        tableView.headerView = NSTableHeaderView()
+        tableView.usesAlternatingRowBackgroundColors = false
+        tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
+        tableView.rowHeight = 24
+        tableView.allowsColumnResizing = true
+        tableView.allowsColumnReordering = false
+        tableView.allowsMultipleSelection = false
+        tableView.allowsEmptySelection = true
+        tableView.columnAutoresizingStyle = .noColumnAutoresizing
+        tableView.dataSource = context.coordinator
+        tableView.delegate = context.coordinator
+        scrollView.documentView = tableView
+
+        context.coordinator.tableView = tableView
+        context.coordinator.attach(to: scrollView)
+        context.coordinator.syncColumns()
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.grid = grid
+        context.coordinator.selectedRow = selectedRow
+        context.coordinator.selectedColumn = selectedColumn
+        context.coordinator.selectCell = selectCell
+        context.coordinator.requestCellWindow = requestCellWindow
+        context.coordinator.syncColumns()
+        context.coordinator.tableView?.reloadData()
+        context.coordinator.restoreSelection()
+        context.coordinator.requestVisibleWindowIfNeeded()
+    }
+
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        var grid: TableBrowserCellWindowSnapshot
+        var selectedRow: Int?
+        var selectedColumn: Int?
+        var selectCell: (_ rowIndex: Int?, _ selectedVisibleColumn: Int?, _ targetVisibleColumn: Int?) -> Void
+        var requestCellWindow: (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
+        weak var tableView: NSTableView?
+        private weak var scrollView: NSScrollView?
+        private var lastColumnIDs: [String] = []
+        private var lastRequestedWindow: String?
+        private let cellIdentifier = NSUserInterfaceItemIdentifier("TableBrowserCell")
+
+        init(
+            grid: TableBrowserCellWindowSnapshot,
+            selectedRow: Int?,
+            selectedColumn: Int?,
+            selectCell: @escaping (_ rowIndex: Int?, _ selectedVisibleColumn: Int?, _ targetVisibleColumn: Int?) -> Void,
+            requestCellWindow: @escaping (_ rowStart: Int, _ rowLimit: Int, _ columnStart: Int, _ columnLimit: Int) -> Void
+        ) {
+            self.grid = grid
+            self.selectedRow = selectedRow
+            self.selectedColumn = selectedColumn
+            self.selectCell = selectCell
+            self.requestCellWindow = requestCellWindow
+        }
+
+        func attach(to scrollView: NSScrollView) {
+            detach()
+            self.scrollView = scrollView
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(boundsDidChange(_:)),
+                name: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView
+            )
+        }
+
+        func detach() {
+            if let scrollView {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: NSView.boundsDidChangeNotification,
+                    object: scrollView.contentView
+                )
+            }
+            scrollView = nil
+        }
+
+        func syncColumns() {
+            guard let tableView else {
+                return
+            }
+            let desiredIDs = ["row"] + grid.columns.map { "column-\($0.index)" }
+            guard desiredIDs != lastColumnIDs else {
+                updateColumnMetrics(tableView)
+                return
+            }
+            for column in tableView.tableColumns {
+                tableView.removeTableColumn(column)
+            }
+
+            let rowColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("row"))
+            rowColumn.title = "Row"
+            rowColumn.width = 72
+            rowColumn.minWidth = 56
+            rowColumn.maxWidth = 120
+            tableView.addTableColumn(rowColumn)
+
+            for column in grid.columns {
+                let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("column-\(column.index)"))
+                tableColumn.title = column.header
+                tableColumn.width = columnWidth(for: column)
+                tableColumn.minWidth = 72
+                tableColumn.maxWidth = 420
+                tableColumn.headerToolTip = "\(column.name): \(column.summary)"
+                tableView.addTableColumn(tableColumn)
+            }
+            lastColumnIDs = desiredIDs
+        }
+
+        private func updateColumnMetrics(_ tableView: NSTableView) {
+            guard tableView.tableColumns.count == grid.columns.count + 1 else {
+                return
+            }
+            for column in grid.columns {
+                let tableIndex = column.index + 1
+                guard tableIndex < tableView.tableColumns.count else {
+                    continue
+                }
+                let tableColumn = tableView.tableColumns[tableIndex]
+                tableColumn.title = column.header
+                tableColumn.headerToolTip = "\(column.name): \(column.summary)"
+            }
+        }
+
+        private func columnWidth(for column: TableBrowserCellWindowSnapshot.Column) -> CGFloat {
+            CGFloat(min(max(column.width, 8), 40)) * 8.0 + 28.0
+        }
+
+        func numberOfRows(in tableView: NSTableView) -> Int {
+            grid.rowCount
+        }
+
+        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+            guard let tableColumn else {
+                return nil
+            }
+            requestWindowFor(row: row, tableColumn: tableColumn)
+            let cellView = tableView.makeView(withIdentifier: cellIdentifier, owner: self) as? NSTableCellView
+                ?? makeCellView()
+            cellView.textField?.stringValue = displayValue(for: tableColumn, row: row)
+            cellView.textField?.alignment = tableColumn.identifier.rawValue == "row" ? .right : .left
+            cellView.toolTip = cellView.textField?.stringValue
+            return cellView
+        }
+
+        func tableViewSelectionDidChange(_ notification: Notification) {
+            guard let tableView else {
+                return
+            }
+            let row = tableView.selectedRow
+            guard row >= 0 else {
+                return
+            }
+            let clickedColumn = tableView.clickedColumn
+            let targetColumn = clickedColumn > 0 ? clickedColumn - 1 : selectedColumn
+            selectCell(row, selectedColumn, targetColumn)
+        }
+
+        func restoreSelection() {
+            guard let tableView, let selectedRow, selectedRow >= 0, selectedRow < grid.rowCount else {
+                return
+            }
+            if tableView.selectedRow != selectedRow {
+                tableView.selectRowIndexes(IndexSet(integer: selectedRow), byExtendingSelection: false)
+            }
+        }
+
+        @objc private func boundsDidChange(_ notification: Notification) {
+            requestVisibleWindowIfNeeded()
+        }
+
+        func requestVisibleWindowIfNeeded() {
+            guard let tableView else {
+                return
+            }
+            let visibleRect = tableView.visibleRect
+            let visibleRows = tableView.rows(in: visibleRect)
+            guard visibleRows.location != NSNotFound, visibleRows.length > 0 else {
+                return
+            }
+            let visibleColumns = tableView.columnIndexes(in: visibleRect)
+                .filter { $0 > 0 }
+                .map { $0 - 1 }
+            let firstColumn = visibleColumns.min() ?? 0
+            let lastColumn = visibleColumns.max() ?? firstColumn
+            let rowStart = max(0, visibleRows.location - 32)
+            let rowLimit = max(visibleRows.length + 64, 96)
+            let columnStart = max(0, firstColumn - 4)
+            let columnLimit = max(lastColumn - firstColumn + 1 + 8, 24)
+            requestWindowIfNeeded(
+                rowStart: rowStart,
+                rowLimit: rowLimit,
+                columnStart: columnStart,
+                columnLimit: columnLimit
+            )
+        }
+
+        private func requestWindowFor(row: Int, tableColumn: NSTableColumn) {
+            let columnIndex = columnIndex(for: tableColumn)
+            guard row >= 0, let columnIndex else {
+                return
+            }
+            if grid.cell(row: row, column: columnIndex) == nil {
+                requestWindowIfNeeded(
+                    rowStart: max(0, row - 32),
+                    rowLimit: 96,
+                    columnStart: max(0, columnIndex - 4),
+                    columnLimit: 24
+                )
+            }
+        }
+
+        private func requestWindowIfNeeded(rowStart: Int, rowLimit: Int, columnStart: Int, columnLimit: Int) {
+            if grid.contains(rowStart: rowStart, rowLimit: rowLimit, columnStart: columnStart, columnLimit: columnLimit) {
+                lastRequestedWindow = nil
+                return
+            }
+            let key = "\(rowStart):\(rowLimit):\(columnStart):\(columnLimit)"
+            guard key != lastRequestedWindow else {
+                return
+            }
+            lastRequestedWindow = key
+            DispatchQueue.main.async { [weak self] in
+                self?.requestCellWindow(rowStart, rowLimit, columnStart, columnLimit)
+            }
+        }
+
+        private func columnIndex(for tableColumn: NSTableColumn) -> Int? {
+            let value = tableColumn.identifier.rawValue
+            guard value.hasPrefix("column-") else {
+                return nil
+            }
+            return Int(value.dropFirst("column-".count))
+        }
+
+        private func displayValue(for tableColumn: NSTableColumn, row: Int) -> String {
+            if tableColumn.identifier.rawValue == "row" {
+                return String(row)
+            }
+            guard let columnIndex = columnIndex(for: tableColumn) else {
+                return ""
+            }
+            return grid.cell(row: row, column: columnIndex)?.display ?? ""
+        }
+
+        private func makeCellView() -> NSTableCellView {
+            let cellView = NSTableCellView()
+            cellView.identifier = cellIdentifier
+            let textField = NSTextField(labelWithString: "")
+            textField.translatesAutoresizingMaskIntoConstraints = false
+            textField.font = NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+            textField.lineBreakMode = .byTruncatingTail
+            textField.maximumNumberOfLines = 1
+            textField.allowsDefaultTighteningForTruncation = false
+            cellView.addSubview(textField)
+            cellView.textField = textField
+            NSLayoutConstraint.activate([
+                textField.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 6),
+                textField.trailingAnchor.constraint(equalTo: cellView.trailingAnchor, constant: -6),
+                textField.centerYAnchor.constraint(equalTo: cellView.centerYAnchor)
+            ])
+            return cellView
+        }
     }
 }
 

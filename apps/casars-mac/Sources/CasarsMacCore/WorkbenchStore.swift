@@ -368,6 +368,7 @@ public struct UniFFIImageExplorerClient: ImageExplorerClient {
 
 public protocol TableBrowserClient {
     func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot
+    func buildCellWindow(request: TableBrowserCellWindowRequest) throws -> TableBrowserCellWindowSnapshot
 }
 
 public struct UniFFITableBrowserClient: TableBrowserClient {
@@ -378,6 +379,13 @@ public struct UniFFITableBrowserClient: TableBrowserClient {
         let requestJSON = String(decoding: requestData, as: UTF8.self)
         let json = try CasarsFrontendServices.buildTableBrowserSnapshotFromRequestJson(requestJson: requestJSON)
         return try JSONDecoder().decode(TableBrowserSnapshot.self, from: Data(json.utf8))
+    }
+
+    public func buildCellWindow(request: TableBrowserCellWindowRequest) throws -> TableBrowserCellWindowSnapshot {
+        let requestData = try JSONEncoder().encode(request)
+        let requestJSON = String(decoding: requestData, as: UTF8.self)
+        let json = try CasarsFrontendServices.buildTableBrowserCellWindowJson(requestJson: requestJSON)
+        return try JSONDecoder().decode(TableBrowserCellWindowSnapshot.self, from: Data(json.utf8))
     }
 }
 
@@ -1305,24 +1313,36 @@ public final class WorkbenchStore: ObservableObject {
         )
         do {
             let snapshot = try tableBrowserClient.buildSnapshot(request: browserState.snapshotRequest(datasetPath: dataset.path))
-            state.tableBrowsers[datasetID] = TableBrowserSessionState(
+            var nextState = TableBrowserSessionState(
                 datasetID: datasetID,
                 selectedView: snapshot.view,
                 focus: snapshot.focus,
                 commands: browserState.commands,
+                cellWindowRowStart: browserState.cellWindowRowStart,
+                cellWindowRowLimit: browserState.cellWindowRowLimit,
+                cellWindowColumnStart: browserState.cellWindowColumnStart,
+                cellWindowColumnLimit: browserState.cellWindowColumnLimit,
                 status: .ready,
                 lastError: nil,
-                snapshot: snapshot
+                snapshot: snapshot,
+                cellWindow: browserState.cellWindow
             )
+            refreshTableBrowserCellWindowIfNeeded(dataset: dataset, browserState: &nextState)
+            state.tableBrowsers[datasetID] = nextState
         } catch {
             state.tableBrowsers[datasetID] = TableBrowserSessionState(
                 datasetID: datasetID,
                 selectedView: browserState.selectedView,
                 focus: browserState.focus,
                 commands: browserState.commands,
+                cellWindowRowStart: browserState.cellWindowRowStart,
+                cellWindowRowLimit: browserState.cellWindowRowLimit,
+                cellWindowColumnStart: browserState.cellWindowColumnStart,
+                cellWindowColumnLimit: browserState.cellWindowColumnLimit,
                 status: .failed,
                 lastError: "\(error)",
-                snapshot: nil
+                snapshot: nil,
+                cellWindow: browserState.cellWindow
             )
             state.lastErrors.append("Open table browser for \(dataset.name): \(error)")
         }
@@ -1621,6 +1641,30 @@ public final class WorkbenchStore: ObservableObject {
         refreshTableBrowser(datasetID: datasetID)
     }
 
+    public func requestTableBrowserCellWindow(
+        rowStart: Int,
+        rowLimit: Int,
+        columnStart: Int,
+        columnLimit: Int,
+        datasetID: String
+    ) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        guard canBrowseAsTable(dataset) else {
+            state.lastErrors.append("Dataset \(dataset.name) is not a casacore table")
+            return
+        }
+        var browserState = tableBrowserState(datasetID: datasetID)
+        browserState.cellWindowRowStart = max(0, rowStart)
+        browserState.cellWindowRowLimit = max(1, min(rowLimit, 512))
+        browserState.cellWindowColumnStart = max(0, columnStart)
+        browserState.cellWindowColumnLimit = max(1, min(columnLimit, 128))
+        refreshTableBrowserCellWindowIfNeeded(dataset: dataset, browserState: &browserState, force: true)
+        state.tableBrowsers[datasetID] = browserState
+    }
+
     public func openSelectedTableBrowserSubtable(datasetID: String) {
         guard let snapshot = state.tableBrowsers[datasetID]?.snapshot,
               snapshot.selectedAddress?.kind == "subtable",
@@ -1877,6 +1921,35 @@ public final class WorkbenchStore: ObservableObject {
 
     private func canBrowseAsTable(_ dataset: DatasetSummary) -> Bool {
         dataset.kind == .measurementSet || dataset.kind == .table || dataset.kind == .calibrationTable
+    }
+
+    private func refreshTableBrowserCellWindowIfNeeded(
+        dataset: DatasetSummary,
+        browserState: inout TableBrowserSessionState,
+        force: Bool = false
+    ) {
+        guard browserState.selectedView == "cells" || browserState.snapshot?.view == "cells" else {
+            browserState.cellWindow = nil
+            return
+        }
+        let request = browserState.cellWindowRequest(datasetPath: dataset.path)
+        if !force,
+           browserState.cellWindow?.contains(
+               rowStart: request.rowStart,
+               rowLimit: request.rowLimit,
+               columnStart: request.columnStart,
+               columnLimit: request.columnLimit
+           ) == true
+        {
+            return
+        }
+        do {
+            browserState.cellWindow = try tableBrowserClient.buildCellWindow(request: request)
+            browserState.lastError = nil
+        } catch {
+            browserState.lastError = "\(error)"
+            state.lastErrors.append("Load table cells for \(dataset.name): \(error)")
+        }
     }
 
     private func tableBrowserState(datasetID: String) -> TableBrowserSessionState {
