@@ -1,6 +1,6 @@
 # Wave 6 Issue 175 VLA Imaging
 
-Verification: `cargo test -p casa-imaging mtmfs --lib`; `cargo test -p casars-imager pblimit --lib`; `cargo test -p casars-imager primary_beam --lib`; `cargo test -p casars-imager mtmfs --lib`; `cargo test -p casars-imager merge_prepared_inputs_appends_mfs_visibility_and_mosaic_metadata --lib`; `cargo test -p casars-imager mfs_spectral_coordinate_can_record_selected_bandwidth_delta --lib`; `cargo test -p casars-imager outlier_file_request_accepts_vla_imaging_multiscale_modelcolumn_slice --lib`; `cargo test -p casa-images image_analysis_task_dispatch_roundtrips_real_image_products --lib`; `PYTHONPATH=crates/casars-python/python python -m pytest crates/casars-python/python/tests/test_image_analysis.py -q`; `cargo build --release -p casars-imager --bin casars-imager -p casa-images --bin immath -p casa-images --bin imexplore`; reduced CASA/Rust MT-MFS multiscale W-projection smoke on `SNR_G55_10s.calib.ms`; full all-SPW `1280x1280` CASA/Rust dirty MT-MFS W-projection comparison on `SNR_G55_10s.calib.ms`.
+Verification: `cargo test -p casa-imaging mtmfs --lib`; `cargo test -p casa-imaging evla_primary_beam_uses_casa_sampled_radius_lookup --lib`; `cargo test -p casars-imager pblimit --lib`; `cargo test -p casars-imager primary_beam --lib`; `cargo test -p casars-imager mtmfs --lib`; `cargo test -p casars-imager merge_prepared_inputs_appends_mfs_visibility_and_mosaic_metadata --lib`; `cargo test -p casars-imager mfs_spectral_coordinate_can_record_selected_bandwidth_delta --lib`; `cargo test -p casars-imager outlier_file_request_accepts_vla_imaging_multiscale_modelcolumn_slice --lib`; `cargo test -p casa-images image_analysis_task_dispatch_roundtrips_real_image_products --lib`; `PYTHONPATH=crates/casars-python/python python -m pytest crates/casars-python/python/tests/test_image_analysis.py -q`; `cargo build --release -p casars-imager --bin casars-imager -p casa-images --bin immath -p casa-images --bin imexplore`; reduced CASA/Rust MT-MFS multiscale W-projection smoke on `SNR_G55_10s.calib.ms`; full all-SPW `1280x1280` CASA/Rust dirty MT-MFS W-projection comparison on `SNR_G55_10s.calib.ms`.
 
 ## Scope
 
@@ -35,11 +35,12 @@ The registry key is `vla/imaging/calibrated-ms`.
 `casars-imager` now accepts the guide's negative `pblimit` policy, writes
 single-field `.pb` products for the VLA imaging paths, and writes PB-corrected
 regular and MT-MFS products when requested. For MT-MFS W-projection, the
-single-field PB product follows CASA's `SimplePBConvFunc` path closely enough
-for the guide's EVLA L-band case: `.pb.tt0` is the EVLA polynomial power
-response at the MT-MFS reference frequency, negative `pblimit` keeps the PB
-sidecar unmasked while PB-corrected images still apply the absolute cutoff, and
-`.image.ttN.pbcor` is written for every Taylor term. MT-MFS now supports the
+single-field PB product follows CASA's `SimplePBConvFunc` path for the guide's
+EVLA L-band case: `.pb.tt0` is the EVLA polynomial power response evaluated via
+CASA's 10,000-sample integer-truncated radial lookup, at the image spectral
+coordinate frequency and around the pointing pixel. Negative `pblimit` keeps
+the PB sidecar unmasked while PB-corrected images still apply the absolute
+cutoff, and `.image.ttN.pbcor` is written for every Taylor term. MT-MFS now supports the
 tutorial combination of multiscale terms and W-projection, computes all-SPW
 Taylor weights from the merged LSRK reference frequency, persists the one-plane
 MT-MFS spectral axis with CASA-style selected-bandwidth `cdelt`, and
@@ -92,14 +93,21 @@ Current full same-parameter dirty MT-MFS W-projection comparison, all SPWs,
 | Product / mask | Pixels | Correlation | RMS diff | p95 frac of CASA peak | Max frac of CASA peak |
 |---|---:|---:|---:|---:|---:|
 | `.image.tt0`, `abs(CASA) > 1% peak` | `69310` | `0.999981349828415` | `1.725756780364063e-06` | `0.00043303238811617936` | `0.004239727393551368` |
-| `.pb.tt0`, `CASA PB > 0.1` | `86733` | `0.9999999375031747` | `0.00041545340147570547` | `0.0005521476268768311` | `0.0005899369716644287` |
-| `.image.tt0.pbcor`, source and `PB > 0.1` | `6323` | `0.9999989319908296` | `9.53794574319806e-06` | `0.00025242973066096574` | `0.003320468950729661` |
-| `.image.tt0.pbcor`, source and `PB > 0.02` | `20416` | `0.9999603912173918` | `2.8920676873134515e-05` | `0.0011082318289550197` | `0.014704124816080147` |
+| `.pb.tt0`, `CASA PB > 0.1` | `86733` | `0.9999999999907654` | `1.107249566379e-06` | `0.0` | `0.00011529028415679932` |
+| `.image.tt0.pbcor`, source and `PB > 0.1` | `6340` | `0.9999991686925678` | `4.14079894965808e-06` | `0.00017737779658010694` | `0.00041169352089508057` |
+| `.image.tt0.pbcor`, source and `PB > 0.02` | `20538` | `0.9999719656906548` | `1.940113160139551e-05` | `0.0008128347040230116` | `0.0030550250062175897` |
 
-The PB-corrected high-tail residuals are in low-PB/noise-dominated regions.
-On the bright source support with `PB > 0.1`, the p95 PB-corrected residual is
-`0.025%` of the CASA peak and the max is `0.332%`. Relaxing to `PB > 0.02`
-raises the max to `1.47%` at the low-PB edge, while p95 remains `0.111%`.
+The earlier `.pb.tt0` comparison exposed a coherent negative annulus. Source
+inspection traced it to two CASA details that casa-rs now mirrors: PBMath uses
+an integer-truncated sampled radial table rather than direct polynomial
+evaluation, and single-field PB products use the output image spectral
+coordinate rather than a sample-derived weighted PB frequency. After that fix,
+the mid-radius PB annulus is gone: the worst radial mean residual is
+`-1.8014106899499894e-07` PB units. The remaining PB max residual is an edge
+pixel near the cutoff. On the bright source support with `PB > 0.1`, the p95
+PB-corrected residual is `0.0177%` of the CASA peak and the max is `0.0412%`.
+Relaxing to `PB > 0.02` raises the max to `0.306%` at the low-PB edge, while
+p95 remains `0.0813%`.
 
 The MT-MFS spectral axis now uses the CASA LSRK reference value and selected
 bandwidth. CASA writes `crval=1578964191.6475568 Hz`,
@@ -111,9 +119,9 @@ Full dirty wall times:
 | Engine | Wall time |
 |---|---:|
 | CASA C++ | `132.44 s` |
-| casa-rs | `245.82 s` |
+| casa-rs | `229.53 s` |
 
 Full comparison artifacts:
 
-- Metrics: `target/issue175-evidence/full-mtmfs-wproj-dirty-rust-pbfix11/comparison-fractional.json`
-- Figures: `target/issue175-evidence/full-mtmfs-wproj-dirty-rust-pbfix11/figures/`
+- Metrics: `target/issue175-evidence/full-mtmfs-wproj-dirty-rust-pbfix13/comparison-fractional.json`
+- Figures: `target/issue175-evidence/full-mtmfs-wproj-dirty-rust-pbfix13/figures/`

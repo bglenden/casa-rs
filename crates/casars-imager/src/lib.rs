@@ -17,8 +17,8 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use casa_coordinates::{
-    CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate,
-    StokesCoordinate, StokesType,
+    CoordinateSystem, CoordinateType, DirectionCoordinate, Projection, ProjectionType,
+    SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
 use casa_imaging::{
@@ -9995,6 +9995,14 @@ struct PrimaryBeamProductContext {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct PrimaryBeamPlaneGeometry {
+    pointing_x_pixel: f64,
+    pointing_y_pixel: f64,
+    increment_x_rad: f64,
+    increment_y_rad: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct PrimaryBeamWeightSample {
     frequency_hz: f64,
     weight: f32,
@@ -10015,6 +10023,51 @@ fn single_field_primary_beam_context(
     })
 }
 
+fn primary_beam_plane_geometry(
+    coords: &CoordinateSystem,
+    context: PrimaryBeamProductContext,
+) -> Result<PrimaryBeamPlaneGeometry, String> {
+    let mut pixel_axis_offset = 0usize;
+    let mut direction_coordinate_index = None;
+    for coordinate_index in 0..coords.n_coordinates() {
+        let coordinate = coords.coordinate(coordinate_index);
+        if coordinate.coordinate_type() == CoordinateType::Direction {
+            direction_coordinate_index = Some((coordinate_index, pixel_axis_offset));
+            break;
+        }
+        pixel_axis_offset += coordinate.n_pixel_axes();
+    }
+    let (direction_coordinate_index, pixel_axis_offset) = direction_coordinate_index
+        .ok_or_else(|| "primary-beam product requires a direction coordinate".to_string())?;
+    if pixel_axis_offset != 0 {
+        return Err("primary-beam product requires direction pixel axes first".to_string());
+    }
+    let direction_coordinate = coords.coordinate(direction_coordinate_index);
+    let pointing_pixel = direction_coordinate
+        .to_pixel(&context.phase_center_direction_rad)
+        .map_err(|error| format!("convert PB pointing direction to pixel: {error}"))?;
+    let increments = direction_coordinate.increment();
+    if pointing_pixel.len() < 2 || increments.len() < 2 {
+        return Err("primary-beam direction coordinate must have two axes".to_string());
+    }
+    Ok(PrimaryBeamPlaneGeometry {
+        pointing_x_pixel: pointing_pixel[0],
+        pointing_y_pixel: pointing_pixel[1],
+        increment_x_rad: increments[0],
+        increment_y_rad: increments[1],
+    })
+}
+
+fn primary_beam_radius_rad_from_plane(
+    geometry: PrimaryBeamPlaneGeometry,
+    x: usize,
+    y: usize,
+) -> f64 {
+    let dx = geometry.increment_x_rad * (x as f64 - geometry.pointing_x_pixel);
+    let dy = geometry.increment_y_rad * (y as f64 - geometry.pointing_y_pixel);
+    (dx * dx + dy * dy).sqrt()
+}
+
 fn single_field_primary_beam_product(
     coords: &CoordinateSystem,
     shape: (usize, usize, usize, usize),
@@ -10027,6 +10080,7 @@ fn single_field_primary_beam_product(
     if pixel_axis_count < 2 {
         return Err("primary-beam product requires at least two direction pixel axes".to_string());
     }
+    let plane_geometry = primary_beam_plane_geometry(coords, context)?;
     let fallback_frequency_hz = channel_frequencies_hz
         .iter()
         .copied()
@@ -10040,26 +10094,9 @@ fn single_field_primary_beam_product(
             .copied()
             .filter(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
             .unwrap_or(fallback_frequency_hz);
-        let mut pixel = vec![0.0; pixel_axis_count];
-        if pixel_axis_count > 3 {
-            pixel[3] = channel_index as f64;
-        }
         for x in 0..nx {
-            pixel[0] = x as f64;
             for y in 0..ny {
-                pixel[1] = y as f64;
-                let world = coords
-                    .to_world(&pixel)
-                    .map_err(|error| format!("convert PB pixel ({x}, {y}) to world: {error}"))?;
-                if world.len() < 2 {
-                    return Err(
-                        "primary-beam product requires two direction world axes".to_string()
-                    );
-                }
-                let radius_rad = direction_separation_rad(
-                    [world[0], world[1]],
-                    context.phase_center_direction_rad,
-                );
+                let radius_rad = primary_beam_radius_rad_from_plane(plane_geometry, x, y);
                 let value = primary_beam_voltage_pattern(
                     context.primary_beam_model,
                     radius_rad,
@@ -10078,30 +10115,18 @@ fn single_field_primary_beam_product(
 fn single_field_weighted_primary_beam_product(
     coords: &CoordinateSystem,
     shape: (usize, usize, usize, usize),
+    channel_frequencies_hz: &[f64],
     samples: &[PrimaryBeamWeightSample],
     context: PrimaryBeamProductContext,
 ) -> Result<Array4<f32>, String> {
     let usable_samples = collapse_primary_beam_weight_samples(samples);
-    let min_frequency_hz = usable_samples
-        .iter()
-        .map(|sample| sample.frequency_hz)
-        .filter(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
-        .reduce(f64::min)
-        .ok_or_else(|| {
+    if usable_samples.is_empty() {
+        return Err(
             "weighted primary-beam product requires at least one finite positive weighted sample"
-                .to_string()
-        })?;
-    let max_frequency_hz = usable_samples
-        .iter()
-        .map(|sample| sample.frequency_hz)
-        .filter(|frequency_hz| frequency_hz.is_finite() && *frequency_hz > 0.0)
-        .reduce(f64::max)
-        .ok_or_else(|| {
-            "weighted primary-beam product requires at least one finite positive weighted sample"
-                .to_string()
-        })?;
-    let reference_frequency_hz = 0.5 * (min_frequency_hz + max_frequency_hz);
-    single_field_primary_beam_product(coords, shape, &[reference_frequency_hz], context)
+                .to_string(),
+        );
+    }
+    single_field_primary_beam_product(coords, shape, channel_frequencies_hz, context)
 }
 
 fn collapse_primary_beam_weight_samples(
@@ -10164,28 +10189,12 @@ fn normalized_weighted_primary_beam_product(
         return Err("weighted primary-beam product has non-positive total weight".to_string());
     }
 
+    let plane_geometry = primary_beam_plane_geometry(coords, context)?;
     let mut peak = 0.0f32;
     for channel_index in 0..nchan {
-        let mut pixel = vec![0.0; pixel_axis_count];
-        if pixel_axis_count > 3 {
-            pixel[3] = channel_index as f64;
-        }
         for x in 0..nx {
-            pixel[0] = x as f64;
             for y in 0..ny {
-                pixel[1] = y as f64;
-                let world = coords.to_world(&pixel).map_err(|error| {
-                    format!("convert weighted PB pixel ({x}, {y}) to world: {error}")
-                })?;
-                if world.len() < 2 {
-                    return Err(
-                        "primary-beam product requires two direction world axes".to_string()
-                    );
-                }
-                let radius_rad = direction_separation_rad(
-                    [world[0], world[1]],
-                    context.phase_center_direction_rad,
-                );
+                let radius_rad = primary_beam_radius_rad_from_plane(plane_geometry, x, y);
                 let weighted_power = usable_samples
                     .iter()
                     .map(|sample| {
@@ -10407,6 +10416,7 @@ fn write_products(
                 single_field_weighted_primary_beam_product(
                     coords,
                     image_tt0.dim(),
+                    channel_frequencies_hz,
                     &products.primary_beam_weight_samples,
                     context,
                 )?
@@ -16655,7 +16665,7 @@ mod tests {
     }
 
     #[test]
-    fn single_field_weighted_primary_beam_uses_reference_frequency() {
+    fn single_field_weighted_primary_beam_uses_image_spectral_frequency() {
         let coords = build_coordinate_system(CoordinateSystemBuild {
             imsize: 5,
             phase_center: [1.0, 0.5],
@@ -16678,6 +16688,7 @@ mod tests {
         let selected = single_field_weighted_primary_beam_product(
             &coords,
             (5, 5, 1, 1),
+            &[1.5e9],
             &[
                 PrimaryBeamWeightSample {
                     frequency_hz: 1.0e9,

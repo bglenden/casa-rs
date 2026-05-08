@@ -2143,14 +2143,18 @@ fn evla_common_voltage_pattern(radius_rad: f64, frequency_hz: f64) -> f32 {
     {
         return 0.0;
     }
-    // Mirror CASA PBMath1DEVLA::nearestVPArray() + PBMath1DPoly::fillPBArray()
-    // for the EVLA common-PB model used by the current EVLA mosaic gates.
+    // Mirror CASA PBMath1DEVLA::nearestVPArray(), PBMath1DPoly::fillPBArray(),
+    // and PBMath1D::apply(): CASA samples 10,000 voltage-pattern entries and
+    // then uses integer-truncated radial lookup when applying the image PB.
     let coefficients = nearest_evla_common_coefficients(frequency_hz * 1.0e-6);
     let radius_arcmin_ghz = radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9);
     if radius_arcmin_ghz > 58.0 {
         return 0.0;
     }
-    let x2 = radius_arcmin_ghz * radius_arcmin_ghz;
+    let inverse_increment_radius = 9_999.0 / 58.0;
+    let sample_index = (radius_arcmin_ghz * inverse_increment_radius).floor();
+    let sampled_radius_arcmin_ghz = sample_index / inverse_increment_radius;
+    let x2 = sampled_radius_arcmin_ghz * sampled_radius_arcmin_ghz;
     let mut taper = 0.0f64;
     let mut power = 1.0f64;
     for coefficient in coefficients {
@@ -6506,6 +6510,26 @@ mod tests {
             ),
             0.0
         );
+    }
+
+    #[test]
+    fn evla_primary_beam_uses_casa_sampled_radius_lookup() {
+        let frequency_hz = 1.578_964_191_647_556_8e9_f64;
+        let sample_index = 2_210.0_f64;
+        let sampled_radius_arcmin_ghz = sample_index / (9_999.0_f64 / 58.0);
+        let radius_arcmin_ghz = sampled_radius_arcmin_ghz + 0.75 / (9_999.0_f64 / 58.0);
+        let radius_rad = (radius_arcmin_ghz / 60.0_f64 / (frequency_hz / 1.0e9_f64)).to_radians();
+        let x2 = sampled_radius_arcmin_ghz * sampled_radius_arcmin_ghz;
+        let expected_power: f64 = 1.0 - 1.435e-3 * x2 + 7.54e-7 * x2 * x2 - 1.49e-10 * x2 * x2 * x2;
+        let expected_voltage = expected_power.sqrt() as f32;
+
+        let actual = super::primary_beam_voltage_pattern(
+            PrimaryBeamModel::EvlaLBandCommon,
+            radius_rad,
+            frequency_hz,
+        );
+
+        assert!((actual - expected_voltage).abs() < 1.0e-7);
     }
 
     #[test]
