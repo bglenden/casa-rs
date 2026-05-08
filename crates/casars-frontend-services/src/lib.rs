@@ -112,6 +112,15 @@ struct TableBrowserCellWindowRequest {
     column_start: u64,
     #[serde(default = "default_table_browser_cell_column_limit")]
     column_limit: u64,
+    #[serde(default)]
+    column_options: Vec<TableBrowserCellColumnDisplayOption>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TableBrowserCellColumnDisplayOption {
+    column_index: u64,
+    #[serde(default)]
+    array_inline_limit: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -132,6 +141,7 @@ struct TableBrowserCellWindowColumn {
     header: String,
     summary: String,
     width: u64,
+    keywords: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -184,7 +194,7 @@ const fn default_table_browser_inspector_height() -> u16 {
 }
 
 const fn default_table_browser_cell_row_limit() -> u64 {
-    96
+    1024
 }
 
 const fn default_table_browser_cell_column_limit() -> u64 {
@@ -1276,13 +1286,19 @@ fn build_table_browser_cell_window(
                 header,
                 summary: table_browser_cell_column_summary(table, name),
                 width: width as u64,
+                keywords: table_browser_column_keyword_lines(table, name),
             }
         })
         .collect::<Vec<_>>();
+    let column_display_options = request
+        .column_options
+        .iter()
+        .map(|option| (option.column_index, option.array_inline_limit as usize))
+        .collect::<BTreeMap<_, _>>();
 
     let row_count = table.row_count();
     let row_start = (request.row_start as usize).min(row_count);
-    let row_limit = request.row_limit.clamp(1, 512) as usize;
+    let row_limit = request.row_limit.clamp(1, 4096) as usize;
     let row_end = row_start.saturating_add(row_limit).min(row_count);
     let column_count = columns.len();
     let column_start = (request.column_start as usize).min(column_count);
@@ -1293,15 +1309,20 @@ fn build_table_browser_cell_window(
     for row_index in row_start..row_end {
         let mut cells = Vec::with_capacity(visible_columns.len());
         for column in visible_columns {
-            let (display, defined) = table_browser_cell_display(table, row_index, &column.name)
-                .map_err(|error| FrontendServiceError::TableExplorer {
-                    reason: format!(
-                        "read {} row {} column {}: {error}",
-                        table_path.display(),
-                        row_index,
-                        column.name
-                    ),
-                })?;
+            let array_inline_limit = column_display_options
+                .get(&column.index)
+                .copied()
+                .unwrap_or(0);
+            let (display, defined) =
+                table_browser_cell_display(table, row_index, &column.name, array_inline_limit)
+                    .map_err(|error| FrontendServiceError::TableExplorer {
+                        reason: format!(
+                            "read {} row {} column {}: {error}",
+                            table_path.display(),
+                            row_index,
+                            column.name
+                        ),
+                    })?;
             cells.push(TableBrowserCellWindowCell {
                 column_index: column.index,
                 display,
@@ -1375,10 +1396,22 @@ fn table_browser_cell_display(
     table: &Table,
     row_index: usize,
     name: &str,
+    array_inline_limit: usize,
 ) -> Result<(String, bool), casa_tables::TableError> {
     if let Some(column) = table.schema().and_then(|schema| schema.column(name)) {
         match column.column_type() {
             ColumnType::Array(_) => {
+                if array_inline_limit > 0
+                    && let Some(display) = table_browser_expanded_array_display(
+                        table,
+                        row_index,
+                        name,
+                        column,
+                        array_inline_limit,
+                    )?
+                {
+                    return Ok((display, true));
+                }
                 return Ok((format_table_browser_schema_array(column), true));
             }
             ColumnType::Record => {
@@ -1390,6 +1423,41 @@ fn table_browser_cell_display(
 
     let value = table.cell_accessor(row_index, name)?.value()?;
     Ok((format_table_browser_cell_value(value), value.is_some()))
+}
+
+fn table_browser_expanded_array_display(
+    table: &Table,
+    row_index: usize,
+    name: &str,
+    column: &casa_tables::ColumnSchema,
+    array_inline_limit: usize,
+) -> Result<Option<String>, casa_tables::TableError> {
+    let fixed_size = match column.column_type() {
+        ColumnType::Array(ArrayShapeContract::Fixed { shape }) => {
+            Some(shape.iter().copied().product::<usize>())
+        }
+        ColumnType::Array(ArrayShapeContract::Variable { .. }) => None,
+        ColumnType::Scalar | ColumnType::Record => return Ok(None),
+    };
+    if let Some(size) = fixed_size
+        && size > array_inline_limit
+    {
+        return Ok(None);
+    }
+    let Some(value) = table.cell_accessor(row_index, name)?.value()? else {
+        return Ok(Some("<undef>".to_string()));
+    };
+    let Value::Array(array) = value else {
+        return Ok(None);
+    };
+    if array.len() > array_inline_limit {
+        return Ok(Some(format!(
+            "array<{:?}>[{}]",
+            array.primitive_type(),
+            table_browser_shape_label(array.shape())
+        )));
+    }
+    Ok(Some(format_table_browser_array_expanded(array)))
 }
 
 fn format_table_browser_schema_array(column: &casa_tables::ColumnSchema) -> String {
@@ -1420,6 +1488,37 @@ fn table_browser_shape_label(shape: &[usize]) -> String {
         .map(|extent| extent.to_string())
         .collect::<Vec<_>>()
         .join("x")
+}
+
+fn table_browser_column_keyword_lines(table: &Table, name: &str) -> Vec<String> {
+    let Some(record) = table.column_keywords(name) else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    push_table_browser_keyword_lines(record, &[], &mut lines);
+    lines
+}
+
+fn push_table_browser_keyword_lines(
+    record: &casa_types::RecordValue,
+    prefix: &[String],
+    lines: &mut Vec<String>,
+) {
+    for field in record.fields() {
+        if matches!(field.value, Value::TableRef(_)) {
+            continue;
+        }
+        let mut path = prefix.to_vec();
+        path.push(field.name.clone());
+        match &field.value {
+            Value::Record(record) => push_table_browser_keyword_lines(record, &path, lines),
+            value => lines.push(format!(
+                "{} = {}",
+                path.join("."),
+                format_table_browser_cell_value(Some(value))
+            )),
+        }
+    }
 }
 
 fn table_browser_cell_column_type_label(column: &casa_tables::ColumnSchema) -> String {
@@ -1535,6 +1634,60 @@ fn format_table_browser_array(array: &ArrayValue) -> String {
     )
 }
 
+fn format_table_browser_array_expanded(array: &ArrayValue) -> String {
+    format!(
+        "array<{:?}>[{}] {}",
+        array.primitive_type(),
+        table_browser_shape_label(array.shape()),
+        table_browser_array_all_values(array)
+    )
+}
+
+fn table_browser_array_all_values(array: &ArrayValue) -> String {
+    match array {
+        ArrayValue::Bool(values) => {
+            table_browser_all_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::UInt8(values) => {
+            table_browser_all_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::UInt16(values) => {
+            table_browser_all_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::UInt32(values) => {
+            table_browser_all_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::Int16(values) => {
+            table_browser_all_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::Int32(values) => {
+            table_browser_all_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::Int64(values) => {
+            table_browser_all_values(values.iter().map(|value| value.to_string()))
+        }
+        ArrayValue::Float32(values) => {
+            table_browser_all_values(values.iter().map(|value| format!("{value:.4}")))
+        }
+        ArrayValue::Float64(values) => {
+            table_browser_all_values(values.iter().map(|value| format!("{value:.4}")))
+        }
+        ArrayValue::Complex32(values) => table_browser_all_values(
+            values
+                .iter()
+                .map(|value| format!("{:.3}+{:.3}i", value.re, value.im)),
+        ),
+        ArrayValue::Complex64(values) => table_browser_all_values(
+            values
+                .iter()
+                .map(|value| format!("{:.3}+{:.3}i", value.re, value.im)),
+        ),
+        ArrayValue::String(values) => {
+            table_browser_all_values(values.iter().map(|value| format!("{value:?}")))
+        }
+    }
+}
+
 fn table_browser_array_preview(array: &ArrayValue) -> String {
     match array {
         ArrayValue::Bool(values) => {
@@ -1578,6 +1731,10 @@ fn table_browser_array_preview(array: &ArrayValue) -> String {
             table_browser_preview_values(values.iter().map(|value| format!("{value:?}")))
         }
     }
+}
+
+fn table_browser_all_values(values: impl Iterator<Item = String>) -> String {
+    format!("[{}]", values.collect::<Vec<_>>().join(", "))
 }
 
 fn table_browser_preview_values(values: impl Iterator<Item = String>) -> String {
@@ -4292,6 +4449,15 @@ mod tests {
         )])
         .expect("schema");
         let mut table = Table::with_schema(schema);
+        let mut keywords = RecordValue::default();
+        keywords.upsert(
+            "MEASINFO",
+            Value::Record(RecordValue::new(vec![RecordField::new(
+                "type",
+                Value::Scalar(ScalarValue::String("visibility".to_string())),
+            )])),
+        );
+        table.set_column_keywords("DATA", keywords);
         table
             .add_row(RecordValue::new(vec![RecordField::new(
                 "DATA",
@@ -4309,7 +4475,11 @@ mod tests {
             "row_start": 0,
             "row_limit": 1,
             "column_start": 0,
-            "column_limit": 1
+            "column_limit": 1,
+            "column_options": [{
+                "column_index": 0,
+                "array_inline_limit": 4
+            }]
         })
         .to_string();
         let window_json =
@@ -4317,7 +4487,14 @@ mod tests {
         let window: serde_json::Value =
             serde_json::from_str(&window_json).expect("cell window json");
 
-        assert_eq!(window["rows"][0]["cells"][0]["display"], "array<f32>[2x2]");
+        assert_eq!(
+            window["columns"][0]["keywords"][0],
+            "MEASINFO.type = \"visibility\""
+        );
+        assert_eq!(
+            window["rows"][0]["cells"][0]["display"],
+            "array<Float32>[2x2] [1.0000, 2.0000, 3.0000, 4.0000]"
+        );
     }
 
     #[test]

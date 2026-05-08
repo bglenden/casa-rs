@@ -1654,6 +1654,42 @@ public struct TableBrowserCellWindowSnapshot: Codable, Equatable {
         public var header: String
         public var summary: String
         public var width: Int
+        public var keywords: [String]
+
+        enum CodingKeys: String, CodingKey {
+            case index
+            case name
+            case header
+            case summary
+            case width
+            case keywords
+        }
+
+        public init(
+            index: Int,
+            name: String,
+            header: String,
+            summary: String,
+            width: Int,
+            keywords: [String] = []
+        ) {
+            self.index = index
+            self.name = name
+            self.header = header
+            self.summary = summary
+            self.width = width
+            self.keywords = keywords
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            index = try container.decode(Int.self, forKey: .index)
+            name = try container.decode(String.self, forKey: .name)
+            header = try container.decode(String.self, forKey: .header)
+            summary = try container.decode(String.self, forKey: .summary)
+            width = try container.decode(Int.self, forKey: .width)
+            keywords = try container.decodeIfPresent([String].self, forKey: .keywords) ?? []
+        }
     }
 
     public struct Row: Codable, Equatable {
@@ -1830,6 +1866,7 @@ public struct TableBrowserCellWindowRequest: Codable, Equatable {
     public var rowLimit: Int
     public var columnStart: Int
     public var columnLimit: Int
+    public var columnOptions: [TableBrowserColumnDisplayOption] = []
 
     enum CodingKeys: String, CodingKey {
         case datasetPath = "dataset_path"
@@ -1837,6 +1874,17 @@ public struct TableBrowserCellWindowRequest: Codable, Equatable {
         case rowLimit = "row_limit"
         case columnStart = "column_start"
         case columnLimit = "column_limit"
+        case columnOptions = "column_options"
+    }
+}
+
+public struct TableBrowserColumnDisplayOption: Codable, Equatable {
+    public var columnIndex: Int
+    public var arrayInlineLimit: Int
+
+    enum CodingKeys: String, CodingKey {
+        case columnIndex = "column_index"
+        case arrayInlineLimit = "array_inline_limit"
     }
 }
 
@@ -1847,9 +1895,11 @@ public struct TableBrowserSessionState: Codable, Equatable {
     public var commands: [TableBrowserCommand] = []
     public var transientCommands: [TableBrowserCommand] = []
     public var cellWindowRowStart: Int = 0
-    public var cellWindowRowLimit: Int = 96
+    public var cellWindowRowLimit: Int = 1024
     public var cellWindowColumnStart: Int = 0
     public var cellWindowColumnLimit: Int = 24
+    public var hiddenCellColumns: Set<Int> = []
+    public var cellColumnArrayInlineLimits: [Int: Int] = [:]
     public var status: ExplorerSessionStatus
     public var lastError: String?
     public var snapshot: TableBrowserSnapshot?
@@ -1865,6 +1915,8 @@ public struct TableBrowserSessionState: Codable, Equatable {
         case cellWindowRowLimit
         case cellWindowColumnStart
         case cellWindowColumnLimit
+        case hiddenCellColumns
+        case cellColumnArrayInlineLimits
         case status
         case lastError
         case snapshot
@@ -1878,9 +1930,11 @@ public struct TableBrowserSessionState: Codable, Equatable {
         commands: [TableBrowserCommand] = [],
         transientCommands: [TableBrowserCommand] = [],
         cellWindowRowStart: Int = 0,
-        cellWindowRowLimit: Int = 96,
+        cellWindowRowLimit: Int = 1024,
         cellWindowColumnStart: Int = 0,
         cellWindowColumnLimit: Int = 24,
+        hiddenCellColumns: Set<Int> = [],
+        cellColumnArrayInlineLimits: [Int: Int] = [:],
         status: ExplorerSessionStatus,
         lastError: String?,
         snapshot: TableBrowserSnapshot?,
@@ -1895,6 +1949,8 @@ public struct TableBrowserSessionState: Codable, Equatable {
         self.cellWindowRowLimit = cellWindowRowLimit
         self.cellWindowColumnStart = cellWindowColumnStart
         self.cellWindowColumnLimit = cellWindowColumnLimit
+        self.hiddenCellColumns = hiddenCellColumns
+        self.cellColumnArrayInlineLimits = cellColumnArrayInlineLimits
         self.status = status
         self.lastError = lastError
         self.snapshot = snapshot
@@ -1909,9 +1965,11 @@ public struct TableBrowserSessionState: Codable, Equatable {
         commands = try container.decodeIfPresent([TableBrowserCommand].self, forKey: .commands) ?? []
         transientCommands = try container.decodeIfPresent([TableBrowserCommand].self, forKey: .transientCommands) ?? []
         cellWindowRowStart = try container.decodeIfPresent(Int.self, forKey: .cellWindowRowStart) ?? 0
-        cellWindowRowLimit = try container.decodeIfPresent(Int.self, forKey: .cellWindowRowLimit) ?? 96
+        cellWindowRowLimit = try container.decodeIfPresent(Int.self, forKey: .cellWindowRowLimit) ?? 1024
         cellWindowColumnStart = try container.decodeIfPresent(Int.self, forKey: .cellWindowColumnStart) ?? 0
         cellWindowColumnLimit = try container.decodeIfPresent(Int.self, forKey: .cellWindowColumnLimit) ?? 24
+        hiddenCellColumns = try container.decodeIfPresent(Set<Int>.self, forKey: .hiddenCellColumns) ?? []
+        cellColumnArrayInlineLimits = try container.decodeIfPresent([Int: Int].self, forKey: .cellColumnArrayInlineLimits) ?? [:]
         status = try container.decode(ExplorerSessionStatus.self, forKey: .status)
         lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
         snapshot = try container.decodeIfPresent(TableBrowserSnapshot.self, forKey: .snapshot)
@@ -1932,12 +1990,19 @@ public struct TableBrowserSessionState: Codable, Equatable {
     }
 
     public func cellWindowRequest(datasetPath: String) -> TableBrowserCellWindowRequest {
-        TableBrowserCellWindowRequest(
+        let columnOptions = cellColumnArrayInlineLimits
+            .filter { _, limit in limit > 0 }
+            .map { columnIndex, limit in
+                TableBrowserColumnDisplayOption(columnIndex: columnIndex, arrayInlineLimit: limit)
+            }
+            .sorted { $0.columnIndex < $1.columnIndex }
+        return TableBrowserCellWindowRequest(
             datasetPath: datasetPath,
             rowStart: cellWindowRowStart,
             rowLimit: cellWindowRowLimit,
             columnStart: cellWindowColumnStart,
-            columnLimit: cellWindowColumnLimit
+            columnLimit: cellWindowColumnLimit,
+            columnOptions: columnOptions
         )
     }
 }

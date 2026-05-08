@@ -1324,6 +1324,8 @@ public final class WorkbenchStore: ObservableObject {
                 cellWindowRowLimit: browserState.cellWindowRowLimit,
                 cellWindowColumnStart: browserState.cellWindowColumnStart,
                 cellWindowColumnLimit: browserState.cellWindowColumnLimit,
+                hiddenCellColumns: browserState.hiddenCellColumns,
+                cellColumnArrayInlineLimits: browserState.cellColumnArrayInlineLimits,
                 status: .ready,
                 lastError: nil,
                 snapshot: snapshot,
@@ -1341,6 +1343,8 @@ public final class WorkbenchStore: ObservableObject {
                 cellWindowRowLimit: browserState.cellWindowRowLimit,
                 cellWindowColumnStart: browserState.cellWindowColumnStart,
                 cellWindowColumnLimit: browserState.cellWindowColumnLimit,
+                hiddenCellColumns: browserState.hiddenCellColumns,
+                cellColumnArrayInlineLimits: browserState.cellColumnArrayInlineLimits,
                 status: .failed,
                 lastError: "\(error)",
                 snapshot: nil,
@@ -1660,9 +1664,38 @@ public final class WorkbenchStore: ObservableObject {
         }
         var browserState = tableBrowserState(datasetID: datasetID)
         browserState.cellWindowRowStart = max(0, rowStart)
-        browserState.cellWindowRowLimit = max(1, min(rowLimit, 512))
+        browserState.cellWindowRowLimit = max(1, min(rowLimit, 4096))
         browserState.cellWindowColumnStart = max(0, columnStart)
         browserState.cellWindowColumnLimit = max(1, min(columnLimit, 128))
+        state.tableBrowsers[datasetID] = browserState
+        scheduleTableBrowserCellWindowLoad(
+            datasetID: datasetID,
+            dataset: dataset,
+            request: browserState.cellWindowRequest(datasetPath: dataset.path)
+        )
+    }
+
+    public func setTableBrowserColumnHidden(columnIndex: Int, hidden: Bool, datasetID: String) {
+        var browserState = tableBrowserState(datasetID: datasetID)
+        if hidden {
+            browserState.hiddenCellColumns.insert(columnIndex)
+        } else {
+            browserState.hiddenCellColumns.remove(columnIndex)
+        }
+        state.tableBrowsers[datasetID] = browserState
+    }
+
+    public func setTableBrowserArrayInlineLimit(columnIndex: Int, limit: Int, datasetID: String) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        var browserState = tableBrowserState(datasetID: datasetID)
+        if limit > 0 {
+            browserState.cellColumnArrayInlineLimits[columnIndex] = limit
+        } else {
+            browserState.cellColumnArrayInlineLimits.removeValue(forKey: columnIndex)
+        }
         state.tableBrowsers[datasetID] = browserState
         scheduleTableBrowserCellWindowLoad(
             datasetID: datasetID,
