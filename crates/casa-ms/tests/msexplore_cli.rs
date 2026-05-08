@@ -90,6 +90,36 @@ fn msexplore_help_mentions_plot_controls() {
 }
 
 #[test]
+fn msexplore_decimated_payload_samples_rows_before_large_array_reads() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let payload = build_msexplore_payload_from_spec(&MsExploreSpec {
+        ms_path,
+        summary_format: MeasurementSetSummaryOutputFormat::Text,
+        selection: MsSelectionSpec::default(),
+        header_items: Vec::new(),
+        page_title: None,
+        exprange: MsPageExportRange::Current,
+        max_plot_points: 1,
+        plots: vec![MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsChannel)],
+    })
+    .expect("payload");
+
+    let MsPlotPayload::Scatter(payload) = payload else {
+        panic!("expected scatter payload");
+    };
+    assert!(payload.summary.contains("Sampled rows=1/"));
+    assert_eq!(
+        payload
+            .series
+            .iter()
+            .map(|series| series.points.len())
+            .sum::<usize>(),
+        1
+    );
+}
+
+#[test]
 fn msexplore_run_task_writes_summary_and_flag_preview_artifacts() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());

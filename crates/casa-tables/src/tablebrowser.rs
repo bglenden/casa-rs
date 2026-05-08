@@ -1707,6 +1707,9 @@ fn push_keyword_entries(
     record: &RecordValue,
 ) {
     for field in record.fields() {
+        if matches!(field.value, Value::TableRef(_)) {
+            continue;
+        }
         let mut path = prefix.to_vec();
         path.push(field.name.clone());
         entries.push(KeywordEntry {
@@ -2412,14 +2415,18 @@ mod tests {
         ));
 
         browser.set_view(TableBrowserView::Keywords);
-        browser
-            .select_table_keyword(&["NESTED".to_string(), "child".to_string()])
-            .expect("select table keyword");
         let keyword_snapshot = browser.snapshot();
-        assert!(matches!(
-            keyword_snapshot.inspector.expect("keyword inspector").node,
-            BrowserValueNode::TableRef { .. }
-        ));
+        assert!(
+            !keyword_snapshot
+                .content_lines
+                .iter()
+                .any(|line| line.contains("child.tab"))
+        );
+        assert!(
+            browser
+                .select_table_keyword(&["NESTED".to_string(), "child".to_string()])
+                .is_err()
+        );
 
         browser.set_view(TableBrowserView::Subtables);
         assert_eq!(browser.selected_subtable_index(), Some(0));

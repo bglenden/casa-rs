@@ -24,16 +24,15 @@ use std::path::Path;
 
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_types::ArrayValue;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
 use casa_types::quanta::{MvAngle, MvTime};
+use casa_types::{ArrayValue, ScalarValue};
 use ndarray::IxDyn;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::columns::uvw_column::UvwColumn;
-use crate::subtables::{SubTable, get_f64, get_i32, has_column};
+use crate::subtables::{SubTable, get_i32, has_column};
 use crate::{MeasurementSet, MsError, MsResult};
 
 mod selector;
@@ -45,6 +44,7 @@ pub(crate) use selector::{
 const LISTOBS_SCHEMA_VERSION: u32 = 1;
 const LISTOBS_UV_SCHEMA_VERSION: u32 = 1;
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
+const MAIN_SCALAR_CHUNK_ROWS: usize = 65_536;
 
 /// Output formats supported by the `listobs` renderers and CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -932,8 +932,6 @@ impl ListObsUvCoverage {
         let selected_rows = resolve_selected_rows(ms, options)?;
         let dd = ms.data_description()?;
         let spw = ms.spectral_window()?;
-        let uvw = UvwColumn::new(ms.main_table());
-
         let mut ddid_to_spw = HashMap::<i32, i32>::with_capacity(dd.row_count());
         for row in 0..dd.row_count() {
             ddid_to_spw.insert(row as i32, dd.spectral_window_id(row)?);
@@ -963,13 +961,20 @@ impl ListObsUvCoverage {
             .as_deref()
             .map(|rows| rows.to_vec())
             .unwrap_or_else(|| (0..ms.main_table().row_count()).collect());
+        let main_table = ms.main_table();
+        let antenna1_values = load_i32_rows(main_table, "ANTENNA1", &rows)?;
+        let antenna2_values = load_i32_rows(main_table, "ANTENNA2", &rows)?;
+        let field_values = load_i32_rows(main_table, "FIELD_ID", &rows)?;
+        let data_desc_values = load_i32_rows(main_table, "DATA_DESC_ID", &rows)?;
+        let time_values = load_f64_rows(main_table, "TIME", &rows)?;
+        let uvw_values = load_uvw_rows(main_table, "UVW", &rows)?;
 
-        for row in rows {
-            let antenna1 = get_i32(ms.main_table(), row, "ANTENNA1")?;
-            let antenna2 = get_i32(ms.main_table(), row, "ANTENNA2")?;
-            let field_id = get_i32(ms.main_table(), row, "FIELD_ID")?;
-            let data_desc_id = get_i32(ms.main_table(), row, "DATA_DESC_ID")?;
-            let time_mjd_seconds = get_f64(ms.main_table(), row, "TIME")?;
+        for (row_slot, row) in rows.iter().copied().enumerate() {
+            let antenna1 = antenna1_values[row_slot];
+            let antenna2 = antenna2_values[row_slot];
+            let field_id = field_values[row_slot];
+            let data_desc_id = data_desc_values[row_slot];
+            let time_mjd_seconds = time_values[row_slot];
             let spectral_window_id = *ddid_to_spw.get(&data_desc_id).ok_or_else(|| {
                 MsError::VersionError(format!(
                     "MAIN.DATA_DESC_ID {data_desc_id} does not resolve to a DATA_DESCRIPTION row"
@@ -981,7 +986,7 @@ impl ListObsUvCoverage {
                 ))
             })?;
             let wavelength_m = SPEED_OF_LIGHT_M_S / center_frequency_hz;
-            let [u_m, v_m, w_m] = uvw.get(row)?;
+            let [u_m, v_m, w_m] = uvw_values[row_slot];
             let point = ListObsUvPoint {
                 row,
                 time_mjd_seconds,
@@ -1061,6 +1066,90 @@ impl ListObsUvCoverage {
     pub fn render_json_pretty(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
+}
+
+fn load_i32_rows(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<i32>> {
+    table
+        .column_accessor(column)?
+        .scalar_cells_owned_for_rows(rows)?
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| match value {
+            Some(ScalarValue::Int32(v)) => Ok(v),
+            Some(other) => Err(MsError::ColumnTypeMismatch {
+                column: column.to_string(),
+                table: "MAIN".to_string(),
+                expected: "Int32".to_string(),
+                found: format!("{:?}", other.primitive_type()),
+            }),
+            None => Err(MsError::MissingColumn {
+                column: format!("{column}[row={row}]"),
+                table: "MAIN".to_string(),
+            }),
+        })
+        .collect()
+}
+
+fn load_f64_rows(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<f64>> {
+    table
+        .column_accessor(column)?
+        .scalar_cells_owned_for_rows(rows)?
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| match value {
+            Some(ScalarValue::Float64(v)) => Ok(v),
+            Some(other) => Err(MsError::ColumnTypeMismatch {
+                column: column.to_string(),
+                table: "MAIN".to_string(),
+                expected: "Float64".to_string(),
+                found: format!("{:?}", other.primitive_type()),
+            }),
+            None => Err(MsError::MissingColumn {
+                column: format!("{column}[row={row}]"),
+                table: "MAIN".to_string(),
+            }),
+        })
+        .collect()
+}
+
+fn load_uvw_rows(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<[f64; 3]>> {
+    table
+        .column_accessor(column)?
+        .array_cells_owned(rows)?
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| match value {
+            Some(ArrayValue::Float64(values)) => {
+                let slice = values
+                    .as_slice()
+                    .ok_or_else(|| MsError::ColumnTypeMismatch {
+                        column: column.to_string(),
+                        table: "MAIN".to_string(),
+                        expected: "contiguous f64[3]".to_string(),
+                        found: "non-contiguous".to_string(),
+                    })?;
+                if slice.len() != 3 {
+                    return Err(MsError::ColumnTypeMismatch {
+                        column: column.to_string(),
+                        table: "MAIN".to_string(),
+                        expected: "f64[3]".to_string(),
+                        found: format!("f64[{}]", slice.len()),
+                    });
+                }
+                Ok([slice[0], slice[1], slice[2]])
+            }
+            Some(other) => Err(MsError::ColumnTypeMismatch {
+                column: column.to_string(),
+                table: "MAIN".to_string(),
+                expected: "Float64 array".to_string(),
+                found: format!("{:?}", other.primitive_type()),
+            }),
+            None => Err(MsError::MissingColumn {
+                column: format!("{column}[row={row}]"),
+                table: "MAIN".to_string(),
+            }),
+        })
+        .collect()
 }
 
 fn build_observations(
@@ -1446,41 +1535,55 @@ fn build_scans(
     let row_numbers = selected_rows
         .map(|rows| rows.to_vec())
         .unwrap_or_else(|| (0..table.row_count()).collect());
-    for row in row_numbers {
-        let observation_id = get_i32(table, row, "OBSERVATION_ID")?;
-        let array_id = get_i32(table, row, "ARRAY_ID")?;
-        let scan_number = get_i32(table, row, "SCAN_NUMBER")?;
-        let field_id = get_i32(table, row, "FIELD_ID")?;
-        let data_desc_id = get_i32(table, row, "DATA_DESC_ID")?;
-        let state_id = get_i32(table, row, "STATE_ID")?;
-        let time = get_f64(table, row, "TIME")?;
-        let interval = get_f64(table, row, "INTERVAL")?;
-        let exposure = if has_exposure {
-            get_f64(table, row, "EXPOSURE")?
+    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
+        let observation_values = load_i32_rows(table, "OBSERVATION_ID", row_chunk)?;
+        let array_values = load_i32_rows(table, "ARRAY_ID", row_chunk)?;
+        let scan_values = load_i32_rows(table, "SCAN_NUMBER", row_chunk)?;
+        let field_values = load_i32_rows(table, "FIELD_ID", row_chunk)?;
+        let data_desc_values = load_i32_rows(table, "DATA_DESC_ID", row_chunk)?;
+        let state_values = load_i32_rows(table, "STATE_ID", row_chunk)?;
+        let time_values = load_f64_rows(table, "TIME", row_chunk)?;
+        let interval_values = load_f64_rows(table, "INTERVAL", row_chunk)?;
+        let exposure_values = if has_exposure {
+            Some(load_f64_rows(table, "EXPOSURE", row_chunk)?)
         } else {
-            interval
+            None
         };
-        let unflagged_row_fraction = unflagged_context
-            .map(|context| compute_unflagged_row_fraction(ms, row, context))
-            .transpose()?;
-        rows.push(MainRowInfo {
-            observation_id,
-            array_id,
-            scan_number,
-            field_id,
-            data_desc_id,
-            state_id,
-            time,
-            exposure_seconds: exposure,
-            unflagged_row_fraction,
-        });
-        let begin = time - interval / 2.0;
-        let end = time + interval / 2.0;
-        let entry = scan_time_ranges
-            .entry((observation_id, array_id, scan_number))
-            .or_insert((begin, end));
-        entry.0 = entry.0.min(begin);
-        entry.1 = entry.1.max(end);
+        for (row_slot, row) in row_chunk.iter().copied().enumerate() {
+            let observation_id = observation_values[row_slot];
+            let array_id = array_values[row_slot];
+            let scan_number = scan_values[row_slot];
+            let field_id = field_values[row_slot];
+            let data_desc_id = data_desc_values[row_slot];
+            let state_id = state_values[row_slot];
+            let time = time_values[row_slot];
+            let interval = interval_values[row_slot];
+            let exposure = exposure_values
+                .as_ref()
+                .map(|values| values[row_slot])
+                .unwrap_or(interval);
+            let unflagged_row_fraction = unflagged_context
+                .map(|context| compute_unflagged_row_fraction(ms, row, context))
+                .transpose()?;
+            rows.push(MainRowInfo {
+                observation_id,
+                array_id,
+                scan_number,
+                field_id,
+                data_desc_id,
+                state_id,
+                time,
+                exposure_seconds: exposure,
+                unflagged_row_fraction,
+            });
+            let begin = time - interval / 2.0;
+            let end = time + interval / 2.0;
+            let entry = scan_time_ranges
+                .entry((observation_id, array_id, scan_number))
+                .or_insert((begin, end));
+            entry.0 = entry.0.min(begin);
+            entry.1 = entry.1.max(end);
+        }
     }
 
     rows.sort_by(|left, right| {
@@ -1737,44 +1840,56 @@ fn analyze_main_table(
     let row_numbers = selected_rows
         .map(|rows| rows.to_vec())
         .unwrap_or_else(|| (0..table.row_count()).collect());
-    for row in row_numbers {
-        let field_id = get_i32(table, row, "FIELD_ID")?;
-        if field_id >= 0 {
-            usage.used_field_ids.insert(field_id as usize);
-            *usage.field_row_counts.entry(field_id).or_insert(0) += 1;
-            if let Some(context) = unflagged_context {
-                *usage
-                    .field_unflagged_row_counts
-                    .entry(field_id)
-                    .or_insert(0.0) += compute_unflagged_row_fraction(ms, row, context)?;
+    for row_chunk in row_numbers.chunks(MAIN_SCALAR_CHUNK_ROWS) {
+        let field_values = load_i32_rows(table, "FIELD_ID", row_chunk)?;
+        let observation_values = load_i32_rows(table, "OBSERVATION_ID", row_chunk)?;
+        let array_values = load_i32_rows(table, "ARRAY_ID", row_chunk)?;
+        let antenna1_values = load_i32_rows(table, "ANTENNA1", row_chunk)?;
+        let antenna2_values = load_i32_rows(table, "ANTENNA2", row_chunk)?;
+        let data_desc_values = load_i32_rows(table, "DATA_DESC_ID", row_chunk)?;
+        let time_values = load_f64_rows(table, "TIME", row_chunk)?;
+        let interval_values = load_f64_rows(table, "INTERVAL", row_chunk)?;
+        for (row_slot, row) in row_chunk.iter().copied().enumerate() {
+            let field_id = field_values[row_slot];
+            if field_id >= 0 {
+                usage.used_field_ids.insert(field_id as usize);
+                *usage.field_row_counts.entry(field_id).or_insert(0) += 1;
+                if let Some(context) = unflagged_context {
+                    *usage
+                        .field_unflagged_row_counts
+                        .entry(field_id)
+                        .or_insert(0.0) += compute_unflagged_row_fraction(ms, row, context)?;
+                }
             }
-        }
-        let observation_id = get_i32(table, row, "OBSERVATION_ID")?;
-        if observation_id >= 0 {
-            usage.used_observation_ids.insert(observation_id as usize);
-        }
-        let array_id = get_i32(table, row, "ARRAY_ID")?;
-        usage.used_array_ids.insert(array_id);
-
-        for column in ["ANTENNA1", "ANTENNA2"] {
-            let antenna_id = get_i32(table, row, column)?;
-            if antenna_id >= 0 {
-                usage.used_antenna_ids.insert(antenna_id as usize);
+            let observation_id = observation_values[row_slot];
+            if observation_id >= 0 {
+                usage.used_observation_ids.insert(observation_id as usize);
             }
-        }
+            let array_id = array_values[row_slot];
+            usage.used_array_ids.insert(array_id);
 
-        let data_desc_id = get_i32(table, row, "DATA_DESC_ID")?;
-        if data_desc_id >= 0 {
-            usage
-                .used_data_description_ids
-                .insert(data_desc_id as usize);
-        }
+            let antenna1 = antenna1_values[row_slot];
+            if antenna1 >= 0 {
+                usage.used_antenna_ids.insert(antenna1 as usize);
+            }
+            let antenna2 = antenna2_values[row_slot];
+            if antenna2 >= 0 {
+                usage.used_antenna_ids.insert(antenna2 as usize);
+            }
 
-        let time = get_f64(table, row, "TIME")?;
-        let interval = get_f64(table, row, "INTERVAL")?;
-        start = start.min(time - interval / 2.0);
-        end = end.max(time + interval / 2.0);
-        usage.selected_row_count += 1;
+            let data_desc_id = data_desc_values[row_slot];
+            if data_desc_id >= 0 {
+                usage
+                    .used_data_description_ids
+                    .insert(data_desc_id as usize);
+            }
+
+            let time = time_values[row_slot];
+            let interval = interval_values[row_slot];
+            start = start.min(time - interval / 2.0);
+            end = end.max(time + interval / 2.0);
+            usage.selected_row_count += 1;
+        }
     }
 
     if usage.selected_row_count > 0 {

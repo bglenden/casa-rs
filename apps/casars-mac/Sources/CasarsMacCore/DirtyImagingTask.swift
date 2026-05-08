@@ -371,6 +371,7 @@ public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {
     static func resolvedExecutablePath(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundleExecutableURL: URL? = Bundle.main.executableURL,
+        currentDirectoryPath: String = FileManager.default.currentDirectoryPath,
         isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
     ) -> String? {
         if let path = environment["CASARS_IMAGER_BIN"], !path.isEmpty {
@@ -383,6 +384,30 @@ public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {
             .path
         if let bundledPath, isExecutable(bundledPath) {
             return bundledPath
+        }
+
+        if let repoRoot = environment["CASA_RS_REPO_ROOT"], !repoRoot.isEmpty {
+            let candidate = URL(fileURLWithPath: repoRoot, isDirectory: true)
+                .appendingPathComponent("target/debug/casars-imager")
+                .path
+            if isExecutable(candidate) {
+                return candidate
+            }
+        }
+
+        var cursor = URL(fileURLWithPath: currentDirectoryPath, isDirectory: true)
+        for _ in 0..<6 {
+            let candidate = cursor
+                .appendingPathComponent("target/debug/casars-imager")
+                .path
+            if isExecutable(candidate) {
+                return candidate
+            }
+            let parent = cursor.deletingLastPathComponent()
+            if parent.path == cursor.path {
+                break
+            }
+            cursor = parent
         }
 
         return nil

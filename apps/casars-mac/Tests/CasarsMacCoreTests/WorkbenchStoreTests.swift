@@ -3,6 +3,41 @@ import XCTest
 @testable import CasarsMacCore
 
 final class WorkbenchStoreTests: XCTestCase {
+    func testLocalTWHyaMeasurementSetPlotTimingDiagnostic() throws {
+        guard ProcessInfo.processInfo.environment["CASA_RS_RUN_LOCAL_TIMING"] == "1" else {
+            throw XCTSkip("Set CASA_RS_RUN_LOCAL_TIMING=1 to run local TW Hya plot timing diagnostics.")
+        }
+        let msPath = ProcessInfo.processInfo.environment["CASA_RS_TWHYA_MS"]
+            ?? "/private/tmp/casa-rs-wave6-prof/twhya_calibrated.ms"
+        guard FileManager.default.fileExists(atPath: msPath) else {
+            throw XCTSkip("\(msPath) is not staged")
+        }
+
+        let client = UniFFIMeasurementSetPlotClient()
+        for preset in [
+            MeasurementSetExplorerPlotPreset.scanTimeline,
+            .amplitudeVsTime,
+            .phaseVsTime,
+            .amplitudePhaseVsTimeStacked,
+        ] {
+            let startedAt = Date()
+            let result = try client.buildPlot(
+                request: MeasurementSetPlotBuildRequest(
+                    datasetPath: msPath,
+                    preset: preset,
+                    field: nil,
+                    spectralWindow: nil,
+                    correlation: nil,
+                    dataColumn: "DATA"
+                )
+            )
+            let elapsedMilliseconds = Date().timeIntervalSince(startedAt) * 1000
+            print(
+                "\(preset.rawValue): total=\(String(format: "%.0f", elapsedMilliseconds)) ms, points=\(result.renderedPointCount), layers=\(result.plotDocument.layers.count), panels=\(result.plotDocument.panels.count), diagnostics=\(result.diagnostics)"
+            )
+        }
+    }
+
     func testDefaultStateStartsWithoutFixtureProject() throws {
         let store = WorkbenchStore()
 
@@ -15,6 +50,17 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(snapshot.discoveredDatasets.isEmpty)
         XCTAssertTrue(snapshot.openTabs.isEmpty)
         XCTAssertEqual(snapshot.activeTab, "")
+    }
+
+    func testMeasurementSetPlotMaxPointParserAcceptsSuffixes() {
+        XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("250000"), 250_000)
+        XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("250k"), 250_000)
+        XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("2M"), 2_000_000)
+        XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("1.5m"), 1_500_000)
+        XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("12M"), 12_000_000)
+        XCTAssertNil(WorkbenchState.parseMeasurementSetPlotMaxPoints(""))
+        XCTAssertNil(WorkbenchState.parseMeasurementSetPlotMaxPoints("many"))
+        XCTAssertNil(WorkbenchState.parseMeasurementSetPlotMaxPoints("-10k"))
     }
 
     func testFixtureStateExposesInitialDebugSnapshot() throws {
@@ -112,6 +158,10 @@ final class WorkbenchStoreTests: XCTestCase {
     func testCommandQueryRoutesWorkbenchShellSurfaces() {
         let store = WorkbenchStore.fixture()
 
+        store.setCommandQuery("open plot samples")
+        store.runCommandQuery()
+        XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .plotSamples)
+
         store.setCommandQuery("show inspector")
         store.setInspectorCollapsed(true)
         store.runCommandQuery()
@@ -133,6 +183,260 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertFalse(store.state.leftDockCollapsed)
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.kind, .history)
         XCTAssertEqual(store.debugSnapshot().commandQuery, "show timeline")
+    }
+
+    func testFixturePlotSamplesAreInspectable() throws {
+        let store = WorkbenchStore.fixture()
+
+        let snapshot = store.debugSnapshot()
+
+        XCTAssertEqual(snapshot.workbenchPlots.map(\.id), [
+            "sample-plotms-visibility",
+            "sample-uv-coverage",
+            "sample-million-point-pixels",
+            "sample-continuous-point-pixels",
+            "sample-antenna-layout",
+            "sample-metadata-intervals",
+            "sample-stacked-amp-phase",
+            "sample-profile-spectrum",
+            "sample-image-display"
+        ])
+        XCTAssertEqual(snapshot.workbenchPlots[0].layerCount, 3)
+        XCTAssertGreaterThan(snapshot.workbenchPlots[0].pointCount, 250)
+        XCTAssertEqual(snapshot.workbenchPlots[0].boundedLayerCount, 3)
+        XCTAssertEqual(snapshot.workbenchPlots[0].payloadStrategies, [
+            "inlineDisplayPoints",
+            "inlineDisplayPoints",
+            "inlineDisplayPoints"
+        ])
+        XCTAssertEqual(snapshot.workbenchPlots[2].pointCloudCount, 2_000_000)
+        XCTAssertEqual(snapshot.workbenchPlots[2].pointRasterLayerCount, 1)
+        XCTAssertEqual(snapshot.workbenchPlots[2].sourceSampleCount, 2_000_000)
+        XCTAssertLessThan(snapshot.workbenchPlots[2].displaySampleCount, snapshot.workbenchPlots[2].pointCloudCount)
+        XCTAssertEqual(snapshot.workbenchPlots[2].payloadStrategies, ["channelBinPointRaster"])
+        XCTAssertEqual(snapshot.workbenchPlots[3].pointCloudCount, 2_000_000)
+        XCTAssertEqual(snapshot.workbenchPlots[3].pointRasterLayerCount, 1)
+        XCTAssertEqual(snapshot.workbenchPlots[3].payloadStrategies, ["singlePixelPointRaster"])
+        XCTAssertEqual(snapshot.workbenchPlots[4].pointCount, 8)
+        XCTAssertEqual(snapshot.workbenchPlots[5].intervalLayerCount, 2)
+        XCTAssertEqual(snapshot.workbenchPlots[5].displaySampleCount, 7)
+        XCTAssertEqual(snapshot.workbenchPlots[6].panelCount, 2)
+        XCTAssertEqual(snapshot.workbenchPlots[6].layerCount, 3)
+        XCTAssertEqual(snapshot.workbenchPlots[7].layerCount, 2)
+        XCTAssertGreaterThan(snapshot.workbenchPlots[7].pointCount, 120)
+        XCTAssertEqual(snapshot.workbenchPlots[8].rasterLayerCount, 1)
+        XCTAssertEqual(snapshot.workbenchPlots[8].overlayShapeCount, 2)
+        XCTAssertEqual(snapshot.workbenchPlots[8].payloadStrategies, ["rasterOverview"])
+        XCTAssertFalse(snapshot.workbenchPlots[8].dataFingerprint.isEmpty)
+        XCTAssertNoThrow(try store.debugJSON())
+    }
+
+    func testWorkbenchPlotGapSamplesCoverExplorePayloadShapes() throws {
+        let antennaPlot = WorkbenchPlotSamples.antennaLayout()
+        let antennaLayer = try XCTUnwrap(antennaPlot.layers.first)
+        XCTAssertTrue(antennaLayer.points.allSatisfy { $0.label != nil })
+        XCTAssertTrue(antennaLayer.points.contains { ($0.symbolSize ?? 0) > antennaLayer.style.symbolSize })
+
+        let intervals = WorkbenchPlotSamples.metadataIntervals()
+        XCTAssertEqual(intervals.axes[1].laneLabels, ["scan 1", "scan 2", "spw 0", "spw 1", "spw 2"])
+        XCTAssertEqual(intervals.layers.filter { $0.kind == .interval }.count, 2)
+        XCTAssertEqual(intervals.layers.reduce(0) { $0 + $1.intervals.count }, 7)
+
+        let stacked = WorkbenchPlotSamples.stackedAmplitudePhase()
+        XCTAssertEqual(stacked.panels.count, 2)
+        XCTAssertTrue(stacked.panels[0].axes.contains { $0.id == "phase" && $0.drawsOnTrailingEdge })
+        XCTAssertEqual(stacked.allLayers.map(\.id), ["amp-time", "phase-time", "residual-time"])
+
+        let profile = WorkbenchPlotSamples.profileSpectrum()
+        let profileLayer = try XCTUnwrap(profile.layers.first { $0.id == "masked-profile" })
+        XCTAssertTrue(profileLayer.points.contains { $0.lineBreakBefore })
+        XCTAssertTrue(profileLayer.points.contains { $0.selected })
+
+        let image = WorkbenchPlotSamples.imageDisplay()
+        XCTAssertEqual(image.overlayShapes.count, 2)
+        XCTAssertTrue(image.overlayShapes.contains { !$0.closed })
+    }
+
+    func testWorkbenchPlotPointRasterBinsPointCloudToPixels() throws {
+        let pointCloud = WorkbenchPlotPointCloud(
+            xValues: [0.1, 0.9, 1.2, 2.0, 3.0],
+            yValues: [0.1, 0.8, 1.4, 2.0, 1.0]
+        )
+        let pointRaster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: WorkbenchPlotRange(lower: 0, upper: 2),
+            yRange: WorkbenchPlotRange(lower: 0, upper: 2),
+            width: 2,
+            height: 2
+        )
+
+        XCTAssertEqual(pointRaster.totalCount, 4)
+        XCTAssertEqual(pointRaster.occupiedPixelCount, 2)
+        XCTAssertEqual(pointRaster.maxCount, 2)
+        XCTAssertEqual(pointRaster.countAt(x: 0, y: 0), 2)
+        XCTAssertEqual(pointRaster.countAt(x: 1, y: 1), 2)
+        XCTAssertEqual(pointRaster.countAt(x: 2, y: 0), 0)
+    }
+
+    func testWorkbenchPlotPointRasterCanFillChannelBinFootprints() throws {
+        let pointCloud = WorkbenchPlotPointCloud(
+            xValues: [0, 1, 2],
+            yValues: [0.5, 0.5, 0.5]
+        )
+        let pointRaster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: WorkbenchPlotRange(lower: 0, upper: 2),
+            yRange: WorkbenchPlotRange(lower: 0, upper: 1),
+            width: 8,
+            height: 1
+        )
+        let channelBinRaster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: WorkbenchPlotRange(lower: 0, upper: 2),
+            yRange: WorkbenchPlotRange(lower: 0, upper: 1),
+            width: 8,
+            height: 1,
+            xFootprintDataWidth: 1.0
+        )
+
+        XCTAssertEqual(pointRaster.totalCount, 3)
+        XCTAssertEqual(pointRaster.occupiedPixelCount, 3)
+        XCTAssertEqual(channelBinRaster.totalCount, 3)
+        XCTAssertEqual(channelBinRaster.occupiedPixelCount, 8)
+        XCTAssertGreaterThan(channelBinRaster.countAt(x: 1, y: 0), 0)
+        XCTAssertGreaterThan(channelBinRaster.countAt(x: 3, y: 0), 0)
+        XCTAssertGreaterThan(channelBinRaster.countAt(x: 6, y: 0), 0)
+    }
+
+    func testWorkbenchPlotChannelPointCloudUsesChannelBinRasterFootprint() throws {
+        let plot = WorkbenchPlotSamples.millionPointPixels()
+        let layer = try XCTUnwrap(plot.layers.first)
+        let pointCloud = try XCTUnwrap(layer.pointCloud)
+        let pointRaster = try XCTUnwrap(layer.pointRaster)
+        let pointOnlyRaster = WorkbenchPlotPointRaster.build(
+            from: pointCloud,
+            xRange: plot.axes[0].range,
+            yRange: plot.axes[1].range,
+            width: pointRaster.width,
+            height: pointRaster.height
+        )
+
+        XCTAssertEqual(layer.points.count, 0)
+        XCTAssertEqual(pointCloud.count, 2_000_000)
+        XCTAssertEqual(pointRaster.totalCount, 2_000_000)
+        XCTAssertGreaterThan(pointRaster.occupiedPixelCount, 20_000)
+        XCTAssertGreaterThan(pointRaster.occupiedPixelCount, pointOnlyRaster.occupiedPixelCount)
+        XCTAssertLessThan(pointRaster.occupiedPixelCount, pointCloud.count)
+        XCTAssertEqual(layer.dataProfile.strategy, .channelBinPointRaster)
+        XCTAssertEqual(layer.dataProfile.xBinWidth, 1.0)
+        XCTAssertEqual(layer.dataProfile.sourceSampleCount, UInt64(pointCloud.count))
+        XCTAssertEqual(layer.dataProfile.displaySampleCount, pointRaster.occupiedPixelCount)
+        XCTAssertLessThanOrEqual(layer.dataProfile.displaySampleCount, layer.dataProfile.pointBudget)
+        XCTAssertTrue(layer.dataProfile.isDisplayPayloadBounded)
+        XCTAssertEqual(layer.style.symbolSize, 1.0)
+    }
+
+    func testWorkbenchPlotContinuousPointCloudUsesSinglePixelRaster() throws {
+        let plot = WorkbenchPlotSamples.continuousPointPixels()
+        let layer = try XCTUnwrap(plot.layers.first)
+        let pointCloud = try XCTUnwrap(layer.pointCloud)
+        let pointRaster = try XCTUnwrap(layer.pointRaster)
+
+        XCTAssertEqual(layer.points.count, 0)
+        XCTAssertEqual(pointCloud.count, 2_000_000)
+        XCTAssertEqual(pointRaster.totalCount, 2_000_000)
+        XCTAssertGreaterThan(pointRaster.occupiedPixelCount, 70_000)
+        XCTAssertLessThan(pointRaster.occupiedPixelCount, pointCloud.count)
+        XCTAssertEqual(layer.dataProfile.strategy, .singlePixelPointRaster)
+        XCTAssertNil(layer.dataProfile.xBinWidth)
+        XCTAssertEqual(layer.dataProfile.sourceSampleCount, UInt64(pointCloud.count))
+        XCTAssertEqual(layer.dataProfile.displaySampleCount, pointRaster.occupiedPixelCount)
+        XCTAssertLessThanOrEqual(layer.dataProfile.displaySampleCount, layer.dataProfile.pointBudget)
+        XCTAssertTrue(layer.dataProfile.isDisplayPayloadBounded)
+        XCTAssertEqual(layer.style.symbolSize, 1.0)
+    }
+
+    func testWorkbenchPlotDisplayEditsDoNotRegeneratePayload() throws {
+        let store = WorkbenchStore.fixture()
+        let plotID = "sample-plotms-visibility"
+        let original = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        let originalFingerprint = original.dataFingerprint
+        let layerID = try XCTUnwrap(original.layers.first?.id)
+
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setLayerSymbolSize(layerID: layerID, size: 9.5)
+        )
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setLayerOpacity(layerID: layerID, opacity: 0.35)
+        )
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .addAnnotation(id: "fit-note", x: 60, y: 4.4, text: "fit candidate")
+        )
+
+        let edited = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        XCTAssertEqual(edited.dataFingerprint, originalFingerprint)
+        XCTAssertEqual(edited.styleRevision, 3)
+        XCTAssertEqual(edited.layers.first?.style.symbolSize, 9.5)
+        XCTAssertEqual(edited.layers.first?.style.opacity, 0.35)
+        XCTAssertTrue(edited.annotations.contains { $0.id == "fit-note" })
+
+        let encodedAction = try JSONEncoder().encode(
+            WorkbenchPlotEditAction.setLayerLineWidth(layerID: "gaussian-fit", width: 3.0)
+        )
+        XCTAssertFalse(encodedAction.isEmpty)
+    }
+
+    func testWorkbenchPointRasterSymbolSizeIsDisplayOnly() throws {
+        let store = WorkbenchStore.fixture()
+        let plotID = "sample-million-point-pixels"
+        let original = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        let originalFingerprint = original.dataFingerprint
+        let layerID = try XCTUnwrap(original.layers.first?.id)
+        let originalRaster = try XCTUnwrap(original.layers.first?.pointRaster)
+
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setLayerSymbolSize(layerID: layerID, size: 11.0)
+        )
+
+        let edited = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        let editedRaster = try XCTUnwrap(edited.layers.first?.pointRaster)
+        XCTAssertEqual(edited.dataFingerprint, originalFingerprint)
+        XCTAssertEqual(edited.styleRevision, 1)
+        XCTAssertEqual(edited.layers.first?.style.symbolSize, 11.0)
+        XCTAssertEqual(editedRaster.totalCount, originalRaster.totalCount)
+        XCTAssertEqual(editedRaster.occupiedPixelCount, originalRaster.occupiedPixelCount)
+    }
+
+    func testWorkbenchImageSampleStretchAndColorMapAreDisplayOnly() throws {
+        let store = WorkbenchStore.fixture()
+        let plotID = "sample-image-display"
+        let original = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        let originalFingerprint = original.dataFingerprint
+        let layerID = try XCTUnwrap(original.layers.first?.id)
+
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setRasterStretch(layerID: layerID, stretch: .logarithmic)
+        )
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setRasterColorMap(layerID: layerID, colorMap: .magma)
+        )
+        store.applyWorkbenchPlotEdit(
+            plotID: plotID,
+            action: .setAxisLabelsVisible(axisID: "ra", visible: false)
+        )
+
+        let edited = try XCTUnwrap(store.state.plotDocuments.first { $0.id == plotID })
+        XCTAssertEqual(edited.dataFingerprint, originalFingerprint)
+        XCTAssertEqual(edited.styleRevision, 3)
+        XCTAssertEqual(edited.layers.first?.raster?.stretch, .logarithmic)
+        XCTAssertEqual(edited.layers.first?.raster?.colorMap, .magma)
+        XCTAssertEqual(edited.axes.first?.labelsVisible, false)
     }
 
     func testAIProposalMustBeAppliedBeforeItMutatesTaskParameters() {
@@ -219,6 +523,293 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.probeDiagnostics, ["skipped /data/notes.txt"])
         XCTAssertEqual(store.state.selectedDataset?.spectralWindows, ["spw 0: 4 chan, 1.420000 GHz center"])
         XCTAssertEqual(store.state.tabs.first { $0.id == store.state.activeTabID }?.title, "MS: probed.ms")
+    }
+
+    func testRealImageExplorerUsesRustBackedSnapshotState() throws {
+        let imageDataset = DatasetSummary(
+            id: "/data/restored.image",
+            name: "restored.image",
+            path: "/data/restored.image",
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "Recognized by Rust probe."
+        )
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [imageDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            imageExplorerClient: imageClient
+        )
+
+        store.openProject(path: "/data")
+
+        let state = try XCTUnwrap(store.state.imageExplorers[imageDataset.id])
+        XCTAssertEqual(state.status, .ready)
+        XCTAssertEqual(state.selectedView, "plane")
+        XCTAssertEqual(state.snapshot?.activeView, "plane")
+        XCTAssertEqual(state.snapshot?.plane?.width, 2)
+        XCTAssertEqual(state.snapshot?.profile?.samples.count, 2)
+        XCTAssertEqual(imageClient.paths, ["/data/restored.image"])
+        XCTAssertEqual(store.debugSnapshot().imageExplorers[imageDataset.id]?.planeSize, "2x2")
+
+        store.setImageExplorerView("spectrum", datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.selectedView, "spectrum")
+        XCTAssertEqual(imageClient.requests.map(\.selectedView), ["plane", "spectrum"])
+
+        store.stepImageExplorerNonDisplayAxis(axis: 2, delta: 1, datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [1])
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.nonDisplayIndices, [1])
+        store.setImageExplorerNonDisplayAxisIndex(axis: 2, index: 5, datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [5])
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.nonDisplayIndices, [5])
+        store.setImageExplorerNonDisplayAxisIndex(axis: 2, index: 1, datasetID: imageDataset.id)
+
+        store.startImageExplorerMovie(axis: 2, framesPerSecond: 12, loop: true, datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.moviePlaying, true)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.movieAxis, 2)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.movieFramesPerSecond, 12)
+        XCTAssertEqual(store.debugSnapshot().imageExplorers[imageDataset.id]?.moviePlaying, true)
+        store.advanceImageExplorerMovieFrame(datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [2])
+        for expectedIndex in 3...7 {
+            store.advanceImageExplorerMovieFrame(datasetID: imageDataset.id)
+            XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [expectedIndex])
+        }
+        store.advanceImageExplorerMovieFrame(datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [0])
+        store.setImageExplorerMovieLoop(false, datasetID: imageDataset.id)
+        for expectedIndex in 1...7 {
+            store.advanceImageExplorerMovieFrame(datasetID: imageDataset.id)
+            XCTAssertEqual(imageClient.requests.last?.nonDisplayIndices, [expectedIndex])
+        }
+        store.advanceImageExplorerMovieFrame(datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.moviePlaying, false)
+
+        store.setImageExplorerFocus("inspector", datasetID: imageDataset.id)
+        store.setImageExplorerPlaneContentMode("spreadsheet", datasetID: imageDataset.id)
+        store.setImageExplorerCursor(x: 2, y: 3, datasetID: imageDataset.id)
+        store.setImageExplorerParameters(
+            ImageExplorerParameters(blc: "0,0", trc: "3,3", inc: "1,1", stretch: "minmax"),
+            datasetID: imageDataset.id
+        )
+        XCTAssertEqual(imageClient.requests.last?.focus, "inspector")
+        XCTAssertEqual(imageClient.requests.last?.planeContentMode, "spreadsheet")
+        XCTAssertEqual(imageClient.requests.last?.cursorX, 2)
+        XCTAssertEqual(imageClient.requests.last?.cursorY, 3)
+        XCTAssertEqual(imageClient.requests.last?.parameters.stretch, "minmax")
+
+        let requestCountBeforeColorMap = imageClient.requests.count
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.planeColorMap, .grayscale)
+        store.cycleImageExplorerColorMap(datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.planeColorMap, .viridis)
+        store.setImageExplorerColorMap(.inferno, datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.planeColorMap, .inferno)
+        XCTAssertEqual(imageClient.requests.count, requestCountBeforeColorMap)
+
+        store.setImageExplorerManualClip(low: -0.125, high: 2.75, datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.parameters.stretch, "manual")
+        XCTAssertEqual(imageClient.requests.last?.parameters.clipLow, "-0.125")
+        XCTAssertEqual(imageClient.requests.last?.parameters.clipHigh, "2.75")
+
+        store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: imageDataset.id)
+        store.appendImageExplorerRegionCommand(.appendRegionVertex(x: 2, y: 3), datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.commands.map(\.command), ["start_region_shape", "append_region_vertex"])
+        store.runImageExplorerCommandOnce(.setDefaultMask(name: "mask0"), datasetID: imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.transientCommands.map(\.command), ["set_default_mask"])
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.transientCommands, [])
+    }
+
+    func testRealTableBrowserUsesRustBackedSnapshotState() throws {
+        let tableDataset = DatasetSummary(
+            id: "/data/MAIN",
+            name: "MAIN",
+            path: "/data/MAIN",
+            kind: .table,
+            size: "12 rows, 3 columns",
+            units: "casacore table",
+            columns: ["TIME", "DATA", "FLAG"],
+            subtables: ["ANTENNA"],
+            shape: [12],
+            notes: "Recognized by Rust probe."
+        )
+        let tableClient = StubTableBrowserClient(snapshot: makeTableBrowserSnapshot(path: tableDataset.path))
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [tableDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            tableBrowserClient: tableClient
+        )
+
+        store.openProject(path: "/data")
+
+        let state = try XCTUnwrap(store.state.tableBrowsers[tableDataset.id])
+        XCTAssertEqual(state.status, .ready)
+        XCTAssertEqual(state.selectedView, "cells")
+        XCTAssertEqual(state.snapshot?.view, "cells")
+        XCTAssertEqual(state.snapshot?.contentLines.first, "Cells  row=1/12  col=1/3  focus=Main")
+        XCTAssertEqual(tableClient.paths, ["/data/MAIN"])
+        XCTAssertEqual(store.debugSnapshot().tableBrowsers[tableDataset.id]?.inspectorTitle, "Column DATA")
+
+        store.setTableBrowserView("keywords", datasetID: tableDataset.id)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.selectedView, "keywords")
+        XCTAssertEqual(tableClient.requests.map(\.selectedView), ["cells", "keywords"])
+    }
+
+    func testMeasurementSetCanOpenInDedicatedTableBrowserTab() throws {
+        let msDataset = DatasetSummary(
+            id: "/data/example.ms",
+            name: "example.ms",
+            path: "/data/example.ms",
+            kind: .measurementSet,
+            size: "12 rows, 3 columns",
+            units: "Jy, Hz, seconds",
+            columns: ["TIME", "DATA", "FLAG"],
+            subtables: ["ANTENNA"],
+            shape: [12],
+            notes: "Recognized by Rust probe."
+        )
+        let tableClient = StubTableBrowserClient(snapshot: makeTableBrowserSnapshot(path: msDataset.path))
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [msDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            tableBrowserClient: tableClient
+        )
+
+        store.openProject(path: "/data")
+        store.openDatasetTableBrowser(msDataset.id)
+
+        XCTAssertEqual(store.state.activeTabID, "tab-tablebrowser-\(msDataset.id)")
+        XCTAssertEqual(store.state.tabs.last?.kind, .tableBrowser)
+        XCTAssertEqual(store.state.tabs.last?.title, "Table: example.ms")
+        XCTAssertEqual(tableClient.paths, [msDataset.path])
+        waitFor("initial table cell window") {
+            store.state.tableBrowsers[msDataset.id]?.cellWindow?.rowCount == 12
+        }
+        XCTAssertEqual(tableClient.cellWindowRequests.map(\.datasetPath), [msDataset.path])
+        XCTAssertEqual(store.state.tableBrowsers[msDataset.id]?.status, .ready)
+        XCTAssertEqual(store.state.tableBrowsers[msDataset.id]?.cellWindow?.rowCount, 12)
+    }
+
+    func testTableBrowserCellWindowRequestsDoNotRebuildWholeSnapshot() throws {
+        let tableDataset = DatasetSummary(
+            id: "/data/example.table",
+            name: "example.table",
+            path: "/data/example.table",
+            kind: .table,
+            size: "12 rows, 3 columns",
+            units: "Jy, Hz, seconds",
+            columns: ["TIME", "DATA", "FLAG"],
+            subtables: [],
+            shape: [12],
+            notes: "Recognized by Rust probe."
+        )
+        let tableClient = StubTableBrowserClient(snapshot: makeTableBrowserSnapshot(path: tableDataset.path))
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [tableDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            tableBrowserClient: tableClient
+        )
+
+        store.openProject(path: "/data")
+        store.openDatasetTableBrowser(tableDataset.id)
+        let snapshotRequestCount = tableClient.requests.count
+
+        store.requestTableBrowserCellWindow(
+            rowStart: 8,
+            rowLimit: 32,
+            columnStart: 2,
+            columnLimit: 12,
+            datasetID: tableDataset.id
+        )
+
+        waitFor("requested table cell window") {
+            store.state.tableBrowsers[tableDataset.id]?.cellWindow?.rowStart == 8
+        }
+        XCTAssertEqual(tableClient.requests.count, snapshotRequestCount)
+        XCTAssertEqual(tableClient.cellWindowRequests.last?.rowStart, 8)
+        XCTAssertEqual(tableClient.cellWindowRequests.last?.columnStart, 2)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.cellWindow?.rowStart, 8)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.cellWindow?.columnStart, 2)
+
+        let cellWindowRequestCount = tableClient.cellWindowRequests.count
+        store.selectTableBrowserVisibleCell(
+            rowIndex: 9,
+            selectedVisibleColumn: nil,
+            targetVisibleColumn: 3,
+            datasetID: tableDataset.id
+        )
+        XCTAssertEqual(tableClient.requests.count, snapshotRequestCount)
+        XCTAssertEqual(tableClient.cellWindowRequests.count, cellWindowRequestCount)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.selectedCellRow, 9)
+        XCTAssertEqual(store.state.tableBrowsers[tableDataset.id]?.selectedCellColumn, 3)
+    }
+
+    func testSelectedSubtableOpensInNewTableBrowserTab() throws {
+        let msDataset = DatasetSummary(
+            id: "/data/example.ms",
+            name: "example.ms",
+            path: "/data/example.ms",
+            kind: .measurementSet,
+            size: "12 rows, 3 columns",
+            units: "Jy, Hz, seconds",
+            columns: ["TIME", "DATA", "FLAG"],
+            subtables: ["ANTENNA"],
+            shape: [12],
+            notes: "Recognized by Rust probe."
+        )
+        var snapshot = makeTableBrowserSnapshot(path: msDataset.path)
+        snapshot.view = "subtables"
+        snapshot.selectedAddress = TableBrowserSnapshot.SelectedAddress(
+            kind: "subtable",
+            tablePath: msDataset.path,
+            row: nil,
+            column: nil,
+            keywordPath: nil,
+            valuePath: nil,
+            source: "table keyword",
+            targetPath: "/data/example.ms/ANTENNA"
+        )
+        let tableClient = StubTableBrowserClient(snapshot: snapshot)
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [msDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            tableBrowserClient: tableClient
+        )
+
+        store.openProject(path: "/data")
+        store.openDatasetTableBrowser(msDataset.id)
+        store.openSelectedTableBrowserSubtable(datasetID: msDataset.id)
+
+        XCTAssertEqual(store.state.activeTabID, "tab-tablebrowser-/data/example.ms/ANTENNA")
+        XCTAssertEqual(store.state.tabs.last?.title, "Table: ANTENNA")
+        XCTAssertEqual(store.state.project.datasets.last?.path, "/data/example.ms/ANTENNA")
+        XCTAssertEqual(tableClient.paths, [msDataset.path, "/data/example.ms/ANTENNA"])
     }
 
     func testExplorerTabsExposeTypedRealDatasetRoutesInDebugSnapshot() {
@@ -340,14 +931,14 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(store.state.lastErrors.contains("Python is not connected yet"))
         XCTAssertFalse(store.state.lastErrors.contains("Task panels are not connected for real projects yet"))
 
-        store.openFixtureProject()
-        store.openDefaultTab(kind: .aiChat)
-        store.openDefaultTab(kind: .python)
-        store.openDefaultTab(kind: .task)
+        let fixtureStore = WorkbenchStore.fixture()
+        fixtureStore.openDefaultTab(kind: .aiChat)
+        fixtureStore.openDefaultTab(kind: .python)
+        fixtureStore.openDefaultTab(kind: .task)
 
-        XCTAssertTrue(store.state.tabs.contains { $0.kind == .aiChat })
-        XCTAssertTrue(store.state.tabs.contains { $0.kind == .python })
-        XCTAssertTrue(store.state.tabs.contains { $0.kind == .task })
+        XCTAssertTrue(fixtureStore.state.tabs.contains { $0.kind == .aiChat })
+        XCTAssertTrue(fixtureStore.state.tabs.contains { $0.kind == .python })
+        XCTAssertTrue(fixtureStore.state.tabs.contains { $0.kind == .task })
     }
 
     func testDirtyImagingTaskCanOpenWhenSelectedDatasetIsAnImage() {
@@ -841,9 +1432,13 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.title, "UV Coverage")
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.imageByteCount, 8)
         XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.renderedPointCount, 42)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.plotDocumentLayerCount, 1)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.plotDocumentPanelCount, 0)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.plotDocumentPayloadStrategies, ["inlineDisplayPoints"])
         XCTAssertEqual(plotClient.requests.last?.preset, .uvCoverage)
         XCTAssertNil(plotClient.requests.last?.field)
         XCTAssertNil(plotClient.requests.last?.spectralWindow)
+        XCTAssertEqual(plotClient.requests.last?.maxPlotPoints, WorkbenchState.defaultMeasurementSetPlotMaxPoints)
         XCTAssertEqual(plotClient.requests.count, 1)
 
         store.setMeasurementSetPlotPreset(.amplitudeVsUvDistance, datasetID: probedDataset.id)
@@ -881,6 +1476,80 @@ final class WorkbenchStoreTests: XCTestCase {
         store.runMeasurementSetPlot(datasetID: probedDataset.id)
 
         XCTAssertEqual(plotClient.requests.count, 2)
+
+        store.setMeasurementSetPlotMaxPoints(100_000, datasetID: probedDataset.id)
+
+        snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.maxPlotPoints, 100_000)
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.status, .idle)
+        XCTAssertNil(snapshot.measurementSetPlots[probedDataset.id]?.resultPreset)
+
+        store.runMeasurementSetPlot(datasetID: probedDataset.id)
+        waitFor("budgeted plot job to finish") {
+            store.debugSnapshot().measurementSetPlots[probedDataset.id]?.status == .ready
+        }
+
+        XCTAssertEqual(plotClient.requests.count, 3)
+        XCTAssertEqual(plotClient.requests.last?.maxPlotPoints, 100_000)
+
+        store.setMeasurementSetPlotPreset(.amplitudeVsChannel, datasetID: probedDataset.id)
+        store.setMeasurementSetPlotSpectralWindow("spw 0: 4 chan, 1.420000 GHz center", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotChannelSelection("1~3", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotTimerange(">2024/01/01/00:00:00", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotUVRange("0~1klambda", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotAntenna("ea01&ea02", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotScan("1", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotArray("0", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotObservation("0", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotIntent("*OBSERVE_TARGET*", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotFeed("0", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotMSSelect("ANTENNA1 != ANTENNA2", datasetID: probedDataset.id)
+        store.setMeasurementSetPlotAvgChannel(2, datasetID: probedDataset.id)
+        store.setMeasurementSetPlotAvgTime(30.5, datasetID: probedDataset.id)
+        store.setMeasurementSetPlotAvgScan(true, datasetID: probedDataset.id)
+        store.setMeasurementSetPlotAvgField(true, datasetID: probedDataset.id)
+        store.setMeasurementSetPlotAvgBaseline(true, datasetID: probedDataset.id)
+        store.setMeasurementSetPlotAvgAntenna(true, datasetID: probedDataset.id)
+        store.setMeasurementSetPlotAvgSPW(true, datasetID: probedDataset.id)
+        store.setMeasurementSetPlotScalarAverage(true, datasetID: probedDataset.id)
+
+        store.runMeasurementSetPlot(datasetID: probedDataset.id)
+        waitFor("fully selected plot job to finish") {
+            store.debugSnapshot().measurementSetPlots[probedDataset.id]?.resultPreset == .amplitudeVsChannel
+        }
+
+        XCTAssertEqual(plotClient.requests.count, 4)
+        XCTAssertEqual(plotClient.requests.last?.spectralWindow, "0:1~3")
+        XCTAssertEqual(plotClient.requests.last?.timerange, ">2024/01/01/00:00:00")
+        XCTAssertEqual(plotClient.requests.last?.uvRange, "0~1klambda")
+        XCTAssertEqual(plotClient.requests.last?.antenna, "ea01&ea02")
+        XCTAssertEqual(plotClient.requests.last?.scan, "1")
+        XCTAssertEqual(plotClient.requests.last?.array, "0")
+        XCTAssertEqual(plotClient.requests.last?.observation, "0")
+        XCTAssertEqual(plotClient.requests.last?.intent, "*OBSERVE_TARGET*")
+        XCTAssertEqual(plotClient.requests.last?.feed, "0")
+        XCTAssertEqual(plotClient.requests.last?.msselect, "ANTENNA1 != ANTENNA2")
+        XCTAssertEqual(plotClient.requests.last?.avgChannel, 2)
+        XCTAssertEqual(plotClient.requests.last?.avgTime, 30.5)
+        XCTAssertEqual(plotClient.requests.last?.avgScan, true)
+        XCTAssertEqual(plotClient.requests.last?.avgField, true)
+        XCTAssertEqual(plotClient.requests.last?.avgBaseline, true)
+        XCTAssertEqual(plotClient.requests.last?.avgAntenna, true)
+        XCTAssertEqual(plotClient.requests.last?.avgSPW, true)
+        XCTAssertEqual(plotClient.requests.last?.scalarAverage, true)
+
+        store.setMeasurementSetPlotMaxPoints(1, datasetID: probedDataset.id)
+
+        snapshot = store.debugSnapshot()
+        XCTAssertEqual(
+            snapshot.measurementSetPlots[probedDataset.id]?.maxPlotPoints,
+            WorkbenchState.minimumMeasurementSetPlotMaxPoints
+        )
+
+        store.setMeasurementSetPlotMaxPoints(12_000_000, datasetID: probedDataset.id)
+
+        snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.measurementSetPlots[probedDataset.id]?.maxPlotPoints, 12_000_000)
     }
 
     func testMeasurementSetPlotJobDoesNotBlockUnrelatedWorkbenchActions() {
@@ -1065,7 +1734,10 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testInterfaceFontSizeIsAdjustableClampedAndPreservedAcrossFixtureOpen() {
-        let store = WorkbenchStore.fixture()
+        let store = WorkbenchStore(
+            state: FixtureWorkbench.makeState(),
+            demoProjectClient: StubDemoProjectClient(result: makeDemoProjectProbe(rootPath: "/tmp/tutorial-demo"))
+        )
 
         store.adjustInterfaceFontSize(by: 3)
         XCTAssertEqual(store.state.interfaceFontSize, WorkbenchState.defaultInterfaceFontSize + 3)
@@ -1082,6 +1754,46 @@ final class WorkbenchStoreTests: XCTestCase {
 
         store.resetInterfaceFontSize()
         XCTAssertEqual(store.state.interfaceFontSize, WorkbenchState.defaultInterfaceFontSize)
+    }
+
+    func testOpenDemoProjectStagesRealTutorialProjectAndCleansItUpWhenReplaced() {
+        let demoClient = StubDemoProjectClient(result: makeDemoProjectProbe(rootPath: "/tmp/tutorial-demo"))
+        let replacementDataset = DatasetSummary(
+            id: "/data/replacement.ms",
+            name: "replacement.ms",
+            path: "/data/replacement.ms",
+            kind: .measurementSet,
+            size: "4 rows",
+            units: "Jy",
+            dataColumns: ["DATA"],
+            notes: "Replacement real project."
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Replacement", rootPath: "/data", datasets: [replacementDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            demoProjectClient: demoClient
+        )
+
+        store.openFixtureProject()
+
+        let snapshot = store.debugSnapshot()
+        XCTAssertEqual(snapshot.activeProject, "TW Hya Tutorial Demo")
+        XCTAssertEqual(snapshot.activeProjectRoot, "/tmp/tutorial-demo")
+        XCTAssertEqual(snapshot.activeProjectSource, ProjectSource.probed)
+        XCTAssertFalse(store.state.isDemoProject)
+        XCTAssertEqual(snapshot.selectedDataset, "twhya_calibrated.ms")
+        XCTAssertEqual(snapshot.discoveredDatasets, ["twhya_calibrated.ms", "twhya_cont.image", "twhya_calibrated_ANTENNA.table"])
+        XCTAssertEqual(snapshot.openTabs.first, "MS: twhya_calibrated.ms")
+        XCTAssertTrue(snapshot.probeDiagnostics.contains("Staged tutorial dataset: alma/first-look/twhya/calibrated-ms"))
+
+        store.openProject(path: "/data")
+
+        XCTAssertEqual(demoClient.cleanedRoots, ["/tmp/tutorial-demo"])
+        XCTAssertEqual(store.debugSnapshot().activeProject, "Replacement")
     }
 
     func testPlotImageCacheIDTracksFullImageBytes() {
@@ -1110,10 +1822,28 @@ final class WorkbenchStoreTests: XCTestCase {
             ),
             "/Applications/casars-mac.app/Contents/MacOS/casars-imager"
         )
+        XCTAssertEqual(
+            ProcessDirtyImagingTaskClient.resolvedExecutablePath(
+                environment: ["CASA_RS_REPO_ROOT": "/repo"],
+                bundleExecutableURL: nil,
+                isExecutable: { $0 == "/repo/target/debug/casars-imager" }
+            ),
+            "/repo/target/debug/casars-imager"
+        )
+        XCTAssertEqual(
+            ProcessDirtyImagingTaskClient.resolvedExecutablePath(
+                environment: [:],
+                bundleExecutableURL: nil,
+                currentDirectoryPath: "/repo/apps/casars-mac",
+                isExecutable: { $0 == "/repo/target/debug/casars-imager" }
+            ),
+            "/repo/target/debug/casars-imager"
+        )
         XCTAssertNil(
             ProcessDirtyImagingTaskClient.resolvedExecutablePath(
                 environment: [:],
                 bundleExecutableURL: bundleExecutable,
+                currentDirectoryPath: "/nowhere",
                 isExecutable: { _ in false }
             )
         )
@@ -1130,6 +1860,28 @@ private struct StubProjectProbeClient: ProjectProbeClient {
 
     func probePath(path: String) throws -> DatasetSummary? {
         probedPaths[path]
+    }
+}
+
+private final class StubDemoProjectClient: DemoProjectClient {
+    var result: ProjectFixtureProbe
+    var error: Error?
+    private(set) var cleanedRoots: [String] = []
+
+    init(result: ProjectFixtureProbe, error: Error? = nil) {
+        self.result = result
+        self.error = error
+    }
+
+    func createDemoProject() throws -> ProjectFixtureProbe {
+        if let error {
+            throw error
+        }
+        return result
+    }
+
+    func cleanupDemoProject(rootPath: String) {
+        cleanedRoots.append(rootPath)
     }
 }
 
@@ -1158,6 +1910,286 @@ private final class StubMeasurementSetPlotClient: MeasurementSetPlotClient {
             imageHeight: request.height
         )
     }
+}
+
+private final class StubImageExplorerClient: ImageExplorerClient {
+    struct Request {
+        var datasetPath: String
+        var selectedView: String
+        var focus: String
+        var planeContentMode: String
+        var parameters: ImageExplorerParameters
+        var cursorX: Int?
+        var cursorY: Int?
+        var selectedProfileAxis: Int?
+        var nonDisplayIndices: [Int]
+        var commands: [ImageExplorerCommand]
+        var transientCommands: [ImageExplorerCommand]
+    }
+
+    private(set) var paths: [String] = []
+    private(set) var requests: [Request] = []
+    var snapshot: ImageExplorerSnapshot
+
+    init(snapshot: ImageExplorerSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    func buildSnapshot(request: ImageExplorerSnapshotRequest) throws -> ImageExplorerSnapshot {
+        paths.append(request.datasetPath)
+        requests.append(
+            Request(
+                datasetPath: request.datasetPath,
+                selectedView: request.selectedView,
+                focus: request.focus,
+                planeContentMode: request.planeContentMode,
+                parameters: request.parameters,
+                cursorX: request.cursorX,
+                cursorY: request.cursorY,
+                selectedProfileAxis: request.selectedProfileAxis,
+                nonDisplayIndices: request.nonDisplayIndices,
+                commands: request.commands,
+                transientCommands: request.transientCommands
+            )
+        )
+        var nextSnapshot = snapshot
+        if let x = request.cursorX, let y = request.cursorY {
+            nextSnapshot.planeCursor = ImageExplorerSnapshot.PlaneCursor(
+                sampledX: x,
+                sampledY: y,
+                pixelX: x,
+                pixelY: y
+            )
+        }
+        nextSnapshot.parameters = request.parameters
+        nextSnapshot.nonDisplayAxes = snapshot.nonDisplayAxes?.map { axis in
+            var nextAxis = axis
+            if let position = snapshot.nonDisplayAxes?.firstIndex(where: { $0.axis == axis.axis }),
+               request.nonDisplayIndices.indices.contains(position)
+            {
+                nextAxis.index = request.nonDisplayIndices[position]
+                nextAxis.pixel = request.nonDisplayIndices[position]
+            }
+            return nextAxis
+        }
+        return nextSnapshot
+    }
+}
+
+private final class StubTableBrowserClient: TableBrowserClient {
+    struct Request {
+        var request: TableBrowserSnapshotRequest
+
+        var datasetPath: String { request.datasetPath }
+        var selectedView: String { request.selectedView }
+    }
+
+    private(set) var paths: [String] = []
+    private(set) var requests: [Request] = []
+    private(set) var cellWindowRequests: [TableBrowserCellWindowRequest] = []
+    var snapshot: TableBrowserSnapshot
+    var cellWindow: TableBrowserCellWindowSnapshot
+
+    init(snapshot: TableBrowserSnapshot, cellWindow: TableBrowserCellWindowSnapshot? = nil) {
+        self.snapshot = snapshot
+        self.cellWindow = cellWindow ?? makeTableBrowserCellWindow(path: snapshot.tablePath)
+    }
+
+    func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot {
+        paths.append(request.datasetPath)
+        requests.append(Request(request: request))
+        var nextSnapshot = snapshot
+        nextSnapshot.view = request.selectedView
+        nextSnapshot.focus = request.focus
+        return nextSnapshot
+    }
+
+    func buildCellWindow(request: TableBrowserCellWindowRequest) throws -> TableBrowserCellWindowSnapshot {
+        cellWindowRequests.append(request)
+        var nextWindow = cellWindow
+        nextWindow.tablePath = request.datasetPath
+        nextWindow.rowStart = request.rowStart
+        nextWindow.columnStart = request.columnStart
+        return nextWindow
+    }
+
+    func buildCellValue(request: TableBrowserCellValueRequest) throws -> String {
+        "row \(request.rowIndex) column \(request.columnIndex)"
+    }
+}
+
+private func makeDemoProjectProbe(rootPath: String) -> ProjectFixtureProbe {
+    let msDataset = DatasetSummary(
+        id: "\(rootPath)/twhya_calibrated.ms",
+        name: "twhya_calibrated.ms",
+        path: "\(rootPath)/twhya_calibrated.ms",
+        kind: .measurementSet,
+        size: "tutorial rows",
+        units: "Jy, Hz, seconds",
+        fields: ["5: TW Hya"],
+        spectralWindows: ["spw 0: 128 chan, 372.533 GHz center"],
+        dataColumns: ["DATA"],
+        notes: "ALMA First Look TW Hya tutorial MeasurementSet."
+    )
+    let imageDataset = DatasetSummary(
+        id: "\(rootPath)/twhya_cont.image",
+        name: "twhya_cont.image",
+        path: "\(rootPath)/twhya_cont.image",
+        kind: .imageCube,
+        size: "512 x 512",
+        units: "Jy/beam",
+        shape: [512, 512],
+        notes: "ALMA First Look TW Hya tutorial image."
+    )
+    let tableDataset = DatasetSummary(
+        id: "\(rootPath)/twhya_calibrated_ANTENNA.table",
+        name: "twhya_calibrated_ANTENNA.table",
+        path: "\(rootPath)/twhya_calibrated_ANTENNA.table",
+        kind: .table,
+        size: "27 rows",
+        units: "casacore table",
+        columns: ["NAME", "POSITION", "DISH_DIAMETER"],
+        shape: [27],
+        notes: "ANTENNA subtable copied from the TW Hya tutorial MeasurementSet."
+    )
+    return ProjectFixtureProbe(
+        project: ProjectFixture(
+            name: "TW Hya Tutorial Demo",
+            rootPath: rootPath,
+            datasets: [imageDataset, tableDataset, msDataset],
+            source: .probed
+        ),
+        diagnostics: ["Staged tutorial dataset: alma/first-look/twhya/calibrated-ms"]
+    )
+}
+
+private func makeImageExplorerSnapshot(nonDisplayIndex: Int = 0) -> ImageExplorerSnapshot {
+    ImageExplorerSnapshot(
+        statusLine: "Browsing restored.image.",
+        activeView: "plane",
+        shape: [4, 4, 8],
+        inspectorLines: ["Cursor: 1,1", "Value: 2 Jy/beam"],
+        contentLines: ["plane content"],
+        plane: ImageExplorerSnapshot.Plane(
+            width: 2,
+            height: 2,
+            pixelsU8: [0, 64, 128, 255],
+            clipMin: 0,
+            clipMax: 3,
+            dataMin: 0,
+            dataMax: 3,
+            valueUnit: "Jy/beam",
+            maskedOrNonFiniteCount: 0
+        ),
+        profile: ImageExplorerSnapshot.Profile(
+            axis: 2,
+            axisName: "Frequency",
+            axisUnit: "Hz",
+            valueUnit: "Jy/beam",
+            samples: [
+                ImageExplorerSnapshot.Profile.Sample(sampleIndex: 0, pixelIndex: 0, value: 1.0, finite: true),
+                ImageExplorerSnapshot.Profile.Sample(sampleIndex: 1, pixelIndex: 1, value: 2.0, finite: true)
+            ]
+        ),
+        planeCursor: ImageExplorerSnapshot.PlaneCursor(sampledX: 1, sampledY: 1, pixelX: 1, pixelY: 1),
+        nonDisplayAxes: [
+            ImageExplorerSnapshot.NonDisplayAxis(
+                axis: 2,
+                label: "Frequency",
+                index: nonDisplayIndex,
+                length: 8,
+                pixel: nonDisplayIndex
+            )
+        ],
+        region: ImageExplorerSnapshot.Region(label: "active region", shapeCount: 1, closedShapeCount: 1, editing: false),
+        savedRegionNames: ["source"],
+        maskNames: ["mask0"],
+        capabilities: ImageExplorerSnapshot.Capabilities(
+            renderablePlane: true,
+            worldCoordsAvailable: true,
+            pixelOnlyMode: false,
+            nonDisplayAxisSelectors: true,
+            maskPresent: true
+        )
+    )
+}
+
+private func makeTableBrowserSnapshot(path: String) -> TableBrowserSnapshot {
+    TableBrowserSnapshot(
+        capabilities: TableBrowserSnapshot.Capabilities(editable: false),
+        view: "cells",
+        focus: "main",
+        tablePath: path,
+        breadcrumb: [TableBrowserSnapshot.Breadcrumb(label: "MAIN", path: path)],
+        viewport: TableBrowserSnapshot.Viewport(width: 180, height: 48, inspectorHeight: 12),
+        statusLine: "Browsing \(path).",
+        contentLines: [
+            "Cells  row=1/12  col=1/3  focus=Main",
+            "row | TIME<f64>[s] | DATA<c64[4x2]> | FLAG<bool> |",
+            ">  0 | 0.0 | >[1+0i, ...]< | false |",
+            "   1 | 1.0 | [1+1i, ...] | false |"
+        ],
+        verticalMetrics: TableBrowserSnapshot.NavigationMetrics(
+            selectedIndex: 0,
+            totalItems: 12,
+            viewportItems: 46
+        ),
+        horizontalMetrics: TableBrowserSnapshot.NavigationMetrics(
+            selectedIndex: 1,
+            totalItems: 3,
+            viewportItems: 3
+        ),
+        selectedAddress: TableBrowserSnapshot.SelectedAddress(
+            kind: "column",
+            tablePath: path,
+            row: nil,
+            column: "DATA",
+            keywordPath: nil,
+            valuePath: nil,
+            source: nil,
+            targetPath: nil
+        ),
+        inspector: TableBrowserSnapshot.Inspector(
+            title: "Column DATA",
+            trail: [],
+            node: .array(
+                primitive: "complex64",
+                shape: [4, 2],
+                totalElements: 8,
+                pageStart: 0,
+                pageSize: 8,
+                elements: []
+            ),
+            renderedLines: ["Array Complex64[4,2]", "Unit: Jy"]
+        )
+    )
+}
+
+private func makeTableBrowserCellWindow(path: String) -> TableBrowserCellWindowSnapshot {
+    TableBrowserCellWindowSnapshot(
+        tablePath: path,
+        rowCount: 12,
+        columnCount: 3,
+        rowStart: 0,
+        columnStart: 0,
+        columns: [
+            TableBrowserCellWindowSnapshot.Column(index: 0, name: "TIME", header: "TIME<f64>[s]", summary: "Scalar Float64", width: 14),
+            TableBrowserCellWindowSnapshot.Column(index: 1, name: "DATA", header: "DATA<c64[4x2]>", summary: "Array<Complex64> fixed", width: 20),
+            TableBrowserCellWindowSnapshot.Column(index: 2, name: "FLAG", header: "FLAG<bool>", summary: "Scalar Bool", width: 10)
+        ],
+        rows: [
+            TableBrowserCellWindowSnapshot.Row(index: 0, cells: [
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 0, display: "0.0", defined: true),
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 1, display: "[1+0i, ...]", defined: true),
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 2, display: "false", defined: true)
+            ]),
+            TableBrowserCellWindowSnapshot.Row(index: 1, cells: [
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 0, display: "1.0", defined: true),
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 1, display: "[1+1i, ...]", defined: true),
+                TableBrowserCellWindowSnapshot.Cell(columnIndex: 2, display: "false", defined: true)
+            ])
+        ]
+    )
 }
 
 private final class BlockingMeasurementSetPlotClient: MeasurementSetPlotClient {
@@ -1236,11 +2268,40 @@ private func makePlotResult(
         requestedMaxPoints: requestedMaxPoints,
         renderedPointCount: 42,
         diagnostics: [],
+        plotDocument: makeTestPlotDocument(title: title),
         renderer: "stub renderer",
         imageFormat: "png",
         imageWidth: imageWidth,
         imageHeight: imageHeight,
         imageBytes: imageBytes
+    )
+}
+
+private func makeTestPlotDocument(title: String = "UV Coverage") -> WorkbenchPlotDocument {
+    WorkbenchPlotDocument(
+        id: "test-ms-plot",
+        title: title,
+        subtitle: "Synthetic plot document for tests.",
+        axes: [
+            WorkbenchPlotAxis(id: "frequency", label: "Frequency", unit: "Hz", range: WorkbenchPlotRange(lower: 0, upper: 3)),
+            WorkbenchPlotAxis(id: "amplitude", label: "Amplitude", unit: "", range: WorkbenchPlotRange(lower: 0, upper: 2))
+        ],
+        layers: [
+            WorkbenchPlotLayer(
+                id: "target",
+                title: "Target",
+                kind: .scatter,
+                xAxisID: "frequency",
+                yAxisID: "amplitude",
+                points: [
+                    WorkbenchPlotPoint(x: 0, y: 0.2),
+                    WorkbenchPlotPoint(x: 1, y: 0.8),
+                    WorkbenchPlotPoint(x: 2, y: 1.4)
+                ],
+                style: WorkbenchPlotLayerStyle(colorHex: "#2563eb", symbolSize: 3, opacity: 0.8),
+                provenanceSummary: "Synthetic MeasurementSet samples."
+            )
+        ]
     )
 }
 

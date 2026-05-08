@@ -30,6 +30,7 @@ pub mod task_contract;
 use std::fmt;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use casa_tables::Table;
 use casa_types::measures::doppler::DopplerRef;
@@ -45,11 +46,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::columns::{
-    exposure_interval::IntervalColumn,
     frequency_columns::ChanFreqColumn,
-    main_ids,
-    time_columns::TimeColumn,
-    uvw_column::UvwColumn,
     weight_columns::{SigmaSpectrumColumn, WeightSpectrumColumn},
 };
 use crate::derived::engine::MsCalEngine;
@@ -63,11 +60,56 @@ use crate::spectral_selection::{
     convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz,
 };
 use crate::subtables::SubTable;
+use crate::subtables::data_description::MsDataDescription;
+use crate::subtables::polarization::MsPolarization;
 use crate::{MeasurementSet, MeasurementSetSummaryOptions, MeasurementSetSummaryOutputFormat};
 
 const EXPORT_DPI: f32 = 72.0;
 const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
 type BitmapArea<'a> = DrawingArea<BitMapBackend<'a>, plotters::coord::Shift>;
+
+#[derive(Default)]
+struct VisibilityScatterTiming {
+    row_grid: Duration,
+    row_arrays: Duration,
+    grouping: Duration,
+    bin_collect: Duration,
+    axis_compute: Duration,
+    point_push: Duration,
+}
+
+impl VisibilityScatterTiming {
+    fn enabled() -> bool {
+        std::env::var("CASA_RS_MSEXPLORE_TIMING")
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+    }
+
+    fn checkpoint(label: &str, started: &mut Instant) {
+        if Self::enabled() {
+            let elapsed = started.elapsed();
+            eprintln!("msexplore timing: {label}={} ms", elapsed.as_millis());
+        }
+        *started = Instant::now();
+    }
+
+    fn report(&self, label: &str, rows: usize, points: usize, started: Instant) {
+        if !Self::enabled() {
+            return;
+        }
+        eprintln!(
+            "msexplore timing: {label} total={} ms rows={} points={} row_grid={} ms row_arrays={} ms grouping={} ms bin_collect={} ms axis_compute={} ms point_push={} ms",
+            started.elapsed().as_millis(),
+            rows,
+            points,
+            self.row_grid.as_millis(),
+            self.row_arrays.as_millis(),
+            self.grouping.as_millis(),
+            self.bin_collect.as_millis(),
+            self.axis_compute.as_millis(),
+            self.point_push.as_millis()
+        );
+    }
+}
 
 struct ScatterPanelAxes<'a> {
     x_axis: MsAxis,
@@ -2158,6 +2200,7 @@ pub struct MsScatterPagePayload {
 struct PointBudget {
     max_plot_points: Option<usize>,
     rendered_points: usize,
+    allow_predecimation: bool,
 }
 
 impl PointBudget {
@@ -2165,13 +2208,15 @@ impl PointBudget {
         Self {
             max_plot_points: None,
             rendered_points: 0,
+            allow_predecimation: false,
         }
     }
 
-    fn limited(max_plot_points: usize) -> Self {
+    fn limited(max_plot_points: usize, allow_predecimation: bool) -> Self {
         Self {
             max_plot_points: Some(max_plot_points),
             rendered_points: 0,
+            allow_predecimation,
         }
     }
 
@@ -2477,7 +2522,7 @@ fn build_msexplore_payload_internal(
     allow_decimation: bool,
 ) -> Result<MsPlotPayload, String> {
     spec.validate()?;
-    let mut point_budget = PointBudget::limited(spec.max_plot_points);
+    let mut point_budget = PointBudget::limited(spec.max_plot_points, allow_decimation);
     let header_lines = resolve_page_header_lines(ms, spec)?;
     if spec.plots.len() == 1 {
         let mut payload = build_msexplore_plot_payload_validated(
@@ -3475,18 +3520,139 @@ struct AveragedPanelAccumulator {
     contributing_rows: std::collections::BTreeSet<usize>,
 }
 
+struct VisibilityPredecimationContext<'a> {
+    data_description: &'a MsDataDescription<'a>,
+    spectral_window: &'a crate::subtables::spectral_window::MsSpectralWindow<'a>,
+    polarization: &'a MsPolarization<'a>,
+    requested_corr_codes: Option<&'a [i32]>,
+}
+
+fn predecimate_visibility_rows(
+    ms: &MeasurementSet,
+    row_numbers: Vec<usize>,
+    spec: &MsPlotSpec,
+    point_budget: &PointBudget,
+    context: VisibilityPredecimationContext<'_>,
+) -> Result<Vec<usize>, String> {
+    if !point_budget.allow_predecimation || row_numbers.len() <= 1 {
+        return Ok(row_numbers);
+    }
+    let Some(max_plot_points) = point_budget.max_plot_points else {
+        return Ok(row_numbers);
+    };
+    let Some(first_row) = row_numbers.first().copied() else {
+        return Ok(row_numbers);
+    };
+
+    let ddid = selected_i32_values(ms.main_table(), "DATA_DESC_ID", &[first_row])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("msexplore requires DATA_DESC_ID data for row {first_row}"))?;
+    if ddid < 0 || (ddid as usize) >= context.data_description.row_count() {
+        return Ok(row_numbers);
+    }
+    let ddid = ddid as usize;
+    let spw_id = context
+        .data_description
+        .spectral_window_id(ddid)
+        .map_err(|error| error.to_string())?;
+    let chan_count = if spw_id >= 0 && (spw_id as usize) < context.spectral_window.row_count() {
+        let num_chan = context
+            .spectral_window
+            .num_chan(spw_id as usize)
+            .map_err(|error| error.to_string())?;
+        usize::try_from(num_chan).unwrap_or(0)
+    } else {
+        0
+    };
+    if chan_count == 0 {
+        return Ok(row_numbers);
+    }
+    let pol_id = context
+        .data_description
+        .polarization_id(ddid)
+        .map_err(|error| error.to_string())?;
+    let (corr_count, corr_types) =
+        if pol_id >= 0 && (pol_id as usize) < context.polarization.row_count() {
+            let pol_id = pol_id as usize;
+            let corr_types = context
+                .polarization
+                .corr_type(pol_id)
+                .map_err(|error| error.to_string())?;
+            let num_corr = context
+                .polarization
+                .num_corr(pol_id)
+                .map_err(|error| error.to_string())?;
+            let corr_count = usize::try_from(num_corr)
+                .ok()
+                .filter(|count| *count > 0)
+                .unwrap_or(corr_types.len());
+            (corr_count, corr_types)
+        } else {
+            (0, Vec::new())
+        };
+    if corr_count == 0 {
+        return Ok(row_numbers);
+    }
+    let selected_correlations =
+        select_correlation_slots(corr_count, &corr_types, context.requested_corr_codes);
+    if selected_correlations.is_empty() {
+        return Ok(row_numbers);
+    }
+    let correlation_required = spec.x_axis.uses_correlation_slots()
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(MsAxis::uses_correlation_slots)
+        || matches!(spec.color_by, MsColorAxis::Correlation)
+        || matches!(spec.iteration.iteraxis, Some(MsIterationAxis::Correlation));
+    let corr_points_per_row = if correlation_required {
+        selected_correlations.len()
+    } else {
+        1
+    };
+    let channel_points_per_corr = plot_channel_bins(chan_count, spec)?.len();
+    let y_points_per_bin = spec.y_axes.len().max(1);
+    let estimated_points_per_row = corr_points_per_row
+        .saturating_mul(channel_points_per_corr)
+        .saturating_mul(y_points_per_bin);
+    if estimated_points_per_row == 0 {
+        return Ok(row_numbers);
+    }
+
+    let estimated_points = row_numbers.len().saturating_mul(estimated_points_per_row);
+    if estimated_points <= max_plot_points {
+        return Ok(row_numbers);
+    }
+    let target_rows = (max_plot_points / estimated_points_per_row).clamp(1, row_numbers.len());
+    let sampled = sampled_indices(row_numbers.len(), target_rows)
+        .into_iter()
+        .map(|index| row_numbers[index])
+        .collect();
+    Ok(sampled)
+}
+
 fn build_generic_visibility_scatter(
     ms: &MeasurementSet,
     selection: &MsSelectionSpec,
     spec: &MsPlotSpec,
     point_budget: &mut PointBudget,
 ) -> Result<MsPlotPayload, String> {
+    let timing_enabled = VisibilityScatterTiming::enabled();
+    let scatter_started = Instant::now();
+    let mut checkpoint_started = Instant::now();
+    let mut scatter_timing = VisibilityScatterTiming::default();
     if uses_extended_averaging(spec) {
         return build_generic_visibility_scatter_with_averaging(ms, selection, spec, point_budget);
     }
 
     let listobs_options = selection.to_summary_options();
     let row_numbers = resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?;
+    let selected_row_count = row_numbers.len();
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("resolve_selected_rows", &mut checkpoint_started);
+    }
 
     let needs_visibility_grid = spec.x_axis.is_visibility_math()
         || spec.y_axes.iter().copied().any(MsAxis::is_visibility_math);
@@ -3496,7 +3662,73 @@ fn build_generic_visibility_scatter(
             .iter()
             .copied()
             .any(MsAxis::uses_spectral_coordinates);
+    let needs_flag_grid = needs_visibility_grid
+        || matches!(spec.x_axis, MsAxis::Flag)
+        || spec.y_axes.iter().copied().any(|axis| {
+            matches!(
+                axis,
+                MsAxis::Flag | MsAxis::WeightSpectrum | MsAxis::SigmaSpectrum
+            )
+        });
+    let needs_weight_values = matches!(spec.x_axis, MsAxis::Weight | MsAxis::WeightSpectrum)
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(|axis| matches!(axis, MsAxis::Weight | MsAxis::WeightSpectrum));
+    let needs_sigma_values = matches!(spec.x_axis, MsAxis::Sigma | MsAxis::SigmaSpectrum)
+        || spec
+            .y_axes
+            .iter()
+            .copied()
+            .any(|axis| matches!(axis, MsAxis::Sigma | MsAxis::SigmaSpectrum));
+    let needs_uvw_values = matches!(
+        spec.x_axis,
+        MsAxis::UvDistance | MsAxis::U | MsAxis::V | MsAxis::W
+    ) || spec
+        .y_axes
+        .iter()
+        .copied()
+        .any(|axis| matches!(axis, MsAxis::UvDistance | MsAxis::U | MsAxis::V | MsAxis::W));
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
+    let field = ms.field().map_err(|error| error.to_string())?;
+    let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
+    let polarization = ms.polarization().map_err(|error| error.to_string())?;
+    let data_description = ms.data_description().map_err(|error| error.to_string())?;
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("open_metadata_subtables", &mut checkpoint_started);
+    }
+
+    let requested_corr_codes = selection
+        .correlation
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(listobs::parse_correlation_selector)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+
+    let row_numbers = predecimate_visibility_rows(
+        ms,
+        row_numbers,
+        spec,
+        point_budget,
+        VisibilityPredecimationContext {
+            data_description: &data_description,
+            spectral_window: &spectral_window,
+            polarization: &polarization,
+            requested_corr_codes: requested_corr_codes.as_deref(),
+        },
+    )?;
+    let sampled_row_count = row_numbers.len();
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("predecimate_rows", &mut checkpoint_started);
+    }
+    let row_sampling_summary = if sampled_row_count < selected_row_count {
+        format!(" Sampled rows={sampled_row_count}/{selected_row_count}.")
+    } else {
+        String::new()
+    };
+
     let data_source = if needs_visibility_grid {
         Some(PreparedSelectedDataSource::new(
             ms,
@@ -3506,12 +3738,52 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
-    let flag_row = ms.flag_row_column();
-    let selected_flags = SelectedArrayColumn::load(ms.main_table(), "FLAG", &row_numbers)?;
-    let selected_weights = SelectedArrayColumn::load(ms.main_table(), "WEIGHT", &row_numbers)?;
-    let selected_sigmas = SelectedArrayColumn::load(ms.main_table(), "SIGMA", &row_numbers)?;
-    let time = TimeColumn::new(ms.main_table());
-    let uvw = UvwColumn::new(ms.main_table());
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("load_visibility_data", &mut checkpoint_started);
+    }
+    let selected_flags = if needs_flag_grid {
+        Some(SelectedArrayColumn::load(
+            ms.main_table(),
+            "FLAG",
+            &row_numbers,
+        )?)
+    } else {
+        None
+    };
+    let selected_weights = if needs_weight_values {
+        Some(SelectedArrayColumn::load(
+            ms.main_table(),
+            "WEIGHT",
+            &row_numbers,
+        )?)
+    } else {
+        None
+    };
+    let selected_sigmas = if needs_sigma_values {
+        Some(SelectedArrayColumn::load(
+            ms.main_table(),
+            "SIGMA",
+            &row_numbers,
+        )?)
+    } else {
+        None
+    };
+    let selected_flag_rows = selected_bool_values(ms.main_table(), "FLAG_ROW", &row_numbers)?;
+    let selected_data_desc_ids =
+        selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
+    let selected_field_ids = selected_i32_values(ms.main_table(), "FIELD_ID", &row_numbers)?;
+    let selected_scan_numbers = selected_i32_values(ms.main_table(), "SCAN_NUMBER", &row_numbers)?;
+    let selected_antenna1 = selected_i32_values(ms.main_table(), "ANTENNA1", &row_numbers)?;
+    let selected_antenna2 = selected_i32_values(ms.main_table(), "ANTENNA2", &row_numbers)?;
+    let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
+    let selected_uvw = if needs_uvw_values {
+        selected_uvw_values(ms.main_table(), "UVW", &row_numbers)?
+    } else {
+        Vec::new()
+    };
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("load_aux_columns", &mut checkpoint_started);
+    }
     let derived_engine = if spec.x_axis.uses_derived_geometry()
         || spec
             .y_axes
@@ -3532,29 +3804,14 @@ fn build_generic_visibility_scatter(
             .any(MsAxis::uses_derived_geometry);
     let mut geometry_samples_seen =
         std::collections::BTreeSet::<(String, String, String, u64, i32)>::new();
-    let field_id = main_ids::field_id(ms.main_table());
-    let scan_number = main_ids::scan_number(ms.main_table());
-    let data_desc_id = main_ids::data_desc_id(ms.main_table());
-    let antenna1 = main_ids::antenna1(ms.main_table());
-    let antenna2 = main_ids::antenna2(ms.main_table());
-
-    let field = ms.field().map_err(|error| error.to_string())?;
-    let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
-    let polarization = ms.polarization().map_err(|error| error.to_string())?;
-    let data_description = ms.data_description().map_err(|error| error.to_string())?;
     let chan_freq = if needs_spectral_coordinates {
         Some(ChanFreqColumn::new(spectral_window.table()))
     } else {
         None
     };
-
-    let requested_corr_codes = selection
-        .correlation
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .map(listobs::parse_correlation_selector)
-        .transpose()
-        .map_err(|error| error.to_string())?;
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("prepare_context", &mut checkpoint_started);
+    }
 
     let iteraxis = spec.iteration.iteraxis;
     let mut panel_order = Vec::<String>::new();
@@ -3591,14 +3848,17 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("load_optional_spectra", &mut checkpoint_started);
+    }
 
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
-        let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
+        let flag_row_value = selected_flag_rows[row_slot];
         if flag_row_value && !include_row_flagged_points {
             continue;
         }
 
-        let ddid = data_desc_id.get(row).map_err(|error| error.to_string())?;
+        let ddid = selected_data_desc_ids[row_slot];
         if ddid < 0 || (ddid as usize) >= data_description.row_count() {
             continue;
         }
@@ -3617,28 +3877,45 @@ fn build_generic_visibility_scatter(
             Vec::new()
         };
 
-        let flags = match selected_flags.get(row_slot)? {
-            ArrayValue::Bool(values) => {
-                values.view().into_dimensionality::<Ix2>().map_err(|_| {
-                    "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
-                })?
-            }
-            other => {
-                return Err(format!(
-                    "msexplore requires BOOL flag cells, found {:?}",
-                    other.primitive_type()
-                ));
-            }
-        };
+        let row_grid_started = timing_enabled.then(Instant::now);
         let grid = data_source
             .as_ref()
             .map(|source| source.row(row_slot))
             .transpose()?;
+        if let Some(started) = row_grid_started {
+            scatter_timing.row_grid += started.elapsed();
+        }
+        let expected_corr_count = corr_types.len();
+        let spw_row = usize::try_from(spw_id)
+            .map_err(|_| format!("invalid DATA_DESCRIPTION SPECTRAL_WINDOW_ID {spw_id}"))?;
+        let expected_chan_count = spectral_window
+            .num_chan(spw_row)
+            .map_err(|error| error.to_string())
+            .and_then(|count| {
+                usize::try_from(count)
+                    .map_err(|_| format!("invalid SPECTRAL_WINDOW NUM_CHAN {count}"))
+            })?;
         let (corr_count, chan_count) = grid
             .as_ref()
             .map(|grid| (grid.corr_count, grid.chan_count))
-            .unwrap_or((flags.nrows(), flags.ncols()));
-        if flags.shape() != [corr_count, chan_count] {
+            .unwrap_or((expected_corr_count, expected_chan_count));
+        let flags = selected_flags
+            .as_ref()
+            .map(|column| match column.get(row_slot)? {
+                ArrayValue::Bool(values) => {
+                    values.view().into_dimensionality::<Ix2>().map_err(|_| {
+                        "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
+                    })
+                }
+                other => Err(format!(
+                    "msexplore requires BOOL flag cells, found {:?}",
+                    other.primitive_type()
+                )),
+            })
+            .transpose()?;
+        if let Some(flags) = flags.as_ref()
+            && flags.shape() != [corr_count, chan_count]
+        {
             return Err(format!(
                 "visibility flag shape {:?} does not match data shape [{}, {}]",
                 flags.shape(),
@@ -3646,9 +3923,17 @@ fn build_generic_visibility_scatter(
                 chan_count
             ));
         }
-        let weight_values =
-            float_axis_values(selected_weights.get(row_slot)?, corr_count, "WEIGHT")?;
-        let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
+        let row_arrays_started = timing_enabled.then(Instant::now);
+        let weight_values = selected_weights
+            .as_ref()
+            .map(|column| float_axis_values(column.get(row_slot)?, corr_count, "WEIGHT"))
+            .transpose()?
+            .unwrap_or_else(|| vec![0.0; corr_count]);
+        let sigma_values = selected_sigmas
+            .as_ref()
+            .map(|column| float_axis_values(column.get(row_slot)?, corr_count, "SIGMA"))
+            .transpose()?
+            .unwrap_or_else(|| vec![0.0; corr_count]);
         let weight_spectrum_grid = if needs_weight_spectrum {
             Some(
                 selected_weight_spectrum
@@ -3684,6 +3969,9 @@ fn build_generic_visibility_scatter(
                 }
             }
         }
+        if let Some(started) = row_arrays_started {
+            scatter_timing.row_arrays += started.elapsed();
+        }
 
         let selected_correlations =
             select_correlation_slots(corr_count, &corr_types, requested_corr_codes.as_deref());
@@ -3706,13 +3994,16 @@ fn build_generic_visibility_scatter(
 
         let channel_bins = plot_channel_bins(chan_count, spec)?;
 
-        let field_id_value = field_id.get(row).map_err(|error| error.to_string())?;
-        let scan_number_value = scan_number.get(row).map_err(|error| error.to_string())?;
-        let antenna1_value = antenna1.get(row).map_err(|error| error.to_string())?;
-        let antenna2_value = antenna2.get(row).map_err(|error| error.to_string())?;
-        let row_time_value = time
-            .get_mjd_seconds(row)
-            .map_err(|error| error.to_string())?;
+        let field_id_value = selected_field_ids[row_slot];
+        let scan_number_value = selected_scan_numbers[row_slot];
+        let antenna1_value = selected_antenna1[row_slot];
+        let antenna2_value = selected_antenna2[row_slot];
+        let row_time_value = selected_times[row_slot];
+        let row_uvw_value = if needs_uvw_values {
+            selected_uvw[row_slot]
+        } else {
+            [0.0, 0.0, 0.0]
+        };
         let spectral_context = resolve_spectral_context(
             spec,
             spw_id,
@@ -3727,6 +4018,7 @@ fn build_generic_visibility_scatter(
         let mut row_contributed = false;
         let mut row_panels = std::collections::BTreeSet::<String>::new();
         for (corr_index, corr_label) in &selected_correlations {
+            let grouping_started = timing_enabled.then(Instant::now);
             let row_weight = weight_values[*corr_index];
             let row_sigma = sigma_values[*corr_index];
             let (group_key, group_label) = visibility_group(
@@ -3773,15 +4065,22 @@ fn build_generic_visibility_scatter(
                     (y_axis, series_key, series_label, color_group)
                 })
                 .collect::<Vec<_>>();
+            if let Some(started) = grouping_started {
+                scatter_timing.grouping += started.elapsed();
+            }
             let mut samples = Vec::<Complex64>::new();
             let mut flag_samples = Vec::<bool>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
             for bin in &channel_bins {
+                let bin_collect_started = timing_enabled.then(Instant::now);
                 if let Some(grid) = grid.as_ref() {
+                    let flags = flags
+                        .as_ref()
+                        .expect("visibility grid loads matching flag grid");
                     collect_bin_samples_into(
                         grid,
-                        &flags,
+                        flags,
                         &[*corr_index],
                         bin.start,
                         bin.end,
@@ -3790,11 +4089,24 @@ fn build_generic_visibility_scatter(
                 } else {
                     samples.clear();
                 }
-                collect_bin_flags_into(&flags, *corr_index, bin.start, bin.end, &mut flag_samples);
+                if let Some(flags) = flags.as_ref() {
+                    collect_bin_flags_into(
+                        flags,
+                        *corr_index,
+                        bin.start,
+                        bin.end,
+                        &mut flag_samples,
+                    );
+                } else {
+                    flag_samples.clear();
+                }
                 if let Some(grid) = weight_spectrum_grid.as_ref() {
+                    let flags = flags
+                        .as_ref()
+                        .expect("weight spectrum loads matching flag grid");
                     collect_bin_float_samples_into(
                         grid,
-                        &flags,
+                        flags,
                         *corr_index,
                         bin.start,
                         bin.end,
@@ -3804,9 +4116,12 @@ fn build_generic_visibility_scatter(
                     weight_spectrum_samples.clear();
                 }
                 if let Some(grid) = sigma_spectrum_grid.as_ref() {
+                    let flags = flags
+                        .as_ref()
+                        .expect("sigma spectrum loads matching flag grid");
                     collect_bin_float_samples_into(
                         grid,
-                        &flags,
+                        flags,
                         *corr_index,
                         bin.start,
                         bin.end,
@@ -3815,9 +4130,12 @@ fn build_generic_visibility_scatter(
                 } else {
                     sigma_spectrum_samples.clear();
                 }
+                if let Some(started) = bin_collect_started {
+                    scatter_timing.bin_collect += started.elapsed();
+                }
+                let axis_started = timing_enabled.then(Instant::now);
                 let Some(x_value) = compute_axis_value(
                     spec.x_axis,
-                    row,
                     &samples,
                     &flag_samples,
                     &weight_spectrum_samples,
@@ -3830,8 +4148,8 @@ fn build_generic_visibility_scatter(
                     spec.averaging.scalar,
                     bin,
                     spectral_context.as_ref(),
-                    &time,
-                    &uvw,
+                    row_time_value,
+                    row_uvw_value,
                     derived_engine.as_ref(),
                 )?
                 else {
@@ -3843,7 +4161,6 @@ fn build_generic_visibility_scatter(
                 for (y_axis, series_key, series_label, color_group) in &series_identity {
                     let Some(y_value) = compute_axis_value(
                         *y_axis,
-                        row,
                         &samples,
                         &flag_samples,
                         &weight_spectrum_samples,
@@ -3856,8 +4173,8 @@ fn build_generic_visibility_scatter(
                         spec.averaging.scalar,
                         bin,
                         spectral_context.as_ref(),
-                        &time,
-                        &uvw,
+                        row_time_value,
+                        row_uvw_value,
                         derived_engine.as_ref(),
                     )?
                     else {
@@ -3885,6 +4202,7 @@ fn build_generic_visibility_scatter(
                                 points: Vec::new(),
                                 provenance: Vec::new(),
                             });
+                    let push_started = timing_enabled.then(Instant::now);
                     series.points.push((x_value, y_value));
                     series.provenance.push(MsScatterPointRef {
                         row,
@@ -3892,6 +4210,9 @@ fn build_generic_visibility_scatter(
                         chan_start: bin.start,
                         chan_end: bin.end,
                     });
+                    if let Some(started) = push_started {
+                        scatter_timing.point_push += started.elapsed();
+                    }
                     point_budget.record_points(
                         1,
                         spec.preset
@@ -3902,6 +4223,9 @@ fn build_generic_visibility_scatter(
                     contributing_points += 1;
                     row_contributed = true;
                     row_panels.insert(panel_key.clone());
+                }
+                if let Some(started) = axis_started {
+                    scatter_timing.axis_compute += started.elapsed();
                 }
             }
         }
@@ -3914,6 +4238,9 @@ fn build_generic_visibility_scatter(
         if row_contributed {
             contributing_rows += 1;
         }
+    }
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("expand_rows", &mut checkpoint_started);
     }
 
     if contributing_points == 0 {
@@ -3975,6 +4302,17 @@ fn build_generic_visibility_scatter(
             })
         })
         .collect::<Vec<_>>();
+    if timing_enabled {
+        VisibilityScatterTiming::checkpoint("sort_and_pack_series", &mut checkpoint_started);
+        scatter_timing.report(
+            spec.preset
+                .map(MsPlotPreset::display_name)
+                .unwrap_or("MeasurementSet plot"),
+            contributing_rows,
+            contributing_points,
+            scatter_started,
+        );
+    }
     if let Some(iteraxis) = iteraxis {
         let (gridrows, gridcols) =
             resolve_iterated_grid(panels.len(), spec.layout.gridrows, spec.layout.gridcols)?;
@@ -4002,14 +4340,15 @@ fn build_generic_visibility_scatter(
             share_y_bounds,
             header_lines: Vec::new(),
             summary: format!(
-                "{}. Panels={} Rows={} Points={} Data column={}",
+                "{}. Panels={} Rows={} Points={} Data column={}.{}",
                 spec.preset
                     .map(MsPlotPreset::display_name)
                     .unwrap_or("MeasurementSet iterated plot"),
                 panels.len(),
                 contributing_rows,
                 contributing_points,
-                spec.data_column
+                spec.data_column,
+                row_sampling_summary
             ),
             panels,
         }));
@@ -4035,13 +4374,14 @@ fn build_generic_visibility_scatter(
         symbol_size_px: spec.style.symbol_size,
         header_lines: Vec::new(),
         summary: format!(
-            "{}. Rows={} Points={} Data column={}",
+            "{}. Rows={} Points={} Data column={}.{}",
             spec.preset
                 .map(MsPlotPreset::display_name)
                 .unwrap_or("MeasurementSet plot"),
             contributing_rows,
             contributing_points,
-            spec.data_column
+            spec.data_column,
+            row_sampling_summary
         ),
         series: panel.series,
     }))
@@ -4246,13 +4586,19 @@ fn build_generic_visibility_scatter_with_averaging(
     } else {
         None
     };
-    let flag_row = ms.flag_row_column();
-    let interval = IntervalColumn::new(ms.main_table());
     let selected_flags = SelectedArrayColumn::load(ms.main_table(), "FLAG", &row_numbers)?;
     let selected_weights = SelectedArrayColumn::load(ms.main_table(), "WEIGHT", &row_numbers)?;
     let selected_sigmas = SelectedArrayColumn::load(ms.main_table(), "SIGMA", &row_numbers)?;
-    let time = TimeColumn::new(ms.main_table());
-    let uvw = UvwColumn::new(ms.main_table());
+    let selected_flag_rows = selected_bool_values(ms.main_table(), "FLAG_ROW", &row_numbers)?;
+    let selected_intervals = selected_f64_values(ms.main_table(), "INTERVAL", &row_numbers)?;
+    let selected_data_desc_ids =
+        selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
+    let selected_field_ids = selected_i32_values(ms.main_table(), "FIELD_ID", &row_numbers)?;
+    let selected_scan_numbers = selected_i32_values(ms.main_table(), "SCAN_NUMBER", &row_numbers)?;
+    let selected_antenna1 = selected_i32_values(ms.main_table(), "ANTENNA1", &row_numbers)?;
+    let selected_antenna2 = selected_i32_values(ms.main_table(), "ANTENNA2", &row_numbers)?;
+    let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
+    let selected_uvw = selected_uvw_values(ms.main_table(), "UVW", &row_numbers)?;
     let derived_engine = if spec.x_axis.uses_derived_geometry()
         || spec
             .y_axes
@@ -4265,12 +4611,6 @@ fn build_generic_visibility_scatter_with_averaging(
     } else {
         None
     };
-    let field_id = main_ids::field_id(ms.main_table());
-    let scan_number = main_ids::scan_number(ms.main_table());
-    let data_desc_id = main_ids::data_desc_id(ms.main_table());
-    let antenna1 = main_ids::antenna1(ms.main_table());
-    let antenna2 = main_ids::antenna2(ms.main_table());
-
     let field = ms.field().map_err(|error| error.to_string())?;
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
@@ -4327,12 +4667,12 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut shared_time_scope_bounds =
         std::collections::BTreeMap::<SharedTimeAverageScopeKey, (f64, f64)>::new();
     if spec.averaging.avgtime.is_some() {
-        for &row in &row_numbers {
-            let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
+        for (row_slot, _row) in row_numbers.iter().copied().enumerate() {
+            let flag_row_value = selected_flag_rows[row_slot];
             if flag_row_value && !include_row_flagged_points {
                 continue;
             }
-            let ddid = data_desc_id.get(row).map_err(|error| error.to_string())?;
+            let ddid = selected_data_desc_ids[row_slot];
             if ddid < 0 || (ddid as usize) >= data_description.row_count() {
                 continue;
             }
@@ -4340,13 +4680,11 @@ fn build_generic_visibility_scatter_with_averaging(
             let spw_id = data_description
                 .spectral_window_id(ddid)
                 .map_err(|error| error.to_string())?;
-            let field_id_value = field_id.get(row).map_err(|error| error.to_string())?;
-            let scan_number_value = scan_number.get(row).map_err(|error| error.to_string())?;
-            let antenna1_value = antenna1.get(row).map_err(|error| error.to_string())?;
-            let antenna2_value = antenna2.get(row).map_err(|error| error.to_string())?;
-            let row_time_value = time
-                .get_mjd_seconds(row)
-                .map_err(|error| error.to_string())?;
+            let field_id_value = selected_field_ids[row_slot];
+            let scan_number_value = selected_scan_numbers[row_slot];
+            let antenna1_value = selected_antenna1[row_slot];
+            let antenna2_value = selected_antenna2[row_slot];
+            let row_time_value = selected_times[row_slot];
             if use_shared_time_scope_midpoint {
                 let shared_scope = build_shared_time_average_scope_key(
                     field_id_value,
@@ -4387,12 +4725,12 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut contributing_rows = std::collections::BTreeSet::<usize>::new();
 
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
-        let flag_row_value = flag_row.get(row).map_err(|error| error.to_string())?;
+        let flag_row_value = selected_flag_rows[row_slot];
         if flag_row_value && !include_row_flagged_points {
             continue;
         }
 
-        let ddid = data_desc_id.get(row).map_err(|error| error.to_string())?;
+        let ddid = selected_data_desc_ids[row_slot];
         if ddid < 0 || (ddid as usize) >= data_description.row_count() {
             continue;
         }
@@ -4500,14 +4838,13 @@ fn build_generic_visibility_scatter_with_averaging(
 
         let channel_bins = plot_channel_bins(chan_count, spec)?;
 
-        let field_id_value = field_id.get(row).map_err(|error| error.to_string())?;
-        let scan_number_value = scan_number.get(row).map_err(|error| error.to_string())?;
-        let antenna1_value = antenna1.get(row).map_err(|error| error.to_string())?;
-        let antenna2_value = antenna2.get(row).map_err(|error| error.to_string())?;
-        let row_time_value = time
-            .get_mjd_seconds(row)
-            .map_err(|error| error.to_string())?;
-        let row_interval_value = interval.get(row).map_err(|error| error.to_string())?;
+        let field_id_value = selected_field_ids[row_slot];
+        let scan_number_value = selected_scan_numbers[row_slot];
+        let antenna1_value = selected_antenna1[row_slot];
+        let antenna2_value = selected_antenna2[row_slot];
+        let row_time_value = selected_times[row_slot];
+        let row_uvw_value = selected_uvw[row_slot];
+        let row_interval_value = selected_intervals[row_slot];
         let shared_time_scope_value = if use_shared_time_scope_midpoint {
             let shared_scope = build_shared_time_average_scope_key(
                 field_id_value,
@@ -4693,7 +5030,6 @@ fn build_generic_visibility_scatter_with_averaging(
                             axis if !axis.is_visibility_math() => {
                                 if let Some(value) = compute_axis_value(
                                     axis,
-                                    row,
                                     &samples,
                                     &flag_samples,
                                     &weight_spectrum_samples,
@@ -4706,8 +5042,8 @@ fn build_generic_visibility_scatter_with_averaging(
                                     spec.averaging.scalar,
                                     bin,
                                     spectral_context.as_ref(),
-                                    &time,
-                                    &uvw,
+                                    row_time_value,
+                                    row_uvw_value,
                                     derived_engine.as_ref(),
                                 )? {
                                     let value = if axis == MsAxis::Time {
@@ -4739,7 +5075,6 @@ fn build_generic_visibility_scatter_with_averaging(
                             axis if !axis.is_visibility_math() => {
                                 if let Some(value) = compute_axis_value(
                                     axis,
-                                    row,
                                     &samples,
                                     &flag_samples,
                                     &weight_spectrum_samples,
@@ -4752,8 +5087,8 @@ fn build_generic_visibility_scatter_with_averaging(
                                     spec.averaging.scalar,
                                     bin,
                                     spectral_context.as_ref(),
-                                    &time,
-                                    &uvw,
+                                    row_time_value,
+                                    row_uvw_value,
                                     derived_engine.as_ref(),
                                 )? {
                                     let value = if axis == MsAxis::Time {
@@ -5360,7 +5695,6 @@ fn resolve_spectral_context(
 #[allow(clippy::too_many_arguments)]
 fn compute_axis_value(
     axis: MsAxis,
-    row: usize,
     samples: &[Complex64],
     flag_samples: &[bool],
     weight_spectrum_samples: &[f64],
@@ -5373,32 +5707,29 @@ fn compute_axis_value(
     scalar_average: bool,
     channel_bin: &ChannelBin,
     spectral_context: Option<&SpectralContext>,
-    time: &TimeColumn<'_>,
-    uvw: &UvwColumn<'_>,
+    row_time_value: f64,
+    row_uvw_value: [f64; 3],
     geometry_engine: Option<&MsCalEngine>,
 ) -> Result<Option<f64>, String> {
     if axis.is_visibility_math() {
         return Ok(compute_visibility_math(axis, samples, scalar_average));
     }
     match axis {
-        MsAxis::Time => time
-            .get_mjd_seconds(row)
-            .map(Some)
-            .map_err(|error| error.to_string()),
+        MsAxis::Time => Ok(Some(row_time_value)),
         MsAxis::UvDistance => {
-            let [u, v, _w] = uvw.get(row).map_err(|error| error.to_string())?;
+            let [u, v, _w] = row_uvw_value;
             Ok(Some((u * u + v * v).sqrt()))
         }
         MsAxis::U => {
-            let [u, _v, _w] = uvw.get(row).map_err(|error| error.to_string())?;
+            let [u, _v, _w] = row_uvw_value;
             Ok(Some(u))
         }
         MsAxis::V => {
-            let [_u, v, _w] = uvw.get(row).map_err(|error| error.to_string())?;
+            let [_u, v, _w] = row_uvw_value;
             Ok(Some(v))
         }
         MsAxis::W => {
-            let [_u, _v, w] = uvw.get(row).map_err(|error| error.to_string())?;
+            let [_u, _v, w] = row_uvw_value;
             Ok(Some(w))
         }
         MsAxis::Channel => {
@@ -5451,15 +5782,12 @@ fn compute_axis_value(
             let geometry_engine = geometry_engine.ok_or_else(|| {
                 "internal error: missing geometry engine for azimuth axis".to_string()
             })?;
-            let time_value = time
-                .get_mjd_seconds(row)
-                .map_err(|error| error.to_string())?;
             let field_id = usize::try_from(field_id_value)
                 .map_err(|_| format!("invalid FIELD_ID {field_id_value} for azimuth axis"))?;
             let antenna_id = usize::try_from(antenna1_value)
                 .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for azimuth axis"))?;
             geometry_engine
-                .azel(time_value, field_id, antenna_id)
+                .azel(row_time_value, field_id, antenna_id)
                 .map(|(azimuth, _elevation)| Some(normalize_signed_degrees(azimuth.to_degrees())))
                 .map_err(|error| error.to_string())
         }
@@ -5467,15 +5795,12 @@ fn compute_axis_value(
             let geometry_engine = geometry_engine.ok_or_else(|| {
                 "internal error: missing geometry engine for elevation axis".to_string()
             })?;
-            let time_value = time
-                .get_mjd_seconds(row)
-                .map_err(|error| error.to_string())?;
             let field_id = usize::try_from(field_id_value)
                 .map_err(|_| format!("invalid FIELD_ID {field_id_value} for elevation axis"))?;
             let antenna_id = usize::try_from(antenna1_value)
                 .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for elevation axis"))?;
             geometry_engine
-                .azel(time_value, field_id, antenna_id)
+                .azel(row_time_value, field_id, antenna_id)
                 .map(|(_azimuth, elevation)| Some(elevation.to_degrees()))
                 .map_err(|error| error.to_string())
         }
@@ -5483,15 +5808,12 @@ fn compute_axis_value(
             let geometry_engine = geometry_engine.ok_or_else(|| {
                 "internal error: missing geometry engine for hour angle axis".to_string()
             })?;
-            let time_value = time
-                .get_mjd_seconds(row)
-                .map_err(|error| error.to_string())?;
             let field_id = usize::try_from(field_id_value)
                 .map_err(|_| format!("invalid FIELD_ID {field_id_value} for hour angle axis"))?;
             let antenna_id = usize::try_from(antenna1_value)
                 .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for hour angle axis"))?;
             geometry_engine
-                .hour_angle(time_value, field_id, antenna_id)
+                .hour_angle(row_time_value, field_id, antenna_id)
                 .map(|hour_angle| Some(hour_angle * 12.0 / std::f64::consts::PI))
                 .map_err(|error| error.to_string())
         }
@@ -5499,9 +5821,6 @@ fn compute_axis_value(
             let geometry_engine = geometry_engine.ok_or_else(|| {
                 "internal error: missing geometry engine for parallactic angle axis".to_string()
             })?;
-            let time_value = time
-                .get_mjd_seconds(row)
-                .map_err(|error| error.to_string())?;
             let field_id = usize::try_from(field_id_value).map_err(|_| {
                 format!("invalid FIELD_ID {field_id_value} for parallactic angle axis")
             })?;
@@ -5509,7 +5828,7 @@ fn compute_axis_value(
                 format!("invalid ANTENNA1 {antenna1_value} for parallactic angle axis")
             })?;
             geometry_engine
-                .parallactic_angle(time_value, field_id, antenna_id)
+                .parallactic_angle(row_time_value, field_id, antenna_id)
                 .map(|parallactic_angle| Some(parallactic_angle.to_degrees()))
                 .map_err(|error| error.to_string())
         }
@@ -5902,6 +6221,106 @@ struct FloatGrid {
     corr_count: usize,
     chan_count: usize,
     values: Vec<f64>,
+}
+
+fn selected_bool_values(
+    table: &Table,
+    column: &'static str,
+    rows: &[usize],
+) -> Result<Vec<bool>, String> {
+    selected_scalar_values(table, column, rows, |value| match value {
+        ScalarValue::Bool(value) => Ok(value),
+        other => Err(format!(
+            "msexplore requires BOOL {column} cells, found {:?}",
+            other.primitive_type()
+        )),
+    })
+}
+
+fn selected_i32_values(
+    table: &Table,
+    column: &'static str,
+    rows: &[usize],
+) -> Result<Vec<i32>, String> {
+    selected_scalar_values(table, column, rows, |value| match value {
+        ScalarValue::Int32(value) => Ok(value),
+        other => Err(format!(
+            "msexplore requires INT {column} cells, found {:?}",
+            other.primitive_type()
+        )),
+    })
+}
+
+fn selected_f64_values(
+    table: &Table,
+    column: &'static str,
+    rows: &[usize],
+) -> Result<Vec<f64>, String> {
+    selected_scalar_values(table, column, rows, |value| match value {
+        ScalarValue::Float64(value) => Ok(value),
+        other => Err(format!(
+            "msexplore requires DOUBLE {column} cells, found {:?}",
+            other.primitive_type()
+        )),
+    })
+}
+
+fn selected_scalar_values<T>(
+    table: &Table,
+    column: &'static str,
+    rows: &[usize],
+    convert: impl Fn(ScalarValue) -> Result<T, String>,
+) -> Result<Vec<T>, String> {
+    table
+        .column_accessor(column)
+        .map_err(|error| error.to_string())?
+        .scalar_cells_owned_for_rows(rows)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| {
+            value
+                .ok_or_else(|| format!("msexplore requires {column} data for row {row}"))
+                .and_then(&convert)
+        })
+        .collect()
+}
+
+fn selected_uvw_values(
+    table: &Table,
+    column: &'static str,
+    rows: &[usize],
+) -> Result<Vec<[f64; 3]>, String> {
+    table
+        .column_accessor(column)
+        .map_err(|error| error.to_string())?
+        .array_cells_owned(rows)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .zip(rows.iter().copied())
+        .map(|(value, row)| {
+            let value =
+                value.ok_or_else(|| format!("msexplore requires {column} data for row {row}"))?;
+            match value {
+                ArrayValue::Float64(values) => {
+                    let slice = values.as_slice().ok_or_else(|| {
+                        format!("msexplore requires contiguous {column} f64[3] cells")
+                    })?;
+                    if slice.len() != 3 {
+                        return Err(format!(
+                            "msexplore requires {column} cells with shape [3], found [{}]",
+                            slice.len()
+                        ));
+                    }
+                    Ok([slice[0], slice[1], slice[2]])
+                }
+                other => Err(format!(
+                    "msexplore requires DOUBLE array {column} cells, found {:?}",
+                    other.primitive_type()
+                )),
+            }
+        })
+        .collect()
 }
 
 struct SelectedArrayColumn {
@@ -8509,6 +8928,7 @@ mod tests {
         let point_budget = PointBudget {
             max_plot_points: Some(6),
             rendered_points: 10,
+            allow_predecimation: false,
         };
 
         let compacted = compact_payload_to_budget(payload, &point_budget).unwrap();
@@ -8753,6 +9173,7 @@ mod tests {
             &PointBudget {
                 max_plot_points: Some(4),
                 rendered_points: 9,
+                allow_predecimation: false,
             },
         )
         .unwrap();
@@ -8816,6 +9237,7 @@ mod tests {
             &PointBudget {
                 max_plot_points: Some(3),
                 rendered_points: 6,
+                allow_predecimation: false,
             },
         )
         .unwrap();
@@ -8863,6 +9285,7 @@ mod tests {
                 &PointBudget {
                     max_plot_points: Some(1),
                     rendered_points: 2,
+                    allow_predecimation: false,
                 },
             )
             .unwrap_err()

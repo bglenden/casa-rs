@@ -15,6 +15,8 @@ use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, ScalarValue};
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
@@ -49,6 +51,26 @@ pub struct MsCalEngine {
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
     time_reference: EpochRef,
+    azel_cache: RefCell<HashMap<GeometryCacheKey, (f64, f64)>>,
+    hadec_cache: RefCell<HashMap<GeometryCacheKey, (f64, f64)>>,
+    parallactic_angle_cache: RefCell<HashMap<GeometryCacheKey, f64>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct GeometryCacheKey {
+    time_bits: u64,
+    field_id: usize,
+    antenna_id: usize,
+}
+
+impl GeometryCacheKey {
+    fn new(time_mjd_sec: f64, field_id: usize, antenna_id: usize) -> Self {
+        Self {
+            time_bits: time_mjd_sec.to_bits(),
+            field_id,
+            antenna_id,
+        }
+    }
 }
 
 impl MsCalEngine {
@@ -88,6 +110,9 @@ impl MsCalEngine {
             field_directions,
             observatory_position,
             time_reference,
+            azel_cache: RefCell::new(HashMap::new()),
+            hadec_cache: RefCell::new(HashMap::new()),
+            parallactic_angle_cache: RefCell::new(HashMap::new()),
         })
     }
 
@@ -103,6 +128,9 @@ impl MsCalEngine {
             field_directions,
             observatory_position,
             time_reference: EpochRef::UTC,
+            azel_cache: RefCell::new(HashMap::new()),
+            hadec_cache: RefCell::new(HashMap::new()),
+            parallactic_angle_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -218,7 +246,12 @@ impl MsCalEngine {
         field_id: usize,
         antenna_id: usize,
     ) -> MsResult<f64> {
+        let key = GeometryCacheKey::new(time_mjd_sec, field_id, antenna_id);
+        if let Some(value) = self.parallactic_angle_cache.borrow().get(&key).copied() {
+            return Ok(value);
+        }
         if !self.antenna_is_alt_az(antenna_id)? {
+            self.parallactic_angle_cache.borrow_mut().insert(key, 0.0);
             return Ok(0.0);
         }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
@@ -228,7 +261,9 @@ impl MsCalEngine {
         let pole_azel =
             MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
                 .convert_to(DirectionRef::AZEL, &frame)?;
-        Ok(spherical_position_angle(&source_azel, &pole_azel))
+        let value = spherical_position_angle(&source_azel, &pole_azel);
+        self.parallactic_angle_cache.borrow_mut().insert(key, value);
+        Ok(value)
     }
 
     /// Compute the array-fiducial hour angle (radians) using the observatory position.
@@ -268,10 +303,16 @@ impl MsCalEngine {
         field_id: usize,
         antenna_id: usize,
     ) -> MsResult<(f64, f64)> {
+        let key = GeometryCacheKey::new(time_mjd_sec, field_id, antenna_id);
+        if let Some(value) = self.azel_cache.borrow().get(&key).copied() {
+            return Ok(value);
+        }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
         let dir = self.field_dir(field_id)?;
         let azel = dir.convert_to(DirectionRef::AZEL, &frame)?;
-        Ok(azel.as_angles())
+        let value = azel.as_angles();
+        self.azel_cache.borrow_mut().insert(key, value);
+        Ok(value)
     }
 
     /// Compute the array-fiducial azimuth and elevation (radians) using the observatory position.
@@ -323,10 +364,16 @@ impl MsCalEngine {
         field_id: usize,
         antenna_id: usize,
     ) -> MsResult<(f64, f64)> {
+        let key = GeometryCacheKey::new(time_mjd_sec, field_id, antenna_id);
+        if let Some(value) = self.hadec_cache.borrow().get(&key).copied() {
+            return Ok(value);
+        }
         let frame = self.make_frame(time_mjd_sec, antenna_id)?;
         let dir = self.field_dir(field_id)?;
         let hadec = dir.convert_to(DirectionRef::HADEC, &frame)?;
-        Ok(hadec.as_angles())
+        let value = hadec.as_angles();
+        self.hadec_cache.borrow_mut().insert(key, value);
+        Ok(value)
     }
 
     /// Compute UVW in J2000 frame for a baseline (ant1, ant2) at a given time and field.

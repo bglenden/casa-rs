@@ -7,6 +7,13 @@ private let datasetSelectionLogger = Logger(
     category: "DatasetSelection"
 )
 
+private let measurementSetPlotLogger = Logger(
+    subsystem: "org.casa-rs.casars-mac",
+    category: "MeasurementSetPlot"
+)
+
+private let denseScatterPointThreshold = 8_000
+
 public protocol ProjectProbeClient {
     func probeProject(path: String) throws -> ProjectFixtureProbe
     func probePath(path: String) throws -> DatasetSummary?
@@ -35,13 +42,146 @@ public struct UniFFIProjectProbeClient: ProjectProbeClient {
     }
 }
 
+public protocol DemoProjectClient {
+    func createDemoProject() throws -> ProjectFixtureProbe
+    func cleanupDemoProject(rootPath: String)
+}
+
+public struct TutorialDemoProjectClient: DemoProjectClient {
+    public init() {}
+
+    public func createDemoProject() throws -> ProjectFixtureProbe {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("casars-mac-tutorial-demo-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+
+        do {
+            let staged = try stageTutorialDatasets(in: root, fileManager: fileManager)
+            guard !staged.isEmpty else {
+                throw DemoProjectError.noTutorialDatasets(tutorialRootCandidates().map(\.path))
+            }
+            let probe = try UniFFIProjectProbeClient().probeProject(path: root.path)
+            var project = probe.project
+            project.name = "TW Hya Tutorial Demo"
+            project.source = .probed
+            let diagnostics = probe.diagnostics + staged.map { "Staged tutorial dataset: \($0)" }
+            return ProjectFixtureProbe(project: project, diagnostics: diagnostics)
+        } catch {
+            try? fileManager.removeItem(at: root)
+            throw error
+        }
+    }
+
+    public func cleanupDemoProject(rootPath: String) {
+        guard !rootPath.isEmpty else { return }
+        try? FileManager.default.removeItem(atPath: rootPath)
+    }
+
+    private func stageTutorialDatasets(in root: URL, fileManager: FileManager) throws -> [String] {
+        guard let tutorialRoot = tutorialRootCandidates().first(where: { fileManager.fileExists(atPath: $0.path) }) else {
+            return []
+        }
+
+        var staged: [String] = []
+        let twhyaRoot = tutorialRoot
+            .appendingPathComponent("tutorial-parity/alma/first-look/twhya", isDirectory: true)
+
+        let calibratedMS = twhyaRoot.appendingPathComponent("twhya_calibrated.ms.tar")
+        if fileManager.fileExists(atPath: calibratedMS.path) {
+            try extractTarArchive(calibratedMS, into: root)
+            staged.append("alma/first-look/twhya/calibrated-ms")
+
+            let antennaTable = root
+                .appendingPathComponent("twhya_calibrated.ms", isDirectory: true)
+                .appendingPathComponent("ANTENNA", isDirectory: true)
+            if fileManager.fileExists(atPath: antennaTable.path) {
+                let copy = root.appendingPathComponent("twhya_calibrated_ANTENNA.table", isDirectory: true)
+                try copyDirectory(from: antennaTable, to: copy, fileManager: fileManager)
+                staged.append("alma/first-look/twhya/calibrated-ms/ANTENNA")
+            }
+        }
+
+        for imageName in ["twhya_cont.image", "twhya_n2hp.image"] {
+            let source = twhyaRoot.appendingPathComponent(imageName, isDirectory: true)
+            guard fileManager.fileExists(atPath: source.path) else { continue }
+            let destination = root.appendingPathComponent(imageName, isDirectory: true)
+            try copyDirectory(from: source, to: destination, fileManager: fileManager)
+            staged.append("alma/first-look/twhya/\(imageName)")
+        }
+
+        return staged
+    }
+
+    private func tutorialRootCandidates() -> [URL] {
+        var candidates: [URL] = []
+        if let override = ProcessInfo.processInfo.environment["CASA_RS_TUTORIAL_DATA_ROOT"], !override.isEmpty {
+            candidates.append(URL(fileURLWithPath: override, isDirectory: true))
+        }
+        candidates.append(
+            URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+                .appendingPathComponent("SoftwareProjects/casa-tutorial-data", isDirectory: true)
+        )
+        return candidates
+    }
+
+    private func extractTarArchive(_ archive: URL, into root: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        process.arguments = ["-xf", archive.path, "-C", root.path]
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw DemoProjectError.tarFailed(archive.path, process.terminationStatus)
+        }
+    }
+
+    private func copyDirectory(from source: URL, to destination: URL, fileManager: FileManager) throws {
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.copyItem(at: source, to: destination)
+    }
+}
+
+public enum DemoProjectError: Error, Equatable, CustomStringConvertible {
+    case noTutorialDatasets([String])
+    case tarFailed(String, Int32)
+
+    public var description: String {
+        switch self {
+        case .noTutorialDatasets(let roots):
+            "No local tutorial demo datasets found. Stage TW Hya tutorial data under one of: \(roots.joined(separator: ", "))"
+        case .tarFailed(let path, let status):
+            "Failed to extract tutorial archive \(path) with tar exit status \(status)"
+        }
+    }
+}
+
 public struct MeasurementSetPlotBuildRequest: Equatable {
     public var datasetPath: String
     public var preset: MeasurementSetExplorerPlotPreset
     public var field: String?
     public var spectralWindow: String?
+    public var timerange: String?
+    public var uvRange: String?
+    public var antenna: String?
+    public var scan: String?
     public var correlation: String?
+    public var array: String?
+    public var observation: String?
+    public var intent: String?
+    public var feed: String?
+    public var msselect: String?
     public var dataColumn: String
+    public var avgChannel: UInt64?
+    public var avgTime: Double?
+    public var avgScan: Bool
+    public var avgField: Bool
+    public var avgBaseline: Bool
+    public var avgAntenna: Bool
+    public var avgSPW: Bool
+    public var scalarAverage: Bool
     public var width: UInt32
     public var height: UInt32
     public var maxPlotPoints: UInt64
@@ -51,18 +191,52 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
         preset: MeasurementSetExplorerPlotPreset,
         field: String?,
         spectralWindow: String?,
+        timerange: String? = nil,
+        uvRange: String? = nil,
+        antenna: String? = nil,
+        scan: String? = nil,
         correlation: String?,
+        array: String? = nil,
+        observation: String? = nil,
+        intent: String? = nil,
+        feed: String? = nil,
+        msselect: String? = nil,
         dataColumn: String,
+        avgChannel: UInt64? = nil,
+        avgTime: Double? = nil,
+        avgScan: Bool = false,
+        avgField: Bool = false,
+        avgBaseline: Bool = false,
+        avgAntenna: Bool = false,
+        avgSPW: Bool = false,
+        scalarAverage: Bool = false,
         width: UInt32 = 960,
         height: UInt32 = 600,
-        maxPlotPoints: UInt64 = 250_000
+        maxPlotPoints: UInt64 = WorkbenchState.defaultMeasurementSetPlotMaxPoints
     ) {
         self.datasetPath = datasetPath
         self.preset = preset
         self.field = field
         self.spectralWindow = spectralWindow
+        self.timerange = timerange
+        self.uvRange = uvRange
+        self.antenna = antenna
+        self.scan = scan
         self.correlation = correlation
+        self.array = array
+        self.observation = observation
+        self.intent = intent
+        self.feed = feed
+        self.msselect = msselect
         self.dataColumn = dataColumn
+        self.avgChannel = avgChannel
+        self.avgTime = avgTime
+        self.avgScan = avgScan
+        self.avgField = avgField
+        self.avgBaseline = avgBaseline
+        self.avgAntenna = avgAntenna
+        self.avgSPW = avgSPW
+        self.scalarAverage = scalarAverage
         self.width = width
         self.height = height
         self.maxPlotPoints = maxPlotPoints
@@ -73,45 +247,190 @@ public protocol MeasurementSetPlotClient {
     func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary
 }
 
+public protocol MeasurementSetMetadataClient {
+    func probeUVRange(datasetPath: String) throws -> MeasurementSetUVRangeSummary
+    func probeTimeRange(datasetPath: String) throws -> MeasurementSetTimeRangeSummary
+}
+
 public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
     public init() {}
 
     public func buildPlot(request: MeasurementSetPlotBuildRequest) throws -> MeasurementSetPlotResultSummary {
+        let ffiStartedAt = Date()
         let result = try CasarsFrontendServices.buildMeasurementSetPlot(
             request: CasarsFrontendServices.MeasurementSetPlotRequest(
                 datasetPath: request.datasetPath,
                 preset: CasarsFrontendServices.MeasurementSetPlotPreset(preset: request.preset),
                 field: request.field,
                 spectralWindow: request.spectralWindow,
+                timerange: request.timerange,
+                uvrange: request.uvRange,
+                antenna: request.antenna,
+                scan: request.scan,
                 correlation: request.correlation,
+                array: request.array,
+                observation: request.observation,
+                intent: request.intent,
+                feed: request.feed,
+                msselect: request.msselect,
                 dataColumn: request.dataColumn,
+                avgchannel: request.avgChannel,
+                avgtime: request.avgTime,
+                avgscan: request.avgScan,
+                avgfield: request.avgField,
+                avgbaseline: request.avgBaseline,
+                avgantenna: request.avgAntenna,
+                avgspw: request.avgSPW,
+                scalar: request.scalarAverage,
                 width: request.width,
                 height: request.height,
                 maxPlotPoints: request.maxPlotPoints
             )
         )
-        return MeasurementSetPlotResultSummary(result: result)
+        let ffiElapsed = Date().timeIntervalSince(ffiStartedAt)
+        let summaryStartedAt = Date()
+        var summary = MeasurementSetPlotResultSummary(result: result)
+        let summaryElapsed = Date().timeIntervalSince(summaryStartedAt)
+        let totalElapsed = ffiElapsed + summaryElapsed
+        let diagnostic = String(
+            format: "swift timing: ffi=%.0f ms, summary=%.0f ms, total=%.0f ms",
+            ffiElapsed * 1000,
+            summaryElapsed * 1000,
+            totalElapsed * 1000
+        )
+        summary.diagnostics.append(diagnostic)
+        measurementSetPlotLogger.info("\(diagnostic, privacy: .public)")
+        return summary
+    }
+}
+
+public struct UniFFIMeasurementSetMetadataClient: MeasurementSetMetadataClient {
+    public init() {}
+
+    public func probeUVRange(datasetPath: String) throws -> MeasurementSetUVRangeSummary {
+        let probe = try CasarsFrontendServices.probeMeasurementSetUvRange(datasetPath: datasetPath)
+        return MeasurementSetUVRangeSummary(
+            minMeters: probe.minMeters,
+            maxMeters: probe.maxMeters,
+            minKiloLambda: probe.minKilolambda,
+            maxKiloLambda: probe.maxKilolambda,
+            rowCount: probe.rowCount
+        )
+    }
+
+    public func probeTimeRange(datasetPath: String) throws -> MeasurementSetTimeRangeSummary {
+        let probe = try CasarsFrontendServices.probeMeasurementSetTimeRange(datasetPath: datasetPath)
+        return MeasurementSetTimeRangeSummary(
+            minSeconds: probe.minSeconds,
+            maxSeconds: probe.maxSeconds,
+            rowCount: probe.rowCount
+        )
+    }
+}
+
+public enum MeasurementSetUVRangeFormatter {
+    public static func formatMeters(_ value: Double) -> String {
+        format(value)
+    }
+
+    public static func formatKiloLambda(_ value: Double) -> String {
+        format(value)
+    }
+
+    private static func format(_ value: Double) -> String {
+        guard value.isFinite else {
+            return ""
+        }
+        if abs(value) >= 1_000 {
+            return String(format: "%.0f", value)
+        }
+        if abs(value) >= 10 {
+            return String(format: "%.2f", value)
+        }
+        return String(format: "%.3g", value)
+    }
+}
+
+public protocol ImageExplorerClient {
+    func buildSnapshot(request: ImageExplorerSnapshotRequest) throws -> ImageExplorerSnapshot
+}
+
+public struct UniFFIImageExplorerClient: ImageExplorerClient {
+    public init() {}
+
+    public func buildSnapshot(request: ImageExplorerSnapshotRequest) throws -> ImageExplorerSnapshot {
+        let requestData = try JSONEncoder().encode(request)
+        let requestJSON = String(decoding: requestData, as: UTF8.self)
+        let json = try CasarsFrontendServices.buildImageExplorerSnapshotFromRequestJson(requestJson: requestJSON)
+        return try JSONDecoder().decode(ImageExplorerSnapshot.self, from: Data(json.utf8))
+    }
+}
+
+public protocol TableBrowserClient {
+    func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot
+    func buildCellWindow(request: TableBrowserCellWindowRequest) throws -> TableBrowserCellWindowSnapshot
+    func buildCellValue(request: TableBrowserCellValueRequest) throws -> String
+}
+
+public struct UniFFITableBrowserClient: TableBrowserClient {
+    public init() {}
+
+    public func buildSnapshot(request: TableBrowserSnapshotRequest) throws -> TableBrowserSnapshot {
+        let requestData = try JSONEncoder().encode(request)
+        let requestJSON = String(decoding: requestData, as: UTF8.self)
+        let json = try CasarsFrontendServices.buildTableBrowserSnapshotFromRequestJson(requestJson: requestJSON)
+        return try JSONDecoder().decode(TableBrowserSnapshot.self, from: Data(json.utf8))
+    }
+
+    public func buildCellWindow(request: TableBrowserCellWindowRequest) throws -> TableBrowserCellWindowSnapshot {
+        let requestData = try JSONEncoder().encode(request)
+        let requestJSON = String(decoding: requestData, as: UTF8.self)
+        let json = try CasarsFrontendServices.buildTableBrowserCellWindowJson(requestJson: requestJSON)
+        return try JSONDecoder().decode(TableBrowserCellWindowSnapshot.self, from: Data(json.utf8))
+    }
+
+    public func buildCellValue(request: TableBrowserCellValueRequest) throws -> String {
+        let requestData = try JSONEncoder().encode(request)
+        let requestJSON = String(decoding: requestData, as: UTF8.self)
+        let json = try CasarsFrontendServices.buildTableBrowserCellValueJson(requestJson: requestJSON)
+        return try JSONDecoder().decode(String.self, from: Data(json.utf8))
     }
 }
 
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
     private let probeClient: ProjectProbeClient
+    private let demoProjectClient: DemoProjectClient
     private let plotClient: MeasurementSetPlotClient
+    private let imageExplorerClient: ImageExplorerClient
+    private let tableBrowserClient: TableBrowserClient
     private let dirtyImagingClient: DirtyImagingTaskClient
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
+    private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
     private var activeTaskExecutions: [String: DirtyImagingTaskExecution] = [:]
+    private var tableBrowserCellWindowGenerations: [String: Int] = [:]
+    private var temporaryDemoProjectRoot: String?
 
     public init(
         state: WorkbenchState = EmptyWorkbench.makeState(),
         probeClient: ProjectProbeClient = UniFFIProjectProbeClient(),
+        demoProjectClient: DemoProjectClient = TutorialDemoProjectClient(),
         plotClient: MeasurementSetPlotClient = UniFFIMeasurementSetPlotClient(),
+        imageExplorerClient: ImageExplorerClient = UniFFIImageExplorerClient(),
+        tableBrowserClient: TableBrowserClient = UniFFITableBrowserClient(),
         dirtyImagingClient: DirtyImagingTaskClient = ProcessDirtyImagingTaskClient()
     ) {
         self.state = state
         self.probeClient = probeClient
+        self.demoProjectClient = demoProjectClient
         self.plotClient = plotClient
+        self.imageExplorerClient = imageExplorerClient
+        self.tableBrowserClient = tableBrowserClient
         self.dirtyImagingClient = dirtyImagingClient
+    }
+
+    deinit {
+        cleanupTemporaryDemoProject()
     }
 
     public static func empty() -> WorkbenchStore {
@@ -124,12 +443,41 @@ public final class WorkbenchStore: ObservableObject {
 
     public func openFixtureProject() {
         let interfaceFontSize = state.interfaceFontSize
-        state = FixtureWorkbench.makeState()
-        state.interfaceFontSize = interfaceFontSize
+        cleanupTemporaryDemoProject()
+        do {
+            let probed = try demoProjectClient.createDemoProject()
+            temporaryDemoProjectRoot = probed.project.rootPath
+            var project = probed.project
+            project.datasets = orderedDemoDatasets(project.datasets)
+            state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+            state.project = project
+            state.probeDiagnostics = probed.diagnostics
+            state.selectedDatasetID = project.datasets.first?.id
+            state.dockMode = .datasets
+            state.leftDockCollapsed = false
+            state.inspectorCollapsed = false
+            if let dataset = state.selectedDataset {
+                openExplorer(for: dataset)
+            }
+            state.history.append(
+                ProcessingHistoryEvent(
+                    id: "hist-demo-project-open",
+                    timestamp: "staged",
+                    title: "Tutorial demo opened",
+                    reason: "Staged local TW Hya tutorial datasets into a temporary project and probed them with Rust frontend services.",
+                    affectedPaths: [probed.project.rootPath],
+                    approval: "user"
+                )
+            )
+        } catch {
+            state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+            state.lastErrors.append("Open tutorial demo project: \(error)")
+        }
     }
 
     public func openProject(path: String) {
         let interfaceFontSize = state.interfaceFontSize
+        cleanupTemporaryDemoProject()
         do {
             let probed = try probeClient.probeProject(path: path)
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
@@ -154,6 +502,36 @@ public final class WorkbenchStore: ObservableObject {
             )
         } catch {
             state.lastErrors.append("Open project \(path): \(error)")
+        }
+    }
+
+    private func cleanupTemporaryDemoProject() {
+        guard let temporaryDemoProjectRoot else { return }
+        demoProjectClient.cleanupDemoProject(rootPath: temporaryDemoProjectRoot)
+        self.temporaryDemoProjectRoot = nil
+    }
+
+    private func orderedDemoDatasets(_ datasets: [DatasetSummary]) -> [DatasetSummary] {
+        datasets.sorted { lhs, rhs in
+            let leftRank = demoDatasetRank(lhs)
+            let rightRank = demoDatasetRank(rhs)
+            if leftRank != rightRank {
+                return leftRank < rightRank
+            }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private func demoDatasetRank(_ dataset: DatasetSummary) -> Int {
+        switch dataset.kind {
+        case .measurementSet:
+            0
+        case .imageCube:
+            1
+        case .table, .calibrationTable:
+            2
+        case .runProduct:
+            3
         }
     }
 
@@ -207,6 +585,48 @@ public final class WorkbenchStore: ObservableObject {
         openExplorer(for: dataset)
     }
 
+    public func openDatasetTableBrowser(_ datasetID: String) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        guard canBrowseAsTable(dataset) else {
+            state.lastErrors.append("Dataset \(dataset.name) is not a casacore table")
+            return
+        }
+
+        state.selectedDatasetID = datasetID
+        refreshTableBrowser(datasetID: datasetID)
+        openTab(
+            WorkbenchTab(
+                id: tableBrowserTabID(for: dataset.id),
+                title: "Table: \(dataset.name)",
+                kind: .tableBrowser,
+                datasetID: dataset.id
+            )
+        )
+    }
+
+    public func openTableBrowserPath(_ path: String, sourceDatasetID: String? = nil) {
+        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        if !state.project.datasets.contains(where: { $0.id == normalizedPath }) {
+            let sourceName = sourceDatasetID
+                .flatMap { id in state.project.datasets.first { $0.id == id }?.name }
+            state.project.datasets.append(
+                DatasetSummary(
+                    id: normalizedPath,
+                    name: URL(fileURLWithPath: normalizedPath).lastPathComponent,
+                    path: normalizedPath,
+                    kind: .table,
+                    size: "casacore table",
+                    units: "",
+                    notes: sourceName.map { "Opened from \($0)." } ?? "Opened from tablebrowser."
+                )
+            )
+        }
+        openDatasetTableBrowser(normalizedPath)
+    }
+
     public func openRunProduct(runID: String, productID: String) {
         guard let group = state.runProductGroups.first(where: { $0.runID == runID }) else {
             state.lastErrors.append("Unknown run \(runID)")
@@ -248,6 +668,36 @@ public final class WorkbenchStore: ObservableObject {
         state.measurementSetPlots[datasetID] = plotState
     }
 
+    public func setMeasurementSetPlotChannelSelection(_ channelSelection: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedChannelSelection = normalizedTextSelection(channelSelection)
+        }
+    }
+
+    public func setMeasurementSetPlotTimerange(_ timerange: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedTimerange = normalizedTextSelection(timerange)
+        }
+    }
+
+    public func setMeasurementSetPlotUVRange(_ uvRange: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedUVRange = normalizedTextSelection(uvRange)
+        }
+    }
+
+    public func setMeasurementSetPlotAntenna(_ antenna: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedAntenna = normalizedTextSelection(antenna)
+        }
+    }
+
+    public func setMeasurementSetPlotScan(_ scan: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedScan = normalizedTextSelection(scan)
+        }
+    }
+
     public func setMeasurementSetPlotCorrelation(_ correlation: String?, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
         plotState.selectedCorrelation = normalizedPickerValue(correlation)
@@ -256,9 +706,95 @@ public final class WorkbenchStore: ObservableObject {
         state.measurementSetPlots[datasetID] = plotState
     }
 
+    public func setMeasurementSetPlotArray(_ array: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedArray = normalizedTextSelection(array)
+        }
+    }
+
+    public func setMeasurementSetPlotObservation(_ observation: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedObservation = normalizedTextSelection(observation)
+        }
+    }
+
+    public func setMeasurementSetPlotIntent(_ intent: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedIntent = normalizedTextSelection(intent)
+        }
+    }
+
+    public func setMeasurementSetPlotFeed(_ feed: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedFeed = normalizedTextSelection(feed)
+        }
+    }
+
+    public func setMeasurementSetPlotMSSelect(_ msselect: String?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.selectedMSSelect = normalizedTextSelection(msselect)
+        }
+    }
+
     public func setMeasurementSetPlotDataColumn(_ dataColumn: String, datasetID: String) {
         var plotState = measurementSetPlotState(for: datasetID)
         plotState.dataColumn = dataColumn
+        plotState.lastError = nil
+        refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
+        state.measurementSetPlots[datasetID] = plotState
+    }
+
+    public func setMeasurementSetPlotAvgChannel(_ avgChannel: UInt64?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgChannel = avgChannel
+        }
+    }
+
+    public func setMeasurementSetPlotAvgTime(_ avgTime: Double?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgTime = avgTime
+        }
+    }
+
+    public func setMeasurementSetPlotAvgScan(_ avgScan: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgScan = avgScan
+        }
+    }
+
+    public func setMeasurementSetPlotAvgField(_ avgField: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgField = avgField
+        }
+    }
+
+    public func setMeasurementSetPlotAvgBaseline(_ avgBaseline: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgBaseline = avgBaseline
+        }
+    }
+
+    public func setMeasurementSetPlotAvgAntenna(_ avgAntenna: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgAntenna = avgAntenna
+        }
+    }
+
+    public func setMeasurementSetPlotAvgSPW(_ avgSPW: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.avgSPW = avgSPW
+        }
+    }
+
+    public func setMeasurementSetPlotScalarAverage(_ scalarAverage: Bool, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.scalarAverage = scalarAverage
+        }
+    }
+
+    public func setMeasurementSetPlotMaxPoints(_ maxPlotPoints: UInt64, datasetID: String) {
+        var plotState = measurementSetPlotState(for: datasetID)
+        plotState.maxPlotPoints = Self.minimumBoundedMeasurementSetPlotMaxPoints(maxPlotPoints)
         plotState.lastError = nil
         refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
         state.measurementSetPlots[datasetID] = plotState
@@ -291,9 +827,27 @@ public final class WorkbenchStore: ObservableObject {
             datasetPath: dataset.path,
             preset: plotState.preset,
             field: selectorToken(plotState.selectedField),
-            spectralWindow: selectorToken(plotState.selectedSpectralWindow),
+            spectralWindow: spectralWindowSelectorToken(plotState),
+            timerange: plotState.selectedTimerange,
+            uvRange: plotState.selectedUVRange,
+            antenna: plotState.selectedAntenna,
+            scan: plotState.selectedScan,
             correlation: selectorToken(plotState.selectedCorrelation),
-            dataColumn: plotState.dataColumn
+            array: plotState.selectedArray,
+            observation: plotState.selectedObservation,
+            intent: plotState.selectedIntent,
+            feed: plotState.selectedFeed,
+            msselect: plotState.selectedMSSelect,
+            dataColumn: plotState.dataColumn,
+            avgChannel: plotState.avgChannel,
+            avgTime: plotState.avgTime,
+            avgScan: plotState.avgScan,
+            avgField: plotState.avgField,
+            avgBaseline: plotState.avgBaseline,
+            avgAntenna: plotState.avgAntenna,
+            avgSPW: plotState.avgSPW,
+            scalarAverage: plotState.scalarAverage,
+            maxPlotPoints: plotState.maxPlotPoints
         )
         let tabID = dataset.explorerTabID
         let jobID = nextJobID(prefix: "ms-plot")
@@ -318,14 +872,17 @@ public final class WorkbenchStore: ObservableObject {
 
         let requestedPlotState = plotState
         plotQueue.async { [plotClient] in
+            let startedAt = Date()
             do {
                 let result = try plotClient.buildPlot(request: request)
+                let elapsedSeconds = Date().timeIntervalSince(startedAt)
                 DispatchQueue.main.async { [weak self] in
                     self?.finishMeasurementSetPlotJob(
                         jobID: jobID,
                         dataset: dataset,
                         plotState: requestedPlotState,
-                        result: result
+                        result: result,
+                        elapsedSeconds: elapsedSeconds
                     )
                 }
             } catch {
@@ -369,7 +926,9 @@ public final class WorkbenchStore: ObservableObject {
         }
 
         let normalized = query.lowercased()
-        if normalized.contains("python") {
+        if normalized.contains("plot") || normalized.contains("chart") {
+            openDefaultTab(kind: .plotSamples)
+        } else if normalized.contains("python") {
             openDefaultTab(kind: .python)
         } else if normalized.contains("history") || normalized.contains("timeline") {
             openDefaultTab(kind: .history)
@@ -393,13 +952,19 @@ public final class WorkbenchStore: ObservableObject {
         if !state.tabs.contains(where: { $0.id == tab.id }) {
             state.tabs.append(tab)
         }
+        if tab.kind == .tableBrowser, let datasetID = tab.datasetID {
+            state.selectedDatasetID = datasetID
+        }
         state.activeTabID = tab.id
     }
 
     public func activateTab(_ tabID: String) {
-        guard state.tabs.contains(where: { $0.id == tabID }) else {
+        guard let tab = state.tabs.first(where: { $0.id == tabID }) else {
             state.lastErrors.append("Unknown tab \(tabID)")
             return
+        }
+        if tab.kind == .tableBrowser, let datasetID = tab.datasetID {
+            state.selectedDatasetID = datasetID
         }
         state.activeTabID = tabID
     }
@@ -437,12 +1002,23 @@ public final class WorkbenchStore: ObservableObject {
         switch kind {
         case .datasetExplorer:
             openSelectedDatasetExplorer()
+        case .tableBrowser:
+            guard let dataset = state.selectedDataset else {
+                state.lastErrors.append("No selected dataset to browse")
+                return
+            }
+            openDatasetTableBrowser(dataset.id)
         case .task:
             if state.isDemoProject {
                 openTab(WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: state.selectedDatasetID))
             } else {
                 openDirtyImagingTaskForSelectedDataset()
             }
+        case .plotSamples:
+            if state.plotDocuments.isEmpty {
+                state.plotDocuments = WorkbenchPlotSamples.all()
+            }
+            openTab(WorkbenchTab(id: "tab-plot-samples", title: "Plot Samples", kind: .plotSamples))
         case .aiChat:
             guard state.isDemoProject else {
                 state.lastErrors.append("AI chat is not connected yet")
@@ -458,6 +1034,18 @@ public final class WorkbenchStore: ObservableObject {
         case .history:
             openTab(WorkbenchTab(id: "tab-history", title: "History", kind: .history))
         }
+    }
+
+    public func applyWorkbenchPlotEdit(plotID: String, action: WorkbenchPlotEditAction) {
+        guard let index = state.plotDocuments.firstIndex(where: { $0.id == plotID }) else {
+            state.lastErrors.append("Unknown workbench plot \(plotID)")
+            return
+        }
+        state.plotDocuments[index].apply(action)
+    }
+
+    public func resetWorkbenchPlotSamples() {
+        state.plotDocuments = WorkbenchPlotSamples.all()
     }
 
     public func openDirtyImagingTaskForSelectedDataset() {
@@ -675,6 +1263,492 @@ public final class WorkbenchStore: ObservableObject {
                 approval: "user"
             )
         )
+    }
+
+    public func refreshImageExplorer(datasetID: String) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        guard dataset.kind == .imageCube else {
+            state.lastErrors.append("Dataset \(dataset.name) is not an image")
+            return
+        }
+        let explorerState = state.imageExplorers[datasetID] ?? ImageExplorerSessionState(
+            datasetID: datasetID,
+            selectedView: "plane",
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+        do {
+            let snapshot = try imageExplorerClient.buildSnapshot(request: explorerState.snapshotRequest(datasetPath: dataset.path))
+            var nextState = explorerState
+            nextState.status = .ready
+            nextState.lastError = nil
+            nextState.snapshot = snapshot
+            nextState.cursorX = snapshot.planeCursor?.pixelX ?? nextState.cursorX
+            nextState.cursorY = snapshot.planeCursor?.pixelY ?? nextState.cursorY
+            nextState.nonDisplayIndices = snapshot.nonDisplayAxes?.map(\.index) ?? nextState.nonDisplayIndices
+            if let parameters = snapshot.parameters {
+                nextState.parameters = parameters
+            }
+            nextState.transientCommands = []
+            state.imageExplorers[datasetID] = nextState
+        } catch {
+            var failedState = explorerState
+            failedState.status = .failed
+            failedState.lastError = "\(error)"
+            failedState.snapshot = nil
+            state.imageExplorers[datasetID] = failedState
+            state.lastErrors.append("Open image explorer for \(dataset.name): \(error)")
+        }
+    }
+
+    public func refreshTableBrowser(datasetID: String) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        guard canBrowseAsTable(dataset) else {
+            state.lastErrors.append("Dataset \(dataset.name) is not a casacore table")
+            return
+        }
+        let browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
+            datasetID: datasetID,
+            selectedView: Self.canonicalTableBrowserView(nil),
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+        do {
+            let snapshot = try tableBrowserClient.buildSnapshot(request: browserState.snapshotRequest(datasetPath: dataset.path))
+            var nextState = TableBrowserSessionState(
+                datasetID: datasetID,
+                selectedView: snapshot.view,
+                focus: snapshot.focus,
+                commands: browserState.commands,
+                cellWindowRowStart: browserState.cellWindowRowStart,
+                cellWindowRowLimit: browserState.cellWindowRowLimit,
+                cellWindowColumnStart: browserState.cellWindowColumnStart,
+                cellWindowColumnLimit: browserState.cellWindowColumnLimit,
+                hiddenCellColumns: browserState.hiddenCellColumns,
+                cellColumnArrayInlineLimits: browserState.cellColumnArrayInlineLimits,
+                status: .ready,
+                lastError: nil,
+                snapshot: snapshot,
+                cellWindow: browserState.cellWindow
+            )
+            refreshTableBrowserCellWindowIfNeeded(dataset: dataset, browserState: &nextState)
+            state.tableBrowsers[datasetID] = nextState
+        } catch {
+            state.tableBrowsers[datasetID] = TableBrowserSessionState(
+                datasetID: datasetID,
+                selectedView: browserState.selectedView,
+                focus: browserState.focus,
+                commands: browserState.commands,
+                cellWindowRowStart: browserState.cellWindowRowStart,
+                cellWindowRowLimit: browserState.cellWindowRowLimit,
+                cellWindowColumnStart: browserState.cellWindowColumnStart,
+                cellWindowColumnLimit: browserState.cellWindowColumnLimit,
+                hiddenCellColumns: browserState.hiddenCellColumns,
+                cellColumnArrayInlineLimits: browserState.cellColumnArrayInlineLimits,
+                status: .failed,
+                lastError: "\(error)",
+                snapshot: nil,
+                cellWindow: browserState.cellWindow
+            )
+            state.lastErrors.append("Open table browser for \(dataset.name): \(error)")
+        }
+    }
+
+    public func setImageExplorerView(_ view: String, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.selectedView = view
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerFocus(_ focus: String, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.focus = focus
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerPlaneContentMode(_ mode: String, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.planeContentMode = mode
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerParameters(_ parameters: ImageExplorerParameters, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.parameters = parameters
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerColorMap(_ colorMap: ImageExplorerColorMap, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.planeColorMap = colorMap
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func cycleImageExplorerColorMap(datasetID: String) {
+        let explorerState = imageExplorerState(datasetID: datasetID)
+        setImageExplorerColorMap(explorerState.planeColorMap.next(), datasetID: datasetID)
+    }
+
+    public func setImageExplorerManualClip(low: Double, high: Double, datasetID: String) {
+        guard low.isFinite, high.isFinite, low < high else {
+            state.lastErrors.append("Invalid image clip range")
+            return
+        }
+        var parameters = imageExplorerState(datasetID: datasetID).parameters
+        parameters.stretch = "manual"
+        parameters.clipLow = Self.formatImageExplorerClipValue(low)
+        parameters.clipHigh = Self.formatImageExplorerClipValue(high)
+        setImageExplorerParameters(parameters, datasetID: datasetID)
+    }
+
+    public func setImageExplorerCursor(x: Int?, y: Int?, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.cursorX = x
+        explorerState.cursorY = y
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func stepImageExplorerNonDisplayAxis(axis: Int, delta: Int, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        var indices = explorerState.nonDisplayIndices
+        let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
+        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
+        let currentIndex = snapshotAxis?.index
+            ?? axisPosition.flatMap { indices[safe: $0] }
+            ?? indices[safe: axis]
+            ?? 0
+        let length = max(snapshotAxis?.length ?? currentIndex + 1, 1)
+        let nextIndex = min(max(currentIndex + delta, 0), length - 1)
+        if let axisPosition {
+            indices = normalizedNonDisplayIndices(from: indices, axes: snapshotAxes)
+            indices[axisPosition] = nextIndex
+        } else {
+            while indices.count <= axis {
+                indices.append(0)
+            }
+            indices[axis] = nextIndex
+        }
+        explorerState.nonDisplayIndices = indices
+        explorerState.selectedProfileAxis = axis
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerNonDisplayAxisIndex(axis: Int, index: Int, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        var indices = explorerState.nonDisplayIndices
+        let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
+        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
+        let length = max(snapshotAxis?.length ?? index + 1, 1)
+        let nextIndex = min(max(index, 0), length - 1)
+        if let axisPosition {
+            indices = normalizedNonDisplayIndices(from: indices, axes: snapshotAxes)
+            indices[axisPosition] = nextIndex
+        } else {
+            while indices.count <= axis {
+                indices.append(0)
+            }
+            indices[axis] = nextIndex
+        }
+        explorerState.nonDisplayIndices = indices
+        explorerState.selectedProfileAxis = axis
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func startImageExplorerMovie(axis: Int, framesPerSecond: Double?, loop: Bool, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.moviePlaying = true
+        explorerState.movieAxis = axis
+        if let framesPerSecond {
+            explorerState.movieFramesPerSecond = Self.clampedMovieFramesPerSecond(framesPerSecond)
+        }
+        explorerState.movieLoop = loop
+        explorerState.selectedProfileAxis = axis
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func stopImageExplorerMovie(datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.moviePlaying = false
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func setImageExplorerMovieFramesPerSecond(_ framesPerSecond: Double, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.movieFramesPerSecond = Self.clampedMovieFramesPerSecond(framesPerSecond)
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func setImageExplorerMovieLoop(_ loop: Bool, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.movieLoop = loop
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func advanceImageExplorerMovieFrame(datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        guard explorerState.moviePlaying else {
+            return
+        }
+        let axis = explorerState.movieAxis
+            ?? explorerState.snapshot?.nonDisplayAxes?.first?.axis
+            ?? explorerState.nonDisplayIndices.indices.first
+        guard let axis else {
+            explorerState.moviePlaying = false
+            state.imageExplorers[datasetID] = explorerState
+            return
+        }
+
+        var indices = explorerState.nonDisplayIndices
+        let snapshotAxes = explorerState.snapshot?.nonDisplayAxes ?? []
+        let axisPosition = snapshotAxes.firstIndex { $0.axis == axis }
+        let snapshotAxis = axisPosition.map { snapshotAxes[$0] }
+        let currentIndex = snapshotAxis?.index
+            ?? axisPosition.flatMap { indices[safe: $0] }
+            ?? indices[safe: axis]
+            ?? 0
+        let length = max(snapshotAxis?.length ?? currentIndex + 1, 1)
+        let proposedIndex = currentIndex + 1
+        let nextIndex: Int
+        if proposedIndex >= length {
+            if explorerState.movieLoop {
+                nextIndex = 0
+            } else {
+                explorerState.moviePlaying = false
+                state.imageExplorers[datasetID] = explorerState
+                return
+            }
+        } else {
+            nextIndex = proposedIndex
+        }
+
+        if let axisPosition {
+            indices = normalizedNonDisplayIndices(from: indices, axes: snapshotAxes)
+            indices[axisPosition] = nextIndex
+        } else {
+            while indices.count <= axis {
+                indices.append(0)
+            }
+            indices[axis] = nextIndex
+        }
+        explorerState.nonDisplayIndices = indices
+        explorerState.movieAxis = axis
+        explorerState.selectedProfileAxis = axis
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerSelectedProfileAxis(_ axis: Int, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.selectedProfileAxis = axis
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func appendImageExplorerRegionCommand(_ command: ImageExplorerCommand, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.regionCommands.append(command)
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func runImageExplorerCommandOnce(_ command: ImageExplorerCommand, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.transientCommands.append(command)
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func clearImageExplorerRegionCommands(datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.regionCommands = []
+        explorerState.transientCommands = [.clearRegion]
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setTableBrowserView(_ view: String, datasetID: String) {
+        var browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
+            datasetID: datasetID,
+            selectedView: Self.canonicalTableBrowserView(nil),
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+        browserState.selectedView = Self.canonicalTableBrowserView(view)
+        browserState.focus = "main"
+        browserState.commands = []
+        browserState.transientCommands = []
+        state.tableBrowsers[datasetID] = browserState
+        refreshTableBrowser(datasetID: datasetID)
+    }
+
+    public func runTableBrowserCommand(_ command: TableBrowserCommand, datasetID: String) {
+        var browserState = state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
+            datasetID: datasetID,
+            selectedView: Self.canonicalTableBrowserView(nil),
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+        browserState.commands.append(command)
+        state.tableBrowsers[datasetID] = browserState
+        refreshTableBrowser(datasetID: datasetID)
+    }
+
+    public func selectTableBrowserMainItem(index: Int, datasetID: String) {
+        guard index >= 0 else {
+            return
+        }
+        var browserState = tableBrowserState(datasetID: datasetID)
+        guard let selectedIndex = browserState.snapshot?.verticalMetrics?.selectedIndex else {
+            return
+        }
+        guard appendTableBrowserMove(from: selectedIndex, to: index, into: &browserState) else {
+            return
+        }
+        state.tableBrowsers[datasetID] = browserState
+        refreshTableBrowser(datasetID: datasetID)
+    }
+
+    public func selectTableBrowserVisibleCell(
+        rowIndex: Int?,
+        selectedVisibleColumn: Int?,
+        targetVisibleColumn: Int?,
+        datasetID: String
+    ) {
+        var browserState = tableBrowserState(datasetID: datasetID)
+        var changed = false
+        if let rowIndex, rowIndex >= 0 {
+            changed = browserState.selectedCellRow != rowIndex || changed
+            browserState.selectedCellRow = rowIndex
+        }
+        if let targetVisibleColumn {
+            changed = browserState.selectedCellColumn != targetVisibleColumn || changed
+            browserState.selectedCellColumn = targetVisibleColumn
+        }
+        guard changed else {
+            return
+        }
+        state.tableBrowsers[datasetID] = browserState
+    }
+
+    public func requestTableBrowserCellWindow(
+        rowStart: Int,
+        rowLimit: Int,
+        columnStart: Int,
+        columnLimit: Int,
+        datasetID: String
+    ) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        guard canBrowseAsTable(dataset) else {
+            state.lastErrors.append("Dataset \(dataset.name) is not a casacore table")
+            return
+        }
+        var browserState = tableBrowserState(datasetID: datasetID)
+        browserState.cellWindowRowStart = max(0, rowStart)
+        browserState.cellWindowRowLimit = max(1, min(rowLimit, 4096))
+        browserState.cellWindowColumnStart = max(0, columnStart)
+        browserState.cellWindowColumnLimit = max(1, min(columnLimit, 128))
+        state.tableBrowsers[datasetID] = browserState
+        scheduleTableBrowserCellWindowLoad(
+            datasetID: datasetID,
+            dataset: dataset,
+            request: browserState.cellWindowRequest(datasetPath: dataset.path)
+        )
+    }
+
+    public func setTableBrowserColumnHidden(columnIndex: Int, hidden: Bool, datasetID: String) {
+        var browserState = tableBrowserState(datasetID: datasetID)
+        if hidden {
+            browserState.hiddenCellColumns.insert(columnIndex)
+        } else {
+            browserState.hiddenCellColumns.remove(columnIndex)
+        }
+        state.tableBrowsers[datasetID] = browserState
+    }
+
+    public func setTableBrowserArrayInlineLimit(columnIndex: Int, limit: Int, datasetID: String) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        var browserState = tableBrowserState(datasetID: datasetID)
+        if limit > 0 {
+            browserState.cellColumnArrayInlineLimits[columnIndex] = limit
+        } else {
+            browserState.cellColumnArrayInlineLimits.removeValue(forKey: columnIndex)
+        }
+        state.tableBrowsers[datasetID] = browserState
+        scheduleTableBrowserCellWindowLoad(
+            datasetID: datasetID,
+            dataset: dataset,
+            request: browserState.cellWindowRequest(datasetPath: dataset.path)
+        )
+    }
+
+    public func loadTableBrowserCellValue(
+        rowIndex: Int,
+        columnIndex: Int,
+        datasetID: String,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        guard let dataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            let error = NSError(
+                domain: "CasarsMacCore.WorkbenchStore",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Unknown dataset \(datasetID)"]
+            )
+            state.lastErrors.append(error.localizedDescription)
+            completion(.failure(error))
+            return
+        }
+        let request = TableBrowserCellValueRequest(
+            datasetPath: dataset.path,
+            rowIndex: rowIndex,
+            columnIndex: columnIndex
+        )
+        tableBrowserQueue.async { [tableBrowserClient] in
+            let result = Result {
+                try tableBrowserClient.buildCellValue(request: request)
+            }
+            DispatchQueue.main.async {
+                if case let .failure(error) = result {
+                    self.state.lastErrors.append("Copy table cell for \(dataset.name): \(error)")
+                }
+                completion(result)
+            }
+        }
+    }
+
+    public func openSelectedTableBrowserSubtable(datasetID: String) {
+        guard let snapshot = state.tableBrowsers[datasetID]?.snapshot,
+              snapshot.selectedAddress?.kind == "subtable",
+              let targetPath = snapshot.selectedAddress?.targetPath
+        else {
+            state.lastErrors.append("No subtable is selected")
+            return
+        }
+        openTableBrowserPath(targetPath, sourceDatasetID: datasetID)
     }
 
     public func rejectAIProposal(_ proposalID: String) {
@@ -916,6 +1990,113 @@ public final class WorkbenchStore: ObservableObject {
         return String(tabID.dropFirst(prefix.count))
     }
 
+    private func tableBrowserTabID(for datasetID: String) -> String {
+        "tab-tablebrowser-\(datasetID)"
+    }
+
+    private func canBrowseAsTable(_ dataset: DatasetSummary) -> Bool {
+        dataset.kind == .measurementSet || dataset.kind == .table || dataset.kind == .calibrationTable
+    }
+
+    private func refreshTableBrowserCellWindowIfNeeded(
+        dataset: DatasetSummary,
+        browserState: inout TableBrowserSessionState,
+        force: Bool = false
+    ) {
+        guard browserState.selectedView == "cells" || browserState.snapshot?.view == "cells" else {
+            browserState.cellWindow = nil
+            return
+        }
+        let request = browserState.cellWindowRequest(datasetPath: dataset.path)
+        if !force,
+           browserState.cellWindow?.contains(
+               rowStart: request.rowStart,
+               rowLimit: request.rowLimit,
+               columnStart: request.columnStart,
+               columnLimit: request.columnLimit
+           ) == true
+        {
+            return
+        }
+        scheduleTableBrowserCellWindowLoad(
+            datasetID: browserState.datasetID,
+            dataset: dataset,
+            request: request
+        )
+    }
+
+    private func scheduleTableBrowserCellWindowLoad(
+        datasetID: String,
+        dataset: DatasetSummary,
+        request: TableBrowserCellWindowRequest
+    ) {
+        let generation = (tableBrowserCellWindowGenerations[datasetID] ?? 0) + 1
+        tableBrowserCellWindowGenerations[datasetID] = generation
+        tableBrowserQueue.async { [tableBrowserClient] in
+            let result = Result {
+                try tableBrowserClient.buildCellWindow(request: request)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.tableBrowserCellWindowGenerations[datasetID] == generation,
+                      var browserState = self.state.tableBrowsers[datasetID],
+                      browserState.cellWindowRequest(datasetPath: dataset.path) == request
+                else {
+                    return
+                }
+
+                switch result {
+                case let .success(window):
+                    browserState.cellWindow = window
+                    browserState.lastError = nil
+                case let .failure(error):
+                    browserState.lastError = "\(error)"
+                    self.state.lastErrors.append("Load table cells for \(dataset.name): \(error)")
+                }
+                self.state.tableBrowsers[datasetID] = browserState
+            }
+        }
+    }
+
+    private func tableBrowserState(datasetID: String) -> TableBrowserSessionState {
+        state.tableBrowsers[datasetID] ?? TableBrowserSessionState(
+            datasetID: datasetID,
+            selectedView: Self.canonicalTableBrowserView(nil),
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+    }
+
+    private static func canonicalTableBrowserView(_ view: String?) -> String {
+        switch view?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "keywords":
+            "keywords"
+        case "subtables":
+            "subtables"
+        default:
+            "cells"
+        }
+    }
+
+    @discardableResult
+    private func appendTableBrowserMove(
+        from selectedIndex: Int,
+        to targetIndex: Int,
+        into browserState: inout TableBrowserSessionState
+    ) -> Bool {
+        let delta = targetIndex - selectedIndex
+        if delta > 0 {
+            browserState.commands.append(.moveDown(steps: delta))
+            return true
+        }
+        if delta < 0 {
+            browserState.commands.append(.moveUp(steps: -delta))
+            return true
+        }
+        return false
+    }
+
     private func activeTaskTabID(parameters: DirtyImagingTaskParameters) -> String {
         if let activeTab = state.tabs.first(where: { $0.id == state.activeTabID && $0.kind == .task }) {
             return activeTab.id
@@ -930,7 +2111,8 @@ public final class WorkbenchStore: ObservableObject {
         jobID: String,
         dataset: DatasetSummary,
         plotState requestedPlotState: MeasurementSetExplorerPlotState,
-        result: MeasurementSetPlotResultSummary
+        result: MeasurementSetPlotResultSummary,
+        elapsedSeconds: TimeInterval
     ) {
         guard var job = state.jobs[jobID], job.status != .cancelled else {
             return
@@ -948,7 +2130,9 @@ public final class WorkbenchStore: ObservableObject {
         job.progress = 1.0
         job.resultSummary = result.summary
         job.lastEvent = "succeeded"
-        job.logLines.append("Rendered \(result.renderedPointCount) points.")
+        job.logLines.append(
+            "Rendered \(result.renderedPointCount) points in \(formatDuration(elapsedSeconds))."
+        )
         state.jobs[jobID] = job
         state.activeJobIDsByTab.removeValue(forKey: job.tabID)
     }
@@ -984,6 +2168,10 @@ public final class WorkbenchStore: ObservableObject {
     private func openExplorer(for dataset: DatasetSummary) {
         if dataset.kind == .measurementSet && !state.isDemoProject {
             _ = measurementSetPlotState(for: dataset.id)
+        } else if dataset.kind == .imageCube && !state.isDemoProject {
+            refreshImageExplorer(datasetID: dataset.id)
+        } else if (dataset.kind == .table || dataset.kind == .calibrationTable) && !state.isDemoProject {
+            refreshTableBrowser(datasetID: dataset.id)
         }
         openTab(
             WorkbenchTab(
@@ -993,6 +2181,36 @@ public final class WorkbenchStore: ObservableObject {
                 datasetID: dataset.id
             )
         )
+    }
+
+    private func imageExplorerState(datasetID: String) -> ImageExplorerSessionState {
+        state.imageExplorers[datasetID] ?? ImageExplorerSessionState(
+            datasetID: datasetID,
+            selectedView: "plane",
+            status: .idle,
+            lastError: nil,
+            snapshot: nil
+        )
+    }
+
+    private static func clampedMovieFramesPerSecond(_ framesPerSecond: Double) -> Double {
+        guard framesPerSecond.isFinite else {
+            return 6.0
+        }
+        return min(max(framesPerSecond, 0.2), 60.0)
+    }
+
+    private static func formatImageExplorerClipValue(_ value: Double) -> String {
+        String(format: "%.6g", value)
+    }
+
+    private func normalizedNonDisplayIndices(
+        from indices: [Int],
+        axes: [ImageExplorerSnapshot.NonDisplayAxis]
+    ) -> [Int] {
+        axes.enumerated().map { position, axis in
+            indices[safe: position] ?? axis.index
+        }
     }
 
     private func measurementSetPlotState(for datasetID: String) -> MeasurementSetExplorerPlotState {
@@ -1007,6 +2225,7 @@ public final class WorkbenchStore: ObservableObject {
                 selectedSpectralWindow: nil,
                 selectedCorrelation: nil,
                 dataColumn: "DATA",
+                maxPlotPoints: WorkbenchState.defaultMeasurementSetPlotMaxPoints,
                 status: .idle,
                 lastError: nil,
                 result: nil
@@ -1068,11 +2287,33 @@ public final class WorkbenchStore: ObservableObject {
             "preset:\(plotState.preset.rawValue)",
             "field:\(plotState.selectedField ?? "all")",
             "spw:\(plotState.selectedSpectralWindow ?? "all")",
+            "chan:\(plotState.selectedChannelSelection ?? "all")",
+            "timerange:\(plotState.selectedTimerange ?? "all")",
+            "uvrange:\(plotState.selectedUVRange ?? "all")",
+            "antenna:\(plotState.selectedAntenna ?? "all")",
+            "scan:\(plotState.selectedScan ?? "all")",
             "corr:\(plotState.selectedCorrelation ?? "all")",
+            "array:\(plotState.selectedArray ?? "all")",
+            "observation:\(plotState.selectedObservation ?? "all")",
+            "intent:\(plotState.selectedIntent ?? "all")",
+            "feed:\(plotState.selectedFeed ?? "all")",
+            "msselect:\(plotState.selectedMSSelect ?? "all")",
             "data:\(plotState.dataColumn)",
+            "avgchannel:\(plotState.avgChannel.map { String($0) } ?? "none")",
+            "avgtime:\(plotState.avgTime.map { String($0) } ?? "none")",
+            "avgscan:\(plotState.avgScan)",
+            "avgfield:\(plotState.avgField)",
+            "avgbaseline:\(plotState.avgBaseline)",
+            "avgantenna:\(plotState.avgAntenna)",
+            "avgspw:\(plotState.avgSPW)",
+            "scalar:\(plotState.scalarAverage)",
             "size:960x600",
-            "maxPoints:250000"
+            "maxPoints:\(plotState.maxPlotPoints)"
         ].joined(separator: "|")
+    }
+
+    private static func minimumBoundedMeasurementSetPlotMaxPoints(_ value: UInt64) -> UInt64 {
+        max(WorkbenchState.minimumMeasurementSetPlotMaxPoints, value)
     }
 
     private func defaultDirtyImagingParameters(for dataset: DatasetSummary) -> DirtyImagingTaskParameters {
@@ -1422,6 +2663,24 @@ public final class WorkbenchStore: ObservableObject {
         return value
     }
 
+    private func normalizedTextSelection(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty, value != "all" else {
+            return nil
+        }
+        return value
+    }
+
+    private func updateMeasurementSetPlotState(
+        datasetID: String,
+        update: (inout MeasurementSetExplorerPlotState) -> Void
+    ) {
+        var plotState = measurementSetPlotState(for: datasetID)
+        update(&plotState)
+        plotState.lastError = nil
+        refreshMeasurementSetPlotStateFromCache(&plotState, datasetID: datasetID)
+        state.measurementSetPlots[datasetID] = plotState
+    }
+
     private func selectorToken(_ value: String?) -> String? {
         guard let value = normalizedPickerValue(value) else {
             return nil
@@ -1434,6 +2693,34 @@ public final class WorkbenchStore: ObservableObject {
             return String(value[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return value
+    }
+
+    private func spectralWindowSelectorToken(_ plotState: MeasurementSetExplorerPlotState) -> String? {
+        guard let spectralWindow = spectralWindowSelectorToken(plotState.selectedSpectralWindow) else {
+            return nil
+        }
+        guard let channelSelection = plotState.selectedChannelSelection else {
+            return spectralWindow
+        }
+        return "\(spectralWindow):\(channelSelection)"
+    }
+
+    private func spectralWindowSelectorToken(_ value: String?) -> String? {
+        guard let value = normalizedPickerValue(value) else {
+            return nil
+        }
+        if value.hasPrefix("spw ") {
+            let remainder = value.dropFirst(4)
+            return String(remainder.prefix { $0.isNumber })
+        }
+        return value
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else { return nil }
+        return self[index]
     }
 }
 
@@ -1463,7 +2750,11 @@ extension DatasetSummary {
             fields: probe.fields,
             spectralWindows: probe.spectralWindows,
             scans: probe.scans,
+            arrays: probe.arrays,
+            observations: probe.observations,
             antennas: probe.antennas,
+            intents: probe.intents,
+            feeds: probe.feeds,
             correlations: probe.correlations,
             columns: probe.columns,
             dataColumns: probe.dataColumns,
@@ -1493,14 +2784,56 @@ extension CasarsFrontendServices.MeasurementSetPlotPreset {
         switch preset {
         case .uvCoverage:
             self = .uvCoverage
+        case .antennaLayout:
+            self = .antennaLayout
+        case .scanTimeline:
+            self = .scanTimeline
+        case .spectralWindowCoverage:
+            self = .spectralWindowCoverage
+        case .phaseVsTime:
+            self = .phaseVsTime
+        case .amplitudePhaseVsTimeStacked:
+            self = .amplitudePhaseVsTimeStacked
+        case .weightVsTime:
+            self = .weightVsTime
+        case .sigmaVsTime:
+            self = .sigmaVsTime
+        case .flagVsTime:
+            self = .flagVsTime
+        case .weightSpectrumVsTime:
+            self = .weightSpectrumVsTime
+        case .sigmaSpectrumVsTime:
+            self = .sigmaSpectrumVsTime
+        case .flagRowVsTime:
+            self = .flagRowVsTime
+        case .elevationVsTime:
+            self = .elevationVsTime
+        case .azimuthVsTime:
+            self = .azimuthVsTime
+        case .hourAngleVsTime:
+            self = .hourAngleVsTime
+        case .parallacticAngleVsTime:
+            self = .parallacticAngleVsTime
+        case .azimuthVsElevation:
+            self = .azimuthVsElevation
         case .amplitudeVsFrequency:
             self = .amplitudeVsFrequency
         case .amplitudeVsChannel:
             self = .amplitudeVsChannel
+        case .phaseVsChannel:
+            self = .phaseVsChannel
+        case .phaseVsFrequency:
+            self = .phaseVsFrequency
+        case .amplitudeVsVelocity:
+            self = .amplitudeVsVelocity
+        case .phaseVsVelocity:
+            self = .phaseVsVelocity
         case .amplitudeVsUvDistance:
             self = .amplitudeVsUvDistance
         case .amplitudeVsTime:
             self = .amplitudeVsTime
+        case .realVsImaginary:
+            self = .realVsImaginary
         }
     }
 }
@@ -1510,14 +2843,56 @@ extension MeasurementSetExplorerPlotPreset {
         switch preset {
         case .uvCoverage:
             self = .uvCoverage
+        case .antennaLayout:
+            self = .antennaLayout
+        case .scanTimeline:
+            self = .scanTimeline
+        case .spectralWindowCoverage:
+            self = .spectralWindowCoverage
+        case .phaseVsTime:
+            self = .phaseVsTime
+        case .amplitudePhaseVsTimeStacked:
+            self = .amplitudePhaseVsTimeStacked
+        case .weightVsTime:
+            self = .weightVsTime
+        case .sigmaVsTime:
+            self = .sigmaVsTime
+        case .flagVsTime:
+            self = .flagVsTime
+        case .weightSpectrumVsTime:
+            self = .weightSpectrumVsTime
+        case .sigmaSpectrumVsTime:
+            self = .sigmaSpectrumVsTime
+        case .flagRowVsTime:
+            self = .flagRowVsTime
+        case .elevationVsTime:
+            self = .elevationVsTime
+        case .azimuthVsTime:
+            self = .azimuthVsTime
+        case .hourAngleVsTime:
+            self = .hourAngleVsTime
+        case .parallacticAngleVsTime:
+            self = .parallacticAngleVsTime
+        case .azimuthVsElevation:
+            self = .azimuthVsElevation
         case .amplitudeVsFrequency:
             self = .amplitudeVsFrequency
         case .amplitudeVsChannel:
             self = .amplitudeVsChannel
+        case .phaseVsChannel:
+            self = .phaseVsChannel
+        case .phaseVsFrequency:
+            self = .phaseVsFrequency
+        case .amplitudeVsVelocity:
+            self = .amplitudeVsVelocity
+        case .phaseVsVelocity:
+            self = .phaseVsVelocity
         case .amplitudeVsUvDistance:
             self = .amplitudeVsUvDistance
         case .amplitudeVsTime:
             self = .amplitudeVsTime
+        case .realVsImaginary:
+            self = .realVsImaginary
         }
     }
 }
@@ -1556,11 +2931,204 @@ extension MeasurementSetPlotResultSummary {
             requestedMaxPoints: result.sampling.requestedMaxPoints,
             renderedPointCount: result.sampling.renderedPointCount,
             diagnostics: result.sampling.diagnostics,
+            plotDocument: WorkbenchPlotDocument(payload: result.document),
             renderer: result.render.renderer,
             imageFormat: result.render.imageFormat,
             imageWidth: result.render.width,
             imageHeight: result.render.height,
             imageBytes: result.imageBytes
         )
+    }
+}
+
+extension WorkbenchPlotDocument {
+    init(
+        payload: CasarsFrontendServices.PlotDocumentPayload,
+        displayMode: WorkbenchPlotDisplayMode = .automatic
+    ) {
+        self.init(
+            id: payload.id,
+            title: payload.title,
+            subtitle: payload.subtitle,
+            headerLines: payload.headerLines,
+            axes: payload.axes.map(WorkbenchPlotAxis.init(payload:)),
+            layers: payload.layers.enumerated().map { index, layer in
+                WorkbenchPlotLayer(payload: layer, paletteIndex: index)
+            },
+            annotations: payload.annotations.map(WorkbenchPlotAnnotation.init(payload:)),
+            panels: payload.panels.map(WorkbenchPlotPanel.init(payload:)),
+            showLegend: payload.showLegend,
+            displayMode: displayMode
+        )
+    }
+}
+
+extension WorkbenchPlotPanel {
+    init(payload: CasarsFrontendServices.PlotDocumentPanel) {
+        self.init(
+            id: payload.id,
+            title: payload.title,
+            axes: payload.axes.map(WorkbenchPlotAxis.init(payload:)),
+            layers: payload.layers.enumerated().map { index, layer in
+                WorkbenchPlotLayer(payload: layer, paletteIndex: index)
+            },
+            annotations: payload.annotations.map(WorkbenchPlotAnnotation.init(payload:))
+        )
+    }
+}
+
+extension WorkbenchPlotAxis {
+    init(payload: CasarsFrontendServices.PlotDocumentAxis) {
+        self.init(
+            id: payload.id,
+            label: payload.label,
+            unit: payload.unit,
+            range: WorkbenchPlotRange(lower: payload.lower, upper: payload.upper),
+            scale: WorkbenchPlotAxisScale(scale: payload.scale),
+            laneLabels: payload.laneLabels,
+            drawsOnTrailingEdge: payload.drawsOnTrailingEdge
+        )
+    }
+}
+
+extension WorkbenchPlotLayer {
+    init(payload: CasarsFrontendServices.PlotDocumentLayer, paletteIndex: Int) {
+        let pointCount = min(payload.xValues.count, payload.yValues.count)
+        let provenance = payload.provenance.map(WorkbenchPlotPointProvenance.init(payload:))
+        let layerKind = WorkbenchPlotLayerKind(kind: payload.kind)
+        let inlinePointThreshold = layerKind == .line ? 50_000 : denseScatterPointThreshold
+        let points = pointCount <= inlinePointThreshold
+            ? (0..<pointCount).map { index in
+                WorkbenchPlotPoint(
+                    x: payload.xValues[index],
+                    y: payload.yValues[index],
+                    label: index < payload.pointLabels.count && !payload.pointLabels[index].isEmpty ? payload.pointLabels[index] : nil,
+                    symbolSize: index < payload.pointSymbolSizes.count ? payload.pointSymbolSizes[index] : nil,
+                    provenance: index < provenance.count ? provenance[index] : nil
+                )
+            }
+            : []
+        let pointCloud = pointCount > inlinePointThreshold
+            ? WorkbenchPlotPointCloud(
+                xValues: Array(payload.xValues.prefix(pointCount)),
+                yValues: Array(payload.yValues.prefix(pointCount)),
+                provenanceSamples: provenance
+            )
+            : nil
+        let intervalCount = min(
+            payload.intervalXStart.count,
+            payload.intervalXEnd.count,
+            payload.intervalY.count,
+            payload.intervalHeight.count
+        )
+        let intervals = (0..<intervalCount).map { index in
+            WorkbenchPlotInterval(
+                id: "\(payload.id)-interval-\(index)",
+                xStart: payload.intervalXStart[index],
+                xEnd: payload.intervalXEnd[index],
+                y: payload.intervalY[index],
+                height: payload.intervalHeight[index],
+                label: index < payload.intervalLabels.count && !payload.intervalLabels[index].isEmpty ? payload.intervalLabels[index] : nil
+            )
+        }
+        self.init(
+            id: payload.id,
+            title: payload.title,
+            kind: layerKind,
+            xAxisID: payload.xAxisId,
+            yAxisID: payload.yAxisId,
+            points: points,
+            intervals: intervals,
+            pointCloud: pointCloud,
+            style: WorkbenchPlotLayerStyle(
+                colorHex: WorkbenchPlotLayerStyle.colorHex(for: payload.colorGroup, paletteIndex: paletteIndex),
+                symbolSize: payload.symbolSize,
+                lineWidth: payload.lineWidth,
+                opacity: payload.opacity
+            ),
+            provenanceSummary: payload.provenanceSummary,
+            dataProfile: WorkbenchPlotLayerDataProfile(
+                sourceSampleCount: payload.sourceSampleCount,
+                displaySampleCount: max(points.count, pointCloud?.count ?? 0, intervals.count),
+                pointBudget: layerKind == .line ? 100_000 : denseScatterPointThreshold,
+                strategy: WorkbenchPlotPayloadStrategy(payloadStrategy: payload.payloadStrategy, fallback: pointCloud == nil ? .inlineDisplayPoints : .viewportLevelOfDetail),
+                sourceDescription: payload.provenanceSummary,
+                provenanceKey: payload.colorGroup
+            )
+        )
+    }
+}
+
+private func formatDuration(_ seconds: TimeInterval) -> String {
+    if seconds < 1.0 {
+        return "\(Int((seconds * 1_000).rounded())) ms"
+    }
+    return String(format: "%.2f s", seconds)
+}
+
+extension WorkbenchPlotAnnotation {
+    init(payload: CasarsFrontendServices.PlotDocumentAnnotation) {
+        self.init(id: payload.id, x: payload.x, y: payload.y, text: payload.text)
+    }
+}
+
+extension WorkbenchPlotPointProvenance {
+    init(payload: CasarsFrontendServices.PlotPointProvenance) {
+        self.init(
+            row: payload.row,
+            source: "row \(payload.row), corr \(payload.corr), chan \(payload.chanStart)..<\(payload.chanEnd)"
+        )
+    }
+}
+
+extension WorkbenchPlotAxisScale {
+    init(scale: CasarsFrontendServices.PlotAxisScale) {
+        switch scale {
+        case .linear:
+            self = .linear
+        case .log:
+            self = .logarithmic
+        }
+    }
+}
+
+extension WorkbenchPlotLayerKind {
+    init(kind: CasarsFrontendServices.PlotLayerKind) {
+        switch kind {
+        case .scatter:
+            self = .scatter
+        case .line:
+            self = .line
+        case .interval:
+            self = .interval
+        }
+    }
+}
+
+extension WorkbenchPlotPayloadStrategy {
+    init(payloadStrategy: String, fallback: WorkbenchPlotPayloadStrategy) {
+        switch payloadStrategy {
+        case "point_cloud":
+            self = .viewportLevelOfDetail
+        case "intervals":
+            self = .inlineDisplayPoints
+        case "single_pixel_point_raster":
+            self = .singlePixelPointRaster
+        case "density_grid":
+            self = .densityGrid
+        default:
+            self = fallback
+        }
+    }
+}
+
+extension WorkbenchPlotLayerStyle {
+    static func colorHex(for colorGroup: String, paletteIndex: Int) -> String {
+        let palette = ["#2563eb", "#16a34a", "#dc2626", "#9333ea", "#ea580c", "#0891b2", "#7c3aed", "#0f766e"]
+        var hash = 5381
+        for scalar in colorGroup.unicodeScalars {
+            hash = ((hash << 5) &+ hash) &+ Int(scalar.value)
+        }
+        return palette[abs(hash &+ paletteIndex) % palette.count]
     }
 }
