@@ -33,6 +33,8 @@ This directory holds stable project documentation.
 - install guide: [`install.md`](install.md)
 - CASA VLA parity runbook:
   [`casa-vla-importvla-parity.md`](casa-vla-importvla-parity.md)
+- tutorial learning packs:
+  [`tutorial-parity/tutorial-learning-packs.md`](tutorial-parity/tutorial-learning-packs.md)
 
 ## Planning And Program Reference
 

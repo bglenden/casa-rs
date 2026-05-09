@@ -18,6 +18,7 @@ functionality.
 - [Code-quality map](code-quality-map.md)
 - [Current tutorial and dataset inventory](current-tutorial-inventory.md)
 - [Tutorial capability matrix](capability-matrix.md)
+- [Tutorial learning packs](tutorial-learning-packs.md)
 
 ## Wave 3 Artifacts
 

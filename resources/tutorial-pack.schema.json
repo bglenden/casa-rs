@@ -1,0 +1,533 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bglenden.github.io/casa-rs/schemas/tutorial-pack.v0.schema.json",
+  "title": "casa-rs Tutorial Pack Manifest v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pack_id",
+    "tutorial_id",
+    "title",
+    "declared_casa_version",
+    "source",
+    "customers",
+    "storage",
+    "inputs",
+    "workspace",
+    "surfaces",
+    "native_provider_policy",
+    "learner",
+    "regression",
+    "sections"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "tutorial-pack.v0"
+    },
+    "pack_id": {
+      "$ref": "#/$defs/slash_id"
+    },
+    "tutorial_id": {
+      "$ref": "#/$defs/slash_id"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "declared_casa_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "guide_url",
+        "inventory_path",
+        "source_policy"
+      ],
+      "properties": {
+        "guide_url": {
+          "$ref": "#/$defs/http_url"
+        },
+        "inventory_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "source_policy": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "customers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "learner",
+        "regression"
+      ],
+      "properties": {
+        "learner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "regression": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generated_pack_root_policy",
+        "path_mode",
+        "inputs_mutability",
+        "workspace_mutability"
+      ],
+      "properties": {
+        "generated_pack_root_policy": {
+          "type": "string",
+          "pattern": "\\$\\{CASA_RS_TUTORIAL_DATA_ROOT\\}/tutorial-parity/"
+        },
+        "path_mode": {
+          "const": "relative-pack-paths-with-registry-metadata"
+        },
+        "inputs_mutability": {
+          "const": "immutable"
+        },
+        "workspace_mutability": {
+          "const": "writable"
+        }
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/input"
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "native_path",
+        "oracle_path",
+        "scratch_path"
+      ],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "native_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "oracle_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "scratch_path": {
+          "$ref": "#/$defs/relative_path"
+        }
+      }
+    },
+    "surfaces": {
+      "type": "array",
+      "minItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "cli",
+          "python",
+          "tui",
+          "gui"
+        ]
+      }
+    },
+    "native_provider_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "native_provider_kind",
+        "oracle_provider_kind",
+        "forbidden_native_providers"
+      ],
+      "properties": {
+        "native_provider_kind": {
+          "const": "native-rust"
+        },
+        "oracle_provider_kind": {
+          "const": "casa-oracle"
+        },
+        "forbidden_native_providers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "casars-casa-task",
+              "casa-python"
+            ]
+          }
+        }
+      }
+    },
+    "learner": {
+      "$ref": "#/$defs/learner_view"
+    },
+    "regression": {
+      "$ref": "#/$defs/regression_view"
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/section"
+      }
+    }
+  },
+  "$defs": {
+    "slash_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._/-]*[a-z0-9]$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "pattern": "^(~|/|[A-Za-z]:|.*\\.\\./)"
+      }
+    },
+    "http_url": {
+      "type": "string",
+      "pattern": "^https://"
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "display_name",
+        "kind",
+        "registry_key",
+        "source_page_url",
+        "source_artifact_url",
+        "filename",
+        "size_bytes",
+        "checksum_policy",
+        "pack_path",
+        "materialization"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slash_id"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "casa-image",
+            "measurement-set",
+            "fits",
+            "table",
+            "other"
+          ]
+        },
+        "registry_key": {
+          "$ref": "#/$defs/slash_id"
+        },
+        "source_page_url": {
+          "$ref": "#/$defs/http_url"
+        },
+        "source_artifact_url": {
+          "$ref": "#/$defs/http_url"
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checksum_policy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pack_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "materialization": {
+          "enum": [
+            "registry-staged",
+            "external-ref",
+            "symlink",
+            "copy-on-generate"
+          ]
+        }
+      }
+    },
+    "learner_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "docs_index",
+        "section_docs_path",
+        "screenshot_path",
+        "include_internal_evidence"
+      ],
+      "properties": {
+        "docs_index": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "section_docs_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "screenshot_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "include_internal_evidence": {
+          "const": false
+        }
+      }
+    },
+    "regression_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_path",
+        "data_manifest",
+        "native_runs",
+        "oracle_runs",
+        "comparisons",
+        "timings",
+        "provider_provenance",
+        "review_path",
+        "review_record_schema",
+        "screenshot_specs_path"
+      ],
+      "properties": {
+        "evidence_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "data_manifest": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "native_runs": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "oracle_runs": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "comparisons": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "timings": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "provider_provenance": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "review_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "review_record_schema": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "screenshot_specs_path": {
+          "$ref": "#/$defs/relative_path"
+        }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sequence",
+        "title",
+        "casa_source",
+        "observable_result",
+        "input_refs",
+        "tasks",
+        "steps",
+        "review_checkpoint"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slash_id"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "casa_source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "guide_url",
+            "section_anchor",
+            "task_calls"
+          ],
+          "properties": {
+            "guide_url": {
+              "$ref": "#/$defs/http_url"
+            },
+            "section_anchor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "task_calls": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "task_id",
+                  "parameters"
+                ],
+                "properties": {
+                  "task_id": {
+                    "$ref": "#/$defs/slash_id"
+                  },
+                  "parameters": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "observable_result": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/slash_id"
+          }
+        },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/slash_id"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/step"
+          }
+        },
+        "review_checkpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "required",
+            "status",
+            "record_path"
+          ],
+          "properties": {
+            "required": {
+              "const": true
+            },
+            "status": {
+              "enum": [
+                "pending-human-review",
+                "accepted",
+                "needs-revision",
+                "product-gap"
+              ]
+            },
+            "record_path": {
+              "$ref": "#/$defs/relative_path"
+            }
+          }
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "surface",
+        "provider_kind",
+        "task_id",
+        "parameters",
+        "outputs"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slash_id"
+        },
+        "surface": {
+          "enum": [
+            "cli",
+            "python",
+            "tui",
+            "gui",
+            "oracle"
+          ]
+        },
+        "provider_kind": {
+          "enum": [
+            "native-rust",
+            "casa-oracle"
+          ]
+        },
+        "task_id": {
+          "$ref": "#/$defs/slash_id"
+        },
+        "command_template": {
+          "type": "string"
+        },
+        "ui_path": {
+          "type": "string"
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "path"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "$ref": "#/$defs/relative_path"
+              }
+            }
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relative_path"
+          }
+        }
+      }
+    }
+  }
+}

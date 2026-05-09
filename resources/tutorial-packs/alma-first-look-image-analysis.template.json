@@ -1,0 +1,563 @@
+{
+  "schema_version": "tutorial-pack.v0",
+  "pack_id": "alma-first-look-image-analysis",
+  "tutorial_id": "alma/first-look/twhya/image-analysis",
+  "title": "ALMA First Look: Image Analysis",
+  "declared_casa_version": "6.6.6",
+  "source": {
+    "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
+    "inventory_path": "docs/tutorial-parity/current-tutorial-inventory.md",
+    "source_policy": "Store source URL, section title, task call, parameter record, retrieval date, and concise derived notes; do not vendor full CASA Guide pages."
+  },
+  "customers": {
+    "learner": "Data plus concise tutorial docs, visible parameters, screenshots, and expected products for running the tutorial.",
+    "regression": "Reproducible correctness, performance, completeness, provenance, comparison, and human-review evidence."
+  },
+  "storage": {
+    "generated_pack_root_policy": "${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack",
+    "path_mode": "relative-pack-paths-with-registry-metadata",
+    "inputs_mutability": "immutable",
+    "workspace_mutability": "writable"
+  },
+  "inputs": [
+    {
+      "id": "twhya-cont-image",
+      "display_name": "TW Hya continuum image",
+      "kind": "casa-image",
+      "registry_key": "alma/first-look/twhya/continuum-image",
+      "source_page_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
+      "source_artifact_url": "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_cont.image",
+      "filename": "twhya_cont.image",
+      "size_bytes": 369373,
+      "checksum_policy": "directory-sha256-manifest",
+      "pack_path": "inputs/twhya_cont.image",
+      "materialization": "registry-staged"
+    },
+    {
+      "id": "twhya-n2hp-image",
+      "display_name": "TW Hya N2H+ image cube",
+      "kind": "casa-image",
+      "registry_key": "alma/first-look/twhya/n2hp-image",
+      "source_page_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
+      "source_artifact_url": "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image",
+      "filename": "twhya_n2hp.image",
+      "size_bytes": 3859246,
+      "checksum_policy": "directory-sha256-manifest",
+      "pack_path": "inputs/twhya_n2hp.image",
+      "materialization": "registry-staged"
+    }
+  ],
+  "workspace": {
+    "root": "workspace",
+    "native_path": "workspace/native",
+    "oracle_path": "workspace/oracle",
+    "scratch_path": "workspace/scratch"
+  },
+  "surfaces": [
+    "cli",
+    "python",
+    "tui",
+    "gui"
+  ],
+  "native_provider_policy": {
+    "native_provider_kind": "native-rust",
+    "oracle_provider_kind": "casa-oracle",
+    "forbidden_native_providers": [
+      "casars-casa-task",
+      "casa-python"
+    ]
+  },
+  "learner": {
+    "docs_index": "docs/index.md",
+    "section_docs_path": "docs/sections",
+    "screenshot_path": "screenshots/annotated",
+    "include_internal_evidence": false
+  },
+  "regression": {
+    "evidence_path": "evidence",
+    "data_manifest": "evidence/data-manifest.json",
+    "native_runs": "evidence/native-runs.jsonl",
+    "oracle_runs": "evidence/oracle-runs.jsonl",
+    "comparisons": "evidence/comparisons.json",
+    "timings": "evidence/timings.jsonl",
+    "provider_provenance": "evidence/provider-provenance.json",
+    "review_path": "evidence/review",
+    "review_record_schema": "evidence/review/tutorial-pack-review.schema.json",
+    "screenshot_specs_path": "screenshots/specs"
+  },
+  "sections": [
+    {
+      "id": "01-imhead-continuum-header",
+      "sequence": 1,
+      "title": "Inspect continuum image header",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
+        "section_anchor": "Continuum_image_header_inspection",
+        "task_calls": [
+          {
+            "task_id": "imhead",
+            "parameters": {
+              "imagename": "twhya_cont.image"
+            }
+          }
+        ]
+      },
+      "observable_result": "Header and coordinate metadata for twhya_cont.image.",
+      "input_refs": [
+        "twhya-cont-image"
+      ],
+      "tasks": [
+        "imhead"
+      ],
+      "steps": [
+        {
+          "id": "01-cli-imhead",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "imhead",
+          "command_template": "imexplore imhead inputs/twhya_cont.image --json",
+          "parameters": {
+            "image_path": "inputs/twhya_cont.image",
+            "json": true,
+            "mode": "summary"
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": "workspace/native/01-imhead-continuum-header/cli-imhead.json"
+            }
+          ]
+        },
+        {
+          "id": "01-python-imhead",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "imhead",
+          "parameters": {
+            "image_path": "inputs/twhya_cont.image",
+            "json": true,
+            "mode": "summary"
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": "workspace/native/01-imhead-continuum-header/python-imhead.json"
+            }
+          ]
+        },
+        {
+          "id": "01-tui-imhead",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "imhead",
+          "ui_path": "Images > Image Header",
+          "parameters": {
+            "image_path": "inputs/twhya_cont.image",
+            "json": true,
+            "mode": "summary"
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": "workspace/native/01-imhead-continuum-header/tui-imhead.json"
+            }
+          ]
+        },
+        {
+          "id": "01-gui-imhead",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "imhead",
+          "ui_path": "Images > Image Header",
+          "parameters": {
+            "image_path": "inputs/twhya_cont.image",
+            "json": true,
+            "mode": "summary"
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": "workspace/native/01-imhead-continuum-header/gui-imhead.json"
+            }
+          ]
+        },
+        {
+          "id": "01-oracle-imhead",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "imhead",
+          "parameters": {
+            "imagename": "inputs/twhya_cont.image"
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": "workspace/oracle/01-imhead-continuum-header/casa-imhead.json"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": "evidence/review/01-imhead-continuum-header.json"
+      }
+    },
+    {
+      "id": "02-imstat-continuum-statistics",
+      "sequence": 2,
+      "title": "Measure continuum image statistics",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
+        "section_anchor": "Continuum_image_statistics",
+        "task_calls": [
+          {
+            "task_id": "imstat",
+            "parameters": {
+              "imagename": "twhya_cont.image"
+            }
+          }
+        ]
+      },
+      "observable_result": "Numeric statistics for twhya_cont.image with explicit tolerances.",
+      "input_refs": [
+        "twhya-cont-image"
+      ],
+      "tasks": [
+        "imstat"
+      ],
+      "steps": [
+        {
+          "id": "02-cli-imstat",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "imstat",
+          "command_template": "imexplore imstat inputs/twhya_cont.image --json",
+          "parameters": {
+            "image_path": "inputs/twhya_cont.image",
+            "json": true
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": "workspace/native/02-imstat-continuum-statistics/cli-imstat.json"
+            }
+          ]
+        },
+        {
+          "id": "02-python-imstat",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "imstat",
+          "parameters": {
+            "image_path": "inputs/twhya_cont.image",
+            "json": true
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": "workspace/native/02-imstat-continuum-statistics/python-imstat.json"
+            }
+          ]
+        },
+        {
+          "id": "02-tui-imstat",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "imstat",
+          "ui_path": "Images > Image Statistics",
+          "parameters": {
+            "image_path": "inputs/twhya_cont.image",
+            "json": true
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": "workspace/native/02-imstat-continuum-statistics/tui-imstat.json"
+            }
+          ]
+        },
+        {
+          "id": "02-gui-imstat",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "imstat",
+          "ui_path": "Images > Image Statistics",
+          "parameters": {
+            "image_path": "inputs/twhya_cont.image",
+            "json": true
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": "workspace/native/02-imstat-continuum-statistics/gui-imstat.json"
+            }
+          ]
+        },
+        {
+          "id": "02-oracle-imstat",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "imstat",
+          "parameters": {
+            "imagename": "inputs/twhya_cont.image"
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": "workspace/oracle/02-imstat-continuum-statistics/casa-imstat.json"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": "evidence/review/02-imstat-continuum-statistics.json"
+      }
+    },
+    {
+      "id": "03-immoments-n2hp-moment-map",
+      "sequence": 3,
+      "title": "Create N2H+ moment map",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
+        "section_anchor": "Moment_map_creation",
+        "task_calls": [
+          {
+            "task_id": "immoments",
+            "parameters": {
+              "imagename": "twhya_n2hp.image",
+              "outfile": "twhya_n2hp.mom0"
+            }
+          }
+        ]
+      },
+      "observable_result": "Moment image product with shape, coordinates, units, metadata, and pixel values compared within tolerance.",
+      "input_refs": [
+        "twhya-n2hp-image"
+      ],
+      "tasks": [
+        "immoments"
+      ],
+      "steps": [
+        {
+          "id": "03-cli-immoments",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "immoments",
+          "command_template": "immoments inputs/twhya_n2hp.image --outfile workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0 --moments 0 --overwrite",
+          "parameters": {
+            "imagename": "inputs/twhya_n2hp.image",
+            "outfile": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0",
+            "moments": 0,
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0"
+            }
+          ]
+        },
+        {
+          "id": "03-python-immoments",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "immoments",
+          "parameters": {
+            "imagename": "inputs/twhya_n2hp.image",
+            "outfile": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.python.mom0",
+            "moments": 0,
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.python.mom0"
+            }
+          ]
+        },
+        {
+          "id": "03-tui-immoments",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "immoments",
+          "ui_path": "Images > Image Moments",
+          "parameters": {
+            "imagename": "inputs/twhya_n2hp.image",
+            "outfile": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.tui.mom0",
+            "moments": 0,
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.tui.mom0"
+            }
+          ]
+        },
+        {
+          "id": "03-gui-immoments",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "immoments",
+          "ui_path": "Images > Image Moments",
+          "parameters": {
+            "imagename": "inputs/twhya_n2hp.image",
+            "outfile": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.gui.mom0",
+            "moments": 0,
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.gui.mom0"
+            }
+          ]
+        },
+        {
+          "id": "03-oracle-immoments",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "immoments",
+          "parameters": {
+            "imagename": "inputs/twhya_n2hp.image",
+            "outfile": "workspace/oracle/03-immoments-n2hp-moment-map/twhya_n2hp.mom0",
+            "moments": 0
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": "workspace/oracle/03-immoments-n2hp-moment-map/twhya_n2hp.mom0"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": "evidence/review/03-immoments-n2hp-moment-map.json"
+      }
+    },
+    {
+      "id": "04-exportfits-products",
+      "sequence": 4,
+      "title": "Export image products to FITS",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
+        "section_anchor": "FITS_export",
+        "task_calls": [
+          {
+            "task_id": "exportfits",
+            "parameters": {
+              "imagename": "twhya_cont.image",
+              "fitsimage": "twhya_cont.fits"
+            }
+          }
+        ]
+      },
+      "observable_result": "FITS output with WCS/header fields and image array values compared within tolerance.",
+      "input_refs": [
+        "twhya-cont-image"
+      ],
+      "tasks": [
+        "exportfits"
+      ],
+      "steps": [
+        {
+          "id": "04-cli-exportfits",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "exportfits",
+          "command_template": "exportfits inputs/twhya_cont.image workspace/native/04-exportfits-products/twhya_cont.fits --overwrite",
+          "parameters": {
+            "imagename": "inputs/twhya_cont.image",
+            "fitsimage": "workspace/native/04-exportfits-products/twhya_cont.fits",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "fits",
+              "path": "workspace/native/04-exportfits-products/twhya_cont.fits"
+            }
+          ]
+        },
+        {
+          "id": "04-python-exportfits",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "exportfits",
+          "parameters": {
+            "imagename": "inputs/twhya_cont.image",
+            "fitsimage": "workspace/native/04-exportfits-products/twhya_cont.python.fits",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "fits",
+              "path": "workspace/native/04-exportfits-products/twhya_cont.python.fits"
+            }
+          ]
+        },
+        {
+          "id": "04-tui-exportfits",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "exportfits",
+          "ui_path": "Images > Export FITS",
+          "parameters": {
+            "imagename": "inputs/twhya_cont.image",
+            "fitsimage": "workspace/native/04-exportfits-products/twhya_cont.tui.fits",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "fits",
+              "path": "workspace/native/04-exportfits-products/twhya_cont.tui.fits"
+            }
+          ]
+        },
+        {
+          "id": "04-gui-exportfits",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "exportfits",
+          "ui_path": "Images > Export FITS",
+          "parameters": {
+            "imagename": "inputs/twhya_cont.image",
+            "fitsimage": "workspace/native/04-exportfits-products/twhya_cont.gui.fits",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "fits",
+              "path": "workspace/native/04-exportfits-products/twhya_cont.gui.fits"
+            }
+          ]
+        },
+        {
+          "id": "04-oracle-exportfits",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "exportfits",
+          "parameters": {
+            "imagename": "inputs/twhya_cont.image",
+            "fitsimage": "workspace/oracle/04-exportfits-products/twhya_cont.fits"
+          },
+          "outputs": [
+            {
+              "kind": "fits",
+              "path": "workspace/oracle/04-exportfits-products/twhya_cont.fits"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": "evidence/review/04-exportfits-products.json"
+      }
+    }
+  ]
+}
