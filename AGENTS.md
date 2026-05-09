@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-04-24
+Last reality check: 2026-05-09
 Verification: just docs-check
 
 ## Purpose
@@ -17,7 +17,7 @@ persistent data while preserving on-disk interoperability.
 4. GitHub issues and board state for planning history.
 5. `docs/Planning/` is historical unless a file says otherwise.
 
-## Commands
+## Main Commands
 
 - Setup: `just setup`
 - Fast loop: `just quick`
@@ -29,6 +29,10 @@ persistent data while preserving on-disk interoperability.
 - Performance release evidence: `just release-perf`
 - Slow parity: `scripts/test-slow.sh`
 - Release: `scripts/release.sh <version>`
+- Local install from checkout: `just install-local`
+- Local suite install: `just install-local-suite`
+- Local GUI install: `just install-local-gui`
+- Release install: `just install-release <version>`
 - Local CASA/C++ task runs use `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python`, which has the `~/SoftwareProjects/casa` built `casatasks` and `casatools` wheels installed.
 
 ## WDAD Workflow
