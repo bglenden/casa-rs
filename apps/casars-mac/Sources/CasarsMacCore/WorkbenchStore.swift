@@ -1099,7 +1099,7 @@ public final class WorkbenchStore: ObservableObject {
             if state.isDemoProject {
                 openTab(WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: state.selectedDatasetID))
             } else {
-                openDirtyImagingTaskForSelectedDataset()
+                openTab(WorkbenchTab(id: "tab-tasks", title: "Tasks", kind: .task, datasetID: state.selectedDatasetID))
             }
         case .plotSamples:
             if state.plotDocuments.isEmpty {

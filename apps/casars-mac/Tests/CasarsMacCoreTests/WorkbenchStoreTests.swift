@@ -1203,8 +1203,9 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openDefaultTab(kind: .aiChat)
         store.openDefaultTab(kind: .python)
         store.openDefaultTab(kind: .task)
-        XCTAssertTrue(store.state.tabs.isEmpty)
-        XCTAssertEqual(store.state.lastErrors.count, 3)
+        XCTAssertEqual(store.state.tabs.count, 1)
+        XCTAssertEqual(store.state.tabs.first?.title, "Tasks")
+        XCTAssertEqual(store.state.lastErrors.count, 2)
 
         store.openProject(path: "/data")
         store.openDefaultTab(kind: .aiChat)
@@ -1213,6 +1214,10 @@ final class WorkbenchStoreTests: XCTestCase {
 
         XCTAssertEqual(store.state.tabs.count, 2)
         XCTAssertEqual(store.state.tabs.first?.kind, .datasetExplorer)
+        XCTAssertEqual(store.state.tabs.last?.title, "Tasks")
+        XCTAssertNil(store.state.dirtyImagingTaskParameters)
+        store.openDirtyImagingTaskForSelectedDataset()
+        XCTAssertEqual(store.state.tabs.count, 3)
         XCTAssertEqual(store.state.tabs.last?.title, "Dirty Image: probed.ms")
         XCTAssertEqual(store.state.dirtyImagingTaskParameters?.measurementSetPath, "/data/probed.ms")
         XCTAssertEqual(store.state.dirtyImagingTaskParameters?.selectedField, "0: Target")
@@ -1272,7 +1277,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
         store.openProject(path: "/data")
         store.selectDataset(imageDataset.id)
-        store.openDefaultTab(kind: .task)
+        store.openDirtyImagingTaskForSelectedDataset()
 
         XCTAssertEqual(store.state.selectedDatasetID, imageDataset.id)
         XCTAssertEqual(store.state.dirtyImagingTaskParameters?.datasetID, "")
@@ -1334,7 +1339,8 @@ final class WorkbenchStoreTests: XCTestCase {
         let store = WorkbenchStore(probeClient: probeClient, genericTaskClient: taskClient)
 
         store.openProject(path: "/data")
-        store.openDefaultTab(kind: .task)
+        store.openDirtyImagingTaskForSelectedDataset()
+        store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
         store.setDirtyImagingImageSize(256)
         store.setDirtyImagingImageHeight(256)
@@ -1418,7 +1424,7 @@ final class WorkbenchStoreTests: XCTestCase {
         )
 
         store.openProject(path: "/data")
-        store.openDefaultTab(kind: .task)
+        store.openDirtyImagingTaskForSelectedDataset()
         store.setDirtyImagingImageSize(1024)
         store.setDirtyImagingImageHeight(768)
         store.setDirtyImagingCellArcsec(0.5)
@@ -1482,7 +1488,7 @@ final class WorkbenchStoreTests: XCTestCase {
         )
 
         store.openProject(path: "/data")
-        store.openDefaultTab(kind: .task)
+        store.openDirtyImagingTaskForSelectedDataset()
 
         let parameters = try XCTUnwrap(store.state.dirtyImagingTaskParameters)
         XCTAssertEqual(parameters.selectedField, "5: NGC4826-F3")
@@ -1535,7 +1541,7 @@ final class WorkbenchStoreTests: XCTestCase {
         )
 
         store.openProject(path: "/data")
-        store.openDefaultTab(kind: .task)
+        store.openDirtyImagingTaskForSelectedDataset()
 
         let parameters = try XCTUnwrap(store.state.dirtyImagingTaskParameters)
         XCTAssertEqual(parameters.selectedField, "5: TW Hya")
@@ -1581,7 +1587,7 @@ final class WorkbenchStoreTests: XCTestCase {
         let store = WorkbenchStore(probeClient: probeClient)
 
         store.openProject(path: "/data")
-        store.openDefaultTab(kind: .task)
+        store.openDirtyImagingTaskForSelectedDataset()
         store.setDirtyImagingImageSize(0)
         store.setDirtyImagingImageHeight(128)
         store.setDirtyImagingCellArcsec(-1)
@@ -1619,7 +1625,7 @@ final class WorkbenchStoreTests: XCTestCase {
         )
 
         store.openProject(path: "/data")
-        store.openDefaultTab(kind: .task)
+        store.openDirtyImagingTaskForSelectedDataset()
         store.setDirtyImagingImageSize(512)
         store.setDirtyImagingImageHeight(256)
         let diagnostics = store.state.dirtyImagingTaskParameters?.validationErrors() ?? []
@@ -1665,7 +1671,7 @@ final class WorkbenchStoreTests: XCTestCase {
         )
 
         store.openProject(path: "/data")
-        store.openDefaultTab(kind: .task)
+        store.openDirtyImagingTaskForSelectedDataset()
         store.setDirtyImagingImageSize(257)
         store.setDirtyImagingImageHeight(511)
         store.adjustDirtyImagingImageWidthToNiceSize()
@@ -1997,6 +2003,7 @@ final class WorkbenchStoreTests: XCTestCase {
 
         store.openProject(path: "/data")
         store.openDefaultTab(kind: .task)
+        store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
         store.runTask()
 

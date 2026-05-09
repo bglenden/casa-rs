@@ -60,10 +60,9 @@ struct CentralWorkspaceView: View {
                     store.openDefaultTab(kind: .datasetExplorer)
                 }
                 .disabled(store.state.selectedDataset == nil)
-                Button(store.state.isDemoProject ? "Calibrate Task" : "Dirty Imaging Task") {
+                Button("Tasks") {
                     store.openDefaultTab(kind: .task)
                 }
-                .disabled(store.state.selectedDataset == nil)
                 Button("Plot Samples") {
                     store.openDefaultTab(kind: .plotSamples)
                 }
@@ -5275,7 +5274,11 @@ struct TaskPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    TaskCatalogBlock(tasks: store.state.taskCatalog, activeTaskID: "calibrate")
+                    TaskCatalogBlock(
+                        tasks: store.state.taskCatalog,
+                        activeTaskID: "calibrate",
+                        categoryFilter: .constant(.all)
+                    )
                     parameterBlock
                     aiProposalBlock
                     runBlock
@@ -5390,6 +5393,7 @@ struct DirtyImagingTaskPanel: View {
                     TaskCatalogBlock(
                         tasks: store.state.taskCatalog,
                         activeTaskID: store.state.activeTaskID,
+                        categoryFilter: .constant(.all),
                         selectTask: store.selectTask
                     )
                     if let parameters = store.state.dirtyImagingTaskParameters {
@@ -5811,6 +5815,8 @@ struct DirtyImagingTaskPanel: View {
 
 struct GenericTaskPanel: View {
     @ObservedObject var store: WorkbenchStore
+    @State private var showingTaskList = true
+    @State private var categoryFilter: CasaTaskCategoryFilter = .all
 
     private var task: TaskCatalogEntry? {
         store.state.taskCatalog.first { $0.id == store.state.activeTaskID }
@@ -5824,19 +5830,28 @@ struct GenericTaskPanel: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(schema?.displayName ?? task?.displayName ?? "Task")
+                    Text(showingTaskList ? "Tasks" : (schema?.displayName ?? task?.displayName ?? "Task"))
                         .workbenchFont(.title3, weight: .semibold)
-                    Text(schema?.summary ?? "Schema-backed CASA-rs task")
+                    Text(showingTaskList ? "Choose a schema-backed CASA-rs task" : (schema?.summary ?? "Schema-backed CASA-rs task"))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if !showingTaskList {
+                    Button {
+                        showingTaskList = true
+                    } label: {
+                        Label("Change Task", systemImage: "list.bullet")
+                    }
+                    .accessibilityIdentifier("task.change")
+                }
                 Button {
                     store.runTask()
                 } label: {
                     Label(store.state.taskRun.state == .running ? "Running" : "Run", systemImage: "play.fill")
                 }
                 .disabled(
-                    store.state.taskRun.state == .running
+                    showingTaskList
+                        || store.state.taskRun.state == .running
                         || schema == nil
                         || (store.taskRequiresConfirmation() && !store.taskHasConfirmation())
                 )
@@ -5853,12 +5868,16 @@ struct GenericTaskPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    TaskCatalogBlock(
-                        tasks: store.state.taskCatalog,
-                        activeTaskID: store.state.activeTaskID,
-                        selectTask: store.selectTask
-                    )
-                    if let schema {
+                    if showingTaskList {
+                        TaskCatalogBlock(
+                            tasks: filteredTasks,
+                            activeTaskID: store.state.activeTaskID,
+                            categoryFilter: $categoryFilter
+                        ) { taskID in
+                            store.selectTask(taskID)
+                            showingTaskList = false
+                        }
+                    } else if let schema {
                         genericParameterBlock(schema: schema)
                         genericSafetyBlock
                     } else {
@@ -5866,7 +5885,9 @@ struct GenericTaskPanel: View {
                             .foregroundStyle(.secondary)
                             .taskCard()
                     }
-                    runStatusBlock
+                    if !showingTaskList {
+                        runStatusBlock
+                    }
                 }
                 .padding(20)
             }
@@ -5874,6 +5895,19 @@ struct GenericTaskPanel: View {
         .task {
             store.loadTaskUISchemaIfNeeded()
         }
+    }
+
+    private var filteredTasks: [TaskCatalogEntry] {
+        store.state.taskCatalog
+            .filter { $0.showInSwift }
+            .filter { categoryFilter.matches(task: $0) }
+            .sorted {
+                let ordering = $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                if ordering == .orderedSame {
+                    return $0.id < $1.id
+                }
+                return ordering == .orderedAscending
+            }
     }
 
     private func genericParameterBlock(schema: TaskUISchema) -> some View {
@@ -6013,12 +6047,18 @@ struct GenericTaskPanel: View {
 struct TaskCatalogBlock: View {
     var tasks: [TaskCatalogEntry]
     var activeTaskID: String
+    @Binding var categoryFilter: CasaTaskCategoryFilter
     var selectTask: ((String) -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Tasks")
-                .workbenchFont(.headline)
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("Category", selection: $categoryFilter) {
+                ForEach(CasaTaskCategoryFilter.allCases) { category in
+                    Text(category.title).tag(category)
+                }
+            }
+            .accessibilityIdentifier("task.categoryFilter")
+
             ForEach(tasks) { task in
                 Button {
                     selectTask?(task.id)
@@ -6037,20 +6077,102 @@ struct TaskCatalogBlock: View {
 
     private func taskRow(_ task: TaskCatalogEntry) -> some View {
         HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(task.displayName)
-                            .fontWeight(task.id == activeTaskID ? .semibold : .regular)
-                        Text("\(task.category) / \(task.shellKind)")
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if task.id == activeTaskID {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    } else if task.includeInSuite {
-                        Image(systemName: "shippingbox")
-                            .foregroundStyle(.secondary)
-                    }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.displayName)
+                    .fontWeight(task.id == activeTaskID ? .semibold : .regular)
+                Text("\(CasaTaskCategoryFilter.categoryTitle(for: task)) / \(task.shellKind)")
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if task.id == activeTaskID {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            } else if task.includeInSuite {
+                Image(systemName: "shippingbox")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+enum CasaTaskCategoryFilter: String, CaseIterable, Identifiable {
+    case all
+    case inputOutput
+    case information
+    case flagging
+    case calibration
+    case imaging
+    case singleDish
+    case manipulation
+    case analysis
+    case visualization
+    case simulation
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "All Tasks"
+        case .inputOutput: return "Input / Output"
+        case .information: return "Information"
+        case .flagging: return "Flagging"
+        case .calibration: return "Calibration"
+        case .imaging: return "Imaging"
+        case .singleDish: return "Single Dish"
+        case .manipulation: return "Manipulation"
+        case .analysis: return "Analysis"
+        case .visualization: return "Visualization"
+        case .simulation: return "Simulation"
+        }
+    }
+
+    func matches(task: TaskCatalogEntry) -> Bool {
+        self == .all || Self.category(for: task) == self
+    }
+
+    static func categoryTitle(for task: TaskCatalogEntry) -> String {
+        category(for: task).title
+    }
+
+    static func category(for task: TaskCatalogEntry) -> CasaTaskCategoryFilter {
+        switch task.id {
+        case "importvla", "importfits", "exportfits":
+            return .inputOutput
+        case "msexplore", "tablebrowser":
+            return .information
+        case "flagdata", "flagmanager":
+            return .flagging
+        case "calibrate":
+            return .calibration
+        case "imager", "feather":
+            return .imaging
+        case "mstransform":
+            return .manipulation
+        case "immath", "immoments", "impv", "imregrid", "imsubimage":
+            return .analysis
+        case "imexplore":
+            return .visualization
+        case "simobserve":
+            return .simulation
+        default:
+            switch task.category.lowercased() {
+            case "import":
+                return .inputOutput
+            case "measurementset":
+                return .information
+            case "flagging":
+                return .flagging
+            case "calibration":
+                return .calibration
+            case "imaging":
+                return .imaging
+            case "images":
+                return .analysis
+            case "simulation":
+                return .simulation
+            default:
+                return .information
+            }
         }
     }
 }
