@@ -241,6 +241,7 @@ public struct WorkbenchTab: Identifiable, Codable, Equatable {
 public enum WorkbenchJobKind: String, Codable, Equatable {
     case measurementSetPlot
     case dirtyImagingTask
+    case genericTask
 }
 
 public enum WorkbenchJobOwner: String, Codable, Equatable {
@@ -353,6 +354,200 @@ public struct TaskCatalogEntry: Codable, Equatable, Identifiable {
         case showInTUI = "show_in_tui"
         case showInSwift = "show_in_swift"
         case includeInSuite = "include_in_suite"
+    }
+}
+
+public struct TaskExecutionMatrixEnvelope: Codable, Equatable {
+    public var schemaVersion: UInt64
+    public var generatedFor: String
+    public var scopeNote: String
+    public var rows: [TaskExecutionMatrixRow]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case generatedFor = "generated_for"
+        case scopeNote = "scope_note"
+        case rows
+    }
+}
+
+public struct TaskExecutionMatrixRow: Codable, Equatable, Identifiable {
+    public var id: String { taskID }
+
+    public var taskID: String
+    public var displayName: String
+    public var category: String
+    public var catalogPresence: String
+    public var binaryName: String
+    public var cargoPackage: String
+    public var datasetKinds: [String]
+    public var suiteInstall: String
+    public var localInstall: String
+    public var releaseInstall: String
+    public var tuiStatus: String
+    public var guiStatus: String
+    public var optionSource: String
+    public var fullControlStatus: String
+    public var mutationClass: String
+    public var confirmation: String
+    public var smokeEvidence: String
+
+    enum CodingKeys: String, CodingKey {
+        case taskID = "task_id"
+        case displayName = "display_name"
+        case category
+        case catalogPresence = "catalog_presence"
+        case binaryName = "binary_name"
+        case cargoPackage = "cargo_package"
+        case datasetKinds = "dataset_kinds"
+        case suiteInstall = "suite_install"
+        case localInstall = "local_install"
+        case releaseInstall = "release_install"
+        case tuiStatus = "tui_status"
+        case guiStatus = "gui_status"
+        case optionSource = "option_source"
+        case fullControlStatus = "full_control_status"
+        case mutationClass = "mutation_class"
+        case confirmation
+        case smokeEvidence = "smoke_evidence"
+    }
+}
+
+public struct TaskContextOptionsEnvelope: Codable, Equatable {
+    public var schemaVersion: UInt64
+    public var datasetPath: String
+    public var datasetKind: String
+    public var fields: [String]
+    public var spectralWindows: [String]
+    public var scans: [String]
+    public var arrays: [String]
+    public var observations: [String]
+    public var antennas: [String]
+    public var intents: [String]
+    public var feeds: [String]
+    public var correlations: [String]
+    public var columns: [String]
+    public var dataColumns: [String]
+    public var subtables: [String]
+    public var shape: [UInt64]
+    public var defaults: [String: String]
+    public var diagnostics: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case datasetPath = "dataset_path"
+        case datasetKind = "dataset_kind"
+        case fields
+        case spectralWindows = "spectral_windows"
+        case scans
+        case arrays
+        case observations
+        case antennas
+        case intents
+        case feeds
+        case correlations
+        case columns
+        case dataColumns = "data_columns"
+        case subtables
+        case shape
+        case defaults
+        case diagnostics
+    }
+}
+
+public struct TaskUISchema: Codable, Equatable {
+    public var schemaVersion: UInt64
+    public var commandID: String
+    public var invocationName: String
+    public var displayName: String
+    public var category: String
+    public var summary: String
+    public var usage: String
+    public var arguments: [TaskUIArgument]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case commandID = "command_id"
+        case invocationName = "invocation_name"
+        case displayName = "display_name"
+        case category
+        case summary
+        case usage
+        case arguments
+    }
+}
+
+public struct TaskUIArgument: Codable, Equatable, Identifiable {
+    public var id: String
+    public var label: String
+    public var order: Int
+    public var parser: TaskUIArgumentParser
+    public var valueKind: String
+    public var required: Bool
+    public var `default`: String?
+    public var help: String
+    public var group: String
+    public var advanced: Bool
+    public var hiddenInTUI: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case order
+        case parser
+        case valueKind = "value_kind"
+        case required
+        case `default`
+        case help
+        case group
+        case advanced
+        case hiddenInTUI = "hidden_in_tui"
+    }
+}
+
+public struct TaskUIArgumentParser: Codable, Equatable {
+    public var kind: String
+    public var flags: [String]?
+    public var metavar: String?
+    public var choices: [String]?
+    public var trueFlags: [String]?
+    public var falseFlags: [String]?
+    public var action: String?
+    public var positionalMetavar: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind
+        case flags
+        case metavar
+        case choices
+        case trueFlags = "true_flags"
+        case falseFlags = "false_flags"
+        case action
+        case positionalMetavar = "positional_metavar"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(String.self, forKey: .kind)
+        flags = try container.decodeIfPresent([String].self, forKey: .flags)
+        metavar = try container.decodeIfPresent(String.self, forKey: .metavar)
+        choices = try container.decodeIfPresent([String].self, forKey: .choices)
+        trueFlags = try container.decodeIfPresent([String].self, forKey: .trueFlags)
+        falseFlags = try container.decodeIfPresent([String].self, forKey: .falseFlags)
+        action = try container.decodeIfPresent(String.self, forKey: .action)
+        positionalMetavar = try container.decodeIfPresent(String.self, forKey: .positionalMetavar)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(flags, forKey: .flags)
+        try container.encodeIfPresent(metavar, forKey: .metavar)
+        try container.encodeIfPresent(choices, forKey: .choices)
+        try container.encodeIfPresent(trueFlags, forKey: .trueFlags)
+        try container.encodeIfPresent(falseFlags, forKey: .falseFlags)
+        try container.encodeIfPresent(action, forKey: .action)
+        try container.encodeIfPresent(positionalMetavar, forKey: .positionalMetavar)
     }
 }
 
@@ -2169,6 +2364,12 @@ public struct WorkbenchState: Codable, Equatable {
     public var activeJobIDsByTab: [String: String]
     public var runProductGroups: [RunProductGroup]
     public var taskCatalog: [TaskCatalogEntry]
+    public var taskExecutionMatrixRows: [TaskExecutionMatrixRow]
+    public var activeTaskID: String
+    public var taskUISchemas: [String: TaskUISchema]
+    public var genericTaskValues: [String: [String: String]]
+    public var genericTaskToggles: [String: [String: Bool]]
+    public var genericTaskConfirmations: [String: Bool]
     public var history: [ProcessingHistoryEvent]
     public var commandQuery: String
     public var lastErrors: [String]
@@ -2198,6 +2399,12 @@ public struct WorkbenchState: Codable, Equatable {
         activeJobIDsByTab: [String: String] = [:],
         runProductGroups: [RunProductGroup] = [],
         taskCatalog: [TaskCatalogEntry] = [],
+        taskExecutionMatrixRows: [TaskExecutionMatrixRow] = [],
+        activeTaskID: String = "imager",
+        taskUISchemas: [String: TaskUISchema] = [:],
+        genericTaskValues: [String: [String: String]] = [:],
+        genericTaskToggles: [String: [String: Bool]] = [:],
+        genericTaskConfirmations: [String: Bool] = [:],
         history: [ProcessingHistoryEvent],
         commandQuery: String,
         lastErrors: [String],
@@ -2226,6 +2433,12 @@ public struct WorkbenchState: Codable, Equatable {
         self.activeJobIDsByTab = activeJobIDsByTab
         self.runProductGroups = runProductGroups
         self.taskCatalog = taskCatalog
+        self.taskExecutionMatrixRows = taskExecutionMatrixRows
+        self.activeTaskID = activeTaskID
+        self.taskUISchemas = taskUISchemas
+        self.genericTaskValues = genericTaskValues
+        self.genericTaskToggles = genericTaskToggles
+        self.genericTaskConfirmations = genericTaskConfirmations
         self.history = history
         self.commandQuery = commandQuery
         self.lastErrors = lastErrors

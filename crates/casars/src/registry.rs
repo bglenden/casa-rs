@@ -486,13 +486,22 @@ mod tests {
                 "imexplore",
                 "immoments",
                 "exportfits",
+                "mstransform",
+                "flagdata",
+                "flagmanager",
+                "impv",
+                "imsubimage",
+                "immath",
+                "imregrid",
+                "feather",
+                "importfits",
             ]
         );
         assert!(
             task_catalog_entries()
                 .iter()
                 .any(|entry| entry.id == "mstransform"
-                    && !entry.show_in_tui
+                    && entry.show_in_tui
                     && entry.binary_name == "mstransform")
         );
         assert_eq!(exportfits_app().id, "exportfits");

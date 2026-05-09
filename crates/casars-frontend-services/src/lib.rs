@@ -2,8 +2,11 @@
 //! Shared frontend services exposed to Swift and Python through UniFFI.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use casa_coordinates::{CoordinateSystem, CoordinateType};
@@ -37,6 +40,10 @@ use thiserror::Error;
 const TASK_CATALOG_JSON: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../resources/task-catalog.json"
+));
+const TASK_EXECUTION_MATRIX_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../resources/task-execution-matrix.json"
 ));
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
 const MAX_PROJECT_SCAN_DEPTH: usize = 4;
@@ -279,6 +286,57 @@ struct FrontendTaskCatalogEntry {
     show_in_tui: bool,
     show_in_swift: bool,
     include_in_suite: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct FrontendTaskExecutionMatrix {
+    schema_version: u64,
+    generated_for: String,
+    scope_note: String,
+    rows: Vec<FrontendTaskExecutionMatrixRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct FrontendTaskExecutionMatrixRow {
+    task_id: String,
+    display_name: String,
+    category: String,
+    catalog_presence: String,
+    binary_name: String,
+    cargo_package: String,
+    dataset_kinds: Vec<String>,
+    suite_install: String,
+    local_install: String,
+    release_install: String,
+    tui_status: String,
+    gui_status: String,
+    option_source: String,
+    full_control_status: String,
+    mutation_class: String,
+    confirmation: String,
+    smoke_evidence: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct TaskContextOptions {
+    schema_version: u64,
+    dataset_path: String,
+    dataset_kind: String,
+    fields: Vec<String>,
+    spectral_windows: Vec<String>,
+    scans: Vec<String>,
+    arrays: Vec<String>,
+    observations: Vec<String>,
+    antennas: Vec<String>,
+    intents: Vec<String>,
+    feeds: Vec<String>,
+    correlations: Vec<String>,
+    columns: Vec<String>,
+    data_columns: Vec<String>,
+    subtables: Vec<String>,
+    shape: Vec<u64>,
+    defaults: BTreeMap<String, String>,
+    diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -558,6 +616,251 @@ pub fn task_catalog_json() -> FrontendResult<String> {
     serde_json::to_string(&catalog).map_err(|error| FrontendServiceError::Probe {
         reason: format!("serialize task catalog: {error}"),
     })
+}
+
+#[uniffi::export]
+pub fn task_execution_matrix_json() -> FrontendResult<String> {
+    let matrix: FrontendTaskExecutionMatrix = serde_json::from_str(TASK_EXECUTION_MATRIX_JSON)
+        .map_err(|error| FrontendServiceError::Probe {
+            reason: format!("parse task execution matrix: {error}"),
+        })?;
+    serde_json::to_string(&matrix).map_err(|error| FrontendServiceError::Probe {
+        reason: format!("serialize task execution matrix: {error}"),
+    })
+}
+
+#[uniffi::export]
+pub fn task_context_options_json(dataset_path: String) -> FrontendResult<String> {
+    let path = PathBuf::from(&dataset_path);
+    let probe = probe_dataset_path(&path)
+        .map_err(|error| FrontendServiceError::Probe {
+            reason: format!("{}: {error}", path.display()),
+        })?
+        .ok_or_else(|| FrontendServiceError::InvalidPath {
+            reason: format!("{} is not a recognized CASA-rs dataset", path.display()),
+        })?;
+
+    let mut defaults = BTreeMap::new();
+    insert_first_default(&mut defaults, "field", &probe.fields);
+    insert_first_default(&mut defaults, "spectral_window", &probe.spectral_windows);
+    insert_first_default(&mut defaults, "scan", &probe.scans);
+    insert_first_default(&mut defaults, "antenna", &probe.antennas);
+    insert_first_default(&mut defaults, "correlation", &probe.correlations);
+    insert_first_default(&mut defaults, "data_column", &probe.data_columns);
+    insert_first_default(&mut defaults, "column", &probe.columns);
+
+    let options = TaskContextOptions {
+        schema_version: 1,
+        dataset_path: probe.path,
+        dataset_kind: match probe.kind {
+            DatasetKind::MeasurementSet => "measurement_set",
+            DatasetKind::Image => "image",
+            DatasetKind::Table => "table",
+        }
+        .to_string(),
+        fields: probe.fields,
+        spectral_windows: probe.spectral_windows,
+        scans: probe.scans,
+        arrays: probe.arrays,
+        observations: probe.observations,
+        antennas: probe.antennas,
+        intents: probe.intents,
+        feeds: probe.feeds,
+        correlations: probe.correlations,
+        columns: probe.columns,
+        data_columns: probe.data_columns,
+        subtables: probe.subtables,
+        shape: probe.shape,
+        defaults,
+        diagnostics: probe.diagnostics,
+    };
+
+    serde_json::to_string(&options).map_err(|error| FrontendServiceError::Probe {
+        reason: format!("serialize task context options: {error}"),
+    })
+}
+
+#[uniffi::export]
+pub fn task_ui_schema_json(task_id: String) -> FrontendResult<String> {
+    let catalog: FrontendTaskCatalog =
+        serde_json::from_str(TASK_CATALOG_JSON).map_err(|error| FrontendServiceError::Probe {
+            reason: format!("parse task catalog: {error}"),
+        })?;
+    let task = catalog
+        .tasks
+        .into_iter()
+        .find(|task| task.id == task_id)
+        .ok_or_else(|| FrontendServiceError::Probe {
+            reason: format!("unknown task id {task_id:?}"),
+        })?;
+    if task.schema_source == "none" {
+        return Err(FrontendServiceError::Probe {
+            reason: format!("task {:?} does not expose a UI schema", task.id),
+        });
+    }
+
+    load_task_ui_schema(&task)
+}
+
+fn insert_first_default(defaults: &mut BTreeMap<String, String>, key: &str, values: &[String]) {
+    if let Some(value) = values.first().filter(|value| !value.is_empty()) {
+        defaults.insert(key.to_string(), value.clone());
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedFrontendCommand {
+    program: OsString,
+    prefix_args: Vec<OsString>,
+}
+
+impl ResolvedFrontendCommand {
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.program);
+        command.args(&self.prefix_args);
+        command
+    }
+}
+
+fn load_task_ui_schema(task: &FrontendTaskCatalogEntry) -> FrontendResult<String> {
+    let resolved = resolve_frontend_task_command(task)?;
+    let json_schema_output = resolved
+        .command()
+        .arg("--json-schema")
+        .output()
+        .map_err(|error| FrontendServiceError::Probe {
+            reason: format!("spawn {} --json-schema: {error}", task.binary_name),
+        })?;
+    if json_schema_output.status.success() {
+        let bundle = serde_json::from_slice::<serde_json::Value>(&json_schema_output.stdout)
+            .map_err(|error| FrontendServiceError::Probe {
+                reason: format!("parse {} --json-schema output: {error}", task.binary_name),
+            })?;
+        if let Some(ui_schema) = bundle.pointer("/projections/ui_schema").cloned() {
+            return serde_json::to_string(&ui_schema).map_err(|error| {
+                FrontendServiceError::Probe {
+                    reason: format!(
+                        "serialize {} projected UI schema: {error}",
+                        task.binary_name
+                    ),
+                }
+            });
+        }
+    }
+
+    let output = resolved
+        .command()
+        .arg("--ui-schema")
+        .output()
+        .map_err(|error| FrontendServiceError::Probe {
+            reason: format!("spawn {} --ui-schema: {error}", task.binary_name),
+        })?;
+    if !output.status.success() {
+        return Err(FrontendServiceError::Probe {
+            reason: format!(
+                "{} --ui-schema exited with {}: {}",
+                task.binary_name,
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        });
+    }
+    let schema = serde_json::from_slice::<serde_json::Value>(&output.stdout).map_err(|error| {
+        FrontendServiceError::Probe {
+            reason: format!("parse {} --ui-schema output: {error}", task.binary_name),
+        }
+    })?;
+    serde_json::to_string(&schema).map_err(|error| FrontendServiceError::Probe {
+        reason: format!("serialize {} UI schema: {error}", task.binary_name),
+    })
+}
+
+fn resolve_frontend_task_command(
+    task: &FrontendTaskCatalogEntry,
+) -> FrontendResult<ResolvedFrontendCommand> {
+    if let Some(path) = env::var_os(&task.override_env).filter(|path| !path.is_empty()) {
+        return Ok(ResolvedFrontendCommand {
+            program: path,
+            prefix_args: Vec::new(),
+        });
+    }
+
+    if let Some(path) = env::var_os(format!("CARGO_BIN_EXE_{}", task.binary_name)) {
+        return Ok(ResolvedFrontendCommand {
+            program: path,
+            prefix_args: Vec::new(),
+        });
+    }
+
+    if let Some(path) = bundled_or_sibling_binary(&task.binary_name) {
+        return Ok(ResolvedFrontendCommand {
+            program: path.into_os_string(),
+            prefix_args: Vec::new(),
+        });
+    }
+
+    if let Some(path) = repo_local_binary(&task.binary_name) {
+        return Ok(ResolvedFrontendCommand {
+            program: path.into_os_string(),
+            prefix_args: Vec::new(),
+        });
+    }
+
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    Ok(ResolvedFrontendCommand {
+        program: cargo,
+        prefix_args: vec![
+            OsString::from("run"),
+            OsString::from("--manifest-path"),
+            workspace_manifest_path().into_os_string(),
+            OsString::from("-q"),
+            OsString::from("-p"),
+            OsString::from(&task.cargo_package),
+            OsString::from("--bin"),
+            OsString::from(&task.binary_name),
+            OsString::from("--"),
+        ],
+    })
+}
+
+fn bundled_or_sibling_binary(binary_name: &str) -> Option<PathBuf> {
+    let mut path = env::current_exe().ok()?;
+    path.pop();
+    path.push(binary_name);
+    path.set_extension(env::consts::EXE_EXTENSION);
+    path.exists().then_some(path)
+}
+
+fn repo_local_binary(binary_name: &str) -> Option<PathBuf> {
+    if let Some(repo_root) = env::var_os("CASA_RS_REPO_ROOT").filter(|path| !path.is_empty()) {
+        let candidate = PathBuf::from(repo_root)
+            .join("target")
+            .join("debug")
+            .join(binary_name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    let mut cursor = env::current_dir().ok()?;
+    for _ in 0..6 {
+        let candidate = cursor.join("target").join("debug").join(binary_name);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        if !cursor.pop() {
+            break;
+        }
+    }
+    None
+}
+
+fn workspace_manifest_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("casars frontend services should live under <workspace>/crates")
+        .join("Cargo.toml")
 }
 
 #[uniffi::export]
@@ -4053,6 +4356,97 @@ mod tests {
                 && task["show_in_tui"] == false
                 && task["include_in_suite"] == true
         }));
+    }
+
+    #[test]
+    fn task_execution_matrix_covers_catalog_and_known_inventory_gaps() {
+        let catalog_json = task_catalog_json().expect("task catalog");
+        let catalog: serde_json::Value =
+            serde_json::from_str(&catalog_json).expect("task catalog json");
+        let catalog_ids = catalog["tasks"]
+            .as_array()
+            .expect("catalog tasks")
+            .iter()
+            .map(|task| task["id"].as_str().expect("catalog task id"))
+            .collect::<BTreeSet<_>>();
+
+        let matrix_json = task_execution_matrix_json().expect("task execution matrix");
+        let matrix: serde_json::Value =
+            serde_json::from_str(&matrix_json).expect("task execution matrix json");
+        let rows = matrix["rows"].as_array().expect("matrix rows");
+        let matrix_ids = rows
+            .iter()
+            .map(|row| row["task_id"].as_str().expect("matrix task id"))
+            .collect::<BTreeSet<_>>();
+
+        for id in catalog_ids {
+            assert!(matrix_ids.contains(id), "matrix missing catalog task {id}");
+        }
+        assert!(matrix_ids.contains("flagdata"));
+        assert!(matrix_ids.contains("split"));
+        assert!(matrix_ids.contains("simalma"));
+        assert!(rows.iter().any(|row| {
+            row["task_id"] == "mstransform"
+                && row["tui_status"] == "invokable"
+                && row["full_control_status"] == "partial"
+        }));
+        assert!(rows.iter().any(|row| {
+            row["task_id"] == "imager"
+                && row["gui_status"] == "partial_panel"
+                && row["full_control_status"] == "partial"
+        }));
+    }
+
+    #[test]
+    fn task_context_options_json_is_grounded_in_dataset_probe() {
+        let (_dir, ms_path) = unpack_small_ms();
+
+        let options_json =
+            task_context_options_json(ms_path.display().to_string()).expect("task options");
+        let options: serde_json::Value =
+            serde_json::from_str(&options_json).expect("task options json");
+
+        assert_eq!(options["dataset_kind"], "measurement_set");
+        assert_eq!(options["dataset_path"], ms_path.display().to_string());
+        let spectral_windows = options["spectral_windows"]
+            .as_array()
+            .expect("spectral window options");
+        assert!(!spectral_windows.is_empty());
+        assert_eq!(
+            options["defaults"]["spectral_window"],
+            spectral_windows[0].as_str().expect("first spw")
+        );
+        assert_eq!(options["data_columns"], serde_json::json!(["DATA"]));
+        assert_eq!(options["defaults"]["data_column"], "DATA");
+        assert!(
+            options["fields"]
+                .as_array()
+                .expect("field options")
+                .iter()
+                .all(|value| value.as_str().is_some_and(|label| label.contains(':')))
+        );
+    }
+
+    #[test]
+    fn task_ui_schema_json_loads_cataloged_binary_schema() {
+        let schema_json = task_ui_schema_json("flagdata".to_string()).expect("flagdata schema");
+        let schema: serde_json::Value =
+            serde_json::from_str(&schema_json).expect("flagdata schema json");
+
+        assert_eq!(schema["command_id"], "flagdata");
+        assert!(
+            schema["arguments"]
+                .as_array()
+                .expect("arguments")
+                .iter()
+                .any(|argument| {
+                    argument["id"] == "mode"
+                        && argument["parser"]["choices"]
+                            .as_array()
+                            .expect("mode choices")
+                            .contains(&serde_json::json!("summary"))
+                })
+        );
     }
 
     #[test]

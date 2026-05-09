@@ -5239,8 +5239,10 @@ struct TaskPanel: View {
     var body: some View {
         if store.state.isDemoProject {
             fixtureTaskBody
-        } else {
+        } else if store.state.activeTaskID == "imager" {
             DirtyImagingTaskPanel(store: store)
+        } else {
+            GenericTaskPanel(store: store)
         }
     }
 
@@ -5387,7 +5389,11 @@ struct DirtyImagingTaskPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    TaskCatalogBlock(tasks: store.state.taskCatalog, activeTaskID: "imager")
+                    TaskCatalogBlock(
+                        tasks: store.state.taskCatalog,
+                        activeTaskID: store.state.activeTaskID,
+                        selectTask: store.selectTask
+                    )
                     if let parameters = store.state.dirtyImagingTaskParameters {
                         selectionBlock(parameters: parameters)
                         imagingBlock(parameters: parameters)
@@ -5805,16 +5811,224 @@ struct DirtyImagingTaskPanel: View {
     }
 }
 
+struct GenericTaskPanel: View {
+    @ObservedObject var store: WorkbenchStore
+
+    private var task: TaskCatalogEntry? {
+        store.state.taskCatalog.first { $0.id == store.state.activeTaskID }
+    }
+
+    private var schema: TaskUISchema? {
+        store.state.taskUISchemas[store.state.activeTaskID]
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(schema?.displayName ?? task?.displayName ?? "Task")
+                        .workbenchFont(.title3, weight: .semibold)
+                    Text(schema?.summary ?? "Schema-backed CASA-rs task")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    store.runTask()
+                } label: {
+                    Label(store.state.taskRun.state == .running ? "Running" : "Run", systemImage: "play.fill")
+                }
+                .disabled(
+                    store.state.taskRun.state == .running
+                        || schema == nil
+                        || (store.taskRequiresConfirmation() && !store.taskHasConfirmation())
+                )
+
+                Button {
+                    store.stopTask()
+                } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                }
+                .disabled(store.state.taskRun.state != .running)
+            }
+            .padding()
+            .background(.bar)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    TaskCatalogBlock(
+                        tasks: store.state.taskCatalog,
+                        activeTaskID: store.state.activeTaskID,
+                        selectTask: store.selectTask
+                    )
+                    if let schema {
+                        genericParameterBlock(schema: schema)
+                        genericSafetyBlock
+                    } else {
+                        Text("Loading task schema...")
+                            .foregroundStyle(.secondary)
+                            .taskCard()
+                    }
+                    runStatusBlock
+                }
+                .padding(20)
+            }
+        }
+        .task {
+            store.loadTaskUISchemaIfNeeded()
+        }
+    }
+
+    private func genericParameterBlock(schema: TaskUISchema) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Parameters")
+                .workbenchFont(.headline)
+            ForEach(schema.arguments.filter { !$0.hiddenInTUI }.sorted { $0.order < $1.order }) { argument in
+                genericControl(argument: argument)
+            }
+        }
+        .taskCard()
+    }
+
+    @ViewBuilder
+    private var genericSafetyBlock: some View {
+        if store.taskRequiresConfirmation() {
+            let taskID = store.state.activeTaskID
+            let confirmed = Binding(
+                get: { store.taskHasConfirmation(taskID: taskID) },
+                set: { store.setGenericTaskConfirmation(taskID: taskID, confirmed: $0) }
+            )
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Safety")
+                    .workbenchFont(.headline)
+                Toggle("Confirm this task may modify data or create products", isOn: confirmed)
+                if let row = store.taskExecutionMatrixRow(taskID: taskID) {
+                    Text("\(row.mutationClass) / \(row.confirmation)")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .taskCard()
+        }
+    }
+
+    @ViewBuilder
+    private func genericControl(argument: TaskUIArgument) -> some View {
+        let taskID = store.state.activeTaskID
+        let value = Binding(
+            get: { store.state.genericTaskValues[taskID]?[argument.id] ?? argument.default ?? "" },
+            set: { store.setGenericTaskValue(taskID: taskID, argumentID: argument.id, value: $0) }
+        )
+        let toggle = Binding(
+            get: { store.state.genericTaskToggles[taskID]?[argument.id] ?? (argument.default == "true") },
+            set: { store.setGenericTaskToggle(taskID: taskID, argumentID: argument.id, value: $0) }
+        )
+
+        if argument.parser.kind == "toggle" {
+            Toggle(argument.label, isOn: toggle)
+                .help(argument.help)
+        } else if !choices(for: argument).isEmpty {
+            Picker(argument.label, selection: value) {
+                ForEach(choices(for: argument), id: \.self) { choice in
+                    Text(choice).tag(choice)
+                }
+            }
+            .help(argument.help)
+        } else {
+            TextField(argument.label, text: value)
+                .textFieldStyle(.roundedBorder)
+                .help(argument.help)
+        }
+    }
+
+    private func choices(for argument: TaskUIArgument) -> [String] {
+        if argument.id == "spw", let spectralWindows = store.state.selectedDataset?.spectralWindows, !spectralWindows.isEmpty {
+            return spectralWindows.compactMap { label in
+                label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
+            }
+        }
+        if argument.id == "field", let fields = store.state.selectedDataset?.fields, !fields.isEmpty {
+            return fields.compactMap { label in
+                label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
+            }
+        }
+        if argument.id == "scan", let scans = store.state.selectedDataset?.scans, !scans.isEmpty {
+            return scans.compactMap { label in
+                label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
+            }
+        }
+        if argument.id == "antenna", let antennas = store.state.selectedDataset?.antennas, !antennas.isEmpty {
+            return antennas
+        }
+        if argument.id == "correlation", let correlations = store.state.selectedDataset?.correlations, !correlations.isEmpty {
+            return correlations
+        }
+        if argument.id == "datacolumn", let columns = store.state.selectedDataset?.dataColumns, !columns.isEmpty {
+            return columns
+        }
+        return argument.parser.choices ?? []
+    }
+
+    private var runStatusBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Run")
+                .workbenchFont(.headline)
+            ProgressView(value: store.state.taskRun.progress)
+            Text(store.state.taskRun.state.rawValue)
+                .foregroundStyle(.secondary)
+            valueList("Log", values: store.state.taskRun.logLines)
+            valueList("Diagnostics", values: store.state.taskRun.diagnostics)
+            valueList("Products", values: store.state.taskRun.products)
+        }
+        .taskCard()
+    }
+
+    private func valueList(_ title: String, values: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .workbenchFont(.subheadline, weight: .semibold)
+            if values.isEmpty {
+                Text("None")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(values, id: \.self) { value in
+                    Text(value)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+
 struct TaskCatalogBlock: View {
     var tasks: [TaskCatalogEntry]
     var activeTaskID: String
+    var selectTask: ((String) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Tasks")
                 .workbenchFont(.headline)
             ForEach(tasks) { task in
-                HStack {
+                Button {
+                    selectTask?(task.id)
+                } label: {
+                    HStack {
+                        taskRow(task)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(selectTask == nil)
+            }
+        }
+        .taskCard()
+        .accessibilityIdentifier("task.catalog")
+    }
+
+    private func taskRow(_ task: TaskCatalogEntry) -> some View {
+        HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(task.displayName)
                             .fontWeight(task.id == activeTaskID ? .semibold : .regular)
@@ -5829,11 +6043,7 @@ struct TaskCatalogBlock: View {
                         Image(systemName: "shippingbox")
                             .foregroundStyle(.secondary)
                     }
-                }
-            }
         }
-        .taskCard()
-        .accessibilityIdentifier("task.catalog")
     }
 }
 

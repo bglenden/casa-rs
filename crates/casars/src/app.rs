@@ -716,6 +716,7 @@ pub(crate) struct AppState {
     kitty_response_capture: Option<String>,
     kitty_movie_store_invalidated: bool,
     last_click: Option<ClickState>,
+    pending_run_confirmation: bool,
     movie_perf: MoviePerfTracer,
     quit: bool,
     return_to_launcher: bool,
@@ -2216,6 +2217,7 @@ impl AppState {
             kitty_response_capture: None,
             kitty_movie_store_invalidated: false,
             last_click: None,
+            pending_run_confirmation: false,
             movie_perf: MoviePerfTracer::from_env(),
             quit: false,
             return_to_launcher: false,
@@ -2288,6 +2290,7 @@ impl AppState {
             kitty_response_capture: None,
             kitty_movie_store_invalidated: false,
             last_click: None,
+            pending_run_confirmation: false,
             movie_perf: MoviePerfTracer::from_env(),
             quit: false,
             return_to_launcher: false,
@@ -3405,6 +3408,9 @@ impl AppState {
     }
 
     fn apply_action(&mut self, action: AppAction) {
+        if !matches!(action, AppAction::StartRun) {
+            self.pending_run_confirmation = false;
+        }
         match action {
             AppAction::Quit => {
                 if self.has_active_session() {
@@ -5266,6 +5272,7 @@ impl AppState {
 
     #[cfg(test)]
     pub(crate) fn start_run_for_test(&mut self) {
+        self.pending_run_confirmation = self.requires_run_confirmation();
         self.start_run();
     }
 
@@ -8828,6 +8835,7 @@ impl AppState {
         }
 
         if self.app.is_browser_session() {
+            self.pending_run_confirmation = false;
             self.start_browser_session();
             return;
         }
@@ -8835,9 +8843,22 @@ impl AppState {
         if self.app.id == "calibrate"
             && self.current_workflow_stage() == WorkflowStageId::InspectDataset
         {
+            self.pending_run_confirmation = false;
             self.run_calibrate_dataset_summary_inline();
             return;
         }
+
+        if self.requires_run_confirmation() && !self.pending_run_confirmation {
+            self.pending_run_confirmation = true;
+            self.result.status_line = format!(
+                "{} may modify data or create products. Press r again to confirm.",
+                self.app.display_name
+            );
+            self.result.status_kind = StatusKind::Warning;
+            self.active_result_tab = ResultTab::Overview;
+            return;
+        }
+        self.pending_run_confirmation = false;
 
         match self.build_execution_plan() {
             Ok(plan) => match spawn_process(&plan) {
@@ -8874,6 +8895,27 @@ impl AppState {
                 self.active_result_tab = ResultTab::Stderr;
             }
         }
+    }
+
+    fn requires_run_confirmation(&self) -> bool {
+        matches!(
+            self.app.id.as_str(),
+            "calibrate"
+                | "importvla"
+                | "imager"
+                | "simobserve"
+                | "immoments"
+                | "exportfits"
+                | "mstransform"
+                | "flagdata"
+                | "flagmanager"
+                | "impv"
+                | "imsubimage"
+                | "immath"
+                | "imregrid"
+                | "feather"
+                | "importfits"
+        )
     }
 
     fn run_calibrate_dataset_summary_inline(&mut self) {

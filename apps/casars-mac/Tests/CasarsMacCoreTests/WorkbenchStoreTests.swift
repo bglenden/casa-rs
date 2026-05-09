@@ -62,6 +62,184 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(tasks.contains { $0.id == "imager" && $0.binaryName == "casars-imager" })
     }
 
+    func testTaskExecutionMatrixLoadsFromFrontendServices() throws {
+        let matrix = try UniFFITaskExecutionMatrixClient().loadTaskExecutionMatrix()
+
+        XCTAssertTrue(matrix.rows.contains { $0.taskID == "msexplore" && $0.tuiStatus == "invokable" })
+        XCTAssertTrue(matrix.rows.contains { $0.taskID == "imager" && $0.guiStatus == "partial_panel" })
+        XCTAssertTrue(matrix.rows.contains { $0.taskID == "flagdata" && $0.tuiStatus == "invokable" })
+        XCTAssertTrue(matrix.rows.contains { $0.taskID == "mstransform" && $0.tuiStatus == "invokable" })
+    }
+
+    func testTaskContextOptionsDecodeRealDataChoices() throws {
+        let optionsJSON = """
+        {
+          "schema_version": 1,
+          "dataset_path": "/data/probed.ms",
+          "dataset_kind": "measurement_set",
+          "fields": ["0: Target"],
+          "spectral_windows": ["spw 0: 4 chan, 1.420000 GHz center"],
+          "scans": ["scan 1"],
+          "arrays": [],
+          "observations": [],
+          "antennas": ["ea01"],
+          "intents": [],
+          "feeds": [],
+          "correlations": ["I"],
+          "columns": ["DATA", "FLAG"],
+          "data_columns": ["DATA"],
+          "subtables": ["ANTENNA (required)"],
+          "shape": [4],
+          "defaults": {
+            "field": "0: Target",
+            "spectral_window": "spw 0: 4 chan, 1.420000 GHz center",
+            "data_column": "DATA"
+          },
+          "diagnostics": []
+        }
+        """
+        let options = try JSONDecoder().decode(
+            TaskContextOptionsEnvelope.self,
+            from: Data(optionsJSON.utf8)
+        )
+
+        XCTAssertEqual(options.datasetKind, "measurement_set")
+        XCTAssertEqual(options.spectralWindows, ["spw 0: 4 chan, 1.420000 GHz center"])
+        XCTAssertEqual(options.defaults["spectral_window"], options.spectralWindows.first)
+        XCTAssertEqual(options.dataColumns, ["DATA"])
+    }
+
+    func testTaskUISchemaLoadsFromFrontendServices() throws {
+        let schema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "flagdata")
+
+        XCTAssertEqual(schema.commandID, "flagdata")
+        XCTAssertTrue(schema.arguments.contains { argument in
+            argument.id == "mode" && argument.parser.choices?.contains("summary") == true
+        })
+    }
+
+    func testGenericTaskArgumentsUseSchemaFlagsChoicesAndToggles() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "flagdata",
+          "invocation_name": "flagdata",
+          "display_name": "Flag Data",
+          "category": "Flagging",
+          "summary": "Run native CASA-style MeasurementSet flagging.",
+          "usage": "flagdata",
+          "arguments": [
+            {"id":"vis","label":"MeasurementSet","order":0,"parser":{"kind":"option","flags":["--vis"],"metavar":"MS","choices":[]},"value_kind":"path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","manual"]},"value_kind":"choice","required":true,"default":"summary","help":"","group":"Flagging","advanced":false,"hidden_in_tui":false},
+            {"id":"flagbackup","label":"Backup","order":2,"parser":{"kind":"toggle","true_flags":["--flagbackup"],"false_flags":["--no-flagbackup"]},"value_kind":"bool","required":false,"default":"true","help":"","group":"Safety","advanced":false,"hidden_in_tui":false}
+          ]
+        }
+        """.utf8))
+        let request = GenericTaskRequest(
+            runID: "run-1",
+            task: TaskCatalogEntry(
+                id: "flagdata",
+                category: "Flagging",
+                displayName: "Flag Data",
+                binaryName: "flagdata",
+                cargoPackage: "casa-ms",
+                overrideEnv: "CASARS_FLAGDATA_BIN",
+                shellKind: "workflow",
+                interaction: "one_shot",
+                browserKind: nil,
+                datasetKinds: ["measurement_set"],
+                schemaSource: "binary",
+                showInTUI: true,
+                showInSwift: true,
+                includeInSuite: true
+            ),
+            schema: schema,
+            values: ["vis": "/data/input.ms", "mode": "summary"],
+            toggles: ["flagbackup": false]
+        )
+
+        XCTAssertEqual(
+            try ProcessGenericTaskClient.arguments(for: request),
+            ["--vis", "/data/input.ms", "--mode", "summary", "--no-flagbackup"]
+        )
+    }
+
+    func testGenericMutatingTaskRequiresConfirmationBeforeStart() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "flagdata",
+          "invocation_name": "flagdata",
+          "display_name": "Flag Data",
+          "category": "Flagging",
+          "summary": "Run native CASA-style MeasurementSet flagging.",
+          "usage": "flagdata",
+          "arguments": [
+            {"id":"vis","label":"MeasurementSet","order":0,"parser":{"kind":"option","flags":["--vis"],"metavar":"MS","choices":[]},"value_kind":"path","required":true,"default":"/data/input.ms","help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","manual"]},"value_kind":"choice","required":true,"default":"summary","help":"","group":"Flagging","advanced":false,"hidden_in_tui":false}
+          ]
+        }
+        """.utf8))
+        let task = TaskCatalogEntry(
+            id: "flagdata",
+            category: "Flagging",
+            displayName: "Flag Data",
+            binaryName: "flagdata",
+            cargoPackage: "casa-ms",
+            overrideEnv: "CASARS_FLAGDATA_BIN",
+            shellKind: "workflow",
+            interaction: "one_shot",
+            browserKind: nil,
+            datasetKinds: ["measurement_set"],
+            schemaSource: "binary",
+            showInTUI: true,
+            showInSwift: true,
+            includeInSuite: true
+        )
+        let matrixRow = TaskExecutionMatrixRow(
+            taskID: "flagdata",
+            displayName: "Flag Data",
+            category: "Flagging",
+            catalogPresence: "catalog",
+            binaryName: "flagdata",
+            cargoPackage: "casa-ms",
+            datasetKinds: ["measurement_set"],
+            suiteInstall: "installed",
+            localInstall: "installed",
+            releaseInstall: "installed",
+            tuiStatus: "invokable",
+            guiStatus: "invokable",
+            optionSource: "ui_schema_and_dataset_probe",
+            fullControlStatus: "partial",
+            mutationClass: "mutates_input",
+            confirmation: "required_backup_confirmation",
+            smokeEvidence: "unit test"
+        )
+        let taskClient = StubGenericTaskClient()
+        var state = EmptyWorkbench.makeState()
+        state.taskCatalog = [task]
+        state.taskExecutionMatrixRows = [matrixRow]
+        state.activeTaskID = "flagdata"
+        let store = WorkbenchStore(
+            state: state,
+            genericTaskClient: taskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: schema),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [matrixRow])
+        )
+
+        store.loadTaskUISchemaIfNeeded("flagdata")
+        store.runTask()
+
+        XCTAssertTrue(taskClient.requests.isEmpty)
+        XCTAssertEqual(store.state.taskRun.state, .failed)
+        XCTAssertTrue(store.state.taskRun.diagnostics.contains { $0.contains("Confirm this task") })
+
+        store.setGenericTaskConfirmation(taskID: "flagdata", confirmed: true)
+        store.runTask()
+
+        XCTAssertEqual(taskClient.requests.count, 1)
+    }
+
     func testMeasurementSetPlotMaxPointParserAcceptsSuffixes() {
         XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("250000"), 250_000)
         XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("250k"), 250_000)
@@ -2351,6 +2529,45 @@ private final class StubDirtyImagingTaskClient: DirtyImagingTaskClient {
         )
         eventHandler(event ?? .succeeded(result))
         return StubDirtyImagingExecution()
+    }
+}
+
+private final class StubGenericTaskClient: GenericTaskClient {
+    var requests: [GenericTaskRequest] = []
+
+    func startTask(
+        request: GenericTaskRequest,
+        eventHandler: @escaping (GenericTaskEvent) -> Void
+    ) throws -> DirtyImagingTaskExecution {
+        requests.append(request)
+        eventHandler(.succeeded(GenericTaskResult(
+            taskID: request.task.id,
+            arguments: try ProcessGenericTaskClient.arguments(for: request),
+            stdout: "",
+            stderr: ""
+        )))
+        return StubDirtyImagingExecution()
+    }
+}
+
+private struct StubTaskUISchemaClient: TaskUISchemaClient {
+    var schema: TaskUISchema
+
+    func loadTaskUISchema(taskID: String) throws -> TaskUISchema {
+        schema
+    }
+}
+
+private struct StubTaskExecutionMatrixClient: TaskExecutionMatrixClient {
+    var rows: [TaskExecutionMatrixRow]
+
+    func loadTaskExecutionMatrix() throws -> TaskExecutionMatrixEnvelope {
+        TaskExecutionMatrixEnvelope(
+            schemaVersion: 1,
+            generatedFor: "test",
+            scopeNote: "test",
+            rows: rows
+        )
     }
 }
 

@@ -3660,6 +3660,26 @@ public func taskCatalogJson()throws  -> String  {
     )
 })
 }
+public func taskContextOptionsJson(datasetPath: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_task_context_options_json(
+        FfiConverterString.lower(datasetPath),$0
+    )
+})
+}
+public func taskExecutionMatrixJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_task_execution_matrix_json($0
+    )
+})
+}
+public func taskUiSchemaJson(taskId: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_task_ui_schema_json(
+        FfiConverterString.lower(taskId),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -3710,6 +3730,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_task_catalog_json() != 57208) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_task_context_options_json() != 343) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_task_execution_matrix_json() != 33299) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_task_ui_schema_json() != 59642) {
         return InitializationResult.apiChecksumMismatch
     }
 

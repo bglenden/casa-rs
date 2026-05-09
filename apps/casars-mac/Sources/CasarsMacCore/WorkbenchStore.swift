@@ -57,6 +57,48 @@ public struct UniFFITaskCatalogClient: TaskCatalogClient {
     }
 }
 
+public protocol TaskExecutionMatrixClient {
+    func loadTaskExecutionMatrix() throws -> TaskExecutionMatrixEnvelope
+}
+
+public struct UniFFITaskExecutionMatrixClient: TaskExecutionMatrixClient {
+    public init() {}
+
+    public func loadTaskExecutionMatrix() throws -> TaskExecutionMatrixEnvelope {
+        let json = try CasarsFrontendServices.taskExecutionMatrixJson()
+        let data = Data(json.utf8)
+        return try JSONDecoder().decode(TaskExecutionMatrixEnvelope.self, from: data)
+    }
+}
+
+public protocol TaskContextOptionsClient {
+    func loadTaskContextOptions(datasetPath: String) throws -> TaskContextOptionsEnvelope
+}
+
+public struct UniFFITaskContextOptionsClient: TaskContextOptionsClient {
+    public init() {}
+
+    public func loadTaskContextOptions(datasetPath: String) throws -> TaskContextOptionsEnvelope {
+        let json = try CasarsFrontendServices.taskContextOptionsJson(datasetPath: datasetPath)
+        let data = Data(json.utf8)
+        return try JSONDecoder().decode(TaskContextOptionsEnvelope.self, from: data)
+    }
+}
+
+public protocol TaskUISchemaClient {
+    func loadTaskUISchema(taskID: String) throws -> TaskUISchema
+}
+
+public struct UniFFITaskUISchemaClient: TaskUISchemaClient {
+    public init() {}
+
+    public func loadTaskUISchema(taskID: String) throws -> TaskUISchema {
+        let json = try CasarsFrontendServices.taskUiSchemaJson(taskId: taskID)
+        let data = Data(json.utf8)
+        return try JSONDecoder().decode(TaskUISchema.self, from: data)
+    }
+}
+
 public protocol DemoProjectClient {
     func createDemoProject() throws -> ProjectFixtureProbe
     func cleanupDemoProject(rootPath: String)
@@ -420,6 +462,9 @@ public final class WorkbenchStore: ObservableObject {
     private let imageExplorerClient: ImageExplorerClient
     private let tableBrowserClient: TableBrowserClient
     private let dirtyImagingClient: DirtyImagingTaskClient
+    private let genericTaskClient: GenericTaskClient
+    private let taskUISchemaClient: TaskUISchemaClient
+    private let taskExecutionMatrixClient: TaskExecutionMatrixClient
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
     private var activeTaskExecutions: [String: DirtyImagingTaskExecution] = [:]
@@ -434,7 +479,10 @@ public final class WorkbenchStore: ObservableObject {
         imageExplorerClient: ImageExplorerClient = UniFFIImageExplorerClient(),
         tableBrowserClient: TableBrowserClient = UniFFITableBrowserClient(),
         dirtyImagingClient: DirtyImagingTaskClient = ProcessDirtyImagingTaskClient(),
-        taskCatalogClient: TaskCatalogClient = UniFFITaskCatalogClient()
+        genericTaskClient: GenericTaskClient = ProcessGenericTaskClient(),
+        taskCatalogClient: TaskCatalogClient = UniFFITaskCatalogClient(),
+        taskUISchemaClient: TaskUISchemaClient = UniFFITaskUISchemaClient(),
+        taskExecutionMatrixClient: TaskExecutionMatrixClient = UniFFITaskExecutionMatrixClient()
     ) {
         var initialState = state
         if initialState.taskCatalog.isEmpty {
@@ -444,6 +492,13 @@ public final class WorkbenchStore: ObservableObject {
                 initialState.lastErrors.append("Load task catalog: \(error)")
             }
         }
+        if initialState.taskExecutionMatrixRows.isEmpty {
+            do {
+                initialState.taskExecutionMatrixRows = try taskExecutionMatrixClient.loadTaskExecutionMatrix().rows
+            } catch {
+                initialState.lastErrors.append("Load task execution matrix: \(error)")
+            }
+        }
         self.state = initialState
         self.probeClient = probeClient
         self.demoProjectClient = demoProjectClient
@@ -451,6 +506,9 @@ public final class WorkbenchStore: ObservableObject {
         self.imageExplorerClient = imageExplorerClient
         self.tableBrowserClient = tableBrowserClient
         self.dirtyImagingClient = dirtyImagingClient
+        self.genericTaskClient = genericTaskClient
+        self.taskUISchemaClient = taskUISchemaClient
+        self.taskExecutionMatrixClient = taskExecutionMatrixClient
     }
 
     deinit {
@@ -1810,6 +1868,74 @@ public final class WorkbenchStore: ObservableObject {
         state.taskParameters.selectedSpectralWindow = spectralWindow
     }
 
+    public func selectTask(_ taskID: String) {
+        guard state.taskCatalog.contains(where: { $0.id == taskID }) else {
+            state.lastErrors.append("Unknown task \(taskID)")
+            return
+        }
+        state.activeTaskID = taskID
+        loadTaskUISchemaIfNeeded(taskID)
+    }
+
+    public func loadTaskUISchemaIfNeeded(_ taskID: String? = nil) {
+        let resolvedTaskID = taskID ?? state.activeTaskID
+        guard !resolvedTaskID.isEmpty, state.taskUISchemas[resolvedTaskID] == nil else {
+            return
+        }
+        do {
+            let schema = try taskUISchemaClient.loadTaskUISchema(taskID: resolvedTaskID)
+            state.taskUISchemas[resolvedTaskID] = schema
+            seedGenericTaskDefaults(schema)
+            state.taskRun = TaskRun(
+                state: .idle,
+                progress: 0,
+                logLines: ["Loaded \(schema.displayName) task schema."],
+                warnings: [],
+                products: [],
+                requestSummary: genericTaskRequestSummary(taskID: resolvedTaskID)
+            )
+        } catch {
+            state.lastErrors.append("Load task schema for \(resolvedTaskID): \(error)")
+        }
+    }
+
+    public func setGenericTaskValue(taskID: String? = nil, argumentID: String, value: String) {
+        let resolvedTaskID = taskID ?? state.activeTaskID
+        var values = state.genericTaskValues[resolvedTaskID] ?? [:]
+        values[argumentID] = value
+        state.genericTaskValues[resolvedTaskID] = values
+        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID)
+    }
+
+    public func setGenericTaskToggle(taskID: String? = nil, argumentID: String, value: Bool) {
+        let resolvedTaskID = taskID ?? state.activeTaskID
+        var toggles = state.genericTaskToggles[resolvedTaskID] ?? [:]
+        toggles[argumentID] = value
+        state.genericTaskToggles[resolvedTaskID] = toggles
+        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID)
+    }
+
+    public func setGenericTaskConfirmation(taskID: String? = nil, confirmed: Bool) {
+        state.genericTaskConfirmations[taskID ?? state.activeTaskID] = confirmed
+    }
+
+    public func taskExecutionMatrixRow(taskID: String? = nil) -> TaskExecutionMatrixRow? {
+        state.taskExecutionMatrixRows.first { $0.taskID == (taskID ?? state.activeTaskID) }
+    }
+
+    public func taskRequiresConfirmation(taskID: String? = nil) -> Bool {
+        guard let row = taskExecutionMatrixRow(taskID: taskID) else {
+            return false
+        }
+        return row.mutationClass != "read_only"
+            && row.mutationClass != "launcher"
+            && row.mutationClass != "not_applicable"
+    }
+
+    public func taskHasConfirmation(taskID: String? = nil) -> Bool {
+        state.genericTaskConfirmations[taskID ?? state.activeTaskID] ?? false
+    }
+
     public func runTask() {
         if state.isDemoProject {
             state.taskRun = TaskRun(
@@ -1834,6 +1960,11 @@ public final class WorkbenchStore: ObservableObject {
                     approval: "user"
                 )
             )
+            return
+        }
+
+        if state.activeTaskID != "imager" {
+            runGenericTask()
             return
         }
 
@@ -1900,6 +2031,90 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
+    private func runGenericTask() {
+        let taskID = state.activeTaskID
+        guard let task = state.taskCatalog.first(where: { $0.id == taskID }) else {
+            state.lastErrors.append("Unknown task \(taskID)")
+            return
+        }
+        if state.taskUISchemas[taskID] == nil {
+            loadTaskUISchemaIfNeeded(taskID)
+        }
+        guard let schema = state.taskUISchemas[taskID] else {
+            state.lastErrors.append("Task schema for \(taskID) is not available")
+            return
+        }
+        if taskRequiresConfirmation(taskID: taskID) && !taskHasConfirmation(taskID: taskID) {
+            state.taskRun = TaskRun(
+                state: .failed,
+                progress: 1.0,
+                logLines: [],
+                warnings: [],
+                products: [],
+                diagnostics: ["Confirm this task may modify data or create products before running it."],
+                requestSummary: genericTaskRequestSummary(taskID: taskID)
+            )
+            state.lastErrors.append("Confirm \(task.displayName) before running.")
+            return
+        }
+
+        let values = state.genericTaskValues[taskID] ?? [:]
+        let toggles = state.genericTaskToggles[taskID] ?? [:]
+        let runID = nextJobID(prefix: taskID)
+        let summary = genericTaskRequestSummary(taskID: taskID)
+        let tabID = state.activeTabID.isEmpty ? "tab-task-\(taskID)" : state.activeTabID
+        startJob(WorkbenchJob(
+            id: runID,
+            tabID: tabID,
+            kind: .genericTask,
+            owner: .user,
+            status: .running,
+            progress: 0.05,
+            title: schema.displayName,
+            detail: summary,
+            logLines: ["Starting \(task.binaryName).", summary],
+            lastEvent: "started"
+        ))
+        state.taskRun = TaskRun(
+            runID: runID,
+            state: .running,
+            progress: 0.05,
+            logLines: ["Starting \(task.binaryName).", summary],
+            warnings: [],
+            products: [],
+            diagnostics: [],
+            requestSummary: summary
+        )
+
+        do {
+            let execution = try genericTaskClient.startTask(
+                request: GenericTaskRequest(
+                    runID: runID,
+                    task: task,
+                    schema: schema,
+                    values: values,
+                    toggles: toggles
+                )
+            ) { [weak self] event in
+                DispatchQueue.main.async {
+                    self?.handleGenericTaskEvent(event, runID: runID)
+                }
+            }
+            activeTaskExecutions[runID] = execution
+        } catch {
+            state.taskRun = TaskRun(
+                state: .failed,
+                progress: 1.0,
+                logLines: ["Failed to start \(task.binaryName)."],
+                warnings: [],
+                products: [],
+                diagnostics: ["\(error)"],
+                requestSummary: summary
+            )
+            state.lastErrors.append("Start \(task.displayName): \(error)")
+        }
+    }
+
     public func stopTask() {
         if state.isDemoProject {
             state.taskRun.state = .stopped
@@ -1908,20 +2123,22 @@ public final class WorkbenchStore: ObservableObject {
         }
 
         guard state.taskRun.state == .running, let runID = state.taskRun.runID else {
-            state.lastErrors.append("No dirty imaging task is running")
+            state.lastErrors.append("No task is running")
             return
         }
         cancelJob(runID, recordError: false)
-        state.history.append(
-            ProcessingHistoryEvent(
-                id: "hist-run-\(state.history.count + 1)",
-                timestamp: currentTimestamp(),
-                title: "Dirty imaging cancelled",
-                reason: state.dirtyImagingTaskParameters?.runReason ?? "User cancelled the dirty imaging run.",
-                affectedPaths: state.taskRun.outputPaths,
-                approval: "user"
-            )
-        )
+        let title = state.activeTaskID == "imager" ? "Dirty imaging cancelled" : "Task cancelled"
+        let reason = state.activeTaskID == "imager"
+            ? state.dirtyImagingTaskParameters?.runReason ?? "User cancelled the dirty imaging run."
+            : "User cancelled \(state.activeTaskID)."
+        state.history.append(ProcessingHistoryEvent(
+            id: "hist-run-\(state.history.count + 1)",
+            timestamp: currentTimestamp(),
+            title: title,
+            reason: reason,
+            affectedPaths: state.taskRun.outputPaths,
+            approval: "user"
+        ))
     }
 
     public func setPythonOwner(_ owner: PythonOwner) {
@@ -2005,6 +2222,14 @@ public final class WorkbenchStore: ObservableObject {
                 state.taskRun.state = .cancelled
                 state.taskRun.progress = 1.0
                 state.taskRun.logLines.append("Cancellation requested for dirty imaging task.")
+            }
+        case .genericTask:
+            activeTaskExecutions[jobID]?.cancel()
+            activeTaskExecutions.removeValue(forKey: jobID)
+            if state.taskRun.runID == jobID {
+                state.taskRun.state = .cancelled
+                state.taskRun.progress = 1.0
+                state.taskRun.logLines.append("Cancellation requested for task.")
             }
         }
     }
@@ -2134,6 +2359,86 @@ public final class WorkbenchStore: ObservableObject {
             return "tab-dirty-imaging-\(parameters.datasetID)"
         }
         return "tab-dirty-imaging-unbound"
+    }
+
+    private func seedGenericTaskDefaults(_ schema: TaskUISchema) {
+        var values = state.genericTaskValues[schema.commandID] ?? [:]
+        var toggles = state.genericTaskToggles[schema.commandID] ?? [:]
+        for argument in schema.arguments where !argument.hiddenInTUI {
+            switch argument.parser.kind {
+            case "toggle":
+                if toggles[argument.id] == nil {
+                    toggles[argument.id] = argument.default == "true"
+                }
+            case "option", "positional":
+                if values[argument.id] == nil {
+                    if let defaultValue = argument.default {
+                        values[argument.id] = defaultValue
+                    } else if argument.valueKind == "path",
+                              let dataset = state.selectedDataset,
+                              argumentLooksLikeInputDataset(argument) {
+                        values[argument.id] = dataset.path
+                    } else if argument.id == "spw",
+                              let spectralWindow = state.selectedDataset?.spectralWindows.first {
+                        values[argument.id] = spectralWindowSelectorValue(spectralWindow)
+                    } else if argument.id == "field",
+                              let field = state.selectedDataset?.fields.first {
+                        values[argument.id] = selectorIDValue(field) ?? field
+                    } else if argument.id == "scan",
+                              let scan = state.selectedDataset?.scans.first {
+                        values[argument.id] = selectorIDValue(scan) ?? scan
+                    } else if argument.id == "antenna",
+                              let antenna = state.selectedDataset?.antennas.first {
+                        values[argument.id] = antenna
+                    } else if argument.id == "correlation",
+                              let correlation = state.selectedDataset?.correlations.first {
+                        values[argument.id] = correlation
+                    } else if argument.id == "datacolumn",
+                              let dataColumn = state.selectedDataset?.dataColumns.first {
+                        values[argument.id] = dataColumn
+                    }
+                }
+            default:
+                break
+            }
+        }
+        state.genericTaskValues[schema.commandID] = values
+        state.genericTaskToggles[schema.commandID] = toggles
+    }
+
+    private func genericTaskRequestSummary(taskID: String) -> String {
+        guard let schema = state.taskUISchemas[taskID] else {
+            return "task=\(taskID)"
+        }
+        let values = state.genericTaskValues[taskID] ?? [:]
+        let toggles = state.genericTaskToggles[taskID] ?? [:]
+        return schema.arguments
+            .filter { !$0.hiddenInTUI }
+            .compactMap { argument -> String? in
+                if argument.parser.kind == "toggle" {
+                    return "\(argument.id)=\(toggles[argument.id] ?? false)"
+                }
+                guard let value = values[argument.id], !value.isEmpty else {
+                    return argument.required ? "\(argument.id)=<required>" : nil
+                }
+                return "\(argument.id)=\(value)"
+            }
+            .joined(separator: ", ")
+    }
+
+    private func argumentLooksLikeInputDataset(_ argument: TaskUIArgument) -> Bool {
+        ["ms", "vis", "image", "imagename", "table", "infile", "fitsimage"].contains(argument.id)
+            || argument.label.localizedCaseInsensitiveContains("input")
+            || argument.label.localizedCaseInsensitiveContains("measurementset")
+    }
+
+    private func spectralWindowSelectorValue(_ label: String) -> String {
+        selectorIDValue(label) ?? label
+    }
+
+    private func selectorIDValue(_ label: String) -> String? {
+        let prefix = label.split(separator: ":", maxSplits: 1).first?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return prefix?.split(separator: " ").last.map(String.init)
     }
 
     private func finishMeasurementSetPlotJob(
@@ -2594,6 +2899,80 @@ public final class WorkbenchStore: ObservableObject {
                         approval: "user"
                     )
                 )
+            }
+        }
+    }
+
+    private func handleGenericTaskEvent(_ event: GenericTaskEvent, runID: String) {
+        guard state.jobs[runID]?.status != .cancelled else {
+            return
+        }
+        activeTaskExecutions.removeValue(forKey: runID)
+        if var job = state.jobs[runID] {
+            job.progress = 1.0
+            if state.activeJobIDsByTab[job.tabID] == runID {
+                state.activeJobIDsByTab.removeValue(forKey: job.tabID)
+            }
+            switch event {
+            case .succeeded(let result):
+                job.status = .succeeded
+                job.resultSummary = "\(result.taskID) completed"
+                job.lastEvent = "succeeded"
+                job.logLines.append("Arguments: \(result.arguments.joined(separator: " "))")
+                if !result.stdout.isEmpty {
+                    job.logLines.append(result.stdout)
+                }
+                if !result.stderr.isEmpty {
+                    job.logLines.append(result.stderr)
+                }
+                state.jobs[runID] = job
+                if state.taskRun.runID == runID {
+                    state.taskRun = TaskRun(
+                        runID: runID,
+                        state: .succeeded,
+                        progress: 1.0,
+                        logLines: ["\(result.taskID) completed.", "Arguments: \(result.arguments.joined(separator: " "))"],
+                        warnings: result.stderr.isEmpty ? [] : [result.stderr],
+                        products: [],
+                        diagnostics: result.stdout.isEmpty ? [] : [result.stdout],
+                        requestSummary: state.taskRun.requestSummary
+                    )
+                }
+                state.history.append(ProcessingHistoryEvent(
+                    id: "hist-run-\(state.history.count + 1)",
+                    timestamp: currentTimestamp(),
+                    title: "\(result.taskID) completed",
+                    reason: state.taskRun.requestSummary ?? "User ran \(result.taskID).",
+                    affectedPaths: [],
+                    approval: "user"
+                ))
+            case .failed(let failure):
+                job.status = .failed
+                job.error = failure.message
+                job.lastEvent = "failed"
+                job.logLines.append(failure.message)
+                job.logLines.append(contentsOf: failure.diagnostics)
+                state.jobs[runID] = job
+                if state.taskRun.runID == runID {
+                    state.taskRun.state = .failed
+                    state.taskRun.progress = 1.0
+                    state.taskRun.logLines.append(failure.message)
+                    state.taskRun.diagnostics.append(contentsOf: failure.diagnostics)
+                }
+                state.lastErrors.append("Task failed: \(failure.message)")
+            case .cancelled(let failure):
+                job.status = .cancelled
+                job.error = failure.message
+                job.lastEvent = "cancelled"
+                job.cancellationRequested = true
+                job.logLines.append(failure.message)
+                state.jobs[runID] = job
+                if state.taskRun.runID == runID {
+                    state.taskRun.state = .cancelled
+                    state.taskRun.progress = 1.0
+                    state.taskRun.logLines.append(failure.message)
+                    state.taskRun.diagnostics.append(contentsOf: failure.diagnostics)
+                }
             }
         }
     }
