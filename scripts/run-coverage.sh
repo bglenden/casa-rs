@@ -65,6 +65,8 @@ run_tarpaulin() {
   # `cargo test --workspace` gate. Under tarpaulin it can complete successfully
   # and then leave the coverage runner in a generic post-test abort state, so
   # skip it only for coverage collection.
+  # Run test binaries serially under tarpaulin; the normal test gate keeps its
+  # parallelism, while coverage avoids LLVM profile/runtime races on CI.
   cargo tarpaulin \
     --workspace \
     --exclude casars-python \
@@ -88,6 +90,7 @@ run_tarpaulin() {
     'crates/casars-python/src/**/*.rs' \
     '*/crates/casars-python/**/*.rs' \
     -- \
+    --test-threads=1 \
     --skip tablebrowser::tests::browser_traverses_real_fixture_tables_and_cells
 }
 
