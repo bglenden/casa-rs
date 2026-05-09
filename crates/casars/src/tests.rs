@@ -101,14 +101,28 @@ fn launcher_lists_registered_apps_in_expected_order() {
             "fluxscale",
             "gencal",
             "plotms",
+            "plotcal",
             "flagdata",
             "flagmanager",
+            "imcollapse",
+            "imfit",
+            "impbcor",
+            "widebandpbcor",
+            "imcontsub",
             "impv",
             "imsubimage",
             "immath",
             "imregrid",
             "feather",
-            "importfits"
+            "importfits",
+            "concat",
+            "statwt",
+            "hanningsmooth",
+            "clearcal",
+            "delmod",
+            "ft",
+            "simanalyze",
+            "simalma"
         ]
     );
 }

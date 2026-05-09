@@ -733,13 +733,15 @@ impl ResolvedFrontendCommand {
 
 fn load_task_ui_schema(task: &FrontendTaskCatalogEntry) -> FrontendResult<String> {
     let resolved = resolve_frontend_task_command(task)?;
-    let json_schema_output = resolved
-        .command()
-        .arg("--json-schema")
-        .output()
-        .map_err(|error| FrontendServiceError::Probe {
-            reason: format!("spawn {} --json-schema: {error}", task.binary_name),
-        })?;
+    let mut json_schema_command = resolved.command();
+    add_frontend_schema_args(&mut json_schema_command, task);
+    let json_schema_output =
+        json_schema_command
+            .arg("--json-schema")
+            .output()
+            .map_err(|error| FrontendServiceError::Probe {
+                reason: format!("spawn {} --json-schema: {error}", task.binary_name),
+            })?;
     if json_schema_output.status.success() {
         let bundle = serde_json::from_slice::<serde_json::Value>(&json_schema_output.stdout)
             .map_err(|error| FrontendServiceError::Probe {
@@ -758,8 +760,9 @@ fn load_task_ui_schema(task: &FrontendTaskCatalogEntry) -> FrontendResult<String
         }
     }
 
-    let output = resolved
-        .command()
+    let mut ui_schema_command = resolved.command();
+    add_frontend_schema_args(&mut ui_schema_command, task);
+    let output = ui_schema_command
         .arg("--ui-schema")
         .output()
         .map_err(|error| FrontendServiceError::Probe {
@@ -784,6 +787,12 @@ fn load_task_ui_schema(task: &FrontendTaskCatalogEntry) -> FrontendResult<String
     serde_json::to_string(&schema).map_err(|error| FrontendServiceError::Probe {
         reason: format!("serialize {} UI schema: {error}", task.binary_name),
     })
+}
+
+fn add_frontend_schema_args(command: &mut Command, task: &FrontendTaskCatalogEntry) {
+    if task.binary_name == "casars-casa-task" {
+        command.arg("--task").arg(&task.id);
+    }
 }
 
 fn enrich_task_ui_schema(
@@ -1495,7 +1504,9 @@ fn infer_task_parameter_type(
         "out" if matches!(task_id, "simobserve" | "mstransform" | "split") => {
             "output_measurement_set_path"
         }
-        "output_measurement_set" | "outputms" => "output_measurement_set_path",
+        "output_measurement_set" | "outputms" | "outputvis" | "concatvis" => {
+            "output_measurement_set_path"
+        }
         "archivefiles" => "archive_path",
         "table_path" => "table_path",
         "caltable" | "bandpass" | "fluxtable" | "fluxscale_input" | "gain_model_source"
@@ -1504,6 +1515,7 @@ fn infer_task_parameter_type(
         "callib" => "calibration_library_path",
         "out_table" => "output_calibration_table_path",
         "model" if task_id == "simobserve" => "fits_path",
+        "model" if task_id == "ft" => "image_path_list",
         "fitsimage" if task_id == "exportfits" => "output_fits_path",
         "fitsimage" | "fitsfile" => "fits_path",
         "imagename" if task_id == "imager" => "output_image_path",
@@ -1517,11 +1529,16 @@ fn infer_task_parameter_type(
         }
         "imagename" if task_id == "immath" => "image_path_list",
         "imagename" if task_id == "importfits" => "output_image_path",
-        "outfile" | "output" if task.dataset_kinds.iter().any(|kind| kind == "image") => {
+        "outfile" | "output" | "linefile" | "contfile"
+            if task.dataset_kinds.iter().any(|kind| kind == "image") =>
+        {
             "output_image_path"
         }
+        "residual" | "model" if task_id == "imfit" => "output_image_path",
         "startmodel" | "mask_image" | "mask" | "image" | "template" | "highres" | "lowres"
-        | "infile" => "image_path",
+        | "infile" | "pbimage" | "skymodel" | "modelimage" => "image_path",
+        "complist" => "component_list_path",
+        "ptgfile" => "pointing_file_path",
         "outlierfile" => "outlier_definition_path",
         "spw" | "fit_spw" => "spectral_window_selector",
         "field" | "gainfield" | "reference_fields" | "transfer_fields" => "field_selector",
@@ -5265,7 +5282,7 @@ mod tests {
         assert!(rows.iter().any(|row| {
             row["task_id"] == "mstransform"
                 && row["tui_status"] == "invokable"
-                && row["full_control_status"] == "partial"
+                && row["full_control_status"] == "covered"
         }));
         assert!(rows.iter().any(|row| {
             row["task_id"] == "imager"

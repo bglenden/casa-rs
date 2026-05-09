@@ -2,7 +2,7 @@
 
 Truth class: checked artifact
 Last reality check: 2026-05-09
-Verification: `cargo test -p casars-frontend-services`; `cargo test -p casars`; `swift test --package-path apps/casars-mac`
+Verification: `just quick`; `cargo test -p casars-frontend-services`; `cargo test -p casars`; `swift test --package-path apps/casars-mac`
 
 `resources/task-execution-matrix.json` is the canonical machine-readable list
 for issue #226 and the already-landed shared-catalog work from issue #231. It
@@ -32,8 +32,7 @@ explicit work or signoff points. In particular:
   model-column saving, outlier files, and managed output.
 - `impv`, `imsubimage`, `immath`, `imregrid`, `feather`, and `importfits` emit
   image-analysis schemas and are promoted into the TUI through the shared
-  catalog and the generic Swift task panel. They remain partial until
-  full-control verification and product refresh evidence are recorded.
+  catalog and the generic Swift task panel.
 - `flagdata` and `flagmanager` have shared catalog/schema rows and can be
   invoked from the TUI and the generic Swift task panel. The Swift store blocks
   these mutating tasks until the user explicitly confirms the mutation/product
@@ -43,8 +42,15 @@ explicit work or signoff points. In particular:
   Their schemas are projected from the underlying provider binaries with hidden
   defaults or subcommands where needed, so the GUI and TUI expose task-shaped
   parameters instead of the broader provider surface.
-- Remaining provider-gap rows such as `statwt`, `simanalyze`, and `simalma` are
-  tracked so they cannot disappear from the parity scope without user signoff.
+- `imcollapse`, `imfit`, `impbcor`, `widebandpbcor`, `concat`, `statwt`,
+  `hanningsmooth`, `clearcal`, `delmod`, `ft`, `imcontsub`, `simanalyze`, and
+  `simalma` are shared-catalog tasks backed by the local CASA `casatasks`
+  installation through `casars-casa-task`. This exposes the real CASA task
+  parameter surface to both the GUI and TUI while native Rust implementations
+  remain future work.
+- `plotcal` is a shared-catalog task backed by the native calibration plot
+  payload builder because the local CASA 6.7.5 task package no longer exports a
+  `plotcal` function.
 
 The Swift GUI and other frontends can read the matrix through
 `task_execution_matrix_json()`. Dataset-grounded option lists and defaults are

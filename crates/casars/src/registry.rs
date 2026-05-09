@@ -185,11 +185,12 @@ impl RegistryApp {
                     }
                 }
                 let resolved = self.resolve_command()?;
-                if let Some(schema) = load_canonical_ui_schema(&resolved, binary_name)? {
+                if let Some(schema) = load_canonical_ui_schema(&resolved, binary_name, &self.id)? {
                     return Ok(schema);
                 }
-                let output = resolved
-                    .command()
+                let mut command = resolved.command();
+                add_schema_args(&mut command, binary_name, &self.id);
+                let output = command
                     .arg("--ui-schema")
                     .output()
                     .map_err(|error| format!("spawn {binary_name} --ui-schema: {error}"))?;
@@ -984,9 +985,11 @@ fn registry_extra_argument_schema(argument: RegistryExtraAliasArgument) -> serde
 fn load_canonical_ui_schema(
     resolved: &ResolvedCommand,
     binary_name: &str,
+    task_id: &str,
 ) -> Result<Option<UiCommandSchema>, String> {
-    let output = resolved
-        .command()
+    let mut command = resolved.command();
+    add_schema_args(&mut command, binary_name, task_id);
+    let output = command
         .arg("--json-schema")
         .output()
         .map_err(|error| format!("spawn {binary_name} --json-schema: {error}"))?;
@@ -1001,6 +1004,12 @@ fn load_canonical_ui_schema(
     serde_json::from_value(ui_schema)
         .map(Some)
         .map_err(|error| format!("parse {binary_name} projected ui schema: {error}"))
+}
+
+fn add_schema_args(command: &mut Command, binary_name: &str, task_id: &str) {
+    if binary_name == "casars-casa-task" {
+        command.arg("--task").arg(task_id);
+    }
 }
 
 pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
@@ -1186,14 +1195,28 @@ mod tests {
                 "fluxscale",
                 "gencal",
                 "plotms",
+                "plotcal",
                 "flagdata",
                 "flagmanager",
+                "imcollapse",
+                "imfit",
+                "impbcor",
+                "widebandpbcor",
+                "imcontsub",
                 "impv",
                 "imsubimage",
                 "immath",
                 "imregrid",
                 "feather",
                 "importfits",
+                "concat",
+                "statwt",
+                "hanningsmooth",
+                "clearcal",
+                "delmod",
+                "ft",
+                "simanalyze",
+                "simalma",
             ]
         );
         assert!(
