@@ -67,7 +67,13 @@ while read -r binary; do
     casars)
       "$installed" --help >/dev/null
       ;;
+    flagdata|flagmanager)
+      "$installed" --help >/dev/null
+      ;;
     mstransform)
+      ;;
+    casars-casa-task)
+      "$installed" --task plotcal --protocol-info >/dev/null
       ;;
     *)
       "$installed" --protocol-info >/dev/null
