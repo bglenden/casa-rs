@@ -65,6 +65,9 @@ run_tarpaulin() {
   # `cargo test --workspace` gate. Under tarpaulin it can complete successfully
   # and then leave the coverage runner in a generic post-test abort state, so
   # skip it only for coverage collection.
+  # The cube-weighting trace assertion is also covered by the normal test gate;
+  # after the full casa-imaging binary has run under CI tarpaulin, the coverage
+  # runner can segfault while executing this otherwise-passing test.
   # Run test binaries serially under tarpaulin; the normal test gate keeps its
   # parallelism, while coverage avoids LLVM profile/runtime races on CI.
   cargo tarpaulin \
@@ -91,7 +94,8 @@ run_tarpaulin() {
     '*/crates/casars-python/**/*.rs' \
     -- \
     --test-threads=1 \
-    --skip tablebrowser::tests::browser_traverses_real_fixture_tables_and_cells
+    --skip tablebrowser::tests::browser_traverses_real_fixture_tables_and_cells \
+    --skip trace_cube_weighting_exposes_combined_density_and_taper_effects
 }
 
 tarpaulin_log="$(mktemp -t casa-rs-tarpaulin.XXXXXX.log)"

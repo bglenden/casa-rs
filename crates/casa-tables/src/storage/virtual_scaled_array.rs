@@ -461,3 +461,248 @@ pub(crate) fn virtual_col_desc<'a>(
 ) -> Option<&'a ColumnDescContents> {
     col_descs.iter().find(|c| c.col_name == col_name)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::data_type::CasacoreDataType;
+    use casa_types::ArrayValue;
+    use std::path::Path;
+
+    fn record(fields: impl IntoIterator<Item = (&'static str, Value)>) -> RecordValue {
+        let mut record = RecordValue::default();
+        for (name, value) in fields {
+            record.upsert(name, value);
+        }
+        record
+    }
+
+    fn column_desc(
+        col_name: &str,
+        data_type: CasacoreDataType,
+        primitive_type: PrimitiveType,
+        keywords: RecordValue,
+    ) -> ColumnDescContents {
+        ColumnDescContents {
+            class_name: String::new(),
+            col_name: col_name.to_string(),
+            comment: String::new(),
+            data_manager_type: "ScaledArrayEngine".to_string(),
+            data_manager_group: "Scaled".to_string(),
+            data_type,
+            option: 0,
+            nrdim: 1,
+            shape: Vec::new(),
+            max_length: 0,
+            keywords,
+            is_array: true,
+            primitive_type: Some(primitive_type),
+        }
+    }
+
+    fn plain_column(name: &str) -> PlainColumnEntry {
+        PlainColumnEntry {
+            original_name: name.to_string(),
+            dm_seq_nr: 0,
+            is_array: true,
+        }
+    }
+
+    #[test]
+    fn materialize_scaled_array_uses_row_scale_and_offset_columns() {
+        let keywords = record([
+            (
+                KW_STORED_COL,
+                Value::Scalar(ScalarValue::String("STORED".to_string())),
+            ),
+            (KW_SA_FIXED_SCALE, Value::Scalar(ScalarValue::Bool(false))),
+            (
+                KW_SA_SCALE_NAME,
+                Value::Scalar(ScalarValue::String("SCALE".to_string())),
+            ),
+            (KW_SA_FIXED_OFFSET, Value::Scalar(ScalarValue::Bool(false))),
+            (
+                KW_SA_OFFSET_NAME,
+                Value::Scalar(ScalarValue::String("OFFSET".to_string())),
+            ),
+        ]);
+        let col_desc = column_desc(
+            "FLOAT_DATA",
+            CasacoreDataType::TpArrayFloat,
+            PrimitiveType::Float32,
+            keywords,
+        );
+        let source_rows = vec![record([
+            (
+                "STORED",
+                Value::Array(ArrayValue::Int16(
+                    ArrayD::from_shape_vec(IxDyn(&[2]), vec![2, 4]).unwrap(),
+                )),
+            ),
+            ("SCALE", Value::Scalar(ScalarValue::Float32(3.0))),
+            ("OFFSET", Value::Scalar(ScalarValue::Float64(1.0))),
+        ])];
+        let ctx = VirtualContext {
+            col_descs: std::slice::from_ref(&col_desc),
+            rows: &source_rows,
+            table_path: Path::new("."),
+            nrrow: 1,
+        };
+        let plain = plain_column("FLOAT_DATA");
+        let mut rows = vec![RecordValue::default()];
+
+        ScaledColumnEngine {
+            variant: ScaledVariant::Array,
+        }
+        .materialize(&ctx, &[(0, &plain)], &mut rows)
+        .unwrap();
+
+        let Value::Array(ArrayValue::Float32(values)) = rows[0].get("FLOAT_DATA").unwrap() else {
+            panic!("expected Float32 array");
+        };
+        assert_eq!(values.as_slice().unwrap(), &[7.0, 13.0]);
+    }
+
+    #[test]
+    fn materialize_scaled_complex_data_uses_row_scale_and_offset_columns() {
+        let keywords = record([
+            (
+                KW_STORED_COL,
+                Value::Scalar(ScalarValue::String("STORED".to_string())),
+            ),
+            (KW_SC_FIXED_SCALE, Value::Scalar(ScalarValue::Bool(false))),
+            (
+                KW_SC_SCALE_NAME,
+                Value::Scalar(ScalarValue::String("SCALE".to_string())),
+            ),
+            (KW_SC_FIXED_OFFSET, Value::Scalar(ScalarValue::Bool(false))),
+            (
+                KW_SC_OFFSET_NAME,
+                Value::Scalar(ScalarValue::String("OFFSET".to_string())),
+            ),
+        ]);
+        let col_desc = column_desc(
+            "DATA",
+            CasacoreDataType::TpArrayDComplex,
+            PrimitiveType::Complex64,
+            keywords,
+        );
+        let source_rows = vec![record([
+            (
+                "STORED",
+                Value::Array(ArrayValue::Float64(
+                    ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![1.0, 2.0, 10.0, 20.0]).unwrap(),
+                )),
+            ),
+            (
+                "SCALE",
+                Value::Scalar(ScalarValue::Complex32(Complex32::new(2.0, 3.0))),
+            ),
+            (
+                "OFFSET",
+                Value::Scalar(ScalarValue::Complex64(Complex64::new(1.0, -1.0))),
+            ),
+        ])];
+        let ctx = VirtualContext {
+            col_descs: std::slice::from_ref(&col_desc),
+            rows: &source_rows,
+            table_path: Path::new("."),
+            nrrow: 1,
+        };
+        let plain = plain_column("DATA");
+        let mut rows = vec![RecordValue::default()];
+
+        ScaledColumnEngine {
+            variant: ScaledVariant::ComplexData,
+        }
+        .materialize(&ctx, &[(0, &plain)], &mut rows)
+        .unwrap();
+
+        let Value::Array(ArrayValue::Complex64(values)) = rows[0].get("DATA").unwrap() else {
+            panic!("expected Complex64 array");
+        };
+        assert_eq!(
+            values.as_slice().unwrap(),
+            &[Complex64::new(3.0, 29.0), Complex64::new(5.0, 59.0)]
+        );
+    }
+
+    #[test]
+    fn scaled_array_reports_non_numeric_and_missing_inputs() {
+        assert!(
+            apply_real_scale_offset(&Value::table_ref("other"), 1.0, 0.0, PrimitiveType::Float64)
+                .unwrap_err()
+                .to_string()
+                .contains("table reference")
+        );
+        assert!(
+            apply_real_scale_offset(
+                &Value::Scalar(ScalarValue::String("bad".to_string())),
+                1.0,
+                0.0,
+                PrimitiveType::Float64,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported stored scalar type")
+        );
+
+        let keywords = record([(
+            KW_STORED_COL,
+            Value::Scalar(ScalarValue::String("MISSING".to_string())),
+        )]);
+        let col_desc = column_desc(
+            "FLOAT_DATA",
+            CasacoreDataType::TpDouble,
+            PrimitiveType::Float64,
+            keywords,
+        );
+        let source_rows = vec![RecordValue::default()];
+        let ctx = VirtualContext {
+            col_descs: std::slice::from_ref(&col_desc),
+            rows: &source_rows,
+            table_path: Path::new("."),
+            nrrow: 1,
+        };
+        let plain = plain_column("FLOAT_DATA");
+        let err = ScaledColumnEngine {
+            variant: ScaledVariant::Array,
+        }
+        .materialize(&ctx, &[(0, &plain)], &mut [RecordValue::default()])
+        .unwrap_err();
+        assert!(err.to_string().contains("stored column 'MISSING'"));
+    }
+
+    #[test]
+    fn scaled_complex_data_validates_shape_and_target_type() {
+        let bad_shape = Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(IxDyn(&[3]), vec![1.0, 2.0, 3.0]).unwrap(),
+        ));
+        assert!(
+            apply_complex_scale_offset(
+                &bad_shape,
+                Complex64::new(1.0, 1.0),
+                Complex64::new(0.0, 0.0),
+                PrimitiveType::Complex64,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("first dimension must be 2")
+        );
+
+        let unsupported_target = Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(IxDyn(&[2, 1]), vec![1.0, 2.0]).unwrap(),
+        ));
+        assert!(
+            apply_complex_scale_offset(
+                &unsupported_target,
+                Complex64::new(1.0, 1.0),
+                Complex64::new(0.0, 0.0),
+                PrimitiveType::Float64,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported virtual type")
+        );
+    }
+}

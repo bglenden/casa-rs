@@ -199,3 +199,144 @@ pub(crate) enum VirtualColumnBinding {
         expression: String,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_engine_matches_all_supported_virtual_engines() {
+        let cases = [
+            (
+                "ForwardColumnEngine",
+                "ForwardColumnEngine",
+                "ForwardColumnEngine",
+            ),
+            (
+                "ForwardColumnIndexedRowEngine",
+                "ForwardColumnIndexedRowEngine",
+                "ForwardColumnIndexedRowEngine",
+            ),
+            (
+                "ScaledArrayEngine<Float,Short>",
+                "ScaledArrayEngine",
+                "ScaledColumnEngine",
+            ),
+            (
+                "ScaledComplexData<Complex,Short>",
+                "ScaledComplexData",
+                "ScaledColumnEngine",
+            ),
+            ("BitFlagsEngine<Int>", "BitFlagsEngine", "BitFlagsEngine"),
+            ("CompressFloat", "CompressFloat", "CompressFloatEngine"),
+            (
+                "CompressComplex",
+                "CompressComplex",
+                "CompressComplexEngine",
+            ),
+            (
+                "CompressComplexSD",
+                "CompressComplexSD",
+                "CompressComplexEngine",
+            ),
+            (
+                "VirtualTaQLColumn",
+                "VirtualTaQLColumn",
+                "VirtualTaQLColumnEngine",
+            ),
+        ];
+
+        for (type_name, expected_type_name, expected_debug_name) in cases {
+            let engine = lookup_engine(type_name)
+                .unwrap_or_else(|| panic!("expected virtual engine for {type_name}"));
+            assert!(
+                is_virtual_engine(type_name),
+                "{type_name} should be recognized"
+            );
+            assert_eq!(engine.type_name(), expected_type_name);
+            assert!(
+                format!("{engine:?}").contains(expected_debug_name),
+                "debug output for {type_name} should identify {expected_debug_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_engine_rejects_unknown_or_similar_names() {
+        let cases = [
+            "",
+            "ForwardColumnEngineExtra",
+            "CompressComplexSingleDish",
+            "VirtualTaQLColumnV2",
+            "UnknownEngine",
+        ];
+
+        for type_name in cases {
+            assert!(lookup_engine(type_name).is_none());
+            assert!(!is_virtual_engine(type_name));
+        }
+    }
+
+    #[test]
+    fn virtual_column_bindings_clone_and_debug_with_expected_fields() {
+        let bindings = [
+            VirtualColumnBinding::Forward {
+                col_name: "DATA".to_string(),
+                ref_table: PathBuf::from("ref-table"),
+            },
+            VirtualColumnBinding::ScaledArray {
+                virtual_col: "FLOAT_DATA".to_string(),
+                stored_col: "DATA_SHORT".to_string(),
+                scale: 2.0,
+                offset: -1.0,
+            },
+            VirtualColumnBinding::ScaledComplexData {
+                virtual_col: "DATA".to_string(),
+                stored_col: "DATA_SHORT".to_string(),
+                scale: Complex64::new(1.0, -1.0),
+                offset: Complex64::new(0.5, 0.25),
+            },
+            VirtualColumnBinding::BitFlags {
+                virtual_col: "FLAG".to_string(),
+                stored_col: "FLAG_BITS".to_string(),
+                read_mask: 0x1,
+                write_mask: 0x2,
+            },
+            VirtualColumnBinding::CompressFloat {
+                virtual_col: "FLOAT_DATA".to_string(),
+                stored_col: "DATA_SHORT".to_string(),
+                scale: 0.5,
+                offset: 10.0,
+            },
+            VirtualColumnBinding::CompressComplex {
+                virtual_col: "DATA".to_string(),
+                stored_col: "DATA_INT".to_string(),
+                scale: 0.25,
+                offset: -3.0,
+                single_dish: true,
+            },
+            VirtualColumnBinding::ForwardIndexedRow {
+                col_name: "MODEL_DATA".to_string(),
+                ref_table: PathBuf::from("model-table"),
+                row_column: "MODEL_ROW".to_string(),
+            },
+            VirtualColumnBinding::TaQLColumn {
+                col_name: "DERIVED".to_string(),
+                expression: "DATA + MODEL_DATA".to_string(),
+            },
+        ];
+
+        for binding in bindings {
+            let cloned = binding.clone();
+            let debug = format!("{cloned:?}");
+            assert!(debug.contains("col") || debug.contains("DATA") || debug.contains("FLAG"));
+            assert!(
+                debug.contains("Forward")
+                    || debug.contains("Scaled")
+                    || debug.contains("Compress")
+                    || debug.contains("TaQL")
+                    || debug.contains("BitFlags")
+            );
+        }
+    }
+}
