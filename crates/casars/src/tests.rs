@@ -63,7 +63,7 @@ use crate::config::{ConfigStore, ThemeMode};
 use crate::is_suspend_key;
 use crate::registry::{
     calibrate_app, imager_app, imexplore_app, importvla_app, msexplore_app, registered_apps,
-    tablebrowser_app,
+    resolve_app, tablebrowser_app,
 };
 use crate::theme::theme;
 use crate::ui;
@@ -88,10 +88,60 @@ fn launcher_lists_registered_apps_in_expected_order() {
             "simobserve",
             "tablebrowser",
             "imexplore",
+            "imhead",
+            "imstat",
             "immoments",
-            "exportfits"
+            "exportfits",
+            "mstransform",
+            "split",
+            "uvcontsub",
+            "applycal",
+            "gaincal",
+            "bandpass",
+            "fluxscale",
+            "gencal",
+            "plotms",
+            "plotcal",
+            "flagdata",
+            "flagmanager",
+            "imcollapse",
+            "imfit",
+            "impbcor",
+            "widebandpbcor",
+            "imcontsub",
+            "impv",
+            "imsubimage",
+            "immath",
+            "imregrid",
+            "feather",
+            "importfits",
+            "concat",
+            "statwt",
+            "hanningsmooth",
+            "clearcal",
+            "delmod",
+            "ft",
+            "simanalyze",
+            "simalma"
         ]
     );
+}
+
+#[test]
+fn mutating_tui_task_requires_second_run_key_to_confirm() {
+    let app = resolve_app(Some("flagdata")).expect("flagdata app");
+    let schema = app.load_schema().expect("flagdata schema");
+    let mut app = AppState::from_schema(app, schema);
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+
+    assert!(
+        app.status_line_for_test()
+            .contains("Press r again to confirm"),
+        "{}",
+        app.status_line_for_test()
+    );
+    assert!(!app.is_running_for_test());
 }
 
 #[test]

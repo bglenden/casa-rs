@@ -349,11 +349,229 @@ public protocol DirtyImagingTaskExecution {
     func cancel()
 }
 
+public struct GenericTaskRequest: Equatable {
+    public var runID: String
+    public var task: TaskCatalogEntry
+    public var schema: TaskUISchema
+    public var values: [String: String]
+    public var toggles: [String: Bool]
+
+    public init(
+        runID: String,
+        task: TaskCatalogEntry,
+        schema: TaskUISchema,
+        values: [String: String],
+        toggles: [String: Bool]
+    ) {
+        self.runID = runID
+        self.task = task
+        self.schema = schema
+        self.values = values
+        self.toggles = toggles
+    }
+}
+
+public struct GenericTaskResult: Equatable {
+    public var taskID: String
+    public var arguments: [String]
+    public var stdout: String
+    public var stderr: String
+}
+
+public struct GenericTaskFailure: Error, Equatable {
+    public var message: String
+    public var diagnostics: [String]
+}
+
+public enum GenericTaskEvent {
+    case succeeded(GenericTaskResult)
+    case failed(GenericTaskFailure)
+    case cancelled(GenericTaskFailure)
+}
+
+public protocol GenericTaskClient {
+    func startTask(
+        request: GenericTaskRequest,
+        eventHandler: @escaping (GenericTaskEvent) -> Void
+    ) throws -> DirtyImagingTaskExecution
+}
+
 public protocol DirtyImagingTaskClient {
     func startDirtyImaging(
         request: DirtyImagingTaskRequest,
         eventHandler: @escaping (DirtyImagingTaskEvent) -> Void
     ) throws -> DirtyImagingTaskExecution
+}
+
+public final class ProcessGenericTaskClient: GenericTaskClient {
+    private let queue: DispatchQueue
+
+    public init(queue: DispatchQueue = DispatchQueue(label: "casars.mac.generic-task", qos: .userInitiated)) {
+        self.queue = queue
+    }
+
+    public func startTask(
+        request: GenericTaskRequest,
+        eventHandler: @escaping (GenericTaskEvent) -> Void
+    ) throws -> DirtyImagingTaskExecution {
+        let arguments = try Self.arguments(for: request)
+        let execution = ProcessDirtyImagingTaskExecution()
+        queue.async {
+            do {
+                let output = try Self.runProcess(
+                    binaryName: request.task.binaryName,
+                    overrideEnv: request.task.overrideEnv,
+                    arguments: arguments,
+                    execution: execution
+                )
+                if execution.isCancelled {
+                    eventHandler(.cancelled(GenericTaskFailure(message: "Task was cancelled.", diagnostics: [output.stderr])))
+                } else if output.exitCode == 0 {
+                    eventHandler(.succeeded(GenericTaskResult(
+                        taskID: request.task.id,
+                        arguments: arguments,
+                        stdout: output.stdout,
+                        stderr: output.stderr
+                    )))
+                } else {
+                    eventHandler(.failed(GenericTaskFailure(
+                        message: "\(request.task.binaryName) exited with \(output.exitCode).",
+                        diagnostics: [output.stderr, output.stdout].filter { !$0.isEmpty }
+                    )))
+                }
+            } catch {
+                eventHandler(.failed(GenericTaskFailure(message: "\(error)", diagnostics: [])))
+            }
+        }
+        return execution
+    }
+
+    static func arguments(for request: GenericTaskRequest) throws -> [String] {
+        var arguments: [String] = []
+        for argument in request.schema.arguments.sorted(by: { $0.order < $1.order }) {
+            let isHiddenAction = argument.hiddenInTUI && argument.parser.kind == "action"
+            if isHiddenAction {
+                continue
+            }
+            switch argument.parser.kind {
+            case "option":
+                let value = (request.values[argument.id] ?? argument.default ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if value.isEmpty {
+                    if argument.required {
+                        throw GenericTaskFailure(message: "\(argument.label) is required.", diagnostics: [])
+                    }
+                    continue
+                }
+                guard let flag = argument.parser.flags?.first else { continue }
+                arguments.append(flag)
+                arguments.append(value)
+            case "positional":
+                let value = (request.values[argument.id] ?? argument.default ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if value.isEmpty {
+                    if argument.required {
+                        throw GenericTaskFailure(message: "\(argument.label) is required.", diagnostics: [])
+                    }
+                    continue
+                }
+                arguments.append(value)
+            case "toggle":
+                let value = request.toggles[argument.id] ?? (argument.default == "true")
+                if value, let flag = argument.parser.trueFlags?.first {
+                    arguments.append(flag)
+                } else if !value, let flag = argument.parser.falseFlags?.first {
+                    arguments.append(flag)
+                }
+            default:
+                continue
+            }
+        }
+        if let managedOutput = request.schema.managedOutput {
+            for injected in managedOutput.injectArguments {
+                arguments.append(injected.flag)
+                if let value = injected.value {
+                    arguments.append(value)
+                }
+            }
+        }
+        return arguments
+    }
+
+    private static func runProcess(
+        binaryName: String,
+        overrideEnv: String,
+        arguments: [String],
+        execution: ProcessDirtyImagingTaskExecution
+    ) throws -> ProcessOutput {
+        if execution.isCancelled {
+            return ProcessOutput(exitCode: -1, stdout: "", stderr: "cancelled before launch")
+        }
+        let process = Process()
+        if let executablePath = resolvedExecutablePath(binaryName: binaryName, overrideEnv: overrideEnv) {
+            process.executableURL = URL(fileURLWithPath: executablePath)
+            process.arguments = arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [binaryName] + arguments
+        }
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        guard execution.setProcess(process) else {
+            return ProcessOutput(exitCode: -1, stdout: "", stderr: "cancelled before launch")
+        }
+        do {
+            try process.run()
+            process.waitUntilExit()
+            execution.clearProcess(process)
+        } catch {
+            execution.clearProcess(process)
+            throw error
+        }
+        return ProcessOutput(
+            exitCode: process.terminationStatus,
+            stdout: String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
+            stderr: String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        )
+    }
+
+    private static func resolvedExecutablePath(binaryName: String, overrideEnv: String) -> String? {
+        let environment = ProcessInfo.processInfo.environment
+        if let path = environment[overrideEnv], !path.isEmpty {
+            return path
+        }
+        let fileManager = FileManager.default
+        if let bundled = Bundle.main.executableURL?
+            .deletingLastPathComponent()
+            .appendingPathComponent(binaryName)
+            .path,
+           fileManager.isExecutableFile(atPath: bundled) {
+            return bundled
+        }
+        if let repoRoot = environment["CASA_RS_REPO_ROOT"], !repoRoot.isEmpty {
+            let candidate = URL(fileURLWithPath: repoRoot, isDirectory: true)
+                .appendingPathComponent("target/debug/\(binaryName)")
+                .path
+            if fileManager.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        var cursor = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+        for _ in 0..<6 {
+            let candidate = cursor.appendingPathComponent("target/debug/\(binaryName)").path
+            if fileManager.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+            let parent = cursor.deletingLastPathComponent()
+            if parent.path == cursor.path {
+                break
+            }
+            cursor = parent
+        }
+        return nil
+    }
 }
 
 public final class ProcessDirtyImagingTaskClient: DirtyImagingTaskClient {

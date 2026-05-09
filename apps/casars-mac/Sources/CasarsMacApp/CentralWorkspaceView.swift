@@ -2,6 +2,7 @@ import CasarsMacCore
 import AppKit
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct CentralWorkspaceView: View {
     @ObservedObject var store: WorkbenchStore
@@ -60,10 +61,9 @@ struct CentralWorkspaceView: View {
                     store.openDefaultTab(kind: .datasetExplorer)
                 }
                 .disabled(store.state.selectedDataset == nil)
-                Button(store.state.isDemoProject ? "Calibrate Task" : "Dirty Imaging Task") {
+                Button("Tasks") {
                     store.openDefaultTab(kind: .task)
                 }
-                .disabled(store.state.selectedDataset == nil)
                 Button("Plot Samples") {
                     store.openDefaultTab(kind: .plotSamples)
                 }
@@ -5240,7 +5240,7 @@ struct TaskPanel: View {
         if store.state.isDemoProject {
             fixtureTaskBody
         } else {
-            DirtyImagingTaskPanel(store: store)
+            GenericTaskPanel(store: store)
         }
     }
 
@@ -5275,7 +5275,11 @@ struct TaskPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    TaskCatalogBlock(tasks: store.state.taskCatalog, activeTaskID: "calibrate")
+                    TaskCatalogBlock(
+                        tasks: store.state.taskCatalog,
+                        activeTaskID: "calibrate",
+                        categoryFilter: .constant(.all)
+                    )
                     parameterBlock
                     aiProposalBlock
                     runBlock
@@ -5387,7 +5391,12 @@ struct DirtyImagingTaskPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    TaskCatalogBlock(tasks: store.state.taskCatalog, activeTaskID: "imager")
+                    TaskCatalogBlock(
+                        tasks: store.state.taskCatalog,
+                        activeTaskID: store.state.activeTaskID,
+                        categoryFilter: .constant(.all),
+                        selectTask: store.selectTask
+                    )
                     if let parameters = store.state.dirtyImagingTaskParameters {
                         selectionBlock(parameters: parameters)
                         imagingBlock(parameters: parameters)
@@ -5805,35 +5814,667 @@ struct DirtyImagingTaskPanel: View {
     }
 }
 
-struct TaskCatalogBlock: View {
-    var tasks: [TaskCatalogEntry]
-    var activeTaskID: String
+private struct TaskParameterGroup: Identifiable {
+    let name: String
+    var arguments: [TaskUIArgument]
+    var id: String { name }
+}
+
+struct GenericTaskPanel: View {
+    @ObservedObject var store: WorkbenchStore
+    @State private var showingTaskList = true
+    @State private var categoryFilter: CasaTaskCategoryFilter = .all
+    private let parameterGridColumns = [
+        GridItem(.adaptive(minimum: 260), alignment: .topLeading)
+    ]
+
+    private var task: TaskCatalogEntry? {
+        store.state.taskCatalog.first { $0.id == store.state.activeTaskID }
+    }
+
+    private var schema: TaskUISchema? {
+        store.state.taskUISchemas[store.state.activeTaskID]
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Tasks")
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(showingTaskList ? "Tasks" : (schema?.displayName ?? task?.displayName ?? "Task"))
+                        .workbenchFont(.title3, weight: .semibold)
+                    Text(showingTaskList ? "Choose a schema-backed CASA-rs task" : (schema?.summary ?? "Schema-backed CASA-rs task"))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if !showingTaskList {
+                    Button {
+                        showingTaskList = true
+                    } label: {
+                        Label("Change Task", systemImage: "list.bullet")
+                    }
+                    .accessibilityIdentifier("task.change")
+                }
+                Button {
+                    store.runTask()
+                } label: {
+                    Label(store.state.taskRun.state == .running ? "Running" : "Run", systemImage: "play.fill")
+                }
+                .disabled(
+                    showingTaskList
+                        || store.state.taskRun.state == .running
+                        || schema == nil
+                        || (store.taskRequiresConfirmation() && !store.taskHasConfirmation())
+                )
+
+                Button {
+                    store.stopTask()
+                } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                }
+                .disabled(store.state.taskRun.state != .running)
+            }
+            .padding()
+            .background(.bar)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if showingTaskList {
+                        TaskCatalogBlock(
+                            tasks: filteredTasks,
+                            activeTaskID: store.state.activeTaskID,
+                            categoryFilter: $categoryFilter
+                        ) { taskID in
+                            store.selectTask(taskID)
+                            showingTaskList = false
+                        }
+                    } else if let schema {
+                        genericParameterBlock(schema: schema)
+                        genericSafetyBlock
+                    } else {
+                        Text("Loading task schema...")
+                            .foregroundStyle(.secondary)
+                            .taskCard()
+                    }
+                    if !showingTaskList {
+                        runStatusBlock
+                    }
+                }
+                .padding(20)
+            }
+        }
+        .task {
+            store.loadTaskUISchemaIfNeeded()
+        }
+    }
+
+    private var filteredTasks: [TaskCatalogEntry] {
+        store.state.taskCatalog
+            .filter { $0.showInSwift }
+            .filter { !Self.explorerTaskIDs.contains($0.id) }
+            .filter { categoryFilter.matches(task: $0) }
+            .sorted {
+                let ordering = $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
+                if ordering == .orderedSame {
+                    return $0.id < $1.id
+                }
+                return ordering == .orderedAscending
+            }
+    }
+
+    private static let explorerTaskIDs: Set<String> = ["imexplore", "msexplore", "tablebrowser"]
+
+    private func genericParameterBlock(schema: TaskUISchema) -> some View {
+        let groups = parameterGroups(for: schema)
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Parameters")
                 .workbenchFont(.headline)
-            ForEach(tasks) { task in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(task.displayName)
-                            .fontWeight(task.id == activeTaskID ? .semibold : .regular)
-                        Text("\(task.category) / \(task.shellKind)")
+            ForEach(groups) { group in
+                VStack(alignment: .leading, spacing: 6) {
+                    if groups.count > 1 {
+                        Text(group.name)
+                            .workbenchFont(.caption, weight: .semibold)
                             .foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    if task.id == activeTaskID {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    } else if task.includeInSuite {
-                        Image(systemName: "shippingbox")
-                            .foregroundStyle(.secondary)
+                    LazyVGrid(columns: parameterGridColumns, alignment: .leading, spacing: 8) {
+                        ForEach(group.arguments) { argument in
+                            genericControl(argument: argument)
+                        }
                     }
                 }
             }
         }
         .taskCard()
+    }
+
+    private func parameterGroups(for schema: TaskUISchema) -> [TaskParameterGroup] {
+        let arguments = schema.arguments
+            .filter { !$0.hiddenInTUI }
+            .sorted { $0.order < $1.order }
+        var groups: [TaskParameterGroup] = []
+        for argument in arguments {
+            let groupName = argument.group.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = groupName.isEmpty ? "General" : groupName
+            if let index = groups.firstIndex(where: { $0.name == name }) {
+                groups[index].arguments.append(argument)
+            } else {
+                groups.append(TaskParameterGroup(name: name, arguments: [argument]))
+            }
+        }
+        return groups
+    }
+
+    @ViewBuilder
+    private var genericSafetyBlock: some View {
+        if store.taskRequiresConfirmation() {
+            let taskID = store.state.activeTaskID
+            let confirmed = Binding(
+                get: { store.taskHasConfirmation(taskID: taskID) },
+                set: { store.setGenericTaskConfirmation(taskID: taskID, confirmed: $0) }
+            )
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Safety")
+                    .workbenchFont(.headline)
+                Toggle("Confirm this task may modify data or create products", isOn: confirmed)
+                if let row = store.taskExecutionMatrixRow(taskID: taskID) {
+                    Text("\(row.mutationClass) / \(row.confirmation)")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .taskCard()
+        }
+    }
+
+    @ViewBuilder
+    private func genericControl(argument: TaskUIArgument) -> some View {
+        let taskID = store.state.activeTaskID
+        let value = Binding(
+            get: { store.state.genericTaskValues[taskID]?[argument.id] ?? argument.default ?? "" },
+            set: { store.setGenericTaskValue(taskID: taskID, argumentID: argument.id, value: $0) }
+        )
+        let toggle = Binding(
+            get: { store.state.genericTaskToggles[taskID]?[argument.id] ?? (argument.default == "true") },
+            set: { store.setGenericTaskToggle(taskID: taskID, argumentID: argument.id, value: $0) }
+        )
+        let label = displayLabel(for: argument)
+        let selectableChoices = choices(for: argument)
+
+        if argument.parser.kind == "toggle" {
+            Toggle(label, isOn: toggle)
+                .help(argument.help)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label)
+                    .workbenchFont(.caption, weight: .semibold)
+                    .foregroundStyle(.secondary)
+                if isPathArgument(argument) {
+                    pathControl(argument: argument, value: pathValueBinding(rawValue: value), choices: selectableChoices)
+                } else if !selectableChoices.isEmpty {
+                    Picker(label, selection: value) {
+                        ForEach(selectableChoices, id: \.self) { choice in
+                            Text(choice).tag(choice)
+                        }
+                    }
+                    .labelsHidden()
+                    .help(argument.help)
+                } else {
+                    TextField(label, text: value)
+                        .textFieldStyle(.roundedBorder)
+                        .help(argument.help)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func pathControl(
+        argument: TaskUIArgument,
+        value: Binding<String>,
+        choices: [String]
+    ) -> some View {
+        if !choices.isEmpty || canBrowse(argument: argument) {
+            HStack(spacing: 6) {
+                if !choices.isEmpty {
+                    Picker(displayLabel(for: argument), selection: value) {
+                        ForEach(choices, id: \.self) { choice in
+                            Text(displayPath(choice)).tag(displayPath(choice))
+                        }
+                    }
+                    .labelsHidden()
+                } else {
+                    TextField(displayLabel(for: argument), text: value)
+                        .textFieldStyle(.roundedBorder)
+                }
+                if canBrowse(argument: argument) {
+                    Button {
+                        if let url = TaskParameterOpenPanel.choosePath(parameterType: argument.parameterType) {
+                            value.wrappedValue = displayPath(url.path)
+                        }
+                    } label: {
+                        Image(systemName: "folder")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Choose \(displayLabel(for: argument))")
+                }
+            }
+            .help(argument.help)
+        } else {
+            TextField(displayLabel(for: argument), text: value)
+                .textFieldStyle(.roundedBorder)
+                .help(argument.help)
+        }
+    }
+
+    private func choices(for argument: TaskUIArgument) -> [String] {
+        if argument.parameterType == "measurement_set_path" || ["ms", "vis"].contains(argument.id) {
+            let measurementSets = store.state.project.datasets
+                .filter { $0.kind == .measurementSet }
+                .map(\.path)
+            if !measurementSets.isEmpty {
+                return measurementSets
+            }
+        }
+        if argument.parameterType == "image_path" {
+            let images = store.state.project.datasets
+                .filter { $0.kind == .imageCube }
+                .map(\.path)
+            if !images.isEmpty {
+                return images
+            }
+        }
+        if ["table_path", "calibration_table_path"].contains(argument.parameterType ?? "") {
+            let tables = store.state.project.datasets
+                .filter { dataset in
+                    dataset.kind == .table || dataset.kind == .calibrationTable
+                }
+                .map(\.path)
+            if !tables.isEmpty {
+                return tables
+            }
+        }
+        if argument.parameterType == "spectral_window_selector" || argument.id == "spw",
+           let spectralWindows = store.state.selectedDataset?.spectralWindows,
+           !spectralWindows.isEmpty {
+            return spectralWindows.compactMap { label in
+                label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
+            }
+        }
+        if ["field_selector", "field_id"].contains(argument.parameterType ?? "") || ["field", "phasecenter_field"].contains(argument.id),
+           let fields = store.state.selectedDataset?.fields,
+           !fields.isEmpty {
+            return fields.compactMap { label in
+                label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
+            }
+        }
+        if argument.parameterType == "scan_selector" || argument.id == "scan",
+           let scans = store.state.selectedDataset?.scans,
+           !scans.isEmpty {
+            return scans.compactMap { label in
+                label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
+            }
+        }
+        if argument.parameterType == "antenna_selector" || argument.id == "antenna",
+           let antennas = store.state.selectedDataset?.antennas,
+           !antennas.isEmpty {
+            return antennas
+        }
+        if argument.parameterType == "correlation_or_stokes" || argument.id == "correlation",
+           let correlations = store.state.selectedDataset?.correlations,
+           !correlations.isEmpty {
+            return correlations
+        }
+        if argument.parameterType == "data_column" || argument.id == "datacolumn",
+           let columns = store.state.selectedDataset?.dataColumns,
+           !columns.isEmpty {
+            return columns
+        }
+        return argument.parser.choices ?? []
+    }
+
+    private func displayLabel(for argument: TaskUIArgument) -> String {
+        let label = argument.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !label.isEmpty {
+            return label
+        }
+        return argument.id
+            .split(separator: "_")
+            .map { part in
+                part.prefix(1).uppercased() + String(part.dropFirst())
+            }
+            .joined(separator: " ")
+    }
+
+    private func isPathArgument(_ argument: TaskUIArgument) -> Bool {
+        argument.valueKind == "path" || argument.parameterType?.contains("path") == true
+    }
+
+    private func canBrowse(argument: TaskUIArgument) -> Bool {
+        guard isPathArgument(argument) else {
+            return false
+        }
+        return argument.parameterType?.hasPrefix("output_") != true
+    }
+
+    private func pathValueBinding(rawValue: Binding<String>) -> Binding<String> {
+        Binding(
+            get: { displayPath(rawValue.wrappedValue) },
+            set: { rawValue.wrappedValue = absolutePath(fromDisplayedPath: $0) }
+        )
+    }
+
+    private func displayPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return path
+        }
+        let root = store.state.project.rootPath
+        guard !root.isEmpty else {
+            return path
+        }
+        let rootURL = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
+        let pathURL = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath).standardizedFileURL
+        let rootPath = rootURL.path
+        let absolutePath = pathURL.path
+        if absolutePath == rootPath {
+            return "."
+        }
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        if absolutePath.hasPrefix(prefix) {
+            return String(absolutePath.dropFirst(prefix.count))
+        }
+        return path
+    }
+
+    private func absolutePath(fromDisplayedPath path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return path
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return expanded
+        }
+        let root = store.state.project.rootPath
+        guard !root.isEmpty else {
+            return path
+        }
+        return URL(fileURLWithPath: root, isDirectory: true)
+            .appendingPathComponent(trimmed)
+            .standardizedFileURL
+            .path
+    }
+
+    private var runStatusBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Run")
+                .workbenchFont(.headline)
+            ProgressView(value: store.state.taskRun.progress)
+            Text(store.state.taskRun.state.rawValue)
+                .foregroundStyle(.secondary)
+            valueList("Log", values: store.state.taskRun.logLines)
+            valueList("Diagnostics", values: store.state.taskRun.diagnostics)
+            valueList("Products", values: store.state.taskRun.products.map(displayPath))
+        }
+        .taskCard()
+    }
+
+    private func valueList(_ title: String, values: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .workbenchFont(.subheadline, weight: .semibold)
+            if values.isEmpty {
+                Text("None")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(values, id: \.self) { value in
+                    Text(value)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+}
+
+private enum TaskParameterOpenPanel {
+    static func choosePath(parameterType: String?) -> URL? {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = message(for: parameterType)
+        panel.canChooseDirectories = acceptsDirectories(parameterType: parameterType)
+        panel.canChooseFiles = acceptsFiles(parameterType: parameterType)
+        if parameterType == "fits_path" {
+            panel.allowedContentTypes = ["fit", "fits", "fts"].compactMap { UTType(filenameExtension: $0) }
+        }
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return nil
+        }
+        guard selectedPathIsAllowed(url, parameterType: parameterType) else {
+            NSSound.beep()
+            return nil
+        }
+        return url
+    }
+
+    private static func message(for parameterType: String?) -> String {
+        switch parameterType {
+        case "measurement_set_path":
+            return "Choose a MeasurementSet directory ending in .ms."
+        case "image_path":
+            return "Choose a CASA image directory."
+        case "calibration_table_path":
+            return "Choose a CASA calibration table directory."
+        case "table_path":
+            return "Choose a CASA table directory."
+        case "fits_path":
+            return "Choose a FITS file."
+        default:
+            return "Choose a path."
+        }
+    }
+
+    private static func acceptsDirectories(parameterType: String?) -> Bool {
+        switch parameterType {
+        case "fits_path":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func acceptsFiles(parameterType: String?) -> Bool {
+        switch parameterType {
+        case "measurement_set_path", "image_path", "calibration_table_path", "table_path":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func selectedPathIsAllowed(_ url: URL, parameterType: String?) -> Bool {
+        switch parameterType {
+        case "measurement_set_path":
+            return isDirectory(url) && url.pathExtension.localizedCaseInsensitiveCompare("ms") == .orderedSame
+        case "fits_path":
+            return ["fit", "fits", "fts"].contains(url.pathExtension.lowercased())
+        case "image_path", "calibration_table_path", "table_path":
+            return isDirectory(url)
+        default:
+            return true
+        }
+    }
+
+    private static func isDirectory(_ url: URL) -> Bool {
+        var isDirectory = ObjCBool(false)
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+}
+
+struct TaskCatalogBlock: View {
+    var tasks: [TaskCatalogEntry]
+    var activeTaskID: String
+    @Binding var categoryFilter: CasaTaskCategoryFilter
+    var selectTask: ((String) -> Void)? = nil
+    private static let explorerTaskIDs: Set<String> = ["imexplore", "msexplore", "tablebrowser"]
+
+    private var taskRows: [TaskCatalogEntry] {
+        tasks.filter { !Self.explorerTaskIDs.contains($0.id) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("Category", selection: $categoryFilter) {
+                ForEach(CasaTaskCategoryFilter.allCases) { category in
+                    Text(category.title).tag(category)
+                }
+            }
+            .accessibilityIdentifier("task.categoryFilter")
+
+            ForEach(taskRows) { task in
+                Button {
+                    selectTask?(task.id)
+                } label: {
+                    HStack {
+                        taskRow(task)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(selectTask == nil)
+            }
+        }
+        .taskCard()
         .accessibilityIdentifier("task.catalog")
+    }
+
+    private func taskRow(_ task: TaskCatalogEntry) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: CasaTaskCategoryFilter.categoryIcon(for: task))
+                .foregroundStyle(task.id == activeTaskID ? Color.accentColor : Color.secondary)
+                .frame(width: 18, height: 18)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.displayName)
+                    .fontWeight(task.id == activeTaskID ? .semibold : .regular)
+                Text("\(CasaTaskCategoryFilter.categoryTitle(for: task)) / \(task.shellKind)")
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+}
+
+enum CasaTaskCategoryFilter: String, CaseIterable, Identifiable {
+    case all
+    case inputOutput
+    case information
+    case flagging
+    case calibration
+    case imaging
+    case singleDish
+    case manipulation
+    case analysis
+    case visualization
+    case simulation
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "All Tasks"
+        case .inputOutput: return "Input / Output"
+        case .information: return "Information"
+        case .flagging: return "Flagging"
+        case .calibration: return "Calibration"
+        case .imaging: return "Imaging"
+        case .singleDish: return "Single Dish"
+        case .manipulation: return "Manipulation"
+        case .analysis: return "Analysis"
+        case .visualization: return "Visualization"
+        case .simulation: return "Simulation"
+        }
+    }
+
+    func matches(task: TaskCatalogEntry) -> Bool {
+        self == .all || Self.category(for: task) == self
+    }
+
+    static func categoryTitle(for task: TaskCatalogEntry) -> String {
+        category(for: task).title
+    }
+
+    static func categoryIcon(for task: TaskCatalogEntry) -> String {
+        switch category(for: task) {
+        case .all:
+            return "square.grid.2x2"
+        case .inputOutput:
+            return "arrow.left.arrow.right"
+        case .information:
+            return "info.circle"
+        case .flagging:
+            return "flag"
+        case .calibration:
+            return "slider.horizontal.3"
+        case .imaging:
+            return "photo"
+        case .singleDish:
+            return "dot.radiowaves.left.and.right"
+        case .manipulation:
+            return "rectangle.2.swap"
+        case .analysis:
+            return "chart.xyaxis.line"
+        case .visualization:
+            return "eye"
+        case .simulation:
+            return "waveform.path.ecg"
+        }
+    }
+
+    static func category(for task: TaskCatalogEntry) -> CasaTaskCategoryFilter {
+        switch task.id {
+        case "importvla", "importfits", "exportfits":
+            return .inputOutput
+        case "msexplore", "tablebrowser":
+            return .information
+        case "flagdata", "flagmanager":
+            return .flagging
+        case "calibrate", "applycal", "bandpass", "fluxscale", "gaincal", "gencal":
+            return .calibration
+        case "imager", "feather":
+            return .imaging
+        case "mstransform", "split", "uvcontsub":
+            return .manipulation
+        case "immath", "immoments", "impv", "imregrid", "imsubimage":
+            return .analysis
+        case "imexplore":
+            return .visualization
+        case "simobserve":
+            return .simulation
+        default:
+            switch task.category.lowercased() {
+            case "import":
+                return .inputOutput
+            case "measurementset":
+                return .information
+            case "flagging":
+                return .flagging
+            case "calibration":
+                return .calibration
+            case "imaging":
+                return .imaging
+            case "images":
+                return .analysis
+            case "simulation":
+                return .simulation
+            default:
+                return .information
+            }
+        }
     }
 }
 
