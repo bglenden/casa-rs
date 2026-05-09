@@ -6303,7 +6303,12 @@ struct TaskCatalogBlock: View {
     }
 
     private func taskRow(_ task: TaskCatalogEntry) -> some View {
-        HStack {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: CasaTaskCategoryFilter.categoryIcon(for: task))
+                .foregroundStyle(task.id == activeTaskID ? Color.accentColor : Color.secondary)
+                .frame(width: 18, height: 18)
+                .padding(.top, 1)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.displayName)
                     .fontWeight(task.id == activeTaskID ? .semibold : .regular)
@@ -6311,13 +6316,6 @@ struct TaskCatalogBlock: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if task.id == activeTaskID {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-            } else if task.includeInSuite {
-                Image(systemName: "shippingbox")
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 }
@@ -6359,6 +6357,33 @@ enum CasaTaskCategoryFilter: String, CaseIterable, Identifiable {
 
     static func categoryTitle(for task: TaskCatalogEntry) -> String {
         category(for: task).title
+    }
+
+    static func categoryIcon(for task: TaskCatalogEntry) -> String {
+        switch category(for: task) {
+        case .all:
+            return "square.grid.2x2"
+        case .inputOutput:
+            return "arrow.left.arrow.right"
+        case .information:
+            return "info.circle"
+        case .flagging:
+            return "flag"
+        case .calibration:
+            return "slider.horizontal.3"
+        case .imaging:
+            return "photo"
+        case .singleDish:
+            return "dot.radiowaves.left.and.right"
+        case .manipulation:
+            return "rectangle.2.swap"
+        case .analysis:
+            return "chart.xyaxis.line"
+        case .visualization:
+            return "eye"
+        case .simulation:
+            return "waveform.path.ecg"
+        }
     }
 
     static func category(for task: TaskCatalogEntry) -> CasaTaskCategoryFilter {
