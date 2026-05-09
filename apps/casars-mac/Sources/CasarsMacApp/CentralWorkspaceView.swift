@@ -5275,6 +5275,7 @@ struct TaskPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    TaskCatalogBlock(tasks: store.state.taskCatalog, activeTaskID: "calibrate")
                     parameterBlock
                     aiProposalBlock
                     runBlock
@@ -5386,6 +5387,7 @@ struct DirtyImagingTaskPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    TaskCatalogBlock(tasks: store.state.taskCatalog, activeTaskID: "imager")
                     if let parameters = store.state.dirtyImagingTaskParameters {
                         selectionBlock(parameters: parameters)
                         imagingBlock(parameters: parameters)
@@ -5800,6 +5802,38 @@ struct DirtyImagingTaskPanel: View {
                 }
             }
         }
+    }
+}
+
+struct TaskCatalogBlock: View {
+    var tasks: [TaskCatalogEntry]
+    var activeTaskID: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Tasks")
+                .workbenchFont(.headline)
+            ForEach(tasks) { task in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(task.displayName)
+                            .fontWeight(task.id == activeTaskID ? .semibold : .regular)
+                        Text("\(task.category) / \(task.shellKind)")
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if task.id == activeTaskID {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else if task.includeInSuite {
+                        Image(systemName: "shippingbox")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .taskCard()
+        .accessibilityIdentifier("task.catalog")
     }
 }
 

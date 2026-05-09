@@ -17,12 +17,9 @@ install_root="$tmp_root/install-root"
 bin_dir="$tmp_root/bin"
 
 echo "==> Building release binaries for suite install smoke test"
-cargo build --release -p casars --bin casars
-cargo build --release -p casa-calibration --bin calibrate
-cargo build --release -p casars-importvla --bin casars-importvla
-cargo build --release -p casa-ms --bin msexplore --bin mstransform
-cargo build --release -p casars-imager --bin casars-imager
-cargo build --release -p casa-images --bin imexplore --bin immoments --bin impv --bin imsubimage --bin immath --bin imregrid --bin feather --bin exportfits --bin importfits
+while read -r package binary; do
+  cargo build --release -p "$package" --bin "$binary"
+done < <(scripts/list-suite-binaries.py --package-binary)
 
 echo "==> Building Python wheel artifacts for suite install smoke test"
 scripts/build-python-dist.sh "$wheel_dir"
@@ -63,19 +60,20 @@ echo "==> Verifying installed launchers"
 "$bin_dir/calibrate" --protocol-info >/dev/null
 "$bin_dir/casars-stable" --help >/dev/null
 "$bin_dir/calibrate-stable" --protocol-info >/dev/null
-"$install_root/$version/bin/casars-importvla" --protocol-info >/dev/null
-"$install_root/$version/bin/msexplore" --protocol-info >/dev/null
-test -x "$install_root/$version/bin/mstransform"
-"$install_root/$version/bin/casars-imager" --protocol-info >/dev/null
-"$install_root/$version/bin/imexplore" --protocol-info >/dev/null
-"$install_root/$version/bin/immoments" --protocol-info >/dev/null
-"$install_root/$version/bin/impv" --protocol-info >/dev/null
-"$install_root/$version/bin/imsubimage" --protocol-info >/dev/null
-"$install_root/$version/bin/immath" --protocol-info >/dev/null
-"$install_root/$version/bin/imregrid" --protocol-info >/dev/null
-"$install_root/$version/bin/feather" --protocol-info >/dev/null
-"$install_root/$version/bin/exportfits" --protocol-info >/dev/null
-"$install_root/$version/bin/importfits" --protocol-info >/dev/null
+while read -r binary; do
+  installed="$install_root/$version/bin/$binary"
+  test -x "$installed"
+  case "$binary" in
+    casars)
+      "$installed" --help >/dev/null
+      ;;
+    mstransform)
+      ;;
+    *)
+      "$installed" --protocol-info >/dev/null
+      ;;
+  esac
+done < <(scripts/list-suite-binaries.py)
 
 echo "==> Verifying installed Python package"
 source "$install_root/$version/python/bin/activate"

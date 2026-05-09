@@ -77,7 +77,7 @@ use crate::{
 #[test]
 fn launcher_lists_registered_apps_in_expected_order() {
     let apps = registered_apps();
-    let ids = apps.iter().map(|app| app.id).collect::<Vec<_>>();
+    let ids = apps.iter().map(|app| app.id.as_str()).collect::<Vec<_>>();
     assert_eq!(
         ids,
         vec![

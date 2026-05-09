@@ -34,6 +34,10 @@ use casars_tablebrowser_protocol::{BrowserCommand, BrowserFocus, BrowserView, Br
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+const TASK_CATALOG_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../resources/task-catalog.json"
+));
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
 const MAX_PROJECT_SCAN_DEPTH: usize = 4;
 const DEFAULT_GUI_MAX_PLOT_POINTS: u64 = 250_000;
@@ -251,6 +255,30 @@ pub struct ProjectProbe {
     pub diagnostics: Vec<String>,
     pub scanned_entry_count: u64,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct FrontendTaskCatalog {
+    schema_version: u64,
+    tasks: Vec<FrontendTaskCatalogEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct FrontendTaskCatalogEntry {
+    id: String,
+    category: String,
+    display_name: String,
+    binary_name: String,
+    cargo_package: String,
+    override_env: String,
+    shell_kind: String,
+    interaction: String,
+    browser_kind: Option<String>,
+    dataset_kinds: Vec<String>,
+    schema_source: String,
+    show_in_tui: bool,
+    show_in_swift: bool,
+    include_in_suite: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -520,6 +548,17 @@ pub enum FrontendServiceError {
 }
 
 type FrontendResult<T> = Result<T, FrontendServiceError>;
+
+#[uniffi::export]
+pub fn task_catalog_json() -> FrontendResult<String> {
+    let catalog: FrontendTaskCatalog =
+        serde_json::from_str(TASK_CATALOG_JSON).map_err(|error| FrontendServiceError::Probe {
+            reason: format!("parse task catalog: {error}"),
+        })?;
+    serde_json::to_string(&catalog).map_err(|error| FrontendServiceError::Probe {
+        reason: format!("serialize task catalog: {error}"),
+    })
+}
 
 #[uniffi::export]
 pub fn probe_path(path: String) -> FrontendResult<Option<DatasetProbe>> {
@@ -3989,6 +4028,31 @@ mod tests {
         assert!(probe.row_count > 0);
         assert!(probe.min_seconds.is_finite());
         assert!(probe.max_seconds >= probe.min_seconds);
+    }
+
+    #[test]
+    fn task_catalog_json_exposes_shared_frontend_task_surface() {
+        let catalog_json = task_catalog_json().expect("task catalog");
+        let catalog: serde_json::Value =
+            serde_json::from_str(&catalog_json).expect("task catalog json");
+        let tasks = catalog["tasks"].as_array().expect("tasks array");
+        assert!(tasks.iter().any(|task| {
+            task["id"] == "msexplore"
+                && task["show_in_tui"] == true
+                && task["show_in_swift"] == true
+                && task["include_in_suite"] == true
+        }));
+        assert!(tasks.iter().any(|task| {
+            task["id"] == "tablebrowser"
+                && task["show_in_tui"] == true
+                && task["show_in_swift"] == true
+                && task["include_in_suite"] == false
+        }));
+        assert!(tasks.iter().any(|task| {
+            task["id"] == "casars"
+                && task["show_in_tui"] == false
+                && task["include_in_suite"] == true
+        }));
     }
 
     #[test]

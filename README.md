@@ -253,10 +253,31 @@ scripts/package-suite-bundle.sh \
 ```
 
 Or use the convenience wrapper to build, bundle, and install the current
-checkout in one step:
+checkout in one step. On macOS this installs both the CLI/TUI/Python suite and
+the native Swift GUI app:
 
 ```bash
 just install-local
+```
+
+For an ad-hoc reinstall of the same checkout version, use:
+
+```bash
+just install-local -- --force
+```
+
+Split install targets are also available:
+
+```bash
+just install-local-suite -- --force
+just install-local-gui -- --force
+```
+
+To install an already-published release suite without rebuilding or rerunning
+release verification gates, use:
+
+```bash
+just install-release 0.17.0
 ```
 
 ## Terminal Launcher

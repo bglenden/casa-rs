@@ -48,5 +48,14 @@ docs-check:
 graph:
     bash scripts/generate-graphs.sh
 
-install-local:
-    bash scripts/install-local-suite.sh
+install-local *args:
+    bash scripts/install-local.sh {{args}}
+
+install-local-suite *args:
+    bash scripts/install-local-suite.sh {{args}}
+
+install-local-gui *args:
+    bash apps/casars-mac/script/install-local-gui.sh {{args}}
+
+install-release version *args:
+    bash scripts/install-release.sh {{version}} {{args}}

@@ -52,6 +52,16 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.activeTab, "")
     }
 
+    func testTaskCatalogLoadsFromFrontendServicesIntoDebugState() throws {
+        let store = WorkbenchStore()
+
+        let tasks = store.debugSnapshot().taskCatalog
+
+        XCTAssertTrue(tasks.contains { $0.id == "msexplore" && $0.includeInSuite })
+        XCTAssertTrue(tasks.contains { $0.id == "tablebrowser" && !$0.includeInSuite })
+        XCTAssertTrue(tasks.contains { $0.id == "imager" && $0.binaryName == "casars-imager" })
+    }
+
     func testMeasurementSetPlotMaxPointParserAcceptsSuffixes() {
         XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("250000"), 250_000)
         XCTAssertEqual(WorkbenchState.parseMeasurementSetPlotMaxPoints("250k"), 250_000)

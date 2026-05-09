@@ -32,7 +32,7 @@ TEMP_REAL_PROJECT_SOURCE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    run|--debug|debug|--logs|logs|--verify|verify)
+    run|--debug|debug|--logs|logs|--verify|verify|--stage-only|stage)
       MODE="$1"
       shift
       ;;
@@ -122,6 +122,9 @@ schedule_temp_real_project_cleanup() {
 }
 
 cd "$REPO_ROOT"
+if [[ "$MODE" == "--stage-only" || "$MODE" == "stage" ]]; then
+  USE_TEMP_REAL_PROJECT="0"
+fi
 stage_temp_real_project
 "$REPO_ROOT/scripts/generate-frontend-bindings.sh" "$REPO_ROOT/target/frontend-bindings"
 cargo build --release -p casars-frontend-services -p casars-imager
@@ -232,8 +235,11 @@ case "$MODE" in
       schedule_temp_real_project_cleanup "$app_pid"
     fi
     ;;
+  --stage-only|stage)
+    echo "==> Staged $APP_BUNDLE"
+    ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--verify] [--project PATH|--empty]" >&2
+    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--empty]" >&2
     exit 2
     ;;
 esac

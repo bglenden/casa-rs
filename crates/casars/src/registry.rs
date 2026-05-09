@@ -4,6 +4,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::SystemTime;
 
 use casa_calibration::CalibrationTaskSchemaBundle;
@@ -13,12 +14,18 @@ use casa_ms::ui_schema::UiCommandSchema;
 use casa_vla::ImportVlaTaskSchemaBundle;
 use casars_imagebrowser_protocol::ImageBrowserSessionSchemaBundle;
 use casars_imager::ImagerTaskSchemaBundle;
+use serde::Deserialize;
+
+const TASK_CATALOG_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../resources/task-catalog.json"
+));
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegistryApp {
-    pub id: &'static str,
-    pub category: &'static str,
-    pub display_name: &'static str,
+    pub id: String,
+    pub category: String,
+    pub display_name: String,
     shell_kind: AppShellKind,
     kind: RegistryAppKind,
 }
@@ -26,9 +33,9 @@ pub(crate) struct RegistryApp {
 #[derive(Debug, Clone)]
 enum RegistryAppKind {
     Subprocess {
-        binary_name: &'static str,
-        cargo_package: &'static str,
-        override_env: &'static str,
+        binary_name: String,
+        cargo_package: String,
+        override_env: String,
         interaction: AppInteraction,
     },
 }
@@ -50,6 +57,70 @@ pub(crate) enum AppShellKind {
 pub(crate) enum BrowserAppKind {
     Table,
     Image,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskCatalog {
+    tasks: Vec<TaskCatalogEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TaskCatalogEntry {
+    id: String,
+    category: String,
+    display_name: String,
+    binary_name: String,
+    cargo_package: String,
+    override_env: String,
+    shell_kind: String,
+    interaction: String,
+    browser_kind: Option<String>,
+    show_in_tui: bool,
+}
+
+fn task_catalog_entries() -> &'static [TaskCatalogEntry] {
+    static CATALOG: OnceLock<Vec<TaskCatalogEntry>> = OnceLock::new();
+    CATALOG.get_or_init(|| {
+        serde_json::from_str::<TaskCatalog>(TASK_CATALOG_JSON)
+            .expect("resources/task-catalog.json should parse")
+            .tasks
+    })
+}
+
+fn registry_app_from_catalog(entry: &TaskCatalogEntry) -> Option<RegistryApp> {
+    if !entry.show_in_tui {
+        return None;
+    }
+    let shell_kind = match entry.shell_kind.as_str() {
+        "inspect" => AppShellKind::Inspect,
+        "browser" => AppShellKind::Browser,
+        "workflow" => AppShellKind::Workflow,
+        _ => return None,
+    };
+    let interaction = match entry.interaction.as_str() {
+        "one_shot" => AppInteraction::OneShot,
+        "browser_session" => {
+            let browser_kind = match entry.browser_kind.as_deref() {
+                Some("table") => BrowserAppKind::Table,
+                Some("image") => BrowserAppKind::Image,
+                _ => return None,
+            };
+            AppInteraction::BrowserSession(browser_kind)
+        }
+        _ => return None,
+    };
+    Some(RegistryApp {
+        id: entry.id.clone(),
+        category: entry.category.clone(),
+        display_name: entry.display_name.clone(),
+        shell_kind,
+        kind: RegistryAppKind::Subprocess {
+            binary_name: entry.binary_name.clone(),
+            cargo_package: entry.cargo_package.clone(),
+            override_env: entry.override_env.clone(),
+            interaction,
+        },
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -183,7 +254,7 @@ impl RegistryApp {
     }
 
     fn prefers_cargo_workspace_fallback_for_stale_sibling(&self) -> bool {
-        matches!(self.id, "msexplore" | "calibrate" | "importvla")
+        matches!(self.id.as_str(), "msexplore" | "calibrate" | "importvla")
     }
 
     pub(crate) fn is_browser_session(&self) -> bool {
@@ -261,169 +332,70 @@ fn load_canonical_ui_schema(
 }
 
 pub(crate) fn resolve_app(id: Option<&str>) -> Result<RegistryApp, String> {
-    match id.unwrap_or("msexplore") {
-        "msexplore" => Ok(msexplore_app()),
-        "calibrate" => Ok(calibrate_app()),
-        "importvla" => Ok(importvla_app()),
-        "imager" => Ok(imager_app()),
-        "simobserve" => Ok(simobserve_app()),
-        "tablebrowser" => Ok(tablebrowser_app()),
-        "imexplore" => Ok(imexplore_app()),
-        "immoments" => Ok(immoments_app()),
-        "exportfits" => Ok(exportfits_app()),
-        other => Err(format!(
-            "unknown casars app {other:?}; expected one of: msexplore, calibrate, importvla, imager, simobserve, tablebrowser, imexplore, immoments, exportfits"
-        )),
-    }
+    let requested = id.unwrap_or("msexplore");
+    registered_apps()
+        .into_iter()
+        .find(|app| app.id == requested)
+        .ok_or_else(|| {
+            let expected = registered_apps()
+                .into_iter()
+                .map(|app| app.id)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("unknown casars app {requested:?}; expected one of: {expected}")
+        })
 }
 
 pub(crate) fn registered_apps() -> Vec<RegistryApp> {
-    vec![
-        msexplore_app(),
-        calibrate_app(),
-        importvla_app(),
-        imager_app(),
-        simobserve_app(),
-        tablebrowser_app(),
-        imexplore_app(),
-        immoments_app(),
-        exportfits_app(),
-    ]
+    task_catalog_entries()
+        .iter()
+        .filter_map(registry_app_from_catalog)
+        .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn calibrate_app() -> RegistryApp {
-    RegistryApp {
-        id: "calibrate",
-        category: "Calibration",
-        display_name: "Calibrate",
-        shell_kind: AppShellKind::Workflow,
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "calibrate",
-            cargo_package: "casa-calibration",
-            override_env: "CASARS_CALIBRATE_BIN",
-            interaction: AppInteraction::OneShot,
-        },
-    }
+    resolve_app(Some("calibrate")).expect("calibrate should be in task catalog")
 }
 
+#[cfg(test)]
 pub(crate) fn importvla_app() -> RegistryApp {
-    RegistryApp {
-        id: "importvla",
-        category: "Import",
-        display_name: "ImportVLA",
-        shell_kind: AppShellKind::Workflow,
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "casars-importvla",
-            cargo_package: "casars-importvla",
-            override_env: "CASARS_IMPORTVLA_BIN",
-            interaction: AppInteraction::OneShot,
-        },
-    }
+    resolve_app(Some("importvla")).expect("importvla should be in task catalog")
 }
 
+#[cfg(test)]
 pub(crate) fn imager_app() -> RegistryApp {
-    RegistryApp {
-        id: "imager",
-        category: "Imaging",
-        display_name: "Imager",
-        shell_kind: AppShellKind::Workflow,
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "casars-imager",
-            cargo_package: "casars-imager",
-            override_env: "CASARS_IMAGER_BIN",
-            interaction: AppInteraction::OneShot,
-        },
-    }
+    resolve_app(Some("imager")).expect("imager should be in task catalog")
 }
 
+#[cfg(test)]
 pub(crate) fn simobserve_app() -> RegistryApp {
-    RegistryApp {
-        id: "simobserve",
-        category: "Simulation",
-        display_name: "SimObserve",
-        shell_kind: AppShellKind::Workflow,
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "simobserve",
-            cargo_package: "casa-ms",
-            override_env: "CASARS_SIMOBSERVE_BIN",
-            interaction: AppInteraction::OneShot,
-        },
-    }
+    resolve_app(Some("simobserve")).expect("simobserve should be in task catalog")
 }
 
+#[cfg(test)]
 pub(crate) fn tablebrowser_app() -> RegistryApp {
-    RegistryApp {
-        id: "tablebrowser",
-        category: "Tables",
-        display_name: "Table Browser",
-        shell_kind: AppShellKind::Browser,
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "tablebrowser",
-            cargo_package: "casa-tables",
-            override_env: "CASARS_TABLEBROWSER_BIN",
-            interaction: AppInteraction::BrowserSession(BrowserAppKind::Table),
-        },
-    }
+    resolve_app(Some("tablebrowser")).expect("tablebrowser should be in task catalog")
 }
 
+#[cfg(test)]
 pub(crate) fn imexplore_app() -> RegistryApp {
-    RegistryApp {
-        id: "imexplore",
-        category: "Images",
-        display_name: "ImExplore",
-        shell_kind: AppShellKind::Browser,
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "imexplore",
-            cargo_package: "casa-images",
-            override_env: "CASARS_IMEXPLORE_BIN",
-            interaction: AppInteraction::BrowserSession(BrowserAppKind::Image),
-        },
-    }
+    resolve_app(Some("imexplore")).expect("imexplore should be in task catalog")
 }
 
+#[cfg(test)]
 pub(crate) fn immoments_app() -> RegistryApp {
-    RegistryApp {
-        id: "immoments",
-        category: "Images",
-        display_name: "Image Moments",
-        shell_kind: AppShellKind::Workflow,
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "immoments",
-            cargo_package: "casa-images",
-            override_env: "CASARS_IMMOMENTS_BIN",
-            interaction: AppInteraction::OneShot,
-        },
-    }
+    resolve_app(Some("immoments")).expect("immoments should be in task catalog")
 }
 
+#[cfg(test)]
 pub(crate) fn exportfits_app() -> RegistryApp {
-    RegistryApp {
-        id: "exportfits",
-        category: "Images",
-        display_name: "Export FITS",
-        shell_kind: AppShellKind::Workflow,
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "exportfits",
-            cargo_package: "casa-images",
-            override_env: "CASARS_EXPORTFITS_BIN",
-            interaction: AppInteraction::OneShot,
-        },
-    }
+    resolve_app(Some("exportfits")).expect("exportfits should be in task catalog")
 }
 
+#[cfg(test)]
 pub(crate) fn msexplore_app() -> RegistryApp {
-    RegistryApp {
-        id: "msexplore",
-        category: "MeasurementSet",
-        display_name: "MSExplore",
-        shell_kind: AppShellKind::Inspect,
-        kind: RegistryAppKind::Subprocess {
-            binary_name: "msexplore",
-            cargo_package: "casa-ms",
-            override_env: "CASARS_MSEXPLORE_BIN",
-            interaction: AppInteraction::OneShot,
-        },
-    }
+    resolve_app(Some("msexplore")).expect("msexplore should be in task catalog")
 }
 
 fn sibling_binary(binary_name: &str) -> Option<PathBuf> {
@@ -496,6 +468,34 @@ mod tests {
                 .unwrap_err()
                 .contains("unknown casars app")
         );
+    }
+
+    #[test]
+    fn registered_apps_are_projected_from_shared_task_catalog() {
+        let apps = registered_apps();
+        let ids = apps.iter().map(|app| app.id.as_str()).collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                "msexplore",
+                "calibrate",
+                "importvla",
+                "imager",
+                "simobserve",
+                "tablebrowser",
+                "imexplore",
+                "immoments",
+                "exportfits",
+            ]
+        );
+        assert!(
+            task_catalog_entries()
+                .iter()
+                .any(|entry| entry.id == "mstransform"
+                    && !entry.show_in_tui
+                    && entry.binary_name == "mstransform")
+        );
+        assert_eq!(exportfits_app().id, "exportfits");
     }
 
     #[test]

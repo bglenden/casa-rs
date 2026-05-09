@@ -2154,7 +2154,7 @@ impl AppState {
         schema: UiCommandSchema,
         config_store: ConfigStore,
     ) -> Self {
-        let default_summary_view = default_summary_view_for_app(app.id);
+        let default_summary_view = default_summary_view_for_app(&app.id);
         let ready_status_line = if app.shell_kind() == AppShellKind::Workflow
             && app.id == "calibrate"
         {
@@ -2168,7 +2168,7 @@ impl AppState {
             .iter()
             .filter_map(FormField::from_schema)
             .collect::<Vec<_>>();
-        seed_app_field_defaults(app.id, &mut fields);
+        seed_app_field_defaults(&app.id, &mut fields);
         let sections = build_sections(&app, &fields);
         let selected_form = initial_form_selection(&sections, &fields, false);
 
@@ -3650,11 +3650,11 @@ impl AppState {
     }
 
     pub(crate) fn app_category(&self) -> &str {
-        self.app.category
+        &self.app.category
     }
 
     pub(crate) fn app_name(&self) -> &str {
-        self.app.display_name
+        &self.app.display_name
     }
 
     pub(crate) fn footer_text(&self) -> String {
@@ -9890,7 +9890,7 @@ impl AppState {
                 .as_ref()
                 .map(|snapshot| &snapshot.summary);
         }
-        if matches!(self.app.id, "calibrate" | "imager")
+        if matches!(self.app.id.as_str(), "calibrate" | "imager")
             && self.result.structured.is_none()
             && let Some(snapshot) = self.plot_workspace.snapshot.as_ref()
         {
@@ -11982,7 +11982,7 @@ impl AppState {
     }
 
     fn copy_current_plot_cli(&mut self) {
-        if matches!(self.app.id, "calibrate" | "imager") {
+        if matches!(self.app.id.as_str(), "calibrate" | "imager") {
             self.result.status_line =
                 "Copy CLI is not available for this diagnostic workspace.".to_string();
             self.result.status_kind = StatusKind::Warning;
@@ -12082,14 +12082,14 @@ impl AppState {
     }
 
     fn current_plot_export_width(&self) -> u32 {
-        if matches!(self.app.id, "calibrate" | "imager") {
+        if matches!(self.app.id.as_str(), "calibrate" | "imager") {
             return 1600;
         }
         self.current_msexplore_export_width()
     }
 
     fn current_plot_export_height(&self) -> u32 {
-        if matches!(self.app.id, "calibrate" | "imager") {
+        if matches!(self.app.id.as_str(), "calibrate" | "imager") {
             return 900;
         }
         self.current_msexplore_export_height()
@@ -14276,8 +14276,8 @@ impl FormField {
 
 fn build_sections(app: &RegistryApp, fields: &[FormField]) -> Vec<FormSection> {
     match app.shell_kind() {
-        AppShellKind::Inspect => build_inspect_sections(app.id, fields),
-        AppShellKind::Workflow => build_workflow_sections(app.id, fields),
+        AppShellKind::Inspect => build_inspect_sections(&app.id, fields),
+        AppShellKind::Workflow => build_workflow_sections(&app.id, fields),
         AppShellKind::Browser => build_browser_sections(app.browser_kind(), fields),
     }
 }

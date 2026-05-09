@@ -42,6 +42,21 @@ public struct UniFFIProjectProbeClient: ProjectProbeClient {
     }
 }
 
+public protocol TaskCatalogClient {
+    func loadTaskCatalog() throws -> [TaskCatalogEntry]
+}
+
+public struct UniFFITaskCatalogClient: TaskCatalogClient {
+    public init() {}
+
+    public func loadTaskCatalog() throws -> [TaskCatalogEntry] {
+        let json = try CasarsFrontendServices.taskCatalogJson()
+        let data = Data(json.utf8)
+        let envelope = try JSONDecoder().decode(TaskCatalogEnvelope.self, from: data)
+        return envelope.tasks.filter(\.showInSwift)
+    }
+}
+
 public protocol DemoProjectClient {
     func createDemoProject() throws -> ProjectFixtureProbe
     func cleanupDemoProject(rootPath: String)
@@ -418,9 +433,18 @@ public final class WorkbenchStore: ObservableObject {
         plotClient: MeasurementSetPlotClient = UniFFIMeasurementSetPlotClient(),
         imageExplorerClient: ImageExplorerClient = UniFFIImageExplorerClient(),
         tableBrowserClient: TableBrowserClient = UniFFITableBrowserClient(),
-        dirtyImagingClient: DirtyImagingTaskClient = ProcessDirtyImagingTaskClient()
+        dirtyImagingClient: DirtyImagingTaskClient = ProcessDirtyImagingTaskClient(),
+        taskCatalogClient: TaskCatalogClient = UniFFITaskCatalogClient()
     ) {
-        self.state = state
+        var initialState = state
+        if initialState.taskCatalog.isEmpty {
+            do {
+                initialState.taskCatalog = try taskCatalogClient.loadTaskCatalog()
+            } catch {
+                initialState.lastErrors.append("Load task catalog: \(error)")
+            }
+        }
+        self.state = initialState
         self.probeClient = probeClient
         self.demoProjectClient = demoProjectClient
         self.plotClient = plotClient
@@ -443,6 +467,7 @@ public final class WorkbenchStore: ObservableObject {
 
     public func openFixtureProject() {
         let interfaceFontSize = state.interfaceFontSize
+        let taskCatalog = state.taskCatalog
         cleanupTemporaryDemoProject()
         do {
             let probed = try demoProjectClient.createDemoProject()
@@ -450,6 +475,7 @@ public final class WorkbenchStore: ObservableObject {
             var project = probed.project
             project.datasets = orderedDemoDatasets(project.datasets)
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+            state.taskCatalog = taskCatalog
             state.project = project
             state.probeDiagnostics = probed.diagnostics
             state.selectedDatasetID = project.datasets.first?.id
@@ -471,16 +497,19 @@ public final class WorkbenchStore: ObservableObject {
             )
         } catch {
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+            state.taskCatalog = taskCatalog
             state.lastErrors.append("Open tutorial demo project: \(error)")
         }
     }
 
     public func openProject(path: String) {
         let interfaceFontSize = state.interfaceFontSize
+        let taskCatalog = state.taskCatalog
         cleanupTemporaryDemoProject()
         do {
             let probed = try probeClient.probeProject(path: path)
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+            state.taskCatalog = taskCatalog
             state.project = probed.project
             state.probeDiagnostics = probed.diagnostics
             state.selectedDatasetID = probed.project.datasets.first?.id

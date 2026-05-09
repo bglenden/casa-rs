@@ -152,3 +152,25 @@ To build, bundle, and install the current checkout in one step, run:
 ```bash
 just install-local
 ```
+
+On macOS, `just install-local` also builds and installs the Swift GUI app under
+the same suite root. Use `--force` for an ad-hoc reinstall of the same checkout
+version:
+
+```bash
+just install-local -- --force
+```
+
+Use the split commands when only one install surface is needed:
+
+```bash
+just install-local-suite -- --force
+just install-local-gui -- --force
+```
+
+To install a published release suite without rebuilding the checkout or
+rerunning release verification gates, run:
+
+```bash
+just install-release 0.17.0
+```
