@@ -52,9 +52,23 @@
     {
       "id": "visibility-inspection-plotms",
       "source": "docs/tutorial-parity/current-tutorial-inventory.md",
-      "task_id": "msexplore",
-      "task_represents": "plotms and listobs",
+      "task_id": "plotms",
+      "task_represents": "plotms",
       "parameters": ["ms_path", "output", "overwrite", "selectdata", "field", "spw", "timerange", "uvrange", "antenna", "scan", "correlation", "data_column", "preset", "x_axis", "y_axis", "avgchannel", "avgtime", "plot_output", "plot_width", "plot_height", "flag_selected", "flag_apply"]
+    },
+    {
+      "id": "image-header-inspection",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "imhead",
+      "task_represents": "imhead",
+      "parameters": ["image_path", "json", "mode", "hdkey", "hdvalue"]
+    },
+    {
+      "id": "image-statistics-inspection",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "imstat",
+      "task_represents": "imstat",
+      "parameters": ["image_path", "box", "chans", "json"]
     },
     {
       "id": "split-and-subset-ms",

@@ -245,6 +245,37 @@ final class WorkbenchStoreTests: XCTestCase {
         )
     }
 
+    func testGenericTaskArgumentsInvokeHiddenDefaultPositionals() throws {
+        let schema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "imhead")
+        let request = GenericTaskRequest(
+            runID: "run-1",
+            task: TaskCatalogEntry(
+                id: "imhead",
+                category: "Images",
+                displayName: "Image Header",
+                binaryName: "imexplore",
+                cargoPackage: "casa-images",
+                overrideEnv: "CASARS_IMEXPLORE_BIN",
+                shellKind: "workflow",
+                interaction: "one_shot",
+                browserKind: nil,
+                datasetKinds: ["image"],
+                schemaSource: "embedded_or_binary",
+                showInTUI: true,
+                showInSwift: true,
+                includeInSuite: true
+            ),
+            schema: schema,
+            values: ["image_path": "/data/image.im", "mode": "list"],
+            toggles: ["json": true]
+        )
+
+        XCTAssertEqual(
+            try ProcessGenericTaskClient.arguments(for: request),
+            ["imhead", "/data/image.im", "--json", "--mode", "list"]
+        )
+    }
+
     func testGenericTaskRequestSummaryDisplaysProjectRelativePaths() throws {
         let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
         {

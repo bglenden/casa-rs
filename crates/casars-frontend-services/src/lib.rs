@@ -875,8 +875,18 @@ fn apply_task_alias_schema(task: &FrontendTaskCatalogEntry, schema: &mut serde_j
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            if id == "mode" {
-                argument_object.insert("default".to_string(), alias.mode.into());
+            if argument_object
+                .get("hidden_in_tui")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+                && argument_object.get("default").is_some()
+            {
+                return true;
+            }
+            if id == "mode"
+                && let Some(mode) = alias.mode
+            {
+                argument_object.insert("default".to_string(), mode.into());
                 argument_object.insert("hidden_in_tui".to_string(), true.into());
                 argument_object.insert("required".to_string(), false.into());
                 argument_object.insert("advanced".to_string(), true.into());
@@ -887,6 +897,9 @@ fn apply_task_alias_schema(task: &FrontendTaskCatalogEntry, schema: &mut serde_j
                 return true;
             }
             if visible.contains(id.as_str()) {
+                if alias.subcommand.is_some() && id == "image_path" {
+                    argument_object.insert("order".to_string(), 1.into());
+                }
                 argument_object.insert(
                     "required".to_string(),
                     required.contains(id.as_str()).into(),
@@ -899,7 +912,8 @@ fn apply_task_alias_schema(task: &FrontendTaskCatalogEntry, schema: &mut serde_j
 }
 
 struct TaskAlias {
-    mode: &'static str,
+    mode: Option<&'static str>,
+    subcommand: Option<&'static str>,
     summary: &'static str,
     usage: &'static str,
     visible_arguments: &'static [&'static str],
@@ -912,21 +926,37 @@ struct ExtraAliasArgument {
     id: &'static str,
     label: &'static str,
     order: u64,
-    flags: &'static [&'static str],
-    metavar: &'static str,
-    choices: &'static [&'static str],
+    parser: ExtraAliasParser,
     value_kind: &'static str,
     required: bool,
     default: Option<&'static str>,
     help: &'static str,
     group: &'static str,
     advanced: bool,
+    hidden: bool,
+}
+
+#[derive(Clone, Copy)]
+enum ExtraAliasParser {
+    Option {
+        flags: &'static [&'static str],
+        metavar: &'static str,
+        choices: &'static [&'static str],
+    },
+    Positional {
+        metavar: &'static str,
+    },
+    Toggle {
+        true_flags: &'static [&'static str],
+        false_flags: &'static [&'static str],
+    },
 }
 
 fn task_alias(task_id: &str) -> Option<TaskAlias> {
     match task_id {
         "uvcontsub" => Some(TaskAlias {
-            mode: "continuum_subtract",
+            mode: Some("continuum_subtract"),
+            subcommand: None,
             summary: "Subtract continuum emission from a MeasurementSet.",
             usage: "calibrate --mode continuum_subtract --ms <input.ms> --output-ms <output.ms> --fitspw <spw:channels>",
             visible_arguments: &[
@@ -952,7 +982,8 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
             extra_arguments: &[],
         }),
         "applycal" => Some(TaskAlias {
-            mode: "apply",
+            mode: Some("apply"),
+            subcommand: None,
             summary: "Apply one or more calibration tables to a MeasurementSet.",
             usage: "calibrate --mode apply --ms <input.ms> --gaintables <caltable[,caltable...]>",
             visible_arguments: &[
@@ -982,7 +1013,8 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
             extra_arguments: &[],
         }),
         "gaincal" => Some(TaskAlias {
-            mode: "solve_gain",
+            mode: Some("solve_gain"),
+            subcommand: None,
             summary: "Solve antenna gain calibration for a MeasurementSet.",
             usage: "calibrate --mode solve_gain --ms <input.ms> --out <gain.cal> --refant <antenna>",
             visible_arguments: &[
@@ -1019,7 +1051,8 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
             extra_arguments: &[],
         }),
         "bandpass" => Some(TaskAlias {
-            mode: "solve_bandpass",
+            mode: Some("solve_bandpass"),
+            subcommand: None,
             summary: "Solve bandpass calibration for a MeasurementSet.",
             usage: "calibrate --mode solve_bandpass --ms <input.ms> --out <bandpass.cal> --refant <antenna>",
             visible_arguments: &[
@@ -1053,7 +1086,8 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
             extra_arguments: &[],
         }),
         "fluxscale" => Some(TaskAlias {
-            mode: "fluxscale",
+            mode: Some("fluxscale"),
+            subcommand: None,
             summary: "Scale gain solutions using reference calibrator fields.",
             usage: "calibrate --mode fluxscale --in <gain.cal> --out <flux.cal> --reference <field[,field...]>",
             visible_arguments: &[
@@ -1072,7 +1106,8 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
             extra_arguments: &[],
         }),
         "gencal" => Some(TaskAlias {
-            mode: "gencal",
+            mode: Some("gencal"),
+            subcommand: None,
             summary: "Generate a calibration table such as antpos, gceff, or opac.",
             usage: "calibrate --mode gencal --ms <input.ms> --out <caltable> --caltype antpos|gceff|opac",
             visible_arguments: &[
@@ -1093,48 +1128,58 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
                     id: "caltype",
                     label: "Calibration Type",
                     order: 16,
-                    flags: &["--caltype"],
-                    metavar: "TYPE",
-                    choices: &["antpos", "gceff", "opac"],
+                    parser: ExtraAliasParser::Option {
+                        flags: &["--caltype"],
+                        metavar: "TYPE",
+                        choices: &["antpos", "gceff", "opac"],
+                    },
                     value_kind: "choice",
                     required: true,
                     default: None,
                     help: "Generated calibration family.",
                     group: "Gencal",
                     advanced: false,
+                    hidden: false,
                 },
                 ExtraAliasArgument {
                     id: "parameter",
                     label: "Parameter",
                     order: 19,
-                    flags: &["--parameter"],
-                    metavar: "VALUE[,VALUE...]",
-                    choices: &[],
+                    parser: ExtraAliasParser::Option {
+                        flags: &["--parameter"],
+                        metavar: "VALUE[,VALUE...]",
+                        choices: &[],
+                    },
                     value_kind: "string",
                     required: false,
                     default: None,
                     help: "Numeric parameter list for the selected generated calibration type.",
                     group: "Gencal",
                     advanced: false,
+                    hidden: false,
                 },
                 ExtraAliasArgument {
                     id: "gaincurve_table",
                     label: "Gaincurve Table",
                     order: 20,
-                    flags: &["--gaincurve-table"],
-                    metavar: "PATH",
-                    choices: &[],
+                    parser: ExtraAliasParser::Option {
+                        flags: &["--gaincurve-table"],
+                        metavar: "PATH",
+                        choices: &[],
+                    },
                     value_kind: "path",
                     required: false,
                     default: None,
                     help: "Optional gaincurve input table for gceff.",
                     group: "Gencal",
                     advanced: true,
+                    hidden: false,
                 },
             ],
         }),
         "split" => Some(TaskAlias {
-            mode: "",
+            mode: None,
+            subcommand: None,
             summary: "Create a selected MeasurementSet subset, equivalent to CASA split.",
             usage: "mstransform --ms <input.ms> --out <output.ms> --spw <spw[:channels]>",
             visible_arguments: &[
@@ -1152,28 +1197,288 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
             required_arguments: &["ms", "out", "spw"],
             extra_arguments: &[],
         }),
+        "plotms" => Some(TaskAlias {
+            mode: None,
+            subcommand: None,
+            summary: "Plot MeasurementSet visibility data with CASA plotms-style selections and axes.",
+            usage: "msexplore <input.ms> --preset amp-vs-uvdist --plot-output <plot.png>",
+            visible_arguments: &[
+                "ms_path",
+                "format",
+                "output",
+                "overwrite",
+                "selectdata",
+                "field",
+                "spw",
+                "timerange",
+                "uvrange",
+                "antenna",
+                "scan",
+                "correlation",
+                "observation",
+                "array",
+                "intent",
+                "feed",
+                "msselect",
+                "page_spec",
+                "preset",
+                "x_axis",
+                "y_axis",
+                "y_axis2",
+                "data_column",
+                "color_by",
+                "avgchannel",
+                "avgtime",
+                "avgscan",
+                "avgfield",
+                "avgbaseline",
+                "avgantenna",
+                "avgspw",
+                "scalar",
+                "freqframe",
+                "restfreq",
+                "veldef",
+                "iteraxis",
+                "gridrows",
+                "gridcols",
+                "xselfscale",
+                "yselfscale",
+                "xsharedaxis",
+                "ysharedaxis",
+                "title",
+                "xlabel",
+                "ylabel",
+                "symbol_size",
+                "showlegend",
+                "legendposition",
+                "showmajorgrid",
+                "showminorgrid",
+                "headeritems",
+                "max_points",
+                "plot_output",
+                "plot_format",
+                "plot_width",
+                "plot_height",
+                "flag_action",
+                "flag_xmin",
+                "flag_xmax",
+                "flag_ymin",
+                "flag_ymax",
+                "flag_plotindex",
+                "flag_panel",
+                "flag_extcorr",
+                "flag_extchannel",
+                "flag_selected",
+                "flag_apply",
+                "flag_output",
+            ],
+            required_arguments: &["ms_path"],
+            extra_arguments: &[],
+        }),
+        "imhead" => Some(TaskAlias {
+            mode: None,
+            subcommand: Some("imhead"),
+            summary: "Inspect or update CASA image header metadata.",
+            usage: "imexplore imhead <image> [--json] [--mode summary|list|put] [--hdkey key --hdvalue value]",
+            visible_arguments: &["image_path", "json", "mode", "hdkey", "hdvalue"],
+            required_arguments: &["image_path"],
+            extra_arguments: &[
+                ExtraAliasArgument {
+                    id: "subcommand",
+                    label: "Subcommand",
+                    order: 0,
+                    parser: ExtraAliasParser::Positional { metavar: "TASK" },
+                    value_kind: "string",
+                    required: false,
+                    default: Some("imhead"),
+                    help: "Hidden imexplore subcommand used to invoke imhead.",
+                    group: "Meta",
+                    advanced: true,
+                    hidden: true,
+                },
+                ExtraAliasArgument {
+                    id: "json",
+                    label: "JSON",
+                    order: 2,
+                    parser: ExtraAliasParser::Toggle {
+                        true_flags: &["--json"],
+                        false_flags: &[],
+                    },
+                    value_kind: "bool",
+                    required: false,
+                    default: Some("false"),
+                    help: "Emit machine-readable JSON.",
+                    group: "Output",
+                    advanced: false,
+                    hidden: false,
+                },
+                ExtraAliasArgument {
+                    id: "mode",
+                    label: "Mode",
+                    order: 3,
+                    parser: ExtraAliasParser::Option {
+                        flags: &["--mode"],
+                        metavar: "MODE",
+                        choices: &["summary", "list", "put"],
+                    },
+                    value_kind: "choice",
+                    required: false,
+                    default: Some("summary"),
+                    help: "Header operation mode.",
+                    group: "Header",
+                    advanced: false,
+                    hidden: false,
+                },
+                ExtraAliasArgument {
+                    id: "hdkey",
+                    label: "Header Key",
+                    order: 4,
+                    parser: ExtraAliasParser::Option {
+                        flags: &["--hdkey"],
+                        metavar: "KEY",
+                        choices: &[],
+                    },
+                    value_kind: "string",
+                    required: false,
+                    default: None,
+                    help: "Header keyword to update when mode is put.",
+                    group: "Header",
+                    advanced: false,
+                    hidden: false,
+                },
+                ExtraAliasArgument {
+                    id: "hdvalue",
+                    label: "Header Value",
+                    order: 5,
+                    parser: ExtraAliasParser::Option {
+                        flags: &["--hdvalue"],
+                        metavar: "VALUE",
+                        choices: &[],
+                    },
+                    value_kind: "string",
+                    required: false,
+                    default: None,
+                    help: "Header value to write when mode is put.",
+                    group: "Header",
+                    advanced: false,
+                    hidden: false,
+                },
+            ],
+        }),
+        "imstat" => Some(TaskAlias {
+            mode: None,
+            subcommand: Some("imstat"),
+            summary: "Compute CASA image statistics over optional pixel and channel selections.",
+            usage: "imexplore imstat <image> [--box x0,y0,x1,y1] [--chans 0~4] [--json]",
+            visible_arguments: &["image_path", "box", "chans", "json"],
+            required_arguments: &["image_path"],
+            extra_arguments: &[
+                ExtraAliasArgument {
+                    id: "subcommand",
+                    label: "Subcommand",
+                    order: 0,
+                    parser: ExtraAliasParser::Positional { metavar: "TASK" },
+                    value_kind: "string",
+                    required: false,
+                    default: Some("imstat"),
+                    help: "Hidden imexplore subcommand used to invoke imstat.",
+                    group: "Meta",
+                    advanced: true,
+                    hidden: true,
+                },
+                ExtraAliasArgument {
+                    id: "box",
+                    label: "Box",
+                    order: 2,
+                    parser: ExtraAliasParser::Option {
+                        flags: &["--box"],
+                        metavar: "x0,y0,x1,y1",
+                        choices: &[],
+                    },
+                    value_kind: "string",
+                    required: false,
+                    default: None,
+                    help: "Inclusive pixel box.",
+                    group: "Selection",
+                    advanced: false,
+                    hidden: false,
+                },
+                ExtraAliasArgument {
+                    id: "chans",
+                    label: "Channels",
+                    order: 3,
+                    parser: ExtraAliasParser::Option {
+                        flags: &["--chans"],
+                        metavar: "range",
+                        choices: &[],
+                    },
+                    value_kind: "string",
+                    required: false,
+                    default: None,
+                    help: "CASA channel range, for example 4~12.",
+                    group: "Selection",
+                    advanced: false,
+                    hidden: false,
+                },
+                ExtraAliasArgument {
+                    id: "json",
+                    label: "JSON",
+                    order: 4,
+                    parser: ExtraAliasParser::Toggle {
+                        true_flags: &["--json"],
+                        false_flags: &[],
+                    },
+                    value_kind: "bool",
+                    required: false,
+                    default: Some("false"),
+                    help: "Emit machine-readable JSON.",
+                    group: "Output",
+                    advanced: false,
+                    hidden: false,
+                },
+            ],
+        }),
         _ => None,
     }
 }
 
 fn extra_argument_schema(argument: ExtraAliasArgument) -> serde_json::Value {
+    let parser = match argument.parser {
+        ExtraAliasParser::Option {
+            flags,
+            metavar,
+            choices,
+        } => serde_json::json!({
+            "kind": "option",
+            "flags": flags,
+            "metavar": metavar,
+            "choices": choices,
+        }),
+        ExtraAliasParser::Positional { metavar } => serde_json::json!({
+            "kind": "positional",
+            "metavar": metavar,
+        }),
+        ExtraAliasParser::Toggle {
+            true_flags,
+            false_flags,
+        } => serde_json::json!({
+            "kind": "toggle",
+            "true_flags": true_flags,
+            "false_flags": false_flags,
+        }),
+    };
     serde_json::json!({
         "id": argument.id,
         "label": argument.label,
         "order": argument.order,
-        "parser": {
-            "kind": "option",
-            "flags": argument.flags,
-            "metavar": argument.metavar,
-            "choices": argument.choices,
-        },
+        "parser": parser,
         "value_kind": argument.value_kind,
         "required": argument.required,
         "default": argument.default,
         "help": argument.help,
         "group": argument.group,
         "advanced": argument.advanced,
-        "hidden_in_tui": false,
+        "hidden_in_tui": argument.hidden,
     })
 }
 
@@ -5101,6 +5406,57 @@ mod tests {
                     .as_array()
                     .expect("caltype choices")
                     .contains(&serde_json::json!("opac"))
+        }));
+
+        let plotms_schema_json = task_ui_schema_json("plotms".to_string()).expect("plotms schema");
+        let plotms_schema: serde_json::Value =
+            serde_json::from_str(&plotms_schema_json).expect("plotms schema json");
+        let plotms_arguments = plotms_schema["arguments"]
+            .as_array()
+            .expect("plotms arguments");
+        assert_eq!(plotms_schema["command_id"], "plotms");
+        assert!(plotms_arguments.iter().any(|argument| {
+            argument["id"] == "ms_path" && argument["parameter_type"] == "path"
+        }));
+        assert!(plotms_arguments.iter().any(|argument| {
+            argument["id"] == "plot_output" && argument["parameter_type"] == "path"
+        }));
+        assert!(
+            !plotms_arguments
+                .iter()
+                .any(|argument| argument["id"] == "stretch")
+        );
+
+        let imhead_schema_json = task_ui_schema_json("imhead".to_string()).expect("imhead schema");
+        let imhead_schema: serde_json::Value =
+            serde_json::from_str(&imhead_schema_json).expect("imhead schema json");
+        let imhead_arguments = imhead_schema["arguments"]
+            .as_array()
+            .expect("imhead arguments");
+        assert_eq!(imhead_schema["command_id"], "imhead");
+        assert!(imhead_arguments.iter().any(|argument| {
+            argument["id"] == "subcommand"
+                && argument["default"] == "imhead"
+                && argument["hidden_in_tui"] == true
+        }));
+        assert!(imhead_arguments.iter().any(|argument| {
+            argument["id"] == "mode"
+                && argument["hidden_in_tui"] == false
+                && argument["parser"]["choices"]
+                    .as_array()
+                    .expect("imhead mode choices")
+                    .contains(&serde_json::json!("put"))
+        }));
+
+        let imstat_schema_json = task_ui_schema_json("imstat".to_string()).expect("imstat schema");
+        let imstat_schema: serde_json::Value =
+            serde_json::from_str(&imstat_schema_json).expect("imstat schema json");
+        let imstat_arguments = imstat_schema["arguments"]
+            .as_array()
+            .expect("imstat arguments");
+        assert_eq!(imstat_schema["command_id"], "imstat");
+        assert!(imstat_arguments.iter().any(|argument| {
+            argument["id"] == "box" && argument["parameter_type"] == "pixel_box"
         }));
     }
 

@@ -17675,4 +17675,26 @@ mod tests {
             vec![OsString::from("--mode"), OsString::from("apply")]
         );
     }
+
+    #[test]
+    fn hidden_default_positionals_are_invoked_before_visible_fields() {
+        let schema = crate::registry::imhead_app()
+            .load_schema()
+            .expect("imhead schema");
+        let fields = schema
+            .arguments
+            .iter()
+            .filter_map(FormField::from_schema)
+            .collect::<Vec<_>>();
+        let mut arguments = Vec::new();
+
+        append_hidden_default_arguments(&schema, &mut arguments).expect("hidden defaults");
+
+        assert!(
+            fields
+                .iter()
+                .any(|field| field.schema.id.as_str() == "image_path")
+        );
+        assert_eq!(arguments, vec![OsString::from("imhead")]);
+    }
 }

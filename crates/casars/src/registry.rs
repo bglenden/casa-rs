@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -147,28 +148,42 @@ impl ResolvedCommand {
 
 impl RegistryApp {
     pub(crate) fn load_schema(&self) -> Result<UiCommandSchema, String> {
-        if !self.has_explicit_binary_override() && self.id == "msexplore" {
-            return MsExploreTaskSchemaBundle::current().ui_schema_projection();
-        }
-        if !self.has_explicit_binary_override() && self.id == "calibrate" {
-            return CalibrationTaskSchemaBundle::current().ui_schema_projection();
-        }
-        if !self.has_explicit_binary_override() && self.id == "importvla" {
-            return ImportVlaTaskSchemaBundle::current().ui_schema_projection();
-        }
-        if !self.has_explicit_binary_override() && self.id == "imager" {
-            return ImagerTaskSchemaBundle::current().ui_schema_projection();
-        }
-        if !self.has_explicit_binary_override() && self.id == "imexplore" {
-            let ui_schema = serde_json::from_str(&imexplore_ui_schema_json("imexplore")?)
-                .map_err(|error| format!("parse embedded imexplore schema: {error}"))?;
-            let projected =
-                ImageBrowserSessionSchemaBundle::current(ui_schema).ui_schema_projection()?;
-            return serde_json::from_value(projected)
-                .map_err(|error| format!("parse embedded imexplore schema projection: {error}"));
-        }
+        let schema = self.load_base_schema()?;
+        project_registry_alias_schema(self, schema)
+    }
+
+    fn load_base_schema(&self) -> Result<UiCommandSchema, String> {
         match &self.kind {
             RegistryAppKind::Subprocess { binary_name, .. } => {
+                if !self.has_explicit_binary_override() {
+                    match binary_name.as_str() {
+                        "msexplore" => {
+                            return MsExploreTaskSchemaBundle::current().ui_schema_projection();
+                        }
+                        "calibrate" => {
+                            return CalibrationTaskSchemaBundle::current().ui_schema_projection();
+                        }
+                        "casars-importvla" => {
+                            return ImportVlaTaskSchemaBundle::current().ui_schema_projection();
+                        }
+                        "casars-imager" => {
+                            return ImagerTaskSchemaBundle::current().ui_schema_projection();
+                        }
+                        "imexplore" => {
+                            let ui_schema =
+                                serde_json::from_str(&imexplore_ui_schema_json("imexplore")?)
+                                    .map_err(|error| {
+                                        format!("parse embedded imexplore schema: {error}")
+                                    })?;
+                            let projected = ImageBrowserSessionSchemaBundle::current(ui_schema)
+                                .ui_schema_projection()?;
+                            return serde_json::from_value(projected).map_err(|error| {
+                                format!("parse embedded imexplore schema projection: {error}")
+                            });
+                        }
+                        _ => {}
+                    }
+                }
                 let resolved = self.resolve_command()?;
                 if let Some(schema) = load_canonical_ui_schema(&resolved, binary_name)? {
                     return Ok(schema);
@@ -309,6 +324,663 @@ impl RegistryApp {
     }
 }
 
+fn project_registry_alias_schema(
+    app: &RegistryApp,
+    schema: UiCommandSchema,
+) -> Result<UiCommandSchema, String> {
+    let mut value = serde_json::to_value(schema)
+        .map_err(|error| format!("serialize {} schema for alias projection: {error}", app.id))?;
+    apply_registry_alias_schema(app, &mut value);
+    serde_json::from_value(value)
+        .map_err(|error| format!("parse {} alias schema projection: {error}", app.id))
+}
+
+fn apply_registry_alias_schema(app: &RegistryApp, schema: &mut serde_json::Value) {
+    let Some(alias) = registry_task_alias(app.id.as_str()) else {
+        return;
+    };
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    object.insert("command_id".to_string(), app.id.clone().into());
+    object.insert("display_name".to_string(), app.display_name.clone().into());
+    object.insert("category".to_string(), app.category.clone().into());
+    object.insert("summary".to_string(), alias.summary.into());
+    object.insert("usage".to_string(), alias.usage.into());
+
+    let visible = alias
+        .visible_arguments
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let required = alias
+        .required_arguments
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if let Some(arguments) = object
+        .get_mut("arguments")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for extra in alias.extra_arguments {
+            arguments.push(registry_extra_argument_schema(*extra));
+        }
+        arguments.retain_mut(|argument| {
+            let Some(argument_object) = argument.as_object_mut() else {
+                return false;
+            };
+            let id = argument_object
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if argument_object
+                .get("hidden_in_tui")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+                && argument_object.get("default").is_some()
+            {
+                return true;
+            }
+            if id == "mode"
+                && let Some(mode) = alias.mode
+            {
+                argument_object.insert("default".to_string(), mode.into());
+                argument_object.insert("hidden_in_tui".to_string(), true.into());
+                argument_object.insert("required".to_string(), false.into());
+                argument_object.insert("advanced".to_string(), true.into());
+                argument_object.insert("order".to_string(), 0.into());
+                return true;
+            }
+            if id == "help" || id == "ui_schema" {
+                return true;
+            }
+            if visible.contains(id.as_str()) {
+                if alias.subcommand.is_some() && id == "image_path" {
+                    argument_object.insert("order".to_string(), 1.into());
+                }
+                argument_object.insert(
+                    "required".to_string(),
+                    required.contains(id.as_str()).into(),
+                );
+                return true;
+            }
+            false
+        });
+    }
+}
+
+struct RegistryTaskAlias {
+    mode: Option<&'static str>,
+    subcommand: Option<&'static str>,
+    summary: &'static str,
+    usage: &'static str,
+    visible_arguments: &'static [&'static str],
+    required_arguments: &'static [&'static str],
+    extra_arguments: &'static [RegistryExtraAliasArgument],
+}
+
+#[derive(Clone, Copy)]
+struct RegistryExtraAliasArgument {
+    id: &'static str,
+    label: &'static str,
+    order: u64,
+    parser: RegistryExtraAliasParser,
+    value_kind: &'static str,
+    required: bool,
+    default: Option<&'static str>,
+    help: &'static str,
+    group: &'static str,
+    advanced: bool,
+    hidden: bool,
+}
+
+#[derive(Clone, Copy)]
+enum RegistryExtraAliasParser {
+    Option {
+        flags: &'static [&'static str],
+        metavar: &'static str,
+        choices: &'static [&'static str],
+    },
+    Positional {
+        metavar: &'static str,
+    },
+    Toggle {
+        true_flags: &'static [&'static str],
+        false_flags: &'static [&'static str],
+    },
+}
+
+fn registry_task_alias(task_id: &str) -> Option<RegistryTaskAlias> {
+    match task_id {
+        "uvcontsub" => Some(RegistryTaskAlias {
+            mode: Some("continuum_subtract"),
+            subcommand: None,
+            summary: "Subtract continuum emission from a MeasurementSet.",
+            usage: "calibrate --mode continuum_subtract --ms <input.ms> --output-ms <output.ms> --fitspw <spw:channels>",
+            visible_arguments: &[
+                "measurement_set",
+                "output_measurement_set",
+                "fit_spw",
+                "fit_order",
+                "stats_datacolumn",
+                "format",
+                "output",
+                "overwrite",
+                "selectdata",
+                "field",
+                "spw",
+                "antenna",
+                "scan",
+                "observation",
+                "array",
+                "timerange",
+                "msselect",
+            ],
+            required_arguments: &["measurement_set", "output_measurement_set", "fit_spw"],
+            extra_arguments: &[],
+        }),
+        "applycal" => Some(RegistryTaskAlias {
+            mode: Some("apply"),
+            subcommand: None,
+            summary: "Apply one or more calibration tables to a MeasurementSet.",
+            usage: "calibrate --mode apply --ms <input.ms> --gaintables <caltable[,caltable...]>",
+            visible_arguments: &[
+                "measurement_set",
+                "gaintables",
+                "callib",
+                "gainfield",
+                "interp",
+                "spwmap",
+                "apply_mode",
+                "calwt",
+                "parang",
+                "format",
+                "output",
+                "overwrite",
+                "selectdata",
+                "field",
+                "spw",
+                "antenna",
+                "scan",
+                "observation",
+                "array",
+                "timerange",
+                "msselect",
+            ],
+            required_arguments: &["measurement_set"],
+            extra_arguments: &[],
+        }),
+        "gaincal" => Some(RegistryTaskAlias {
+            mode: Some("solve_gain"),
+            subcommand: None,
+            summary: "Solve antenna gain calibration for a MeasurementSet.",
+            usage: "calibrate --mode solve_gain --ms <input.ms> --out <gain.cal> --refant <antenna>",
+            visible_arguments: &[
+                "measurement_set",
+                "out_table",
+                "refant",
+                "gaintables",
+                "callib",
+                "gainfield",
+                "interp",
+                "spwmap",
+                "gain_type",
+                "solve_mode",
+                "solint",
+                "gain_combine",
+                "gain_model_source",
+                "smodel",
+                "min_snr",
+                "solnorm",
+                "format",
+                "output",
+                "overwrite",
+                "selectdata",
+                "field",
+                "spw",
+                "antenna",
+                "scan",
+                "observation",
+                "array",
+                "timerange",
+                "msselect",
+            ],
+            required_arguments: &["measurement_set", "out_table", "refant"],
+            extra_arguments: &[],
+        }),
+        "bandpass" => Some(RegistryTaskAlias {
+            mode: Some("solve_bandpass"),
+            subcommand: None,
+            summary: "Solve bandpass calibration for a MeasurementSet.",
+            usage: "calibrate --mode solve_bandpass --ms <input.ms> --out <bandpass.cal> --refant <antenna>",
+            visible_arguments: &[
+                "measurement_set",
+                "out_table",
+                "refant",
+                "gaintables",
+                "callib",
+                "gainfield",
+                "interp",
+                "spwmap",
+                "bandpass_combine",
+                "bandtype",
+                "smodel",
+                "min_snr",
+                "solnorm",
+                "format",
+                "output",
+                "overwrite",
+                "selectdata",
+                "field",
+                "spw",
+                "antenna",
+                "scan",
+                "observation",
+                "array",
+                "timerange",
+                "msselect",
+            ],
+            required_arguments: &["measurement_set", "out_table", "refant"],
+            extra_arguments: &[],
+        }),
+        "fluxscale" => Some(RegistryTaskAlias {
+            mode: Some("fluxscale"),
+            subcommand: None,
+            summary: "Scale gain solutions using reference calibrator fields.",
+            usage: "calibrate --mode fluxscale --in <gain.cal> --out <flux.cal> --reference <field[,field...]>",
+            visible_arguments: &[
+                "fluxscale_input",
+                "out_table",
+                "reference_fields",
+                "transfer_fields",
+                "refspwmap",
+                "gainthreshold",
+                "incremental",
+                "format",
+                "output",
+                "overwrite",
+            ],
+            required_arguments: &["fluxscale_input", "out_table", "reference_fields"],
+            extra_arguments: &[],
+        }),
+        "gencal" => Some(RegistryTaskAlias {
+            mode: Some("gencal"),
+            subcommand: None,
+            summary: "Generate a calibration table such as antpos, gceff, or opac.",
+            usage: "calibrate --mode gencal --ms <input.ms> --out <caltable> --caltype antpos|gceff|opac",
+            visible_arguments: &[
+                "measurement_set",
+                "out_table",
+                "caltype",
+                "antenna",
+                "spw",
+                "parameter",
+                "gaincurve_table",
+                "format",
+                "output",
+                "overwrite",
+            ],
+            required_arguments: &["measurement_set", "out_table", "caltype"],
+            extra_arguments: &[
+                RegistryExtraAliasArgument {
+                    id: "caltype",
+                    label: "Calibration Type",
+                    order: 16,
+                    parser: RegistryExtraAliasParser::Option {
+                        flags: &["--caltype"],
+                        metavar: "TYPE",
+                        choices: &["antpos", "gceff", "opac"],
+                    },
+                    value_kind: "choice",
+                    required: true,
+                    default: None,
+                    help: "Generated calibration family.",
+                    group: "Gencal",
+                    advanced: false,
+                    hidden: false,
+                },
+                RegistryExtraAliasArgument {
+                    id: "parameter",
+                    label: "Parameter",
+                    order: 19,
+                    parser: RegistryExtraAliasParser::Option {
+                        flags: &["--parameter"],
+                        metavar: "VALUE[,VALUE...]",
+                        choices: &[],
+                    },
+                    value_kind: "string",
+                    required: false,
+                    default: None,
+                    help: "Numeric parameter list for the selected generated calibration type.",
+                    group: "Gencal",
+                    advanced: false,
+                    hidden: false,
+                },
+                RegistryExtraAliasArgument {
+                    id: "gaincurve_table",
+                    label: "Gaincurve Table",
+                    order: 20,
+                    parser: RegistryExtraAliasParser::Option {
+                        flags: &["--gaincurve-table"],
+                        metavar: "PATH",
+                        choices: &[],
+                    },
+                    value_kind: "path",
+                    required: false,
+                    default: None,
+                    help: "Optional gaincurve input table for gceff.",
+                    group: "Gencal",
+                    advanced: true,
+                    hidden: false,
+                },
+            ],
+        }),
+        "split" => Some(RegistryTaskAlias {
+            mode: None,
+            subcommand: None,
+            summary: "Create a selected MeasurementSet subset, equivalent to CASA split.",
+            usage: "mstransform --ms <input.ms> --out <output.ms> --spw <spw[:channels]>",
+            visible_arguments: &[
+                "ms",
+                "out",
+                "spw",
+                "field",
+                "scan",
+                "antenna",
+                "timerange",
+                "msselect",
+                "datacolumn",
+                "keepflags",
+            ],
+            required_arguments: &["ms", "out", "spw"],
+            extra_arguments: &[],
+        }),
+        "plotms" => Some(RegistryTaskAlias {
+            mode: None,
+            subcommand: None,
+            summary: "Plot MeasurementSet visibility data with CASA plotms-style selections and axes.",
+            usage: "msexplore <input.ms> --preset amp-vs-uvdist --plot-output <plot.png>",
+            visible_arguments: &[
+                "ms_path",
+                "format",
+                "output",
+                "overwrite",
+                "selectdata",
+                "field",
+                "spw",
+                "timerange",
+                "uvrange",
+                "antenna",
+                "scan",
+                "correlation",
+                "observation",
+                "array",
+                "intent",
+                "feed",
+                "msselect",
+                "page_spec",
+                "preset",
+                "x_axis",
+                "y_axis",
+                "y_axis2",
+                "data_column",
+                "color_by",
+                "avgchannel",
+                "avgtime",
+                "avgscan",
+                "avgfield",
+                "avgbaseline",
+                "avgantenna",
+                "avgspw",
+                "scalar",
+                "freqframe",
+                "restfreq",
+                "veldef",
+                "iteraxis",
+                "gridrows",
+                "gridcols",
+                "xselfscale",
+                "yselfscale",
+                "xsharedaxis",
+                "ysharedaxis",
+                "title",
+                "xlabel",
+                "ylabel",
+                "symbol_size",
+                "showlegend",
+                "legendposition",
+                "showmajorgrid",
+                "showminorgrid",
+                "headeritems",
+                "max_points",
+                "plot_output",
+                "plot_format",
+                "plot_width",
+                "plot_height",
+                "flag_action",
+                "flag_xmin",
+                "flag_xmax",
+                "flag_ymin",
+                "flag_ymax",
+                "flag_plotindex",
+                "flag_panel",
+                "flag_extcorr",
+                "flag_extchannel",
+                "flag_selected",
+                "flag_apply",
+                "flag_output",
+            ],
+            required_arguments: &["ms_path"],
+            extra_arguments: &[],
+        }),
+        "imhead" => Some(RegistryTaskAlias {
+            mode: None,
+            subcommand: Some("imhead"),
+            summary: "Inspect or update CASA image header metadata.",
+            usage: "imexplore imhead <image> [--json] [--mode summary|list|put] [--hdkey key --hdvalue value]",
+            visible_arguments: &["image_path", "json", "mode", "hdkey", "hdvalue"],
+            required_arguments: &["image_path"],
+            extra_arguments: &[
+                RegistryExtraAliasArgument {
+                    id: "subcommand",
+                    label: "Subcommand",
+                    order: 0,
+                    parser: RegistryExtraAliasParser::Positional { metavar: "TASK" },
+                    value_kind: "string",
+                    required: false,
+                    default: Some("imhead"),
+                    help: "Hidden imexplore subcommand used to invoke imhead.",
+                    group: "Meta",
+                    advanced: true,
+                    hidden: true,
+                },
+                RegistryExtraAliasArgument {
+                    id: "json",
+                    label: "JSON",
+                    order: 2,
+                    parser: RegistryExtraAliasParser::Toggle {
+                        true_flags: &["--json"],
+                        false_flags: &[],
+                    },
+                    value_kind: "bool",
+                    required: false,
+                    default: Some("false"),
+                    help: "Emit machine-readable JSON.",
+                    group: "Output",
+                    advanced: false,
+                    hidden: false,
+                },
+                RegistryExtraAliasArgument {
+                    id: "mode",
+                    label: "Mode",
+                    order: 3,
+                    parser: RegistryExtraAliasParser::Option {
+                        flags: &["--mode"],
+                        metavar: "MODE",
+                        choices: &["summary", "list", "put"],
+                    },
+                    value_kind: "choice",
+                    required: false,
+                    default: Some("summary"),
+                    help: "Header operation mode.",
+                    group: "Header",
+                    advanced: false,
+                    hidden: false,
+                },
+                RegistryExtraAliasArgument {
+                    id: "hdkey",
+                    label: "Header Key",
+                    order: 4,
+                    parser: RegistryExtraAliasParser::Option {
+                        flags: &["--hdkey"],
+                        metavar: "KEY",
+                        choices: &[],
+                    },
+                    value_kind: "string",
+                    required: false,
+                    default: None,
+                    help: "Header keyword to update when mode is put.",
+                    group: "Header",
+                    advanced: false,
+                    hidden: false,
+                },
+                RegistryExtraAliasArgument {
+                    id: "hdvalue",
+                    label: "Header Value",
+                    order: 5,
+                    parser: RegistryExtraAliasParser::Option {
+                        flags: &["--hdvalue"],
+                        metavar: "VALUE",
+                        choices: &[],
+                    },
+                    value_kind: "string",
+                    required: false,
+                    default: None,
+                    help: "Header value to write when mode is put.",
+                    group: "Header",
+                    advanced: false,
+                    hidden: false,
+                },
+            ],
+        }),
+        "imstat" => Some(RegistryTaskAlias {
+            mode: None,
+            subcommand: Some("imstat"),
+            summary: "Compute CASA image statistics over optional pixel and channel selections.",
+            usage: "imexplore imstat <image> [--box x0,y0,x1,y1] [--chans 0~4] [--json]",
+            visible_arguments: &["image_path", "box", "chans", "json"],
+            required_arguments: &["image_path"],
+            extra_arguments: &[
+                RegistryExtraAliasArgument {
+                    id: "subcommand",
+                    label: "Subcommand",
+                    order: 0,
+                    parser: RegistryExtraAliasParser::Positional { metavar: "TASK" },
+                    value_kind: "string",
+                    required: false,
+                    default: Some("imstat"),
+                    help: "Hidden imexplore subcommand used to invoke imstat.",
+                    group: "Meta",
+                    advanced: true,
+                    hidden: true,
+                },
+                RegistryExtraAliasArgument {
+                    id: "box",
+                    label: "Box",
+                    order: 2,
+                    parser: RegistryExtraAliasParser::Option {
+                        flags: &["--box"],
+                        metavar: "x0,y0,x1,y1",
+                        choices: &[],
+                    },
+                    value_kind: "string",
+                    required: false,
+                    default: None,
+                    help: "Inclusive pixel box.",
+                    group: "Selection",
+                    advanced: false,
+                    hidden: false,
+                },
+                RegistryExtraAliasArgument {
+                    id: "chans",
+                    label: "Channels",
+                    order: 3,
+                    parser: RegistryExtraAliasParser::Option {
+                        flags: &["--chans"],
+                        metavar: "range",
+                        choices: &[],
+                    },
+                    value_kind: "string",
+                    required: false,
+                    default: None,
+                    help: "CASA channel range, for example 4~12.",
+                    group: "Selection",
+                    advanced: false,
+                    hidden: false,
+                },
+                RegistryExtraAliasArgument {
+                    id: "json",
+                    label: "JSON",
+                    order: 4,
+                    parser: RegistryExtraAliasParser::Toggle {
+                        true_flags: &["--json"],
+                        false_flags: &[],
+                    },
+                    value_kind: "bool",
+                    required: false,
+                    default: Some("false"),
+                    help: "Emit machine-readable JSON.",
+                    group: "Output",
+                    advanced: false,
+                    hidden: false,
+                },
+            ],
+        }),
+        _ => None,
+    }
+}
+
+fn registry_extra_argument_schema(argument: RegistryExtraAliasArgument) -> serde_json::Value {
+    let parser = match argument.parser {
+        RegistryExtraAliasParser::Option {
+            flags,
+            metavar,
+            choices,
+        } => serde_json::json!({
+            "kind": "option",
+            "flags": flags,
+            "metavar": metavar,
+            "choices": choices,
+        }),
+        RegistryExtraAliasParser::Positional { metavar } => serde_json::json!({
+            "kind": "positional",
+            "metavar": metavar,
+        }),
+        RegistryExtraAliasParser::Toggle {
+            true_flags,
+            false_flags,
+        } => serde_json::json!({
+            "kind": "toggle",
+            "true_flags": true_flags,
+            "false_flags": false_flags,
+        }),
+    };
+    serde_json::json!({
+        "id": argument.id,
+        "label": argument.label,
+        "order": argument.order,
+        "parser": parser,
+        "value_kind": argument.value_kind,
+        "required": argument.required,
+        "default": argument.default,
+        "help": argument.help,
+        "group": argument.group,
+        "advanced": argument.advanced,
+        "hidden_in_tui": argument.hidden,
+    })
+}
+
 fn load_canonical_ui_schema(
     resolved: &ResolvedCommand,
     binary_name: &str,
@@ -384,6 +1056,16 @@ pub(crate) fn imexplore_app() -> RegistryApp {
 }
 
 #[cfg(test)]
+pub(crate) fn imhead_app() -> RegistryApp {
+    resolve_app(Some("imhead")).expect("imhead should be in task catalog")
+}
+
+#[cfg(test)]
+pub(crate) fn imstat_app() -> RegistryApp {
+    resolve_app(Some("imstat")).expect("imstat should be in task catalog")
+}
+
+#[cfg(test)]
 pub(crate) fn immoments_app() -> RegistryApp {
     resolve_app(Some("immoments")).expect("immoments should be in task catalog")
 }
@@ -396,6 +1078,11 @@ pub(crate) fn exportfits_app() -> RegistryApp {
 #[cfg(test)]
 pub(crate) fn msexplore_app() -> RegistryApp {
     resolve_app(Some("msexplore")).expect("msexplore should be in task catalog")
+}
+
+#[cfg(test)]
+pub(crate) fn plotms_app() -> RegistryApp {
+    resolve_app(Some("plotms")).expect("plotms should be in task catalog")
 }
 
 fn sibling_binary(binary_name: &str) -> Option<PathBuf> {
@@ -486,6 +1173,8 @@ mod tests {
                 "simobserve",
                 "tablebrowser",
                 "imexplore",
+                "imhead",
+                "imstat",
                 "immoments",
                 "exportfits",
                 "mstransform",
@@ -496,6 +1185,7 @@ mod tests {
                 "bandpass",
                 "fluxscale",
                 "gencal",
+                "plotms",
                 "flagdata",
                 "flagmanager",
                 "impv",
@@ -845,6 +1535,46 @@ mod tests {
             choices,
             &["percentile99", "percentile95", "minmax", "zscale", "manual"]
         );
+    }
+
+    #[test]
+    fn alias_load_schema_describes_task_specific_tui_surface() {
+        let _guard = crate::test_env_lock();
+        unsafe {
+            env::remove_var("CASARS_MSEXPLORE_BIN");
+            env::remove_var("CARGO_BIN_EXE_msexplore");
+            env::remove_var("CASARS_IMEXPLORE_BIN");
+            env::remove_var("CARGO_BIN_EXE_imexplore");
+        }
+
+        let plotms = plotms_app().load_schema().expect("load plotms schema");
+        assert_eq!(plotms.command_id, "plotms");
+        assert_eq!(plotms.display_name, "PlotMS");
+        assert!(plotms.argument("ms_path").is_some());
+        assert!(plotms.argument("plot_output").is_some());
+        assert!(plotms.argument("flag_apply").is_some());
+        assert!(plotms.argument("stretch").is_none());
+
+        let imhead = imhead_app().load_schema().expect("load imhead schema");
+        assert_eq!(imhead.command_id, "imhead");
+        let subcommand = imhead.argument("subcommand").expect("subcommand");
+        assert_eq!(subcommand.default.as_deref(), Some("imhead"));
+        assert!(subcommand.hidden_in_tui);
+        assert_eq!(imhead.argument("image_path").expect("image_path").order, 1);
+        assert!(!imhead.argument("mode").expect("mode").hidden_in_tui);
+        assert!(imhead.argument("stretch").is_none());
+
+        let imstat = imstat_app().load_schema().expect("load imstat schema");
+        assert_eq!(imstat.command_id, "imstat");
+        assert_eq!(
+            imstat
+                .argument("subcommand")
+                .and_then(|arg| arg.default.as_deref()),
+            Some("imstat")
+        );
+        assert!(imstat.argument("box").is_some());
+        assert!(imstat.argument("chans").is_some());
+        assert!(imstat.argument("clip_low").is_none());
     }
 
     #[test]

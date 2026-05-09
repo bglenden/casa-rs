@@ -1,8 +1,8 @@
 # GUI/TUI Task Execution Matrix
 
 Truth class: checked artifact
-Last reality check: 2026-05-08
-Verification: `cargo test -p casars-frontend-services task_execution_matrix_covers_catalog_and_known_inventory_gaps tutorial_task_parameter_audit_matches_exposed_task_schemas`; `swift test --package-path apps/casars-mac --filter WorkbenchStoreTests/testGenericImagerArgumentsIncludeTutorialParametersAndManagedOutput`
+Last reality check: 2026-05-09
+Verification: `cargo test -p casars-frontend-services`; `cargo test -p casars`; `swift test --package-path apps/casars-mac`
 
 `resources/task-execution-matrix.json` is the canonical machine-readable list
 for issue #226 and the already-landed shared-catalog work from issue #231. It
@@ -38,8 +38,11 @@ explicit work or signoff points. In particular:
   invoked from the TUI and the generic Swift task panel. The Swift store blocks
   these mutating tasks until the user explicitly confirms the mutation/product
   write.
-- `split` is represented by `mstransform`; `uvcontsub`, `gencal`, `gaincal`,
-  `bandpass`, `fluxscale`, and `applycal` are represented by `calibrate`.
+- `split`, `plotms`, `imhead`, `imstat`, `uvcontsub`, `gencal`, `gaincal`,
+  `bandpass`, `fluxscale`, and `applycal` are first-class shared-catalog tasks.
+  Their schemas are projected from the underlying provider binaries with hidden
+  defaults or subcommands where needed, so the GUI and TUI expose task-shaped
+  parameters instead of the broader provider surface.
 - Remaining provider-gap rows such as `statwt`, `simanalyze`, and `simalma` are
   tracked so they cannot disappear from the parity scope without user signoff.
 
