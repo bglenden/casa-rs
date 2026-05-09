@@ -746,6 +746,7 @@ fn load_task_ui_schema(task: &FrontendTaskCatalogEntry) -> FrontendResult<String
                 reason: format!("parse {} --json-schema output: {error}", task.binary_name),
             })?;
         if let Some(ui_schema) = bundle.pointer("/projections/ui_schema").cloned() {
+            let ui_schema = enrich_task_ui_schema(task, ui_schema);
             return serde_json::to_string(&ui_schema).map_err(|error| {
                 FrontendServiceError::Probe {
                     reason: format!(
@@ -779,9 +780,210 @@ fn load_task_ui_schema(task: &FrontendTaskCatalogEntry) -> FrontendResult<String
             reason: format!("parse {} --ui-schema output: {error}", task.binary_name),
         }
     })?;
+    let schema = enrich_task_ui_schema(task, schema);
     serde_json::to_string(&schema).map_err(|error| FrontendServiceError::Probe {
         reason: format!("serialize {} UI schema: {error}", task.binary_name),
     })
+}
+
+fn enrich_task_ui_schema(
+    task: &FrontendTaskCatalogEntry,
+    mut schema: serde_json::Value,
+) -> serde_json::Value {
+    let task_id = task.id.as_str();
+    if let Some(arguments) = schema
+        .get_mut("arguments")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for argument in arguments {
+            let Some(argument_object) = argument.as_object_mut() else {
+                continue;
+            };
+            let argument_id = argument_object
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let value_kind = argument_object
+                .get("value_kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if let Some(parameter_type) = infer_task_parameter_type(task, &argument_id, value_kind)
+            {
+                argument_object.insert(
+                    "parameter_type".to_string(),
+                    serde_json::Value::String(parameter_type.to_string()),
+                );
+            }
+            if argument_object
+                .get("label")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(str::is_empty)
+            {
+                argument_object.insert(
+                    "label".to_string(),
+                    serde_json::Value::String(default_task_parameter_label(&argument_id)),
+                );
+            }
+        }
+    }
+    if schema.get("command_id").and_then(serde_json::Value::as_str) != Some(task_id) {
+        schema
+            .as_object_mut()
+            .map(|object| object.insert("command_id".to_string(), task_id.into()));
+    }
+    schema
+}
+
+fn infer_task_parameter_type(
+    task: &FrontendTaskCatalogEntry,
+    argument_id: &str,
+    value_kind: &str,
+) -> Option<&'static str> {
+    let task_id = task.id.as_str();
+    let parameter_type = match argument_id {
+        "help" | "ui_schema" | "json" => "action",
+        "vis" if task_id == "importvla" => "output_measurement_set_path",
+        "ms" | "vis" | "measurement_set" => "measurement_set_path",
+        "out" if matches!(task_id, "simobserve" | "mstransform") => "output_measurement_set_path",
+        "output_measurement_set" | "outputms" => "output_measurement_set_path",
+        "archivefiles" => "archive_path",
+        "table_path" => "table_path",
+        "caltable" | "bandpass" | "fluxtable" | "gain_model_source" => "calibration_table_path",
+        "gaintable" | "gaintables" => "calibration_table_list",
+        "callib" => "calibration_library_path",
+        "out_table" => "output_calibration_table_path",
+        "model" if task_id == "simobserve" => "fits_path",
+        "fitsimage" if task_id == "exportfits" => "output_fits_path",
+        "fitsimage" | "fitsfile" => "fits_path",
+        "imagename" if task_id == "imager" => "output_image_path",
+        "imagename"
+            if matches!(
+                task_id,
+                "immoments" | "exportfits" | "impv" | "imsubimage" | "imregrid" | "feather"
+            ) =>
+        {
+            "image_path"
+        }
+        "imagename" if task_id == "immath" => "image_path_list",
+        "imagename" if task_id == "importfits" => "output_image_path",
+        "outfile" | "output" if task.dataset_kinds.iter().any(|kind| kind == "image") => {
+            "output_image_path"
+        }
+        "startmodel" | "mask_image" | "mask" | "image" | "template" | "highres" | "lowres"
+        | "infile" => "image_path",
+        "outlierfile" => "outlier_definition_path",
+        "spw" | "fit_spw" => "spectral_window_selector",
+        "field" | "gainfield" => "field_selector",
+        "phasecenter_field" => "field_id",
+        "scan" => "scan_selector",
+        "antenna" | "refant" => "antenna_selector",
+        "timerange" => "timerange_selector",
+        "msselect" => "measurement_set_selection",
+        "datacolumn" | "stats_datacolumn" => "data_column",
+        "polarization" => "correlation_or_stokes",
+        "ddid" => "data_description_id",
+        "chans" => "channel_selector",
+        "channel_start" => "channel_start",
+        "channel_count" => "channel_count",
+        "start" if task_id == "impv" => "pixel_coordinate",
+        "end" if task_id == "impv" => "pixel_coordinate",
+        "start" => "cube_axis_start",
+        "width" if task_id == "impv" => "pixel_width",
+        "width" => "cube_axis_width",
+        "outframe" => "spectral_frame",
+        "restfreq" | "start_frequency_hz" | "channel_width_hz" | "frequencytol" => "frequency",
+        "veltype" => "velocity_convention",
+        "interpolation" => "interpolation_mode",
+        "phasecenter" => "direction",
+        "box" | "mask_box" => "pixel_box",
+        "includepix" => "pixel_range",
+        "moments" => "image_moment_list",
+        "expr" => "image_math_expression",
+        "summary_paths" => "path_list",
+        "project" => "project_code",
+        "starttime" | "stoptime" => "timestamp",
+        "comment" => "comment",
+        "versionname" | "oldname" => "version_name",
+        "bandname" => "vla_band",
+        "antnamescheme" => "antenna_name_scheme",
+        "mode" if task_id == "flagdata" => "flagdata_mode",
+        "mode" if task_id == "flagmanager" => "flagmanager_mode",
+        "mode" if task_id == "calibrate" => "calibration_mode",
+        "mode" => "mode",
+        "action" => "flag_action",
+        "quackmode" => "quack_mode",
+        "merge" => "flagmanager_merge_mode",
+        "format" => "output_format",
+        "stats_axis" => "statistics_axis",
+        "apply_mode" => "applycal_mode",
+        "gain_type" => "gain_type",
+        "solve_mode" => "solve_mode",
+        "gain_mode" | "bandpass_mode" => "corruption_mode",
+        "specmode" => "spectral_mode",
+        "deconvolver" => "deconvolver",
+        "weighting" => "weighting",
+        "savemodel" => "save_model_mode",
+        "wterm" => "w_term_mode",
+        "restoringbeam" => "restoring_beam",
+        "usemask" => "mask_mode",
+        "imsize" => "image_size_pixels",
+        "cell_arcsec" => "angular_cell_size_arcsec",
+        "pointing_offset_ra_arcsec" | "pointing_offset_dec_arcsec" => "angular_offset_arcsec",
+        "duration" | "integration" | "gain_interval_seconds" | "bandpass_interval_seconds" => {
+            "duration_seconds"
+        }
+        "threshold_jy" | "noise_simplenoise_jy" => "flux_density_jy",
+        "inbright" => "surface_brightness",
+        "robust" => "robust_parameter",
+        "gain" => "loop_gain",
+        "niter" | "nmajor" | "nterms" | "wprojplanes" | "minor_cycle_length" | "growiterations"
+        | "fit_order" | "corruption_seed" => "integer_count",
+        "scales" => "pixel_scale_list",
+        "smallscalebias" => "small_scale_bias",
+        "pblimit" | "minbeamfrac" | "minpsffraction" | "maxpsffraction" | "psfcutoff"
+        | "sdfactor" => "fraction",
+        "cyclefactor" | "sidelobethreshold" | "noisethreshold" | "lownoisethreshold"
+        | "negativethreshold" => "threshold_factor",
+        "quackinterval" | "timecutoff" | "freqcutoff" | "timedev" | "freqdev" => "flag_threshold",
+        "gain_amplitude" | "bandpass_amplitude" | "leakage_amplitude" | "leakage_offset" => {
+            "corruption_amplitude"
+        }
+        "solint" => "solution_interval",
+        "gain_combine" => "combine_selector",
+        "interp" => "calibration_interpolation",
+        "spwmap" => "spectral_window_map",
+        "calwt" => "calibration_weight_mode",
+        _ => fallback_parameter_type(value_kind),
+    };
+    Some(parameter_type)
+}
+
+fn fallback_parameter_type(value_kind: &str) -> &'static str {
+    match value_kind {
+        "bool" => "boolean",
+        "choice" => "enum",
+        "float" | "number" => "float",
+        "path" => "path",
+        "path-list" => "path_list",
+        "none" => "action",
+        _ => "text",
+    }
+}
+
+fn default_task_parameter_label(argument_id: &str) -> String {
+    argument_id
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn resolve_frontend_task_command(
@@ -4456,6 +4658,33 @@ mod tests {
                             .contains(&serde_json::json!("summary"))
                 })
         );
+        assert!(
+            schema["arguments"]
+                .as_array()
+                .expect("arguments")
+                .iter()
+                .any(|argument| {
+                    argument["id"] == "vis" && argument["parameter_type"] == "measurement_set_path"
+                })
+        );
+
+        let imager_schema_json = task_ui_schema_json("imager".to_string()).expect("imager schema");
+        let imager_schema: serde_json::Value =
+            serde_json::from_str(&imager_schema_json).expect("imager schema json");
+        let imager_arguments = imager_schema["arguments"]
+            .as_array()
+            .expect("imager arguments");
+        assert!(imager_arguments.iter().any(|argument| {
+            argument["id"] == "ms" && argument["parameter_type"] == "measurement_set_path"
+        }));
+        assert!(imager_arguments.iter().any(|argument| {
+            argument["id"] == "imagename" && argument["parameter_type"] == "output_image_path"
+        }));
+        assert!(imager_arguments.iter().all(|argument| {
+            argument["parameter_type"]
+                .as_str()
+                .is_some_and(|parameter_type| !parameter_type.is_empty())
+        }));
     }
 
     #[test]
@@ -4484,6 +4713,12 @@ mod tests {
                     argument["hidden_in_tui"].as_bool(),
                     Some(false),
                     "{task_id}.{parameter} must be invokable from the TUI"
+                );
+                assert!(
+                    argument["parameter_type"]
+                        .as_str()
+                        .is_some_and(|parameter_type| !parameter_type.is_empty()),
+                    "{task_id}.{parameter} should expose a parameter_type"
                 );
             }
 

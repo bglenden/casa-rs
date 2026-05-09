@@ -510,6 +510,7 @@ public struct TaskUIArgument: Codable, Equatable, Identifiable {
     public var `default`: String?
     public var help: String
     public var group: String
+    public var parameterType: String?
     public var advanced: Bool
     public var hiddenInTUI: Bool
 
@@ -523,6 +524,7 @@ public struct TaskUIArgument: Codable, Equatable, Identifiable {
         case `default`
         case help
         case group
+        case parameterType = "parameter_type"
         case advanced
         case hiddenInTUI = "hidden_in_tui"
     }

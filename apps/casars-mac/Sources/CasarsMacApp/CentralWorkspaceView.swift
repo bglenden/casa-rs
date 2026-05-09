@@ -2,6 +2,7 @@ import CasarsMacCore
 import AppKit
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct CentralWorkspaceView: View {
     @ObservedObject var store: WorkbenchStore
@@ -5813,10 +5814,19 @@ struct DirtyImagingTaskPanel: View {
     }
 }
 
+private struct TaskParameterGroup: Identifiable {
+    let name: String
+    var arguments: [TaskUIArgument]
+    var id: String { name }
+}
+
 struct GenericTaskPanel: View {
     @ObservedObject var store: WorkbenchStore
     @State private var showingTaskList = true
     @State private var categoryFilter: CasaTaskCategoryFilter = .all
+    private let parameterGridColumns = [
+        GridItem(.adaptive(minimum: 260), alignment: .topLeading)
+    ]
 
     private var task: TaskCatalogEntry? {
         store.state.taskCatalog.first { $0.id == store.state.activeTaskID }
@@ -5900,6 +5910,7 @@ struct GenericTaskPanel: View {
     private var filteredTasks: [TaskCatalogEntry] {
         store.state.taskCatalog
             .filter { $0.showInSwift }
+            .filter { !Self.explorerTaskIDs.contains($0.id) }
             .filter { categoryFilter.matches(task: $0) }
             .sorted {
                 let ordering = $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
@@ -5910,15 +5921,46 @@ struct GenericTaskPanel: View {
             }
     }
 
+    private static let explorerTaskIDs: Set<String> = ["imexplore", "msexplore", "tablebrowser"]
+
     private func genericParameterBlock(schema: TaskUISchema) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let groups = parameterGroups(for: schema)
+        return VStack(alignment: .leading, spacing: 10) {
             Text("Parameters")
                 .workbenchFont(.headline)
-            ForEach(schema.arguments.filter { !$0.hiddenInTUI }.sorted { $0.order < $1.order }) { argument in
-                genericControl(argument: argument)
+            ForEach(groups) { group in
+                VStack(alignment: .leading, spacing: 6) {
+                    if groups.count > 1 {
+                        Text(group.name)
+                            .workbenchFont(.caption, weight: .semibold)
+                            .foregroundStyle(.secondary)
+                    }
+                    LazyVGrid(columns: parameterGridColumns, alignment: .leading, spacing: 8) {
+                        ForEach(group.arguments) { argument in
+                            genericControl(argument: argument)
+                        }
+                    }
+                }
             }
         }
         .taskCard()
+    }
+
+    private func parameterGroups(for schema: TaskUISchema) -> [TaskParameterGroup] {
+        let arguments = schema.arguments
+            .filter { !$0.hiddenInTUI }
+            .sorted { $0.order < $1.order }
+        var groups: [TaskParameterGroup] = []
+        for argument in arguments {
+            let groupName = argument.group.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = groupName.isEmpty ? "General" : groupName
+            if let index = groups.firstIndex(where: { $0.name == name }) {
+                groups[index].arguments.append(argument)
+            } else {
+                groups.append(TaskParameterGroup(name: name, arguments: [argument]))
+            }
+        }
+        return groups
     }
 
     @ViewBuilder
@@ -5954,26 +5996,79 @@ struct GenericTaskPanel: View {
             get: { store.state.genericTaskToggles[taskID]?[argument.id] ?? (argument.default == "true") },
             set: { store.setGenericTaskToggle(taskID: taskID, argumentID: argument.id, value: $0) }
         )
+        let label = displayLabel(for: argument)
+        let selectableChoices = choices(for: argument)
 
         if argument.parser.kind == "toggle" {
-            Toggle(argument.label, isOn: toggle)
+            Toggle(label, isOn: toggle)
                 .help(argument.help)
-        } else if !choices(for: argument).isEmpty {
-            Picker(argument.label, selection: value) {
-                ForEach(choices(for: argument), id: \.self) { choice in
-                    Text(choice).tag(choice)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label)
+                    .workbenchFont(.caption, weight: .semibold)
+                    .foregroundStyle(.secondary)
+                if isPathArgument(argument) {
+                    pathControl(argument: argument, value: value, choices: selectableChoices)
+                } else if !selectableChoices.isEmpty {
+                    Picker(label, selection: value) {
+                        ForEach(selectableChoices, id: \.self) { choice in
+                            Text(choice).tag(choice)
+                        }
+                    }
+                    .labelsHidden()
+                    .help(argument.help)
+                } else {
+                    TextField(label, text: value)
+                        .textFieldStyle(.roundedBorder)
+                        .help(argument.help)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func pathControl(
+        argument: TaskUIArgument,
+        value: Binding<String>,
+        choices: [String]
+    ) -> some View {
+        if !choices.isEmpty || canBrowse(argument: argument) {
+            HStack(spacing: 6) {
+                if !choices.isEmpty {
+                    Picker(displayLabel(for: argument), selection: value) {
+                        ForEach(choices, id: \.self) { choice in
+                            Text(choice).tag(choice)
+                        }
+                    }
+                    .labelsHidden()
+                } else {
+                    TextField(displayLabel(for: argument), text: value)
+                        .textFieldStyle(.roundedBorder)
+                }
+                if canBrowse(argument: argument) {
+                    Button {
+                        if let url = TaskParameterOpenPanel.choosePath(parameterType: argument.parameterType) {
+                            value.wrappedValue = url.path
+                        }
+                    } label: {
+                        Image(systemName: "folder")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Choose \(displayLabel(for: argument))")
                 }
             }
             .help(argument.help)
         } else {
-            TextField(argument.label, text: value)
+            TextField(displayLabel(for: argument), text: value)
                 .textFieldStyle(.roundedBorder)
                 .help(argument.help)
         }
     }
 
     private func choices(for argument: TaskUIArgument) -> [String] {
-        if ["ms", "vis"].contains(argument.id) {
+        if argument.parameterType == "measurement_set_path" || ["ms", "vis"].contains(argument.id) {
             let measurementSets = store.state.project.datasets
                 .filter { $0.kind == .measurementSet }
                 .map(\.path)
@@ -5981,33 +6076,85 @@ struct GenericTaskPanel: View {
                 return measurementSets
             }
         }
-        if argument.id == "spw", let spectralWindows = store.state.selectedDataset?.spectralWindows, !spectralWindows.isEmpty {
+        if argument.parameterType == "image_path" {
+            let images = store.state.project.datasets
+                .filter { $0.kind == .imageCube }
+                .map(\.path)
+            if !images.isEmpty {
+                return images
+            }
+        }
+        if ["table_path", "calibration_table_path"].contains(argument.parameterType ?? "") {
+            let tables = store.state.project.datasets
+                .filter { dataset in
+                    dataset.kind == .table || dataset.kind == .calibrationTable
+                }
+                .map(\.path)
+            if !tables.isEmpty {
+                return tables
+            }
+        }
+        if argument.parameterType == "spectral_window_selector" || argument.id == "spw",
+           let spectralWindows = store.state.selectedDataset?.spectralWindows,
+           !spectralWindows.isEmpty {
             return spectralWindows.compactMap { label in
                 label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
             }
         }
-        if ["field", "phasecenter_field"].contains(argument.id),
+        if ["field_selector", "field_id"].contains(argument.parameterType ?? "") || ["field", "phasecenter_field"].contains(argument.id),
            let fields = store.state.selectedDataset?.fields,
            !fields.isEmpty {
             return fields.compactMap { label in
                 label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
             }
         }
-        if argument.id == "scan", let scans = store.state.selectedDataset?.scans, !scans.isEmpty {
+        if argument.parameterType == "scan_selector" || argument.id == "scan",
+           let scans = store.state.selectedDataset?.scans,
+           !scans.isEmpty {
             return scans.compactMap { label in
                 label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
             }
         }
-        if argument.id == "antenna", let antennas = store.state.selectedDataset?.antennas, !antennas.isEmpty {
+        if argument.parameterType == "antenna_selector" || argument.id == "antenna",
+           let antennas = store.state.selectedDataset?.antennas,
+           !antennas.isEmpty {
             return antennas
         }
-        if argument.id == "correlation", let correlations = store.state.selectedDataset?.correlations, !correlations.isEmpty {
+        if argument.parameterType == "correlation_or_stokes" || argument.id == "correlation",
+           let correlations = store.state.selectedDataset?.correlations,
+           !correlations.isEmpty {
             return correlations
         }
-        if argument.id == "datacolumn", let columns = store.state.selectedDataset?.dataColumns, !columns.isEmpty {
+        if argument.parameterType == "data_column" || argument.id == "datacolumn",
+           let columns = store.state.selectedDataset?.dataColumns,
+           !columns.isEmpty {
             return columns
         }
         return argument.parser.choices ?? []
+    }
+
+    private func displayLabel(for argument: TaskUIArgument) -> String {
+        let label = argument.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !label.isEmpty {
+            return label
+        }
+        return argument.id
+            .split(separator: "_")
+            .map { part in
+                part.prefix(1).uppercased() + String(part.dropFirst())
+            }
+            .joined(separator: " ")
+    }
+
+    private func isPathArgument(_ argument: TaskUIArgument) -> Bool {
+        argument.valueKind == "path" || argument.parameterType?.contains("path") == true
+    }
+
+    private func canBrowse(argument: TaskUIArgument) -> Bool {
+        guard isPathArgument(argument) else {
+            return false
+        }
+        return argument.parameterType?.hasPrefix("output_") != true
     }
 
     private var runStatusBlock: some View {
@@ -6044,11 +6191,91 @@ struct GenericTaskPanel: View {
     }
 }
 
+private enum TaskParameterOpenPanel {
+    static func choosePath(parameterType: String?) -> URL? {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = message(for: parameterType)
+        panel.canChooseDirectories = acceptsDirectories(parameterType: parameterType)
+        panel.canChooseFiles = acceptsFiles(parameterType: parameterType)
+        if parameterType == "fits_path" {
+            panel.allowedContentTypes = ["fit", "fits", "fts"].compactMap { UTType(filenameExtension: $0) }
+        }
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return nil
+        }
+        guard selectedPathIsAllowed(url, parameterType: parameterType) else {
+            NSSound.beep()
+            return nil
+        }
+        return url
+    }
+
+    private static func message(for parameterType: String?) -> String {
+        switch parameterType {
+        case "measurement_set_path":
+            return "Choose a MeasurementSet directory ending in .ms."
+        case "image_path":
+            return "Choose a CASA image directory."
+        case "calibration_table_path":
+            return "Choose a CASA calibration table directory."
+        case "table_path":
+            return "Choose a CASA table directory."
+        case "fits_path":
+            return "Choose a FITS file."
+        default:
+            return "Choose a path."
+        }
+    }
+
+    private static func acceptsDirectories(parameterType: String?) -> Bool {
+        switch parameterType {
+        case "fits_path":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func acceptsFiles(parameterType: String?) -> Bool {
+        switch parameterType {
+        case "measurement_set_path", "image_path", "calibration_table_path", "table_path":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func selectedPathIsAllowed(_ url: URL, parameterType: String?) -> Bool {
+        switch parameterType {
+        case "measurement_set_path":
+            return isDirectory(url) && url.pathExtension.localizedCaseInsensitiveCompare("ms") == .orderedSame
+        case "fits_path":
+            return ["fit", "fits", "fts"].contains(url.pathExtension.lowercased())
+        case "image_path", "calibration_table_path", "table_path":
+            return isDirectory(url)
+        default:
+            return true
+        }
+    }
+
+    private static func isDirectory(_ url: URL) -> Bool {
+        var isDirectory = ObjCBool(false)
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+}
+
 struct TaskCatalogBlock: View {
     var tasks: [TaskCatalogEntry]
     var activeTaskID: String
     @Binding var categoryFilter: CasaTaskCategoryFilter
     var selectTask: ((String) -> Void)? = nil
+    private static let explorerTaskIDs: Set<String> = ["imexplore", "msexplore", "tablebrowser"]
+
+    private var taskRows: [TaskCatalogEntry] {
+        tasks.filter { !Self.explorerTaskIDs.contains($0.id) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -6059,7 +6286,7 @@ struct TaskCatalogBlock: View {
             }
             .accessibilityIdentifier("task.categoryFilter")
 
-            ForEach(tasks) { task in
+            ForEach(taskRows) { task in
                 Button {
                     selectTask?(task.id)
                 } label: {
