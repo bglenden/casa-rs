@@ -2154,7 +2154,7 @@
 <a href=#2154 id=2154 data-nosnippet>2154</a>        schema: UiCommandSchema,
 <a href=#2155 id=2155 data-nosnippet>2155</a>        config_store: ConfigStore,
 <a href=#2156 id=2156 data-nosnippet>2156</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#2157 id=2157 data-nosnippet>2157</a>        <span class="kw">let </span>default_summary_view = default_summary_view_for_app(app.id);
+<a href=#2157 id=2157 data-nosnippet>2157</a>        <span class="kw">let </span>default_summary_view = default_summary_view_for_app(<span class="kw-2">&amp;</span>app.id);
 <a href=#2158 id=2158 data-nosnippet>2158</a>        <span class="kw">let </span>ready_status_line = <span class="kw">if </span>app.shell_kind() == AppShellKind::Workflow
 <a href=#2159 id=2159 data-nosnippet>2159</a>            &amp;&amp; app.id == <span class="string">"calibrate"
 <a href=#2160 id=2160 data-nosnippet>2160</a>        </span>{
@@ -2168,7 +2168,7 @@
 <a href=#2168 id=2168 data-nosnippet>2168</a>            .iter()
 <a href=#2169 id=2169 data-nosnippet>2169</a>            .filter_map(FormField::from_schema)
 <a href=#2170 id=2170 data-nosnippet>2170</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#2171 id=2171 data-nosnippet>2171</a>        seed_app_field_defaults(app.id, <span class="kw-2">&amp;mut </span>fields);
+<a href=#2171 id=2171 data-nosnippet>2171</a>        seed_app_field_defaults(<span class="kw-2">&amp;</span>app.id, <span class="kw-2">&amp;mut </span>fields);
 <a href=#2172 id=2172 data-nosnippet>2172</a>        <span class="kw">let </span>sections = build_sections(<span class="kw-2">&amp;</span>app, <span class="kw-2">&amp;</span>fields);
 <a href=#2173 id=2173 data-nosnippet>2173</a>        <span class="kw">let </span>selected_form = initial_form_selection(<span class="kw-2">&amp;</span>sections, <span class="kw-2">&amp;</span>fields, <span class="bool-val">false</span>);
 <a href=#2174 id=2174 data-nosnippet>2174</a>
@@ -3650,11 +3650,11 @@
 <a href=#3650 id=3650 data-nosnippet>3650</a>    }
 <a href=#3651 id=3651 data-nosnippet>3651</a>
 <a href=#3652 id=3652 data-nosnippet>3652</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>app_category(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>str {
-<a href=#3653 id=3653 data-nosnippet>3653</a>        <span class="self">self</span>.app.category
+<a href=#3653 id=3653 data-nosnippet>3653</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.app.category
 <a href=#3654 id=3654 data-nosnippet>3654</a>    }
 <a href=#3655 id=3655 data-nosnippet>3655</a>
 <a href=#3656 id=3656 data-nosnippet>3656</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>app_name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>str {
-<a href=#3657 id=3657 data-nosnippet>3657</a>        <span class="self">self</span>.app.display_name
+<a href=#3657 id=3657 data-nosnippet>3657</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.app.display_name
 <a href=#3658 id=3658 data-nosnippet>3658</a>    }
 <a href=#3659 id=3659 data-nosnippet>3659</a>
 <a href=#3660 id=3660 data-nosnippet>3660</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>footer_text(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
@@ -9890,7 +9890,7 @@
 <a href=#9890 id=9890 data-nosnippet>9890</a>                .as_ref()
 <a href=#9891 id=9891 data-nosnippet>9891</a>                .map(|snapshot| <span class="kw-2">&amp;</span>snapshot.summary);
 <a href=#9892 id=9892 data-nosnippet>9892</a>        }
-<a href=#9893 id=9893 data-nosnippet>9893</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.app.id, <span class="string">"calibrate" </span>| <span class="string">"imager"</span>)
+<a href=#9893 id=9893 data-nosnippet>9893</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.app.id.as_str(), <span class="string">"calibrate" </span>| <span class="string">"imager"</span>)
 <a href=#9894 id=9894 data-nosnippet>9894</a>            &amp;&amp; <span class="self">self</span>.result.structured.is_none()
 <a href=#9895 id=9895 data-nosnippet>9895</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(snapshot) = <span class="self">self</span>.plot_workspace.snapshot.as_ref()
 <a href=#9896 id=9896 data-nosnippet>9896</a>        {
@@ -11982,7 +11982,7 @@
 <a href=#11982 id=11982 data-nosnippet>11982</a>    }
 <a href=#11983 id=11983 data-nosnippet>11983</a>
 <a href=#11984 id=11984 data-nosnippet>11984</a>    <span class="kw">fn </span>copy_current_plot_cli(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#11985 id=11985 data-nosnippet>11985</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.app.id, <span class="string">"calibrate" </span>| <span class="string">"imager"</span>) {
+<a href=#11985 id=11985 data-nosnippet>11985</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.app.id.as_str(), <span class="string">"calibrate" </span>| <span class="string">"imager"</span>) {
 <a href=#11986 id=11986 data-nosnippet>11986</a>            <span class="self">self</span>.result.status_line =
 <a href=#11987 id=11987 data-nosnippet>11987</a>                <span class="string">"Copy CLI is not available for this diagnostic workspace."</span>.to_string();
 <a href=#11988 id=11988 data-nosnippet>11988</a>            <span class="self">self</span>.result.status_kind = StatusKind::Warning;
@@ -12082,14 +12082,14 @@
 <a href=#12082 id=12082 data-nosnippet>12082</a>    }
 <a href=#12083 id=12083 data-nosnippet>12083</a>
 <a href=#12084 id=12084 data-nosnippet>12084</a>    <span class="kw">fn </span>current_plot_export_width(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u32 {
-<a href=#12085 id=12085 data-nosnippet>12085</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.app.id, <span class="string">"calibrate" </span>| <span class="string">"imager"</span>) {
+<a href=#12085 id=12085 data-nosnippet>12085</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.app.id.as_str(), <span class="string">"calibrate" </span>| <span class="string">"imager"</span>) {
 <a href=#12086 id=12086 data-nosnippet>12086</a>            <span class="kw">return </span><span class="number">1600</span>;
 <a href=#12087 id=12087 data-nosnippet>12087</a>        }
 <a href=#12088 id=12088 data-nosnippet>12088</a>        <span class="self">self</span>.current_msexplore_export_width()
 <a href=#12089 id=12089 data-nosnippet>12089</a>    }
 <a href=#12090 id=12090 data-nosnippet>12090</a>
 <a href=#12091 id=12091 data-nosnippet>12091</a>    <span class="kw">fn </span>current_plot_export_height(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u32 {
-<a href=#12092 id=12092 data-nosnippet>12092</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.app.id, <span class="string">"calibrate" </span>| <span class="string">"imager"</span>) {
+<a href=#12092 id=12092 data-nosnippet>12092</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.app.id.as_str(), <span class="string">"calibrate" </span>| <span class="string">"imager"</span>) {
 <a href=#12093 id=12093 data-nosnippet>12093</a>            <span class="kw">return </span><span class="number">900</span>;
 <a href=#12094 id=12094 data-nosnippet>12094</a>        }
 <a href=#12095 id=12095 data-nosnippet>12095</a>        <span class="self">self</span>.current_msexplore_export_height()
@@ -14276,8 +14276,8 @@
 <a href=#14276 id=14276 data-nosnippet>14276</a>
 <a href=#14277 id=14277 data-nosnippet>14277</a><span class="kw">fn </span>build_sections(app: <span class="kw-2">&amp;</span>RegistryApp, fields: <span class="kw-2">&amp;</span>[FormField]) -&gt; Vec&lt;FormSection&gt; {
 <a href=#14278 id=14278 data-nosnippet>14278</a>    <span class="kw">match </span>app.shell_kind() {
-<a href=#14279 id=14279 data-nosnippet>14279</a>        AppShellKind::Inspect =&gt; build_inspect_sections(app.id, fields),
-<a href=#14280 id=14280 data-nosnippet>14280</a>        AppShellKind::Workflow =&gt; build_workflow_sections(app.id, fields),
+<a href=#14279 id=14279 data-nosnippet>14279</a>        AppShellKind::Inspect =&gt; build_inspect_sections(<span class="kw-2">&amp;</span>app.id, fields),
+<a href=#14280 id=14280 data-nosnippet>14280</a>        AppShellKind::Workflow =&gt; build_workflow_sections(<span class="kw-2">&amp;</span>app.id, fields),
 <a href=#14281 id=14281 data-nosnippet>14281</a>        AppShellKind::Browser =&gt; build_browser_sections(app.browser_kind(), fields),
 <a href=#14282 id=14282 data-nosnippet>14282</a>    }
 <a href=#14283 id=14283 data-nosnippet>14283</a>}

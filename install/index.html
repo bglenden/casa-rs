@@ -831,6 +831,22 @@ scripts/package-suite-bundle.sh<span class="w"> </span><span class="se">\</span>
 <div class="codehilite"><pre><span></span><code>just<span class="w"> </span>install-local
 </code></pre></div>
 
+<p>On macOS, <code>just install-local</code> also builds and installs the Swift GUI app under
+the same suite root. Use <code>--force</code> for an ad-hoc reinstall of the same checkout
+version:</p>
+<div class="codehilite"><pre><span></span><code>just<span class="w"> </span>install-local<span class="w"> </span>--<span class="w"> </span>--force
+</code></pre></div>
+
+<p>Use the split commands when only one install surface is needed:</p>
+<div class="codehilite"><pre><span></span><code>just<span class="w"> </span>install-local-suite<span class="w"> </span>--<span class="w"> </span>--force
+just<span class="w"> </span>install-local-gui<span class="w"> </span>--<span class="w"> </span>--force
+</code></pre></div>
+
+<p>To install a published release suite without rebuilding the checkout or
+rerunning release verification gates, run:</p>
+<div class="codehilite"><pre><span></span><code>just<span class="w"> </span>install-release<span class="w"> </span><span class="m">0</span>.17.0
+</code></pre></div>
+
 
 
 
