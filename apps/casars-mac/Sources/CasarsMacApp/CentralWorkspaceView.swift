@@ -6009,7 +6009,7 @@ struct GenericTaskPanel: View {
                     .workbenchFont(.caption, weight: .semibold)
                     .foregroundStyle(.secondary)
                 if isPathArgument(argument) {
-                    pathControl(argument: argument, value: value, choices: selectableChoices)
+                    pathControl(argument: argument, value: pathValueBinding(rawValue: value), choices: selectableChoices)
                 } else if !selectableChoices.isEmpty {
                     Picker(label, selection: value) {
                         ForEach(selectableChoices, id: \.self) { choice in
@@ -6039,7 +6039,7 @@ struct GenericTaskPanel: View {
                 if !choices.isEmpty {
                     Picker(displayLabel(for: argument), selection: value) {
                         ForEach(choices, id: \.self) { choice in
-                            Text(choice).tag(choice)
+                            Text(displayPath(choice)).tag(displayPath(choice))
                         }
                     }
                     .labelsHidden()
@@ -6050,7 +6050,7 @@ struct GenericTaskPanel: View {
                 if canBrowse(argument: argument) {
                     Button {
                         if let url = TaskParameterOpenPanel.choosePath(parameterType: argument.parameterType) {
-                            value.wrappedValue = url.path
+                            value.wrappedValue = displayPath(url.path)
                         }
                     } label: {
                         Image(systemName: "folder")
@@ -6157,6 +6157,55 @@ struct GenericTaskPanel: View {
         return argument.parameterType?.hasPrefix("output_") != true
     }
 
+    private func pathValueBinding(rawValue: Binding<String>) -> Binding<String> {
+        Binding(
+            get: { displayPath(rawValue.wrappedValue) },
+            set: { rawValue.wrappedValue = absolutePath(fromDisplayedPath: $0) }
+        )
+    }
+
+    private func displayPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return path
+        }
+        let root = store.state.project.rootPath
+        guard !root.isEmpty else {
+            return path
+        }
+        let rootURL = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
+        let pathURL = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath).standardizedFileURL
+        let rootPath = rootURL.path
+        let absolutePath = pathURL.path
+        if absolutePath == rootPath {
+            return "."
+        }
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        if absolutePath.hasPrefix(prefix) {
+            return String(absolutePath.dropFirst(prefix.count))
+        }
+        return path
+    }
+
+    private func absolutePath(fromDisplayedPath path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return path
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return expanded
+        }
+        let root = store.state.project.rootPath
+        guard !root.isEmpty else {
+            return path
+        }
+        return URL(fileURLWithPath: root, isDirectory: true)
+            .appendingPathComponent(trimmed)
+            .standardizedFileURL
+            .path
+    }
+
     private var runStatusBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Run")
@@ -6166,7 +6215,7 @@ struct GenericTaskPanel: View {
                 .foregroundStyle(.secondary)
             valueList("Log", values: store.state.taskRun.logLines)
             valueList("Diagnostics", values: store.state.taskRun.diagnostics)
-            valueList("Products", values: store.state.taskRun.products)
+            valueList("Products", values: store.state.taskRun.products.map(displayPath))
         }
         .taskCard()
     }

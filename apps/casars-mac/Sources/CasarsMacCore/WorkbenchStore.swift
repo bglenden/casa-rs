@@ -2361,9 +2361,35 @@ public final class WorkbenchStore: ObservableObject {
                 guard let value = values[argument.id], !value.isEmpty else {
                     return argument.required ? "\(argument.id)=<required>" : nil
                 }
-                return "\(argument.id)=\(value)"
+                return "\(argument.id)=\(genericTaskDisplayValue(value, for: argument))"
             }
             .joined(separator: ", ")
+    }
+
+    private func genericTaskDisplayValue(_ value: String, for argument: TaskUIArgument) -> String {
+        guard argument.valueKind == "path" || argument.parameterType?.contains("path") == true else {
+            return value
+        }
+        return projectRelativePath(value)
+    }
+
+    private func projectRelativePath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !state.project.rootPath.isEmpty else {
+            return path
+        }
+        let rootURL = URL(fileURLWithPath: state.project.rootPath, isDirectory: true).standardizedFileURL
+        let pathURL = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath).standardizedFileURL
+        let rootPath = rootURL.path
+        let absolutePath = pathURL.path
+        if absolutePath == rootPath {
+            return "."
+        }
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        if absolutePath.hasPrefix(prefix) {
+            return String(absolutePath.dropFirst(prefix.count))
+        }
+        return path
     }
 
     private func argumentLooksLikeInputDataset(_ argument: TaskUIArgument) -> Bool {

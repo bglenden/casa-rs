@@ -186,6 +186,43 @@ final class WorkbenchStoreTests: XCTestCase {
         )
     }
 
+    func testGenericTaskRequestSummaryDisplaysProjectRelativePaths() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "flagdata",
+          "invocation_name": "flagdata",
+          "display_name": "Flag Data",
+          "category": "Flagging",
+          "summary": "Run native CASA-style MeasurementSet flagging.",
+          "usage": "flagdata",
+          "arguments": [
+            {"id":"vis","label":"MeasurementSet","order":0,"parser":{"kind":"option","flags":["--vis"],"metavar":"MS","choices":[]},"value_kind":"path","parameter_type":"measurement_set_path","required":true,"default":"/data/project/input.ms","help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","manual"]},"value_kind":"choice","required":true,"default":"summary","help":"","group":"Flagging","advanced":false,"hidden_in_tui":false}
+          ]
+        }
+        """.utf8))
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "project",
+            rootPath: "/data/project",
+            datasets: [],
+            source: .probed
+        )
+        state.activeTaskID = "flagdata"
+        let store = WorkbenchStore(
+            state: state,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: schema)
+        )
+
+        store.loadTaskUISchemaIfNeeded("flagdata")
+
+        XCTAssertEqual(store.state.genericTaskValues["flagdata"]?["vis"], "/data/project/input.ms")
+        let summary = try XCTUnwrap(store.state.taskRun.requestSummary)
+        XCTAssertTrue(summary.contains("vis=input.ms"))
+        XCTAssertFalse(summary.contains("/data/project/input.ms"))
+    }
+
     func testGenericImagerArgumentsIncludeTutorialParametersAndManagedOutput() throws {
         let schema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "imager")
         let request = GenericTaskRequest(
