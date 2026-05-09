@@ -5239,8 +5239,6 @@ struct TaskPanel: View {
     var body: some View {
         if store.state.isDemoProject {
             fixtureTaskBody
-        } else if store.state.activeTaskID == "imager" {
-            DirtyImagingTaskPanel(store: store)
         } else {
             GenericTaskPanel(store: store)
         }
@@ -5941,12 +5939,22 @@ struct GenericTaskPanel: View {
     }
 
     private func choices(for argument: TaskUIArgument) -> [String] {
+        if ["ms", "vis"].contains(argument.id) {
+            let measurementSets = store.state.project.datasets
+                .filter { $0.kind == .measurementSet }
+                .map(\.path)
+            if !measurementSets.isEmpty {
+                return measurementSets
+            }
+        }
         if argument.id == "spw", let spectralWindows = store.state.selectedDataset?.spectralWindows, !spectralWindows.isEmpty {
             return spectralWindows.compactMap { label in
                 label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
             }
         }
-        if argument.id == "field", let fields = store.state.selectedDataset?.fields, !fields.isEmpty {
+        if ["field", "phasecenter_field"].contains(argument.id),
+           let fields = store.state.selectedDataset?.fields,
+           !fields.isEmpty {
             return fields.compactMap { label in
                 label.split(separator: ":", maxSplits: 1).first?.split(separator: " ").last.map(String.init)
             }

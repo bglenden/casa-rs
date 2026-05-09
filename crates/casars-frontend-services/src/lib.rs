@@ -45,6 +45,10 @@ const TASK_EXECUTION_MATRIX_JSON: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../resources/task-execution-matrix.json"
 ));
+const TUTORIAL_TASK_PARAMETER_AUDIT_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../resources/tutorial-task-parameter-audit.json"
+));
 const MAX_PROJECT_SCAN_ENTRIES: usize = 512;
 const MAX_PROJECT_SCAN_DEPTH: usize = 4;
 const DEFAULT_GUI_MAX_PLOT_POINTS: u64 = 250_000;
@@ -700,6 +704,11 @@ pub fn task_ui_schema_json(task_id: String) -> FrontendResult<String> {
     }
 
     load_task_ui_schema(&task)
+}
+
+#[uniffi::export]
+pub fn tutorial_task_parameter_audit_json() -> String {
+    TUTORIAL_TASK_PARAMETER_AUDIT_JSON.to_string()
 }
 
 fn insert_first_default(defaults: &mut BTreeMap<String, String>, key: &str, values: &[String]) {
@@ -4392,8 +4401,8 @@ mod tests {
         }));
         assert!(rows.iter().any(|row| {
             row["task_id"] == "imager"
-                && row["gui_status"] == "partial_panel"
-                && row["full_control_status"] == "partial"
+                && row["gui_status"] == "invokable"
+                && row["full_control_status"] == "covered"
         }));
     }
 
@@ -4447,6 +4456,60 @@ mod tests {
                             .contains(&serde_json::json!("summary"))
                 })
         );
+    }
+
+    #[test]
+    fn tutorial_task_parameter_audit_matches_exposed_task_schemas() {
+        let audit: serde_json::Value =
+            serde_json::from_str(TUTORIAL_TASK_PARAMETER_AUDIT_JSON).expect("audit json");
+        let matrix: serde_json::Value =
+            serde_json::from_str(TASK_EXECUTION_MATRIX_JSON).expect("matrix json");
+        let matrix_rows = matrix["rows"].as_array().expect("matrix rows");
+
+        for workflow in audit["workflows"].as_array().expect("audit workflows") {
+            let task_id = workflow["task_id"].as_str().expect("task id");
+            let schema_json =
+                task_ui_schema_json(task_id.to_string()).expect("workflow task schema");
+            let schema: serde_json::Value =
+                serde_json::from_str(&schema_json).expect("workflow schema json");
+            let arguments = schema["arguments"].as_array().expect("schema arguments");
+
+            for parameter in workflow["parameters"].as_array().expect("parameters") {
+                let parameter = parameter.as_str().expect("parameter string");
+                let argument = arguments
+                    .iter()
+                    .find(|argument| argument["id"].as_str() == Some(parameter))
+                    .unwrap_or_else(|| panic!("{task_id} schema missing {parameter}"));
+                assert_eq!(
+                    argument["hidden_in_tui"].as_bool(),
+                    Some(false),
+                    "{task_id}.{parameter} must be invokable from the TUI"
+                );
+            }
+
+            let matrix_row = matrix_rows
+                .iter()
+                .find(|row| row["task_id"].as_str() == Some(task_id))
+                .unwrap_or_else(|| panic!("matrix missing {task_id}"));
+            assert!(
+                matches!(
+                    matrix_row["tui_status"].as_str(),
+                    Some("invokable")
+                        | Some("covered_by_mstransform")
+                        | Some("covered_by_calibrate")
+                ),
+                "{task_id} is not TUI invokable"
+            );
+            assert!(
+                matches!(
+                    matrix_row["gui_status"].as_str(),
+                    Some("invokable")
+                        | Some("covered_by_mstransform")
+                        | Some("covered_by_calibrate")
+                ),
+                "{task_id} is not GUI invokable"
+            );
+        }
     }
 
     #[test]

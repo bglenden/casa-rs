@@ -1963,72 +1963,7 @@ public final class WorkbenchStore: ObservableObject {
             return
         }
 
-        if state.activeTaskID != "imager" {
-            runGenericTask()
-            return
-        }
-
-        guard let parameters = state.dirtyImagingTaskParameters else {
-            state.lastErrors.append("Open a dirty-imaging task before running it")
-            return
-        }
-        let validationErrors = parameters.validationErrors()
-        guard validationErrors.isEmpty else {
-            state.taskRun = TaskRun(
-                state: .failed,
-                progress: 0,
-                logLines: ["Dirty imaging request validation failed."],
-                warnings: [],
-                products: [],
-                diagnostics: validationErrors,
-                requestSummary: parameters.requestSummary
-            )
-            state.lastErrors.append(contentsOf: validationErrors)
-            return
-        }
-
-        let runID = nextJobID(prefix: "dirty-imaging")
-        let request = DirtyImagingTaskRequest(runID: runID, parameters: parameters)
-        let tabID = activeTaskTabID(parameters: parameters)
-        startJob(
-            WorkbenchJob(
-                id: runID,
-                tabID: tabID,
-                kind: .dirtyImagingTask,
-                owner: .user,
-                status: .running,
-                progress: 0.05,
-                title: "Dirty imaging",
-                detail: parameters.measurementSetPath,
-                logLines: ["Starting casars-imager dirty imaging task.", parameters.requestSummary],
-                lastEvent: "started"
-            )
-        )
-        state.taskRun = TaskRun(
-            runID: runID,
-            state: .running,
-            progress: 0.05,
-            logLines: [
-                "Starting casars-imager dirty imaging task.",
-                parameters.requestSummary
-            ],
-            warnings: [],
-            products: [],
-            diagnostics: [],
-            requestSummary: parameters.requestSummary
-        )
-
-        do {
-            let execution = try dirtyImagingClient.startDirtyImaging(request: request) { [weak self] event in
-                self?.handleDirtyImagingEvent(event, runID: runID, jobID: runID)
-            }
-            if state.jobs[runID]?.status == .running {
-                activeTaskExecutions[runID] = execution
-            }
-        } catch {
-            failDirtyImagingJob(runID: runID, message: "Failed to start casars-imager.", diagnostics: ["\(error)"])
-            state.lastErrors.append("Start dirty imaging: \(error)")
-        }
+        runGenericTask()
     }
 
     private func runGenericTask() {
@@ -2374,6 +2309,8 @@ public final class WorkbenchStore: ObservableObject {
                 if values[argument.id] == nil {
                     if let defaultValue = argument.default {
                         values[argument.id] = defaultValue
+                    } else if argument.id == "imagename" {
+                        values[argument.id] = defaultTaskOutputPath(taskID: schema.commandID)
                     } else if argument.valueKind == "path",
                               let dataset = state.selectedDataset,
                               argumentLooksLikeInputDataset(argument) {
@@ -2382,6 +2319,9 @@ public final class WorkbenchStore: ObservableObject {
                               let spectralWindow = state.selectedDataset?.spectralWindows.first {
                         values[argument.id] = spectralWindowSelectorValue(spectralWindow)
                     } else if argument.id == "field",
+                              let field = state.selectedDataset?.fields.first {
+                        values[argument.id] = selectorIDValue(field) ?? field
+                    } else if argument.id == "phasecenter_field",
                               let field = state.selectedDataset?.fields.first {
                         values[argument.id] = selectorIDValue(field) ?? field
                     } else if argument.id == "scan",
@@ -2427,9 +2367,22 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func argumentLooksLikeInputDataset(_ argument: TaskUIArgument) -> Bool {
-        ["ms", "vis", "image", "imagename", "table", "infile", "fitsimage"].contains(argument.id)
+        ["ms", "vis", "image", "table", "infile", "fitsimage"].contains(argument.id)
             || argument.label.localizedCaseInsensitiveContains("input")
             || argument.label.localizedCaseInsensitiveContains("measurementset")
+    }
+
+    private func defaultTaskOutputPath(taskID: String) -> String {
+        let root = state.project.rootPath.isEmpty ? FileManager.default.temporaryDirectory.path : state.project.rootPath
+        let datasetStem = state.selectedDataset?.name
+            .replacingOccurrences(of: ".ms", with: "")
+            .replacingOccurrences(of: ".MS", with: "")
+            .replacingOccurrences(of: " ", with: "-")
+            ?? taskID
+        return URL(fileURLWithPath: root, isDirectory: true)
+            .appendingPathComponent("casa-rs-runs", isDirectory: true)
+            .appendingPathComponent("\(datasetStem)-\(taskID)")
+            .path
     }
 
     private func spectralWindowSelectorValue(_ label: String) -> String {
@@ -2926,24 +2879,51 @@ public final class WorkbenchStore: ObservableObject {
                     job.logLines.append(result.stderr)
                 }
                 state.jobs[runID] = job
+                let managedImagerResult = decodeManagedImagerResult(result)
                 if state.taskRun.runID == runID {
-                    state.taskRun = TaskRun(
-                        runID: runID,
-                        state: .succeeded,
-                        progress: 1.0,
-                        logLines: ["\(result.taskID) completed.", "Arguments: \(result.arguments.joined(separator: " "))"],
-                        warnings: result.stderr.isEmpty ? [] : [result.stderr],
-                        products: [],
-                        diagnostics: result.stdout.isEmpty ? [] : [result.stdout],
-                        requestSummary: state.taskRun.requestSummary
-                    )
+                    if let managedImagerResult {
+                        state.taskRun = TaskRun(
+                            runID: runID,
+                            state: .succeeded,
+                            progress: 1.0,
+                            logLines: [
+                                "\(result.taskID) completed.",
+                                "Arguments: \(result.arguments.joined(separator: " "))",
+                                managedImagerResult.report.summary
+                            ],
+                            warnings: result.stderr.isEmpty ? [] : [result.stderr],
+                            products: managedImagerResult.artifacts.map(\.path),
+                            diagnostics: managedImagerResult.diagnostics,
+                            outputPaths: managedImagerResult.outputPaths,
+                            requestSummary: state.taskRun.requestSummary
+                        )
+                    } else {
+                        state.taskRun = TaskRun(
+                            runID: runID,
+                            state: .succeeded,
+                            progress: 1.0,
+                            logLines: ["\(result.taskID) completed.", "Arguments: \(result.arguments.joined(separator: " "))"],
+                            warnings: result.stderr.isEmpty ? [] : [result.stderr],
+                            products: [],
+                            diagnostics: result.stdout.isEmpty ? [] : [result.stdout],
+                            requestSummary: state.taskRun.requestSummary
+                        )
+                    }
+                }
+                let affectedPaths: [String]
+                if let managedImagerResult {
+                    let products = appendProducedDatasets(from: managedImagerResult)
+                    recordRunProductGroup(from: managedImagerResult, products: products)
+                    affectedPaths = managedImagerResult.outputPaths
+                } else {
+                    affectedPaths = []
                 }
                 state.history.append(ProcessingHistoryEvent(
                     id: "hist-run-\(state.history.count + 1)",
                     timestamp: currentTimestamp(),
                     title: "\(result.taskID) completed",
                     reason: state.taskRun.requestSummary ?? "User ran \(result.taskID).",
-                    affectedPaths: [],
+                    affectedPaths: affectedPaths,
                     approval: "user"
                 ))
             case .failed(let failure):
@@ -2975,6 +2955,15 @@ public final class WorkbenchStore: ObservableObject {
                 }
             }
         }
+    }
+
+    private func decodeManagedImagerResult(_ result: GenericTaskResult) -> DirtyImagingTaskResult? {
+        guard result.taskID == "imager",
+              !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return nil
+        }
+        return try? JSONDecoder().decode(DirtyImagingTaskResult.self, from: Data(result.stdout.utf8))
     }
 
     private func appendProducedDatasets(from result: DirtyImagingTaskResult) -> [RunProductReference] {

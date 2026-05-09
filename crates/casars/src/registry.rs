@@ -751,6 +751,45 @@ mod tests {
         assert_eq!(specmode.group, "Stages");
         let managed_output = schema.managed_output.expect("managed output");
         assert_eq!(managed_output.renderer, "imager-run-v1");
+        for argument_id in [
+            "ms",
+            "imagename",
+            "specmode",
+            "channel_count",
+            "start",
+            "width",
+            "outframe",
+            "restfreq",
+            "deconvolver",
+            "weighting",
+            "perchanweightdensity",
+            "restoringbeam",
+            "usemask",
+            "noisethreshold",
+            "sidelobethreshold",
+            "lownoisethreshold",
+            "minbeamfrac",
+            "negativethreshold",
+            "scales",
+            "smallscalebias",
+            "wterm",
+            "wprojplanes",
+            "nterms",
+            "savemodel",
+            "outlierfile",
+            "pbcor",
+            "pblimit",
+        ] {
+            let argument = schema
+                .arguments
+                .iter()
+                .find(|argument| argument.id == argument_id)
+                .unwrap_or_else(|| panic!("missing imager argument {argument_id}"));
+            assert!(
+                !argument.hidden_in_tui,
+                "{argument_id} should be TUI invokable"
+            );
+        }
     }
 
     #[test]

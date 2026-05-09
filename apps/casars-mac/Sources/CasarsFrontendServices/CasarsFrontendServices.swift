@@ -3680,6 +3680,12 @@ public func taskUiSchemaJson(taskId: String)throws  -> String  {
     )
 })
 }
+public func tutorialTaskParameterAuditJson() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_casars_frontend_services_fn_func_tutorial_task_parameter_audit_json($0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -3739,6 +3745,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_task_ui_schema_json() != 59642) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_tutorial_task_parameter_audit_json() != 21445) {
         return InitializationResult.apiChecksumMismatch
     }
 

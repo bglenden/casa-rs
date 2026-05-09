@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "generated_for": "issues-226-231",
+  "scope_note": "Tutorial-facing parameter audit for GUI/TUI task parity. Every listed task must expose these argument ids through its UI schema unless the task is explicitly represented by another catalog task.",
+  "requirements": {
+    "schema": "Each parameter id must be present in the task UI schema.",
+    "tui": "Each parameter id must be invokable from the TUI unless hidden_in_tui is explicitly true for a meta action.",
+    "gui": "Each parameter id must be rendered by the generic Swift task panel, using dataset-grounded selectors where the selected dataset provides real options.",
+    "grounded_selectors": ["ms", "vis", "field", "phasecenter_field", "spw", "scan", "antenna", "correlation", "datacolumn"]
+  },
+  "workflows": [
+    {
+      "id": "alma-first-look-twhya-mfs",
+      "issue": 117,
+      "source": "docs/tutorial-parity/wave-3-issue-117-mfs-foundation.md",
+      "task_id": "imager",
+      "task_represents": "tclean",
+      "parameters": ["ms", "imagename", "imsize", "cell_arcsec", "field", "spw", "specmode", "datacolumn", "weighting", "robust", "deconvolver", "niter", "threshold_jy"]
+    },
+    {
+      "id": "alma-first-look-twhya-line-cube",
+      "issue": 119,
+      "source": "docs/tutorial-parity/wave-3-issue-119-line-imaging.md",
+      "task_id": "imager",
+      "task_represents": "tclean",
+      "parameters": ["ms", "imagename", "field", "spw", "specmode", "channel_count", "start", "width", "outframe", "restfreq", "deconvolver", "weighting", "perchanweightdensity", "restoringbeam", "imsize", "cell_arcsec", "phasecenter_field", "niter", "threshold_jy", "datacolumn"]
+    },
+    {
+      "id": "alma-automasking-twhya",
+      "issue": 167,
+      "source": "docs/tutorial-parity/wave-6-issue-167-automasking.md",
+      "task_id": "imager",
+      "task_represents": "tclean",
+      "parameters": ["ms", "imagename", "specmode", "channel_count", "start", "width", "outframe", "restfreq", "deconvolver", "weighting", "robust", "restoringbeam", "imsize", "cell_arcsec", "niter", "threshold_jy", "usemask", "noisethreshold", "sidelobethreshold", "lownoisethreshold", "minbeamfrac", "negativethreshold", "growiterations"]
+    },
+    {
+      "id": "alma-vla-mosaic-and-pb",
+      "issues": [53, 169],
+      "source": "docs/tutorial-parity/wave-6-issue-53-mosaic-panels.md; docs/tutorial-parity/wave-6-issue-169-3c391.md; scripts/run-wave7-ticket-closeout.sh",
+      "task_id": "imager",
+      "task_represents": "tclean",
+      "parameters": ["ms", "imagename", "phasecenter_field", "spw", "datacolumn", "deconvolver", "scales", "smallscalebias", "weighting", "robust", "imsize", "cell_arcsec", "niter", "minor_cycle_length", "hogbom_iteration_mode", "gain", "threshold_jy", "pbcor", "pblimit"]
+    },
+    {
+      "id": "vla-imaging-wideband-wproject",
+      "issue": 175,
+      "source": "scripts/run-wave6-issue175-vla-imaging.sh",
+      "task_id": "imager",
+      "task_represents": "tclean",
+      "parameters": ["ms", "imagename", "imsize", "cell_arcsec", "pblimit", "spw", "deconvolver", "nterms", "scales", "smallscalebias", "wterm", "wprojplanes", "niter", "nmajor", "threshold_jy", "weighting", "robust", "savemodel", "pbcor", "outlierfile", "write_preview_pngs"]
+    },
+    {
+      "id": "visibility-inspection-plotms",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "msexplore",
+      "task_represents": "plotms and listobs",
+      "parameters": ["ms_path", "output", "overwrite", "selectdata", "field", "spw", "timerange", "uvrange", "antenna", "scan", "correlation", "data_column", "preset", "x_axis", "y_axis", "avgchannel", "avgtime", "plot_output", "plot_width", "plot_height", "flag_selected", "flag_apply"]
+    },
+    {
+      "id": "split-and-subset-ms",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "mstransform",
+      "task_represents": "split",
+      "parameters": ["ms", "out", "spw", "field", "scan", "antenna", "timerange", "msselect", "datacolumn", "keepflags"]
+    },
+    {
+      "id": "manual-flagging-and-flag-versions",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "flagdata",
+      "task_represents": "flagdata",
+      "parameters": ["vis", "mode", "spw", "field", "scan", "antenna", "datacolumn", "action", "flagbackup", "clipzeros", "quackinterval", "quackmode", "timecutoff", "freqcutoff", "timedev", "freqdev", "extendflags", "extendpols"]
+    },
+    {
+      "id": "flag-version-management",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "flagmanager",
+      "task_represents": "flagmanager",
+      "parameters": ["vis", "mode", "versionname", "oldname", "comment", "merge"]
+    },
+    {
+      "id": "calibration-spine",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "calibrate",
+      "task_represents": "uvcontsub, gencal, gaincal, bandpass, fluxscale, applycal",
+      "parameters": ["mode", "measurement_set", "output_measurement_set", "table_path", "gaintables", "callib", "gainfield", "interp", "spwmap", "apply_mode", "calwt", "parang", "fit_spw", "fit_order", "stats_datacolumn", "out_table", "refant", "gain_type", "solve_mode", "solint", "gain_combine", "smodel", "min_snr", "bandpass_combine", "bandtype", "solnorm", "fluxscale_input", "reference_fields", "transfer_fields", "refspwmap", "selectdata", "field", "spw", "antenna", "scan", "observation", "array", "timerange", "msselect"]
+    }
+  ]
+}

@@ -66,7 +66,7 @@ final class WorkbenchStoreTests: XCTestCase {
         let matrix = try UniFFITaskExecutionMatrixClient().loadTaskExecutionMatrix()
 
         XCTAssertTrue(matrix.rows.contains { $0.taskID == "msexplore" && $0.tuiStatus == "invokable" })
-        XCTAssertTrue(matrix.rows.contains { $0.taskID == "imager" && $0.guiStatus == "partial_panel" })
+        XCTAssertTrue(matrix.rows.contains { $0.taskID == "imager" && $0.guiStatus == "invokable" })
         XCTAssertTrue(matrix.rows.contains { $0.taskID == "flagdata" && $0.tuiStatus == "invokable" })
         XCTAssertTrue(matrix.rows.contains { $0.taskID == "mstransform" && $0.tuiStatus == "invokable" })
     }
@@ -118,6 +118,28 @@ final class WorkbenchStoreTests: XCTestCase {
         })
     }
 
+    func testImagerTaskSchemaExposesTutorialControlsAndManagedOutput() throws {
+        let schema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "imager")
+        let argumentIDs = Set(schema.arguments.filter { !$0.hiddenInTUI }.map(\.id))
+        let tutorialArguments = [
+            "ms", "imagename", "imsize", "cell_arcsec", "field", "phasecenter_field",
+            "spw", "datacolumn", "specmode", "channel_count", "start", "width",
+            "outframe", "restfreq", "deconvolver", "weighting", "robust",
+            "perchanweightdensity", "restoringbeam", "niter", "nmajor", "gain",
+            "threshold_jy", "usemask", "noisethreshold", "sidelobethreshold",
+            "lownoisethreshold", "minbeamfrac", "negativethreshold",
+            "deconvolver", "scales", "smallscalebias", "wterm", "wprojplanes",
+            "nterms", "savemodel", "outlierfile", "pbcor", "pblimit"
+        ]
+
+        for argumentID in tutorialArguments {
+            XCTAssertTrue(argumentIDs.contains(argumentID), "missing \(argumentID)")
+        }
+        XCTAssertEqual(schema.managedOutput?.renderer, "imager-run-v1")
+        XCTAssertEqual(schema.managedOutput?.injectArguments.first?.flag, "--managed-output")
+        XCTAssertEqual(schema.managedOutput?.injectArguments.first?.value, "true")
+    }
+
     func testGenericTaskArgumentsUseSchemaFlagsChoicesAndToggles() throws {
         let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
         {
@@ -162,6 +184,88 @@ final class WorkbenchStoreTests: XCTestCase {
             try ProcessGenericTaskClient.arguments(for: request),
             ["--vis", "/data/input.ms", "--mode", "summary", "--no-flagbackup"]
         )
+    }
+
+    func testGenericImagerArgumentsIncludeTutorialParametersAndManagedOutput() throws {
+        let schema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "imager")
+        let request = GenericTaskRequest(
+            runID: "run-1",
+            task: TaskCatalogEntry(
+                id: "imager",
+                category: "Imaging",
+                displayName: "Imager",
+                binaryName: "casars-imager",
+                cargoPackage: "casars-imager",
+                overrideEnv: "CASARS_IMAGER_BIN",
+                shellKind: "workflow",
+                interaction: "one_shot",
+                browserKind: nil,
+                datasetKinds: ["measurement_set"],
+                schemaSource: "binary",
+                showInTUI: true,
+                showInSwift: true,
+                includeInSuite: true
+            ),
+            schema: schema,
+            values: [
+                "ms": "/data/twhya.ms",
+                "imagename": "/data/casa-rs-runs/twhya",
+                "imsize": "250",
+                "cell_arcsec": "0.08",
+                "field": "5",
+                "phasecenter_field": "5",
+                "spw": "0",
+                "datacolumn": "DATA",
+                "specmode": "cube",
+                "channel_count": "15",
+                "start": "0.0km/s",
+                "width": "0.5km/s",
+                "outframe": "LSRK",
+                "restfreq": "372.67249GHz",
+                "deconvolver": "mtmfs",
+                "weighting": "briggsbwtaper",
+                "robust": "0.5",
+                "restoringbeam": "common",
+                "niter": "1000",
+                "nmajor": "4",
+                "gain": "0.1",
+                "threshold_jy": "0.00015",
+                "usemask": "auto-multithresh",
+                "noisethreshold": "4.25",
+                "sidelobethreshold": "2.0",
+                "lownoisethreshold": "1.5",
+                "minbeamfrac": "0.3",
+                "negativethreshold": "15.0",
+                "scales": "0,6,10,30,60",
+                "smallscalebias": "0.9",
+                "wterm": "wproject",
+                "wprojplanes": "-1",
+                "nterms": "2",
+                "savemodel": "modelcolumn",
+                "outlierfile": "/data/outliers.txt",
+                "pblimit": "-0.01"
+            ],
+            toggles: [
+                "perchanweightdensity": true,
+                "pbcor": true,
+                "write_preview_pngs": false
+            ]
+        )
+
+        let arguments = try ProcessGenericTaskClient.arguments(for: request)
+        XCTAssertTrue(arguments.contains("--managed-output"))
+        XCTAssertTrue(arguments.contains("true"))
+        for flag in [
+            "--specmode", "--channel-count", "--start", "--width", "--outframe",
+            "--restfreq", "--deconvolver", "--weighting", "--perchanweightdensity",
+            "--restoringbeam", "--nmajor", "--gain", "--threshold-jy", "--usemask",
+            "--noisethreshold", "--sidelobethreshold", "--lownoisethreshold",
+            "--minbeamfrac", "--negativethreshold", "--scales", "--smallscalebias",
+            "--wterm", "--wprojplanes", "--nterms", "--savemodel", "--outlierfile",
+            "--pbcor", "--pblimit", "--no-preview-pngs"
+        ] {
+            XCTAssertTrue(arguments.contains(flag), "missing \(flag)")
+        }
     }
 
     func testGenericMutatingTaskRequiresConfirmationBeforeStart() throws {
@@ -1226,36 +1330,35 @@ final class WorkbenchStoreTests: XCTestCase {
                 )
             ]
         )
-        let taskClient = StubDirtyImagingTaskClient()
-        let store = WorkbenchStore(probeClient: probeClient, dirtyImagingClient: taskClient)
+        let taskClient = StubGenericTaskClient()
+        let store = WorkbenchStore(probeClient: probeClient, genericTaskClient: taskClient)
 
         store.openProject(path: "/data")
         store.openDefaultTab(kind: .task)
+        store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
         store.setDirtyImagingImageSize(256)
         store.setDirtyImagingImageHeight(256)
         store.setDirtyImagingCellArcsec(0.25)
         store.setDirtyImagingWeighting(.briggs)
         store.setDirtyImagingChannelStart("2")
         store.setDirtyImagingChannelCount("4")
+        let parameters = try XCTUnwrap(store.state.dirtyImagingTaskParameters)
+        let managedRequest = DirtyImagingTaskRequest(runID: "imager-1", parameters: parameters)
+        taskClient.stdout = try makeManagedImagerStdout(request: managedRequest)
         store.runTask()
 
         XCTAssertEqual(taskClient.requests.count, 1)
-        let encoded = String(decoding: try taskClient.requests[0].encodedImagerJSON(), as: UTF8.self)
-        XCTAssertTrue(encoded.contains(#""dirty_only" : true"#))
-        XCTAssertTrue(encoded.contains(#""field_ids" : ["#))
-        XCTAssertTrue(encoded.contains(#""phasecenter_field" : 0"#))
-        XCTAssertTrue(encoded.contains(#""spw_selector" : "0""#))
-        XCTAssertTrue(encoded.contains(#""channel_start" : 2"#))
-        XCTAssertTrue(encoded.contains(#""channel_count" : 4"#))
-        XCTAssertTrue(encoded.contains(#""kind" : "briggs""#))
+        let arguments = try ProcessGenericTaskClient.arguments(for: taskClient.requests[0])
+        XCTAssertTrue(arguments.contains("--managed-output"))
+        XCTAssertTrue(arguments.contains("true"))
+        waitFor("managed imager completion") {
+            store.debugSnapshot().taskState == .succeeded
+        }
 
         let snapshot = store.debugSnapshot()
         XCTAssertEqual(snapshot.taskState, .succeeded)
-        XCTAssertEqual(snapshot.taskRequest?.imageSize, 256)
-        XCTAssertEqual(snapshot.taskRequest?.imageHeight, 256)
-        XCTAssertEqual(snapshot.taskRequest?.cellArcsec, 0.25)
         XCTAssertTrue(snapshot.taskOutputPaths.contains("/data/casa-rs-runs/output.image"))
-        XCTAssertTrue(snapshot.processingHistoryEvents.contains("Dirty imaging completed"))
+        XCTAssertTrue(snapshot.processingHistoryEvents.contains("imager completed"))
         let producedDataset = store.state.project.datasets.first { $0.path == "/data/casa-rs-runs/output.image" }
         XCTAssertEqual(producedDataset?.kind, .imageCube)
         XCTAssertEqual(producedDataset?.size, "256 x 256")
@@ -1475,20 +1578,17 @@ final class WorkbenchStoreTests: XCTestCase {
                 diagnostics: []
             )
         )
-        let taskClient = StubDirtyImagingTaskClient()
-        let store = WorkbenchStore(probeClient: probeClient, dirtyImagingClient: taskClient)
+        let store = WorkbenchStore(probeClient: probeClient)
 
         store.openProject(path: "/data")
         store.openDefaultTab(kind: .task)
         store.setDirtyImagingImageSize(0)
         store.setDirtyImagingImageHeight(128)
         store.setDirtyImagingCellArcsec(-1)
-        store.runTask()
+        let diagnostics = store.state.dirtyImagingTaskParameters?.validationErrors() ?? []
 
-        XCTAssertEqual(taskClient.requests.count, 0)
-        XCTAssertEqual(store.debugSnapshot().taskState, .failed)
-        XCTAssertTrue(store.debugSnapshot().taskDiagnostics.contains("Image width must be positive."))
-        XCTAssertTrue(store.debugSnapshot().taskDiagnostics.contains("Cell size must be a positive finite arcsecond value."))
+        XCTAssertTrue(diagnostics.contains("Image width must be positive."))
+        XCTAssertTrue(diagnostics.contains("Cell size must be a positive finite arcsecond value."))
     }
 
     func testDirtyImagingRectangularImageSizeIsVisibleButNotRunnableYet() {
@@ -1522,12 +1622,11 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openDefaultTab(kind: .task)
         store.setDirtyImagingImageSize(512)
         store.setDirtyImagingImageHeight(256)
-        store.runTask()
+        let diagnostics = store.state.dirtyImagingTaskParameters?.validationErrors() ?? []
 
         XCTAssertEqual(store.state.dirtyImagingTaskParameters?.imageSize, 512)
         XCTAssertEqual(store.state.dirtyImagingTaskParameters?.imageHeight, 256)
-        XCTAssertEqual(store.debugSnapshot().taskState, .failed)
-        XCTAssertTrue(store.debugSnapshot().taskDiagnostics.contains("Rectangular image sizes are not supported by the current casars-imager backend yet."))
+        XCTAssertTrue(diagnostics.contains("Rectangular image sizes are not supported by the current casars-imager backend yet."))
     }
 
     func testDirtyImagingImageSizeAssessmentAndAdjustmentPreferFftFriendlyValues() {
@@ -1867,7 +1966,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.debugSnapshot().jobs.map(\.status), [.succeeded, .succeeded])
     }
 
-    func testCancellingDirtyImagingJobIsScopedToThatJob() {
+    func testCancellingDirtyImagingJobIsScopedToThatJob() throws {
         let probedDataset = DatasetSummary(
             id: "/data/probed.ms",
             name: "probed.ms",
@@ -1880,7 +1979,7 @@ final class WorkbenchStoreTests: XCTestCase {
             dataColumns: ["DATA"],
             notes: "Recognized by Rust probe."
         )
-        let taskClient = HoldingDirtyImagingTaskClient()
+        let taskClient = HoldingGenericTaskClient()
         let store = WorkbenchStore(
             probeClient: StubProjectProbeClient(
                 result: ProjectFixtureProbe(
@@ -1893,16 +1992,17 @@ final class WorkbenchStoreTests: XCTestCase {
                     diagnostics: []
                 )
             ),
-            dirtyImagingClient: taskClient
+            genericTaskClient: taskClient
         )
 
         store.openProject(path: "/data")
         store.openDefaultTab(kind: .task)
+        store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
         store.runTask()
 
         let runID = tryUnwrap(store.state.taskRun.runID)
         XCTAssertEqual(store.debugSnapshot().runningJobCount, 1)
-        XCTAssertEqual(store.debugSnapshot().jobs.first?.kind, .dirtyImagingTask)
+        XCTAssertEqual(store.debugSnapshot().jobs.first?.kind, .genericTask)
         XCTAssertEqual(store.debugSnapshot().jobs.first?.status, .running)
 
         store.stopTask()
@@ -1916,7 +2016,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.taskState, .cancelled)
         XCTAssertTrue(snapshot.activeJobIDsByTab.isEmpty)
 
-        taskClient.emitSucceeded()
+        try taskClient.emitSucceeded()
         XCTAssertEqual(store.debugSnapshot().jobs.first?.status, .cancelled)
         XCTAssertEqual(store.debugSnapshot().taskState, .cancelled)
     }
@@ -2493,6 +2593,36 @@ private func makeTestPlotDocument(title: String = "UV Coverage") -> WorkbenchPlo
     )
 }
 
+private func makeManagedImagerStdout(request: DirtyImagingTaskRequest) throws -> String {
+    let result = DirtyImagingTaskResult(
+        request: request,
+        report: DirtyImagingRunReport(
+            warnings: ["synthetic warning"],
+            griddedSamples: 128,
+            majorCycles: 1,
+            minorIterations: 0,
+            channelCount: 1
+        ),
+        artifacts: [
+            DirtyImagingArtifact(
+                kind: "image",
+                label: "Dirty Image",
+                path: "/data/casa-rs-runs/output.image",
+                exists: true,
+                previewPngPath: "/data/casa-rs-runs/output.image.png",
+                previewPngExists: true
+            )
+        ],
+        requestJSONPath: "/data/casa-rs-runs/output.casars-request.json",
+        stdoutPath: "/data/casa-rs-runs/output.casars-result.json",
+        stderrPath: "/data/casa-rs-runs/output.casars-stderr.log",
+        protocolSummary: #"{"protocol_name":"casars_imager_task"}"#,
+        diagnostics: ["synthetic warning"]
+    )
+    let encoder = JSONEncoder()
+    return String(decoding: try encoder.encode(result), as: UTF8.self)
+}
+
 private final class StubDirtyImagingTaskClient: DirtyImagingTaskClient {
     var requests: [DirtyImagingTaskRequest] = []
     var event: DirtyImagingTaskEvent?
@@ -2534,6 +2664,8 @@ private final class StubDirtyImagingTaskClient: DirtyImagingTaskClient {
 
 private final class StubGenericTaskClient: GenericTaskClient {
     var requests: [GenericTaskRequest] = []
+    var stdout = ""
+    var stderr = ""
 
     func startTask(
         request: GenericTaskRequest,
@@ -2543,8 +2675,8 @@ private final class StubGenericTaskClient: GenericTaskClient {
         eventHandler(.succeeded(GenericTaskResult(
             taskID: request.task.id,
             arguments: try ProcessGenericTaskClient.arguments(for: request),
-            stdout: "",
-            stderr: ""
+            stdout: stdout,
+            stderr: stderr
         )))
         return StubDirtyImagingExecution()
     }
@@ -2602,6 +2734,31 @@ private final class HoldingDirtyImagingTaskClient: DirtyImagingTaskClient {
             stderrPath: "/data/casa-rs-runs/output.casars-stderr.log",
             protocolSummary: #"{"protocol_name":"casars_imager_task"}"#,
             diagnostics: []
+        )))
+    }
+}
+
+private final class HoldingGenericTaskClient: GenericTaskClient {
+    var requests: [GenericTaskRequest] = []
+    var handler: ((GenericTaskEvent) -> Void)?
+    let execution = StubDirtyImagingExecution()
+
+    func startTask(
+        request: GenericTaskRequest,
+        eventHandler: @escaping (GenericTaskEvent) -> Void
+    ) throws -> DirtyImagingTaskExecution {
+        requests.append(request)
+        handler = eventHandler
+        return execution
+    }
+
+    func emitSucceeded() throws {
+        guard let request = requests.last else { return }
+        handler?(.succeeded(GenericTaskResult(
+            taskID: request.task.id,
+            arguments: try ProcessGenericTaskClient.arguments(for: request),
+            stdout: "",
+            stderr: ""
         )))
     }
 }

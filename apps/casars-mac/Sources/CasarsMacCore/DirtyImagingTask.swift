@@ -481,6 +481,14 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                 continue
             }
         }
+        if let managedOutput = request.schema.managedOutput {
+            for injected in managedOutput.injectArguments {
+                arguments.append(injected.flag)
+                if let value = injected.value {
+                    arguments.append(value)
+                }
+            }
+        }
         return arguments
     }
 

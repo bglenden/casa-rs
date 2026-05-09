@@ -464,6 +464,7 @@ public struct TaskUISchema: Codable, Equatable {
     public var summary: String
     public var usage: String
     public var arguments: [TaskUIArgument]
+    public var managedOutput: TaskUIManagedOutput?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -474,7 +475,29 @@ public struct TaskUISchema: Codable, Equatable {
         case summary
         case usage
         case arguments
+        case managedOutput = "managed_output"
     }
+}
+
+public struct TaskUIManagedOutput: Codable, Equatable {
+    public var renderer: String
+    public var stdoutFormat: String
+    public var injectArguments: [TaskUIInjectedArgument]
+    public var rawStdoutAvailable: Bool
+    public var rawStderrAvailable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case renderer
+        case stdoutFormat = "stdout_format"
+        case injectArguments = "inject_arguments"
+        case rawStdoutAvailable = "raw_stdout_available"
+        case rawStderrAvailable = "raw_stderr_available"
+    }
+}
+
+public struct TaskUIInjectedArgument: Codable, Equatable {
+    public var flag: String
+    public var value: String?
 }
 
 public struct TaskUIArgument: Codable, Equatable, Identifiable {
