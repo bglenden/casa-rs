@@ -206,6 +206,7 @@ public enum ProjectSource: String, Codable, Equatable {
     case none
     case fixture
     case probed
+    case tutorialPack
 }
 
 public extension ProjectSource {
@@ -217,6 +218,7 @@ public extension ProjectSource {
 public enum WorkbenchTabKind: String, Codable, Equatable {
     case datasetExplorer
     case tableBrowser
+    case tutorial
     case task
     case plotSamples
     case aiChat
@@ -2390,6 +2392,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var runProductGroups: [RunProductGroup]
     public var taskCatalog: [TaskCatalogEntry]
     public var taskExecutionMatrixRows: [TaskExecutionMatrixRow]
+    public var tutorialPack: TutorialPackContext?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
     public var genericTaskValues: [String: [String: String]]
@@ -2425,6 +2428,7 @@ public struct WorkbenchState: Codable, Equatable {
         runProductGroups: [RunProductGroup] = [],
         taskCatalog: [TaskCatalogEntry] = [],
         taskExecutionMatrixRows: [TaskExecutionMatrixRow] = [],
+        tutorialPack: TutorialPackContext? = nil,
         activeTaskID: String = "imager",
         taskUISchemas: [String: TaskUISchema] = [:],
         genericTaskValues: [String: [String: String]] = [:],
@@ -2459,6 +2463,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.runProductGroups = runProductGroups
         self.taskCatalog = taskCatalog
         self.taskExecutionMatrixRows = taskExecutionMatrixRows
+        self.tutorialPack = tutorialPack
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
         self.genericTaskValues = genericTaskValues
@@ -2534,6 +2539,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var selectedDatasetSummary: DebugDatasetSnapshot?
     public var activeProjectRoot: String
     public var activeProjectSource: ProjectSource
+    public var tutorialPack: DebugTutorialPackSnapshot?
     public var discoveredDatasets: [String]
     public var probeDiagnostics: [String]
     public var inspectorCollapsed: Bool
@@ -2564,6 +2570,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         activeProject = state.project.name
         activeProjectRoot = state.project.rootPath
         activeProjectSource = state.project.source
+        tutorialPack = state.tutorialPack.map(DebugTutorialPackSnapshot.init(context:))
         activeLeftDockMode = state.dockMode
         leftDockCollapsed = state.leftDockCollapsed
         selectedDataset = state.selectedDataset?.name
@@ -2611,6 +2618,60 @@ public struct DebugStateSnapshot: Codable, Equatable {
         commandQuery = state.commandQuery
         lastErrors = state.lastErrors
         interfaceFontSize = state.interfaceFontSize
+    }
+}
+
+public struct DebugTutorialPackSnapshot: Codable, Equatable {
+    public var packID: String
+    public var tutorialID: String
+    public var title: String
+    public var declaredCasaVersion: String
+    public var rootPath: String
+    public var manifestPath: String
+    public var selectedSectionID: String?
+    public var selectedSectionTitle: String?
+    public var inputs: [TutorialPackInputState]
+    public var sections: [DebugTutorialPackSectionSnapshot]
+    public var workspaceRoot: String
+    public var nativeWorkspacePath: String
+    public var oracleWorkspacePath: String
+    public var reviewPath: String
+    public var learnerDocsIndex: String
+
+    public init(context: TutorialPackContext) {
+        packID = context.packID
+        tutorialID = context.tutorialID
+        title = context.title
+        declaredCasaVersion = context.declaredCasaVersion
+        rootPath = context.rootPath
+        manifestPath = context.manifestPath
+        selectedSectionID = context.selectedSection?.id
+        selectedSectionTitle = context.selectedSection?.title
+        inputs = context.inputs
+        sections = context.sections.map(DebugTutorialPackSectionSnapshot.init(section:))
+        workspaceRoot = context.workspaceRoot
+        nativeWorkspacePath = context.nativeWorkspacePath
+        oracleWorkspacePath = context.oracleWorkspacePath
+        reviewPath = context.reviewPath
+        learnerDocsIndex = context.learnerDocsIndex
+    }
+}
+
+public struct DebugTutorialPackSectionSnapshot: Codable, Equatable {
+    public var id: String
+    public var sequence: UInt64
+    public var title: String
+    public var tasks: [String]
+    public var reviewStatus: String
+    public var reviewRecordPath: String
+
+    public init(section: TutorialPackSection) {
+        id = section.id
+        sequence = section.sequence
+        title = section.title
+        tasks = section.tasks
+        reviewStatus = section.reviewCheckpoint.status
+        reviewRecordPath = section.reviewCheckpoint.recordPath
     }
 }
 

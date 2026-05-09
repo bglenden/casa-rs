@@ -4,6 +4,7 @@ set -euo pipefail
 
 MODE="run"
 OPEN_PROJECT=""
+OPEN_TUTORIAL_PACK=""
 USE_TEMP_REAL_PROJECT="1"
 APP_NAME="casars-mac"
 BUNDLE_ID="org.casa-rs.casars-mac"
@@ -45,6 +46,17 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       OPEN_PROJECT="$2"
+      OPEN_TUTORIAL_PACK=""
+      USE_TEMP_REAL_PROJECT="0"
+      shift 2
+      ;;
+    --tutorial-pack|--open-tutorial-pack)
+      if [[ $# -lt 2 ]]; then
+        echo "missing path after $1" >&2
+        exit 2
+      fi
+      OPEN_TUTORIAL_PACK="$2"
+      OPEN_PROJECT=""
       USE_TEMP_REAL_PROJECT="0"
       shift 2
       ;;
@@ -54,7 +66,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "usage: $0 [run|--debug|--logs|--verify] [--project PATH|--empty]" >&2
+      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--tutorial-pack PATH|--empty]" >&2
       exit 2
       ;;
   esac
@@ -192,7 +204,9 @@ open_app() {
     open_flags=(-W -n)
   fi
 
-  if [[ -n "$OPEN_PROJECT" ]]; then
+  if [[ -n "$OPEN_TUTORIAL_PACK" ]]; then
+    /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args --open-tutorial-pack "$OPEN_TUTORIAL_PACK"
+  elif [[ -n "$OPEN_PROJECT" ]]; then
     /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args --open-project "$OPEN_PROJECT"
   else
     /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE"
@@ -204,7 +218,9 @@ launched_app_pid() {
 }
 
 debug_app() {
-  if [[ -n "$OPEN_PROJECT" ]]; then
+  if [[ -n "$OPEN_TUTORIAL_PACK" ]]; then
+    lldb -- "$APP_BINARY" --open-tutorial-pack "$OPEN_TUTORIAL_PACK"
+  elif [[ -n "$OPEN_PROJECT" ]]; then
     lldb -- "$APP_BINARY" --open-project "$OPEN_PROJECT"
   else
     lldb -- "$APP_BINARY"
@@ -245,7 +261,7 @@ case "$MODE" in
     echo "==> Staged $APP_BUNDLE"
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--empty]" >&2
+    echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--tutorial-pack PATH|--empty]" >&2
     exit 2
     ;;
 esac

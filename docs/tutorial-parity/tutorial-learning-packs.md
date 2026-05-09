@@ -71,6 +71,23 @@ does not commit official CASA tutorial datasets. Generated pack manifests must
 record registry keys, source URLs, source artifact URLs, size or checksum
 policy, local staging policy, and directory-manifest identity where applicable.
 
+Generate the current pilot pack with:
+
+```bash
+scripts/generate-tutorial-pack.py --pack alma-first-look-image-analysis
+```
+
+By default this writes:
+
+```text
+${CASA_RS_TUTORIAL_DATA_ROOT:-~/SoftwareProjects/casa-tutorial-data}/tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack
+```
+
+The generator copies local tutorial inputs when they are already staged under
+the tutorial-data root. Use `--no-materialize-inputs` to create only the pack
+skeleton and leave each input marked `missing` in `evidence/data-manifest.json`.
+The macOS GUI can open either the pack directory or its `pack.json` manifest.
+
 ## Learner View
 
 The learner view should be small and runnable. It contains:
@@ -136,6 +153,22 @@ small image inputs and a narrow image-analysis task surface:
 - `immoments`
 - `exportfits`
 
-The first implementation issue defines the pack contract and review workflow
-only. It does not claim full ALMA First Look parity, generate tutorial data, or
-make screenshots canonical.
+The pilot currently defines the pack contract, local pack generation, GUI pack
+loading, and the first-step review workflow. It does not claim full ALMA First
+Look parity or make screenshots canonical.
+
+Open the pilot pack in the macOS GUI from `apps/casars-mac` with:
+
+```bash
+./script/build_and_run.sh --tutorial-pack ~/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack
+```
+
+For non-interactive regression checks, dump the same loaded state with:
+
+```bash
+swift run casars-mac --dump-debug-state --open-tutorial-pack ~/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack
+```
+
+The Tutorial tab shows input staging status, the observable section list, the
+learner docs path, the regression evidence paths, and an `Open Task` action
+that applies the section's GUI parameters to the native task panel.

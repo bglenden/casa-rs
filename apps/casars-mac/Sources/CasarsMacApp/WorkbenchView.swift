@@ -266,6 +266,7 @@ struct LeftDockView: View {
         case .none: "No project"
         case .fixture: "Demo project"
         case .probed: "Real project"
+        case .tutorialPack: "Tutorial pack"
         }
     }
 
@@ -500,6 +501,7 @@ struct InspectorView: View {
         case .none: "No project"
         case .fixture: "Demo metadata"
         case .probed: "Real probe metadata"
+        case .tutorialPack: "Tutorial pack metadata"
         }
     }
 

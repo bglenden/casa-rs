@@ -52,6 +52,81 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.activeTab, "")
     }
 
+    func testTutorialPackContextLoadsTemplateAndInputStatus() throws {
+        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["inputs/twhya_cont.image"])
+        defer { removeTemporaryTutorialPack(packURL) }
+
+        let context = try TutorialPackContext.load(path: packURL.path)
+
+        XCTAssertEqual(context.packID, "alma-first-look-image-analysis")
+        XCTAssertEqual(context.title, "ALMA First Look: Image Analysis")
+        XCTAssertEqual(context.selectedSection?.id, "01-imhead-continuum-header")
+        XCTAssertEqual(context.inputs.map(\.status), [.staged, .missing])
+        XCTAssertEqual(context.datasetSummaries().map(\.name), ["twhya_cont.image"])
+        XCTAssertEqual(
+            context.learnerDocsIndex,
+            packURL.appendingPathComponent("docs/index.md").standardizedFileURL.path
+        )
+    }
+
+    func testOpenTutorialPackPopulatesGuiDebugSnapshot() throws {
+        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["inputs/twhya_cont.image"])
+        defer { removeTemporaryTutorialPack(packURL) }
+        let store = WorkbenchStore(
+            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImheadTaskCatalogEntry()]),
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.openTutorialPack(path: packURL.path)
+        let snapshot = store.debugSnapshot()
+
+        XCTAssertEqual(snapshot.activeProject, "ALMA First Look: Image Analysis")
+        XCTAssertEqual(snapshot.activeProjectSource, .tutorialPack)
+        XCTAssertEqual(snapshot.activeProjectRoot, packURL.standardizedFileURL.path)
+        XCTAssertEqual(snapshot.openTabs, ["Tutorial"])
+        XCTAssertEqual(snapshot.activeTab, "Tutorial")
+        XCTAssertEqual(snapshot.selectedDataset, "twhya_cont.image")
+        XCTAssertEqual(snapshot.tutorialPack?.packID, "alma-first-look-image-analysis")
+        XCTAssertEqual(snapshot.tutorialPack?.selectedSectionID, "01-imhead-continuum-header")
+        XCTAssertEqual(snapshot.tutorialPack?.inputs.map(\.status), [.staged, .missing])
+        XCTAssertEqual(
+            snapshot.tutorialPack.map { Array($0.sections.map(\.id).prefix(4)) },
+            [
+                "01-imhead-continuum-header",
+                "02-imstat-continuum-statistics",
+                "03-immoments-n2hp-moment-map",
+                "04-exportfits-products"
+            ]
+        )
+        XCTAssertTrue(snapshot.probeDiagnostics.contains("Tutorial input twhya_cont.image: staged"))
+        XCTAssertTrue(snapshot.probeDiagnostics.contains("Tutorial input twhya_n2hp.image: missing"))
+    }
+
+    func testOpenTutorialSectionTaskAppliesGuiImheadParameters() throws {
+        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["inputs/twhya_cont.image"])
+        defer { removeTemporaryTutorialPack(packURL) }
+        let store = WorkbenchStore(
+            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImheadTaskCatalogEntry()]),
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.openTutorialPack(path: packURL.path)
+        store.openTutorialSectionTask("01-imhead-continuum-header")
+
+        XCTAssertEqual(store.state.activeTaskID, "imhead")
+        XCTAssertEqual(store.debugSnapshot().activeTab, "Tasks")
+        XCTAssertEqual(
+            store.state.genericTaskValues["imhead"]?["image_path"],
+            packURL.appendingPathComponent("inputs/twhya_cont.image").standardizedFileURL.path
+        )
+        XCTAssertEqual(store.state.genericTaskValues["imhead"]?["mode"], "summary")
+        XCTAssertEqual(store.state.genericTaskToggles["imhead"]?["json"], true)
+        XCTAssertEqual(store.state.taskRun.requestSummary, "image_path=inputs/twhya_cont.image, mode=summary, json=true")
+        XCTAssertTrue(store.state.lastErrors.isEmpty)
+    }
+
     func testTaskCatalogLoadsFromFrontendServicesIntoDebugState() throws {
         let store = WorkbenchStore()
 
@@ -2824,6 +2899,14 @@ private struct StubTaskUISchemaClient: TaskUISchemaClient {
     }
 }
 
+private struct StubTaskCatalogClient: TaskCatalogClient {
+    var tasks: [TaskCatalogEntry]
+
+    func loadTaskCatalog() throws -> [TaskCatalogEntry] {
+        tasks
+    }
+}
+
 private struct StubTaskExecutionMatrixClient: TaskExecutionMatrixClient {
     var rows: [TaskExecutionMatrixRow]
 
@@ -2835,6 +2918,76 @@ private struct StubTaskExecutionMatrixClient: TaskExecutionMatrixClient {
             rows: rows
         )
     }
+}
+
+private func makeTemporaryTutorialPack(stagedInputPaths: Set<String> = []) throws -> URL {
+    let fileManager = FileManager.default
+    let packURL = fileManager.temporaryDirectory
+        .appendingPathComponent("casars-tutorial-pack-\(UUID().uuidString).pack", isDirectory: true)
+    try fileManager.createDirectory(at: packURL, withIntermediateDirectories: true)
+    let templateURL = repositoryRootURL()
+        .appendingPathComponent("resources/tutorial-packs/alma-first-look-image-analysis.template.json")
+    try fileManager.copyItem(at: templateURL, to: packURL.appendingPathComponent("pack.json"))
+    for relativePath in stagedInputPaths {
+        let inputURL = packURL.appendingPathComponent(relativePath, isDirectory: true)
+        try fileManager.createDirectory(at: inputURL, withIntermediateDirectories: true)
+        try "stub tutorial input\n".write(
+            to: inputURL.appendingPathComponent("table.dat"),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+    return packURL
+}
+
+private func removeTemporaryTutorialPack(_ url: URL) {
+    try? FileManager.default.removeItem(at: url)
+}
+
+private func repositoryRootURL() -> URL {
+    var url = URL(fileURLWithPath: #filePath)
+    for _ in 0..<5 {
+        url.deleteLastPathComponent()
+    }
+    return url
+}
+
+private func makeImheadTaskCatalogEntry() -> TaskCatalogEntry {
+    TaskCatalogEntry(
+        id: "imhead",
+        category: "Images",
+        displayName: "Image Header",
+        binaryName: "imexplore",
+        cargoPackage: "casa-images",
+        overrideEnv: "CASARS_IMEXPLORE_BIN",
+        shellKind: "workflow",
+        interaction: "one_shot",
+        browserKind: nil,
+        datasetKinds: ["image_cube"],
+        schemaSource: "binary",
+        showInTUI: true,
+        showInSwift: true,
+        includeInSuite: true
+    )
+}
+
+private func makeImheadTaskUISchema() throws -> TaskUISchema {
+    try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+    {
+      "schema_version": 1,
+      "command_id": "imhead",
+      "invocation_name": "imexplore",
+      "display_name": "Image Header",
+      "category": "Images",
+      "summary": "Inspect CASA image metadata.",
+      "usage": "imexplore imhead <image>",
+      "arguments": [
+        {"id":"image_path","label":"Image","order":0,"parser":{"kind":"option","flags":["--image"],"metavar":"IMAGE","choices":[]},"value_kind":"path","parameter_type":"image_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+        {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","list"]},"value_kind":"choice","required":false,"default":"summary","help":"","group":"Output","advanced":false,"hidden_in_tui":false},
+        {"id":"json","label":"JSON","order":2,"parser":{"kind":"toggle","true_flags":["--json"],"false_flags":["--no-json"]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Output","advanced":false,"hidden_in_tui":false}
+      ]
+    }
+    """.utf8))
 }
 
 private final class HoldingDirtyImagingTaskClient: DirtyImagingTaskClient {

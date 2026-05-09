@@ -592,6 +592,86 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
+    public func openTutorialPack(path: String) {
+        let interfaceFontSize = state.interfaceFontSize
+        let taskCatalog = state.taskCatalog
+        cleanupTemporaryDemoProject()
+        do {
+            let context = try TutorialPackContext.load(path: path)
+            state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
+            state.taskCatalog = taskCatalog
+            state.project = ProjectFixture(
+                name: context.title,
+                rootPath: context.rootPath,
+                datasets: context.datasetSummaries(),
+                source: .tutorialPack
+            )
+            state.tutorialPack = context
+            state.probeDiagnostics = context.inputs.map { input in
+                "Tutorial input \(input.filename): \(input.status.rawValue)"
+            }
+            state.selectedDatasetID = state.project.datasets.first?.id
+            state.dockMode = .datasets
+            state.leftDockCollapsed = false
+            state.inspectorCollapsed = false
+            openTab(
+                WorkbenchTab(
+                    id: "tab-tutorial-pack",
+                    title: "Tutorial",
+                    kind: .tutorial
+                )
+            )
+            state.history.append(
+                ProcessingHistoryEvent(
+                    id: "hist-tutorial-pack-open",
+                    timestamp: "loaded",
+                    title: "Tutorial pack opened",
+                    reason: "Loaded \(context.tutorialID) from pack.json without creating a durable project history.",
+                    affectedPaths: [context.manifestPath],
+                    approval: "user"
+                )
+            )
+        } catch {
+            state.lastErrors.append("Open tutorial pack \(path): \(error)")
+        }
+    }
+
+    public func selectTutorialSection(_ sectionID: String) {
+        guard var context = state.tutorialPack else {
+            state.lastErrors.append("No tutorial pack is open")
+            return
+        }
+        guard context.sections.contains(where: { $0.id == sectionID }) else {
+            state.lastErrors.append("Unknown tutorial section \(sectionID)")
+            return
+        }
+        context.selectedSectionID = sectionID
+        state.tutorialPack = context
+    }
+
+    public func openTutorialSectionTask(_ sectionID: String) {
+        selectTutorialSection(sectionID)
+        guard let context = state.tutorialPack,
+              let section = context.selectedSection
+        else {
+            return
+        }
+        guard let guiStep = section.steps.first(where: { $0.surface == "gui" && $0.providerKind == "native-rust" }) else {
+            state.lastErrors.append("Tutorial section \(sectionID) does not define a native GUI step")
+            return
+        }
+        selectTask(guiStep.taskID)
+        applyTutorialPackParameters(guiStep.parameters, taskID: guiStep.taskID, packRoot: context.rootPath)
+        openTab(
+            WorkbenchTab(
+                id: "tab-tasks",
+                title: "Tasks",
+                kind: .task,
+                datasetID: state.selectedDatasetID
+            )
+        )
+    }
+
     private func cleanupTemporaryDemoProject() {
         guard let temporaryDemoProjectRoot else { return }
         demoProjectClient.cleanupDemoProject(rootPath: temporaryDemoProjectRoot)
@@ -1095,6 +1175,12 @@ public final class WorkbenchStore: ObservableObject {
                 return
             }
             openDatasetTableBrowser(dataset.id)
+        case .tutorial:
+            guard state.tutorialPack != nil else {
+                state.lastErrors.append("No tutorial pack is open")
+                return
+            }
+            openTab(WorkbenchTab(id: "tab-tutorial-pack", title: "Tutorial", kind: .tutorial))
         case .task:
             if state.isDemoProject {
                 openTab(WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: state.selectedDatasetID))
@@ -2393,9 +2479,57 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func argumentLooksLikeInputDataset(_ argument: TaskUIArgument) -> Bool {
-        ["ms", "vis", "image", "table", "infile", "fitsimage"].contains(argument.id)
+        ["ms", "vis", "image", "image_path", "table", "infile", "fitsimage"].contains(argument.id)
             || argument.label.localizedCaseInsensitiveContains("input")
             || argument.label.localizedCaseInsensitiveContains("measurementset")
+    }
+
+    private func applyTutorialPackParameters(
+        _ parameters: [String: TutorialPackValue],
+        taskID: String,
+        packRoot: String
+    ) {
+        let schema = state.taskUISchemas[taskID]
+        let argumentsByID = Dictionary(uniqueKeysWithValues: (schema?.arguments ?? []).map { ($0.id, $0) })
+        for (argumentID, value) in parameters {
+            if let boolValue = value.boolValue,
+               argumentsByID[argumentID]?.parser.kind == "toggle" {
+                setGenericTaskToggle(taskID: taskID, argumentID: argumentID, value: boolValue)
+                continue
+            }
+            guard var textValue = value.stringValue else {
+                continue
+            }
+            if shouldResolveTutorialPath(argumentID: argumentID, argument: argumentsByID[argumentID], value: textValue) {
+                textValue = URL(fileURLWithPath: packRoot, isDirectory: true)
+                    .appendingPathComponent(textValue)
+                    .standardizedFileURL
+                    .path
+            }
+            setGenericTaskValue(taskID: taskID, argumentID: argumentID, value: textValue)
+        }
+    }
+
+    private func shouldResolveTutorialPath(argumentID: String, argument: TaskUIArgument?, value: String) -> Bool {
+        guard !value.isEmpty,
+              !value.hasPrefix("/"),
+              !value.hasPrefix("~"),
+              !value.hasPrefix("http://"),
+              !value.hasPrefix("https://")
+        else {
+            return false
+        }
+        if argument?.valueKind == "path" || argument?.parameterType?.contains("path") == true {
+            return true
+        }
+        return [
+            "image_path",
+            "imagename",
+            "fitsimage",
+            "outfile",
+            "input",
+            "output"
+        ].contains(argumentID)
     }
 
     private func defaultTaskOutputPath(taskID: String) -> String {

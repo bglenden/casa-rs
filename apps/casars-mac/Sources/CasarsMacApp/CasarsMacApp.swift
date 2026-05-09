@@ -13,12 +13,14 @@ struct CasarsMacApp: App {
     @StateObject private var store = WorkbenchStore.empty()
     @State private var didOpenStartupProject = false
     private let startupProjectPath: String?
+    private let startupTutorialPackPath: String?
 
     init() {
         let arguments = CommandLine.arguments
         if arguments.contains("--dump-debug-state") {
             Self.dumpDebugState(
                 simulateMainFlow: arguments.contains("--simulate-main-flow"),
+                tutorialPackPath: Self.argumentValue(after: "--open-tutorial-pack", in: arguments),
                 projectPath: Self.argumentValue(after: "--probe-project", in: arguments)
                     ?? Self.argumentValue(after: "--open-project", in: arguments)
             )
@@ -27,6 +29,7 @@ struct CasarsMacApp: App {
 
         startupProjectPath = Self.argumentValue(after: "--open-project", in: arguments)
             ?? Self.argumentValue(after: "--probe-project", in: arguments)
+        startupTutorialPackPath = Self.argumentValue(after: "--open-tutorial-pack", in: arguments)
     }
 
     var body: some Scene {
@@ -54,6 +57,13 @@ struct CasarsMacApp: App {
                     }
                 }
                 .keyboardShortcut("o", modifiers: [.command])
+
+                Button("Open Tutorial Pack...") {
+                    if let url = TutorialPackOpenPanel.choosePack() {
+                        store.openTutorialPack(path: url.path)
+                    }
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
 
                 Button("Open Demo Project") {
                     store.openFixtureProject()
@@ -123,14 +133,20 @@ struct CasarsMacApp: App {
         }
     }
 
-    private static func dumpDebugState(simulateMainFlow: Bool, projectPath: String?) {
+    private static func dumpDebugState(
+        simulateMainFlow: Bool,
+        tutorialPackPath: String?,
+        projectPath: String?
+    ) {
         let store = WorkbenchStore.empty()
         store.setInterfaceFontSize(storedInterfaceFontSize())
-        if let projectPath {
+        if let tutorialPackPath {
+            store.openTutorialPack(path: tutorialPackPath)
+        } else if let projectPath {
             store.openProject(path: projectPath)
         }
         if simulateMainFlow {
-            if projectPath == nil {
+            if tutorialPackPath == nil && projectPath == nil {
                 store.openFixtureProject()
             }
             if store.state.isDemoProject {
@@ -173,9 +189,13 @@ struct CasarsMacApp: App {
     }
 
     private func openStartupProjectIfNeeded() {
-        guard !didOpenStartupProject, let startupProjectPath else { return }
+        guard !didOpenStartupProject else { return }
         didOpenStartupProject = true
-        store.openProject(path: startupProjectPath)
+        if let startupTutorialPackPath {
+            store.openTutorialPack(path: startupTutorialPackPath)
+        } else if let startupProjectPath {
+            store.openProject(path: startupProjectPath)
+        }
     }
 
     private func syncStoreFontSizeFromSettings() {
@@ -255,6 +275,17 @@ enum ProjectOpenPanel {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Open"
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+}
+
+enum TutorialPackOpenPanel {
+    static func choosePack() -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open Tutorial Pack"
         return panel.runModal() == .OK ? panel.url : nil
     }
 }

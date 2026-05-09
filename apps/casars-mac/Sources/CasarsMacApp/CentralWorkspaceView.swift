@@ -64,6 +64,10 @@ struct CentralWorkspaceView: View {
                 Button("Tasks") {
                     store.openDefaultTab(kind: .task)
                 }
+                Button("Tutorial") {
+                    store.openDefaultTab(kind: .tutorial)
+                }
+                .disabled(store.state.tutorialPack == nil)
                 Button("Plot Samples") {
                     store.openDefaultTab(kind: .plotSamples)
                 }
@@ -101,6 +105,8 @@ struct CentralWorkspaceView: View {
                 DatasetExplorerPanel(store: store, datasetID: tab.datasetID)
             case .tableBrowser:
                 DatasetExplorerPanel(store: store, datasetID: tab.datasetID, forceTableBrowser: true)
+            case .tutorial:
+                TutorialPackPanel(store: store)
             case .task:
                 TaskPanel(store: store)
             case .plotSamples:
@@ -121,6 +127,7 @@ struct CentralWorkspaceView: View {
         switch kind {
         case .datasetExplorer: "chart.xyaxis.line"
         case .tableBrowser: "tablecells"
+        case .tutorial: "book"
         case .task: "slider.horizontal.3"
         case .plotSamples: "chart.xyaxis.line"
         case .aiChat: "sparkles"
@@ -153,6 +160,15 @@ struct EmptyWorkbenchPanel: View {
                 .accessibilityIdentifier("empty.openProject")
 
                 Button {
+                    if let url = TutorialPackOpenPanel.choosePack() {
+                        store.openTutorialPack(path: url.path)
+                    }
+                } label: {
+                    Label("Open Tutorial Pack", systemImage: "book")
+                }
+                .accessibilityIdentifier("empty.openTutorialPack")
+
+                Button {
                     store.openFixtureProject()
                 } label: {
                     Label("Open Demo Project", systemImage: "shippingbox")
@@ -167,6 +183,141 @@ struct EmptyWorkbenchPanel: View {
         .frame(maxWidth: 560, alignment: .leading)
         .padding(28)
         .accessibilityIdentifier("panel.emptyWorkbench")
+    }
+}
+
+struct TutorialPackPanel: View {
+    @ObservedObject var store: WorkbenchStore
+
+    var body: some View {
+        ScrollView {
+            if let context = store.state.tutorialPack {
+                VStack(alignment: .leading, spacing: 18) {
+                    PanelHeader(
+                        title: context.title,
+                        subtitle: "\(context.tutorialID) - CASA \(context.declaredCasaVersion)"
+                    )
+
+                    HStack(alignment: .top, spacing: 16) {
+                        SummaryBox(
+                            title: "Pack",
+                            values: [
+                                "pack_id=\(context.packID)",
+                                "root=\(context.rootPath)",
+                                "workspace=\(context.workspaceRoot)",
+                                "review=\(context.reviewPath)"
+                            ]
+                        )
+                        SummaryBox(
+                            title: "Learner",
+                            values: [
+                                "docs=\(context.learnerDocsIndex)",
+                                "sections=\(context.sections.count)"
+                            ]
+                        )
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Inputs")
+                            .workbenchFont(.headline)
+                        ForEach(context.inputs) { input in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Image(systemName: input.status == .staged ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                    .foregroundStyle(input.status == .staged ? .green : .orange)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(input.filename)
+                                        .workbenchFont(.subheadline, weight: .semibold)
+                                    Text(input.displayName)
+                                        .workbenchFont(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(input.packPath)
+                                        .workbenchFont(.caption, design: .monospaced)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(input.status.rawValue)
+                                    .workbenchFont(.caption, weight: .semibold)
+                                    .foregroundStyle(input.status == .staged ? .green : .orange)
+                            }
+                            .accessibilityIdentifier("tutorial.input.\(input.id)")
+                        }
+                    }
+                    .taskCard()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Sections")
+                            .workbenchFont(.headline)
+                        ForEach(context.sections) { section in
+                            tutorialSectionRow(section, context: context)
+                        }
+                    }
+                    .taskCard()
+                }
+                .padding(20)
+            } else {
+                VStack(alignment: .leading, spacing: 18) {
+                    PanelHeader(title: "Tutorial Pack", subtitle: "Open a tutorial pack directory or pack.json")
+                    Button {
+                        if let url = TutorialPackOpenPanel.choosePack() {
+                            store.openTutorialPack(path: url.path)
+                        }
+                    } label: {
+                        Label("Open Tutorial Pack", systemImage: "book")
+                    }
+                    .accessibilityIdentifier("tutorial.openPack")
+                }
+                .padding(28)
+                .frame(maxWidth: 560, alignment: .leading)
+            }
+        }
+        .accessibilityIdentifier("panel.tutorialPack")
+    }
+
+    private func tutorialSectionRow(_ section: TutorialPackSection, context: TutorialPackContext) -> some View {
+        let isSelected = context.selectedSection?.id == section.id
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(section.sequence). \(section.title)")
+                        .workbenchFont(.subheadline, weight: .semibold)
+                    Text(section.observableResult)
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(section.reviewCheckpoint.status)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                ForEach(section.tasks, id: \.self) { task in
+                    Text(task)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+                Spacer()
+                Button {
+                    store.selectTutorialSection(section.id)
+                } label: {
+                    Label(isSelected ? "Selected" : "Select", systemImage: isSelected ? "checkmark.circle" : "circle")
+                }
+                .accessibilityIdentifier("tutorial.section.select.\(section.id)")
+
+                Button {
+                    store.openTutorialSectionTask(section.id)
+                } label: {
+                    Label("Open Task", systemImage: "slider.horizontal.3")
+                }
+                .accessibilityIdentifier("tutorial.section.openTask.\(section.id)")
+            }
+        }
+        .padding(10)
+        .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("tutorial.section.\(section.id)")
     }
 }
 
