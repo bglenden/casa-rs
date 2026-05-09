@@ -6,9 +6,9 @@ Verification: just docs-check
 
 ![casa-rs observatory assistant header](branding/headers/casa-rs-header.png)
 
-`casa-rs` is an experiment/hobby project by Brian Glendenning, NRAO retiree. I
+`casa-rs` is an experiment/hobby project by Brian Glendenning (<i>brian@glendenning.net</i>), NRAO retiree. I
 am happy for people to experiment with it or use it under the LGPL license, but
-there is no institutional support.
+there is no institutional support. I am also happy to answer questions about it.
 
 This is a from-scratch Rust experimental re-implementation of pieces of CASA
 and casacore, with Swift for the native macOS UI. It uses CASA and casacore for
@@ -136,39 +136,6 @@ Active planning and current wave status now live in GitHub Issues / Project.
 The `docs/Planning/Phase */` tree is retained for historical context and
 program reference, including the imaging parity material that still describes
 current proof boundaries.
-
-## Quick Start
-
-Source builds require CMake for the bundled CFITSIO build used by the
-`fitsio`-backed image-analysis tools:
-
-```bash
-brew install cmake
-# or on Ubuntu:
-sudo apt-get install -y cmake
-```
-
-From this repository workspace, the raw Cargo path is:
-
-```bash
-cargo test --workspace
-```
-
-For the stable repo command surface, use:
-
-```bash
-just quick
-just verify
-just smoke
-```
-
-Install `just` with either:
-
-```bash
-brew install just
-# or
-cargo install just
-```
 
 ## Install on macOS
 
@@ -396,23 +363,6 @@ let metadata = Value::Record(RecordValue::new(vec![
 ]));
 ```
 
-## Demo Programs
-
-Each crate that wraps a C++ casacore module includes a Rust demo program
-equivalent to the corresponding C++ test/demo. These demos:
-
-- Show idiomatic Rust usage of the crate's public API.
-- Include the essential C++ source as comments for comparison.
-- Are runnable via `cargo run -p <crate> --example <name>`.
-
-| Crate | Demo | C++ original | Run |
-|---|---|---|---|
-| `casa-aipsio` | `t_aipsio` | `tAipsIO.cc` | `cargo run -p casa-aipsio --example t_aipsio` |
-| `casa-tables` | `t_table` | `tTable.cc` | `cargo run -p casa-tables --example t_table` |
-
-Demo source lives in each crate's `examples/` directory. The demo logic
-is in a `demo` module within the crate, so `cargo doc` renders it alongside
-the API docs.
 
 ## Measures Runtime
 
