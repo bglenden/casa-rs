@@ -4,6 +4,8 @@ Truth class: current descriptive
 Last reality check: 2026-04-19
 Verification: just verify
 
+![casa-rs observatory assistant header](branding/headers/casa-rs-header.png)
+
 casa-rs is a native Rust implementation of casacore-compatible persistent data
 and related workflows. The workspace now includes both reusable `casa-*`
 libraries and terminal applications built on top of them.
@@ -29,6 +31,12 @@ Contributor/developer policy is in `AGENTS.md`.
   [`docs/casars-tui-framework.md`](docs/casars-tui-framework.md)
 - `casars calibrate` user guide:
   [`docs/casars-calibrate-user-guide.md`](docs/casars-calibrate-user-guide.md)
+
+## Branding Assets
+
+Generated project branding assets live under [`branding/`](branding/). The
+current set includes a wide README/docs header, a macOS `.icns` app icon, and
+source PNGs for future revisions.
 
 ## Current Status
 
