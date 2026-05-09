@@ -308,17 +308,36 @@ struct FrontendTaskExecutionMatrixRow {
     catalog_presence: String,
     binary_name: String,
     cargo_package: String,
+    surface_kind: String,
+    interaction_model: String,
+    row_disposition: String,
+    approved_closeout_scope: bool,
+    provider_contract_schema_source: String,
+    provider_protocol_name: String,
+    provider_protocol_version: String,
     dataset_kinds: Vec<String>,
     suite_install: String,
     local_install: String,
     release_install: String,
     tui_status: String,
     gui_status: String,
+    tui_frontend_status: String,
+    gui_frontend_status: String,
+    tui_provider_resolution_path: String,
+    gui_provider_resolution_path: String,
+    frontend_exposure: String,
     option_source: String,
+    context_option_default_validation_source: String,
     full_control_status: String,
+    parameter_control_coverage: String,
+    omitted_controls: Vec<String>,
     mutation_class: String,
     confirmation: String,
+    dry_run_preview_behavior: String,
+    backup_version_behavior: String,
+    restore_rollback_behavior: String,
     smoke_evidence: String,
+    signoff_reference: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -5276,6 +5295,58 @@ mod tests {
         for id in catalog_ids {
             assert!(matrix_ids.contains(id), "matrix missing catalog task {id}");
         }
+        let required_fields = [
+            "task_id",
+            "display_name",
+            "category",
+            "catalog_presence",
+            "binary_name",
+            "cargo_package",
+            "surface_kind",
+            "interaction_model",
+            "row_disposition",
+            "approved_closeout_scope",
+            "provider_contract_schema_source",
+            "provider_protocol_name",
+            "provider_protocol_version",
+            "dataset_kinds",
+            "suite_install",
+            "local_install",
+            "release_install",
+            "tui_status",
+            "gui_status",
+            "tui_frontend_status",
+            "gui_frontend_status",
+            "tui_provider_resolution_path",
+            "gui_provider_resolution_path",
+            "frontend_exposure",
+            "option_source",
+            "context_option_default_validation_source",
+            "full_control_status",
+            "parameter_control_coverage",
+            "omitted_controls",
+            "mutation_class",
+            "confirmation",
+            "dry_run_preview_behavior",
+            "backup_version_behavior",
+            "restore_rollback_behavior",
+            "smoke_evidence",
+            "signoff_reference",
+        ];
+        for row in rows {
+            for field in required_fields {
+                assert!(
+                    row.get(field).is_some(),
+                    "matrix row {} missing {field}",
+                    row["task_id"]
+                );
+            }
+            assert!(
+                row["omitted_controls"].is_array(),
+                "matrix row {} omitted_controls must be an array",
+                row["task_id"]
+            );
+        }
         assert!(matrix_ids.contains("flagdata"));
         assert!(matrix_ids.contains("split"));
         assert!(matrix_ids.contains("simalma"));
@@ -5283,11 +5354,38 @@ mod tests {
             row["task_id"] == "mstransform"
                 && row["tui_status"] == "invokable"
                 && row["full_control_status"] == "covered"
+                && row["row_disposition"] == "implemented_now"
+                && row["tui_frontend_status"] == "full_control_verified"
+                && row["gui_frontend_status"] == "full_control_verified"
+                && row["tui_provider_resolution_path"]
+                    == "tui_registry_installed_suite_binary_or_cargo_fallback"
         }));
         assert!(rows.iter().any(|row| {
             row["task_id"] == "imager"
                 && row["gui_status"] == "invokable"
                 && row["full_control_status"] == "covered"
+                && row["parameter_control_coverage"]
+                    == "full_approved_schema_parameter_surface_exposed_in_gui_and_tui"
+        }));
+        assert!(rows.iter().any(|row| {
+            row["task_id"] == "simalma"
+                && row["row_disposition"] == "implemented_external_casa_adapter"
+                && row["full_control_status"] == "covered_external_casa"
+                && row["provider_protocol_name"] == "casars_casa_task_adapter"
+                && row["signoff_reference"].as_str().is_some_and(|reference| {
+                    reference.contains("real scientific workflow validation is separate wave")
+                })
+        }));
+        assert!(rows.iter().any(|row| {
+            row["task_id"] == "tablebrowser"
+                && row["surface_kind"] == "session_surface"
+                && row["approved_closeout_scope"] == false
+                && row["row_disposition"] == "not_applicable_session_surface"
+                && row["omitted_controls"].as_array().is_some_and(|controls| {
+                    controls.iter().any(|control| {
+                        control == "one-shot task panel semantics not applicable to session surface"
+                    })
+                })
         }));
     }
 

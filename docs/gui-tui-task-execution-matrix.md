@@ -9,6 +9,14 @@ for issue #226 and the already-landed shared-catalog work from issue #231. It
 contains one row for every current shared catalog task plus the additional CASA
 task families named by the GUI/TUI parity inventory.
 
+Each row records the scope-control fields required by #226: surface kind,
+interaction model, row disposition, approved closeout scope, provider/schema
+source, protocol name/version, install status, GUI/TUI visibility and
+invocation status, provider resolution path, frontend exposure,
+context-option/default/validation source, full parameter coverage, omitted
+controls, mutation class, confirmation/dry-run/backup/restore behavior, smoke
+evidence, and any signoff reference.
+
 `resources/tutorial-task-parameter-audit.json` is the companion checked artifact
 for tutorial-level usefulness. It records the task parameters used by the
 current tutorial parity notes and runners, then the frontend-services test loads
@@ -47,7 +55,8 @@ explicit work or signoff points. In particular:
   `simalma` are shared-catalog tasks backed by the local CASA `casatasks`
   installation through `casars-casa-task`. This exposes the real CASA task
   parameter surface to both the GUI and TUI while native Rust implementations
-  remain future work.
+  remain future work. Their rows record the user signoff that real scientific
+  workflow validation belongs in a separate wave.
 - `plotcal` is a shared-catalog task backed by the native calibration plot
   payload builder because the local CASA 6.7.5 task package no longer exports a
   `plotcal` function.
