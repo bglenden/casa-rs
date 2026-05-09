@@ -59,7 +59,7 @@
     {
       "id": "split-and-subset-ms",
       "source": "docs/tutorial-parity/current-tutorial-inventory.md",
-      "task_id": "mstransform",
+      "task_id": "split",
       "task_represents": "split",
       "parameters": ["ms", "out", "spw", "field", "scan", "antenna", "timerange", "msselect", "datacolumn", "keepflags"]
     },
@@ -83,6 +83,48 @@
       "task_id": "calibrate",
       "task_represents": "uvcontsub, gencal, gaincal, bandpass, fluxscale, applycal",
       "parameters": ["mode", "measurement_set", "output_measurement_set", "table_path", "gaintables", "callib", "gainfield", "interp", "spwmap", "apply_mode", "calwt", "parang", "fit_spw", "fit_order", "stats_datacolumn", "out_table", "refant", "gain_type", "solve_mode", "solint", "gain_combine", "smodel", "min_snr", "bandpass_combine", "bandtype", "solnorm", "fluxscale_input", "reference_fields", "transfer_fields", "refspwmap", "selectdata", "field", "spw", "antenna", "scan", "observation", "array", "timerange", "msselect"]
+    },
+    {
+      "id": "uv-continuum-subtraction",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "uvcontsub",
+      "task_represents": "uvcontsub",
+      "parameters": ["measurement_set", "output_measurement_set", "fit_spw", "fit_order", "stats_datacolumn", "format", "output", "overwrite", "selectdata", "field", "spw", "antenna", "scan", "observation", "array", "timerange", "msselect"]
+    },
+    {
+      "id": "apply-calibration",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "applycal",
+      "task_represents": "applycal",
+      "parameters": ["measurement_set", "gaintables", "callib", "gainfield", "interp", "spwmap", "apply_mode", "calwt", "parang", "format", "output", "overwrite", "selectdata", "field", "spw", "antenna", "scan", "observation", "array", "timerange", "msselect"]
+    },
+    {
+      "id": "solve-gain-calibration",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "gaincal",
+      "task_represents": "gaincal",
+      "parameters": ["measurement_set", "out_table", "refant", "gaintables", "callib", "gainfield", "interp", "spwmap", "gain_type", "solve_mode", "solint", "gain_combine", "gain_model_source", "smodel", "min_snr", "solnorm", "format", "output", "overwrite", "selectdata", "field", "spw", "antenna", "scan", "observation", "array", "timerange", "msselect"]
+    },
+    {
+      "id": "solve-bandpass-calibration",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "bandpass",
+      "task_represents": "bandpass",
+      "parameters": ["measurement_set", "out_table", "refant", "gaintables", "callib", "gainfield", "interp", "spwmap", "bandpass_combine", "bandtype", "smodel", "min_snr", "solnorm", "format", "output", "overwrite", "selectdata", "field", "spw", "antenna", "scan", "observation", "array", "timerange", "msselect"]
+    },
+    {
+      "id": "fluxscale-calibration",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "fluxscale",
+      "task_represents": "fluxscale",
+      "parameters": ["fluxscale_input", "out_table", "reference_fields", "transfer_fields", "refspwmap", "gainthreshold", "incremental", "format", "output", "overwrite"]
+    },
+    {
+      "id": "generated-calibration",
+      "source": "docs/tutorial-parity/current-tutorial-inventory.md",
+      "task_id": "gencal",
+      "task_represents": "gencal",
+      "parameters": ["measurement_set", "out_table", "caltype", "antenna", "spw", "parameter", "gaincurve_table", "format", "output", "overwrite"]
     }
   ]
 }

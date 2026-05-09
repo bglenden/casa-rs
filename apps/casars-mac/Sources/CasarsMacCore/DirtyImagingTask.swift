@@ -448,10 +448,15 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
 
     static func arguments(for request: GenericTaskRequest) throws -> [String] {
         var arguments: [String] = []
-        for argument in request.schema.arguments.filter({ !$0.hiddenInTUI }).sorted(by: { $0.order < $1.order }) {
+        for argument in request.schema.arguments.sorted(by: { $0.order < $1.order }) {
+            let isHiddenAction = argument.hiddenInTUI && argument.parser.kind == "action"
+            if isHiddenAction {
+                continue
+            }
             switch argument.parser.kind {
             case "option":
-                let value = request.values[argument.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let value = (request.values[argument.id] ?? argument.default ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 if value.isEmpty {
                     if argument.required {
                         throw GenericTaskFailure(message: "\(argument.label) is required.", diagnostics: [])
@@ -462,7 +467,8 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
                 arguments.append(flag)
                 arguments.append(value)
             case "positional":
-                let value = request.values[argument.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let value = (request.values[argument.id] ?? argument.default ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 if value.isEmpty {
                     if argument.required {
                         throw GenericTaskFailure(message: "\(argument.label) is required.", diagnostics: [])

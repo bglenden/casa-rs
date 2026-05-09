@@ -791,6 +791,7 @@ fn enrich_task_ui_schema(
     mut schema: serde_json::Value,
 ) -> serde_json::Value {
     let task_id = task.id.as_str();
+    apply_task_alias_schema(task, &mut schema);
     if let Some(arguments) = schema
         .get_mut("arguments")
         .and_then(serde_json::Value::as_array_mut)
@@ -835,6 +836,347 @@ fn enrich_task_ui_schema(
     schema
 }
 
+fn apply_task_alias_schema(task: &FrontendTaskCatalogEntry, schema: &mut serde_json::Value) {
+    let Some(alias) = task_alias(task.id.as_str()) else {
+        return;
+    };
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    object.insert("command_id".to_string(), task.id.clone().into());
+    object.insert("display_name".to_string(), task.display_name.clone().into());
+    object.insert("category".to_string(), task.category.clone().into());
+    object.insert("summary".to_string(), alias.summary.into());
+    object.insert("usage".to_string(), alias.usage.into());
+
+    let visible = alias
+        .visible_arguments
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let required = alias
+        .required_arguments
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if let Some(arguments) = object
+        .get_mut("arguments")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for extra in alias.extra_arguments {
+            arguments.push(extra_argument_schema(*extra));
+        }
+        arguments.retain_mut(|argument| {
+            let Some(argument_object) = argument.as_object_mut() else {
+                return false;
+            };
+            let id = argument_object
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if id == "mode" {
+                argument_object.insert("default".to_string(), alias.mode.into());
+                argument_object.insert("hidden_in_tui".to_string(), true.into());
+                argument_object.insert("required".to_string(), false.into());
+                argument_object.insert("advanced".to_string(), true.into());
+                argument_object.insert("order".to_string(), 0.into());
+                return true;
+            }
+            if id == "help" || id == "ui_schema" {
+                return true;
+            }
+            if visible.contains(id.as_str()) {
+                argument_object.insert(
+                    "required".to_string(),
+                    required.contains(id.as_str()).into(),
+                );
+                return true;
+            }
+            false
+        });
+    }
+}
+
+struct TaskAlias {
+    mode: &'static str,
+    summary: &'static str,
+    usage: &'static str,
+    visible_arguments: &'static [&'static str],
+    required_arguments: &'static [&'static str],
+    extra_arguments: &'static [ExtraAliasArgument],
+}
+
+#[derive(Clone, Copy)]
+struct ExtraAliasArgument {
+    id: &'static str,
+    label: &'static str,
+    order: u64,
+    flags: &'static [&'static str],
+    metavar: &'static str,
+    choices: &'static [&'static str],
+    value_kind: &'static str,
+    required: bool,
+    default: Option<&'static str>,
+    help: &'static str,
+    group: &'static str,
+    advanced: bool,
+}
+
+fn task_alias(task_id: &str) -> Option<TaskAlias> {
+    match task_id {
+        "uvcontsub" => Some(TaskAlias {
+            mode: "continuum_subtract",
+            summary: "Subtract continuum emission from a MeasurementSet.",
+            usage: "calibrate --mode continuum_subtract --ms <input.ms> --output-ms <output.ms> --fitspw <spw:channels>",
+            visible_arguments: &[
+                "measurement_set",
+                "output_measurement_set",
+                "fit_spw",
+                "fit_order",
+                "stats_datacolumn",
+                "format",
+                "output",
+                "overwrite",
+                "selectdata",
+                "field",
+                "spw",
+                "antenna",
+                "scan",
+                "observation",
+                "array",
+                "timerange",
+                "msselect",
+            ],
+            required_arguments: &["measurement_set", "output_measurement_set", "fit_spw"],
+            extra_arguments: &[],
+        }),
+        "applycal" => Some(TaskAlias {
+            mode: "apply",
+            summary: "Apply one or more calibration tables to a MeasurementSet.",
+            usage: "calibrate --mode apply --ms <input.ms> --gaintables <caltable[,caltable...]>",
+            visible_arguments: &[
+                "measurement_set",
+                "gaintables",
+                "callib",
+                "gainfield",
+                "interp",
+                "spwmap",
+                "apply_mode",
+                "calwt",
+                "parang",
+                "format",
+                "output",
+                "overwrite",
+                "selectdata",
+                "field",
+                "spw",
+                "antenna",
+                "scan",
+                "observation",
+                "array",
+                "timerange",
+                "msselect",
+            ],
+            required_arguments: &["measurement_set"],
+            extra_arguments: &[],
+        }),
+        "gaincal" => Some(TaskAlias {
+            mode: "solve_gain",
+            summary: "Solve antenna gain calibration for a MeasurementSet.",
+            usage: "calibrate --mode solve_gain --ms <input.ms> --out <gain.cal> --refant <antenna>",
+            visible_arguments: &[
+                "measurement_set",
+                "out_table",
+                "refant",
+                "gaintables",
+                "callib",
+                "gainfield",
+                "interp",
+                "spwmap",
+                "gain_type",
+                "solve_mode",
+                "solint",
+                "gain_combine",
+                "gain_model_source",
+                "smodel",
+                "min_snr",
+                "solnorm",
+                "format",
+                "output",
+                "overwrite",
+                "selectdata",
+                "field",
+                "spw",
+                "antenna",
+                "scan",
+                "observation",
+                "array",
+                "timerange",
+                "msselect",
+            ],
+            required_arguments: &["measurement_set", "out_table", "refant"],
+            extra_arguments: &[],
+        }),
+        "bandpass" => Some(TaskAlias {
+            mode: "solve_bandpass",
+            summary: "Solve bandpass calibration for a MeasurementSet.",
+            usage: "calibrate --mode solve_bandpass --ms <input.ms> --out <bandpass.cal> --refant <antenna>",
+            visible_arguments: &[
+                "measurement_set",
+                "out_table",
+                "refant",
+                "gaintables",
+                "callib",
+                "gainfield",
+                "interp",
+                "spwmap",
+                "bandpass_combine",
+                "bandtype",
+                "smodel",
+                "min_snr",
+                "solnorm",
+                "format",
+                "output",
+                "overwrite",
+                "selectdata",
+                "field",
+                "spw",
+                "antenna",
+                "scan",
+                "observation",
+                "array",
+                "timerange",
+                "msselect",
+            ],
+            required_arguments: &["measurement_set", "out_table", "refant"],
+            extra_arguments: &[],
+        }),
+        "fluxscale" => Some(TaskAlias {
+            mode: "fluxscale",
+            summary: "Scale gain solutions using reference calibrator fields.",
+            usage: "calibrate --mode fluxscale --in <gain.cal> --out <flux.cal> --reference <field[,field...]>",
+            visible_arguments: &[
+                "fluxscale_input",
+                "out_table",
+                "reference_fields",
+                "transfer_fields",
+                "refspwmap",
+                "gainthreshold",
+                "incremental",
+                "format",
+                "output",
+                "overwrite",
+            ],
+            required_arguments: &["fluxscale_input", "out_table", "reference_fields"],
+            extra_arguments: &[],
+        }),
+        "gencal" => Some(TaskAlias {
+            mode: "gencal",
+            summary: "Generate a calibration table such as antpos, gceff, or opac.",
+            usage: "calibrate --mode gencal --ms <input.ms> --out <caltable> --caltype antpos|gceff|opac",
+            visible_arguments: &[
+                "measurement_set",
+                "out_table",
+                "caltype",
+                "antenna",
+                "spw",
+                "parameter",
+                "gaincurve_table",
+                "format",
+                "output",
+                "overwrite",
+            ],
+            required_arguments: &["measurement_set", "out_table", "caltype"],
+            extra_arguments: &[
+                ExtraAliasArgument {
+                    id: "caltype",
+                    label: "Calibration Type",
+                    order: 16,
+                    flags: &["--caltype"],
+                    metavar: "TYPE",
+                    choices: &["antpos", "gceff", "opac"],
+                    value_kind: "choice",
+                    required: true,
+                    default: None,
+                    help: "Generated calibration family.",
+                    group: "Gencal",
+                    advanced: false,
+                },
+                ExtraAliasArgument {
+                    id: "parameter",
+                    label: "Parameter",
+                    order: 19,
+                    flags: &["--parameter"],
+                    metavar: "VALUE[,VALUE...]",
+                    choices: &[],
+                    value_kind: "string",
+                    required: false,
+                    default: None,
+                    help: "Numeric parameter list for the selected generated calibration type.",
+                    group: "Gencal",
+                    advanced: false,
+                },
+                ExtraAliasArgument {
+                    id: "gaincurve_table",
+                    label: "Gaincurve Table",
+                    order: 20,
+                    flags: &["--gaincurve-table"],
+                    metavar: "PATH",
+                    choices: &[],
+                    value_kind: "path",
+                    required: false,
+                    default: None,
+                    help: "Optional gaincurve input table for gceff.",
+                    group: "Gencal",
+                    advanced: true,
+                },
+            ],
+        }),
+        "split" => Some(TaskAlias {
+            mode: "",
+            summary: "Create a selected MeasurementSet subset, equivalent to CASA split.",
+            usage: "mstransform --ms <input.ms> --out <output.ms> --spw <spw[:channels]>",
+            visible_arguments: &[
+                "ms",
+                "out",
+                "spw",
+                "field",
+                "scan",
+                "antenna",
+                "timerange",
+                "msselect",
+                "datacolumn",
+                "keepflags",
+            ],
+            required_arguments: &["ms", "out", "spw"],
+            extra_arguments: &[],
+        }),
+        _ => None,
+    }
+}
+
+fn extra_argument_schema(argument: ExtraAliasArgument) -> serde_json::Value {
+    serde_json::json!({
+        "id": argument.id,
+        "label": argument.label,
+        "order": argument.order,
+        "parser": {
+            "kind": "option",
+            "flags": argument.flags,
+            "metavar": argument.metavar,
+            "choices": argument.choices,
+        },
+        "value_kind": argument.value_kind,
+        "required": argument.required,
+        "default": argument.default,
+        "help": argument.help,
+        "group": argument.group,
+        "advanced": argument.advanced,
+        "hidden_in_tui": false,
+    })
+}
+
 fn infer_task_parameter_type(
     task: &FrontendTaskCatalogEntry,
     argument_id: &str,
@@ -845,11 +1187,14 @@ fn infer_task_parameter_type(
         "help" | "ui_schema" | "json" => "action",
         "vis" if task_id == "importvla" => "output_measurement_set_path",
         "ms" | "vis" | "measurement_set" => "measurement_set_path",
-        "out" if matches!(task_id, "simobserve" | "mstransform") => "output_measurement_set_path",
+        "out" if matches!(task_id, "simobserve" | "mstransform" | "split") => {
+            "output_measurement_set_path"
+        }
         "output_measurement_set" | "outputms" => "output_measurement_set_path",
         "archivefiles" => "archive_path",
         "table_path" => "table_path",
-        "caltable" | "bandpass" | "fluxtable" | "gain_model_source" => "calibration_table_path",
+        "caltable" | "bandpass" | "fluxtable" | "fluxscale_input" | "gain_model_source"
+        | "gaincurve_table" => "calibration_table_path",
         "gaintable" | "gaintables" => "calibration_table_list",
         "callib" => "calibration_library_path",
         "out_table" => "output_calibration_table_path",
@@ -874,10 +1219,12 @@ fn infer_task_parameter_type(
         | "infile" => "image_path",
         "outlierfile" => "outlier_definition_path",
         "spw" | "fit_spw" => "spectral_window_selector",
-        "field" | "gainfield" => "field_selector",
+        "field" | "gainfield" | "reference_fields" | "transfer_fields" => "field_selector",
         "phasecenter_field" => "field_id",
         "scan" => "scan_selector",
         "antenna" | "refant" => "antenna_selector",
+        "observation" => "observation_selector",
+        "array" => "array_selector",
         "timerange" => "timerange_selector",
         "msselect" => "measurement_set_selection",
         "datacolumn" | "stats_datacolumn" => "data_column",
@@ -918,6 +1265,8 @@ fn infer_task_parameter_type(
         "stats_axis" => "statistics_axis",
         "apply_mode" => "applycal_mode",
         "gain_type" => "gain_type",
+        "caltype" => "gencal_type",
+        "parameter" => "gencal_parameter_list",
         "solve_mode" => "solve_mode",
         "gain_mode" | "bandpass_mode" => "corruption_mode",
         "specmode" => "spectral_mode",
@@ -4563,6 +4912,18 @@ mod tests {
                 && task["include_in_suite"] == false
         }));
         assert!(tasks.iter().any(|task| {
+            task["id"] == "split"
+                && task["binary_name"] == "mstransform"
+                && task["show_in_tui"] == true
+                && task["show_in_swift"] == true
+        }));
+        assert!(tasks.iter().any(|task| {
+            task["id"] == "applycal"
+                && task["binary_name"] == "calibrate"
+                && task["show_in_tui"] == true
+                && task["show_in_swift"] == true
+        }));
+        assert!(tasks.iter().any(|task| {
             task["id"] == "casars"
                 && task["show_in_tui"] == false
                 && task["include_in_suite"] == true
@@ -4685,6 +5046,62 @@ mod tests {
                 .as_str()
                 .is_some_and(|parameter_type| !parameter_type.is_empty())
         }));
+
+        let split_schema_json = task_ui_schema_json("split".to_string()).expect("split schema");
+        let split_schema: serde_json::Value =
+            serde_json::from_str(&split_schema_json).expect("split schema json");
+        let split_arguments = split_schema["arguments"]
+            .as_array()
+            .expect("split arguments");
+        assert_eq!(split_schema["command_id"], "split");
+        assert!(split_arguments.iter().any(|argument| {
+            argument["id"] == "ms" && argument["parameter_type"] == "measurement_set_path"
+        }));
+        assert!(split_arguments.iter().any(|argument| {
+            argument["id"] == "out"
+                && argument["required"] == true
+                && argument["parameter_type"] == "output_measurement_set_path"
+        }));
+
+        let uvcontsub_schema_json =
+            task_ui_schema_json("uvcontsub".to_string()).expect("uvcontsub schema");
+        let uvcontsub_schema: serde_json::Value =
+            serde_json::from_str(&uvcontsub_schema_json).expect("uvcontsub schema json");
+        let uvcontsub_arguments = uvcontsub_schema["arguments"]
+            .as_array()
+            .expect("uvcontsub arguments");
+        assert_eq!(uvcontsub_schema["command_id"], "uvcontsub");
+        assert!(uvcontsub_arguments.iter().any(|argument| {
+            argument["id"] == "mode"
+                && argument["default"] == "continuum_subtract"
+                && argument["hidden_in_tui"] == true
+        }));
+        assert!(uvcontsub_arguments.iter().any(|argument| {
+            argument["id"] == "fit_spw"
+                && argument["required"] == true
+                && argument["hidden_in_tui"] == false
+        }));
+        assert!(
+            !uvcontsub_arguments
+                .iter()
+                .any(|argument| argument["id"] == "gain_type")
+        );
+
+        let gencal_schema_json = task_ui_schema_json("gencal".to_string()).expect("gencal schema");
+        let gencal_schema: serde_json::Value =
+            serde_json::from_str(&gencal_schema_json).expect("gencal schema json");
+        let gencal_arguments = gencal_schema["arguments"]
+            .as_array()
+            .expect("gencal arguments");
+        assert!(gencal_arguments.iter().any(|argument| {
+            argument["id"] == "caltype"
+                && argument["required"] == true
+                && argument["parameter_type"] == "gencal_type"
+                && argument["parser"]["choices"]
+                    .as_array()
+                    .expect("caltype choices")
+                    .contains(&serde_json::json!("opac"))
+        }));
     }
 
     #[test]
@@ -4727,21 +5144,11 @@ mod tests {
                 .find(|row| row["task_id"].as_str() == Some(task_id))
                 .unwrap_or_else(|| panic!("matrix missing {task_id}"));
             assert!(
-                matches!(
-                    matrix_row["tui_status"].as_str(),
-                    Some("invokable")
-                        | Some("covered_by_mstransform")
-                        | Some("covered_by_calibrate")
-                ),
+                matches!(matrix_row["tui_status"].as_str(), Some("invokable")),
                 "{task_id} is not TUI invokable"
             );
             assert!(
-                matches!(
-                    matrix_row["gui_status"].as_str(),
-                    Some("invokable")
-                        | Some("covered_by_mstransform")
-                        | Some("covered_by_calibrate")
-                ),
+                matches!(matrix_row["gui_status"].as_str(), Some("invokable")),
                 "{task_id} is not GUI invokable"
             );
         }

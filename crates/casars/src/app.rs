@@ -12274,6 +12274,7 @@ impl AppState {
             .ok_or_else(|| "missing command schema".to_string())?;
 
         let mut arguments = Vec::<OsString>::new();
+        append_hidden_default_arguments(schema, &mut arguments)?;
         let force_selectdata = self.selection_inputs_present();
         let calibrate_mode = if self.app.id == "calibrate" {
             self.field_text("mode")
@@ -14067,6 +14068,57 @@ fn calibrate_argument_applies_to_mode(field_id: &str, mode: &str) -> bool {
         | "gainthreshold" | "incremental" => mode == "fluxscale",
         _ => true,
     }
+}
+
+fn append_hidden_default_arguments(
+    schema: &UiCommandSchema,
+    arguments: &mut Vec<OsString>,
+) -> Result<(), String> {
+    for argument in schema
+        .arguments
+        .iter()
+        .filter(|argument| argument.hidden_in_tui)
+        .filter(|argument| !matches!(argument.parser, UiArgumentParser::Action { .. }))
+    {
+        let value = argument.default.as_deref().unwrap_or_default().trim();
+        if value.is_empty() {
+            if argument.required {
+                return Err(format!("{} is required.", argument.label));
+            }
+            continue;
+        }
+        match &argument.parser {
+            UiArgumentParser::Positional { .. } => {
+                arguments.push(path_argument_value(
+                    argument.value_kind == UiValueKind::Path,
+                    value,
+                ));
+            }
+            UiArgumentParser::Option { flags, .. } => {
+                let Some(flag) = flags.first() else {
+                    continue;
+                };
+                arguments.push(OsString::from(flag));
+                arguments.push(path_argument_value(
+                    argument.value_kind == UiValueKind::Path,
+                    value,
+                ));
+            }
+            UiArgumentParser::Toggle {
+                true_flags,
+                false_flags,
+            } => {
+                let enabled = argument.default_bool().unwrap_or(false);
+                match (enabled, true_flags.first(), false_flags.first()) {
+                    (true, Some(flag), _) => arguments.push(OsString::from(flag)),
+                    (false, _, Some(flag)) => arguments.push(OsString::from(flag)),
+                    _ => {}
+                }
+            }
+            UiArgumentParser::Action { .. } => {}
+        }
+    }
+    Ok(())
 }
 
 fn yes_no(value: bool) -> &'static str {
@@ -16985,6 +17037,7 @@ fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use casa_images::ImageMovieSurfaceKind;
+    use casa_ms::ui_schema::UiCommandSchema;
     use casars_imagebrowser_protocol::{
         ImageBrowserAxisValue, ImageBrowserCapabilities, ImageBrowserFocus, ImageBrowserParameters,
         ImageBrowserSnapshot, ImageBrowserView, ImageBrowserViewport, ImageDisplayAxisState,
@@ -16997,11 +17050,12 @@ mod tests {
     use super::{
         AppState, BrowserSession, BrowserSessionKind, ConfigStore, FormField, FormSectionContent,
         ImageBrowserLeftPaneMode, ImageBrowserSessionState, ImageMovieState, ImagePlaneColormap,
-        ImagePlaneMode, StaticFormItem, build_workflow_sections, centered_window_start,
-        expand_tilde_path_with_home, image_pan_parameters, image_plane_draw_rect,
-        image_zoom_parameters, new_direct_image_movie_engine,
+        ImagePlaneMode, StaticFormItem, append_hidden_default_arguments, build_workflow_sections,
+        centered_window_start, expand_tilde_path_with_home, image_pan_parameters,
+        image_plane_draw_rect, image_zoom_parameters, new_direct_image_movie_engine,
     };
     use std::{
+        ffi::OsString,
         path::{Path, PathBuf},
         time::Duration,
     };
@@ -17554,5 +17608,71 @@ mod tests {
         assert!(ids.contains(&"niter"));
         assert!(!ids.contains(&"ui_schema"));
         assert!(!ids.contains(&"help"));
+    }
+
+    #[test]
+    fn hidden_default_arguments_are_invoked_without_form_fields() {
+        let schema: UiCommandSchema = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "command_id": "applycal",
+            "invocation_name": "calibrate",
+            "display_name": "Applycal",
+            "category": "Calibration",
+            "summary": "Apply calibration.",
+            "usage": "calibrate --mode apply --ms <input.ms>",
+            "arguments": [
+                {
+                    "id": "mode",
+                    "label": "Mode",
+                    "order": 0,
+                    "parser": {
+                        "kind": "option",
+                        "flags": ["--mode"],
+                        "metavar": "MODE",
+                        "choices": ["apply"]
+                    },
+                    "value_kind": "choice",
+                    "required": false,
+                    "default": "apply",
+                    "help": "",
+                    "group": "Mode",
+                    "advanced": true,
+                    "hidden_in_tui": true
+                },
+                {
+                    "id": "ui_schema",
+                    "label": "UI schema",
+                    "order": 1,
+                    "parser": {
+                        "kind": "action",
+                        "flags": ["--ui-schema"],
+                        "action": "ui_schema"
+                    },
+                    "value_kind": "bool",
+                    "required": false,
+                    "default": null,
+                    "help": "",
+                    "group": "Meta",
+                    "advanced": true,
+                    "hidden_in_tui": true
+                }
+            ],
+            "managed_output": null
+        }))
+        .expect("schema");
+        let fields = schema
+            .arguments
+            .iter()
+            .filter_map(FormField::from_schema)
+            .collect::<Vec<_>>();
+        let mut arguments = Vec::new();
+
+        append_hidden_default_arguments(&schema, &mut arguments).expect("hidden defaults");
+
+        assert!(fields.is_empty());
+        assert_eq!(
+            arguments,
+            vec![OsString::from("--mode"), OsString::from("apply")]
+        );
     }
 }

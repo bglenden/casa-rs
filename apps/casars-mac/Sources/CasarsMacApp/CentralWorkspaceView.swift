@@ -6443,11 +6443,11 @@ enum CasaTaskCategoryFilter: String, CaseIterable, Identifiable {
             return .information
         case "flagdata", "flagmanager":
             return .flagging
-        case "calibrate":
+        case "calibrate", "applycal", "bandpass", "fluxscale", "gaincal", "gencal":
             return .calibration
         case "imager", "feather":
             return .imaging
-        case "mstransform":
+        case "mstransform", "split", "uvcontsub":
             return .manipulation
         case "immath", "immoments", "impv", "imregrid", "imsubimage":
             return .analysis

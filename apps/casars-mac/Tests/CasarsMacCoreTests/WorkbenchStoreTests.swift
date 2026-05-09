@@ -116,6 +116,19 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(schema.arguments.contains { argument in
             argument.id == "mode" && argument.parser.choices?.contains("summary") == true
         })
+
+        let applycalSchema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "applycal")
+        XCTAssertEqual(applycalSchema.commandID, "applycal")
+        XCTAssertTrue(applycalSchema.arguments.contains { argument in
+            argument.id == "mode" && argument.hiddenInTUI && argument.default == "apply"
+        })
+
+        let gencalSchema = try UniFFITaskUISchemaClient().loadTaskUISchema(taskID: "gencal")
+        XCTAssertTrue(gencalSchema.arguments.contains { argument in
+            argument.id == "caltype"
+                && argument.parameterType == "gencal_type"
+                && argument.parser.choices?.contains("opac") == true
+        })
     }
 
     func testImagerTaskSchemaExposesTutorialControlsAndManagedOutput() throws {
@@ -183,6 +196,52 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(
             try ProcessGenericTaskClient.arguments(for: request),
             ["--vis", "/data/input.ms", "--mode", "summary", "--no-flagbackup"]
+        )
+    }
+
+    func testGenericTaskArgumentsInvokeHiddenDefaultOptions() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "applycal",
+          "invocation_name": "calibrate",
+          "display_name": "Applycal",
+          "category": "Calibration",
+          "summary": "Apply native CASA-style calibration.",
+          "usage": "calibrate --mode apply --ms <input.ms>",
+          "arguments": [
+            {"id":"mode","label":"Mode","order":0,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["apply"]},"value_kind":"choice","required":false,"default":"apply","help":"","group":"Mode","advanced":true,"hidden_in_tui":true},
+            {"id":"measurement_set","label":"MeasurementSet","order":1,"parser":{"kind":"option","flags":["--ms"],"metavar":"MS","choices":[]},"value_kind":"path","parameter_type":"measurement_set_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"ui_schema","label":"UI Schema","order":2,"parser":{"kind":"action","flags":["--ui-schema"],"action":"ui_schema"},"value_kind":"bool","required":false,"default":null,"help":"","group":"Meta","advanced":true,"hidden_in_tui":true}
+          ]
+        }
+        """.utf8))
+        let request = GenericTaskRequest(
+            runID: "run-1",
+            task: TaskCatalogEntry(
+                id: "applycal",
+                category: "Calibration",
+                displayName: "Applycal",
+                binaryName: "calibrate",
+                cargoPackage: "casa-calibration",
+                overrideEnv: "CASARS_CALIBRATE_BIN",
+                shellKind: "workflow",
+                interaction: "one_shot",
+                browserKind: nil,
+                datasetKinds: ["measurement_set", "calibration_table"],
+                schemaSource: "embedded_or_binary",
+                showInTUI: true,
+                showInSwift: true,
+                includeInSuite: true
+            ),
+            schema: schema,
+            values: ["measurement_set": "/data/input.ms"],
+            toggles: [:]
+        )
+
+        XCTAssertEqual(
+            try ProcessGenericTaskClient.arguments(for: request),
+            ["--mode", "apply", "--ms", "/data/input.ms"]
         )
     }
 

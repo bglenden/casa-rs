@@ -463,6 +463,8 @@ mod tests {
         assert_eq!(resolve_app(Some("imexplore")).unwrap().id, "imexplore");
         assert_eq!(resolve_app(Some("immoments")).unwrap().id, "immoments");
         assert_eq!(resolve_app(Some("exportfits")).unwrap().id, "exportfits");
+        assert_eq!(resolve_app(Some("split")).unwrap().id, "split");
+        assert_eq!(resolve_app(Some("applycal")).unwrap().id, "applycal");
         assert!(
             resolve_app(Some("bogus"))
                 .unwrap_err()
@@ -487,6 +489,13 @@ mod tests {
                 "immoments",
                 "exportfits",
                 "mstransform",
+                "split",
+                "uvcontsub",
+                "applycal",
+                "gaincal",
+                "bandpass",
+                "fluxscale",
+                "gencal",
                 "flagdata",
                 "flagmanager",
                 "impv",
