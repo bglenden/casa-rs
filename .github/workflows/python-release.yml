@@ -53,7 +53,7 @@ jobs:
 
       - name: Build suite binaries
         run: |
-          cargo build -q --release -p casars --bin casars
+          cargo build -q --release -p casars --bin casars --bin casars-casa-task
           cargo build -q --release -p casa-calibration --bin calibrate
           cargo build -q --release -p casars-importvla --bin casars-importvla
           cargo build -q --release -p casa-ms --bin msexplore --bin mstransform
@@ -141,6 +141,7 @@ jobs:
 
       - name: Build task binaries for smoke test
         run: |
+          cargo build -q -p casars --bin casars-casa-task
           cargo build -q -p casa-calibration --bin calibrate
           cargo build -q -p casars-importvla --bin casars-importvla
           cargo build -q -p casa-ms --bin msexplore
