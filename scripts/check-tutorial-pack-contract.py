@@ -24,7 +24,7 @@ EXPECTED_SCHEMA_VERSION = "tutorial-pack.v0"
 EXPECTED_SURFACES = {"cli", "python", "tui", "gui"}
 EXPECTED_TASKS = {"imhead", "imstat", "immoments", "exportfits"}
 FORBIDDEN_PROVIDER_TEXT = ("casars-casa-task", "casa-python")
-LOCAL_PATH_LEAK_RE = re.compile(r"(^|[\\s\"'])/(Users|private|tmp|var/folders)/|file://|~")
+LOCAL_PATH_LEAK_RE = re.compile(r"(^|[\\s\"'])/(Users|private|tmp|var/folders)/|file://|(^|[\\s\"'])~")
 
 
 def load_json(path: Path) -> Any:
@@ -127,6 +127,23 @@ def validate_template(template: dict[str, Any]) -> None:
         if entry.get("materialization") == "committed":
             fail(f"input {entry.get('id')} attempts to commit tutorial data")
         ensure_relative(entry.get("pack_path", ""), f"inputs[{entry.get('id')}].pack_path")
+        expected_masks = entry.get("expected_masks", [])
+        if expected_masks and entry.get("expected_default_mask") not in expected_masks:
+            fail(
+                f"input {entry.get('id')} expected_default_mask must be listed in expected_masks"
+            )
+
+    n2hp = next(
+        entry for entry in template.get("inputs", []) if entry.get("id") == "twhya-n2hp-image"
+    )
+    if n2hp.get("expected_default_mask") != "mask0":
+        fail("twhya-n2hp-image must declare expected_default_mask=mask0")
+    if "mask0" not in n2hp.get("expected_masks", []):
+        fail("twhya-n2hp-image must declare expected_masks including mask0")
+    if n2hp.get("source_artifact_url", "").endswith(
+        "/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image"
+    ):
+        fail("twhya-n2hp-image source must not use the current unmasked 6.6.6 direct image")
 
     section_tasks: set[str] = set()
     for section in template.get("sections", []):

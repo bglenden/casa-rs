@@ -256,6 +256,15 @@ pub enum ImageBrowserCommand {
         #[serde(default)]
         set_default: bool,
     },
+    ExportRegionFile {
+        path: String,
+    },
+    LoadRegionFile {
+        path: String,
+    },
+    AppendRegionFile {
+        path: String,
+    },
     PreviewOccurrence {
         request: ImageBrowserPreviewRequest,
     },

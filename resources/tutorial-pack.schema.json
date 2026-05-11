@@ -247,6 +247,9 @@
         "source_artifact_url": {
           "$ref": "#/$defs/http_url"
         },
+        "source_note": {
+          "type": "string"
+        },
         "filename": {
           "type": "string",
           "minLength": 1
@@ -258,6 +261,19 @@
         "checksum_policy": {
           "type": "string",
           "minLength": 1
+        },
+        "expected_default_mask": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected_masks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "pack_path": {
           "$ref": "#/$defs/relative_path"

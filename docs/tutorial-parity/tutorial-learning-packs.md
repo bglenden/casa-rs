@@ -24,15 +24,17 @@ Version 0 is a directory pack:
 ```text
 <tutorial-pack>/
   pack.json
-  inputs/
-  workspace/
+  twhya_cont.image/
+  twhya_n2hp.image/
+  README.md
+  regions/
+  .casa-rs/workspace/
     native/
     oracle/
     scratch/
   docs/
-    index.md
     sections/
-  evidence/
+  .casa-rs/evidence/
     data-manifest.json
     native-runs.jsonl
     oracle-runs.jsonl
@@ -40,7 +42,7 @@ Version 0 is a directory pack:
     timings.jsonl
     provider-provenance.json
     review/
-  screenshots/
+  .casa-rs/screenshots/
     source/
     annotated/
     specs/
@@ -52,8 +54,11 @@ Section review records follow
 The no-data pilot template is
 [`resources/tutorial-packs/alma-first-look-image-analysis.template.json`](../../resources/tutorial-packs/alma-first-look-image-analysis.template.json).
 
-`inputs/` is immutable once a pack is generated. `workspace/` is the writable
-area for native casa-rs products, CASA oracle products, and scratch state.
+Top-level CASA datasets are immutable once a pack is generated. The pack root is
+also the working directory learners can use for shell and Python examples, so
+paths in tutorial steps stay short and match CASA-style usage. User-visible
+region files live in `regions/` as CASA CRTF. `.casa-rs/workspace/` is the writable
+area for internal native casa-rs products, CASA oracle products, and scratch state.
 Generated packs live under the existing tutorial-data policy:
 
 ```text
@@ -85,7 +90,7 @@ ${CASA_RS_TUTORIAL_DATA_ROOT:-~/SoftwareProjects/casa-tutorial-data}/tutorial-pa
 
 The generator copies local tutorial inputs when they are already staged under
 the tutorial-data root. Use `--no-materialize-inputs` to create only the pack
-skeleton and leave each input marked `missing` in `evidence/data-manifest.json`.
+skeleton and leave each input marked `missing` in `.casa-rs/evidence/data-manifest.json`.
 The macOS GUI can open either the pack directory or its `pack.json` manifest.
 
 ## Learner View
@@ -119,6 +124,33 @@ Native tutorial steps must record `provider_kind: "native-rust"`. A native step
 must fail validation if it routes through `casars-casa-task`, CASA Python, or
 another adapter path. CASA is allowed only for steps explicitly marked as
 oracle evidence.
+
+## Evidence Capture Policy
+
+Tutorial evidence separates executable correctness from visual capture:
+
+- CLI and Python evidence is captured from native task stdout.
+- GUI evidence is captured from the same macOS workbench task state used by the
+  visible UI, including the selected tutorial section, applied parameters, task
+  logs, diagnostics, and output JSON.
+- For `imhead`, the GUI learner path is Inspector-first: open the tutorial
+  pack, select the staged image, and inspect `Size`, `Units`, `Shape`, and
+  image details. The task form remains the regression path for exact
+  parameterized JSON output.
+- TUI evidence currently records the deterministic startup command and
+  parameter mapping for `casars`. Text-layout screenshots should use a
+  Ratatui buffer/TestBackend style capture. Terminal-emulator screenshots and
+  terminal graphics should use a real emulator backend such as Ghostty or
+  libghostty rather than a raw PTY transcript.
+- `.casa-rs/screenshots/` is reserved for real UI captures and annotations derived from
+  real captures. Synthetic evidence cards may be useful during development,
+  but they must live outside the screenshot evidence path and must not be
+  presented as GUI or TUI screenshots.
+
+The first-section runner therefore treats TUI terminal screenshots as optional
+visual evidence, not as the default correctness gate. This avoids making
+regression runs depend on terminal escape-sequence cleanup while still leaving a
+clear path for richer captures when inline terminal graphics become relevant.
 
 ## Human Checkpoints
 
@@ -172,3 +204,23 @@ swift run casars-mac --dump-debug-state --open-tutorial-pack ~/SoftwareProjects/
 The Tutorial tab shows input staging status, the observable section list, the
 learner docs path, the regression evidence paths, and an `Open Task` action
 that applies the section's GUI parameters to the native task panel.
+
+Generate the first observable chunk, `01-imhead-continuum-header`, with:
+
+```bash
+scripts/run-tutorial-pack-section.py \
+  --pack ~/SoftwareProjects/casa-tutorial-data/tutorial-parity/alma/first-look/twhya/image-analysis/alma-first-look-image-analysis.pack
+```
+
+The runner writes:
+
+- `docs/sections/01-imhead-continuum-header.html`
+- `docs/sections/01-imhead-continuum-header.md`
+- `.casa-rs/workspace/native/01-imhead-continuum-header/*.json`
+- `.casa-rs/workspace/oracle/01-imhead-continuum-header/*.json`
+- `.casa-rs/evidence/comparisons.json`
+- `.casa-rs/evidence/invalid-image-checks.json`
+- `.casa-rs/evidence/review/01-imhead-continuum-header.json`
+
+Use `--capture-tui-pty` only for exploratory raw-PTY TUI capture. It is not the
+default regression path.

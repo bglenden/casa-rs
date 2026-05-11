@@ -43,7 +43,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         Ok(())
     })?);
     measurements.push(measure("imstat_cont_box", 7, || {
-        black_box(imstat(&cont_image, Some("100,100,150,150"), None, None)?);
+        black_box(imstat(
+            &cont_image,
+            Some("100,100,150,150"),
+            None,
+            None,
+            None,
+        )?);
         Ok(())
     })?);
     measurements.push(measure("exportfits_cont", 7, || {

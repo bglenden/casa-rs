@@ -2,6 +2,7 @@
 //! `imexplore` - inspect persistent casacore images from the command line.
 
 use std::env;
+use std::fmt::Display;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::process;
@@ -59,7 +60,8 @@ fn run() -> Result<(), String> {
         args.next();
         let imhead_args = parse_imhead_args(args)?;
         let summary = match imhead_args.mode.as_str() {
-            "summary" | "list" => imhead(&imhead_args.path).map_err(|error| error.to_string())?,
+            "summary" | "list" => imhead(&imhead_args.path)
+                .map_err(|error| image_operation_error("imhead", &imhead_args.path, error))?,
             "put" => {
                 let hdkey = imhead_args
                     .hdkey
@@ -69,7 +71,8 @@ fn run() -> Result<(), String> {
                     .hdvalue
                     .as_deref()
                     .ok_or_else(|| "imexplore imhead --mode put requires --hdvalue".to_string())?;
-                imhead_put(&imhead_args.path, hdkey, hdvalue).map_err(|error| error.to_string())?
+                imhead_put(&imhead_args.path, hdkey, hdvalue)
+                    .map_err(|error| image_operation_error("imhead", &imhead_args.path, error))?
             }
             other => {
                 return Err(format!(
@@ -117,10 +120,11 @@ fn run() -> Result<(), String> {
         let summary = imstat(
             &stat_args.path,
             stat_args.box_pixels.as_deref(),
+            stat_args.region.as_deref(),
             stat_args.chans.as_deref(),
             None,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| image_operation_error("imstat", &stat_args.path, error))?;
         if stat_args.json {
             println!(
                 "{}",
@@ -144,7 +148,9 @@ fn run() -> Result<(), String> {
     if args.peek().is_some_and(|arg| arg == "immoments") {
         args.next();
         let moment_args = parse_immoments_args(args)?;
-        let summary = immoments(&moment_args.request).map_err(|error| error.to_string())?;
+        let summary = immoments(&moment_args.request).map_err(|error| {
+            image_operation_error("immoments", &moment_args.request.imagename, error)
+        })?;
         if moment_args.json {
             println!(
                 "{}",
@@ -163,7 +169,8 @@ fn run() -> Result<(), String> {
     if args.peek().is_some_and(|arg| arg == "impv") {
         args.next();
         let pv_args = parse_impv_args(args)?;
-        let summary = impv(&pv_args.request).map_err(|error| error.to_string())?;
+        let summary = impv(&pv_args.request)
+            .map_err(|error| image_operation_error("impv", &pv_args.request.imagename, error))?;
         if pv_args.json {
             println!(
                 "{}",
@@ -182,6 +189,13 @@ fn run() -> Result<(), String> {
 
     let image_path = parse_path(args)?;
     run_snapshot(&image_path)
+}
+
+fn image_operation_error(operation: &str, path: &PathBuf, error: impl Display) -> String {
+    format!(
+        "{operation}: cannot open or read CASA image '{}': {error}",
+        path.display()
+    )
 }
 
 struct ImheadArgs {
@@ -240,6 +254,7 @@ fn imhead_usage() -> String {
 struct ImstatArgs {
     path: PathBuf,
     box_pixels: Option<String>,
+    region: Option<String>,
     chans: Option<String>,
     json: bool,
 }
@@ -258,6 +273,7 @@ fn parse_imstat_args(args: impl IntoIterator<Item = String>) -> Result<ImstatArg
     let args = args.into_iter().collect::<Vec<_>>();
     let mut path = None;
     let mut box_pixels = None;
+    let mut region = None;
     let mut chans = None;
     let mut json = false;
     let mut idx = 0;
@@ -267,6 +283,10 @@ fn parse_imstat_args(args: impl IntoIterator<Item = String>) -> Result<ImstatArg
             "--box" => {
                 idx += 1;
                 box_pixels = Some(args.get(idx).ok_or_else(imstat_usage)?.clone());
+            }
+            "--region" => {
+                idx += 1;
+                region = Some(args.get(idx).ok_or_else(imstat_usage)?.clone());
             }
             "--chans" => {
                 idx += 1;
@@ -285,13 +305,14 @@ fn parse_imstat_args(args: impl IntoIterator<Item = String>) -> Result<ImstatArg
     Ok(ImstatArgs {
         path: path.ok_or_else(imstat_usage)?,
         box_pixels,
+        region,
         chans,
         json,
     })
 }
 
 fn imstat_usage() -> String {
-    "usage: imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json]".to_string()
+    "usage: imexplore imstat <image-path> [--box x0,y0,x1,y1] [--region path|box[[x0pix,y0pix],[x1pix,y1pix]]|world CRTF box] [--chans 0~4] [--json]".to_string()
 }
 
 fn parse_immoments_args(args: impl IntoIterator<Item = String>) -> Result<ImmomentsArgs, String> {
@@ -354,7 +375,7 @@ fn parse_immoments_args(args: impl IntoIterator<Item = String>) -> Result<Immome
 }
 
 fn immoments_usage() -> String {
-    "usage: imexplore immoments <image-path> --outfile <path> [--moments 0|1] [--chans 4~12] [--includepix min,max] [--overwrite] [--json]".to_string()
+    "usage: imexplore immoments <image-path> --outfile <path> [--moments -1|0|1|2|3] [--chans 4~12] [--includepix min,max] [--overwrite] [--json]".to_string()
 }
 
 fn parse_impv_args(args: impl IntoIterator<Item = String>) -> Result<ImpvArgs, String> {

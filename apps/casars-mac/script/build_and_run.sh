@@ -5,6 +5,7 @@ set -euo pipefail
 MODE="run"
 OPEN_PROJECT=""
 OPEN_TUTORIAL_PACK=""
+OPEN_TUTORIAL_SECTION=""
 USE_TEMP_REAL_PROJECT="1"
 APP_NAME="casars-mac"
 BUNDLE_ID="org.casa-rs.casars-mac"
@@ -19,7 +20,6 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
-IMAGER_HELPER="$APP_MACOS/casars-imager"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 APP_ICON_SOURCE="$REPO_ROOT/branding/app-icon/casa-rs-app-icon.icns"
 APP_ICON_NAME="casa-rs-app-icon.icns"
@@ -27,7 +27,6 @@ FRONTEND_DYLIB_NAME="libcasars_frontend_services.dylib"
 BUILD_CONFIGURATION="release"
 RUST_PROFILE_DIR="$REPO_ROOT/target/release"
 FRONTEND_DYLIB="$RUST_PROFILE_DIR/$FRONTEND_DYLIB_NAME"
-IMAGER_BINARY="$RUST_PROFILE_DIR/casars-imager"
 TUTORIAL_DATA_ROOT="${CASA_RS_TUTORIAL_DATA_ROOT:-$HOME/SoftwareProjects/casa-tutorial-data}"
 TUTORIAL_DEMO_ARCHIVE="$TUTORIAL_DATA_ROOT/tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar"
 FALLBACK_REAL_PROJECT_FIXTURE="$REPO_ROOT/crates/casa-ms/tests/fixtures/mssel_test_small_multifield_spw.ms.tgz"
@@ -60,17 +59,30 @@ while [[ $# -gt 0 ]]; do
       USE_TEMP_REAL_PROJECT="0"
       shift 2
       ;;
+    --tutorial-section|--open-tutorial-section)
+      if [[ $# -lt 2 ]]; then
+        echo "missing section id after $1" >&2
+        exit 2
+      fi
+      OPEN_TUTORIAL_SECTION="$2"
+      shift 2
+      ;;
     --empty)
       OPEN_PROJECT=""
       USE_TEMP_REAL_PROJECT="0"
       shift
       ;;
     *)
-      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--tutorial-pack PATH|--empty]" >&2
+      echo "usage: $0 [run|--debug|--logs|--verify|--stage-only] [--project PATH|--tutorial-pack PATH [--tutorial-section ID]|--empty]" >&2
       exit 2
       ;;
   esac
 done
+
+if [[ -n "$OPEN_TUTORIAL_SECTION" && -z "$OPEN_TUTORIAL_PACK" ]]; then
+  echo "--tutorial-section requires --tutorial-pack" >&2
+  exit 2
+fi
 
 stage_temp_real_project() {
   if [[ "$USE_TEMP_REAL_PROJECT" != "1" || -n "$OPEN_PROJECT" ]]; then
@@ -142,7 +154,34 @@ if [[ "$MODE" == "--stage-only" || "$MODE" == "stage" ]]; then
 fi
 stage_temp_real_project
 "$REPO_ROOT/scripts/generate-frontend-bindings.sh" "$REPO_ROOT/target/frontend-bindings"
-cargo build --release -p casars-frontend-services -p casars-imager
+cargo build --release -p casars-frontend-services --lib
+TASK_HELPER_SPECS=()
+while IFS= read -r spec; do
+  TASK_HELPER_SPECS+=("$spec")
+done < <(
+  python3 - "$REPO_ROOT/resources/task-catalog.json" <<'PY'
+import json
+import sys
+
+catalog = json.load(open(sys.argv[1], encoding="utf-8"))
+seen = set()
+for task in catalog["tasks"]:
+    if not task.get("show_in_swift"):
+        continue
+    package = task["cargo_package"]
+    binary = task["binary_name"]
+    key = (package, binary)
+    if key in seen:
+        continue
+    seen.add(key)
+    print(f"{package}:{binary}")
+PY
+)
+for spec in "${TASK_HELPER_SPECS[@]}"; do
+  package="${spec%%:*}"
+  binary="${spec#*:}"
+  cargo build --release -p "$package" --bin "$binary"
+done
 
 cd "$ROOT_DIR"
 
@@ -155,9 +194,16 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_FRAMEWORKS" "$APP_RESOURCES"
 cp "$BUILD_BINARY" "$APP_BINARY"
 cp "$FRONTEND_DYLIB" "$APP_FRAMEWORKS/$FRONTEND_DYLIB_NAME"
-cp "$IMAGER_BINARY" "$IMAGER_HELPER"
+for spec in "${TASK_HELPER_SPECS[@]}"; do
+  binary="${spec#*:}"
+  cp "$RUST_PROFILE_DIR/$binary" "$APP_MACOS/$binary"
+done
 cp "$APP_ICON_SOURCE" "$APP_RESOURCES/$APP_ICON_NAME"
-chmod +x "$APP_BINARY" "$IMAGER_HELPER"
+chmod +x "$APP_BINARY"
+for spec in "${TASK_HELPER_SPECS[@]}"; do
+  binary="${spec#*:}"
+  chmod +x "$APP_MACOS/$binary"
+done
 
 frontend_dependency="$(
   otool -L "$APP_BINARY" \
@@ -193,7 +239,10 @@ cat >"$INFO_PLIST" <<PLIST
 PLIST
 
 codesign --force --sign - "$APP_FRAMEWORKS/$FRONTEND_DYLIB_NAME" >/dev/null
-codesign --force --sign - "$IMAGER_HELPER" >/dev/null
+for spec in "${TASK_HELPER_SPECS[@]}"; do
+  binary="${spec#*:}"
+  codesign --force --sign - "$APP_MACOS/$binary" >/dev/null
+done
 codesign --force --sign - "$APP_BINARY" >/dev/null
 codesign --force --sign - "$APP_BUNDLE" >/dev/null
 
@@ -205,7 +254,11 @@ open_app() {
   fi
 
   if [[ -n "$OPEN_TUTORIAL_PACK" ]]; then
-    /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args --open-tutorial-pack "$OPEN_TUTORIAL_PACK"
+    local app_args=(--open-tutorial-pack "$OPEN_TUTORIAL_PACK")
+    if [[ -n "$OPEN_TUTORIAL_SECTION" ]]; then
+      app_args+=(--open-tutorial-section "$OPEN_TUTORIAL_SECTION")
+    fi
+    /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args "${app_args[@]}"
   elif [[ -n "$OPEN_PROJECT" ]]; then
     /usr/bin/open "${open_flags[@]}" "$APP_BUNDLE" --args --open-project "$OPEN_PROJECT"
   else
@@ -219,7 +272,11 @@ launched_app_pid() {
 
 debug_app() {
   if [[ -n "$OPEN_TUTORIAL_PACK" ]]; then
-    lldb -- "$APP_BINARY" --open-tutorial-pack "$OPEN_TUTORIAL_PACK"
+    local app_args=(--open-tutorial-pack "$OPEN_TUTORIAL_PACK")
+    if [[ -n "$OPEN_TUTORIAL_SECTION" ]]; then
+      app_args+=(--open-tutorial-section "$OPEN_TUTORIAL_SECTION")
+    fi
+    lldb -- "$APP_BINARY" "${app_args[@]}"
   elif [[ -n "$OPEN_PROJECT" ]]; then
     lldb -- "$APP_BINARY" --open-project "$OPEN_PROJECT"
   else

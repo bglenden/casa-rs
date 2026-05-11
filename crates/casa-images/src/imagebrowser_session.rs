@@ -2,6 +2,7 @@
 //! Long-lived image browser session state.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -10,8 +11,9 @@ use std::time::Instant;
 
 use crate::error::ImageError;
 use crate::image_view::{
-    ImageRegion, ImageRegionOverlayShape, ImageRegionStats, PlaneAutoscaleMode,
-    PlaneRenderTelemetry, PlaneStretchPreset, PlaneStretchSettings, format_numeric_value_with_unit,
+    ImageRegion, ImageRegionOverlayShape, ImageRegionShape, ImageRegionStats, ImageRegionVertex,
+    PlaneAutoscaleMode, PlaneRenderTelemetry, PlaneStretchPreset, PlaneStretchSettings,
+    format_numeric_value_with_unit,
 };
 use crate::{
     ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis, ImageProbe,
@@ -612,6 +614,18 @@ impl ImageBrowserSession {
             }
             ImageBrowserCommand::WriteRegionMask { name, set_default } => {
                 self.write_region_mask(name.as_deref(), set_default)?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::ExportRegionFile { path } => {
+                self.export_region_file(Path::new(&path))?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::LoadRegionFile { path } => {
+                self.load_region_file(Path::new(&path))?;
+                self.snapshot()
+            }
+            ImageBrowserCommand::AppendRegionFile { path } => {
+                self.append_region_file(Path::new(&path))?;
                 self.snapshot()
             }
             ImageBrowserCommand::PreviewOccurrence { request } => {
@@ -1708,6 +1722,190 @@ impl ImageBrowserSession {
         Ok(())
     }
 
+    fn export_region_file(&self, path: &Path) -> Result<(), ImageError> {
+        let Some(region) = self.region.as_ref() else {
+            return Err(ImageError::InvalidMetadata("no active region".into()));
+        };
+        if region.shapes.iter().all(|shape| !shape.closed) {
+            return Err(ImageError::InvalidMetadata(
+                "close the current polygon before exporting a region file".into(),
+            ));
+        }
+        let overlay = self.view.region_overlay_with_window_and_axes(
+            region,
+            &self.window,
+            &self.non_display_indices,
+        )?;
+        let shape = overlay
+            .shapes
+            .iter()
+            .position(|shape| shape.closed && !shape.vertices.is_empty())
+            .ok_or_else(|| ImageError::InvalidMetadata("no closed region to export".into()))?;
+        let overlay_shape = &overlay.shapes[shape];
+        let region_shape = region
+            .shapes
+            .iter()
+            .filter(|shape| shape.closed && !shape.vertices.is_empty())
+            .nth(shape)
+            .ok_or_else(|| ImageError::InvalidMetadata("no closed region to export".into()))?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                ImageError::Io(format!(
+                    "create region export directory {}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+        let pixel_vertices = overlay_shape
+            .vertices
+            .iter()
+            .map(|(x, y)| {
+                Ok((
+                    rounded_region_pixel(*x, "x")?,
+                    rounded_region_pixel(*y, "y")?,
+                ))
+            })
+            .collect::<Result<Vec<_>, ImageError>>()?;
+        let world_vertices = region_shape
+            .vertices
+            .iter()
+            .map(|vertex| {
+                [
+                    crtf_quantity(vertex.world[0], &region.axis_units[0]),
+                    crtf_quantity(vertex.world[1], &region.axis_units[1]),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let crtf = if let Some((first, second)) = crtf_box_vertex_indices(&pixel_vertices) {
+            let first = &world_vertices[first];
+            let second = &world_vertices[second];
+            format!(
+                "#CRTFv0 CASA Region Text Format version 0\nbox[[{},{}],[{},{}]]\n",
+                first[0], first[1], second[0], second[1]
+            )
+        } else {
+            let vertices = world_vertices
+                .iter()
+                .map(|vertex| format!("[{},{}]", vertex[0], vertex[1]))
+                .collect::<Vec<_>>();
+            format!(
+                "#CRTFv0 CASA Region Text Format version 0\npoly [{}]\n",
+                vertices.join(", ")
+            )
+        };
+        fs::write(path, crtf).map_err(|error| {
+            ImageError::Io(format!("write region file {}: {error}", path.display()))
+        })
+    }
+
+    fn read_region_file_shapes(
+        &self,
+        path: &Path,
+    ) -> Result<(String, Vec<ImageRegionShape>), ImageError> {
+        let text = fs::read_to_string(path).map_err(|error| {
+            ImageError::Io(format!("read region file {}: {error}", path.display()))
+        })?;
+        let label = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("Imported region");
+        let mut shapes = Vec::new();
+        for shape in crtf_region_shapes(&text)? {
+            let vertices = shape
+                .into_iter()
+                .map(|vertex| self.crtf_vertex_to_region_vertex(vertex))
+                .collect::<Result<Vec<_>, ImageError>>()?;
+            if vertices.len() >= 3 {
+                shapes.push(ImageRegionShape {
+                    vertices,
+                    closed: true,
+                });
+            }
+        }
+        if shapes.is_empty() {
+            return Err(ImageError::InvalidMetadata(format!(
+                "region file {} does not contain a supported CRTF box or polygon",
+                path.display()
+            )));
+        }
+        Ok((label.to_string(), shapes))
+    }
+
+    fn load_region_file(&mut self, path: &Path) -> Result<(), ImageError> {
+        let (label, shapes) = self.read_region_file_shapes(path)?;
+        let mut region = self.view.default_region(&label)?;
+        region.shapes = shapes;
+        self.region = Some(region);
+        self.active_region_definition_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_string);
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn append_region_file(&mut self, path: &Path) -> Result<(), ImageError> {
+        if self
+            .region
+            .as_ref()
+            .is_some_and(|region| region.shapes.iter().any(|shape| !shape.closed))
+        {
+            return Err(ImageError::InvalidMetadata(
+                "close or cancel the current polygon before loading a region file".into(),
+            ));
+        }
+        let (label, mut shapes) = self.read_region_file_shapes(path)?;
+        if let Some(region) = self.region.as_mut() {
+            region.shapes.append(&mut shapes);
+            self.active_region_definition_name = None;
+        } else {
+            let mut region = self.view.default_region(&label)?;
+            region.shapes.append(&mut shapes);
+            self.region = Some(region);
+            self.active_region_definition_name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(str::to_string);
+        }
+        self.region_revision = self.region_revision.saturating_add(1);
+        Ok(())
+    }
+
+    fn crtf_vertex_to_region_vertex(
+        &self,
+        vertex: [CrtfRegionCoordinate; 2],
+    ) -> Result<ImageRegionVertex, ImageError> {
+        match vertex {
+            [
+                CrtfRegionCoordinate::Pixel(x),
+                CrtfRegionCoordinate::Pixel(y),
+            ] => {
+                let Some(display_axes) = self.view.axis_model().display_axes else {
+                    return Err(ImageError::InvalidMetadata(
+                        "regions require a renderable plane".into(),
+                    ));
+                };
+                let sampled = (
+                    self.window.nearest_sample_index(display_axes[0], x),
+                    self.window.nearest_sample_index(display_axes[1], y),
+                );
+                self.view.region_vertex_for_pixel_with_window_and_axes(
+                    sampled,
+                    &self.window,
+                    &self.non_display_indices,
+                )
+            }
+            [
+                CrtfRegionCoordinate::World(x),
+                CrtfRegionCoordinate::World(y),
+            ] => Ok(ImageRegionVertex { world: [x, y] }),
+            _ => Err(ImageError::InvalidMetadata(
+                "cannot mix pixel and world coordinates in one CRTF vertex".to_string(),
+            )),
+        }
+    }
+
     fn current_display_pixels(&self) -> Option<(usize, usize)> {
         let display_axes = self.view.axis_model().display_axes?;
         Some((
@@ -2082,6 +2280,183 @@ fn map_region_overlay_shape(shape: ImageRegionOverlayShape) -> ImageRegionOverla
             .collect(),
         closed: shape.closed,
     }
+}
+
+fn rounded_region_pixel(value: f64, axis: &str) -> Result<usize, ImageError> {
+    if !value.is_finite() || value < -1.0e-6 {
+        return Err(ImageError::InvalidMetadata(format!(
+            "region {axis} vertex is not a non-negative finite pixel: {value}"
+        )));
+    }
+    Ok(value.max(0.0).round() as usize)
+}
+
+#[cfg(test)]
+fn crtf_box_from_vertices(vertices: &[(usize, usize)]) -> Option<(usize, usize, usize, usize)> {
+    crtf_box_vertex_indices(vertices).map(|(first, second)| {
+        let (x0, y0) = vertices[first];
+        let (x1, y1) = vertices[second];
+        (x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1))
+    })
+}
+
+fn crtf_box_vertex_indices(vertices: &[(usize, usize)]) -> Option<(usize, usize)> {
+    if vertices.len() != 4 {
+        return None;
+    }
+    let mut xs = vertices.iter().map(|(x, _)| *x).collect::<Vec<_>>();
+    xs.sort_unstable();
+    xs.dedup();
+    let mut ys = vertices.iter().map(|(_, y)| *y).collect::<Vec<_>>();
+    ys.sort_unstable();
+    ys.dedup();
+    if xs.len() != 2 || ys.len() != 2 {
+        return None;
+    }
+    let expected = [
+        (xs[0], ys[0]),
+        (xs[0], ys[1]),
+        (xs[1], ys[0]),
+        (xs[1], ys[1]),
+    ];
+    if expected.iter().all(|corner| vertices.contains(corner)) {
+        let first = vertices
+            .iter()
+            .position(|vertex| *vertex == (xs[0], ys[0]))?;
+        let second = vertices
+            .iter()
+            .position(|vertex| *vertex == (xs[1], ys[1]))?;
+        Some((first, second))
+    } else {
+        None
+    }
+}
+
+fn crtf_quantity(value: f64, unit: &str) -> String {
+    let unit = unit.trim();
+    if unit.is_empty() {
+        format!("{value:.15}")
+    } else {
+        format!("{value:.15}{unit}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CrtfRegionCoordinate {
+    Pixel(usize),
+    World(f64),
+}
+
+fn crtf_region_shapes(text: &str) -> Result<Vec<Vec<[CrtfRegionCoordinate; 2]>>, ImageError> {
+    let mut shapes = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let lowercase = line.to_ascii_lowercase();
+        if lowercase.starts_with("box") {
+            shapes.push(crtf_box_region_shape(line)?);
+        } else if lowercase.starts_with("poly") {
+            shapes.push(crtf_poly_region_shape(line)?);
+        }
+    }
+    Ok(shapes)
+}
+
+fn crtf_box_region_shape(text: &str) -> Result<Vec<[CrtfRegionCoordinate; 2]>, ImageError> {
+    let parts = crtf_coordinate_parts(text).ok_or_else(|| {
+        ImageError::InvalidMetadata(format!(
+            "invalid CASA CRTF box region {text:?}: expected box[[x0,y0],[x1,y1]]"
+        ))
+    })?;
+    if parts.len() != 4 {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid CASA CRTF box region {text:?}: expected four coordinates"
+        )));
+    }
+    let x0 = parse_crtf_region_coordinate(&parts[0])?;
+    let y0 = parse_crtf_region_coordinate(&parts[1])?;
+    let x1 = parse_crtf_region_coordinate(&parts[2])?;
+    let y1 = parse_crtf_region_coordinate(&parts[3])?;
+    Ok(vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+}
+
+fn crtf_poly_region_shape(text: &str) -> Result<Vec<[CrtfRegionCoordinate; 2]>, ImageError> {
+    let parts = crtf_coordinate_parts(text).ok_or_else(|| {
+        ImageError::InvalidMetadata(format!(
+            "invalid CASA CRTF polygon region {text:?}: expected poly [[x0,y0],...]"
+        ))
+    })?;
+    if parts.len() < 6 || parts.len() % 2 != 0 {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid CASA CRTF polygon region {text:?}: expected at least three coordinate pairs"
+        )));
+    }
+    parts
+        .chunks_exact(2)
+        .map(|pair| {
+            Ok([
+                parse_crtf_region_coordinate(&pair[0])?,
+                parse_crtf_region_coordinate(&pair[1])?,
+            ])
+        })
+        .collect()
+}
+
+fn crtf_coordinate_parts(text: &str) -> Option<Vec<String>> {
+    let start = text.find("[[")?;
+    let end = text.rfind("]]")?;
+    if end <= start {
+        return None;
+    }
+    Some(
+        text[start + 2..end]
+            .replace("], [", ",")
+            .replace("],[", ",")
+            .replace('[', "")
+            .replace(']', "")
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+fn parse_crtf_region_coordinate(text: &str) -> Result<CrtfRegionCoordinate, ImageError> {
+    let trimmed = text.trim();
+    let lowercase = trimmed.to_ascii_lowercase();
+    if let Some(value) = lowercase.strip_suffix("pix") {
+        let parsed = value.trim().parse::<f64>().map_err(|error| {
+            ImageError::InvalidMetadata(format!(
+                "invalid CRTF pixel coordinate {trimmed:?}: {error}"
+            ))
+        })?;
+        return rounded_region_pixel(parsed, "CRTF").map(CrtfRegionCoordinate::Pixel);
+    }
+    let (value, scale) = if let Some(value) = lowercase.strip_suffix("arcsec") {
+        (value, std::f64::consts::PI / 180.0 / 3600.0)
+    } else if let Some(value) = lowercase.strip_suffix("arcmin") {
+        (value, std::f64::consts::PI / 180.0 / 60.0)
+    } else if let Some(value) = lowercase.strip_suffix("deg") {
+        (value, std::f64::consts::PI / 180.0)
+    } else if let Some(value) = lowercase.strip_suffix("rad") {
+        (value, 1.0)
+    } else {
+        (lowercase.as_str(), 1.0)
+    };
+    let parsed = value.trim().parse::<f64>().map_err(|error| {
+        ImageError::InvalidMetadata(format!(
+            "invalid CRTF world coordinate {trimmed:?}: {error}"
+        ))
+    })?;
+    if !parsed.is_finite() {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid CRTF world coordinate {trimmed:?}: value is not finite"
+        )));
+    }
+    Ok(CrtfRegionCoordinate::World(parsed * scale))
 }
 
 fn map_region_stats(stats: ImageRegionStats) -> ImageRegionStatsState {
@@ -3656,5 +4031,162 @@ mod tests {
             "pixel-only mode: coordinate reconstruction unavailable"
         );
         assert_eq!(snapshot.non_display_axes.len(), 2);
+    }
+
+    #[test]
+    fn crtf_export_classifies_axis_aligned_rectangles_as_boxes() {
+        assert_eq!(
+            crtf_box_from_vertices(&[(100, 100), (150, 100), (150, 150), (100, 150)]),
+            Some((100, 100, 150, 150))
+        );
+        assert_eq!(
+            crtf_box_from_vertices(&[(100, 100), (150, 100), (140, 150), (100, 150)]),
+            None
+        );
+    }
+
+    #[test]
+    fn crtf_region_files_interoperate_with_casa_regionmanager_when_available() {
+        const CASA_PYTHON: &str =
+            "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python";
+        if !Path::new(CASA_PYTHON).exists() {
+            eprintln!("skipping CASA CRTF interop test: {CASA_PYTHON} is not available");
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let image_path = dir.path().join("region-interop.image");
+        let casars_world_region_path = dir.path().join("casars-world-export.crtf");
+        let casars_pixel_region_path = dir.path().join("casars-pixel-export.crtf");
+        let casa_world_region_path = dir.path().join("casa-world-export.crtf");
+        let casa_pixel_region_path = dir.path().join("casa-pixel-export.crtf");
+        let casa_script_path = dir.path().join("crtf_interop.py");
+        let shape = vec![3, 3];
+        let mut image =
+            PagedImage::<f32>::create(shape.clone(), direction_coords(), &image_path).unwrap();
+        image
+            .put_slice(
+                &ArrayD::from_shape_vec(IxDyn(&shape), (0..9).map(|value| value as f32).collect())
+                    .unwrap(),
+                &[0, 0],
+            )
+            .unwrap();
+        image.save().unwrap();
+
+        let mut session =
+            ImageBrowserSession::open(&image_path, ImageBrowserViewport::new(3, 3)).unwrap();
+        session
+            .handle_command(ImageBrowserCommand::StartRegionShape)
+            .unwrap();
+        for (x, y) in [(0, 0), (2, 0), (2, 2), (0, 2)] {
+            session
+                .handle_command(ImageBrowserCommand::AppendRegionVertex { x, y })
+                .unwrap();
+        }
+        session
+            .handle_command(ImageBrowserCommand::CloseRegionShape)
+            .unwrap();
+        session
+            .handle_command(ImageBrowserCommand::ExportRegionFile {
+                path: casars_world_region_path.display().to_string(),
+            })
+            .unwrap();
+        let casars_world_region = fs::read_to_string(&casars_world_region_path).unwrap();
+        assert!(casars_world_region.contains("box[["));
+        assert!(casars_world_region.contains("rad"));
+        assert!(!casars_world_region.contains("pix"));
+        fs::write(
+            &casars_pixel_region_path,
+            "#CRTFv0 CASA Region Text Format version 0\nbox[[0pix,0pix],[1pix,0pix]]\n",
+        )
+        .unwrap();
+
+        fs::write(
+            &casa_script_path,
+            r##"
+import math
+import sys
+from casatools import coordsys, regionmanager
+
+casars_world_region_path = sys.argv[1]
+casars_pixel_region_path = sys.argv[2]
+casa_world_region_path = sys.argv[3]
+casa_pixel_region_path = sys.argv[4]
+
+cs = coordsys()
+cs.newcoordsys(direction=True)
+cs.setunits(["rad", "rad"], type="direction")
+cs.setreferencevalue([0.0, math.pi / 4.0], type="direction")
+cs.setincrement([-1.0e-4, 1.0e-4], type="direction")
+cs.setreferencepixel([1.0, 1.0], type="direction")
+
+rg = regionmanager()
+casars_world_region = rg.fromtextfile(casars_world_region_path, shape=[3, 3], csys=cs.torecord())
+if not rg.isworldregion(casars_world_region):
+    raise RuntimeError("casa-rs exported CRTF was not parsed as a CASA world region")
+casars_pixel_region = rg.fromtextfile(casars_pixel_region_path, shape=[3, 3], csys=cs.torecord())
+if not (rg.ispixelregion(casars_pixel_region) or rg.isworldregion(casars_pixel_region)):
+    raise RuntimeError("casa-rs exported pixel CRTF was not parsed as a CASA region")
+
+first = cs.toworld([0, 0], "n")["numeric"]
+second = cs.toworld([1, 0], "n")["numeric"]
+with open(casa_world_region_path, "w", encoding="utf-8") as handle:
+    handle.write("#CRTFv0 CASA Region Text Format version 0\n")
+    handle.write(
+        f"box[[{first[0]:.15f}rad,{first[1]:.15f}rad],"
+        f"[{second[0]:.15f}rad,{second[1]:.15f}rad]]\n"
+    )
+with open(casa_pixel_region_path, "w", encoding="utf-8") as handle:
+    handle.write("#CRTFv0 CASA Region Text Format version 0\n")
+    handle.write("box[[0pix,0pix],[1pix,0pix]]\n")
+
+casa_world_region = rg.fromtextfile(casa_world_region_path, shape=[3, 3], csys=cs.torecord())
+if not rg.isworldregion(casa_world_region):
+    raise RuntimeError("CASA-authored CRTF was not parsed as a CASA world region")
+casa_pixel_region = rg.fromtextfile(casa_pixel_region_path, shape=[3, 3], csys=cs.torecord())
+if not (rg.ispixelregion(casa_pixel_region) or rg.isworldregion(casa_pixel_region)):
+    raise RuntimeError("CASA-authored pixel CRTF was not parsed as a CASA region")
+"##,
+        )
+        .unwrap();
+
+        let output = std::process::Command::new(CASA_PYTHON)
+            .arg(&casa_script_path)
+            .arg(&casars_world_region_path)
+            .arg(&casars_pixel_region_path)
+            .arg(&casa_world_region_path)
+            .arg(&casa_pixel_region_path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "CASA CRTF interop probe failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let world_stats = crate::analysis::imstat(
+            &image_path,
+            None,
+            Some(casa_world_region_path.to_str().unwrap()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(world_stats.blc, vec![0, 0]);
+        assert_eq!(world_stats.trc, vec![1, 0]);
+        assert_eq!(world_stats.npts, 2.0);
+
+        let pixel_stats = crate::analysis::imstat(
+            &image_path,
+            None,
+            Some(casa_pixel_region_path.to_str().unwrap()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(pixel_stats.blc, vec![0, 0]);
+        assert_eq!(pixel_stats.trc, vec![1, 0]);
+        assert_eq!(pixel_stats.npts, 2.0);
     }
 }

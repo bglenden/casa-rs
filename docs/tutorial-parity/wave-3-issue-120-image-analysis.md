@@ -17,7 +17,7 @@ matching Python task wrappers.
 | --- | --- | --- |
 | `imhead` | `casa-images`, `casa-coordinates` | `imexplore imhead <image> [--json]` returns image shape, units, masks, beam, and coordinate-axis summaries. |
 | `imstat` | `casa-images`, `casa-lattices` | `imexplore imstat <image> [--box ...] [--chans ...] [--json]` returns CASA-style global statistics, mask-aware min/max positions, and Jy/beam flux for tutorial image selections. |
-| `immoments` | `casa-images`, `casa-lattices`, `casa-coordinates` | `immoments <image> --outfile <image> --moments 0|1 --chans ... --includepix ...` writes CASA image moment maps with default masks. |
+| `immoments` | `casa-images`, `casa-lattices`, `casa-coordinates` | `immoments <image> --outfile <image> --moments -1|0|1|2|3 --chans ... --includepix ...` writes CASA image moment maps with default masks. |
 | `exportfits` | `casa-images`, `casa-coordinates` | `exportfits <image> <fits> [--velocity] [--overwrite]` writes a FITS primary HDU through `fitsio`/CFITSIO. |
 | `importfits` | `casa-images`, `casa-coordinates` | `importfits <fits> <image> [--overwrite]` reads a FITS primary HDU through `fitsio`/CFITSIO and writes a CASA image. |
 

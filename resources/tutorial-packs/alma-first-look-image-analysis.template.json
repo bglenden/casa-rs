@@ -30,7 +30,11 @@
       "filename": "twhya_cont.image",
       "size_bytes": 369373,
       "checksum_policy": "directory-sha256-manifest",
-      "pack_path": "inputs/twhya_cont.image",
+      "expected_default_mask": "mask0",
+      "expected_masks": [
+        "mask0"
+      ],
+      "pack_path": "twhya_cont.image",
       "materialization": "registry-staged"
     },
     {
@@ -39,19 +43,24 @@
       "kind": "casa-image",
       "registry_key": "alma/first-look/twhya/n2hp-image",
       "source_page_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Image_Analysis",
-      "source_artifact_url": "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image",
+      "source_artifact_url": "https://bulk.cv.nrao.edu/almadata/public/ALMA_firstlooks/twhya_n2hp.image",
+      "source_note": "The CASA 6.6.6 guide lists Pixel mask(s): mask0 for twhya_n2hp.image, but the 6.6.6 direct-download directory currently omits mask0. This pack stages the legacy ALMA_firstlooks image directory because it preserves the guide-listed mask.",
       "filename": "twhya_n2hp.image",
-      "size_bytes": 3859246,
+      "size_bytes": 3978770,
       "checksum_policy": "directory-sha256-manifest",
-      "pack_path": "inputs/twhya_n2hp.image",
+      "expected_default_mask": "mask0",
+      "expected_masks": [
+        "mask0"
+      ],
+      "pack_path": "twhya_n2hp.image",
       "materialization": "registry-staged"
     }
   ],
   "workspace": {
-    "root": "workspace",
-    "native_path": "workspace/native",
-    "oracle_path": "workspace/oracle",
-    "scratch_path": "workspace/scratch"
+    "root": ".casa-rs/workspace",
+    "native_path": ".casa-rs/workspace/native",
+    "oracle_path": ".casa-rs/workspace/oracle",
+    "scratch_path": ".casa-rs/workspace/scratch"
   },
   "surfaces": [
     "cli",
@@ -68,22 +77,22 @@
     ]
   },
   "learner": {
-    "docs_index": "docs/index.md",
+    "docs_index": "README.md",
     "section_docs_path": "docs/sections",
-    "screenshot_path": "screenshots/annotated",
+    "screenshot_path": ".casa-rs/screenshots/annotated",
     "include_internal_evidence": false
   },
   "regression": {
-    "evidence_path": "evidence",
-    "data_manifest": "evidence/data-manifest.json",
-    "native_runs": "evidence/native-runs.jsonl",
-    "oracle_runs": "evidence/oracle-runs.jsonl",
-    "comparisons": "evidence/comparisons.json",
-    "timings": "evidence/timings.jsonl",
-    "provider_provenance": "evidence/provider-provenance.json",
-    "review_path": "evidence/review",
-    "review_record_schema": "evidence/review/tutorial-pack-review.schema.json",
-    "screenshot_specs_path": "screenshots/specs"
+    "evidence_path": ".casa-rs/evidence",
+    "data_manifest": ".casa-rs/evidence/data-manifest.json",
+    "native_runs": ".casa-rs/evidence/native-runs.jsonl",
+    "oracle_runs": ".casa-rs/evidence/oracle-runs.jsonl",
+    "comparisons": ".casa-rs/evidence/comparisons.json",
+    "timings": ".casa-rs/evidence/timings.jsonl",
+    "provider_provenance": ".casa-rs/evidence/provider-provenance.json",
+    "review_path": ".casa-rs/evidence/review",
+    "review_record_schema": ".casa-rs/evidence/review/tutorial-pack-review.schema.json",
+    "screenshot_specs_path": ".casa-rs/screenshots/specs"
   },
   "sections": [
     {
@@ -115,16 +124,16 @@
           "surface": "cli",
           "provider_kind": "native-rust",
           "task_id": "imhead",
-          "command_template": "imexplore imhead inputs/twhya_cont.image --json",
+          "command_template": "imexplore imhead twhya_cont.image --json",
           "parameters": {
-            "image_path": "inputs/twhya_cont.image",
+            "image_path": "twhya_cont.image",
             "json": true,
             "mode": "summary"
           },
           "outputs": [
             {
               "kind": "json",
-              "path": "workspace/native/01-imhead-continuum-header/cli-imhead.json"
+              "path": ".casa-rs/workspace/native/01-imhead-continuum-header/cli-imhead.json"
             }
           ]
         },
@@ -134,14 +143,14 @@
           "provider_kind": "native-rust",
           "task_id": "imhead",
           "parameters": {
-            "image_path": "inputs/twhya_cont.image",
+            "image_path": "twhya_cont.image",
             "json": true,
             "mode": "summary"
           },
           "outputs": [
             {
               "kind": "json",
-              "path": "workspace/native/01-imhead-continuum-header/python-imhead.json"
+              "path": ".casa-rs/workspace/native/01-imhead-continuum-header/python-imhead.json"
             }
           ]
         },
@@ -152,14 +161,14 @@
           "task_id": "imhead",
           "ui_path": "Images > Image Header",
           "parameters": {
-            "image_path": "inputs/twhya_cont.image",
+            "image_path": "twhya_cont.image",
             "json": true,
             "mode": "summary"
           },
           "outputs": [
             {
               "kind": "json",
-              "path": "workspace/native/01-imhead-continuum-header/tui-imhead.json"
+              "path": ".casa-rs/workspace/native/01-imhead-continuum-header/tui-imhead.json"
             }
           ]
         },
@@ -170,14 +179,14 @@
           "task_id": "imhead",
           "ui_path": "Images > Image Header",
           "parameters": {
-            "image_path": "inputs/twhya_cont.image",
+            "image_path": "twhya_cont.image",
             "json": true,
             "mode": "summary"
           },
           "outputs": [
             {
               "kind": "json",
-              "path": "workspace/native/01-imhead-continuum-header/gui-imhead.json"
+              "path": ".casa-rs/workspace/native/01-imhead-continuum-header/gui-imhead.json"
             }
           ]
         },
@@ -187,12 +196,12 @@
           "provider_kind": "casa-oracle",
           "task_id": "imhead",
           "parameters": {
-            "imagename": "inputs/twhya_cont.image"
+            "imagename": "twhya_cont.image"
           },
           "outputs": [
             {
               "kind": "json",
-              "path": "workspace/oracle/01-imhead-continuum-header/casa-imhead.json"
+              "path": ".casa-rs/workspace/oracle/01-imhead-continuum-header/casa-imhead.json"
             }
           ]
         }
@@ -200,7 +209,7 @@
       "review_checkpoint": {
         "required": true,
         "status": "pending-human-review",
-        "record_path": "evidence/review/01-imhead-continuum-header.json"
+        "record_path": ".casa-rs/evidence/review/01-imhead-continuum-header.json"
       }
     },
     {
@@ -232,15 +241,15 @@
           "surface": "cli",
           "provider_kind": "native-rust",
           "task_id": "imstat",
-          "command_template": "imexplore imstat inputs/twhya_cont.image --json",
+          "command_template": "imexplore imstat twhya_cont.image --json",
           "parameters": {
-            "image_path": "inputs/twhya_cont.image",
+            "image_path": "twhya_cont.image",
             "json": true
           },
           "outputs": [
             {
               "kind": "json",
-              "path": "workspace/native/02-imstat-continuum-statistics/cli-imstat.json"
+              "path": ".casa-rs/workspace/native/02-imstat-continuum-statistics/cli-imstat.json"
             }
           ]
         },
@@ -250,13 +259,13 @@
           "provider_kind": "native-rust",
           "task_id": "imstat",
           "parameters": {
-            "image_path": "inputs/twhya_cont.image",
+            "image_path": "twhya_cont.image",
             "json": true
           },
           "outputs": [
             {
               "kind": "json",
-              "path": "workspace/native/02-imstat-continuum-statistics/python-imstat.json"
+              "path": ".casa-rs/workspace/native/02-imstat-continuum-statistics/python-imstat.json"
             }
           ]
         },
@@ -267,13 +276,13 @@
           "task_id": "imstat",
           "ui_path": "Images > Image Statistics",
           "parameters": {
-            "image_path": "inputs/twhya_cont.image",
+            "image_path": "twhya_cont.image",
             "json": true
           },
           "outputs": [
             {
               "kind": "json",
-              "path": "workspace/native/02-imstat-continuum-statistics/tui-imstat.json"
+              "path": ".casa-rs/workspace/native/02-imstat-continuum-statistics/tui-imstat.json"
             }
           ]
         },
@@ -284,13 +293,13 @@
           "task_id": "imstat",
           "ui_path": "Images > Image Statistics",
           "parameters": {
-            "image_path": "inputs/twhya_cont.image",
+            "image_path": "twhya_cont.image",
             "json": true
           },
           "outputs": [
             {
               "kind": "json",
-              "path": "workspace/native/02-imstat-continuum-statistics/gui-imstat.json"
+              "path": ".casa-rs/workspace/native/02-imstat-continuum-statistics/gui-imstat.json"
             }
           ]
         },
@@ -300,12 +309,12 @@
           "provider_kind": "casa-oracle",
           "task_id": "imstat",
           "parameters": {
-            "imagename": "inputs/twhya_cont.image"
+            "imagename": "twhya_cont.image"
           },
           "outputs": [
             {
               "kind": "json",
-              "path": "workspace/oracle/02-imstat-continuum-statistics/casa-imstat.json"
+              "path": ".casa-rs/workspace/oracle/02-imstat-continuum-statistics/casa-imstat.json"
             }
           ]
         }
@@ -313,7 +322,7 @@
       "review_checkpoint": {
         "required": true,
         "status": "pending-human-review",
-        "record_path": "evidence/review/02-imstat-continuum-statistics.json"
+        "record_path": ".casa-rs/evidence/review/02-imstat-continuum-statistics.json"
       }
     },
     {
@@ -328,7 +337,13 @@
             "task_id": "immoments",
             "parameters": {
               "imagename": "twhya_n2hp.image",
-              "outfile": "twhya_n2hp.mom0"
+              "outfile": "twhya_n2hp.mom0",
+              "moments": 0,
+              "chans": "4~12",
+              "includepix": [
+                0.03,
+                100.0
+              ]
             }
           }
         ]
@@ -346,17 +361,19 @@
           "surface": "cli",
           "provider_kind": "native-rust",
           "task_id": "immoments",
-          "command_template": "immoments inputs/twhya_n2hp.image --outfile workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0 --moments 0 --overwrite",
+          "command_template": "immoments twhya_n2hp.image --outfile .casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0 --moments 0 --chans 4~12 --includepix 0.03,100 --overwrite",
           "parameters": {
-            "imagename": "inputs/twhya_n2hp.image",
-            "outfile": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0",
+            "imagename": "twhya_n2hp.image",
+            "outfile": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0",
             "moments": 0,
+            "chans": "4~12",
+            "includepix": "0.03,100",
             "overwrite": true
           },
           "outputs": [
             {
               "kind": "casa-image",
-              "path": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0"
+              "path": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.mom0"
             }
           ]
         },
@@ -366,15 +383,17 @@
           "provider_kind": "native-rust",
           "task_id": "immoments",
           "parameters": {
-            "imagename": "inputs/twhya_n2hp.image",
-            "outfile": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.python.mom0",
+            "imagename": "twhya_n2hp.image",
+            "outfile": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.python.mom0",
             "moments": 0,
+            "chans": "4~12",
+            "includepix": "0.03,100",
             "overwrite": true
           },
           "outputs": [
             {
               "kind": "casa-image",
-              "path": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.python.mom0"
+              "path": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.python.mom0"
             }
           ]
         },
@@ -385,15 +404,17 @@
           "task_id": "immoments",
           "ui_path": "Images > Image Moments",
           "parameters": {
-            "imagename": "inputs/twhya_n2hp.image",
-            "outfile": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.tui.mom0",
+            "imagename": "twhya_n2hp.image",
+            "outfile": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.tui.mom0",
             "moments": 0,
+            "chans": "4~12",
+            "includepix": "0.03,100",
             "overwrite": true
           },
           "outputs": [
             {
               "kind": "casa-image",
-              "path": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.tui.mom0"
+              "path": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.tui.mom0"
             }
           ]
         },
@@ -404,15 +425,17 @@
           "task_id": "immoments",
           "ui_path": "Images > Image Moments",
           "parameters": {
-            "imagename": "inputs/twhya_n2hp.image",
-            "outfile": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.gui.mom0",
+            "imagename": "twhya_n2hp.image",
+            "outfile": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.gui.mom0",
             "moments": 0,
+            "chans": "4~12",
+            "includepix": "0.03,100",
             "overwrite": true
           },
           "outputs": [
             {
               "kind": "casa-image",
-              "path": "workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.gui.mom0"
+              "path": ".casa-rs/workspace/native/03-immoments-n2hp-moment-map/twhya_n2hp.gui.mom0"
             }
           ]
         },
@@ -422,14 +445,16 @@
           "provider_kind": "casa-oracle",
           "task_id": "immoments",
           "parameters": {
-            "imagename": "inputs/twhya_n2hp.image",
-            "outfile": "workspace/oracle/03-immoments-n2hp-moment-map/twhya_n2hp.mom0",
-            "moments": 0
+            "imagename": "twhya_n2hp.image",
+            "outfile": ".casa-rs/workspace/oracle/03-immoments-n2hp-moment-map/twhya_n2hp.mom0",
+            "moments": 0,
+            "chans": "4~12",
+            "includepix": "0.03,100"
           },
           "outputs": [
             {
               "kind": "casa-image",
-              "path": "workspace/oracle/03-immoments-n2hp-moment-map/twhya_n2hp.mom0"
+              "path": ".casa-rs/workspace/oracle/03-immoments-n2hp-moment-map/twhya_n2hp.mom0"
             }
           ]
         }
@@ -437,7 +462,7 @@
       "review_checkpoint": {
         "required": true,
         "status": "pending-human-review",
-        "record_path": "evidence/review/03-immoments-n2hp-moment-map.json"
+        "record_path": ".casa-rs/evidence/review/03-immoments-n2hp-moment-map.json"
       }
     },
     {
@@ -452,14 +477,25 @@
             "task_id": "exportfits",
             "parameters": {
               "imagename": "twhya_cont.image",
-              "fitsimage": "twhya_cont.fits"
+              "fitsimage": "twhya_cont.fits",
+              "overwrite": true
+            }
+          },
+          {
+            "task_id": "exportfits",
+            "parameters": {
+              "imagename": "twhya_n2hp.image",
+              "fitsimage": "twhya_n2hp.fits",
+              "velocity": true,
+              "overwrite": true
             }
           }
         ]
       },
-      "observable_result": "FITS output with WCS/header fields and image array values compared within tolerance.",
+      "observable_result": "Continuum and N2H+ cube FITS outputs with WCS/header fields and image array values compared within tolerance.",
       "input_refs": [
-        "twhya-cont-image"
+        "twhya-cont-image",
+        "twhya-n2hp-image"
       ],
       "tasks": [
         "exportfits"
@@ -470,16 +506,31 @@
           "surface": "cli",
           "provider_kind": "native-rust",
           "task_id": "exportfits",
-          "command_template": "exportfits inputs/twhya_cont.image workspace/native/04-exportfits-products/twhya_cont.fits --overwrite",
+          "command_template": "exportfits twhya_cont.image .casa-rs/workspace/native/04-exportfits-products/twhya_cont.fits --overwrite && exportfits twhya_n2hp.image .casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.fits --velocity --overwrite",
           "parameters": {
-            "imagename": "inputs/twhya_cont.image",
-            "fitsimage": "workspace/native/04-exportfits-products/twhya_cont.fits",
-            "overwrite": true
+            "products": [
+              {
+                "imagename": "twhya_cont.image",
+                "fitsimage": ".casa-rs/workspace/native/04-exportfits-products/twhya_cont.fits",
+                "velocity": false,
+                "overwrite": true
+              },
+              {
+                "imagename": "twhya_n2hp.image",
+                "fitsimage": ".casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.fits",
+                "velocity": true,
+                "overwrite": true
+              }
+            ]
           },
           "outputs": [
             {
               "kind": "fits",
-              "path": "workspace/native/04-exportfits-products/twhya_cont.fits"
+              "path": ".casa-rs/workspace/native/04-exportfits-products/twhya_cont.fits"
+            },
+            {
+              "kind": "fits",
+              "path": ".casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.fits"
             }
           ]
         },
@@ -489,14 +540,29 @@
           "provider_kind": "native-rust",
           "task_id": "exportfits",
           "parameters": {
-            "imagename": "inputs/twhya_cont.image",
-            "fitsimage": "workspace/native/04-exportfits-products/twhya_cont.python.fits",
-            "overwrite": true
+            "products": [
+              {
+                "imagename": "twhya_cont.image",
+                "fitsimage": ".casa-rs/workspace/native/04-exportfits-products/twhya_cont.python.fits",
+                "velocity": false,
+                "overwrite": true
+              },
+              {
+                "imagename": "twhya_n2hp.image",
+                "fitsimage": ".casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.python.fits",
+                "velocity": true,
+                "overwrite": true
+              }
+            ]
           },
           "outputs": [
             {
               "kind": "fits",
-              "path": "workspace/native/04-exportfits-products/twhya_cont.python.fits"
+              "path": ".casa-rs/workspace/native/04-exportfits-products/twhya_cont.python.fits"
+            },
+            {
+              "kind": "fits",
+              "path": ".casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.python.fits"
             }
           ]
         },
@@ -507,14 +573,29 @@
           "task_id": "exportfits",
           "ui_path": "Images > Export FITS",
           "parameters": {
-            "imagename": "inputs/twhya_cont.image",
-            "fitsimage": "workspace/native/04-exportfits-products/twhya_cont.tui.fits",
-            "overwrite": true
+            "products": [
+              {
+                "imagename": "twhya_cont.image",
+                "fitsimage": ".casa-rs/workspace/native/04-exportfits-products/twhya_cont.tui.fits",
+                "velocity": false,
+                "overwrite": true
+              },
+              {
+                "imagename": "twhya_n2hp.image",
+                "fitsimage": ".casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.tui.fits",
+                "velocity": true,
+                "overwrite": true
+              }
+            ]
           },
           "outputs": [
             {
               "kind": "fits",
-              "path": "workspace/native/04-exportfits-products/twhya_cont.tui.fits"
+              "path": ".casa-rs/workspace/native/04-exportfits-products/twhya_cont.tui.fits"
+            },
+            {
+              "kind": "fits",
+              "path": ".casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.tui.fits"
             }
           ]
         },
@@ -525,14 +606,29 @@
           "task_id": "exportfits",
           "ui_path": "Images > Export FITS",
           "parameters": {
-            "imagename": "inputs/twhya_cont.image",
-            "fitsimage": "workspace/native/04-exportfits-products/twhya_cont.gui.fits",
-            "overwrite": true
+            "products": [
+              {
+                "imagename": "twhya_cont.image",
+                "fitsimage": ".casa-rs/workspace/native/04-exportfits-products/twhya_cont.gui.fits",
+                "velocity": false,
+                "overwrite": true
+              },
+              {
+                "imagename": "twhya_n2hp.image",
+                "fitsimage": ".casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.gui.fits",
+                "velocity": true,
+                "overwrite": true
+              }
+            ]
           },
           "outputs": [
             {
               "kind": "fits",
-              "path": "workspace/native/04-exportfits-products/twhya_cont.gui.fits"
+              "path": ".casa-rs/workspace/native/04-exportfits-products/twhya_cont.gui.fits"
+            },
+            {
+              "kind": "fits",
+              "path": ".casa-rs/workspace/native/04-exportfits-products/twhya_n2hp.gui.fits"
             }
           ]
         },
@@ -542,13 +638,29 @@
           "provider_kind": "casa-oracle",
           "task_id": "exportfits",
           "parameters": {
-            "imagename": "inputs/twhya_cont.image",
-            "fitsimage": "workspace/oracle/04-exportfits-products/twhya_cont.fits"
+            "products": [
+              {
+                "imagename": "twhya_cont.image",
+                "fitsimage": ".casa-rs/workspace/oracle/04-exportfits-products/twhya_cont.fits",
+                "velocity": false,
+                "overwrite": true
+              },
+              {
+                "imagename": "twhya_n2hp.image",
+                "fitsimage": ".casa-rs/workspace/oracle/04-exportfits-products/twhya_n2hp.fits",
+                "velocity": true,
+                "overwrite": true
+              }
+            ]
           },
           "outputs": [
             {
               "kind": "fits",
-              "path": "workspace/oracle/04-exportfits-products/twhya_cont.fits"
+              "path": ".casa-rs/workspace/oracle/04-exportfits-products/twhya_cont.fits"
+            },
+            {
+              "kind": "fits",
+              "path": ".casa-rs/workspace/oracle/04-exportfits-products/twhya_n2hp.fits"
             }
           ]
         }
@@ -556,7 +668,7 @@
       "review_checkpoint": {
         "required": true,
         "status": "pending-human-review",
-        "record_path": "evidence/review/04-exportfits-products.json"
+        "record_path": ".casa-rs/evidence/review/04-exportfits-products.json"
       }
     }
   ]

@@ -1396,9 +1396,9 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
         "imstat" => Some(TaskAlias {
             mode: None,
             subcommand: Some("imstat"),
-            summary: "Compute CASA image statistics over optional pixel and channel selections.",
-            usage: "imexplore imstat <image> [--box x0,y0,x1,y1] [--chans 0~4] [--json]",
-            visible_arguments: &["image_path", "box", "chans", "json"],
+            summary: "Compute CASA image statistics over optional pixel, region, and channel selections.",
+            usage: "imexplore imstat <image> [--box x0,y0,x1,y1] [--region path|box[[x0pix,y0pix],[x1pix,y1pix]]|world CRTF box] [--chans 0~4] [--json]",
+            visible_arguments: &["image_path", "box", "region", "chans", "json"],
             required_arguments: &["image_path"],
             extra_arguments: &[
                 ExtraAliasArgument {
@@ -1434,7 +1434,7 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
                 ExtraAliasArgument {
                     id: "chans",
                     label: "Channels",
-                    order: 3,
+                    order: 4,
                     parser: ExtraAliasParser::Option {
                         flags: &["--chans"],
                         metavar: "range",
@@ -1449,9 +1449,26 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
                     hidden: false,
                 },
                 ExtraAliasArgument {
+                    id: "region",
+                    label: "Region",
+                    order: 3,
+                    parser: ExtraAliasParser::Option {
+                        flags: &["--region"],
+                        metavar: "path|CRTF box",
+                        choices: &[],
+                    },
+                    value_kind: "path",
+                    required: false,
+                    default: None,
+                    help: "CASA CRTF region file, inline CRTF pixel box such as box[[100pix,100pix],[150pix,150pix]], or a world-coordinate CRTF box exported by the image explorer.",
+                    group: "Selection",
+                    advanced: false,
+                    hidden: false,
+                },
+                ExtraAliasArgument {
                     id: "json",
                     label: "JSON",
-                    order: 4,
+                    order: 5,
                     parser: ExtraAliasParser::Toggle {
                         true_flags: &["--json"],
                         false_flags: &[],
@@ -1585,6 +1602,7 @@ fn infer_task_parameter_type(
         "interpolation" => "interpolation_mode",
         "phasecenter" => "direction",
         "box" | "mask_box" => "pixel_box",
+        "region" => "region_path_or_box",
         "includepix" => "pixel_range",
         "moments" => "image_moment_list",
         "expr" => "image_math_expression",
@@ -4686,7 +4704,22 @@ fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
     let region_names = image.region_names();
     let brightness_unit = image_units(&image).to_string();
     diagnostics.push(format!("Pixel type: {pixel_type}"));
+    match image_info(&image) {
+        Ok(info) => {
+            if !info.object_name.is_empty() {
+                diagnostics.push(format!("Object: {}", info.object_name));
+            }
+            diagnostics.push(format!("Image type: {}", info.image_type));
+        }
+        Err(error) => diagnostics.push(format!("Image info unavailable: {error}")),
+    }
     diagnostics.extend(image_coordinate_diagnostics(&image));
+    if !mask_names.is_empty() {
+        diagnostics.push(format!("Masks: {}", mask_names.join(", ")));
+    }
+    if !region_names.is_empty() {
+        diagnostics.push(format!("Regions: {}", region_names.join(", ")));
+    }
     if let Some(default_mask) = image.default_mask_name() {
         diagnostics.push(format!("Default mask: {default_mask}"));
     }
@@ -5573,6 +5606,72 @@ mod tests {
         assert!(imstat_arguments.iter().any(|argument| {
             argument["id"] == "box" && argument["parameter_type"] == "pixel_box"
         }));
+        assert!(imstat_arguments.iter().any(|argument| {
+            argument["id"] == "region" && argument["parameter_type"] == "region_path_or_box"
+        }));
+    }
+
+    #[test]
+    fn swift_visible_task_schemas_expose_path_parameter_roles() {
+        let catalog: serde_json::Value =
+            serde_json::from_str(TASK_CATALOG_JSON).expect("task catalog json");
+        let tasks = catalog["tasks"].as_array().expect("tasks array");
+
+        for task in tasks
+            .iter()
+            .filter(|task| task["show_in_swift"].as_bool() == Some(true))
+        {
+            let task_id = task["id"].as_str().expect("task id");
+            let schema_json =
+                task_ui_schema_json(task_id.to_string()).expect("Swift-visible task schema");
+            let schema: serde_json::Value =
+                serde_json::from_str(&schema_json).expect("Swift-visible schema json");
+            let arguments = schema["arguments"].as_array().expect("schema arguments");
+
+            assert!(
+                !arguments.is_empty(),
+                "{task_id} should expose at least one schema argument"
+            );
+            for argument in arguments
+                .iter()
+                .filter(|argument| argument["hidden_in_tui"].as_bool() != Some(true))
+            {
+                if argument["value_kind"].as_str() == Some("path") {
+                    assert!(
+                        argument["parameter_type"]
+                            .as_str()
+                            .is_some_and(|parameter_type| !parameter_type.is_empty()),
+                        "{task_id}.{} should expose a path parameter_type",
+                        argument["id"].as_str().unwrap_or("<unknown>")
+                    );
+                }
+            }
+        }
+
+        let exportfits_schema: serde_json::Value = serde_json::from_str(
+            &task_ui_schema_json("exportfits".to_string()).expect("exportfits schema"),
+        )
+        .expect("exportfits schema json");
+        let exportfits_arguments = exportfits_schema["arguments"]
+            .as_array()
+            .expect("exportfits arguments");
+        assert!(exportfits_arguments.iter().any(|argument| {
+            argument["id"] == "fitsimage" && argument["parameter_type"] == "output_fits_path"
+        }));
+
+        let importfits_schema: serde_json::Value = serde_json::from_str(
+            &task_ui_schema_json("importfits".to_string()).expect("importfits schema"),
+        )
+        .expect("importfits schema json");
+        let importfits_arguments = importfits_schema["arguments"]
+            .as_array()
+            .expect("importfits arguments");
+        assert!(importfits_arguments.iter().any(|argument| {
+            argument["id"] == "fitsimage" && argument["parameter_type"] == "fits_path"
+        }));
+        assert!(importfits_arguments.iter().any(|argument| {
+            argument["id"] == "imagename" && argument["parameter_type"] == "output_image_path"
+        }));
     }
 
     #[test]
@@ -5937,6 +6036,18 @@ mod tests {
             probe
                 .diagnostics
                 .iter()
+                .any(|line| line == "Object: TW Hya")
+        );
+        assert!(
+            probe
+                .diagnostics
+                .iter()
+                .any(|line| line == "Image type: Intensity")
+        );
+        assert!(
+            probe
+                .diagnostics
+                .iter()
                 .any(|line| line == "Cell size: 0.1 x 0.1 arcsec")
         );
         assert!(
@@ -6044,6 +6155,67 @@ mod tests {
         assert_eq!(requested_snapshot["focus"], "inspector");
         assert_eq!(requested_snapshot["plane_cursor"]["pixel_x"], 1);
         assert_eq!(requested_snapshot["plane_cursor"]["pixel_y"], 1);
+
+        let region_path = path.with_extension("crtf");
+        fs::write(
+            &region_path,
+            "#CRTFv0 CASA Region Text Format version 0\nbox[[1pix,1pix],[2pix,2pix]]\n",
+        )
+        .expect("write test region");
+        let region_request_json = serde_json::json!({
+            "dataset_path": path.display().to_string(),
+            "width": 100,
+            "height": 32,
+            "inspector_height": 8,
+            "plane_pixel_width": 128,
+            "plane_pixel_height": 96,
+            "active_view": "plane",
+            "commands": [
+                {
+                    "command": "load_region_file",
+                    "path": region_path.display().to_string()
+                }
+            ],
+            "include_profile": true
+        })
+        .to_string();
+        let region_snapshot_json =
+            build_image_explorer_snapshot_from_request_json(region_request_json)
+                .expect("image explorer region load snapshot");
+        let region_snapshot: serde_json::Value =
+            serde_json::from_str(&region_snapshot_json).expect("region snapshot json");
+        assert_eq!(region_snapshot["region"]["label"], "restored");
+        assert_eq!(region_snapshot["region"]["shape_count"], 1);
+
+        let append_region_request_json = serde_json::json!({
+            "dataset_path": path.display().to_string(),
+            "width": 100,
+            "height": 32,
+            "inspector_height": 8,
+            "plane_pixel_width": 128,
+            "plane_pixel_height": 96,
+            "active_view": "plane",
+            "commands": [
+                {"command": "start_region_shape"},
+                {"command": "append_region_vertex", "x": 0, "y": 0},
+                {"command": "append_region_vertex", "x": 1, "y": 0},
+                {"command": "append_region_vertex", "x": 1, "y": 1},
+                {"command": "close_region_shape"},
+                {
+                    "command": "append_region_file",
+                    "path": region_path.display().to_string()
+                }
+            ],
+            "include_profile": true
+        })
+        .to_string();
+        let appended_region_snapshot_json =
+            build_image_explorer_snapshot_from_request_json(append_region_request_json)
+                .expect("image explorer region append snapshot");
+        let appended_region_snapshot: serde_json::Value =
+            serde_json::from_str(&appended_region_snapshot_json)
+                .expect("appended region snapshot json");
+        assert_eq!(appended_region_snapshot["region"]["shape_count"], 2);
     }
 
     #[test]

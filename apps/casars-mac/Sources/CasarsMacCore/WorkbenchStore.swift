@@ -470,6 +470,7 @@ public final class WorkbenchStore: ObservableObject {
     private var activeTaskExecutions: [String: DirtyImagingTaskExecution] = [:]
     private var tableBrowserCellWindowGenerations: [String: Int] = [:]
     private var temporaryDemoProjectRoot: String?
+    private var lastProjectDiskRefresh: Date = .distantPast
 
     public init(
         state: WorkbenchState = EmptyWorkbench.makeState(),
@@ -598,18 +599,17 @@ public final class WorkbenchStore: ObservableObject {
         cleanupTemporaryDemoProject()
         do {
             let context = try TutorialPackContext.load(path: path)
+            let tutorialDatasets = tutorialPackDatasetSummaries(context: context)
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
             state.taskCatalog = taskCatalog
             state.project = ProjectFixture(
                 name: context.title,
                 rootPath: context.rootPath,
-                datasets: context.datasetSummaries(),
+                datasets: tutorialDatasets.datasets,
                 source: .tutorialPack
             )
             state.tutorialPack = context
-            state.probeDiagnostics = context.inputs.map { input in
-                "Tutorial input \(input.filename): \(input.status.rawValue)"
-            }
+            state.probeDiagnostics = tutorialDatasets.diagnostics
             state.selectedDatasetID = state.project.datasets.first?.id
             state.dockMode = .datasets
             state.leftDockCollapsed = false
@@ -636,6 +636,328 @@ public final class WorkbenchStore: ObservableObject {
         }
     }
 
+    public func refreshProjectFromDiskIfNeeded(now: Date = Date()) {
+        guard state.hasProject, !state.project.rootPath.isEmpty else {
+            return
+        }
+        guard now.timeIntervalSince(lastProjectDiskRefresh) >= 1.0 else {
+            return
+        }
+        lastProjectDiskRefresh = now
+        refreshProjectFromDisk()
+    }
+
+    public func refreshProjectFromDisk() {
+        guard state.hasProject, !state.project.rootPath.isEmpty else {
+            return
+        }
+        let selectedPath = state.selectedDataset?.path
+        do {
+            let refreshed: (datasets: [DatasetSummary], diagnostics: [String])
+            if let context = state.tutorialPack {
+                refreshed = tutorialPackDatasetSummaries(context: context)
+            } else {
+                let probe = try probeClient.probeProject(path: state.project.rootPath)
+                refreshed = (
+                    datasets: projectDatasetsWithLooseFiles(
+                        recognizedDatasets: probe.project.datasets,
+                        rootPath: state.project.rootPath
+                    ),
+                    diagnostics: probe.diagnostics
+                )
+            }
+            state.project.datasets = deduplicatedDatasets(refreshed.datasets)
+            state.probeDiagnostics = refreshed.diagnostics
+            if let selectedPath,
+               let replacement = state.project.datasets.first(where: { $0.path == selectedPath }) {
+                state.selectedDatasetID = replacement.id
+            } else {
+                state.selectedDatasetID = state.project.datasets.first?.id
+            }
+        } catch {
+            state.lastErrors.append("Refresh project \(state.project.rootPath): \(error)")
+        }
+    }
+
+    private func tutorialPackDatasetSummaries(
+        context: TutorialPackContext
+    ) -> (datasets: [DatasetSummary], diagnostics: [String]) {
+        let manifestDatasets = context.datasetSummaries()
+        var diagnostics = context.inputs.map { input in
+            "Tutorial input \(input.filename): \(input.status.rawValue)"
+        }
+        do {
+            let probe = try probeClient.probeProject(path: context.rootPath)
+            diagnostics.append(contentsOf: probe.diagnostics)
+            let probedByPath = Dictionary(uniqueKeysWithValues: probe.project.datasets.map { dataset in
+                (Self.standardizedDatasetPath(dataset.path), dataset)
+            })
+            var datasets = manifestDatasets.map { dataset in
+                let standardizedPath = Self.standardizedDatasetPath(dataset.path)
+                guard var enriched = probedByPath[standardizedPath] else {
+                    guard context.inputs.contains(where: {
+                        $0.status == .staged && Self.standardizedDatasetPath($0.resolvedPath) == standardizedPath
+                    }) else {
+                        return dataset
+                    }
+                    var unrecognized = dataset
+                    unrecognized.diagnostics.append(
+                        "Image validation failed: cannot open or read CASA image '\(dataset.path)' as a valid casacore image."
+                    )
+                    return unrecognized
+                }
+                enriched.notes = "\(dataset.notes)\n\(enriched.notes)"
+                enriched.diagnostics = dataset.diagnostics + enriched.diagnostics
+                return enriched
+            }
+            datasets.append(contentsOf: tutorialPackRegionDatasetSummaries(context: context))
+            datasets = projectDatasetsWithLooseFiles(
+                recognizedDatasets: datasets,
+                rootPath: context.rootPath
+            )
+            return (deduplicatedDatasets(datasets), diagnostics)
+        } catch {
+            diagnostics.append("Tutorial input metadata probe failed: \(error)")
+            return (
+                deduplicatedDatasets(
+                    projectDatasetsWithLooseFiles(
+                        recognizedDatasets: manifestDatasets + tutorialPackRegionDatasetSummaries(context: context),
+                        rootPath: context.rootPath
+                    )
+                ),
+                diagnostics
+            )
+        }
+    }
+
+    private func projectDatasetsWithLooseFiles(
+        recognizedDatasets: [DatasetSummary],
+        rootPath: String
+    ) -> [DatasetSummary] {
+        let recognizedPaths = Set(recognizedDatasets.map { Self.standardizedDatasetPath($0.path) })
+        let datasetDirectoryPaths = recognizedDatasets
+            .filter { dataset in
+                dataset.kind != .runProduct && FileManager.default.fileExists(atPath: dataset.path, isDirectory: nil)
+            }
+            .compactMap { dataset -> String? in
+                var isDirectory = ObjCBool(false)
+                guard FileManager.default.fileExists(atPath: dataset.path, isDirectory: &isDirectory),
+                      isDirectory.boolValue
+                else {
+                    return nil
+                }
+                return Self.standardizedDatasetPath(dataset.path)
+            }
+        let looseFiles = looseProjectFileDatasets(
+            rootPath: rootPath,
+            recognizedPaths: recognizedPaths,
+            datasetDirectoryPaths: datasetDirectoryPaths
+        )
+        return deduplicatedDatasets(recognizedDatasets + looseFiles)
+    }
+
+    private func deduplicatedDatasets(_ datasets: [DatasetSummary]) -> [DatasetSummary] {
+        var output: [DatasetSummary] = []
+        var indexesByPath: [String: Int] = [:]
+        for dataset in datasets {
+            let standardizedPath = Self.standardizedDatasetPath(dataset.path)
+            if let index = indexesByPath[standardizedPath] {
+                output[index] = dataset
+            } else {
+                indexesByPath[standardizedPath] = output.count
+                output.append(dataset)
+            }
+        }
+        return output
+    }
+
+    private func looseProjectFileDatasets(
+        rootPath: String,
+        recognizedPaths: Set<String>,
+        datasetDirectoryPaths: [String]
+    ) -> [DatasetSummary] {
+        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
+        var output: [DatasetSummary] = []
+        var scanned = 0
+        scanLooseProjectFiles(
+            directory: rootURL,
+            rootURL: rootURL,
+            depth: 0,
+            scanned: &scanned,
+            output: &output,
+            recognizedPaths: recognizedPaths,
+            datasetDirectoryPaths: datasetDirectoryPaths
+        )
+        return output.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+
+    private func scanLooseProjectFiles(
+        directory: URL,
+        rootURL: URL,
+        depth: Int,
+        scanned: inout Int,
+        output: inout [DatasetSummary],
+        recognizedPaths: Set<String>,
+        datasetDirectoryPaths: [String]
+    ) {
+        guard depth <= 5, scanned < 500 else {
+            return
+        }
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        for entry in entries {
+            guard scanned < 500 else {
+                return
+            }
+            scanned += 1
+            let standardizedPath = Self.standardizedDatasetPath(entry.path)
+            if recognizedPaths.contains(standardizedPath) {
+                continue
+            }
+            let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+            if values?.isDirectory == true {
+                if datasetDirectoryPaths.contains(where: { standardizedPath == $0 || standardizedPath.hasPrefix($0 + "/") }) {
+                    continue
+                }
+                if shouldProbeLooseProjectDirectory(entry),
+                   let probed = try? probeClient.probePath(path: standardizedPath) {
+                    output.append(probed)
+                    continue
+                }
+                scanLooseProjectFiles(
+                    directory: entry,
+                    rootURL: rootURL,
+                    depth: depth + 1,
+                    scanned: &scanned,
+                    output: &output,
+                    recognizedPaths: recognizedPaths,
+                    datasetDirectoryPaths: datasetDirectoryPaths
+                )
+                continue
+            }
+            if shouldSurfaceLooseRegionFile(entry) {
+                let relativePath = projectRelativePath(standardizedPath)
+                output.append(DatasetSummary(
+                    id: standardizedPath,
+                    name: entry.lastPathComponent,
+                    path: standardizedPath,
+                    kind: .region,
+                    size: "region file",
+                    units: "CRTF",
+                    sizeBytes: UInt64(values?.fileSize ?? 0),
+                    notes: "Project region file discovered by disk refresh.",
+                    diagnostics: [
+                        "Region parameter syntax: --region \(relativePath)",
+                        "Inline region syntax: box[[x0pix,y0pix],[x1pix,y1pix]] or world-coordinate CRTF"
+                    ]
+                ))
+                continue
+            }
+            guard shouldSurfaceLooseProjectFile(entry) else {
+                continue
+            }
+            let relativePath = projectRelativePath(standardizedPath)
+            output.append(DatasetSummary(
+                id: standardizedPath,
+                name: entry.lastPathComponent,
+                path: standardizedPath,
+                kind: .runProduct,
+                size: byteCountString(UInt64(values?.fileSize ?? 0)),
+                units: entry.pathExtension.uppercased(),
+                sizeBytes: UInt64(values?.fileSize ?? 0),
+                notes: "Project file discovered by disk refresh.",
+                diagnostics: ["Project-relative path: \(relativePath)"]
+            ))
+        }
+    }
+
+    private func shouldProbeLooseProjectDirectory(_ url: URL) -> Bool {
+        switch url.pathExtension.lowercased() {
+        case "image", "ms", "table":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func shouldSurfaceLooseProjectFile(_ url: URL) -> Bool {
+        switch url.pathExtension.lowercased() {
+        case "fits", "fit", "fts":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func shouldSurfaceLooseRegionFile(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "crtf"
+    }
+
+    private func byteCountString(_ bytes: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
+    private func tutorialPackRegionDatasetSummaries(context: TutorialPackContext) -> [DatasetSummary] {
+        let regionDirectories = [
+            URL(fileURLWithPath: context.rootPath, isDirectory: true)
+                .standardizedFileURL,
+            URL(fileURLWithPath: context.rootPath, isDirectory: true)
+                .appendingPathComponent("regions", isDirectory: true),
+            URL(fileURLWithPath: context.nativeWorkspacePath, isDirectory: true)
+                .standardizedFileURL,
+            URL(fileURLWithPath: context.nativeWorkspacePath, isDirectory: true)
+                .appendingPathComponent("regions", isDirectory: true),
+        ].map(\.standardizedFileURL)
+        var files: [URL] = []
+        var preferredNames = Set<String>()
+        for (index, regionsURL) in regionDirectories.enumerated() {
+            let directoryFiles = ((try? FileManager.default.contentsOfDirectory(
+                at: regionsURL,
+                includingPropertiesForKeys: [.fileSizeKey],
+                options: [.skipsHiddenFiles]
+            )) ?? [])
+                .filter { $0.pathExtension == "crtf" }
+            if index == 0 {
+                preferredNames.formUnion(directoryFiles.map(\.lastPathComponent))
+                files.append(contentsOf: directoryFiles)
+            } else {
+                files.append(contentsOf: directoryFiles.filter { !preferredNames.contains($0.lastPathComponent) })
+            }
+        }
+        return files
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            .map { file in
+                let path = Self.standardizedDatasetPath(file.path)
+                let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(UInt64.init) ?? 0
+                return DatasetSummary(
+                    id: path,
+                    name: file.lastPathComponent,
+                    path: path,
+                    kind: .region,
+                    size: "region file",
+                    units: "pixels",
+                    sizeBytes: size,
+                    notes: "Tutorial workspace region file.",
+                    diagnostics: [
+                        "Region parameter syntax: --region \(projectRelativePath(path))",
+                        "Inline region syntax: box[[x0pix,y0pix],[x1pix,y1pix]] or world-coordinate CRTF"
+                    ]
+                )
+            }
+    }
+
+    private static func standardizedDatasetPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.path
+    }
+
+    private func fileSize(path: String) -> UInt64 {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+        return (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
+    }
+
     public func selectTutorialSection(_ sectionID: String) {
         guard var context = state.tutorialPack else {
             state.lastErrors.append("No tutorial pack is open")
@@ -647,6 +969,22 @@ public final class WorkbenchStore: ObservableObject {
         }
         context.selectedSectionID = sectionID
         state.tutorialPack = context
+        selectFirstTutorialInputDataset(context.selectedSection, context: context)
+    }
+
+    private func selectFirstTutorialInputDataset(
+        _ section: TutorialPackSection?,
+        context: TutorialPackContext
+    ) {
+        guard let inputRef = section?.inputRefs.first,
+              let input = context.inputs.first(where: { $0.id == inputRef })
+        else {
+            return
+        }
+        let inputPath = Self.standardizedDatasetPath(input.resolvedPath)
+        if let dataset = state.project.datasets.first(where: { Self.standardizedDatasetPath($0.path) == inputPath }) {
+            state.selectedDatasetID = dataset.id
+        }
     }
 
     public func openTutorialSectionTask(_ sectionID: String) {
@@ -662,12 +1000,14 @@ public final class WorkbenchStore: ObservableObject {
         }
         selectTask(guiStep.taskID)
         applyTutorialPackParameters(guiStep.parameters, taskID: guiStep.taskID, packRoot: context.rootPath)
+        let tabID = nextTaskTabID()
         openTab(
             WorkbenchTab(
-                id: "tab-tasks",
-                title: "Tasks",
+                id: tabID,
+                title: taskTitle(guiStep.taskID),
                 kind: .task,
-                datasetID: state.selectedDatasetID
+                datasetID: state.selectedDatasetID,
+                taskID: guiStep.taskID
             )
         )
     }
@@ -697,7 +1037,7 @@ public final class WorkbenchStore: ObservableObject {
             1
         case .table, .calibrationTable:
             2
-        case .runProduct:
+        case .region, .runProduct:
             3
         }
     }
@@ -1185,7 +1525,7 @@ public final class WorkbenchStore: ObservableObject {
             if state.isDemoProject {
                 openTab(WorkbenchTab(id: "tab-task", title: "Calibrate", kind: .task, datasetID: state.selectedDatasetID))
             } else {
-                openTab(WorkbenchTab(id: "tab-tasks", title: "Tasks", kind: .task, datasetID: state.selectedDatasetID))
+                openTab(WorkbenchTab(id: nextTaskTabID(), title: "Tasks", kind: .task, datasetID: state.selectedDatasetID))
             }
         case .plotSamples:
             if state.plotDocuments.isEmpty {
@@ -1457,25 +1797,53 @@ public final class WorkbenchStore: ObservableObject {
         do {
             let snapshot = try imageExplorerClient.buildSnapshot(request: explorerState.snapshotRequest(datasetPath: dataset.path))
             var nextState = explorerState
-            nextState.status = .ready
-            nextState.lastError = nil
-            nextState.snapshot = snapshot
-            nextState.cursorX = snapshot.planeCursor?.pixelX ?? nextState.cursorX
-            nextState.cursorY = snapshot.planeCursor?.pixelY ?? nextState.cursorY
-            nextState.nonDisplayIndices = snapshot.nonDisplayAxes?.map(\.index) ?? nextState.nonDisplayIndices
-            if let parameters = snapshot.parameters {
-                nextState.parameters = parameters
-            }
-            nextState.transientCommands = []
+            applyReadyImageExplorerSnapshot(snapshot, to: &nextState)
             state.imageExplorers[datasetID] = nextState
         } catch {
+            let originalError = error
+            if explorerState.hasQueuedImageExplorerCommands {
+                var recoveredState = explorerState
+                recoveredState.regionCommands = []
+                recoveredState.transientCommands = []
+                do {
+                    let snapshot = try imageExplorerClient.buildSnapshot(
+                        request: recoveredState.snapshotRequest(datasetPath: dataset.path)
+                    )
+                    applyReadyImageExplorerSnapshot(snapshot, to: &recoveredState)
+                    state.imageExplorers[datasetID] = recoveredState
+                    state.lastErrors.append(
+                        "Cleared invalid image explorer region command sequence for \(dataset.name): \(error)"
+                    )
+                    return
+                } catch let recoveryError {
+                    state.lastErrors.append(
+                        "Image explorer command recovery failed for \(dataset.name): \(recoveryError)"
+                    )
+                }
+            }
             var failedState = explorerState
             failedState.status = .failed
-            failedState.lastError = "\(error)"
+            failedState.lastError = "\(originalError)"
             failedState.snapshot = nil
             state.imageExplorers[datasetID] = failedState
-            state.lastErrors.append("Open image explorer for \(dataset.name): \(error)")
+            state.lastErrors.append("Open image explorer for \(dataset.name): \(originalError)")
         }
+    }
+
+    private func applyReadyImageExplorerSnapshot(
+        _ snapshot: ImageExplorerSnapshot,
+        to explorerState: inout ImageExplorerSessionState
+    ) {
+        explorerState.status = .ready
+        explorerState.lastError = nil
+        explorerState.snapshot = snapshot
+        explorerState.cursorX = snapshot.planeCursor?.pixelX ?? explorerState.cursorX
+        explorerState.cursorY = snapshot.planeCursor?.pixelY ?? explorerState.cursorY
+        explorerState.nonDisplayIndices = snapshot.nonDisplayAxes?.map(\.index) ?? explorerState.nonDisplayIndices
+        if let parameters = snapshot.parameters {
+            explorerState.parameters = parameters
+        }
+        explorerState.transientCommands = []
     }
 
     public func refreshTableBrowser(datasetID: String) {
@@ -1737,8 +2105,169 @@ public final class WorkbenchStore: ObservableObject {
     public func appendImageExplorerRegionCommand(_ command: ImageExplorerCommand, datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.regionCommands.append(command)
+        explorerState.activeRegionFilePath = nil
         state.imageExplorers[datasetID] = explorerState
         refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerRegionTool(_ tool: String, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.regionTool = tool
+        state.imageExplorers[datasetID] = explorerState
+    }
+
+    public func reportImageExplorerRegionError(_ message: String) {
+        state.lastErrors.append(message)
+    }
+
+    public func setImageExplorerBoxRegion(_ boxText: String, datasetID: String) {
+        guard let box = Self.parseImageExplorerPixelBox(boxText) else {
+            state.lastErrors.append("Region box must use non-negative x0,y0,x1,y1 pixel coordinates.")
+            return
+        }
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.regionCommands = Self.imageExplorerBoxRegionCommands(box)
+        explorerState.activeRegionFilePath = nil
+        explorerState.transientCommands = []
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func appendImageExplorerBoxRegion(_ boxText: String, datasetID: String) {
+        guard let box = Self.parseImageExplorerPixelBox(boxText) else {
+            state.lastErrors.append("Region box must use non-negative x0,y0,x1,y1 pixel coordinates.")
+            return
+        }
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.regionCommands.append(contentsOf: Self.imageExplorerBoxRegionCommands(box))
+        explorerState.activeRegionFilePath = nil
+        explorerState.transientCommands = []
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerPolygonRegion(
+        vertices: [(x: Int, y: Int)],
+        closed: Bool = true,
+        datasetID: String
+    ) {
+        guard vertices.count >= (closed ? 3 : 1) else {
+            state.lastErrors.append(closed ? "A polygon region needs at least three vertices." : "A region needs at least one vertex.")
+            return
+        }
+        var commands: [ImageExplorerCommand] = [.startRegionShape]
+        commands.append(contentsOf: vertices.map { .appendRegionVertex(x: max($0.x, 0), y: max($0.y, 0)) })
+        if closed {
+            commands.append(.closeRegionShape)
+        }
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.regionCommands = commands
+        explorerState.activeRegionFilePath = nil
+        explorerState.transientCommands = []
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func setImageExplorerRegionShapes(
+        _ shapes: [[(x: Int, y: Int)]],
+        datasetID: String
+    ) {
+        var commands: [ImageExplorerCommand] = []
+        for vertices in shapes where vertices.count >= 3 {
+            commands.append(.startRegionShape)
+            commands.append(contentsOf: vertices.map { .appendRegionVertex(x: max($0.x, 0), y: max($0.y, 0)) })
+            commands.append(.closeRegionShape)
+        }
+        guard !commands.isEmpty else {
+            state.lastErrors.append("A region needs at least one closed shape.")
+            return
+        }
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.regionCommands = commands
+        explorerState.transientCommands = []
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func deleteImageExplorerRegionShape(index: Int, datasetID: String) {
+        let explorerState = imageExplorerState(datasetID: datasetID)
+        guard let snapshot = explorerState.snapshot,
+              let region = snapshot.region,
+              let overlayShapes = region.overlayShapes,
+              overlayShapes.indices.contains(index)
+        else {
+            state.lastErrors.append("No region shape is available to delete.")
+            return
+        }
+        let remainingShapes = overlayShapes.enumerated().compactMap { shapeIndex, shape -> [(x: Int, y: Int)]? in
+            guard shapeIndex != index, shape.closed, shape.vertices.count >= 3 else {
+                return nil
+            }
+            return shape.vertices.map { Self.sourcePixel(for: $0, displayAxes: snapshot.displayAxes ?? []) }
+        }
+        if remainingShapes.isEmpty {
+            clearImageExplorerRegionCommands(datasetID: datasetID)
+        } else {
+            setImageExplorerRegionShapes(remainingShapes, datasetID: datasetID)
+        }
+    }
+
+    public func deleteLastImageExplorerRegionShape(datasetID: String) {
+        let explorerState = imageExplorerState(datasetID: datasetID)
+        guard let overlayShapes = explorerState.snapshot?.region?.overlayShapes,
+              let index = overlayShapes.indices.last
+        else {
+            state.lastErrors.append("No region shape is available to delete.")
+            return
+        }
+        deleteImageExplorerRegionShape(index: index, datasetID: datasetID)
+    }
+
+    private static func sourcePixel(
+        for vertex: ImageExplorerSnapshot.Region.OverlayVertex,
+        displayAxes: [ImageExplorerSnapshot.DisplayAxis]
+    ) -> (x: Int, y: Int) {
+        guard let xAxis = displayAxes.first, let yAxis = displayAxes[safe: 1] else {
+            return (Int(vertex.sampledX.rounded()), Int(vertex.sampledY.rounded()))
+        }
+        return (
+            x: xAxis.blc + Int((vertex.sampledX * Double(max(xAxis.inc, 1))).rounded()),
+            y: yAxis.blc + Int((vertex.sampledY * Double(max(yAxis.inc, 1))).rounded())
+        )
+    }
+
+    private static func imageExplorerBoxRegionCommands(
+        _ box: (x0: Int, y0: Int, x1: Int, y1: Int)
+    ) -> [ImageExplorerCommand] {
+        let x0 = min(box.x0, box.x1)
+        let x1 = max(box.x0, box.x1)
+        let y0 = min(box.y0, box.y1)
+        let y1 = max(box.y0, box.y1)
+        return [
+            .startRegionShape,
+            .appendRegionVertex(x: x0, y: y0),
+            .appendRegionVertex(x: x1, y: y0),
+            .appendRegionVertex(x: x1, y: y1),
+            .appendRegionVertex(x: x0, y: y1),
+            .closeRegionShape,
+        ]
+    }
+
+    private static func parseImageExplorerPixelBox(_ boxText: String) -> (x0: Int, y0: Int, x1: Int, y1: Int)? {
+        let trimmed = boxText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = trimmed.hasPrefix("box:") ? String(trimmed.dropFirst(4)) : trimmed
+        let parts = value
+            .split(separator: ",", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard parts.count == 4,
+              let x0 = Int(parts[0]), x0 >= 0,
+              let y0 = Int(parts[1]), y0 >= 0,
+              let x1 = Int(parts[2]), x1 >= 0,
+              let y1 = Int(parts[3]), y1 >= 0
+        else {
+            return nil
+        }
+        return (x0, y0, x1, y1)
     }
 
     public func runImageExplorerCommandOnce(_ command: ImageExplorerCommand, datasetID: String) {
@@ -1748,12 +2277,163 @@ public final class WorkbenchStore: ObservableObject {
         refreshImageExplorer(datasetID: datasetID)
     }
 
+    public func loadImageExplorerRegionFile(path: String, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        explorerState.regionCommands = [.loadRegionFile(path: path)]
+        explorerState.activeRegionFilePath = Self.normalizedRegionFilePath(path)
+        explorerState.transientCommands = []
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    public func appendImageExplorerRegionFile(path: String, datasetID: String) {
+        var explorerState = imageExplorerState(datasetID: datasetID)
+        let normalizedPath = Self.normalizedRegionFilePath(path)
+        if explorerState.activeRegionFilePath == normalizedPath {
+            explorerState.regionCommands = [.loadRegionFile(path: path)]
+            explorerState.activeRegionFilePath = normalizedPath
+        } else {
+            let alreadyHasRegion = explorerState.snapshot?.region != nil || !explorerState.regionCommands.isEmpty
+            explorerState.regionCommands.append(.appendRegionFile(path: path))
+            explorerState.activeRegionFilePath = alreadyHasRegion ? nil : normalizedPath
+        }
+        explorerState.transientCommands = []
+        state.imageExplorers[datasetID] = explorerState
+        refreshImageExplorer(datasetID: datasetID)
+    }
+
+    private static func normalizedRegionFilePath(_ path: String) -> String {
+        URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            .standardizedFileURL
+            .path
+    }
+
+    public func exportImageExplorerRegionFile(datasetID: String, path: String? = nil) {
+        guard let imageDataset = state.project.datasets.first(where: { $0.id == datasetID }) else {
+            state.lastErrors.append("Unknown dataset \(datasetID)")
+            return
+        }
+        guard imageDataset.kind == .imageCube else {
+            state.lastErrors.append("Dataset \(imageDataset.name) is not an image")
+            return
+        }
+        let exportPath = path ?? defaultRegionExportPath(for: imageDataset)
+        runImageExplorerCommandOnce(.exportRegionFile(path: exportPath), datasetID: datasetID)
+        guard FileManager.default.fileExists(atPath: exportPath) else {
+            return
+        }
+        registerRegionDataset(path: exportPath, sourceImage: imageDataset)
+        loadImageExplorerRegionFile(path: exportPath, datasetID: datasetID)
+    }
+
+    public func loadRegionFileIntoImageExplorer(regionDatasetID: String, imageDatasetID: String? = nil) {
+        guard let regionDataset = state.project.datasets.first(where: { $0.id == regionDatasetID }) else {
+            state.lastErrors.append("Unknown region dataset \(regionDatasetID)")
+            return
+        }
+        guard regionDataset.kind == .region else {
+            state.lastErrors.append("Dataset \(regionDataset.name) is not a region file")
+            return
+        }
+        guard let imageDataset = imageDatasetID
+            .flatMap({ id in state.project.datasets.first(where: { $0.id == id && $0.kind == .imageCube }) })
+            ?? imageDatasetForRegion(regionDataset)
+        else {
+            state.lastErrors.append("No image dataset is available for region \(regionDataset.name)")
+            return
+        }
+
+        openDatasetExplorer(imageDataset.id)
+        appendImageExplorerRegionFile(path: regionDataset.path, datasetID: imageDataset.id)
+    }
+
     public func clearImageExplorerRegionCommands(datasetID: String) {
         var explorerState = imageExplorerState(datasetID: datasetID)
         explorerState.regionCommands = []
+        explorerState.activeRegionFilePath = nil
         explorerState.transientCommands = [.clearRegion]
         state.imageExplorers[datasetID] = explorerState
         refreshImageExplorer(datasetID: datasetID)
+    }
+
+    private func defaultRegionExportPath(for dataset: DatasetSummary) -> String {
+        let baseURL = URL(
+            fileURLWithPath: state.tutorialPack?.rootPath ?? state.project.rootPath,
+            isDirectory: true
+        )
+        let name = Self.sanitizedRegionFilenameComponent(dataset.name)
+        return baseURL
+            .appendingPathComponent("\(name)-region.crtf")
+            .standardizedFileURL
+            .path
+    }
+
+    private static func sanitizedRegionFilenameComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let name = value.unicodeScalars
+            .map { scalar in allowed.contains(scalar) ? String(scalar) : "-" }
+            .joined()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-."))
+        return name.isEmpty ? "image" : name
+    }
+
+    private func registerRegionDataset(path: String, sourceImage: DatasetSummary) {
+        let standardizedPath = Self.standardizedDatasetPath(path)
+        let region = DatasetSummary(
+            id: standardizedPath,
+            name: URL(fileURLWithPath: standardizedPath).lastPathComponent,
+            path: standardizedPath,
+            kind: .region,
+            size: "region file",
+            units: "pixels",
+            sizeBytes: fileSize(path: standardizedPath),
+            notes: "Exported region from \(sourceImage.name).",
+            diagnostics: [
+                "Region source image: \(projectRelativePath(sourceImage.path))",
+                "Region parameter syntax: --region \(projectRelativePath(standardizedPath))",
+                "Inline region syntax: box[[x0pix,y0pix],[x1pix,y1pix]] or world-coordinate CRTF"
+            ]
+        )
+        if let index = state.project.datasets.firstIndex(where: { $0.id == standardizedPath }) {
+            state.project.datasets[index] = region
+        } else {
+            state.project.datasets.append(region)
+        }
+    }
+
+    private func imageDatasetForRegion(_ regionDataset: DatasetSummary) -> DatasetSummary? {
+        if let source = regionDataset.diagnostics
+            .first(where: { $0.hasPrefix("Region source image:") })?
+            .dropFirst("Region source image:".count)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !source.isEmpty {
+            let sourcePath = resolveProjectPath(source)
+            if let match = state.project.datasets.first(where: { dataset in
+                dataset.kind == .imageCube
+                    && (Self.standardizedDatasetPath(dataset.path) == Self.standardizedDatasetPath(sourcePath)
+                        || dataset.name == source
+                        || dataset.path == source)
+            }) {
+                return match
+            }
+        }
+        return state.selectedDataset.flatMap { selected in
+            selected.kind == .imageCube ? selected : nil
+        } ?? state.project.datasets.first { $0.kind == .imageCube }
+    }
+
+    private func resolveProjectPath(_ path: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return expanded
+        }
+        guard !state.project.rootPath.isEmpty else {
+            return expanded
+        }
+        return URL(fileURLWithPath: state.project.rootPath, isDirectory: true)
+            .appendingPathComponent(expanded)
+            .standardizedFileURL
+            .path
     }
 
     public func setTableBrowserView(_ view: String, datasetID: String) {
@@ -1954,13 +2634,28 @@ public final class WorkbenchStore: ObservableObject {
         state.taskParameters.selectedSpectralWindow = spectralWindow
     }
 
-    public func selectTask(_ taskID: String) {
+    public func selectTask(_ taskID: String, tabID: String? = nil) {
         guard state.taskCatalog.contains(where: { $0.id == taskID }) else {
             state.lastErrors.append("Unknown task \(taskID)")
             return
         }
         state.activeTaskID = taskID
+        let resolvedTabID = tabID ?? state.activeTabID
+        if let index = state.tabs.firstIndex(where: { $0.id == resolvedTabID && $0.kind == .task }) {
+            state.tabs[index].taskID = taskID
+            state.tabs[index].title = taskTitle(taskID)
+        }
         loadTaskUISchemaIfNeeded(taskID)
+    }
+
+    public func taskID(forTab tabID: String) -> String {
+        guard let tab = state.tabs.first(where: { $0.id == tabID }) else {
+            return state.activeTaskID
+        }
+        guard tab.kind == .task else {
+            return state.activeTaskID
+        }
+        return tab.taskID ?? ""
     }
 
     public func loadTaskUISchemaIfNeeded(_ taskID: String? = nil) {
@@ -1988,7 +2683,8 @@ public final class WorkbenchStore: ObservableObject {
     public func setGenericTaskValue(taskID: String? = nil, argumentID: String, value: String) {
         let resolvedTaskID = taskID ?? state.activeTaskID
         var values = state.genericTaskValues[resolvedTaskID] ?? [:]
-        values[argumentID] = value
+        let argument = state.taskUISchemas[resolvedTaskID]?.arguments.first { $0.id == argumentID }
+        values[argumentID] = normalizedGenericTaskValue(value, for: argument)
         state.genericTaskValues[resolvedTaskID] = values
         state.taskRun.requestSummary = genericTaskRequestSummary(taskID: resolvedTaskID)
     }
@@ -2114,7 +2810,8 @@ public final class WorkbenchStore: ObservableObject {
                     task: task,
                     schema: schema,
                     values: values,
-                    toggles: toggles
+                    toggles: toggles,
+                    workingDirectoryPath: state.project.rootPath
                 )
             ) { [weak self] event in
                 DispatchQueue.main.async {
@@ -2259,6 +2956,18 @@ public final class WorkbenchStore: ObservableObject {
         "\(prefix)-\(state.jobs.count + 1)"
     }
 
+    private func nextTaskTabID() -> String {
+        var index = state.tabs.filter { $0.kind == .task }.count + 1
+        while state.tabs.contains(where: { $0.id == "tab-tasks-\(index)" }) {
+            index += 1
+        }
+        return "tab-tasks-\(index)"
+    }
+
+    private func taskTitle(_ taskID: String) -> String {
+        state.taskCatalog.first { $0.id == taskID }?.displayName ?? "Tasks"
+    }
+
     private func datasetIDForExplorerTabID(_ tabID: String) -> String? {
         let prefix = "tab-explorer-"
         guard tabID.hasPrefix(prefix) else { return nil }
@@ -2395,12 +3104,21 @@ public final class WorkbenchStore: ObservableObject {
                 if values[argument.id] == nil {
                     if let defaultValue = argument.default {
                         values[argument.id] = defaultValue
-                    } else if argument.id == "imagename" {
-                        values[argument.id] = defaultTaskOutputPath(taskID: schema.commandID)
+                    } else if argumentLooksLikeOutput(argument) {
+                        values[argument.id] = defaultTaskOutputPath(
+                            taskID: schema.commandID,
+                            argument: argument
+                        )
                     } else if argument.valueKind == "path",
                               let dataset = state.selectedDataset,
-                              argumentLooksLikeInputDataset(argument) {
-                        values[argument.id] = dataset.path
+                              argumentLooksLikeInputDataset(argument),
+                              selectedDataset(dataset, matches: argument) {
+                        values[argument.id] = normalizedGenericTaskValue(dataset.path, for: argument)
+                    } else if argument.id == "imagename" {
+                        values[argument.id] = defaultTaskOutputPath(
+                            taskID: schema.commandID,
+                            argument: argument
+                        )
                     } else if argument.id == "spw",
                               let spectralWindow = state.selectedDataset?.spectralWindows.first {
                         values[argument.id] = spectralWindowSelectorValue(spectralWindow)
@@ -2459,6 +3177,16 @@ public final class WorkbenchStore: ObservableObject {
         return projectRelativePath(value)
     }
 
+    private func normalizedGenericTaskValue(_ value: String, for argument: TaskUIArgument?) -> String {
+        guard argument?.valueKind == "path" || argument?.parameterType?.contains("path") == true else {
+            return value
+        }
+        guard !Self.isInlineRegionSyntax(value) else {
+            return value
+        }
+        return projectRelativePath(value)
+    }
+
     private func projectRelativePath(_ path: String) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !state.project.rootPath.isEmpty else {
@@ -2479,9 +3207,55 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func argumentLooksLikeInputDataset(_ argument: TaskUIArgument) -> Bool {
-        ["ms", "vis", "image", "image_path", "table", "infile", "fitsimage"].contains(argument.id)
+        if argumentLooksLikeOutput(argument) {
+            return false
+        }
+        if argument.parameterType == "fits_path" {
+            return true
+        }
+        return ["ms", "vis", "image", "image_path", "imagename", "table", "infile", "fitsimage", "region"].contains(argument.id)
+            || argument.parameterType == "region_path_or_box"
             || argument.label.localizedCaseInsensitiveContains("input")
             || argument.label.localizedCaseInsensitiveContains("measurementset")
+    }
+
+    private func argumentLooksLikeOutput(_ argument: TaskUIArgument) -> Bool {
+        if argument.parameterType?.hasPrefix("output_") == true {
+            return true
+        }
+        return ["outfile", "output", "outputvis", "outputms", "fitsimage"].contains(argument.id)
+            && !["fits_path"].contains(argument.parameterType ?? "")
+    }
+
+    private func selectedDataset(_ dataset: DatasetSummary, matches argument: TaskUIArgument) -> Bool {
+        if argument.parameterType == "image_path" || ["image", "imagename"].contains(argument.id) {
+            return dataset.kind == .imageCube
+        }
+        if argument.parameterType == "fits_path" {
+            return isFitsDataset(dataset)
+        }
+        if argument.parameterType == "region_path_or_box" || argument.id == "region" {
+            return dataset.kind == .region
+        }
+        if argument.parameterType == "measurement_set_path" || ["ms", "vis"].contains(argument.id) {
+            return dataset.kind == .measurementSet
+        }
+        if ["table_path", "calibration_table_path"].contains(argument.parameterType ?? "") {
+            return dataset.kind == .table || dataset.kind == .calibrationTable
+        }
+        return dataset.kind != .region
+    }
+
+    private func isFitsDataset(_ dataset: DatasetSummary) -> Bool {
+        guard dataset.kind == .runProduct else {
+            return false
+        }
+        switch URL(fileURLWithPath: dataset.path).pathExtension.lowercased() {
+        case "fits", "fit", "fts":
+            return true
+        default:
+            return false
+        }
     }
 
     private func applyTutorialPackParameters(
@@ -2515,7 +3289,8 @@ public final class WorkbenchStore: ObservableObject {
               !value.hasPrefix("/"),
               !value.hasPrefix("~"),
               !value.hasPrefix("http://"),
-              !value.hasPrefix("https://")
+              !value.hasPrefix("https://"),
+              !Self.isInlineRegionSyntax(value)
         else {
             return false
         }
@@ -2532,17 +3307,101 @@ public final class WorkbenchStore: ObservableObject {
         ].contains(argumentID)
     }
 
-    private func defaultTaskOutputPath(taskID: String) -> String {
-        let root = state.project.rootPath.isEmpty ? FileManager.default.temporaryDirectory.path : state.project.rootPath
-        let datasetStem = state.selectedDataset?.name
-            .replacingOccurrences(of: ".ms", with: "")
-            .replacingOccurrences(of: ".MS", with: "")
-            .replacingOccurrences(of: " ", with: "-")
-            ?? taskID
-        return URL(fileURLWithPath: root, isDirectory: true)
+    private static func isInlineRegionSyntax(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.hasPrefix("box[[")
+            || trimmed.hasPrefix("poly [[")
+            || trimmed.hasPrefix("box:")
+            || trimmed.hasPrefix("pixelbox(")
+    }
+
+    private func defaultTaskOutputPath(taskID: String, argument: TaskUIArgument? = nil) -> String {
+        let datasetStem = defaultTaskOutputStem(taskID: taskID)
+        let basename: String
+        switch argument?.parameterType {
+        case "output_fits_path":
+            basename = "\(datasetStem).fits"
+        case "output_measurement_set_path":
+            basename = "\(datasetStem)-\(taskID).ms"
+        case "output_image_path":
+            basename = "\(datasetStem)-\(taskID).image"
+        default:
+            basename = "\(datasetStem)-\(taskID)"
+        }
+        if !state.project.rootPath.isEmpty {
+            return basename
+        }
+        return FileManager.default.temporaryDirectory
             .appendingPathComponent("casa-rs-runs", isDirectory: true)
-            .appendingPathComponent("\(datasetStem)-\(taskID)")
+            .appendingPathComponent(basename)
             .path
+    }
+
+    private func defaultTaskOutputStem(taskID: String) -> String {
+        let name = state.selectedDataset?.name ?? taskID
+        let knownSuffixes = [".image", ".ms", ".MS", ".fits", ".fit", ".fts"]
+        let trimmed = knownSuffixes.reduce(name) { partial, suffix in
+            partial.hasSuffix(suffix) ? String(partial.dropLast(suffix.count)) : partial
+        }
+        return trimmed.replacingOccurrences(of: " ", with: "-")
+    }
+
+    public func taskOutputSaveDirectory() -> String {
+        if !state.project.rootPath.isEmpty {
+            return state.project.rootPath
+        }
+        return FileManager.default.currentDirectoryPath
+    }
+
+    public func taskOutputSaveFilename() -> String {
+        let extensionName = activeTaskOutputLooksLikeJSON() ? "json" : "txt"
+        return "\(sanitizedPathComponent(state.activeTaskID))-result.\(extensionName)"
+    }
+
+    public func hasSaveableActiveTaskOutput() -> Bool {
+        activeTaskOutput() != nil
+    }
+
+    public func saveActiveTaskOutput(to path: String) {
+        guard let output = activeTaskOutput(), let data = output.data(using: .utf8) else {
+            state.lastErrors.append("No task output is available to save.")
+            return
+        }
+
+        let url = URL(fileURLWithPath: path)
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            if !state.taskRun.outputPaths.contains(url.path) {
+                state.taskRun.outputPaths.append(url.path)
+            }
+            state.taskRun.logLines.append("Saved output: \(url.path)")
+            state.history.append(ProcessingHistoryEvent(
+                id: "hist-save-task-output-\(state.history.count + 1)",
+                timestamp: currentTimestamp(),
+                title: "Saved \(state.activeTaskID) output",
+                reason: "User saved the latest \(state.activeTaskID) task output.",
+                affectedPaths: [url.path],
+                approval: "user"
+            ))
+        } catch {
+            state.lastErrors.append("Save \(state.activeTaskID) output: \(error)")
+        }
+    }
+
+    private func activeTaskOutput() -> String? {
+        let output = state.taskRun.diagnostics.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !output.isEmpty else {
+            return nil
+        }
+        return output
+    }
+
+    private func activeTaskOutputLooksLikeJSON() -> Bool {
+        guard let output = activeTaskOutput(), let data = output.data(using: .utf8) else {
+            return false
+        }
+        return (try? JSONSerialization.jsonObject(with: data)) != nil
     }
 
     private func spectralWindowSelectorValue(_ label: String) -> String {
@@ -3058,14 +3917,16 @@ public final class WorkbenchStore: ObservableObject {
                             requestSummary: state.taskRun.requestSummary
                         )
                     } else {
+                        let genericProducts = genericTaskProducts(from: result)
                         state.taskRun = TaskRun(
                             runID: runID,
                             state: .succeeded,
                             progress: 1.0,
                             logLines: ["\(result.taskID) completed.", "Arguments: \(result.arguments.joined(separator: " "))"],
                             warnings: result.stderr.isEmpty ? [] : [result.stderr],
-                            products: [],
+                            products: genericProducts.map(\.path),
                             diagnostics: result.stdout.isEmpty ? [] : [result.stdout],
+                            outputPaths: genericProducts.map(\.path),
                             requestSummary: state.taskRun.requestSummary
                         )
                     }
@@ -3076,7 +3937,9 @@ public final class WorkbenchStore: ObservableObject {
                     recordRunProductGroup(from: managedImagerResult, products: products)
                     affectedPaths = managedImagerResult.outputPaths
                 } else {
-                    affectedPaths = []
+                    let products = appendProducedDatasets(from: genericTaskProducts(from: result), runID: runID)
+                    recordGenericRunProductGroup(runID: runID, taskID: result.taskID, products: products)
+                    affectedPaths = products.map(\.path)
                 }
                 state.history.append(ProcessingHistoryEvent(
                     id: "hist-run-\(state.history.count + 1)",
@@ -3124,6 +3987,107 @@ public final class WorkbenchStore: ObservableObject {
             return nil
         }
         return try? JSONDecoder().decode(DirtyImagingTaskResult.self, from: Data(result.stdout.utf8))
+    }
+
+    private func genericTaskProducts(from result: GenericTaskResult) -> [DirtyImagingArtifact] {
+        guard let data = result.stdout.data(using: .utf8),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let taskResult = payload["result"] as? [String: Any]
+        else {
+            return []
+        }
+        return genericTaskProductKeys(taskID: result.taskID)
+            .compactMap { key -> DirtyImagingArtifact? in
+                guard let outputPath = taskResult[key] as? String, !outputPath.isEmpty else {
+                    return nil
+                }
+                let outputURL = URL(
+                    fileURLWithPath: outputPath,
+                    relativeTo: URL(fileURLWithPath: state.project.rootPath, isDirectory: true)
+                ).standardizedFileURL
+                let path = outputURL.path
+                return DirtyImagingArtifact(
+                    kind: genericTaskProductKind(taskID: result.taskID, key: key, path: path),
+                    label: URL(fileURLWithPath: path).lastPathComponent,
+                    path: path,
+                    exists: FileManager.default.fileExists(atPath: path),
+                    previewPngPath: nil,
+                    previewPngExists: false
+                )
+            }
+    }
+
+    private func genericTaskProductKeys(taskID: String) -> [String] {
+        switch taskID {
+        case "exportfits":
+            return ["fitsimage"]
+        case "importfits":
+            return ["imagename"]
+        case "immoments", "impv", "imsubimage", "immath":
+            return ["outfile"]
+        case "imregrid":
+            return ["output"]
+        case "feather":
+            return ["imagename"]
+        default:
+            return ["outfile"]
+        }
+    }
+
+    private func genericTaskProductKind(taskID: String, key: String, path: String) -> String {
+        if taskID == "exportfits" || ["fits", "fit", "fts"].contains(URL(fileURLWithPath: path).pathExtension.lowercased()) {
+            return "fits"
+        }
+        if key == "imagename" || key == "outfile" || key == "output" {
+            return "casa-image"
+        }
+        return "run-product"
+    }
+
+    private func appendProducedDatasets(from artifacts: [DirtyImagingArtifact], runID: String) -> [RunProductReference] {
+        var products: [RunProductReference] = []
+        for artifact in artifacts where artifact.exists {
+            if let existing = state.project.datasets.first(where: { $0.path == artifact.path }) {
+                products.append(runProductReference(artifact: artifact, datasetID: existing.id))
+                continue
+            }
+            if let probed = try? probeClient.probePath(path: artifact.path) {
+                state.project.datasets.append(probed)
+                products.append(runProductReference(artifact: artifact, datasetID: probed.id))
+                continue
+            }
+            let fallback = DatasetSummary(
+                id: artifact.path,
+                name: URL(fileURLWithPath: artifact.path).lastPathComponent,
+                path: artifact.path,
+                kind: fallbackDatasetKind(for: artifact),
+                size: "Unprobed \(artifact.kind) product",
+                units: fallbackDatasetUnits(for: artifact),
+                notes: "Produced by \(runID).",
+                diagnostics: []
+            )
+            state.project.datasets.append(fallback)
+            products.append(runProductReference(artifact: artifact, datasetID: fallback.id))
+        }
+        return products
+    }
+
+    private func recordGenericRunProductGroup(runID: String, taskID: String, products: [RunProductReference]) {
+        guard !products.isEmpty else { return }
+        let group = RunProductGroup(
+            id: "products-\(runID)",
+            runID: runID,
+            title: "\(taskID) products",
+            sourceDatasetID: state.selectedDatasetID ?? "",
+            sourcePath: state.selectedDataset?.path ?? "",
+            products: products,
+            diagnostics: []
+        )
+        if let index = state.runProductGroups.firstIndex(where: { $0.runID == runID }) {
+            state.runProductGroups[index] = group
+        } else {
+            state.runProductGroups.append(group)
+        }
     }
 
     private func appendProducedDatasets(from result: DirtyImagingTaskResult) -> [RunProductReference] {
@@ -3194,6 +4158,9 @@ public final class WorkbenchStore: ObservableObject {
         }
         if kind.contains("ms") || kind.contains("measurement") {
             return .measurementSet
+        }
+        if kind.contains("fits") || kind.contains("output") {
+            return .runProduct
         }
         return .imageCube
     }

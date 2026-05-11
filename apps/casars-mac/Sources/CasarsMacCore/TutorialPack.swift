@@ -166,6 +166,8 @@ public enum TutorialPackValue: Codable, Equatable {
     case string(String)
     case bool(Bool)
     case number(Double)
+    case array([TutorialPackValue])
+    case object([String: TutorialPackValue])
     case null
 
     public init(from decoder: Decoder) throws {
@@ -176,6 +178,10 @@ public enum TutorialPackValue: Codable, Equatable {
             self = .bool(value)
         } else if let value = try? container.decode(Double.self) {
             self = .number(value)
+        } else if let value = try? container.decode([TutorialPackValue].self) {
+            self = .array(value)
+        } else if let value = try? container.decode([String: TutorialPackValue].self) {
+            self = .object(value)
         } else {
             self = .string(try container.decode(String.self))
         }
@@ -190,6 +196,10 @@ public enum TutorialPackValue: Codable, Equatable {
             try container.encode(value)
         case .number(let value):
             try container.encode(value)
+        case .array(let value):
+            try container.encode(value)
+        case .object(let value):
+            try container.encode(value)
         case .null:
             try container.encodeNil()
         }
@@ -201,7 +211,7 @@ public enum TutorialPackValue: Codable, Equatable {
             value
         case .number(let value):
             value.rounded() == value ? String(Int(value)) : String(value)
-        case .bool, .null:
+        case .bool, .array, .object, .null:
             nil
         }
     }
@@ -212,7 +222,7 @@ public enum TutorialPackValue: Codable, Equatable {
             value
         case .string(let value):
             value == "true" ? true : value == "false" ? false : nil
-        case .number, .null:
+        case .number, .array, .object, .null:
             nil
         }
     }

@@ -65,21 +65,35 @@ def input_source_path(tutorial_root: Path, input_entry: dict[str, Any]) -> Path:
     return tutorial_root / "tutorial-parity" / registry_key
 
 
+def validate_expected_input_masks(input_entry: dict[str, Any], image_path: Path) -> None:
+    for mask_name in input_entry.get("expected_masks", []):
+        mask_path = image_path / mask_name
+        if not mask_path.exists():
+            raise SystemExit(
+                f"input {input_entry['id']} expected mask {mask_name!r} missing from {image_path}"
+            )
+    default_mask = input_entry.get("expected_default_mask")
+    if default_mask and not (image_path / default_mask).exists():
+        raise SystemExit(
+            f"input {input_entry['id']} expected default mask {default_mask!r} missing from {image_path}"
+        )
+
+
 def generate_pack(pack_id: str, output: Path, tutorial_root: Path, materialize_inputs: bool) -> dict[str, Any]:
     template_path = TEMPLATE_PATHS[pack_id]
     manifest = json.loads(template_path.read_text(encoding="utf-8"))
 
     output.mkdir(parents=True, exist_ok=True)
     for relative in [
-        "inputs",
-        "workspace/native",
-        "workspace/oracle",
-        "workspace/scratch",
+        ".casa-rs/workspace/native",
+        ".casa-rs/workspace/oracle",
+        ".casa-rs/workspace/scratch",
+        "regions",
         "docs/sections",
-        "evidence/review",
-        "screenshots/source",
-        "screenshots/annotated",
-        "screenshots/specs",
+        ".casa-rs/evidence/review",
+        ".casa-rs/screenshots/source",
+        ".casa-rs/screenshots/annotated",
+        ".casa-rs/screenshots/specs",
     ]:
         (output / relative).mkdir(parents=True, exist_ok=True)
 
@@ -89,9 +103,12 @@ def generate_pack(pack_id: str, output: Path, tutorial_root: Path, materialize_i
         destination = output / input_entry["pack_path"]
         status = "missing"
         if source.exists() and materialize_inputs:
+            validate_expected_input_masks(input_entry, source)
             copy_directory(source, destination)
+            validate_expected_input_masks(input_entry, destination)
             status = "staged"
         elif destination.exists():
+            validate_expected_input_masks(input_entry, destination)
             status = "staged"
         input_records.append(
             {
@@ -102,13 +119,17 @@ def generate_pack(pack_id: str, output: Path, tutorial_root: Path, materialize_i
                 "status": status,
                 "checksum_policy": input_entry["checksum_policy"],
                 "size_bytes": input_entry["size_bytes"],
+                "expected_default_mask": input_entry.get("expected_default_mask"),
+                "expected_masks": input_entry.get("expected_masks", []),
+                "source_artifact_url": input_entry.get("source_artifact_url"),
+                "source_note": input_entry.get("source_note"),
             }
         )
 
-    shutil.copy2(REVIEW_SCHEMA_PATH, output / "evidence" / "review" / "tutorial-pack-review.schema.json")
+    shutil.copy2(REVIEW_SCHEMA_PATH, output / ".casa-rs" / "evidence" / "review" / "tutorial-pack-review.schema.json")
     write_json(output / "pack.json", manifest)
     write_json(
-        output / "evidence" / "data-manifest.json",
+        output / ".casa-rs" / "evidence" / "data-manifest.json",
         {
             "schema_version": "tutorial-pack-data-manifest.v0",
             "pack_id": manifest["pack_id"],
@@ -117,7 +138,7 @@ def generate_pack(pack_id: str, output: Path, tutorial_root: Path, materialize_i
             "inputs": input_records,
         },
     )
-    (output / "docs" / "index.md").write_text(
+    (output / "README.md").write_text(
         f"# {manifest['title']}\n\nGenerated tutorial pack skeleton. Section docs are generated as tutorial chunks are reviewed.\n",
         encoding="utf-8",
     )

@@ -29,6 +29,7 @@ public enum DatasetKind: String, Codable, Equatable {
     case imageCube
     case calibrationTable
     case table
+    case region
     case runProduct
 
     public var explorerName: String {
@@ -41,6 +42,8 @@ public enum DatasetKind: String, Codable, Equatable {
             "Calibration Table Explorer"
         case .table:
             "Table Explorer"
+        case .region:
+            "Region File"
         case .runProduct:
             "Run Product Explorer"
         }
@@ -56,6 +59,8 @@ public enum DatasetKind: String, Codable, Equatable {
             "Cal"
         case .table:
             "Table"
+        case .region:
+            "Region"
         case .runProduct:
             "Product"
         }
@@ -231,12 +236,14 @@ public struct WorkbenchTab: Identifiable, Codable, Equatable {
     public var title: String
     public var kind: WorkbenchTabKind
     public var datasetID: String?
+    public var taskID: String?
 
-    public init(id: String, title: String, kind: WorkbenchTabKind, datasetID: String? = nil) {
+    public init(id: String, title: String, kind: WorkbenchTabKind, datasetID: String? = nil, taskID: String? = nil) {
         self.id = id
         self.title = title
         self.kind = kind
         self.datasetID = datasetID
+        self.taskID = taskID
     }
 }
 
@@ -1218,6 +1225,7 @@ public struct ImageExplorerCommand: Codable, Equatable {
     public var name: String?
     public var newName: String?
     public var setDefault: Bool?
+    public var path: String?
 
     public init(
         command: String,
@@ -1225,7 +1233,8 @@ public struct ImageExplorerCommand: Codable, Equatable {
         y: Int? = nil,
         name: String? = nil,
         newName: String? = nil,
-        setDefault: Bool? = nil
+        setDefault: Bool? = nil,
+        path: String? = nil
     ) {
         self.command = command
         self.x = x
@@ -1233,6 +1242,7 @@ public struct ImageExplorerCommand: Codable, Equatable {
         self.name = name
         self.newName = newName
         self.setDefault = setDefault
+        self.path = path
     }
 
     public static let startRegionShape = ImageExplorerCommand(command: "start_region_shape")
@@ -1261,6 +1271,15 @@ public struct ImageExplorerCommand: Codable, Equatable {
     public static func writeRegionMask(name: String?, setDefault: Bool) -> ImageExplorerCommand {
         ImageExplorerCommand(command: "write_region_mask", name: name, setDefault: setDefault)
     }
+    public static func exportRegionFile(path: String) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "export_region_file", path: path)
+    }
+    public static func loadRegionFile(path: String) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "load_region_file", path: path)
+    }
+    public static func appendRegionFile(path: String) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "append_region_file", path: path)
+    }
 
     enum CodingKeys: String, CodingKey {
         case command
@@ -1269,6 +1288,7 @@ public struct ImageExplorerCommand: Codable, Equatable {
         case name
         case newName = "new_name"
         case setDefault = "set_default"
+        case path
     }
 }
 
@@ -1586,11 +1606,17 @@ public struct ImageExplorerSessionState: Codable, Equatable {
     public var movieAxis: Int?
     public var movieFramesPerSecond: Double = 6.0
     public var movieLoop: Bool = true
+    public var regionTool: String = "select"
     public var regionCommands: [ImageExplorerCommand] = []
+    public var activeRegionFilePath: String?
     public var transientCommands: [ImageExplorerCommand] = []
     public var status: ExplorerSessionStatus
     public var lastError: String?
     public var snapshot: ImageExplorerSnapshot?
+
+    public var hasQueuedImageExplorerCommands: Bool {
+        !regionCommands.isEmpty || !transientCommands.isEmpty
+    }
 
     public func snapshotRequest(datasetPath: String) -> ImageExplorerSnapshotRequest {
         ImageExplorerSnapshotRequest(
@@ -2546,8 +2572,12 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var openTabs: [String]
     public var explorerTabs: [DebugExplorerTabSnapshot]
     public var activeTab: String
+    public var activeTaskID: String
+    public var activeTaskValues: [String: String]
+    public var activeTaskToggles: [String: Bool]
     public var taskState: TaskRunState
     public var taskRequest: DirtyImagingTaskParameters?
+    public var taskLogLines: [String]
     public var taskDiagnostics: [String]
     public var taskOutputPaths: [String]
     public var taskCatalog: [TaskCatalogEntry]
@@ -2583,8 +2613,12 @@ public struct DebugStateSnapshot: Codable, Equatable {
             .filter { $0.kind == .datasetExplorer }
             .map { DebugExplorerTabSnapshot(tab: $0, state: state) }
         activeTab = state.tabs.first { $0.id == state.activeTabID }?.title ?? state.activeTabID
+        activeTaskID = state.activeTaskID
+        activeTaskValues = state.genericTaskValues[state.activeTaskID] ?? [:]
+        activeTaskToggles = state.genericTaskToggles[state.activeTaskID] ?? [:]
         taskState = state.taskRun.state
         taskRequest = state.dirtyImagingTaskParameters
+        taskLogLines = state.taskRun.logLines
         taskDiagnostics = state.taskRun.diagnostics
         taskOutputPaths = state.taskRun.outputPaths
         taskCatalog = state.taskCatalog
@@ -2917,5 +2951,132 @@ public struct DebugTableBrowserSnapshot: Codable, Equatable {
         contentLineCount = state.snapshot?.contentLines.count ?? 0
         inspectorTitle = state.snapshot?.inspector?.title
         lastError = state.lastError
+    }
+}
+
+public struct RegionFileInspection: Equatable {
+    public struct Point: Equatable {
+        public var x: Double
+        public var y: Double
+
+        public init(x: Double, y: Double) {
+            self.x = x
+            self.y = y
+        }
+    }
+
+    public var kind: String
+    public var coordinateSystem: String
+    public var xExtentLabel: String
+    public var yExtentLabel: String
+    public var points: [Point]
+
+    public static func inspect(path: String) -> RegionFileInspection? {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return nil
+        }
+        return inspect(text: text)
+    }
+
+    public static func inspect(text: String) -> RegionFileInspection? {
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+            let kind: String
+            if line.hasPrefix("box[[") {
+                kind = "Box"
+            } else if line.hasPrefix("poly [") {
+                kind = "Polygon"
+            } else {
+                continue
+            }
+            let coordinates = coordinatePairs(in: line)
+            guard coordinates.count >= 2 else { return nil }
+            let allPixel = coordinates.allSatisfy { $0.x.unit == "pix" && $0.y.unit == "pix" }
+            let points = coordinates.map { pair in
+                Point(
+                    x: allPixel ? pair.x.value : pair.x.arcseconds,
+                    y: allPixel ? pair.y.value : pair.y.arcseconds
+                )
+            }
+            guard let minX = points.map(\.x).min(),
+                  let maxX = points.map(\.x).max(),
+                  let minY = points.map(\.y).min(),
+                  let maxY = points.map(\.y).max()
+            else {
+                return nil
+            }
+            let unit = allPixel ? "px" : "arcsec"
+            return RegionFileInspection(
+                kind: kind,
+                coordinateSystem: allPixel ? "Pixel" : "World",
+                xExtentLabel: formatExtent(maxX - minX, unit: unit),
+                yExtentLabel: formatExtent(maxY - minY, unit: unit),
+                points: points
+            )
+        }
+        return nil
+    }
+
+    private struct Coordinate: Equatable {
+        var value: Double
+        var unit: String
+
+        var arcseconds: Double {
+            switch unit {
+            case "rad": value * 206_264.80624709636
+            case "deg": value * 3_600.0
+            case "arcmin": value * 60.0
+            case "arcsec": value
+            default: value
+            }
+        }
+    }
+
+    private static func coordinatePairs(in text: String) -> [(x: Coordinate, y: Coordinate)] {
+        let pattern = #"\[\s*([^\[\],]+)\s*,\s*([^\[\],]+)\s*\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+        let nsText = text as NSString
+        return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap { match in
+            guard match.numberOfRanges == 3,
+                  let x = parseCoordinate(nsText.substring(with: match.range(at: 1))),
+                  let y = parseCoordinate(nsText.substring(with: match.range(at: 2)))
+            else {
+                return nil
+            }
+            return (x: x, y: y)
+        }
+    }
+
+    private static func parseCoordinate(_ text: String) -> Coordinate? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = #"^([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z]*)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)),
+              match.numberOfRanges == 3
+        else {
+            return nil
+        }
+        let nsText = trimmed as NSString
+        guard let value = Double(nsText.substring(with: match.range(at: 1))) else {
+            return nil
+        }
+        let unit = nsText.substring(with: match.range(at: 2)).lowercased()
+        return Coordinate(value: value, unit: unit.isEmpty ? "rad" : unit)
+    }
+
+    private static func formatExtent(_ value: Double, unit: String) -> String {
+        if unit == "px" {
+            return "\(Int(value.rounded())) px"
+        }
+        if abs(value) >= 100 {
+            return String(format: "%.1f %@", value, unit)
+        }
+        if abs(value) >= 10 {
+            return String(format: "%.2f %@", value, unit)
+        }
+        return String(format: "%.3f %@", value, unit)
     }
 }

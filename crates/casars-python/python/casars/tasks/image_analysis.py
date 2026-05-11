@@ -155,6 +155,7 @@ def imstat(
     imagename: StrPath,
     *,
     box: str | None = None,
+    region: StrPath | None = None,
     chans: str | None = None,
     binary: StrPath | None = None,
 ) -> dict[str, Any]:
@@ -163,6 +164,8 @@ def imstat(
     argv = [os.fspath(imagename)]
     if box is not None:
         argv.extend(["--box", box])
+    if region is not None:
+        argv.extend(["--region", os.fspath(region)])
     if chans is not None:
         argv.extend(["--chans", chans])
     return invoke_imexplore_json_subcommand("imstat", argv, binary=binary)

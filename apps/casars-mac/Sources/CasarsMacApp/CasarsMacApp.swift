@@ -14,6 +14,10 @@ struct CasarsMacApp: App {
     @State private var didOpenStartupProject = false
     private let startupProjectPath: String?
     private let startupTutorialPackPath: String?
+    private let startupTutorialSectionID: String?
+    private let startupOpenSelectedDatasetExplorer: Bool
+    private let startupImageRegionBoxes: [(Int, Int, Int, Int)]
+    private let startupImageRegionExportPath: String?
 
     init() {
         let arguments = CommandLine.arguments
@@ -21,6 +25,13 @@ struct CasarsMacApp: App {
             Self.dumpDebugState(
                 simulateMainFlow: arguments.contains("--simulate-main-flow"),
                 tutorialPackPath: Self.argumentValue(after: "--open-tutorial-pack", in: arguments),
+                tutorialSectionID: Self.argumentValue(after: "--open-tutorial-section", in: arguments),
+                taskValueOverrides: Self.argumentPairs(after: "--set-task-value", in: arguments),
+                taskToggleOverrides: Self.argumentPairs(after: "--set-task-toggle", in: arguments),
+                runActiveTask: arguments.contains("--run-active-task"),
+                openSelectedDatasetExplorer: arguments.contains("--open-selected-dataset-explorer"),
+                imageRegionBoxes: Self.regionBoxes(after: "--image-region-box", in: arguments),
+                imageRegionExportPath: Self.argumentValue(after: "--export-image-region-file", in: arguments),
                 projectPath: Self.argumentValue(after: "--probe-project", in: arguments)
                     ?? Self.argumentValue(after: "--open-project", in: arguments)
             )
@@ -30,6 +41,10 @@ struct CasarsMacApp: App {
         startupProjectPath = Self.argumentValue(after: "--open-project", in: arguments)
             ?? Self.argumentValue(after: "--probe-project", in: arguments)
         startupTutorialPackPath = Self.argumentValue(after: "--open-tutorial-pack", in: arguments)
+        startupTutorialSectionID = Self.argumentValue(after: "--open-tutorial-section", in: arguments)
+        startupOpenSelectedDatasetExplorer = arguments.contains("--open-selected-dataset-explorer")
+        startupImageRegionBoxes = Self.regionBoxes(after: "--image-region-box", in: arguments)
+        startupImageRegionExportPath = Self.argumentValue(after: "--export-image-region-file", in: arguments)
     }
 
     var body: some Scene {
@@ -136,14 +151,39 @@ struct CasarsMacApp: App {
     private static func dumpDebugState(
         simulateMainFlow: Bool,
         tutorialPackPath: String?,
+        tutorialSectionID: String?,
+        taskValueOverrides: [(String, String)],
+        taskToggleOverrides: [(String, String)],
+        runActiveTask: Bool,
+        openSelectedDatasetExplorer: Bool,
+        imageRegionBoxes: [(Int, Int, Int, Int)],
+        imageRegionExportPath: String?,
         projectPath: String?
     ) {
         let store = WorkbenchStore.empty()
         store.setInterfaceFontSize(storedInterfaceFontSize())
         if let tutorialPackPath {
             store.openTutorialPack(path: tutorialPackPath)
+            if let tutorialSectionID {
+                store.openTutorialSectionTask(tutorialSectionID)
+            }
         } else if let projectPath {
             store.openProject(path: projectPath)
+        }
+        for (argumentID, value) in taskValueOverrides {
+            store.setGenericTaskValue(argumentID: argumentID, value: value)
+        }
+        for (argumentID, value) in taskToggleOverrides {
+            store.setGenericTaskToggle(argumentID: argumentID, value: value == "true")
+        }
+        if runActiveTask {
+            store.runTask()
+            Self.waitForTaskToFinish(store: store, timeoutSeconds: 120)
+        }
+        if openSelectedDatasetExplorer || !imageRegionBoxes.isEmpty {
+            store.openDefaultTab(kind: .datasetExplorer)
+            Self.applyImageRegionBoxes(imageRegionBoxes, store: store)
+            Self.exportImageRegionIfNeeded(imageRegionExportPath, store: store)
         }
         if simulateMainFlow {
             if tutorialPackPath == nil && projectPath == nil {
@@ -174,11 +214,70 @@ struct CasarsMacApp: App {
         }
     }
 
+    private static func applyImageRegionBoxes(
+        _ boxes: [(Int, Int, Int, Int)],
+        store: WorkbenchStore
+    ) {
+        guard let datasetID = store.state.selectedDatasetID else { return }
+        for (x0, y0, x1, y1) in boxes {
+            store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: datasetID)
+            store.appendImageExplorerRegionCommand(.appendRegionVertex(x: x0, y: y0), datasetID: datasetID)
+            store.appendImageExplorerRegionCommand(.appendRegionVertex(x: x1, y: y0), datasetID: datasetID)
+            store.appendImageExplorerRegionCommand(.appendRegionVertex(x: x1, y: y1), datasetID: datasetID)
+            store.appendImageExplorerRegionCommand(.appendRegionVertex(x: x0, y: y1), datasetID: datasetID)
+            store.appendImageExplorerRegionCommand(.closeRegionShape, datasetID: datasetID)
+        }
+    }
+
+    private static func exportImageRegionIfNeeded(_ path: String?, store: WorkbenchStore) {
+        guard let path else { return }
+        guard let datasetID = store.state.selectedDatasetID else { return }
+        store.exportImageExplorerRegionFile(datasetID: datasetID, path: path)
+    }
+
     private static func argumentValue(after flag: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) else {
             return nil
         }
         return arguments[index + 1]
+    }
+
+    private static func argumentPairs(after flag: String, in arguments: [String]) -> [(String, String)] {
+        var pairs: [(String, String)] = []
+        var index = arguments.startIndex
+        while index < arguments.endIndex {
+            guard arguments[index] == flag else {
+                index = arguments.index(after: index)
+                continue
+            }
+            let keyIndex = arguments.index(after: index)
+            let valueIndex = arguments.index(keyIndex, offsetBy: 1)
+            guard keyIndex < arguments.endIndex, valueIndex < arguments.endIndex else {
+                break
+            }
+            pairs.append((arguments[keyIndex], arguments[valueIndex]))
+            index = arguments.index(after: valueIndex)
+        }
+        return pairs
+    }
+
+    private static func regionBoxes(after flag: String, in arguments: [String]) -> [(Int, Int, Int, Int)] {
+        var boxes: [(Int, Int, Int, Int)] = []
+        var index = arguments.startIndex
+        while index < arguments.endIndex {
+            guard arguments[index] == flag else {
+                index = arguments.index(after: index)
+                continue
+            }
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { break }
+            let parts = arguments[valueIndex].split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            if parts.count == 4 {
+                boxes.append((parts[0], parts[1], parts[2], parts[3]))
+            }
+            index = arguments.index(after: valueIndex)
+        }
+        return boxes
     }
 
     private static func waitForTaskToFinish(store: WorkbenchStore, timeoutSeconds: TimeInterval) {
@@ -193,8 +292,16 @@ struct CasarsMacApp: App {
         didOpenStartupProject = true
         if let startupTutorialPackPath {
             store.openTutorialPack(path: startupTutorialPackPath)
+            if let startupTutorialSectionID {
+                store.selectTutorialSection(startupTutorialSectionID)
+            }
         } else if let startupProjectPath {
             store.openProject(path: startupProjectPath)
+        }
+        if startupOpenSelectedDatasetExplorer || !startupImageRegionBoxes.isEmpty {
+            store.openDefaultTab(kind: .datasetExplorer)
+            Self.applyImageRegionBoxes(startupImageRegionBoxes, store: store)
+            Self.exportImageRegionIfNeeded(startupImageRegionExportPath, store: store)
         }
     }
 
