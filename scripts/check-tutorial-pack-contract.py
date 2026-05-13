@@ -14,15 +14,19 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = REPO_ROOT / "resources" / "tutorial-pack.schema.json"
 REVIEW_SCHEMA_PATH = REPO_ROOT / "resources" / "tutorial-pack-review.schema.json"
-TEMPLATE_PATH = (
-    REPO_ROOT
-    / "resources"
-    / "tutorial-packs"
-    / "alma-first-look-image-analysis.template.json"
-)
+TEMPLATE_DIR = REPO_ROOT / "resources" / "tutorial-packs"
 EXPECTED_SCHEMA_VERSION = "tutorial-pack.v0"
 EXPECTED_SURFACES = {"cli", "python", "tui", "gui"}
-EXPECTED_TASKS = {"imhead", "imstat", "immoments", "exportfits"}
+PACK_EXPECTATIONS = {
+    "alma-first-look-image-analysis": {
+        "inputs": {"twhya-cont-image", "twhya-n2hp-image"},
+        "tasks": {"imhead", "imstat", "immoments", "exportfits"},
+    },
+    "alma-first-look-imaging": {
+        "inputs": {"twhya-calibrated-ms"},
+        "tasks": {"msexplore"},
+    },
+}
 FORBIDDEN_PROVIDER_TEXT = ("casars-casa-task", "casa-python")
 LOCAL_PATH_LEAK_RE = re.compile(r"(^|[\\s\"'])/(Users|private|tmp|var/folders)/|file://|(^|[\\s\"'])~")
 
@@ -97,31 +101,35 @@ def validate_review_schema(schema: dict[str, Any]) -> None:
             fail(f"review schema is missing required field {field}")
 
 
-def validate_template(template: dict[str, Any]) -> None:
+def validate_template(template: dict[str, Any], template_path: Path) -> None:
     if template.get("schema_version") != EXPECTED_SCHEMA_VERSION:
-        fail("template schema_version does not match tutorial-pack.v0")
+        fail(f"{template_path.name} schema_version does not match tutorial-pack.v0")
+
+    pack_id = template.get("pack_id")
+    if pack_id not in PACK_EXPECTATIONS:
+        fail(f"{template_path.name} has no contract expectations for pack_id {pack_id!r}")
 
     surfaces = set(template.get("surfaces", []))
     if surfaces != EXPECTED_SURFACES:
-        fail(f"template surfaces must be {sorted(EXPECTED_SURFACES)}, got {sorted(surfaces)}")
+        fail(f"{template_path.name} surfaces must be {sorted(EXPECTED_SURFACES)}, got {sorted(surfaces)}")
 
     storage_policy = template.get("storage", {}).get("generated_pack_root_policy", "")
     if "${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/" not in storage_policy:
-        fail("generated pack root must use CASA_RS_TUTORIAL_DATA_ROOT/tutorial-parity")
+        fail(f"{template_path.name} generated pack root must use CASA_RS_TUTORIAL_DATA_ROOT/tutorial-parity")
 
     if template.get("learner", {}).get("include_internal_evidence") is not False:
-        fail("learner view must not include internal evidence")
+        fail(f"{template_path.name} learner view must not include internal evidence")
     if "review_record_schema" not in template.get("regression", {}):
-        fail("regression view must point at the review record schema")
+        fail(f"{template_path.name} regression view must point at the review record schema")
 
     all_text = json.dumps(template, sort_keys=True)
     if LOCAL_PATH_LEAK_RE.search(all_text):
-        fail("template contains local absolute path or user-home leak")
+        fail(f"{template_path.name} contains local absolute path or user-home leak")
 
     input_ids = {entry.get("id") for entry in template.get("inputs", [])}
-    for required_input in {"twhya-cont-image", "twhya-n2hp-image"}:
+    for required_input in PACK_EXPECTATIONS[pack_id]["inputs"]:
         if required_input not in input_ids:
-            fail(f"template missing input {required_input}")
+            fail(f"{template_path.name} missing input {required_input}")
 
     for entry in template.get("inputs", []):
         if entry.get("materialization") == "committed":
@@ -133,17 +141,18 @@ def validate_template(template: dict[str, Any]) -> None:
                 f"input {entry.get('id')} expected_default_mask must be listed in expected_masks"
             )
 
-    n2hp = next(
-        entry for entry in template.get("inputs", []) if entry.get("id") == "twhya-n2hp-image"
-    )
-    if n2hp.get("expected_default_mask") != "mask0":
-        fail("twhya-n2hp-image must declare expected_default_mask=mask0")
-    if "mask0" not in n2hp.get("expected_masks", []):
-        fail("twhya-n2hp-image must declare expected_masks including mask0")
-    if n2hp.get("source_artifact_url", "").endswith(
-        "/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image"
-    ):
-        fail("twhya-n2hp-image source must not use the current unmasked 6.6.6 direct image")
+    if pack_id == "alma-first-look-image-analysis":
+        n2hp = next(
+            entry for entry in template.get("inputs", []) if entry.get("id") == "twhya-n2hp-image"
+        )
+        if n2hp.get("expected_default_mask") != "mask0":
+            fail("twhya-n2hp-image must declare expected_default_mask=mask0")
+        if "mask0" not in n2hp.get("expected_masks", []):
+            fail("twhya-n2hp-image must declare expected_masks including mask0")
+        if n2hp.get("source_artifact_url", "").endswith(
+            "/casaguides/FirstLook_TWHya_Band7_6.6.6/twhya_n2hp.image"
+        ):
+            fail("twhya-n2hp-image source must not use the current unmasked 6.6.6 direct image")
 
     section_tasks: set[str] = set()
     for section in template.get("sections", []):
@@ -179,9 +188,9 @@ def validate_template(template: dict[str, Any]) -> None:
         if missing:
             fail(f"section {section.get('id')} missing native surfaces {sorted(missing)}")
 
-    missing_tasks = EXPECTED_TASKS - section_tasks
+    missing_tasks = PACK_EXPECTATIONS[pack_id]["tasks"] - section_tasks
     if missing_tasks:
-        fail(f"template missing planned tasks {sorted(missing_tasks)}")
+        fail(f"{template_path.name} missing planned tasks {sorted(missing_tasks)}")
 
     for path, value in iter_values(template):
         if not isinstance(value, str):
@@ -193,10 +202,14 @@ def validate_template(template: dict[str, Any]) -> None:
 def main() -> None:
     schema = load_json(SCHEMA_PATH)
     review_schema = load_json(REVIEW_SCHEMA_PATH)
-    template = load_json(TEMPLATE_PATH)
     validate_schema(schema)
     validate_review_schema(review_schema)
-    validate_template(template)
+    templates = sorted(TEMPLATE_DIR.glob("*.template.json"))
+    if not templates:
+        fail("no tutorial pack templates found")
+    for template_path in templates:
+        template = load_json(template_path)
+        validate_template(template, template_path)
 
 
 if __name__ == "__main__":

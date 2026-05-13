@@ -58,7 +58,8 @@ fn run() -> Result<(), String> {
 fn parse_request(args: &[String]) -> Result<MsTransformRequest, String> {
     let mut input_ms = None;
     let mut output_ms = None;
-    let mut spw = None;
+    let mut spw = String::new();
+    let mut width = 1usize;
     let mut data_column = TransformDataColumn::default();
     let mut selection = MsSelection::default();
     let mut keep_flags = true;
@@ -75,7 +76,12 @@ fn parse_request(args: &[String]) -> Result<MsTransformRequest, String> {
             }
             "--spw" => {
                 index += 1;
-                spw = Some(args.get(index).ok_or_else(usage)?.clone());
+                spw = args.get(index).ok_or_else(usage)?.clone();
+            }
+            "--width" => {
+                index += 1;
+                let value = args.get(index).ok_or_else(usage)?;
+                width = parse_width(value)?;
             }
             "--datacolumn" => {
                 index += 1;
@@ -123,11 +129,29 @@ fn parse_request(args: &[String]) -> Result<MsTransformRequest, String> {
     Ok(MsTransformRequest {
         input_ms: input_ms.ok_or_else(usage)?,
         output_ms: output_ms.ok_or_else(usage)?,
-        spw: spw.ok_or_else(usage)?,
+        spw,
+        width,
         data_column,
         selection,
         keep_flags,
     })
+}
+
+fn parse_width(value: &str) -> Result<usize, String> {
+    let first = value
+        .split(',')
+        .next()
+        .unwrap_or(value)
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'');
+    let parsed = first
+        .parse::<usize>()
+        .map_err(|error| format!("invalid --width {value:?}: {error}"))?;
+    if parsed == 0 {
+        return Err("--width must be at least 1".to_string());
+    }
+    Ok(parsed)
 }
 
 fn parse_data_column(value: &str) -> Result<TransformDataColumn, String> {
@@ -156,7 +180,7 @@ fn parse_time_range(value: &str) -> Result<(f64, f64), String> {
 }
 
 fn usage() -> String {
-    "usage: mstransform --ms <input.ms> --out <output.ms> --spw <spw[:channels]> [--field <ids>] [--datacolumn DATA|CORRECTED_DATA] [--keepflags|--no-keepflags]".to_string()
+    "usage: mstransform --ms <input.ms> --out <output.ms> [--spw <spw[:channels]>] [--field <ids>] [--width <n>] [--datacolumn DATA|CORRECTED_DATA] [--keepflags|--no-keepflags]".to_string()
 }
 
 fn command_schema(program_name: &str) -> UiCommandSchema {
@@ -204,14 +228,27 @@ fn command_schema(program_name: &str) -> UiCommandSchema {
                 value_kind: UiValueKind::String,
                 choices: &[],
                 default: None,
-                required: true,
+                required: false,
                 help: "CASA-style spectral-window and channel selector.",
+                group: "Selection",
+            }),
+            option_argument(OptionConfig {
+                id: "width",
+                label: "Channel Width",
+                order: 3,
+                flags: &["--width"],
+                metavar: "N",
+                value_kind: UiValueKind::String,
+                choices: &[],
+                default: Some("1"),
+                required: false,
+                help: "Average this many adjacent selected channels into each output channel, matching CASA split width.",
                 group: "Selection",
             }),
             option_argument(OptionConfig {
                 id: "field",
                 label: "Field",
-                order: 3,
+                order: 4,
                 flags: &["--field"],
                 metavar: "IDS",
                 value_kind: UiValueKind::String,
@@ -224,7 +261,7 @@ fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionConfig {
                 id: "scan",
                 label: "Scan",
-                order: 4,
+                order: 5,
                 flags: &["--scan"],
                 metavar: "IDS",
                 value_kind: UiValueKind::String,
@@ -237,7 +274,7 @@ fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionConfig {
                 id: "antenna",
                 label: "Antenna",
-                order: 5,
+                order: 6,
                 flags: &["--antenna"],
                 metavar: "IDS",
                 value_kind: UiValueKind::String,
@@ -250,7 +287,7 @@ fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionConfig {
                 id: "timerange",
                 label: "Time Range",
-                order: 6,
+                order: 7,
                 flags: &["--timerange"],
                 metavar: "START~END",
                 value_kind: UiValueKind::String,
@@ -263,7 +300,7 @@ fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionConfig {
                 id: "msselect",
                 label: "MS Select",
-                order: 7,
+                order: 8,
                 flags: &["--msselect"],
                 metavar: "TAQL",
                 value_kind: UiValueKind::String,
@@ -276,7 +313,7 @@ fn command_schema(program_name: &str) -> UiCommandSchema {
             option_argument(OptionConfig {
                 id: "datacolumn",
                 label: "Data Column",
-                order: 8,
+                order: 9,
                 flags: &["--datacolumn"],
                 metavar: "COLUMN",
                 value_kind: UiValueKind::Choice,
@@ -289,7 +326,7 @@ fn command_schema(program_name: &str) -> UiCommandSchema {
             toggle_argument(ToggleConfig {
                 id: "keepflags",
                 label: "Keep Fully Flagged Rows",
-                order: 9,
+                order: 10,
                 true_flags: &["--keepflags"],
                 false_flags: &["--no-keepflags"],
                 default: Some("true"),
@@ -321,11 +358,12 @@ fn schema_bundle(program_name: &str) -> serde_json::Value {
         },
         "request_schema": {
             "type": "object",
-            "required": ["input_ms", "output_ms", "spw"],
+            "required": ["input_ms", "output_ms"],
             "properties": {
                 "input_ms": {"type": "string"},
                 "output_ms": {"type": "string"},
                 "spw": {"type": "string"},
+                "width": {"type": "integer", "minimum": 1},
                 "data_column": {"type": "string", "enum": ["DATA", "CORRECTED_DATA"]},
                 "keep_flags": {"type": "boolean"}
             }

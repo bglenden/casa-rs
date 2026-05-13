@@ -8706,6 +8706,28 @@ fn msexplore_summary_tabs_populate_from_current_form_without_subprocess_run() {
 }
 
 #[test]
+fn imager_summary_tabs_do_not_treat_stokes_i_as_ms_correlation_selector() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_fixture_ms(temp.path());
+
+    let schema = imager_app().load_schema().expect("load imager schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imager_app(), schema, config);
+    app.set_text_value("ms", ms_path.to_string_lossy().as_ref());
+    app.set_text_value("polarization", "I");
+
+    app.set_active_result_tab(ResultTab::Observations);
+
+    assert!(
+        app.structured_for_test().is_some(),
+        "Stokes I is an imaging-plane choice, not a raw MeasurementSet correlation filter"
+    );
+    let rendered = render_app(&app, 220, 32);
+    assert!(rendered.contains("Observations"));
+    assert!(!rendered.contains("correlation selector"));
+}
+
+#[test]
 fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     with_test_env_lock(clear_imager_launcher_bin);
 

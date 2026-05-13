@@ -24,6 +24,7 @@ use std::path::Path;
 
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
+use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::position::MPosition;
 use casa_types::quanta::{MvAngle, MvTime};
@@ -435,7 +436,7 @@ pub struct SpectralWindowSummary {
 /// Summary of one SOURCE subtable row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SourceSummary {
-    /// SOURCE_ID column value.
+    /// Display ID for the SOURCE subtable row.
     pub source_id: i32,
     /// Source name.
     pub name: String,
@@ -526,15 +527,11 @@ impl ListObsSummary {
         let data_descriptions = build_data_descriptions(ms, &main_usage)?;
         let spectral_windows =
             build_spectral_windows(ms, &data_descriptions, &polarization_setups)?;
-        let used_source_ids = fields
-            .iter()
-            .filter_map(|field| (field.source_id >= 0).then_some(field.source_id))
-            .collect::<BTreeSet<_>>();
         let used_spw_ids = spectral_windows
             .iter()
             .map(|summary| summary.spectral_window_id as i32)
             .collect::<BTreeSet<_>>();
-        let sources = build_sources(ms, &used_source_ids, &used_spw_ids)?;
+        let sources = build_sources(ms, &used_spw_ids)?;
         let antennas = build_antennas(ms, &observations, &main_usage)?;
 
         let field_name_lookup: HashMap<i32, String> = fields
@@ -823,14 +820,14 @@ impl ListObsSummary {
         );
         let _ = writeln!(
             out,
-            "  SpwID  Name   #Chans   Frame   Ch0(MHz)  ChanWid(kHz)  TotBW(kHz) CtrFreq(MHz)  Corrs"
+            "  SpwID  Name                           #Chans   Frame   Ch0(MHz)  ChanWid(kHz)  TotBW(kHz) CtrFreq(MHz)  Corrs"
         );
         for spw in &self.spectral_windows {
             let _ = writeln!(
                 out,
-                "  {:<7}{:<6}{:>8}   {:<6}{:>10.3}{:>14.3}{:>12.1}{:>13.4}   {}",
+                "  {:<7}{:<30}{:>8}   {:<6}{:>10.3}{:>14.3}{:>12.1}{:>13.4}   {}",
                 spw.spectral_window_id,
-                truncate_for_column(&spw_display_name(spw), 6),
+                truncate_for_column(&spw_display_name(spw), 30),
                 spw.num_channels,
                 spw.frame.as_deref().unwrap_or("?"),
                 spw.first_channel_frequency_hz / 1.0e6,
@@ -1186,7 +1183,6 @@ fn build_observations(
 
 fn build_fields(ms: &MeasurementSet, main_usage: &MainUsage) -> MsResult<Vec<FieldSummary>> {
     let field = ms.field()?;
-    let direction_reference = column_measure_reference(field.table(), "PHASE_DIR");
     let mut summaries = Vec::with_capacity(field.row_count());
     for row in 0..field.row_count() {
         if (main_usage.selection_applied || !main_usage.used_field_ids.is_empty())
@@ -1205,7 +1201,7 @@ fn build_fields(ms: &MeasurementSet, main_usage: &MainUsage) -> MsResult<Vec<Fie
                 .get(&(row as i32))
                 .copied(),
             time_mjd_seconds: field.time(row)?,
-            direction_reference: direction_reference.clone(),
+            direction_reference: column_measure_reference_for_row(field.table(), "PHASE_DIR", row)?,
             phase_direction_radians: extract_direction_pair(field.phase_dir(row)?)?,
         });
     }
@@ -1316,7 +1312,6 @@ fn build_spectral_windows(
 
 fn build_sources(
     ms: &MeasurementSet,
-    used_source_ids: &BTreeSet<i32>,
     used_spw_ids: &BTreeSet<i32>,
 ) -> MsResult<Vec<SourceSummary>> {
     let source = match ms.source() {
@@ -1326,13 +1321,15 @@ fn build_sources(
     };
     let mut summaries = Vec::with_capacity(source.row_count());
     for row in 0..source.row_count() {
-        let source_id = source.i32(row, "SOURCE_ID")?;
+        let source_id = row as i32;
         let spw_id = source.i32(row, "SPECTRAL_WINDOW_ID")?;
-        let matches_source = used_source_ids.is_empty() || used_source_ids.contains(&source_id);
         let matches_spw = spw_id < 0 || used_spw_ids.is_empty() || used_spw_ids.contains(&spw_id);
-        if !matches_source || !matches_spw {
+        if !matches_spw {
             continue;
         }
+        let rest_frequency_hz =
+            extract_first_f64_opt(source.optional_array(row, "REST_FREQUENCY")?)?
+                .filter(|value| *value > 0.0);
         summaries.push(SourceSummary {
             source_id,
             name: source.string(row, "NAME")?,
@@ -1340,10 +1337,12 @@ fn build_sources(
             spectral_window_id: spw_id,
             calibration_group: source.i32(row, "CALIBRATION_GROUP")?,
             num_lines: source.i32(row, "NUM_LINES")?,
-            rest_frequency_hz: extract_first_f64_opt(
-                source.optional_array(row, "REST_FREQUENCY")?,
-            )?,
-            system_velocity_m_s: extract_first_f64_opt(source.optional_array(row, "SYSVEL")?)?,
+            rest_frequency_hz,
+            system_velocity_m_s: if rest_frequency_hz.is_some() {
+                extract_first_f64_opt(source.optional_array(row, "SYSVEL")?)?
+            } else {
+                None
+            },
             time_mjd_seconds: source.f64(row, "TIME")?,
             direction_radians: extract_direction_pair(source.array(row, "DIRECTION")?)?,
         });
@@ -1524,7 +1523,6 @@ fn build_scans(
                 && self.scan_number == group.scan_number
                 && self.field_ids == group.field_ids
                 && self.data_description_ids == group.data_description_ids
-                && self.state_ids == group.state_ids
         }
     }
 
@@ -1816,13 +1814,63 @@ fn main_time_reference(table: &Table) -> Option<String> {
     }
 }
 
-fn column_measure_reference(table: &Table, column: &str) -> Option<String> {
-    let desc = TableMeasDesc::reconstruct(table, column)?;
-    match desc.ref_desc() {
-        MeasRefDesc::Fixed { refer } => Some(refer.clone()),
-        MeasRefDesc::VariableInt { ref_column, .. } => Some(format!("variable:{ref_column}")),
-        MeasRefDesc::VariableString { ref_column } => Some(format!("variable:{ref_column}")),
-    }
+fn column_measure_reference_for_row(
+    table: &Table,
+    column: &str,
+    row: usize,
+) -> MsResult<Option<String>> {
+    let Some(desc) = TableMeasDesc::reconstruct(table, column) else {
+        return Ok(None);
+    };
+    let reference = match desc.ref_desc() {
+        MeasRefDesc::Fixed { refer } => refer.clone(),
+        MeasRefDesc::VariableInt {
+            ref_column,
+            tab_ref_types,
+            tab_ref_codes,
+        } => {
+            let code = match table.cell_accessor(row, ref_column)?.scalar()? {
+                ScalarValue::Int32(value) => *value,
+                ScalarValue::Int64(value) => *value as i32,
+                ScalarValue::UInt32(value) => *value as i32,
+                other => {
+                    return Err(MsError::ColumnTypeMismatch {
+                        column: ref_column.clone(),
+                        table: "listobs".to_string(),
+                        expected: "Int scalar".to_string(),
+                        found: format!("{other:?}"),
+                    });
+                }
+            };
+            tab_ref_codes
+                .iter()
+                .position(|candidate| *candidate == code)
+                .and_then(|index| tab_ref_types.get(index).cloned())
+                .ok_or_else(|| MsError::InvalidMeasureCode {
+                    table: "listobs".to_string(),
+                    column: ref_column.clone(),
+                    code,
+                })?
+        }
+        MeasRefDesc::VariableString { ref_column } => {
+            match table.cell_accessor(row, ref_column)?.scalar()? {
+                ScalarValue::String(value) => value.clone(),
+                other => {
+                    return Err(MsError::ColumnTypeMismatch {
+                        column: ref_column.clone(),
+                        table: "listobs".to_string(),
+                        expected: "String scalar".to_string(),
+                        found: format!("{other:?}"),
+                    });
+                }
+            }
+        }
+    };
+    Ok(reference
+        .parse::<DirectionRef>()
+        .map(|reference| reference.as_str().to_string())
+        .ok()
+        .or(Some(reference)))
 }
 
 fn analyze_main_table(
@@ -2283,6 +2331,38 @@ mod tests {
         assert_eq!(
             summary.measurement_set.time_reference.as_deref(),
             Some("UTC")
+        );
+    }
+
+    #[test]
+    fn scan_summary_merges_state_ids_like_casa_listobs() {
+        let mut ms = MeasurementSet::create_memory(
+            MeasurementSetBuilder::new().with_optional_subtable(crate::SubtableId::Source),
+        )
+        .expect("create MS");
+        add_observation_row(&mut ms, 4_981_000_000.0, 4_981_000_030.0);
+        add_field_row(&mut ms);
+        add_source_row(&mut ms);
+        add_state_row(&mut ms, "CALIBRATE_PHASE.ON_SOURCE");
+        add_state_row(&mut ms, "CALIBRATE_WVR.ON_SOURCE");
+        add_spectral_window_row(&mut ms);
+        add_polarization_row(&mut ms);
+        add_data_description_row(&mut ms);
+        add_antenna_rows(&mut ms);
+        add_main_row_with_selection(&mut ms, 4_981_000_000.0, 0, 1, 0, 0, [0.0, 0.0, 0.0]);
+        add_main_row_with_selection(&mut ms, 4_981_000_015.0, 1, 1, 0, 1, [0.0, 0.0, 0.0]);
+
+        let summary = ListObsSummary::from_ms(&ms).expect("build summary");
+
+        assert_eq!(summary.scans.len(), 1);
+        assert_eq!(summary.scans[0].row_count, 2);
+        assert_eq!(summary.scans[0].state_ids, vec![0, 1]);
+        assert_eq!(
+            summary.scans[0].scan_intents,
+            vec![
+                "CALIBRATE_PHASE.ON_SOURCE".to_string(),
+                "CALIBRATE_WVR.ON_SOURCE".to_string()
+            ]
         );
     }
 

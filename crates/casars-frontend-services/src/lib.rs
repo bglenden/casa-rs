@@ -17,10 +17,10 @@ use casa_ms::plot::{
     SpectralWindowCoverageBar, SpectralWindowCoveragePlotPayload, UvCoverageSeries,
 };
 use casa_ms::{
-    MeasurementSet, MeasurementSetPlotPayload, MeasurementSetSummaryOutputFormat, MsExploreSpec,
-    MsPageExportRange, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsScatterGridPayload,
-    MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec,
-    VisibilityDataColumn, build_msexplore_payload_from_spec,
+    MeasurementSet, MeasurementSetPlotPayload, MeasurementSetSummary,
+    MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPayload,
+    MsPlotPreset, MsPlotSpec, MsScatterGridPayload, MsScatterPagePayload, MsScatterPlotPayload,
+    MsScatterSeries, MsSelectionSpec, VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableBrowser, TableOptions};
 use casa_types::measures::direction::{
@@ -459,6 +459,7 @@ pub struct MeasurementSetPlotRequest {
     pub feed: Option<String>,
     pub msselect: Option<String>,
     pub data_column: String,
+    pub color_by: Option<String>,
     pub avgchannel: Option<u64>,
     pub avgtime: Option<f64>,
     pub avgscan: bool,
@@ -467,9 +468,37 @@ pub struct MeasurementSetPlotRequest {
     pub avgantenna: bool,
     pub avgspw: bool,
     pub scalar: bool,
+    pub iteraxis: Option<String>,
     pub width: u32,
     pub height: u32,
     pub max_plot_points: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MeasurementSetSummaryRequest {
+    pub dataset_path: String,
+    pub format: String,
+    pub field: Option<String>,
+    pub spectral_window: Option<String>,
+    pub timerange: Option<String>,
+    pub uvrange: Option<String>,
+    pub antenna: Option<String>,
+    pub scan: Option<String>,
+    pub correlation: Option<String>,
+    pub array: Option<String>,
+    pub observation: Option<String>,
+    pub intent: Option<String>,
+    pub feed: Option<String>,
+    pub msselect: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MeasurementSetSummaryResult {
+    pub dataset_path: String,
+    pub format: String,
+    pub summary_text: String,
+    pub selection_summary: String,
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -1209,11 +1238,12 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
             mode: None,
             subcommand: None,
             summary: "Create a selected MeasurementSet subset, equivalent to CASA split.",
-            usage: "mstransform --ms <input.ms> --out <output.ms> --spw <spw[:channels]>",
+            usage: "mstransform --ms <input.ms> --out <output.ms> [--spw <spw[:channels]>] [--width <n>]",
             visible_arguments: &[
                 "ms",
                 "out",
                 "spw",
+                "width",
                 "field",
                 "scan",
                 "antenna",
@@ -1222,7 +1252,7 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
                 "datacolumn",
                 "keepflags",
             ],
-            required_arguments: &["ms", "out", "spw"],
+            required_arguments: &["ms", "out"],
             extra_arguments: &[],
         }),
         "plotms" => Some(TaskAlias {
@@ -1822,6 +1852,74 @@ pub fn probe_project(path: String) -> FrontendResult<ProjectProbe> {
 }
 
 #[uniffi::export]
+pub fn build_measurement_set_summary(
+    request: MeasurementSetSummaryRequest,
+) -> FrontendResult<MeasurementSetSummaryResult> {
+    let dataset_path = PathBuf::from(&request.dataset_path);
+    if !dataset_path.is_dir() {
+        return Err(FrontendServiceError::InvalidPath {
+            reason: format!(
+                "{} is not a MeasurementSet directory",
+                dataset_path.display()
+            ),
+        });
+    }
+
+    let format = match request.format.trim().to_ascii_lowercase().as_str() {
+        "" | "text" => MeasurementSetSummaryOutputFormat::Text,
+        "json" => MeasurementSetSummaryOutputFormat::Json,
+        other => {
+            return Err(FrontendServiceError::Probe {
+                reason: format!("unsupported MeasurementSet summary format {other:?}"),
+            });
+        }
+    };
+    let selection = MsSelectionSpec {
+        field: normalized_optional(request.field.clone()),
+        spw: normalized_optional(request.spectral_window.clone()),
+        timerange: normalized_optional(request.timerange.clone()),
+        uvrange: normalized_optional(request.uvrange.clone()),
+        antenna: normalized_optional(request.antenna.clone()),
+        scan: normalized_optional(request.scan.clone()),
+        correlation: normalized_optional(request.correlation.clone()),
+        array: normalized_optional(request.array.clone()),
+        observation: normalized_optional(request.observation.clone()),
+        intent: normalized_optional(request.intent.clone()),
+        feed: normalized_optional(request.feed.clone()),
+        msselect: normalized_optional(request.msselect.clone()),
+        ..MsSelectionSpec::default()
+    };
+    let started = Instant::now();
+    let ms = MeasurementSet::open(&dataset_path).map_err(|error| FrontendServiceError::Probe {
+        reason: format!("open MeasurementSet {}: {error}", dataset_path.display()),
+    })?;
+    let summary = MeasurementSetSummary::from_ms_with_options(&ms, &selection.to_summary_options())
+        .map_err(|error| FrontendServiceError::Probe {
+            reason: format!(
+                "summarize MeasurementSet {}: {error}",
+                dataset_path.display()
+            ),
+        })?;
+    let summary_text = summary
+        .render(format)
+        .map_err(|error| FrontendServiceError::Probe {
+            reason: format!("render MeasurementSet summary: {error}"),
+        })?;
+    let elapsed = started.elapsed();
+    Ok(MeasurementSetSummaryResult {
+        dataset_path: dataset_path.display().to_string(),
+        format: match format {
+            MeasurementSetSummaryOutputFormat::Text => "text",
+            MeasurementSetSummaryOutputFormat::Json => "json",
+        }
+        .to_string(),
+        summary_text,
+        selection_summary: measurement_set_summary_selection_summary(&request),
+        diagnostics: vec![format!("timing: summary={} ms", elapsed.as_millis())],
+    })
+}
+
+#[uniffi::export]
 pub fn build_measurement_set_plot(
     request: MeasurementSetPlotRequest,
 ) -> FrontendResult<MeasurementSetPlotResult> {
@@ -1848,6 +1946,12 @@ pub fn build_measurement_set_plot(
         casa_ms::MsDataColumn::parse(&data_column).map_err(|error| FrontendServiceError::Plot {
             reason: format!("{}: {error}", dataset_path.display()),
         })?;
+    if let Some(color_by) = normalized_optional(request.color_by.clone()) {
+        plot.color_by =
+            casa_ms::MsColorAxis::parse(&color_by).map_err(|error| FrontendServiceError::Plot {
+                reason: format!("{}: {error}", dataset_path.display()),
+            })?;
+    }
     plot.averaging.avgchannel = request
         .avgchannel
         .map(usize::try_from)
@@ -1862,6 +1966,12 @@ pub fn build_measurement_set_plot(
     plot.averaging.avgantenna = request.avgantenna;
     plot.averaging.avgspw = request.avgspw;
     plot.averaging.scalar = request.scalar;
+    plot.iteration.iteraxis = normalized_optional(request.iteraxis.clone())
+        .map(|iteraxis| casa_ms::MsIterationAxis::parse(&iteraxis))
+        .transpose()
+        .map_err(|error| FrontendServiceError::Plot {
+            reason: format!("{}: {error}", dataset_path.display()),
+        })?;
 
     let selection = MsSelectionSpec {
         field: normalized_optional(request.field.clone()),
@@ -4211,6 +4321,30 @@ fn normalized_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty() && value != "all")
 }
 
+fn measurement_set_summary_selection_summary(request: &MeasurementSetSummaryRequest) -> String {
+    let mut parts = Vec::new();
+    if let Some(field) = normalized_optional(request.field.clone()) {
+        parts.push(format!("field {field}"));
+    }
+    if let Some(spw) = normalized_optional(request.spectral_window.clone()) {
+        parts.push(format!("spw {spw}"));
+    }
+    if let Some(correlation) = normalized_optional(request.correlation.clone()) {
+        parts.push(format!("correlation {correlation}"));
+    }
+    if let Some(scan) = normalized_optional(request.scan.clone()) {
+        parts.push(format!("scan {scan}"));
+    }
+    if let Some(timerange) = normalized_optional(request.timerange.clone()) {
+        parts.push(format!("timerange {timerange}"));
+    }
+    if parts.is_empty() {
+        "all rows".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
 fn selection_summary(request: &MeasurementSetPlotRequest) -> String {
     let mut parts = vec![format!(
         "data column {}",
@@ -5515,6 +5649,14 @@ mod tests {
                 && argument["required"] == true
                 && argument["parameter_type"] == "output_measurement_set_path"
         }));
+        assert!(
+            split_arguments
+                .iter()
+                .any(|argument| { argument["id"] == "spw" && argument["required"] == false })
+        );
+        assert!(split_arguments.iter().any(|argument| {
+            argument["id"] == "width" && argument["required"] == false && argument["default"] == "1"
+        }));
 
         let uvcontsub_schema_json =
             task_ui_schema_json("uvcontsub".to_string()).expect("uvcontsub schema");
@@ -5725,6 +5867,34 @@ mod tests {
     }
 
     #[test]
+    fn measurement_set_summary_builds_listobs_text_for_gui() {
+        let (_dir, ms_path) = unpack_small_ms();
+
+        let result = build_measurement_set_summary(MeasurementSetSummaryRequest {
+            dataset_path: ms_path.display().to_string(),
+            format: "text".to_string(),
+            field: None,
+            spectral_window: None,
+            timerange: None,
+            uvrange: None,
+            antenna: None,
+            scan: None,
+            correlation: None,
+            array: None,
+            observation: None,
+            intent: None,
+            feed: None,
+            msselect: None,
+        })
+        .expect("build listobs-style summary");
+
+        assert_eq!(result.format, "text");
+        assert_eq!(result.selection_summary, "all rows");
+        assert!(result.summary_text.contains("Observation"));
+        assert!(result.summary_text.contains("Spectral Windows"));
+    }
+
+    #[test]
     fn measurement_set_plot_builds_typed_document_without_gui_png_work() {
         let (_dir, ms_path) = unpack_small_ms();
 
@@ -5749,6 +5919,7 @@ mod tests {
                 feed: None,
                 msselect: None,
                 data_column: "DATA".to_string(),
+                color_by: None,
                 avgchannel: None,
                 avgtime: None,
                 avgscan: false,
@@ -5757,6 +5928,7 @@ mod tests {
                 avgantenna: false,
                 avgspw: false,
                 scalar: false,
+                iteraxis: None,
                 width: DEFAULT_PLOT_WIDTH,
                 height: DEFAULT_PLOT_HEIGHT,
                 max_plot_points: 10_000,
@@ -5869,6 +6041,7 @@ mod tests {
                 feed: None,
                 msselect: None,
                 data_column: "DATA".to_string(),
+                color_by: None,
                 avgchannel: None,
                 avgtime: None,
                 avgscan: false,
@@ -5877,6 +6050,7 @@ mod tests {
                 avgantenna: false,
                 avgspw: false,
                 scalar: false,
+                iteraxis: None,
                 width: DEFAULT_PLOT_WIDTH,
                 height: DEFAULT_PLOT_HEIGHT,
                 max_plot_points: 250_000,

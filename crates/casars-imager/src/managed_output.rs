@@ -56,6 +56,8 @@ pub struct ManagedImagingRequest {
     pub dirty_only: bool,
     /// Whether preview PNG sidecars were requested.
     pub write_preview_pngs: bool,
+    /// Whether the primary-beam product was requested.
+    pub write_pb: bool,
     /// Whether per-channel density estimation was requested for cube weighting.
     pub per_channel_weight_density: bool,
     /// Requested MTMFS Taylor-term count.
@@ -159,6 +161,7 @@ impl ManagedImagingOutput {
                 cell_arcsec: config.cell_arcsec,
                 dirty_only: config.dirty_only,
                 write_preview_pngs: config.write_preview_pngs,
+                write_pb: config.write_pb,
                 per_channel_weight_density: config.per_channel_weight_density,
                 nterms: config.nterms,
                 output_channels: summary.channel_summaries.len(),
@@ -231,6 +234,7 @@ impl ManagedImagingOutput {
                 cell_arcsec: request.cell_arcsec,
                 dirty_only: request.dirty_only,
                 write_preview_pngs: request.write_preview_pngs,
+                write_pb: request.write_pb,
                 per_channel_weight_density: request.per_channel_weight_density,
                 nterms: request.nterms,
                 output_channels: result.run.channels.len(),
@@ -511,17 +515,24 @@ fn imaging_artifacts(config: &CliConfig) -> Vec<ManagedImagingArtifact> {
                     .then(|| PathBuf::from(format!("{base}.{kind}.png")));
                 artifacts.push(artifact(label.to_string(), kind, path, preview));
             }
+            if config.write_pb || config.pbcor {
+                let path = PathBuf::from(format!("{base}.pb"));
+                let preview = config
+                    .write_preview_pngs
+                    .then(|| PathBuf::from(format!("{base}.pb.png")));
+                artifacts.push(artifact("Primary Beam".to_string(), "pb", path, preview));
+            }
             if config.pbcor {
-                for (kind, label) in [
-                    ("pb", "Primary Beam"),
-                    ("image.pbcor", "PB-corrected Image"),
-                ] {
-                    let path = PathBuf::from(format!("{base}.{kind}"));
-                    let preview = config
-                        .write_preview_pngs
-                        .then(|| PathBuf::from(format!("{base}.{kind}.png")));
-                    artifacts.push(artifact(label.to_string(), kind, path, preview));
-                }
+                let path = PathBuf::from(format!("{base}.image.pbcor"));
+                let preview = config
+                    .write_preview_pngs
+                    .then(|| PathBuf::from(format!("{base}.image.pbcor.png")));
+                artifacts.push(artifact(
+                    "PB-corrected Image".to_string(),
+                    "image.pbcor",
+                    path,
+                    preview,
+                ));
             }
         }
     }
@@ -609,6 +620,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -775,6 +787,7 @@ mod tests {
                 psf_cutoff: 0.4,
                 mosaic_pb_limit: 0.1,
                 pbcor: false,
+                write_pb: false,
                 minor_cycle_length: 16,
                 cyclefactor: 1.2,
                 min_psf_fraction: 0.15,

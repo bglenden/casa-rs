@@ -15,6 +15,7 @@ private let datasetClickLogger = Logger(
 
 struct WorkbenchView: View {
     @ObservedObject var store: WorkbenchStore
+    var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
     @State private var leftDockWidth: CGFloat = 250
     @State private var inspectorWidth: CGFloat = 250
 
@@ -34,7 +35,10 @@ struct WorkbenchView: View {
                 HorizontalResizeHandle(width: $inspectorWidth, range: 220...520)
             }
 
-            CentralWorkspaceView(store: store)
+            CentralWorkspaceView(
+                store: store,
+                initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
+            )
                 .frame(minWidth: 560)
         }
         .toolbar {

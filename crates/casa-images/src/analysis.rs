@@ -129,6 +129,11 @@ impl ImageAnalysisTaskSchemaBundle {
                         result_kind: Some("immath".to_string()),
                     },
                     TaskOperationDescriptor {
+                        name: "impbcor".to_string(),
+                        request_kind: "impbcor".to_string(),
+                        result_kind: Some("impbcor".to_string()),
+                    },
+                    TaskOperationDescriptor {
                         name: "imregrid".to_string(),
                         request_kind: "imregrid".to_string(),
                         result_kind: Some("imregrid".to_string()),
@@ -172,6 +177,7 @@ impl ImageAnalysisTaskSchemaBundle {
                         "impv",
                         "imsubimage",
                         "immath",
+                        "impbcor",
                         "imregrid",
                         "feather",
                         "exportfits",
@@ -470,6 +476,146 @@ pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError>
                     default: serde_json::json!("false"),
                     help: "Replace existing output image",
                     group: "Output",
+                })
+            ]),
+        ),
+        "impbcor" => (
+            "impbcor",
+            "Primary Beam Correction",
+            "Apply primary-beam correction to a CASA image",
+            "impbcor --imagename <image> --pbimage <pb> --outfile <path> [--cutoff 0.2] [--overwrite]",
+            serde_json::json!([
+                arg(UiArgument {
+                    id: "imagename",
+                    label: "Image",
+                    order: 0,
+                    parser: option(["--imagename"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Input CASA image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "pbimage",
+                    label: "PB Image",
+                    order: 1,
+                    parser: option(["--pbimage"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Primary-beam CASA image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "outfile",
+                    label: "Output",
+                    order: 2,
+                    parser: option(["--outfile"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Output PB-corrected CASA image path",
+                    group: "Output",
+                }),
+                arg(UiArgument {
+                    id: "cutoff",
+                    label: "Cutoff",
+                    order: 3,
+                    parser: option(["--cutoff"], "value", []),
+                    value_kind: "float",
+                    required: false,
+                    default: serde_json::json!("-1.0"),
+                    help: "Minimum PB value to keep; negative disables cutoff masking",
+                    group: "Correction",
+                }),
+                arg(UiArgument {
+                    id: "mode",
+                    label: "Mode",
+                    order: 9,
+                    parser: option(["--mode"], "divide|multiply", ["divide", "multiply"]),
+                    value_kind: "choice",
+                    required: false,
+                    default: serde_json::json!("divide"),
+                    help: "Correction mode",
+                    group: "Correction",
+                }),
+                arg(UiArgument {
+                    id: "overwrite",
+                    label: "Overwrite",
+                    order: 10,
+                    parser: toggle(["--overwrite"], []),
+                    value_kind: "bool",
+                    required: false,
+                    default: serde_json::json!("false"),
+                    help: "Replace existing output image",
+                    group: "Output",
+                }),
+                arg(UiArgument {
+                    id: "box",
+                    label: "Box",
+                    order: 4,
+                    parser: option(["--box"], "x0,y0,x1,y1", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Optional CASA pixel box selection. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "region",
+                    label: "Region",
+                    order: 5,
+                    parser: option(["--region"], "path|CRTF box", []),
+                    value_kind: "path",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Optional CASA CRTF region file or inline CRTF region. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "chans",
+                    label: "Channels",
+                    order: 6,
+                    parser: option(["--chans"], "selector", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Optional channel selector. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "stokes",
+                    label: "Stokes",
+                    order: 7,
+                    parser: option(["--stokes"], "selector", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Optional Stokes selector. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "mask",
+                    label: "Mask",
+                    order: 8,
+                    parser: option(["--mask"], "expression", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Optional mask expression. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "stretch",
+                    label: "Stretch",
+                    order: 11,
+                    parser: toggle(["--stretch"], []),
+                    value_kind: "bool",
+                    required: false,
+                    default: serde_json::json!("false"),
+                    help: "Stretch masks to fit the selected image shape. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
                 })
             ]),
         ),
@@ -787,6 +933,8 @@ pub enum ImageAnalysisTaskRequest {
     Imsubimage(ImsubimageRequest),
     /// CASA `immath(..., mode="evalexpr")` style image arithmetic.
     Immath(ImmathRequest),
+    /// CASA `impbcor` style primary-beam correction.
+    Impbcor(ImpbcorRequest),
     /// CASA `imregrid` style template-image regridding.
     Imregrid(ImregridRequest),
     /// CASA `feather` style Fourier-domain image combination.
@@ -813,6 +961,8 @@ pub enum ImageAnalysisTaskResult {
     Imsubimage(ImageSubimageSummary),
     /// Result for [`ImageAnalysisTaskRequest::Immath`].
     Immath(ImageMathSummary),
+    /// Result for [`ImageAnalysisTaskRequest::Impbcor`].
+    Impbcor(PbcorSummary),
     /// Result for [`ImageAnalysisTaskRequest::Imregrid`].
     Imregrid(ImageRegridSummary),
     /// Result for [`ImageAnalysisTaskRequest::Feather`].
@@ -933,6 +1083,44 @@ pub struct ImmathRequest {
     pub overwrite: bool,
 }
 
+/// CASA `impbcor` request for primary-beam image correction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImpbcorRequest {
+    /// Input CASA image path.
+    pub imagename: PathBuf,
+    /// Primary-beam CASA image path.
+    pub pbimage: PathBuf,
+    /// Output CASA image path.
+    pub outfile: PathBuf,
+    /// Correction mode. Supported values are `divide` and `multiply`.
+    #[serde(default = "default_impbcor_mode")]
+    pub mode: String,
+    /// Minimum PB value to keep. Negative disables cutoff masking.
+    #[serde(default = "default_impbcor_cutoff")]
+    pub cutoff: f64,
+    /// Optional pixel box selection. Not implemented for `impbcor` yet.
+    #[serde(default, rename = "box")]
+    pub box_selection: Option<String>,
+    /// Optional region selection. Not implemented for `impbcor` yet.
+    #[serde(default)]
+    pub region: Option<PathBuf>,
+    /// Optional channel selector. Not implemented for `impbcor` yet.
+    #[serde(default)]
+    pub chans: Option<String>,
+    /// Optional Stokes selector. Not implemented for `impbcor` yet.
+    #[serde(default)]
+    pub stokes: Option<String>,
+    /// Optional mask expression. Not implemented for `impbcor` yet.
+    #[serde(default)]
+    pub mask: Option<String>,
+    /// Stretch masks to match the selected image shape. Not implemented for `impbcor` yet.
+    #[serde(default)]
+    pub stretch: bool,
+    /// Replace an existing output image.
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
 /// CASA `imregrid` request for template-image regridding.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImregridRequest {
@@ -983,6 +1171,14 @@ fn default_sdfactor() -> f32 {
     1.0
 }
 
+fn default_impbcor_mode() -> String {
+    "divide".to_string()
+}
+
+fn default_impbcor_cutoff() -> f64 {
+    -1.0
+}
+
 /// Summary returned after writing a PV image.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PvImageSummary {
@@ -1031,6 +1227,27 @@ pub struct ImageMathSummary {
     /// Pixel units copied from the first input image.
     pub units: String,
     /// Valid output pixels after intersecting input masks and finite results.
+    pub valid_pixels: usize,
+}
+
+/// Summary returned after writing an `impbcor` product.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PbcorSummary {
+    /// Input CASA image path.
+    pub imagename: String,
+    /// Primary-beam CASA image path.
+    pub pbimage: String,
+    /// Output CASA image path.
+    pub outfile: String,
+    /// Correction mode.
+    pub mode: String,
+    /// Minimum PB value kept.
+    pub cutoff: f64,
+    /// Output image shape.
+    pub shape: Vec<usize>,
+    /// Pixel units copied from the input image.
+    pub units: String,
+    /// Valid output pixels after intersecting masks and cutoff.
     pub valid_pixels: usize,
 }
 
@@ -1265,6 +1482,9 @@ pub fn run_image_analysis_task(
         ImageAnalysisTaskRequest::Immath(request) => {
             Ok(ImageAnalysisTaskResult::Immath(immath(&request)?))
         }
+        ImageAnalysisTaskRequest::Impbcor(request) => {
+            Ok(ImageAnalysisTaskResult::Impbcor(impbcor(&request)?))
+        }
         ImageAnalysisTaskRequest::Imregrid(request) => {
             Ok(ImageAnalysisTaskResult::Imregrid(imregrid(&request)?))
         }
@@ -1444,6 +1664,36 @@ pub fn immath(request: &ImmathRequest) -> Result<ImageMathSummary, ImageError> {
         count => Err(ImageError::InvalidMetadata(format!(
             "immath tutorial support currently requires one or two input images, got {count}"
         ))),
+    }
+}
+
+/// Apply CASA `impbcor`-style primary-beam correction.
+pub fn impbcor(request: &ImpbcorRequest) -> Result<PbcorSummary, ImageError> {
+    if request.box_selection.is_some()
+        || request.region.is_some()
+        || request.chans.is_some()
+        || request.stokes.is_some()
+        || request.mask.is_some()
+        || request.stretch
+    {
+        return Err(ImageError::InvalidMetadata(
+            "impbcor selection parameters (box, region, chans, stokes, mask, stretch) are not yet supported; run image-wide PB correction or use a pre-selected image"
+                .to_string(),
+        ));
+    }
+    let image = AnyPagedImage::open(&request.imagename)?;
+    let pb = AnyPagedImage::open(&request.pbimage)?;
+    match (&image, &pb) {
+        (AnyPagedImage::Float32(image), AnyPagedImage::Float32(pb)) => {
+            impbcor_typed(image, pb, request)
+        }
+        (AnyPagedImage::Float64(image), AnyPagedImage::Float64(pb)) => {
+            impbcor_typed(image, pb, request)
+        }
+        _ => Err(ImageError::InvalidMetadata(
+            "impbcor tutorial support currently requires matching real-valued pixel types"
+                .to_string(),
+        )),
     }
 }
 
@@ -2067,17 +2317,15 @@ fn region_pixels<T: ImagePixel>(
     if let Some(polygon) = crtf_polygon_pixels(image, &contents)? {
         return Ok(Some(PixelRegion::Polygon(polygon)));
     }
-    {
-        let format = if contents.trim_start().starts_with('{') {
-            "casa-rs JSON region files are not a persistent interchange format; use CASA CRTF"
-        } else {
-            "expected CASA CRTF box or polygon, for example box[[100pix,100pix],[150pix,150pix]] or poly [[100pix,100pix],...]"
-        };
-        return Err(ImageError::InvalidMetadata(format!(
-            "unsupported region file {}: {format}",
-            region_path.display()
-        )));
-    }
+    let format = if contents.trim_start().starts_with('{') {
+        "casa-rs JSON region files are not a persistent interchange format; use CASA CRTF"
+    } else {
+        "expected CASA CRTF box or polygon, for example box[[100pix,100pix],[150pix,150pix]] or poly [[100pix,100pix],...]"
+    };
+    Err(ImageError::InvalidMetadata(format!(
+        "unsupported region file {}: {format}",
+        region_path.display()
+    )))
 }
 
 fn region_pixel_mask(
@@ -2264,8 +2512,7 @@ fn crtf_box_parts(text: &str) -> Result<Option<[String; 4]>, ImageError> {
     let body = body
         .replace("], [", ",")
         .replace("],[", ",")
-        .replace('[', "")
-        .replace(']', "");
+        .replace(['[', ']'], "");
     let parts = body
         .split(',')
         .map(|part| part.trim().to_string())
@@ -2967,6 +3214,99 @@ where
         expr: request.expr.clone(),
         shape,
         units: lhs.units().to_string(),
+        valid_pixels: valid.iter().filter(|pixel| **pixel).count(),
+    })
+}
+
+fn impbcor_typed<T>(
+    image: &PagedImage<T>,
+    pb: &PagedImage<T>,
+    request: &ImpbcorRequest,
+) -> Result<PbcorSummary, ImageError>
+where
+    T: ImagePixel + Into<f64> + From<f32> + Copy,
+{
+    if image.shape() != pb.shape() {
+        return Err(ImageError::ShapeMismatch {
+            expected: image.shape().to_vec(),
+            got: pb.shape().to_vec(),
+        });
+    }
+    if request.outfile.exists() {
+        if request.overwrite {
+            fs::remove_dir_all(&request.outfile)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+        } else {
+            return Err(ImageError::Io(format!(
+                "impbcor output already exists: {}",
+                request.outfile.display()
+            )));
+        }
+    }
+    let divide = match request.mode.as_str() {
+        "divide" => true,
+        "multiply" => false,
+        other => {
+            return Err(ImageError::InvalidMetadata(format!(
+                "unsupported impbcor mode {other:?}; expected divide or multiply"
+            )));
+        }
+    };
+    let shape = image.shape().to_vec();
+    let origin = vec![0; image.ndim()];
+    let left = image.get_slice(&origin, &shape)?;
+    let right = pb.get_slice(&origin, &shape)?;
+    let image_mask = image.get_mask_slice(&origin, &shape, &vec![1; image.ndim()])?;
+    let pb_mask = pb.get_mask_slice(&origin, &shape, &vec![1; pb.ndim()])?;
+    let mut data = ArrayD::from_elem(IxDyn(&shape), T::from(0.0));
+    let mut valid = ndarray::ArrayD::from_elem(IxDyn(&shape), true);
+    Zip::from(&mut data)
+        .and(&mut valid)
+        .and(&left)
+        .and(&right)
+        .for_each(|out, valid, image, pb| {
+            let image = (*image).into();
+            let pb = (*pb).into();
+            let value = if divide {
+                if pb == 0.0 { f64::NAN } else { image / pb }
+            } else {
+                image * pb
+            };
+            *valid = (request.cutoff < 0.0 || pb >= request.cutoff) && value.is_finite();
+            *out = T::from(value as f32);
+        });
+    if let Some(mask) = image_mask {
+        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
+            *valid = *valid && *mask;
+        });
+    }
+    if let Some(mask) = pb_mask {
+        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
+            *valid = *valid && *mask;
+        });
+    }
+    let mut output = TempImage::<T>::new(shape.clone(), image.coordinates().clone())?;
+    let legacy_coordinates = image.table().keywords().get("coords").cloned();
+    output.set_units(image.units())?;
+    output.set_image_info(&image.image_info()?)?;
+    output.set_misc_info(image.misc_info())?;
+    output.put_slice(&data, &vec![0; output.ndim()])?;
+    if valid.iter().any(|pixel| !*pixel) {
+        output.put_mask("mask0", &valid)?;
+        output.set_default_mask("mask0")?;
+    }
+    output.save_as(&request.outfile)?;
+    if let Some(Value::Record(coords)) = legacy_coordinates {
+        patch_saved_coords_keyword(&request.outfile, coords)?;
+    }
+    Ok(PbcorSummary {
+        imagename: request.imagename.display().to_string(),
+        pbimage: request.pbimage.display().to_string(),
+        outfile: request.outfile.display().to_string(),
+        mode: request.mode.clone(),
+        cutoff: request.cutoff,
+        shape,
+        units: image.units().to_string(),
         valid_pixels: valid.iter().filter(|pixel| **pixel).count(),
     })
 }
@@ -4624,7 +4964,10 @@ fn velocity_fits_axis_overrides(coordinates: &CoordinateSystem) -> BTreeMap<Stri
             let crval_m_s = SPEED_OF_LIGHT_M_S * (1.0 - crval_hz / rest_frequency);
             let cdelt_m_s = -SPEED_OF_LIGHT_M_S * cdelt_hz / rest_frequency;
             let mut overrides = BTreeMap::new();
-            overrides.insert(format!("CTYPE{axis}"), FitsValue::String("VRAD".to_string()));
+            overrides.insert(
+                format!("CTYPE{axis}"),
+                FitsValue::String("VRAD".to_string()),
+            );
             overrides.insert(format!("CRVAL{axis}"), FitsValue::Float(crval_m_s));
             overrides.insert(format!("CDELT{axis}"), FitsValue::Float(cdelt_m_s));
             overrides.insert(format!("CUNIT{axis}"), FitsValue::String("m".to_string()));
@@ -4724,7 +5067,7 @@ mod tests {
             bundle.protocol.protocol_name,
             IMAGE_ANALYSIS_TASK_PROTOCOL_NAME
         );
-        assert_eq!(bundle.semantic.operations.len(), 10);
+        assert_eq!(bundle.semantic.operations.len(), 11);
         assert_eq!(
             bundle
                 .projections
@@ -4746,6 +5089,10 @@ mod tests {
             ("impv", ["imagename", "outfile", "start", "end"].as_slice()),
             ("imsubimage", ["imagename", "outfile", "box"].as_slice()),
             ("immath", ["imagename", "expr", "outfile"].as_slice()),
+            (
+                "impbcor",
+                ["imagename", "pbimage", "outfile", "cutoff"].as_slice(),
+            ),
             (
                 "imregrid",
                 ["imagename", "template", "output", "interpolation"].as_slice(),
@@ -4966,6 +5313,35 @@ mod tests {
         let put_header = imhead_put(&scaled_path, "bunit", "K").unwrap();
         assert_eq!(put_header.units, "K");
         assert_eq!(PagedImage::<f32>::open(&scaled_path).unwrap().units(), "K");
+
+        let pbcor_path = temp.path().join("pbcor.image");
+        let pbcor_result =
+            run_image_analysis_task(ImageAnalysisTaskRequest::Impbcor(ImpbcorRequest {
+                imagename: source_path.clone(),
+                pbimage: mask_path.clone(),
+                outfile: pbcor_path.clone(),
+                mode: "divide".to_string(),
+                cutoff: 0.3,
+                box_selection: None,
+                region: None,
+                chans: None,
+                stokes: None,
+                mask: None,
+                stretch: false,
+                overwrite: false,
+            }))
+            .unwrap();
+        let ImageAnalysisTaskResult::Impbcor(pbcor) = pbcor_result else {
+            panic!("expected impbcor result");
+        };
+        assert_eq!(pbcor.shape, vec![2, 2, 3]);
+        assert_eq!(pbcor.units, "Jy/beam");
+        assert_eq!(pbcor.valid_pixels, 9);
+        let pbcor_image = PagedImage::<f32>::open(&pbcor_path).unwrap();
+        assert_eq!(pbcor_image.default_mask_name(), Some("mask0".to_string()));
+        let pbcor_data = pbcor_image.get_slice(&[1, 0, 0], &[1, 1, 1]).unwrap();
+        let source_data = source.get_slice(&[1, 0, 0], &[1, 1, 1]).unwrap();
+        assert!((pbcor_data[[0, 0, 0]] - source_data[[0, 0, 0]]).abs() < 1.0e-6);
 
         run_image_analysis_task(ImageAnalysisTaskRequest::Exportfits(ExportFitsRequest {
             imagename: source_path.clone(),

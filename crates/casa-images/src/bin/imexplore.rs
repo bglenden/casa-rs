@@ -4,7 +4,7 @@
 use std::env;
 use std::fmt::Display;
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use casa_images::{
@@ -191,7 +191,7 @@ fn run() -> Result<(), String> {
     run_snapshot(&image_path)
 }
 
-fn image_operation_error(operation: &str, path: &PathBuf, error: impl Display) -> String {
+fn image_operation_error(operation: &str, path: &Path, error: impl Display) -> String {
     format!(
         "{operation}: cannot open or read CASA image '{}': {error}",
         path.display()

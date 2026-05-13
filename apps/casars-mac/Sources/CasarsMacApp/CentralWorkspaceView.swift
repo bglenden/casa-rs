@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 struct CentralWorkspaceView: View {
     @ObservedObject var store: WorkbenchStore
+    var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
 
     var body: some View {
         VStack(spacing: 0) {
@@ -102,9 +103,18 @@ struct CentralWorkspaceView: View {
         if let tab = store.state.tabs.first(where: { $0.id == store.state.activeTabID }) {
             switch tab.kind {
             case .datasetExplorer:
-                DatasetExplorerPanel(store: store, datasetID: tab.datasetID)
+                DatasetExplorerPanel(
+                    store: store,
+                    datasetID: tab.datasetID,
+                    initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
+                )
             case .tableBrowser:
-                DatasetExplorerPanel(store: store, datasetID: tab.datasetID, forceTableBrowser: true)
+                DatasetExplorerPanel(
+                    store: store,
+                    datasetID: tab.datasetID,
+                    forceTableBrowser: true,
+                    initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
+                )
             case .tutorial:
                 TutorialPackPanel(store: store)
             case .task:
@@ -326,6 +336,7 @@ struct DatasetExplorerPanel: View {
     @ObservedObject var store: WorkbenchStore
     let datasetID: String?
     var forceTableBrowser: Bool = false
+    var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
 
     var body: some View {
         Group {
@@ -333,7 +344,11 @@ struct DatasetExplorerPanel: View {
                 if forceTableBrowser && !store.state.isDemoProject {
                     tableBrowserRoot(for: dataset)
                 } else if dataset.kind == .measurementSet && !store.state.isDemoProject {
-                    MeasurementSetPlotPanel(store: store, dataset: dataset)
+                    MeasurementSetPlotPanel(
+                        store: store,
+                        dataset: dataset,
+                        initialExplorerMode: initialMeasurementSetExplorerMode
+                    )
                 } else if dataset.kind == .imageCube && !store.state.isDemoProject {
                     VStack(alignment: .leading, spacing: 10) {
                         PanelHeader(title: dataset.kind.explorerName, subtitle: explorerSubtitle(for: dataset))
@@ -4609,10 +4624,29 @@ private struct SelectionHelperOption: Identifiable, Equatable {
     var id: String { "\(label)=\(value)" }
 }
 
+enum MeasurementSetExplorerMode: String, CaseIterable, Identifiable {
+    case summary
+    case plots
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .summary: "Summary"
+        case .plots: "Plots"
+        }
+    }
+}
+
 struct MeasurementSetPlotPanel: View {
     @ObservedObject var store: WorkbenchStore
     let dataset: DatasetSummary
     @Environment(\.workbenchFontSize) private var workbenchFontSize
+    @State private var explorerMode: MeasurementSetExplorerMode = .summary
+    @State private var summaryStatus: MeasurementSetPlotStatus = .idle
+    @State private var summaryResult: MeasurementSetSummaryResultSummary?
+    @State private var summaryError: String?
+    @State private var summaryFormat = "text"
     @State private var showingAdvancedSetup = false
     @State private var showingPlotControls = false
     @State private var plotDisplayMode: WorkbenchPlotDisplayMode = .automatic
@@ -4640,15 +4674,45 @@ struct MeasurementSetPlotPanel: View {
     @State private var msSelectValue = ""
     @State private var avgTimeUnit = "s"
     private let metadataClient: MeasurementSetMetadataClient = UniFFIMeasurementSetMetadataClient()
+    private let summaryClient: MeasurementSetSummaryClient = UniFFIMeasurementSetSummaryClient()
+
+    init(
+        store: WorkbenchStore,
+        dataset: DatasetSummary,
+        initialExplorerMode: MeasurementSetExplorerMode = .summary
+    ) {
+        self.store = store
+        self.dataset = dataset
+        _explorerMode = State(initialValue: initialExplorerMode)
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
-            plotSurface
-            plotCommandBar
+            if explorerMode == .summary {
+                summarySurface
+            } else {
+                plotSurface
+            }
+            explorerCommandBar
                 .padding(.top, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("msPlot.panel.\(dataset.id)")
+        .onAppear {
+            if summaryStatus == .idle {
+                runMeasurementSetSummary()
+            }
+        }
+        .onChange(of: explorerMode) { mode in
+            if mode == .summary && summaryResult == nil && summaryStatus != .running {
+                runMeasurementSetSummary()
+            }
+        }
+        .onChange(of: summaryFormat) { _ in
+            if explorerMode == .summary {
+                runMeasurementSetSummary()
+            }
+        }
     }
 
     private var plotState: MeasurementSetExplorerPlotState {
@@ -4662,19 +4726,39 @@ struct MeasurementSetPlotPanel: View {
         return result
     }
 
-    private var plotCommandBar: some View {
+    private var explorerCommandBar: some View {
         HStack(spacing: 10) {
-            Picker("Plot", selection: Binding(
-                get: { plotState.preset },
-                set: { store.setMeasurementSetPlotPreset($0, datasetID: dataset.id) }
-            )) {
-                ForEach(MeasurementSetExplorerPlotPreset.allCases) { preset in
-                    Text(preset.title).tag(preset)
+            Picker("View", selection: $explorerMode) {
+                ForEach(MeasurementSetExplorerMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
                 }
             }
             .labelsHidden()
-            .frame(width: 220)
-            .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
+            .pickerStyle(.segmented)
+            .frame(width: 170)
+            .accessibilityIdentifier("msExplore.mode.\(dataset.id)")
+
+            if explorerMode == .plots {
+                Picker("Plot", selection: Binding(
+                    get: { plotState.preset },
+                    set: { store.setMeasurementSetPlotPreset($0, datasetID: dataset.id) }
+                )) {
+                    ForEach(MeasurementSetExplorerPlotPreset.menuCases) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+                .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
+            } else {
+                Picker("Format", selection: $summaryFormat) {
+                    Text("Text").tag("text")
+                    Text("JSON").tag("json")
+                }
+                .labelsHidden()
+                .frame(width: 105)
+                .accessibilityIdentifier("msSummary.format.\(dataset.id)")
+            }
 
             Button {
                 showingAdvancedSetup.toggle()
@@ -4689,13 +4773,31 @@ struct MeasurementSetPlotPanel: View {
             }
             .accessibilityIdentifier("msPlot.selections.\(dataset.id)")
 
-            Button {
-                store.runMeasurementSetPlot(datasetID: dataset.id)
-            } label: {
-                Label(plotState.status == .running ? "Generating" : "Generate", systemImage: "play.fill")
+            if explorerMode == .summary {
+                Button {
+                    runMeasurementSetSummary()
+                } label: {
+                    Label(summaryStatus == .running ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(summaryStatus == .running)
+                .accessibilityIdentifier("msSummary.refresh.\(dataset.id)")
+
+                Button {
+                    saveMeasurementSetSummary()
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .disabled(summaryResult == nil || summaryResult?.format != summaryFormat)
+                .accessibilityIdentifier("msSummary.save.\(dataset.id)")
+            } else {
+                Button {
+                    store.runMeasurementSetPlot(datasetID: dataset.id)
+                } label: {
+                    Label(plotState.status == .running ? "Generating" : "Generate", systemImage: "play.fill")
+                }
+                .disabled(plotState.status == .running)
+                .accessibilityIdentifier("msPlot.generate.\(dataset.id)")
             }
-            .disabled(plotState.status == .running)
-            .accessibilityIdentifier("msPlot.generate.\(dataset.id)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -4882,6 +4984,29 @@ struct MeasurementSetPlotPanel: View {
             .disabled(plotState.preset == .uvCoverage)
             .accessibilityIdentifier("msPlot.dataColumn.\(dataset.id)")
 
+            Picker("Color By", selection: Binding(
+                get: { plotState.colorBy },
+                set: { store.setMeasurementSetPlotColorBy($0, datasetID: dataset.id) }
+            )) {
+                ForEach(MeasurementSetPlotColorAxis.allCases) { axis in
+                    Text(axis.title).tag(axis)
+                }
+            }
+            .help("CASA plotms color/group axis. Field groups source fields; Baseline groups antenna pairs; None draws one series.")
+            .accessibilityIdentifier("msPlot.colorBy.\(dataset.id)")
+
+            Picker("Iterate by", selection: Binding<MeasurementSetPlotIterationAxis?>(
+                get: { plotState.iterationAxis },
+                set: { store.setMeasurementSetPlotIterationAxis($0, datasetID: dataset.id) }
+            )) {
+                Text("None").tag(nil as MeasurementSetPlotIterationAxis?)
+                ForEach(MeasurementSetPlotIterationAxis.allCases) { axis in
+                    Text(axis.title).tag(Optional(axis))
+                }
+            }
+            .help("CASA plotms Page tab Iteration Axis. Field splits amplitude/UV-distance plots into one panel per source field.")
+            .accessibilityIdentifier("msPlot.iterationAxis.\(dataset.id)")
+
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("Max plotted points")
@@ -4978,6 +5103,127 @@ struct MeasurementSetPlotPanel: View {
     private var plotSurface: some View {
         plotDocumentSurface
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var summarySurface: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ListObs Summary")
+                        .workbenchFont(.headline)
+                    Text(summaryResult?.selectionSummary ?? "CASA-style MeasurementSet metadata")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if summaryStatus == .running {
+                    ProgressView()
+                        .scaleEffect(0.75)
+                }
+            }
+
+            if let summaryError {
+                Text(summaryError)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let summaryResult {
+                ScrollView([.vertical, .horizontal]) {
+                    Text(summaryResult.summaryText)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(12)
+                }
+                .background(Color(nsColor: .textBackgroundColor))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.20)))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                if let diagnostic = summaryResult.diagnostics.first {
+                    Text(diagnostic)
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.20)))
+                    VStack(spacing: 10) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .workbenchFont(.largeTitle)
+                        Text(summaryStatus == .running ? "Reading MeasurementSet summary" : "No summary loaded")
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .padding(.top, 76)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityIdentifier("msSummary.document.\(dataset.id)")
+    }
+
+    private func runMeasurementSetSummary() {
+        let request = MeasurementSetSummaryBuildRequest(
+            datasetPath: dataset.path,
+            format: summaryFormat,
+            field: selectorToken(plotState.selectedField),
+            spectralWindow: spectralWindowSelectorToken(plotState),
+            timerange: plotState.selectedTimerange,
+            uvRange: plotState.selectedUVRange,
+            antenna: plotState.selectedAntenna,
+            scan: plotState.selectedScan,
+            correlation: selectorToken(plotState.selectedCorrelation),
+            array: plotState.selectedArray,
+            observation: plotState.selectedObservation,
+            intent: plotState.selectedIntent,
+            feed: plotState.selectedFeed,
+            msselect: plotState.selectedMSSelect
+        )
+        summaryStatus = .running
+        summaryError = nil
+        summaryResult = nil
+        Task {
+            do {
+                let result = try summaryClient.buildSummary(request: request)
+                await MainActor.run {
+                    summaryResult = result
+                    summaryStatus = .ready
+                    summaryError = nil
+                }
+            } catch {
+                await MainActor.run {
+                    summaryStatus = .failed
+                    summaryError = "\(error)"
+                }
+            }
+        }
+    }
+
+    private func saveMeasurementSetSummary() {
+        guard let summaryResult else { return }
+        let panel = NSSavePanel()
+        panel.title = "Save MeasurementSet Summary"
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.directoryURL = URL(fileURLWithPath: dataset.path).deletingLastPathComponent()
+        panel.nameFieldStringValue = "\(dataset.name)-listobs.\(summaryFileExtension)"
+        panel.allowedContentTypes = summaryFormat == "json" ? [.json] : [.plainText]
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try summaryResult.summaryText.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                summaryError = "Save failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private var summaryFileExtension: String {
+        summaryFormat == "json" ? "json" : "txt"
     }
 
     private func selectionTextField(
@@ -6098,6 +6344,34 @@ struct MeasurementSetPlotPanel: View {
         return String(format: "%.6g", value)
     }
 
+    private func selectorToken(_ value: String?) -> String? {
+        guard let value = normalizedPickerValue(value) else {
+            return nil
+        }
+        if let colon = value.firstIndex(of: ":") {
+            return String(value[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value
+    }
+
+    private func spectralWindowSelectorToken(_ plotState: MeasurementSetExplorerPlotState) -> String? {
+        guard let spectralWindow = selectorToken(plotState.selectedSpectralWindow) else {
+            return nil
+        }
+        guard let channelSelection = plotState.selectedChannelSelection, !channelSelection.isEmpty else {
+            return spectralWindow
+        }
+        return "\(spectralWindow):\(channelSelection)"
+    }
+
+    private func normalizedPickerValue(_ value: String?) -> String? {
+        let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let normalized, !normalized.isEmpty, normalized != "all" else {
+            return nil
+        }
+        return normalized
+    }
+
     @ViewBuilder
     private var plotMetadata: some View {
         if let result = visiblePlotResult {
@@ -6864,6 +7138,7 @@ struct GenericTaskPanel: View {
     @State private var genericChannelStartText = ""
     @State private var genericChannelEndText = ""
     @State private var genericChannelStepText = ""
+    @State private var showingAdvancedParameters = false
     private let parameterGridColumns = [
         GridItem(.adaptive(minimum: 260), alignment: .topLeading)
     ]
@@ -7009,9 +7284,22 @@ struct GenericTaskPanel: View {
 
     private func genericParameterBlock(schema: TaskUISchema) -> some View {
         let groups = parameterGroups(for: schema)
+        let hiddenAdvancedCount = schema.arguments
+            .filter { !$0.hiddenInTUI && $0.advanced && !shouldRevealAdvancedArgument($0) }
+            .count
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Parameters")
-                .workbenchFont(.headline)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Parameters")
+                    .workbenchFont(.headline)
+                Spacer()
+                if hiddenAdvancedCount > 0 {
+                    Toggle("Advanced", isOn: $showingAdvancedParameters)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .help("Show less common parameters. CASA exposes many of these only after selecting related modes.")
+                        .accessibilityIdentifier("task.parameters.advanced")
+                }
+            }
             ForEach(groups) { group in
                 VStack(alignment: .leading, spacing: 6) {
                     if groups.count > 1 {
@@ -7033,6 +7321,7 @@ struct GenericTaskPanel: View {
     private func parameterGroups(for schema: TaskUISchema) -> [TaskParameterGroup] {
         let arguments = schema.arguments
             .filter { !$0.hiddenInTUI }
+            .filter { shouldShowArgument($0) }
             .sorted { $0.order < $1.order }
         var groups: [TaskParameterGroup] = []
         for argument in arguments {
@@ -7045,6 +7334,68 @@ struct GenericTaskPanel: View {
             }
         }
         return groups
+    }
+
+    private func shouldShowArgument(_ argument: TaskUIArgument) -> Bool {
+        if activeTaskID == "imager",
+           ["niter", "threshold_jy"].contains(argument.id),
+            genericTaskToggle("dirty_only") {
+            return false
+        }
+        return !argument.advanced
+            || showingAdvancedParameters
+            || shouldRevealAdvancedArgument(argument)
+    }
+
+    private func shouldRevealAdvancedArgument(_ argument: TaskUIArgument) -> Bool {
+        guard activeTaskID == "imager" else {
+            return hasNonDefaultGenericValue(argument)
+        }
+
+        switch argument.id {
+        case "robust":
+            return ["briggs", "briggsbwtaper"].contains(genericTaskValue("weighting"))
+        case "start", "width", "outframe", "veltype", "interpolation", "restfreq", "restoringbeam",
+             "channel_start", "channel_count", "perchanweightdensity":
+            return ["cube", "cubedata"].contains(genericTaskValue("specmode"))
+        case "nterms":
+            return genericTaskValue("deconvolver") == "mtmfs"
+        case "scales", "smallscalebias":
+            return genericTaskValue("deconvolver") == "multiscale"
+        case "sidelobethreshold", "noisethreshold", "lownoisethreshold", "negativethreshold",
+             "minbeamfrac", "growiterations":
+            return genericTaskValue("usemask") == "auto-multithresh"
+        case "wprojplanes":
+            return genericTaskValue("gridder") == "wproject" || genericTaskValue("wterm") == "wproject"
+        case "usepointing":
+            return ["mosaic", "awproject", "awp2", "awphpg"].contains(genericTaskValue("gridder"))
+        case "pblimit", "pbcor":
+            return genericTaskToggle("write_pb") || genericTaskToggle("pbcor") || ["mosaic", "awproject", "awp2", "awphpg"].contains(genericTaskValue("gridder"))
+        default:
+            return hasNonDefaultGenericValue(argument)
+        }
+    }
+
+    private func hasNonDefaultGenericValue(_ argument: TaskUIArgument) -> Bool {
+        if argument.parser.kind == "toggle" {
+            let current = genericTaskToggle(argument.id)
+            let defaultValue = argument.default == "true"
+            return current != defaultValue
+        }
+        let current = genericTaskValue(argument.id)
+        let defaultValue = argument.default ?? ""
+        return !current.isEmpty && current != defaultValue
+    }
+
+    private func genericTaskValue(_ argumentID: String) -> String {
+        store.state.genericTaskValues[activeTaskID]?[argumentID]
+            ?? schema?.arguments.first { $0.id == argumentID }?.default
+            ?? ""
+    }
+
+    private func genericTaskToggle(_ argumentID: String) -> Bool {
+        store.state.genericTaskToggles[activeTaskID]?[argumentID]
+            ?? (schema?.arguments.first { $0.id == argumentID }?.default == "true")
     }
 
     @ViewBuilder

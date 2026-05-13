@@ -21,6 +21,10 @@ struct CasarsMacApp: App {
 
     init() {
         let arguments = CommandLine.arguments
+        if arguments.contains("--capture-gui-evidence") {
+            Self.captureGUIEvidence(arguments: arguments)
+            exit(0)
+        }
         if arguments.contains("--dump-debug-state") {
             Self.dumpDebugState(
                 simulateMainFlow: arguments.contains("--simulate-main-flow"),
@@ -287,6 +291,25 @@ struct CasarsMacApp: App {
         }
     }
 
+    private static func waitForMeasurementSetPlot(
+        store: WorkbenchStore,
+        datasetID: String,
+        timeoutSeconds: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            let plotState = store.state.measurementSetPlots[datasetID]
+            if plotState?.status == .ready && plotState?.result != nil {
+                return true
+            }
+            if plotState?.status == .failed {
+                return false
+            }
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        return false
+    }
+
     private func openStartupProjectIfNeeded() {
         guard !didOpenStartupProject else { return }
         didOpenStartupProject = true
@@ -380,6 +403,7 @@ enum ProjectOpenPanel {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.treatsFilePackagesAsDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Open"
         return panel.runModal() == .OK ? panel.url : nil
@@ -391,6 +415,7 @@ enum TutorialPackOpenPanel {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
+        panel.treatsFilePackagesAsDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Open Tutorial Pack"
         return panel.runModal() == .OK ? panel.url : nil

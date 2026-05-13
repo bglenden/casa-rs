@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import shutil
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,11 @@ TEMPLATE_PATHS = {
     "alma-first-look-image-analysis": REPO_ROOT
     / "resources"
     / "tutorial-packs"
-    / "alma-first-look-image-analysis.template.json"
+    / "alma-first-look-image-analysis.template.json",
+    "alma-first-look-imaging": REPO_ROOT
+    / "resources"
+    / "tutorial-packs"
+    / "alma-first-look-imaging.template.json",
 }
 REVIEW_SCHEMA_PATH = REPO_ROOT / "resources" / "tutorial-pack-review.schema.json"
 
@@ -29,16 +34,25 @@ def default_tutorial_root() -> Path:
 
 
 def default_output(pack_id: str) -> Path:
-    if pack_id != "alma-first-look-image-analysis":
-        raise ValueError(f"unknown pack {pack_id!r}")
+    suffixes = {
+        "alma-first-look-image-analysis": (
+            "image-analysis",
+            "alma-first-look-image-analysis.pack",
+        ),
+        "alma-first-look-imaging": ("imaging", "alma-first-look-imaging.pack"),
+    }
+    try:
+        tutorial_suffix, pack_name = suffixes[pack_id]
+    except KeyError:
+        raise ValueError(f"unknown pack {pack_id!r}") from None
     return (
         default_tutorial_root()
         / "tutorial-parity"
         / "alma"
         / "first-look"
         / "twhya"
-        / "image-analysis"
-        / "alma-first-look-image-analysis.pack"
+        / tutorial_suffix
+        / pack_name
     )
 
 
@@ -49,6 +63,60 @@ def copy_directory(source: Path, destination: Path) -> None:
         else:
             destination.unlink()
     shutil.copytree(source, destination)
+
+
+def remove_existing(path: Path) -> None:
+    if path.exists() or path.is_symlink():
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+
+def is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def extract_tar_member_source(member_name: str) -> str:
+    return member_name.split("/", 1)[0]
+
+
+def extract_tar(source: Path, destination: Path) -> None:
+    remove_existing(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    extract_root = destination.parent
+    expected_root = destination.name
+    with tarfile.open(source) as archive:
+        for member in archive.getmembers():
+            if member.name.startswith("/") or ".." in Path(member.name).parts:
+                raise SystemExit(f"refusing unsafe tar member {member.name!r} in {source}")
+            if extract_tar_member_source(member.name) != expected_root:
+                raise SystemExit(
+                    f"tar {source} does not extract to expected top-level {expected_root!r}"
+                )
+            target = (extract_root / member.name).resolve()
+            if not is_relative_to(target, extract_root.resolve()):
+                raise SystemExit(f"refusing tar member outside pack root: {member.name!r}")
+        try:
+            archive.extractall(extract_root, filter="fully_trusted")
+        except TypeError:
+            archive.extractall(extract_root)
+    if not destination.exists():
+        raise SystemExit(f"tar {source} did not produce expected input {destination}")
+
+
+def materialize_input(source: Path, destination: Path) -> None:
+    if source.is_dir():
+        copy_directory(source, destination)
+        return
+    if source.is_file() and source.suffix == ".tar":
+        extract_tar(source, destination)
+        return
+    raise SystemExit(f"cannot materialize input source {source}")
 
 
 def write_json(path: Path, payload: Any) -> None:
@@ -62,6 +130,11 @@ def input_source_path(tutorial_root: Path, input_entry: dict[str, Any]) -> Path:
         return tutorial_root / "tutorial-parity" / "alma" / "first-look" / "twhya" / "twhya_cont.image"
     if registry_key == "alma/first-look/twhya/n2hp-image":
         return tutorial_root / "tutorial-parity" / "alma" / "first-look" / "twhya" / "twhya_n2hp.image"
+    if registry_key == "alma/first-look/twhya/calibrated-ms":
+        extracted = tutorial_root / "tutorial-parity" / "alma" / "first-look" / "twhya" / "twhya_calibrated.ms"
+        if extracted.exists():
+            return extracted
+        return extracted.with_suffix(".ms.tar")
     return tutorial_root / "tutorial-parity" / registry_key
 
 
@@ -103,8 +176,9 @@ def generate_pack(pack_id: str, output: Path, tutorial_root: Path, materialize_i
         destination = output / input_entry["pack_path"]
         status = "missing"
         if source.exists() and materialize_inputs:
-            validate_expected_input_masks(input_entry, source)
-            copy_directory(source, destination)
+            if source.is_dir():
+                validate_expected_input_masks(input_entry, source)
+            materialize_input(source, destination)
             validate_expected_input_masks(input_entry, destination)
             status = "staged"
         elif destination.exists():

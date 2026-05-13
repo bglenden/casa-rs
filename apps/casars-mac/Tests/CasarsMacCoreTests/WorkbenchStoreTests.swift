@@ -69,6 +69,20 @@ final class WorkbenchStoreTests: XCTestCase {
         )
     }
 
+    func testTutorialPackMeasurementSetInputKeepsMeasurementSetKind() throws {
+        let packURL = try makeTemporaryTutorialPack(
+            stagedInputPaths: ["twhya_calibrated.ms"],
+            templateName: "alma-first-look-imaging.template.json"
+        )
+        defer { removeTemporaryTutorialPack(packURL) }
+
+        let context = try TutorialPackContext.load(path: packURL.path)
+        let dataset = try XCTUnwrap(context.datasetSummaries().first { $0.name == "twhya_calibrated.ms" })
+
+        XCTAssertEqual(dataset.kind, .measurementSet)
+        XCTAssertEqual(dataset.path, packURL.appendingPathComponent("twhya_calibrated.ms").standardizedFileURL.path)
+    }
+
     func testOpenTutorialPackPopulatesGuiDebugSnapshot() throws {
         let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
         defer { removeTemporaryTutorialPack(packURL) }
@@ -583,11 +597,11 @@ final class WorkbenchStoreTests: XCTestCase {
             "ms", "imagename", "imsize", "cell_arcsec", "field", "phasecenter_field",
             "spw", "datacolumn", "specmode", "channel_count", "start", "width",
             "outframe", "restfreq", "deconvolver", "weighting", "robust",
-            "perchanweightdensity", "restoringbeam", "niter", "nmajor", "gain",
+            "gridder", "perchanweightdensity", "restoringbeam", "niter", "nmajor", "gain",
             "threshold_jy", "usemask", "noisethreshold", "sidelobethreshold",
             "lownoisethreshold", "minbeamfrac", "negativethreshold",
             "deconvolver", "scales", "smallscalebias", "wterm", "wprojplanes",
-            "nterms", "savemodel", "outlierfile", "pbcor", "pblimit"
+            "nterms", "savemodel", "outlierfile", "write_pb", "pbcor", "pblimit"
         ]
 
         for argumentID in tutorialArguments {
@@ -1128,6 +1142,7 @@ final class WorkbenchStoreTests: XCTestCase {
             .appendingPathComponent("casars-disk-refresh-image-\(UUID().uuidString)", isDirectory: true)
         let outputURL = rootURL.appendingPathComponent("twhya_cont-importfits.image", isDirectory: true)
         try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        try Data([0x54, 0x61, 0x62, 0x6c, 0x65]).write(to: outputURL.appendingPathComponent("table.dat"))
         defer { try? FileManager.default.removeItem(at: rootURL) }
         let outputPath = outputURL.standardizedFileURL.path
         let outputDataset = DatasetSummary(
@@ -1156,6 +1171,88 @@ final class WorkbenchStoreTests: XCTestCase {
         let producedDataset = try XCTUnwrap(store.state.project.datasets.first { $0.path == outputPath })
         XCTAssertEqual(producedDataset.kind, .imageCube)
         XCTAssertEqual(producedDataset.name, "twhya_cont-importfits.image")
+    }
+
+    func testProjectDiskRefreshSurfacesLooseImagerProductDirectoriesFromProjectTree() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-disk-refresh-imager-products-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let productNames = [
+            "phase_cal.psf",
+            "phase_cal.residual",
+            "phase_cal.model",
+            "phase_cal.image",
+            "phase_cal.image.pbcor",
+            "phase_cal.psf.tt0",
+            "phase_cal.alpha.error",
+        ]
+        var probedPaths: [String: DatasetSummary] = [:]
+        for name in productNames {
+            let productURL = rootURL.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: productURL, withIntermediateDirectories: true)
+            try Data([0x54, 0x61, 0x62, 0x6c, 0x65]).write(to: productURL.appendingPathComponent("table.dat"))
+            let path = productURL.standardizedFileURL.path
+            probedPaths[path] = DatasetSummary(
+                id: path,
+                name: name,
+                path: path,
+                kind: .imageCube,
+                size: "250 x 250 x 1 x 1",
+                units: "Jy/beam",
+                notes: "Recognized by Rust probe."
+            )
+        }
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed),
+                    diagnostics: []
+                ),
+                probedPaths: probedPaths
+            )
+        )
+
+        store.openProject(path: rootURL.path)
+        store.refreshProjectFromDisk()
+
+        let surfacedNames = Set(store.state.project.datasets.map(\.name))
+        XCTAssertTrue(productNames.allSatisfy { surfacedNames.contains($0) })
+    }
+
+    func testProjectDiskRefreshDoesNotProbeLooseDirectoryBySuffixAlone() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-disk-refresh-not-table-\(UUID().uuidString)", isDirectory: true)
+        let outputURL = rootURL.appendingPathComponent("phase_cal.psf", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let outputPath = outputURL.standardizedFileURL.path
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed),
+                    diagnostics: []
+                ),
+                probedPaths: [
+                    outputPath: DatasetSummary(
+                        id: outputPath,
+                        name: "phase_cal.psf",
+                        path: outputPath,
+                        kind: .imageCube,
+                        size: "250 x 250 x 1 x 1",
+                        units: "Jy/beam",
+                        notes: "Should not be used without table.dat."
+                    )
+                ]
+            )
+        )
+
+        store.openProject(path: rootURL.path)
+        store.refreshProjectFromDisk()
+
+        XCTAssertFalse(store.state.project.datasets.contains { $0.path == outputPath })
     }
 
     func testProjectDiskRefreshSurfacesTopLevelRegionFile() throws {
@@ -1414,6 +1511,7 @@ final class WorkbenchStoreTests: XCTestCase {
                 "deconvolver": "mtmfs",
                 "weighting": "briggsbwtaper",
                 "robust": "0.5",
+                "gridder": "wproject",
                 "restoringbeam": "common",
                 "niter": "1000",
                 "nmajor": "4",
@@ -1436,6 +1534,7 @@ final class WorkbenchStoreTests: XCTestCase {
             ],
             toggles: [
                 "perchanweightdensity": true,
+                "write_pb": true,
                 "pbcor": true,
                 "write_preview_pngs": false
             ]
@@ -1450,8 +1549,8 @@ final class WorkbenchStoreTests: XCTestCase {
             "--restoringbeam", "--nmajor", "--gain", "--threshold-jy", "--usemask",
             "--noisethreshold", "--sidelobethreshold", "--lownoisethreshold",
             "--minbeamfrac", "--negativethreshold", "--scales", "--smallscalebias",
-            "--wterm", "--wprojplanes", "--nterms", "--savemodel", "--outlierfile",
-            "--pbcor", "--pblimit", "--no-preview-pngs"
+            "--gridder", "--wterm", "--wprojplanes", "--nterms", "--savemodel", "--outlierfile",
+            "--write-pb", "--pbcor", "--pblimit", "--no-preview-pngs"
         ] {
             XCTAssertTrue(arguments.contains(flag), "missing \(flag)")
         }
@@ -4199,13 +4298,16 @@ private struct StubTaskExecutionMatrixClient: TaskExecutionMatrixClient {
     }
 }
 
-private func makeTemporaryTutorialPack(stagedInputPaths: Set<String> = []) throws -> URL {
+private func makeTemporaryTutorialPack(
+    stagedInputPaths: Set<String> = [],
+    templateName: String = "alma-first-look-image-analysis.template.json"
+) throws -> URL {
     let fileManager = FileManager.default
     let packURL = fileManager.temporaryDirectory
         .appendingPathComponent("casars-tutorial-pack-\(UUID().uuidString).pack", isDirectory: true)
     try fileManager.createDirectory(at: packURL, withIntermediateDirectories: true)
     let templateURL = repositoryRootURL()
-        .appendingPathComponent("resources/tutorial-packs/alma-first-look-image-analysis.template.json")
+        .appendingPathComponent("resources/tutorial-packs/\(templateName)")
     try fileManager.copyItem(at: templateURL, to: packURL.appendingPathComponent("pack.json"))
     for relativePath in stagedInputPaths {
         let inputURL = packURL.appendingPathComponent(relativePath, isDirectory: true)

@@ -5,6 +5,7 @@ from . import imager
 from . import image_analysis
 from . import importvla
 from . import msexplore
+from . import split
 from . import simulation_analysis
 from . import simobserve
 
@@ -14,6 +15,7 @@ __all__ = [
     "image_analysis",
     "importvla",
     "msexplore",
+    "split",
     "simulation_analysis",
     "simobserve",
 ]

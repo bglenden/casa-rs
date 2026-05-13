@@ -799,6 +799,12 @@ public enum MeasurementSetExplorerPlotPreset: String, CaseIterable, Codable, Equ
 
     public var id: String { rawValue }
 
+    public static var menuCases: [MeasurementSetExplorerPlotPreset] {
+        allCases.sorted { lhs, rhs in
+            lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+    }
+
     public var title: String {
         switch self {
         case .uvCoverage:
@@ -853,6 +859,86 @@ public enum MeasurementSetExplorerPlotPreset: String, CaseIterable, Codable, Equ
             "Amplitude vs Time"
         case .realVsImaginary:
             "Real vs Imaginary"
+        }
+    }
+}
+
+public enum MeasurementSetPlotColorAxis: String, CaseIterable, Codable, Equatable, Identifiable {
+    case none
+    case field
+    case scan
+    case spectralWindow
+    case baseline
+    case correlation
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .none:
+            "None"
+        case .field:
+            "Field"
+        case .scan:
+            "Scan"
+        case .spectralWindow:
+            "Spectral Window"
+        case .baseline:
+            "Baseline"
+        case .correlation:
+            "Correlation"
+        }
+    }
+
+    public var protocolValue: String {
+        switch self {
+        case .none:
+            "none"
+        case .field:
+            "field"
+        case .scan:
+            "scan"
+        case .spectralWindow:
+            "spw"
+        case .baseline:
+            "baseline"
+        case .correlation:
+            "correlation"
+        }
+    }
+}
+
+public enum MeasurementSetPlotIterationAxis: String, CaseIterable, Codable, Equatable, Identifiable {
+    case field
+    case scan
+    case spectralWindow
+    case correlation
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .field:
+            "Field"
+        case .scan:
+            "Scan"
+        case .spectralWindow:
+            "Spectral Window"
+        case .correlation:
+            "Correlation"
+        }
+    }
+
+    public var protocolValue: String {
+        switch self {
+        case .field:
+            "field"
+        case .scan:
+            "scan"
+        case .spectralWindow:
+            "spw"
+        case .correlation:
+            "correlation"
         }
     }
 }
@@ -994,6 +1080,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
     public var selectedFeed: String?
     public var selectedMSSelect: String?
     public var dataColumn: String
+    public var colorBy: MeasurementSetPlotColorAxis
     public var avgChannel: UInt64?
     public var avgTime: Double?
     public var avgScan: Bool
@@ -1002,6 +1089,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
     public var avgAntenna: Bool
     public var avgSPW: Bool
     public var scalarAverage: Bool
+    public var iterationAxis: MeasurementSetPlotIterationAxis?
     public var maxPlotPoints: UInt64
     public var status: MeasurementSetPlotStatus
     public var lastError: String?
@@ -1024,6 +1112,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         selectedFeed: String? = nil,
         selectedMSSelect: String? = nil,
         dataColumn: String,
+        colorBy: MeasurementSetPlotColorAxis = .field,
         avgChannel: UInt64? = nil,
         avgTime: Double? = nil,
         avgScan: Bool = false,
@@ -1032,6 +1121,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         avgAntenna: Bool = false,
         avgSPW: Bool = false,
         scalarAverage: Bool = false,
+        iterationAxis: MeasurementSetPlotIterationAxis? = nil,
         maxPlotPoints: UInt64 = WorkbenchState.defaultMeasurementSetPlotMaxPoints,
         status: MeasurementSetPlotStatus,
         lastError: String?,
@@ -1053,6 +1143,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         self.selectedFeed = selectedFeed
         self.selectedMSSelect = selectedMSSelect
         self.dataColumn = dataColumn
+        self.colorBy = colorBy
         self.avgChannel = avgChannel
         self.avgTime = avgTime
         self.avgScan = avgScan
@@ -1061,6 +1152,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         self.avgAntenna = avgAntenna
         self.avgSPW = avgSPW
         self.scalarAverage = scalarAverage
+        self.iterationAxis = iterationAxis
         self.maxPlotPoints = maxPlotPoints
         self.status = status
         self.lastError = lastError
@@ -1075,6 +1167,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
             selectedSpectralWindow: nil,
             selectedCorrelation: nil,
             dataColumn: dataset.dataColumns.first ?? "DATA",
+            colorBy: .field,
             maxPlotPoints: WorkbenchState.defaultMeasurementSetPlotMaxPoints,
             status: .idle,
             lastError: nil,
@@ -2819,6 +2912,7 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
     public var selectedFeed: String?
     public var selectedMSSelect: String?
     public var dataColumn: String
+    public var colorBy: MeasurementSetPlotColorAxis
     public var avgChannel: UInt64?
     public var avgTime: Double?
     public var avgScan: Bool
@@ -2859,6 +2953,7 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
         selectedFeed = plotState.selectedFeed
         selectedMSSelect = plotState.selectedMSSelect
         dataColumn = plotState.dataColumn
+        colorBy = plotState.colorBy
         avgChannel = plotState.avgChannel
         avgTime = plotState.avgTime
         avgScan = plotState.avgScan

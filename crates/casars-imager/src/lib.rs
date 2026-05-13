@@ -581,6 +581,7 @@ fn oracle_parameter_manifest(config: &CliConfig) -> BTreeMap<String, String> {
         config.mosaic_pb_limit.to_string(),
     );
     manifest.insert("pbcor".to_string(), config.pbcor.to_string());
+    manifest.insert("write_pb".to_string(), config.write_pb.to_string());
     manifest.insert(
         "minor_cycle_length".to_string(),
         config.minor_cycle_length.to_string(),
@@ -3512,6 +3513,8 @@ pub struct CliConfig {
     pub mosaic_pb_limit: f32,
     /// Write CASA-style PB-corrected mosaic image products.
     pub pbcor: bool,
+    /// Write the primary-beam product used for PB correction.
+    pub write_pb: bool,
     /// Residual-refresh cadence.
     pub minor_cycle_length: usize,
     /// CASA-style cycle-threshold scale factor.
@@ -3581,6 +3584,7 @@ impl CliConfig {
         let mut psf_cutoff = 0.35f32;
         let mut mosaic_pb_limit = 0.2f32;
         let mut pbcor = false;
+        let mut write_pb = false;
         let mut minor_cycle_length = 8usize;
         let mut cyclefactor = 1.0f32;
         let mut min_psf_fraction = 0.05f32;
@@ -3739,6 +3743,10 @@ impl CliConfig {
                     weighting_name = next_value(&mut args, "--weighting")?;
                     continue;
                 }
+                "--gridder" => {
+                    w_term_mode = parse_gridder_w_term_mode(&next_value(&mut args, "--gridder")?)?;
+                    continue;
+                }
                 "--perchanweightdensity" => {
                     per_channel_weight_density = true;
                     continue;
@@ -3838,6 +3846,10 @@ impl CliConfig {
                 }
                 "--pbcor" => {
                     pbcor = true;
+                    continue;
+                }
+                "--write-pb" => {
+                    write_pb = true;
                     continue;
                 }
                 "--minor-cycle-length" => {
@@ -4039,6 +4051,7 @@ impl CliConfig {
             psf_cutoff,
             mosaic_pb_limit,
             pbcor,
+            write_pb,
             minor_cycle_length,
             cyclefactor,
             min_psf_fraction,
@@ -10009,7 +10022,7 @@ struct PrimaryBeamWeightSample {
 }
 
 fn needs_single_field_primary_beam_products(config: &CliConfig) -> bool {
-    config.pbcor || config.mosaic_pb_limit < 0.0
+    config.pbcor || config.write_pb || config.mosaic_pb_limit < 0.0
 }
 
 fn single_field_primary_beam_context(
@@ -10423,31 +10436,33 @@ fn write_products(
             };
             let limited_pb_product = pb_limited_product(&pb_product, config.mosaic_pb_limit);
             let support_mask = pb_support_mask_product(&pb_product, config.mosaic_pb_limit);
-            write_single_product_inner(SingleProductWrite {
-                path: &PathBuf::from(format!("{base}.pb.tt0")),
-                data: &limited_pb_product,
-                coords,
-                units: "",
-                beam_set: ImageBeamSet::default(),
-                role: "pb",
-                plane_stokes,
-                channel_frequencies_hz,
-                reffreq_hz,
-                mask: Some(&support_mask),
-            })?;
-            for term_index in 1..result.image_terms.len() {
-                let zero_pb_term = Array4::<f32>::zeros(image_tt0.dim());
-                write_single_product(
-                    &PathBuf::from(format!("{base}.pb.tt{term_index}")),
-                    &zero_pb_term,
+            if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
+                write_single_product_inner(SingleProductWrite {
+                    path: &PathBuf::from(format!("{base}.pb.tt0")),
+                    data: &limited_pb_product,
                     coords,
-                    "",
-                    ImageBeamSet::default(),
-                    "pb",
+                    units: "",
+                    beam_set: ImageBeamSet::default(),
+                    role: "pb",
                     plane_stokes,
                     channel_frequencies_hz,
                     reffreq_hz,
-                )?;
+                    mask: Some(&support_mask),
+                })?;
+                for term_index in 1..result.image_terms.len() {
+                    let zero_pb_term = Array4::<f32>::zeros(image_tt0.dim());
+                    write_single_product(
+                        &PathBuf::from(format!("{base}.pb.tt{term_index}")),
+                        &zero_pb_term,
+                        coords,
+                        "",
+                        ImageBeamSet::default(),
+                        "pb",
+                        plane_stokes,
+                        channel_frequencies_hz,
+                        reffreq_hz,
+                    )?;
+                }
             }
             if config.pbcor {
                 for (term_index, image_term) in result.image_terms.iter().enumerate() {
@@ -10696,23 +10711,26 @@ fn write_products(
             channel_frequencies_hz,
             reffreq_hz,
         )?;
-        let pb_product = mosaic_pb_product.expect("mosaic PB product computed from weight image");
-        let limited_pb_product = pb_limited_product(&pb_product, config.mosaic_pb_limit);
-        write_single_product_inner(SingleProductWrite {
-            path: &PathBuf::from(format!("{base}.pb")),
-            data: &limited_pb_product,
-            coords,
-            units: "",
-            beam_set: ImageBeamSet::default(),
-            role: "pb",
-            plane_stokes,
-            channel_frequencies_hz,
-            reffreq_hz,
-            mask: mosaic_support_mask.as_ref(),
-        })?;
+        let pb_product = mosaic_pb_product
+            .as_ref()
+            .expect("mosaic PB product computed from weight image");
+        let limited_pb_product = pb_limited_product(pb_product, config.mosaic_pb_limit);
+        if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
+            write_single_product_inner(SingleProductWrite {
+                path: &PathBuf::from(format!("{base}.pb")),
+                data: &limited_pb_product,
+                coords,
+                units: "",
+                beam_set: ImageBeamSet::default(),
+                role: "pb",
+                plane_stokes,
+                channel_frequencies_hz,
+                reffreq_hz,
+                mask: mosaic_support_mask.as_ref(),
+            })?;
+        }
         if config.pbcor {
-            let pbcor_product =
-                pb_correct_image_product(image, &pb_product, config.mosaic_pb_limit);
+            let pbcor_product = pb_correct_image_product(image, pb_product, config.mosaic_pb_limit);
             write_single_product_inner(SingleProductWrite {
                 path: &PathBuf::from(format!("{base}.image.pbcor")),
                 data: &pbcor_product,
@@ -10729,18 +10747,20 @@ fn write_products(
     }
     if let Some(pb_product) = single_field_pb_product.as_ref() {
         let limited_pb_product = pb_limited_product(pb_product, config.mosaic_pb_limit);
-        write_single_product_inner(SingleProductWrite {
-            path: &PathBuf::from(format!("{base}.pb")),
-            data: &limited_pb_product,
-            coords,
-            units: "",
-            beam_set: ImageBeamSet::default(),
-            role: "pb",
-            plane_stokes,
-            channel_frequencies_hz,
-            reffreq_hz,
-            mask: single_field_support_mask.as_ref(),
-        })?;
+        if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
+            write_single_product_inner(SingleProductWrite {
+                path: &PathBuf::from(format!("{base}.pb")),
+                data: &limited_pb_product,
+                coords,
+                units: "",
+                beam_set: ImageBeamSet::default(),
+                role: "pb",
+                plane_stokes,
+                channel_frequencies_hz,
+                reffreq_hz,
+                mask: single_field_support_mask.as_ref(),
+            })?;
+        }
         if config.pbcor {
             let pbcor_product = pb_correct_image_product(image, pb_product, config.mosaic_pb_limit);
             write_single_product_inner(SingleProductWrite {
@@ -10765,15 +10785,19 @@ fn write_products(
         write_preview_png(&PathBuf::from(format!("{base}.image.png")), image)?;
         if let Some(weight_product) = debug_weight_product.as_ref() {
             write_preview_png(&PathBuf::from(format!("{base}.weight.png")), weight_product)?;
-            let pb_product = mosaic_pb_product_from_weight_product(weight_product);
-            let limited_pb_product = pb_limited_product(&pb_product, config.mosaic_pb_limit);
-            write_preview_png(
-                &PathBuf::from(format!("{base}.pb.png")),
-                &limited_pb_product,
-            )?;
+            let pb_product = mosaic_pb_product
+                .as_ref()
+                .expect("mosaic PB product computed from weight image");
+            if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
+                let limited_pb_product = pb_limited_product(pb_product, config.mosaic_pb_limit);
+                write_preview_png(
+                    &PathBuf::from(format!("{base}.pb.png")),
+                    &limited_pb_product,
+                )?;
+            }
             if config.pbcor {
                 let pbcor_product =
-                    pb_correct_image_product(image, &pb_product, config.mosaic_pb_limit);
+                    pb_correct_image_product(image, pb_product, config.mosaic_pb_limit);
                 write_preview_png(
                     &PathBuf::from(format!("{base}.image.pbcor.png")),
                     &pbcor_product,
@@ -10781,11 +10805,13 @@ fn write_products(
             }
         }
         if let Some(pb_product) = single_field_pb_product.as_ref() {
-            let limited_pb_product = pb_limited_product(pb_product, config.mosaic_pb_limit);
-            write_preview_png(
-                &PathBuf::from(format!("{base}.pb.png")),
-                &limited_pb_product,
-            )?;
+            if config.write_pb || config.pbcor || config.mosaic_pb_limit < 0.0 {
+                let limited_pb_product = pb_limited_product(pb_product, config.mosaic_pb_limit);
+                write_preview_png(
+                    &PathBuf::from(format!("{base}.pb.png")),
+                    &limited_pb_product,
+                )?;
+            }
             if config.pbcor {
                 let pbcor_product =
                     pb_correct_image_product(image, pb_product, config.mosaic_pb_limit);
@@ -11677,6 +11703,21 @@ fn parse_w_term_mode(text: &str) -> Result<WTermMode, String> {
         "wproject" => Ok(WTermMode::WProject),
         _ => Err(format!(
             "unsupported --wterm value {text:?}; expected none, direct, or wproject"
+        )),
+    }
+}
+
+fn parse_gridder_w_term_mode(text: &str) -> Result<WTermMode, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "standard" | "gridft" | "ft" | "mosaic" => Ok(WTermMode::None),
+        "wproject" => Ok(WTermMode::WProject),
+        "widefield" | "awproject" | "awp2" | "awphpg" => Err(format!(
+            "gridder={text:?} is not implemented by casa-rs imager yet; \
+             supported gridder values are standard, wproject, and mosaic. \
+             Track widefield/AW-family parity in https://github.com/bglenden/casa-rs/issues/52"
+        )),
+        _ => Err(format!(
+            "unsupported --gridder value {text:?}; expected standard, wproject, widefield, mosaic, awproject, awp2, or awphpg"
         )),
     }
 }
@@ -14209,6 +14250,7 @@ Options:
   --stokes I|Q|U|V          explicit scalar Stokes-plane imaging
   --specmode MODE           mfs, cube, or cubedata
   --weighting MODE          natural, uniform, briggs, or briggsbwtaper
+  --gridder MODE            standard, wproject, widefield, mosaic, awproject, awp2, or awphpg
   --perchanweightdensity    cube uniform/briggs density per output channel
   --usepointing             use POINTING-table directions instead of FIELD phase centers
   --uvtaper SPEC            gaussian taper: MAJOR[,MINOR[,PA]] with arcsec/deg/lambda units
@@ -14226,6 +14268,7 @@ Options:
   --nsigma VALUE            robust-RMS stopping multiplier (default 0.0)
   --psfcutoff VALUE         PSF beam-fit cutoff fraction (default 0.35)
   --pblimit VALUE           primary-beam cutoff; negative keeps PB products unmasked (default 0.2)
+  --write-pb                write the primary-beam image used for PB correction
   --pbcor                   write mosaic primary-beam-corrected image products
   --minor-cycle-length N    residual refresh cadence (default 8)
   --cycleniter N            alias for --minor-cycle-length
@@ -15528,6 +15571,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -15583,6 +15627,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -15654,6 +15699,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -15717,6 +15763,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -15783,6 +15830,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -15846,6 +15894,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -15901,6 +15950,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -17046,6 +17096,23 @@ mod tests {
         assert_eq!(parse_w_term_mode("2d").unwrap(), WTermMode::None);
         assert_eq!(parse_w_term_mode("direct").unwrap(), WTermMode::Direct);
         assert!(parse_w_term_mode("wproj").is_err());
+        assert_eq!(
+            parse_gridder_w_term_mode("standard").unwrap(),
+            WTermMode::None
+        );
+        assert_eq!(
+            parse_gridder_w_term_mode("mosaic").unwrap(),
+            WTermMode::None
+        );
+        assert_eq!(
+            parse_gridder_w_term_mode("wproject").unwrap(),
+            WTermMode::WProject
+        );
+        assert!(
+            parse_gridder_w_term_mode("awproject")
+                .unwrap_err()
+                .contains("not implemented")
+        );
 
         assert_eq!(parse_mask_box("1,2,3,4").unwrap(), [1, 2, 3, 4]);
         assert!(parse_mask_box("1,2,3").is_err());
@@ -17082,6 +17149,7 @@ mod tests {
         assert!(parse_uv_taper("10arcsec,20lambda,30deg,40deg").is_err());
 
         assert!(help_text().contains("--specmode"));
+        assert!(help_text().contains("--gridder"));
         assert!(help_text().contains("--uvtaper"));
         assert!(help_text().contains("--json-schema"));
         assert!(help_text().contains("--protocol-info"));
@@ -17748,6 +17816,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.2,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.05,
@@ -18036,6 +18105,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -18136,6 +18206,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -18232,6 +18303,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -18380,6 +18452,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -18508,6 +18581,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -18589,6 +18663,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -18702,6 +18777,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -18810,6 +18886,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -18900,6 +18977,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -19044,6 +19122,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -19140,6 +19219,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -19237,6 +19317,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -19329,6 +19410,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -19437,6 +19519,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -19553,6 +19636,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -19646,6 +19730,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -19882,6 +19967,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -19988,6 +20074,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -20111,6 +20198,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -20251,6 +20339,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -20358,6 +20447,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -20465,6 +20555,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -20591,6 +20682,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -20732,6 +20824,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -20851,6 +20944,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -20969,6 +21063,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -21065,6 +21160,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -21155,6 +21251,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -21246,6 +21343,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -21340,6 +21438,7 @@ deconvolver=mtmfs
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 2,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,

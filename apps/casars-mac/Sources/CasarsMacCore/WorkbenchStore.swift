@@ -231,6 +231,7 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
     public var feed: String?
     public var msselect: String?
     public var dataColumn: String
+    public var colorBy: MeasurementSetPlotColorAxis
     public var avgChannel: UInt64?
     public var avgTime: Double?
     public var avgScan: Bool
@@ -239,6 +240,7 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
     public var avgAntenna: Bool
     public var avgSPW: Bool
     public var scalarAverage: Bool
+    public var iterationAxis: MeasurementSetPlotIterationAxis?
     public var width: UInt32
     public var height: UInt32
     public var maxPlotPoints: UInt64
@@ -259,6 +261,7 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
         feed: String? = nil,
         msselect: String? = nil,
         dataColumn: String,
+        colorBy: MeasurementSetPlotColorAxis = .field,
         avgChannel: UInt64? = nil,
         avgTime: Double? = nil,
         avgScan: Bool = false,
@@ -267,6 +270,7 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
         avgAntenna: Bool = false,
         avgSPW: Bool = false,
         scalarAverage: Bool = false,
+        iterationAxis: MeasurementSetPlotIterationAxis? = nil,
         width: UInt32 = 960,
         height: UInt32 = 600,
         maxPlotPoints: UInt64 = WorkbenchState.defaultMeasurementSetPlotMaxPoints
@@ -286,6 +290,7 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
         self.feed = feed
         self.msselect = msselect
         self.dataColumn = dataColumn
+        self.colorBy = colorBy
         self.avgChannel = avgChannel
         self.avgTime = avgTime
         self.avgScan = avgScan
@@ -294,10 +299,80 @@ public struct MeasurementSetPlotBuildRequest: Equatable {
         self.avgAntenna = avgAntenna
         self.avgSPW = avgSPW
         self.scalarAverage = scalarAverage
+        self.iterationAxis = iterationAxis
         self.width = width
         self.height = height
         self.maxPlotPoints = maxPlotPoints
     }
+}
+
+public struct MeasurementSetSummaryBuildRequest: Equatable {
+    public var datasetPath: String
+    public var format: String
+    public var field: String?
+    public var spectralWindow: String?
+    public var timerange: String?
+    public var uvRange: String?
+    public var antenna: String?
+    public var scan: String?
+    public var correlation: String?
+    public var array: String?
+    public var observation: String?
+    public var intent: String?
+    public var feed: String?
+    public var msselect: String?
+
+    public init(
+        datasetPath: String,
+        format: String = "text",
+        field: String? = nil,
+        spectralWindow: String? = nil,
+        timerange: String? = nil,
+        uvRange: String? = nil,
+        antenna: String? = nil,
+        scan: String? = nil,
+        correlation: String? = nil,
+        array: String? = nil,
+        observation: String? = nil,
+        intent: String? = nil,
+        feed: String? = nil,
+        msselect: String? = nil
+    ) {
+        self.datasetPath = datasetPath
+        self.format = format
+        self.field = field
+        self.spectralWindow = spectralWindow
+        self.timerange = timerange
+        self.uvRange = uvRange
+        self.antenna = antenna
+        self.scan = scan
+        self.correlation = correlation
+        self.array = array
+        self.observation = observation
+        self.intent = intent
+        self.feed = feed
+        self.msselect = msselect
+    }
+}
+
+public struct MeasurementSetSummaryResultSummary: Equatable {
+    public var datasetPath: String
+    public var format: String
+    public var summaryText: String
+    public var selectionSummary: String
+    public var diagnostics: [String]
+
+    public init(result: CasarsFrontendServices.MeasurementSetSummaryResult) {
+        datasetPath = result.datasetPath
+        format = result.format
+        summaryText = result.summaryText
+        selectionSummary = result.selectionSummary
+        diagnostics = result.diagnostics
+    }
+}
+
+public protocol MeasurementSetSummaryClient {
+    func buildSummary(request: MeasurementSetSummaryBuildRequest) throws -> MeasurementSetSummaryResultSummary
 }
 
 public protocol MeasurementSetPlotClient {
@@ -331,6 +406,7 @@ public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
                 feed: request.feed,
                 msselect: request.msselect,
                 dataColumn: request.dataColumn,
+                colorBy: request.colorBy.protocolValue,
                 avgchannel: request.avgChannel,
                 avgtime: request.avgTime,
                 avgscan: request.avgScan,
@@ -339,6 +415,7 @@ public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
                 avgantenna: request.avgAntenna,
                 avgspw: request.avgSPW,
                 scalar: request.scalarAverage,
+                iteraxis: request.iterationAxis?.protocolValue,
                 width: request.width,
                 height: request.height,
                 maxPlotPoints: request.maxPlotPoints
@@ -358,6 +435,32 @@ public struct UniFFIMeasurementSetPlotClient: MeasurementSetPlotClient {
         summary.diagnostics.append(diagnostic)
         measurementSetPlotLogger.info("\(diagnostic, privacy: .public)")
         return summary
+    }
+}
+
+public struct UniFFIMeasurementSetSummaryClient: MeasurementSetSummaryClient {
+    public init() {}
+
+    public func buildSummary(request: MeasurementSetSummaryBuildRequest) throws -> MeasurementSetSummaryResultSummary {
+        let result = try CasarsFrontendServices.buildMeasurementSetSummary(
+            request: CasarsFrontendServices.MeasurementSetSummaryRequest(
+                datasetPath: request.datasetPath,
+                format: request.format,
+                field: request.field,
+                spectralWindow: request.spectralWindow,
+                timerange: request.timerange,
+                uvrange: request.uvRange,
+                antenna: request.antenna,
+                scan: request.scan,
+                correlation: request.correlation,
+                array: request.array,
+                observation: request.observation,
+                intent: request.intent,
+                feed: request.feed,
+                msselect: request.msselect
+            )
+        )
+        return MeasurementSetSummaryResultSummary(result: result)
     }
 }
 
@@ -875,12 +978,18 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     private func shouldProbeLooseProjectDirectory(_ url: URL) -> Bool {
-        switch url.pathExtension.lowercased() {
-        case "image", "ms", "table":
-            return true
-        default:
+        isCasacoreTableDirectory(url)
+    }
+
+    private func isCasacoreTableDirectory(_ url: URL) -> Bool {
+        let tableDatURL = url.appendingPathComponent("table.dat", isDirectory: false)
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: tableDatURL.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue
+        else {
             return false
         }
+        return FileManager.default.isReadableFile(atPath: tableDatURL.path)
     }
 
     private func shouldSurfaceLooseProjectFile(_ url: URL) -> Bool {
@@ -998,8 +1107,11 @@ public final class WorkbenchStore: ObservableObject {
             state.lastErrors.append("Tutorial section \(sectionID) does not define a native GUI step")
             return
         }
-        selectTask(guiStep.taskID)
         applyTutorialPackParameters(guiStep.parameters, taskID: guiStep.taskID, packRoot: context.rootPath)
+        if openTutorialExplorerTask(guiStep.taskID) {
+            return
+        }
+        selectTask(guiStep.taskID)
         let tabID = nextTaskTabID()
         openTab(
             WorkbenchTab(
@@ -1010,6 +1122,43 @@ public final class WorkbenchStore: ObservableObject {
                 taskID: guiStep.taskID
             )
         )
+    }
+
+    private func openTutorialExplorerTask(_ taskID: String) -> Bool {
+        switch taskID {
+        case "msexplore":
+            if let dataset = selectedOrFirstDataset(kind: .measurementSet) {
+                openDatasetExplorer(dataset.id)
+            } else {
+                state.lastErrors.append("Tutorial msexplore step has no MeasurementSet dataset")
+            }
+            return true
+        case "imexplore":
+            if let dataset = selectedOrFirstDataset(kind: .imageCube) {
+                openDatasetExplorer(dataset.id)
+            } else {
+                state.lastErrors.append("Tutorial imexplore step has no image dataset")
+            }
+            return true
+        case "tablebrowser":
+            if let selected = state.selectedDataset, canBrowseAsTable(selected) {
+                openDatasetTableBrowser(selected.id)
+            } else if let dataset = state.project.datasets.first(where: canBrowseAsTable) {
+                openDatasetTableBrowser(dataset.id)
+            } else {
+                state.lastErrors.append("Tutorial tablebrowser step has no casacore table dataset")
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func selectedOrFirstDataset(kind: DatasetKind) -> DatasetSummary? {
+        if let selected = state.selectedDataset, selected.kind == kind {
+            return selected
+        }
+        return state.project.datasets.first { $0.kind == kind }
     }
 
     private func cleanupTemporaryDemoProject() {
@@ -1134,6 +1283,30 @@ public final class WorkbenchStore: ObservableObject {
         openDatasetTableBrowser(normalizedPath)
     }
 
+    public func openImageExplorerPath(_ path: String, sourceDatasetID: String? = nil) {
+        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        if !state.project.datasets.contains(where: { $0.id == normalizedPath }) {
+            if let probed = try? probeClient.probePath(path: normalizedPath), probed.kind == .imageCube {
+                state.project.datasets.append(probed)
+            } else {
+                let sourceName = sourceDatasetID
+                    .flatMap { id in state.project.datasets.first { $0.id == id }?.name }
+                state.project.datasets.append(
+                    DatasetSummary(
+                        id: normalizedPath,
+                        name: URL(fileURLWithPath: normalizedPath).lastPathComponent,
+                        path: normalizedPath,
+                        kind: .imageCube,
+                        size: "CASA image",
+                        units: "",
+                        notes: sourceName.map { "Opened from \($0)." } ?? "Opened from image explorer."
+                    )
+                )
+            }
+        }
+        openDatasetExplorer(normalizedPath)
+    }
+
     public func openRunProduct(runID: String, productID: String) {
         guard let group = state.runProductGroups.first(where: { $0.runID == runID }) else {
             state.lastErrors.append("Unknown run \(runID)")
@@ -1251,6 +1424,12 @@ public final class WorkbenchStore: ObservableObject {
         state.measurementSetPlots[datasetID] = plotState
     }
 
+    public func setMeasurementSetPlotColorBy(_ colorBy: MeasurementSetPlotColorAxis, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.colorBy = colorBy
+        }
+    }
+
     public func setMeasurementSetPlotAvgChannel(_ avgChannel: UInt64?, datasetID: String) {
         updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
             plotState.avgChannel = avgChannel
@@ -1296,6 +1475,12 @@ public final class WorkbenchStore: ObservableObject {
     public func setMeasurementSetPlotScalarAverage(_ scalarAverage: Bool, datasetID: String) {
         updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
             plotState.scalarAverage = scalarAverage
+        }
+    }
+
+    public func setMeasurementSetPlotIterationAxis(_ iterationAxis: MeasurementSetPlotIterationAxis?, datasetID: String) {
+        updateMeasurementSetPlotState(datasetID: datasetID) { plotState in
+            plotState.iterationAxis = iterationAxis
         }
     }
 
@@ -1346,6 +1531,7 @@ public final class WorkbenchStore: ObservableObject {
             feed: plotState.selectedFeed,
             msselect: plotState.selectedMSSelect,
             dataColumn: plotState.dataColumn,
+            colorBy: plotState.colorBy,
             avgChannel: plotState.avgChannel,
             avgTime: plotState.avgTime,
             avgScan: plotState.avgScan,
@@ -1354,6 +1540,7 @@ public final class WorkbenchStore: ObservableObject {
             avgAntenna: plotState.avgAntenna,
             avgSPW: plotState.avgSPW,
             scalarAverage: plotState.scalarAverage,
+            iterationAxis: plotState.iterationAxis,
             maxPlotPoints: plotState.maxPlotPoints
         )
         let tabID = dataset.explorerTabID
@@ -3267,7 +3454,7 @@ public final class WorkbenchStore: ObservableObject {
         let argumentsByID = Dictionary(uniqueKeysWithValues: (schema?.arguments ?? []).map { ($0.id, $0) })
         for (argumentID, value) in parameters {
             if let boolValue = value.boolValue,
-               argumentsByID[argumentID]?.parser.kind == "toggle" {
+               (argumentsByID[argumentID]?.parser.kind == "toggle" || argumentsByID[argumentID] == nil) {
                 setGenericTaskToggle(taskID: taskID, argumentID: argumentID, value: boolValue)
                 continue
             }
@@ -3605,6 +3792,7 @@ public final class WorkbenchStore: ObservableObject {
             "feed:\(plotState.selectedFeed ?? "all")",
             "msselect:\(plotState.selectedMSSelect ?? "all")",
             "data:\(plotState.dataColumn)",
+            "colorBy:\(plotState.colorBy.protocolValue)",
             "avgchannel:\(plotState.avgChannel.map { String($0) } ?? "none")",
             "avgtime:\(plotState.avgTime.map { String($0) } ?? "none")",
             "avgscan:\(plotState.avgScan)",
@@ -3613,6 +3801,7 @@ public final class WorkbenchStore: ObservableObject {
             "avgantenna:\(plotState.avgAntenna)",
             "avgspw:\(plotState.avgSPW)",
             "scalar:\(plotState.scalarAverage)",
+            "iteraxis:\(plotState.iterationAxis?.protocolValue ?? "none")",
             "size:960x600",
             "maxPoints:\(plotState.maxPlotPoints)"
         ].joined(separator: "|")

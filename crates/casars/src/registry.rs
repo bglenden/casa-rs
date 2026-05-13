@@ -681,11 +681,12 @@ fn registry_task_alias(task_id: &str) -> Option<RegistryTaskAlias> {
             mode: None,
             subcommand: None,
             summary: "Create a selected MeasurementSet subset, equivalent to CASA split.",
-            usage: "mstransform --ms <input.ms> --out <output.ms> --spw <spw[:channels]>",
+            usage: "mstransform --ms <input.ms> --out <output.ms> [--spw <spw[:channels]>] [--width <n>]",
             visible_arguments: &[
                 "ms",
                 "out",
                 "spw",
+                "width",
                 "field",
                 "scan",
                 "antenna",
@@ -694,7 +695,7 @@ fn registry_task_alias(task_id: &str) -> Option<RegistryTaskAlias> {
                 "datacolumn",
                 "keepflags",
             ],
-            required_arguments: &["ms", "out", "spw"],
+            required_arguments: &["ms", "out"],
             extra_arguments: &[],
         }),
         "plotms" => Some(RegistryTaskAlias {
@@ -1501,6 +1502,7 @@ mod tests {
             "restfreq",
             "deconvolver",
             "weighting",
+            "gridder",
             "perchanweightdensity",
             "restoringbeam",
             "usemask",
@@ -1516,6 +1518,7 @@ mod tests {
             "nterms",
             "savemodel",
             "outlierfile",
+            "write_pb",
             "pbcor",
             "pblimit",
         ] {
@@ -1527,6 +1530,78 @@ mod tests {
             assert!(
                 !argument.hidden_in_tui,
                 "{argument_id} should be TUI invokable"
+            );
+        }
+
+        for argument_id in [
+            "ms",
+            "imagename",
+            "imsize",
+            "cell_arcsec",
+            "field",
+            "phasecenter_field",
+            "spw",
+            "specmode",
+            "dirty_only",
+            "deconvolver",
+            "weighting",
+            "gridder",
+            "niter",
+            "threshold_jy",
+        ] {
+            let argument = schema
+                .arguments
+                .iter()
+                .find(|argument| argument.id == argument_id)
+                .unwrap_or_else(|| panic!("missing imager argument {argument_id}"));
+            assert!(
+                !argument.advanced,
+                "{argument_id} should be in the default imager form"
+            );
+        }
+
+        for argument_id in [
+            "savemodel",
+            "ddid",
+            "polarization",
+            "wterm",
+            "nmajor",
+            "gain",
+            "usemask",
+            "sidelobethreshold",
+            "noisethreshold",
+        ] {
+            let argument = schema
+                .arguments
+                .iter()
+                .find(|argument| argument.id == argument_id)
+                .unwrap_or_else(|| panic!("missing imager argument {argument_id}"));
+            assert!(
+                argument.advanced,
+                "{argument_id} should stay behind advanced or conditional disclosure"
+            );
+        }
+
+        let dirty_order = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "dirty_only")
+            .expect("dirty_only")
+            .order;
+        for argument_id in ["niter", "threshold_jy"] {
+            let argument = schema
+                .arguments
+                .iter()
+                .find(|argument| argument.id == argument_id)
+                .unwrap_or_else(|| panic!("missing imager argument {argument_id}"));
+            assert_eq!(argument.group, "Stages");
+            assert!(
+                argument.order > dirty_order,
+                "{argument_id} should appear immediately after dirty_only"
+            );
+            assert!(
+                argument.help.contains("Dirty Only"),
+                "{argument_id} should explain the Dirty Only interaction"
             );
         }
     }

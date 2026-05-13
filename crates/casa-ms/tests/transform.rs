@@ -18,6 +18,7 @@ fn mstransform_selects_channels_updates_metadata_and_weight_spectrum() {
         input_ms: input_ms.clone(),
         output_ms: output_ms.clone(),
         spw: "0:2~5".to_string(),
+        width: 1,
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new(),
         keep_flags: true,
@@ -102,6 +103,7 @@ fn mstransform_filters_rows_by_selected_spw_and_preserves_time_order() {
         input_ms: input_ms.clone(),
         output_ms: output_ms.clone(),
         spw: "1:0~5".to_string(),
+        width: 1,
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new().field(&[0]),
         keep_flags: true,
@@ -165,6 +167,105 @@ fn mstransform_filters_rows_by_selected_spw_and_preserves_time_order() {
 }
 
 #[test]
+fn mstransform_compacts_selected_field_table_and_remaps_main_field_ids() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input_ms = common::create_msexplore_averaging_fixture_ms(dir.path());
+    let output_ms = dir.path().join("field1.ms");
+
+    let report = mstransform(&MsTransformRequest {
+        input_ms: input_ms.clone(),
+        output_ms: output_ms.clone(),
+        spw: "0".to_string(),
+        width: 1,
+        data_column: TransformDataColumn::Data,
+        selection: MsSelection::new().field(&[1]),
+        keep_flags: true,
+    })
+    .expect("mstransform field 1");
+
+    assert_eq!(report.row_count, 1);
+    let output = MeasurementSet::open(&output_ms).expect("open transformed MS");
+    assert_eq!(output.row_count(), 1);
+    let field = output.field().expect("FIELD");
+    assert_eq!(field.row_count(), 1);
+    assert_eq!(field.name(0).expect("field name"), "FIELD1");
+    assert_eq!(
+        output
+            .main_table()
+            .cell_accessor(0, "FIELD_ID")
+            .and_then(|cell| cell.scalar())
+            .expect("FIELD_ID"),
+        &ScalarValue::Int32(0)
+    );
+}
+
+#[test]
+fn mstransform_width_averages_selected_channels_and_metadata() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input_ms = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let output_ms = dir.path().join("averaged.ms");
+
+    let report = mstransform(&MsTransformRequest {
+        input_ms: input_ms.clone(),
+        output_ms: output_ms.clone(),
+        spw: "0:2~5".to_string(),
+        width: 2,
+        data_column: TransformDataColumn::Data,
+        selection: MsSelection::new(),
+        keep_flags: true,
+    })
+    .expect("mstransform width");
+
+    assert_eq!(report.output_channels_by_spw[&0], 2);
+    assert_eq!(report.width, 2);
+
+    let output = MeasurementSet::open(&output_ms).expect("open averaged MS");
+    let data = output
+        .data_column(VisibilityDataColumn::Data)
+        .expect("DATA column");
+    let row = data.get(1).expect("row 1 DATA");
+    let ArrayValue::Complex32(row) = row else {
+        panic!("expected Complex32 DATA");
+    };
+    assert_eq!(row.shape(), &[common::NUM_CORR, 2]);
+    for corr in 0..common::NUM_CORR {
+        let source_index_2 = common::NUM_CORR * common::NUM_CHAN + 2 * common::NUM_CORR + corr;
+        let source_index_3 = common::NUM_CORR * common::NUM_CHAN + 3 * common::NUM_CORR + corr;
+        let expected = ((source_index_2 + source_index_3) as f32) / 2.0;
+        assert_eq!(
+            row[[corr, 0]],
+            casa_types::Complex32::new(expected, -expected * 0.5)
+        );
+    }
+
+    let spw = output.spectral_window().expect("SPECTRAL_WINDOW");
+    assert_eq!(spw.num_chan(0).expect("NUM_CHAN"), 2);
+    assert_eq!(
+        spw.chan_freq(0).expect("CHAN_FREQ"),
+        vec![1.0025e9, 1.0045e9]
+    );
+    let spw_table = spw.table();
+    let widths = spw_table
+        .cell_accessor(0, "CHAN_WIDTH")
+        .and_then(|cell| cell.array())
+        .expect("CHAN_WIDTH");
+    let ArrayValue::Float64(widths) = widths else {
+        panic!("expected Float64 CHAN_WIDTH");
+    };
+    assert_eq!(
+        widths.iter().copied().collect::<Vec<_>>(),
+        vec![2.0e6, 2.0e6]
+    );
+    assert_eq!(
+        spw_table
+            .cell_accessor(0, "TOTAL_BANDWIDTH")
+            .and_then(|cell| cell.scalar())
+            .expect("TOTAL_BANDWIDTH"),
+        &ScalarValue::Float64(4.0e6)
+    );
+}
+
+#[test]
 fn mstransform_no_keepflags_drops_flag_row_samples() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input_ms = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[1, 3]);
@@ -174,6 +275,7 @@ fn mstransform_no_keepflags_drops_flag_row_samples() {
         input_ms: input_ms.clone(),
         output_ms: output_ms.clone(),
         spw: "0:0~3".to_string(),
+        width: 1,
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new(),
         keep_flags: false,
@@ -211,6 +313,7 @@ fn mstransform_reports_contract_errors_before_mutating_outputs() {
         input_ms: input_ms.clone(),
         output_ms: input_ms.clone(),
         spw: "0".to_string(),
+        width: 1,
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new(),
         keep_flags: true,
@@ -222,6 +325,7 @@ fn mstransform_reports_contract_errors_before_mutating_outputs() {
         input_ms: input_ms.clone(),
         output_ms: output_ms.clone(),
         spw: "9".to_string(),
+        width: 1,
         data_column: TransformDataColumn::Data,
         selection: MsSelection::new(),
         keep_flags: true,
@@ -234,6 +338,7 @@ fn mstransform_reports_contract_errors_before_mutating_outputs() {
         input_ms,
         output_ms,
         spw: "0".to_string(),
+        width: 1,
         data_column: TransformDataColumn::CorrectedData,
         selection: MsSelection::new(),
         keep_flags: true,

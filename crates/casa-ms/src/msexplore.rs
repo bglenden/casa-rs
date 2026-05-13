@@ -149,7 +149,7 @@ struct ScatterPanelRenderContext<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MsPlotPreset {
-    /// UV coverage from grouped UVW samples.
+    /// Plotms-style U against V coverage from selected visibility samples.
     UvCoverage,
     /// ANTENNA subtable layout plot.
     AntennaLayout,
@@ -354,7 +354,6 @@ impl MsPlotPreset {
 
     fn lowers_to_listobs_metadata(self) -> Option<ListObsPlotKind> {
         match self {
-            Self::UvCoverage => Some(ListObsPlotKind::UvCoverage),
             Self::AntennaLayout => Some(ListObsPlotKind::AntennaLayout),
             Self::ScanTimeline => Some(ListObsPlotKind::ScanTimeline),
             Self::SpectralWindowCoverage => Some(ListObsPlotKind::SpectralWindowCoverage),
@@ -1332,8 +1331,20 @@ impl MsPlotSpec {
     /// Build the default specification for one preset.
     pub fn from_preset(preset: MsPlotPreset) -> Self {
         match preset {
-            MsPlotPreset::UvCoverage
-            | MsPlotPreset::AntennaLayout
+            MsPlotPreset::UvCoverage => Self {
+                preset: Some(preset),
+                x_axis: MsAxis::U,
+                y_axes: vec![MsAxis::V],
+                data_column: MsDataColumn::Data,
+                color_by: MsColorAxis::Field,
+                averaging: MsAverageSpec::default(),
+                transforms: MsTransformSpec::default(),
+                layout: MsLayoutSpec::default(),
+                iteration: MsIterationSpec::default(),
+                style: MsPlotStyleSpec::default(),
+                flag_edit: None,
+            },
+            MsPlotPreset::AntennaLayout
             | MsPlotPreset::ScanTimeline
             | MsPlotPreset::SpectralWindowCoverage => Self {
                 preset: Some(preset),
@@ -1889,17 +1900,6 @@ impl MsPlotSpec {
                     y_axis
                 ));
             }
-        }
-        if self.averaging.avgchannel.is_some()
-            && !matches!(
-                self.x_axis,
-                MsAxis::Channel | MsAxis::Frequency | MsAxis::Velocity
-            )
-        {
-            return Err(
-                "msexplore avgchannel currently requires xaxis=channel, xaxis=frequency, or xaxis=velocity"
-                    .to_string(),
-            );
         }
         if self.averaging.avgchannel.is_some()
             && self
@@ -3273,9 +3273,10 @@ pub fn export_msexplore_plot(
             width,
             height,
         ),
-        (MsPlotPayload::ListObs(_), MsExportFormat::Txt) => Err(
-            "text export is currently available for raw msexplore scatter plots only".to_string(),
-        ),
+        (MsPlotPayload::ListObs(payload), MsExportFormat::Txt) => {
+            std::fs::write(output_path, render_listobs_manifest(payload)?)
+                .map_err(|error| error.to_string())
+        }
         (MsPlotPayload::Scatter(_), MsExportFormat::Txt)
         | (MsPlotPayload::ScatterGrid(_), MsExportFormat::Txt)
         | (MsPlotPayload::ScatterPage(_), MsExportFormat::Txt) => {
@@ -3419,6 +3420,44 @@ fn render_scatter_manifest(payload: &MsPlotPayload) -> Result<String, String> {
         MsPlotPayload::ListObs(_) => {
             Err("text manifest export requires a scatter payload".to_string())
         }
+    }
+}
+
+fn render_listobs_manifest(payload: &ListObsPlotPayload) -> Result<String, String> {
+    match payload {
+        ListObsPlotPayload::UvCoverage(payload) => {
+            let mut out = String::new();
+            out.push_str("# msexplore-manifest-v1\n");
+            out.push_str("# payload=listobs_uv_coverage\n");
+            out.push_str("# title=UV Coverage\n");
+            out.push_str("# x_axis=u_lambda\n");
+            out.push_str("# y_axis=v_lambda\n");
+            out.push_str(&format!("# mirror={}\n", payload.mirror));
+            out.push_str(&format!(
+                "# axis_extent_lambda={:.12}\n",
+                payload.axis_extent_lambda
+            ));
+            out.push_str(&format!("# tracks={}\n", payload.tracks.len()));
+            out.push_str(&format!("# summary={}\n", payload.summary));
+            out.push_str("series_key\tseries_label\tmirrored\tx\ty\n");
+            for (track_index, track) in payload.tracks.iter().enumerate() {
+                let series_key = format!("track-{track_index}");
+                for (x, y) in &track.points {
+                    out.push_str(&format!(
+                        "{}\t{}\tfalse\t{:.12}\t{:.12}\n",
+                        series_key, track.label, x, y
+                    ));
+                    if payload.mirror {
+                        out.push_str(&format!(
+                            "{}\t{}\ttrue\t{:.12}\t{:.12}\n",
+                            series_key, track.label, -x, -y
+                        ));
+                    }
+                }
+            }
+            Ok(out)
+        }
+        _ => Err("text export is currently available for UV coverage and raw msexplore scatter plots only".to_string()),
     }
 }
 
@@ -5468,6 +5507,13 @@ fn channel_bins(chan_count: usize, avgchannel: Option<usize>) -> Result<Vec<Chan
         let end = start + width;
         if end > chan_count {
             if avgchannel.is_some() {
+                if start == 0 {
+                    bins.push(ChannelBin {
+                        start,
+                        end: chan_count,
+                        ordinal,
+                    });
+                }
                 break;
             }
             bins.push(ChannelBin {
@@ -8008,10 +8054,7 @@ mod tests {
         for (kind, preset) in metadata_pairs {
             assert_eq!(MsPlotPreset::from_listobs_kind(kind), preset);
         }
-        assert_eq!(
-            MsPlotPreset::UvCoverage.lowers_to_listobs_metadata(),
-            Some(ListObsPlotKind::UvCoverage)
-        );
+        assert_eq!(MsPlotPreset::UvCoverage.lowers_to_listobs_metadata(), None);
         assert_eq!(
             MsPlotPreset::AmplitudeVsFrequency.lowers_to_listobs_metadata(),
             None
@@ -8733,11 +8776,18 @@ mod tests {
 
         let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
         spec.averaging.avgchannel = Some(8);
-        assert!(
-            spec.validate()
-                .unwrap_err()
-                .contains("avgchannel currently requires")
-        );
+        spec.validate()
+            .expect("CASA plotms accepts avgchannel for visibility amplitude plots");
+
+        let bins = channel_bins(384, Some(10_000)).expect("high avgchannel");
+        assert_eq!(bins.len(), 1);
+        assert_eq!(bins[0].start, 0);
+        assert_eq!(bins[0].end, 384);
+
+        let mut spec = MsPlotSpec::from_preset(MsPlotPreset::UvCoverage);
+        spec.averaging.avgchannel = Some(10_000);
+        spec.validate()
+            .expect("CASA plotms accepts avgchannel for UV coverage");
 
         let mut spec = MsPlotSpec::from_preset(MsPlotPreset::FlagVsTime);
         spec.x_axis = MsAxis::Channel;

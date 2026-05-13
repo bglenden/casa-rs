@@ -99,9 +99,13 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         correlation="I",
         weighting="briggs",
         robust=0.25,
+        gridder="wproject",
         use_pointing=True,
         niter=100,
         threshold_jy=0.001,
+        write_pb=True,
+        pbcor=True,
+        mosaic_pb_limit=-0.01,
         use_mask="auto-multithresh",
         auto_mask={"sidelobe_threshold": 2.0, "noise_threshold": 4.25},
         mask_boxes=[(100, 100, 150, 150)],
@@ -123,9 +127,13 @@ def test_mfs_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["correlation"] == "I"
     assert request["spectral_mode"] == "mfs"
     assert request["weighting"] == {"kind": "briggs", "robust": 0.25}
+    assert request["w_term_mode"] == "wproject"
     assert request["use_pointing"] is True
     assert request["niter"] == 100
     assert request["threshold_jy"] == 0.001
+    assert request["write_pb"] is True
+    assert request["pbcor"] is True
+    assert request["mosaic_pb_limit"] == -0.01
     assert request["use_mask"] == "auto-multithresh"
     assert request["auto_mask"]["sidelobe_threshold"] == 2.0
     assert request["auto_mask"]["noise_threshold"] == 4.25
@@ -147,6 +155,20 @@ def test_wrapper_encodes_briggs_bandwidth_taper(tmp_path: Path) -> None:
 
     request = result["result"]["request"]
     assert request["weighting"] == {"kind": "briggs_bw_taper", "robust": -0.5}
+
+
+def test_wrapper_rejects_unimplemented_gridder_mode(tmp_path: Path) -> None:
+    binary = _write_stub_binary(tmp_path / "ok" / "casars-imager", version="ok")
+
+    with pytest.raises(NotImplementedError, match="not implemented"):
+        imager.mfs(
+            "twhya_calibrated.ms",
+            "products/twhya",
+            image_size=128,
+            cell_arcsec=0.1,
+            gridder="awproject",
+            binary=binary,
+        )
 
 
 def _write_stub_binary(

@@ -1,0 +1,1475 @@
+{
+  "schema_version": "tutorial-pack.v0",
+  "pack_id": "alma-first-look-imaging",
+  "tutorial_id": "alma/first-look/twhya/imaging",
+  "title": "ALMA First Look: Imaging",
+  "declared_casa_version": "6.6.6",
+  "source": {
+    "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+    "inventory_path": "docs/tutorial-parity/current-tutorial-inventory.md",
+    "source_policy": "Store source URL, section title, task call, parameter record, retrieval date, and concise derived notes; do not vendor full CASA Guide pages."
+  },
+  "customers": {
+    "learner": "Data plus concise tutorial docs, visible parameters, screenshots, and expected products for running the tutorial.",
+    "regression": "Reproducible correctness, performance, completeness, provenance, comparison, and human-review evidence."
+  },
+  "storage": {
+    "generated_pack_root_policy": "${CASA_RS_TUTORIAL_DATA_ROOT}/tutorial-parity/alma/first-look/twhya/imaging/alma-first-look-imaging.pack",
+    "path_mode": "relative-pack-paths-with-registry-metadata",
+    "inputs_mutability": "immutable",
+    "workspace_mutability": "writable"
+  },
+  "inputs": [
+    {
+      "id": "twhya-calibrated-ms",
+      "display_name": "TW Hya calibrated MeasurementSet",
+      "kind": "measurement-set",
+      "registry_key": "alma/first-look/twhya/calibrated-ms",
+      "source_page_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+      "source_artifact_url": "https://bulk.cv.nrao.edu/almadata/public/casaguides/FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar",
+      "source_note": "The tutorial registry uses the 6.6.1 calibrated MS tarball because it is the current local parity artifact for the First Look at Imaging tutorial.",
+      "filename": "twhya_calibrated.ms.tar",
+      "size_bytes": 435742720,
+      "checksum_policy": "tar-sha256-f0cfeee5b9dec09ac9ed4d3e4e048d5eb28023c11cbc8295c09ddefe6b8a97b2",
+      "pack_path": "twhya_calibrated.ms",
+      "materialization": "registry-staged"
+    }
+  ],
+  "workspace": {
+    "root": ".casa-rs/workspace",
+    "native_path": ".casa-rs/workspace/native",
+    "oracle_path": ".casa-rs/workspace/oracle",
+    "scratch_path": ".casa-rs/workspace/scratch"
+  },
+  "surfaces": [
+    "cli",
+    "python",
+    "tui",
+    "gui"
+  ],
+  "native_provider_policy": {
+    "native_provider_kind": "native-rust",
+    "oracle_provider_kind": "casa-oracle",
+    "forbidden_native_providers": [
+      "casars-casa-task",
+      "casa-python"
+    ]
+  },
+  "learner": {
+    "docs_index": "README.md",
+    "section_docs_path": "docs/sections",
+    "screenshot_path": ".casa-rs/screenshots/annotated",
+    "include_internal_evidence": false
+  },
+  "regression": {
+    "evidence_path": ".casa-rs/evidence",
+    "data_manifest": ".casa-rs/evidence/data-manifest.json",
+    "native_runs": ".casa-rs/evidence/native-runs.jsonl",
+    "oracle_runs": ".casa-rs/evidence/oracle-runs.jsonl",
+    "comparisons": ".casa-rs/evidence/comparisons.json",
+    "timings": ".casa-rs/evidence/timings.jsonl",
+    "provider_provenance": ".casa-rs/evidence/provider-provenance.json",
+    "review_path": ".casa-rs/evidence/review",
+    "review_record_schema": ".casa-rs/evidence/review/tutorial-pack-review.schema.json",
+    "screenshot_specs_path": ".casa-rs/screenshots/specs"
+  },
+  "sections": [
+    {
+      "id": "01-listobs-calibrated-ms",
+      "sequence": 1,
+      "title": "Inspect calibrated MeasurementSet summary",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        "section_anchor": "A_First_Look_at_the_Data",
+        "task_calls": [
+          {
+            "task_id": "listobs",
+            "parameters": {
+              "vis": "twhya_calibrated.ms"
+            }
+          }
+        ]
+      },
+      "observable_result": "Listobs-style MeasurementSet metadata for twhya_calibrated.ms, including fields, spectral windows, scans, antenna names, time range, and row counts.",
+      "input_refs": [
+        "twhya-calibrated-ms"
+      ],
+      "tasks": [
+        "msexplore"
+      ],
+      "steps": [
+        {
+          "id": "01-cli-msexplore-summary",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore",
+          "command_template": "msexplore --format json --output .casa-rs/workspace/native/01-listobs-calibrated-ms/cli-msexplore-listobs.json --overwrite twhya_calibrated.ms",
+          "parameters": {
+            "ms_path": "twhya_calibrated.ms",
+            "format": "json",
+            "output": ".casa-rs/workspace/native/01-listobs-calibrated-ms/cli-msexplore-listobs.json",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": ".casa-rs/workspace/native/01-listobs-calibrated-ms/cli-msexplore-listobs.json"
+            }
+          ]
+        },
+        {
+          "id": "01-python-msexplore-summary",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore",
+          "parameters": {
+            "measurement_set": "twhya_calibrated.ms",
+            "format": "json",
+            "output_path": ".casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": ".casa-rs/workspace/native/01-listobs-calibrated-ms/python-msexplore-listobs.json"
+            }
+          ]
+        },
+        {
+          "id": "01-tui-msexplore-summary",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore",
+          "ui_path": "Measurement Sets > MSExplore",
+          "parameters": {
+            "ms_path": "twhya_calibrated.ms",
+            "format": "json",
+            "output": ".casa-rs/workspace/native/01-listobs-calibrated-ms/tui-msexplore-listobs.json",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": ".casa-rs/workspace/native/01-listobs-calibrated-ms/tui-msexplore-listobs.json"
+            }
+          ]
+        },
+        {
+          "id": "01-gui-msexplore-summary",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore",
+          "ui_path": "Tasks > MSExplore",
+          "parameters": {
+            "ms_path": "twhya_calibrated.ms",
+            "format": "json",
+            "output": ".casa-rs/workspace/native/01-listobs-calibrated-ms/gui-msexplore-listobs.json",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "json",
+              "path": ".casa-rs/workspace/native/01-listobs-calibrated-ms/gui-msexplore-listobs.json"
+            }
+          ]
+        },
+        {
+          "id": "01-oracle-listobs",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "listobs",
+          "parameters": {
+            "vis": "twhya_calibrated.ms",
+            "listfile": ".casa-rs/workspace/oracle/01-listobs-calibrated-ms/casa-listobs.txt",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "text",
+              "path": ".casa-rs/workspace/oracle/01-listobs-calibrated-ms/casa-listobs.txt"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": ".casa-rs/evidence/review/01-listobs-calibrated-ms.json"
+      }
+    },
+    {
+      "id": "02-uv-coverage",
+      "sequence": 2,
+      "title": "Plot calibrated MeasurementSet UV coverage",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        "section_anchor": "A_First_Look_at_the_Data",
+        "task_calls": [
+          {
+            "task_id": "plotms",
+            "parameters": {
+              "vis": "twhya_calibrated.ms",
+              "xaxis": "u",
+              "yaxis": "v",
+              "avgchannel": "10000",
+              "avgspw": false,
+              "avgtime": "1e9",
+              "avgscan": false,
+              "coloraxis": "field"
+            }
+          }
+        ]
+      },
+      "observable_result": "UV coverage plot for twhya_calibrated.ms with U and V axes in k-lambda, equal U/V aspect ratio, and field-colored tracks.",
+      "input_refs": [
+        "twhya-calibrated-ms"
+      ],
+      "tasks": [
+        "msexplore"
+      ],
+      "steps": [
+        {
+          "id": "02-cli-msexplore-uv-coverage",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore",
+          "command_template": "msexplore --preset uv_coverage --avgchannel 10000 --avgtime 1e9 --color-by field --plot-output .casa-rs/workspace/native/02-uv-coverage/cli-msexplore-uv-coverage.png --plot-width 1200 --plot-height 1200 --overwrite twhya_calibrated.ms",
+          "parameters": {
+            "ms_path": "twhya_calibrated.ms",
+            "preset": "uv_coverage",
+            "avgchannel": 10000,
+            "avgtime": 1000000000.0,
+            "avgspw": false,
+            "avgscan": false,
+            "color_by": "field",
+            "plot_output": ".casa-rs/workspace/native/02-uv-coverage/cli-msexplore-uv-coverage.png",
+            "plot_width": 1200,
+            "plot_height": 1200,
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/02-uv-coverage/cli-msexplore-uv-coverage.png"
+            }
+          ]
+        },
+        {
+          "id": "02-python-msexplore-uv-coverage",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore.plot",
+          "parameters": {
+            "measurement_set": "twhya_calibrated.ms",
+            "output_path": ".casa-rs/workspace/native/02-uv-coverage/python-msexplore-uv-coverage.png",
+            "preset": "uv_coverage",
+            "avgchannel": 10000,
+            "avgtime": 1000000000.0,
+            "avgspw": false,
+            "avgscan": false,
+            "color_by": "Field",
+            "width": 1200,
+            "height": 1200
+          },
+          "outputs": [
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/02-uv-coverage/python-msexplore-uv-coverage.png"
+            }
+          ]
+        },
+        {
+          "id": "02-tui-msexplore-uv-coverage",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore",
+          "ui_path": "Measurement Sets > MSExplore > Plots",
+          "parameters": {
+            "ms_path": "twhya_calibrated.ms",
+            "preset": "UV Coverage",
+            "average_channels": "10000",
+            "average_time": "1e9",
+            "average_spw": false,
+            "average_scan": false,
+            "color_by": "Field"
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/annotated/02-uv-coverage-tui.png"
+            }
+          ]
+        },
+        {
+          "id": "02-gui-msexplore-uv-coverage",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore",
+          "ui_path": "MeasurementSet Explorer > Plots",
+          "parameters": {
+            "ms_path": "twhya_calibrated.ms",
+            "preset": "UV Coverage",
+            "average_channels": "10000",
+            "average_time": "1e9",
+            "average_spw": false,
+            "average_scan": false,
+            "color_by": "Field"
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/annotated/02-uv-coverage-gui.png"
+            }
+          ]
+        },
+        {
+          "id": "02-oracle-plotms-uv-coverage",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "plotms",
+          "parameters": {
+            "vis": "twhya_calibrated.ms",
+            "xaxis": "u",
+            "yaxis": "v",
+            "avgchannel": "10000",
+            "avgspw": false,
+            "avgtime": "1e9",
+            "avgscan": false,
+            "coloraxis": "field",
+            "plotfile": ".casa-rs/workspace/oracle/02-uv-coverage/casa-plotms-uv-coverage.png",
+            "expformat": "png",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/oracle/02-uv-coverage/casa-plotms-uv-coverage.png",
+              "fallback": "Use CASA Guide Figure 1 when local plotms is blocked by a headless DISPLAY."
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": ".casa-rs/evidence/review/02-uv-coverage.json"
+      }
+    },
+    {
+      "id": "03-amplitude-uvdist-by-field",
+      "sequence": 3,
+      "title": "Plot amplitude vs UV distance by field",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        "section_anchor": "A_First_Look_at_the_Data",
+        "task_calls": [
+          {
+            "task_id": "plotms",
+            "parameters": {
+              "vis": "twhya_calibrated.ms",
+              "xaxis": "uvdist",
+              "yaxis": "amp",
+              "avgchannel": "10000",
+              "avgspw": false,
+              "avgtime": "1e9",
+              "avgscan": false,
+              "coloraxis": "field",
+              "iteraxis": "field"
+            }
+          }
+        ]
+      },
+      "observable_result": "Iterated amplitude-vs-UV-distance panels by field; the Ceres panel shows decreasing amplitude with increasing UV distance.",
+      "input_refs": [
+        "twhya-calibrated-ms"
+      ],
+      "tasks": [
+        "msexplore"
+      ],
+      "steps": [
+        {
+          "id": "03-cli-amplitude-uvdist-by-field",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore",
+          "command_template": "msexplore --preset amplitude_vs_uv_distance --avgchannel 10000 --avgtime 1e9 --color-by field --iteraxis field --plot-output .casa-rs/workspace/native/03-amplitude-uvdist-by-field/cli-msexplore-amplitude-uvdist-field.png --plot-width 1600 --plot-height 1200 --overwrite twhya_calibrated.ms",
+          "parameters": {
+            "ms_path": "twhya_calibrated.ms",
+            "preset": "amplitude_vs_uv_distance",
+            "avgchannel": 10000,
+            "avgtime": 1000000000.0,
+            "avgspw": false,
+            "avgscan": false,
+            "color_by": "field",
+            "iteraxis": "field",
+            "plot_output": ".casa-rs/workspace/native/03-amplitude-uvdist-by-field/cli-msexplore-amplitude-uvdist-field.png",
+            "plot_width": 1600,
+            "plot_height": 1200,
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/03-amplitude-uvdist-by-field/cli-msexplore-amplitude-uvdist-field.png"
+            },
+            {
+              "kind": "txt",
+              "path": ".casa-rs/workspace/native/03-amplitude-uvdist-by-field/cli-msexplore-amplitude-uvdist-field.txt"
+            }
+          ]
+        },
+        {
+          "id": "03-python-amplitude-uvdist-by-field",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore.plot",
+          "parameters": {
+            "measurement_set": "twhya_calibrated.ms",
+            "output_path": ".casa-rs/workspace/native/03-amplitude-uvdist-by-field/python-msexplore-amplitude-uvdist-field.png",
+            "preset": "amplitude_vs_uv_distance",
+            "avgchannel": 10000,
+            "avgtime": 1000000000.0,
+            "avgspw": false,
+            "avgscan": false,
+            "color_by": "Field",
+            "iteraxis": "field",
+            "width": 1600,
+            "height": 1200
+          },
+          "outputs": [
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/03-amplitude-uvdist-by-field/python-msexplore-amplitude-uvdist-field.png"
+            },
+            {
+              "kind": "txt",
+              "path": ".casa-rs/workspace/native/03-amplitude-uvdist-by-field/python-msexplore-amplitude-uvdist-field.txt"
+            }
+          ]
+        },
+        {
+          "id": "03-tui-amplitude-uvdist-by-field",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore",
+          "ui_path": "Measurement Sets > MSExplore > Plots",
+          "parameters": {
+            "ms_path": "twhya_calibrated.ms",
+            "preset": "Amplitude vs UV Distance",
+            "average_channels": "10000",
+            "average_time": "1e9",
+            "average_spw": false,
+            "average_scan": false,
+            "color_by": "Field",
+            "iteraxis": "Field"
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/headless/03-amplitude-uvdist-by-field-tui.png"
+            }
+          ]
+        },
+        {
+          "id": "03-gui-amplitude-uvdist-by-field",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "msexplore",
+          "ui_path": "MeasurementSet Explorer > Plots",
+          "parameters": {
+            "ms_path": "twhya_calibrated.ms",
+            "preset": "Amplitude vs UV Distance",
+            "average_channels": "10000",
+            "average_time": "1e9",
+            "average_spw": false,
+            "average_scan": false,
+            "color_by": "Field",
+            "iteraxis": "Field"
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/gui/03-amplitude-uvdist-by-field-gui-workbench-dark.png"
+            }
+          ]
+        },
+        {
+          "id": "03-oracle-amplitude-uvdist-by-field",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "plotms",
+          "parameters": {
+            "vis": "twhya_calibrated.ms",
+            "xaxis": "uvdist",
+            "yaxis": "amp",
+            "avgchannel": "10000",
+            "avgspw": false,
+            "avgtime": "1e9",
+            "avgscan": false,
+            "coloraxis": "field",
+            "iteraxis": "field",
+            "plotfile": ".casa-rs/workspace/oracle/03-amplitude-uvdist-by-field/casa-plotms-amplitude-uvdist-field.png",
+            "expformat": "png",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/oracle/03-amplitude-uvdist-by-field/casa-plotms-amplitude-uvdist-field.png"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": ".casa-rs/evidence/review/03-amplitude-uvdist-by-field.json"
+      }
+    },
+    {
+      "id": "04-phase-cal-dirty",
+      "sequence": 4,
+      "title": "Create the dirty phase-calibrator image",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        "section_anchor": "A_First_Look_at_Imaging",
+        "task_calls": [
+          {
+            "task_id": "tclean",
+            "parameters": {
+              "vis": "twhya_calibrated.ms",
+              "imagename": "phase_cal",
+              "field": "3",
+              "specmode": "mfs",
+              "deconvolver": "hogbom",
+              "gridder": "standard",
+              "imsize": [
+                250,
+                250
+              ],
+              "cell": [
+                "0.1arcsec"
+              ],
+              "weighting": "briggs",
+              "threshold": "0.0mJy",
+              "interactive": true,
+              "regression_overrides": {
+                "niter": 0,
+                "interactive": false
+              }
+            }
+          }
+        ]
+      },
+      "observable_result": "Dirty MFS image of phase calibrator field 3, with a compact source near the image center and matching CASA image/residual/PSF/model/sumwt products.",
+      "input_refs": [
+        "twhya-calibrated-ms"
+      ],
+      "tasks": [
+        "imager"
+      ],
+      "steps": [
+        {
+          "id": "04-cli-phase-cal-dirty",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "casars-imager",
+          "command_template": "casars-imager --ms twhya_calibrated.ms --imagename .casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.cli --imsize 250 --cell-arcsec 0.1 --field 3 --phasecenter-field 3 --specmode mfs --deconvolver hogbom --weighting briggs --robust 0.5 --threshold-jy 0.0 --niter 0 --dirty-only",
+          "parameters": {
+            "ms": "twhya_calibrated.ms",
+            "imagename": ".casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.cli",
+            "imsize": 250,
+            "cell_arcsec": 0.1,
+            "field": 3,
+            "phasecenter_field": 3,
+            "specmode": "mfs",
+            "deconvolver": "hogbom",
+            "weighting": "briggs",
+            "robust": 0.5,
+            "threshold_jy": 0.0,
+            "niter": 0,
+            "dirty_only": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.cli.image"
+            },
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.cli.image.png"
+            }
+          ]
+        },
+        {
+          "id": "04-python-phase-cal-dirty",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "casars.tasks.imager.mfs",
+          "parameters": {
+            "measurement_set": "twhya_calibrated.ms",
+            "image_name": ".casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.python",
+            "image_size": 250,
+            "cell_arcsec": 0.1,
+            "field_ids": [
+              3
+            ],
+            "phasecenter_field": 3,
+            "weighting": "briggs",
+            "robust": 0.5,
+            "deconvolver": "hogbom",
+            "niter": 0,
+            "threshold_jy": 0.0,
+            "dirty_only": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.python.image"
+            },
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.python.image.png"
+            }
+          ]
+        },
+        {
+          "id": "04-tui-phase-cal-dirty",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "imager",
+          "ui_path": "Tasks > Imager",
+          "parameters": {
+            "ms": "twhya_calibrated.ms",
+            "imagename": ".casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.tui",
+            "imsize": 250,
+            "cell_arcsec": 0.1,
+            "field": 3,
+            "phasecenter_field": 3,
+            "weighting": "briggs",
+            "niter": 0,
+            "dirty_only": true
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/headless/04-phase-cal-dirty-tui.png",
+              "status": "pending"
+            }
+          ]
+        },
+        {
+          "id": "04-gui-phase-cal-dirty",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "imager",
+          "ui_path": "Tasks > Imager",
+          "parameters": {
+            "ms": "twhya_calibrated.ms",
+            "imagename": ".casa-rs/workspace/native/04-phase-cal-dirty/phase_cal.gui",
+            "imsize": 250,
+            "cell_arcsec": 0.1,
+            "field": 3,
+            "phasecenter_field": 3,
+            "weighting": "briggs",
+            "niter": 0,
+            "dirty_only": true
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/gui/04-phase-cal-dirty-gui.png",
+              "status": "pending"
+            }
+          ]
+        },
+        {
+          "id": "04-oracle-phase-cal-dirty",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "tclean",
+          "parameters": {
+            "vis": "twhya_calibrated.ms",
+            "imagename": ".casa-rs/workspace/oracle/04-phase-cal-dirty/phase_cal.casa",
+            "field": "3",
+            "specmode": "mfs",
+            "deconvolver": "hogbom",
+            "gridder": "standard",
+            "imsize": [
+              250,
+              250
+            ],
+            "cell": [
+              "0.1arcsec"
+            ],
+            "weighting": "briggs",
+            "threshold": "0.0mJy",
+            "niter": 0,
+            "interactive": false
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/oracle/04-phase-cal-dirty/phase_cal.casa.image"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": ".casa-rs/evidence/review/04-phase-cal-dirty.json"
+      }
+    },
+    {
+      "id": "05-phase-cal-clean",
+      "sequence": 5,
+      "title": "Clean the phase calibrator",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        "section_anchor": "A_First_Look_at_Imaging",
+        "task_calls": [
+          {
+            "task_id": "tclean",
+            "parameters": {
+              "vis": "twhya_calibrated.ms",
+              "imagename": "phase_cal_clean",
+              "field": "3",
+              "specmode": "mfs",
+              "deconvolver": "hogbom",
+              "gridder": "standard",
+              "imsize": [
+                250,
+                250
+              ],
+              "cell": [
+                "0.1arcsec"
+              ],
+              "weighting": "briggs",
+              "robust": 0.5,
+              "niter": 10000,
+              "threshold": "15mJy",
+              "interactive": false,
+              "mask": "box[[100pix,100pix],[150pix,150pix]]"
+            }
+          }
+        ]
+      },
+      "observable_result": "Cleaned phase-calibrator image, model, residual, PSF, and sumwt products after mask-constrained Hogbom deconvolution.",
+      "input_refs": [
+        "twhya-calibrated-ms"
+      ],
+      "tasks": [
+        "imager"
+      ],
+      "steps": [
+        {
+          "id": "05-cli-phase-cal-clean",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "casars-imager",
+          "command_template": "casars-imager --ms twhya_calibrated.ms --imagename .casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.cli --imsize 250 --cell-arcsec 0.1 --field 3 --phasecenter-field 3 --specmode mfs --deconvolver hogbom --weighting briggs --robust 0.5 --threshold-jy 0.015 --niter 10000 --mask-box 100,100,150,150 --pblimit 0.2 --write-pb",
+          "parameters": {
+            "ms": "twhya_calibrated.ms",
+            "imagename": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.cli",
+            "imsize": 250,
+            "cell_arcsec": 0.1,
+            "field": 3,
+            "phasecenter_field": 3,
+            "specmode": "mfs",
+            "deconvolver": "hogbom",
+            "weighting": "briggs",
+            "robust": 0.5,
+            "threshold_jy": 0.015,
+            "niter": 10000,
+            "mask_box": "100,100,150,150",
+            "pblimit": 0.2,
+            "write_pb": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.cli.image"
+            },
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.cli.image.png"
+            },
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.cli.pb"
+            },
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.cli.pb.png"
+            }
+          ]
+        },
+        {
+          "id": "05-python-phase-cal-clean",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "casars.tasks.imager.mfs",
+          "parameters": {
+            "measurement_set": "twhya_calibrated.ms",
+            "image_name": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.python",
+            "image_size": 250,
+            "cell_arcsec": 0.1,
+            "field_ids": [
+              3
+            ],
+            "phasecenter_field": 3,
+            "weighting": "briggs",
+            "robust": 0.5,
+            "deconvolver": "hogbom",
+            "niter": 10000,
+            "threshold_jy": 0.015,
+            "dirty_only": false,
+            "mosaic_pb_limit": 0.2,
+            "write_pb": true,
+            "mask_boxes": [
+              [
+                100,
+                100,
+                150,
+                150
+              ]
+            ]
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.python.image"
+            },
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.python.image.png"
+            },
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.python.pb"
+            },
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.python.pb.png"
+            }
+          ]
+        },
+        {
+          "id": "05-tui-phase-cal-clean",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "imager",
+          "ui_path": "Tasks > Imager",
+          "parameters": {
+            "ms": "twhya_calibrated.ms",
+            "imagename": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.tui",
+            "imsize": 250,
+            "cell_arcsec": 0.1,
+            "field": 3,
+            "phasecenter_field": 3,
+            "weighting": "briggs",
+            "niter": 10000,
+            "threshold_jy": 0.015,
+            "dirty_only": false,
+            "mask_box": "100,100,150,150",
+            "pblimit": 0.2,
+            "write_pb": true
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/headless/05-phase-cal-clean-tui.png",
+              "status": "pending"
+            }
+          ]
+        },
+        {
+          "id": "05-gui-phase-cal-clean",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "imager",
+          "ui_path": "Tasks > Imager",
+          "parameters": {
+            "ms": "twhya_calibrated.ms",
+            "imagename": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.gui",
+            "imsize": 250,
+            "cell_arcsec": 0.1,
+            "field": 3,
+            "phasecenter_field": 3,
+            "weighting": "briggs",
+            "niter": 10000,
+            "threshold_jy": 0.015,
+            "dirty_only": false,
+            "mask_box": "100,100,150,150",
+            "pblimit": 0.2,
+            "write_pb": true
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/gui/05-phase-cal-clean-gui-parameters.png"
+            },
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/gui/05-phase-cal-clean-gui-imexplore.png"
+            },
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/05-phase-cal-clean/phase_cal_clean.gui.pb"
+            }
+          ]
+        },
+        {
+          "id": "05-oracle-phase-cal-clean",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "tclean",
+          "parameters": {
+            "vis": "twhya_calibrated.ms",
+            "imagename": ".casa-rs/workspace/oracle/05-phase-cal-clean/phase_cal_clean.casa",
+            "field": "3",
+            "specmode": "mfs",
+            "deconvolver": "hogbom",
+            "gridder": "standard",
+            "imsize": [
+              250,
+              250
+            ],
+            "cell": [
+              "0.1arcsec"
+            ],
+            "weighting": "briggs",
+            "robust": 0.5,
+            "threshold": "15mJy",
+            "niter": 10000,
+            "interactive": false,
+            "mask": "box[[100pix,100pix],[150pix,150pix]]"
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/oracle/05-phase-cal-clean/phase_cal_clean.casa.image"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": ".casa-rs/evidence/review/05-phase-cal-clean.json"
+      }
+    },
+    {
+      "id": "06-science-target-split",
+      "sequence": 6,
+      "title": "Split science target and average channels",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        "section_anchor": "Image_the_Science_Target",
+        "task_calls": [
+          {
+            "task_id": "split",
+            "parameters": {
+              "vis": "twhya_calibrated.ms",
+              "field": "5",
+              "width": "8",
+              "outputvis": "twhya_smoothed.ms",
+              "datacolumn": "data"
+            }
+          },
+          {
+            "task_id": "listobs",
+            "parameters": {
+              "vis": "twhya_smoothed.ms"
+            }
+          }
+        ]
+      },
+      "observable_result": "A science-target-only MeasurementSet with 44,772 rows, one TW Hya field remapped to FIELD_ID 0, and 48 averaged output channels.",
+      "input_refs": [
+        "twhya-calibrated-ms"
+      ],
+      "tasks": [
+        "split",
+        "msexplore"
+      ],
+      "steps": [
+        {
+          "id": "06-cli-science-target-split",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "split",
+          "command_template": "mstransform --vis twhya_calibrated.ms --outputvis twhya_smoothed.cli.ms --field 5 --width 8 --datacolumn DATA",
+          "parameters": {
+            "vis": "twhya_calibrated.ms",
+            "outputvis": "twhya_smoothed.cli.ms",
+            "field": "5",
+            "width": 8,
+            "datacolumn": "DATA"
+          },
+          "outputs": [
+            {
+              "kind": "measurement-set",
+              "path": "twhya_smoothed.cli.ms"
+            },
+            {
+              "kind": "text",
+              "path": ".casa-rs/workspace/native/06-science-target-split/cli-listobs.txt"
+            }
+          ]
+        },
+        {
+          "id": "06-python-science-target-split",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "split",
+          "parameters": {
+            "vis": "twhya_calibrated.ms",
+            "outputvis": "twhya_smoothed.python.ms",
+            "field": "5",
+            "width": 8,
+            "datacolumn": "data"
+          },
+          "outputs": [
+            {
+              "kind": "measurement-set",
+              "path": "twhya_smoothed.python.ms"
+            },
+            {
+              "kind": "text",
+              "path": ".casa-rs/workspace/native/06-science-target-split/python-listobs.txt"
+            }
+          ]
+        },
+        {
+          "id": "06-tui-science-target-split",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "split",
+          "ui_path": "Tasks > split",
+          "parameters": {
+            "ms": "twhya_calibrated.ms",
+            "out": "twhya_smoothed.tui.ms",
+            "field": "5",
+            "width": 8,
+            "datacolumn": "DATA",
+            "keepflags": true
+          },
+          "outputs": [
+            {
+              "kind": "measurement-set",
+              "path": "twhya_smoothed.tui.ms"
+            },
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/headless/06-science-target-split-tui.png"
+            }
+          ]
+        },
+        {
+          "id": "06-gui-science-target-split",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "split",
+          "ui_path": "Tasks > split",
+          "parameters": {
+            "ms": "twhya_calibrated.ms",
+            "out": "twhya_smoothed.gui.ms",
+            "field": "5",
+            "spw": "0",
+            "width": 8,
+            "datacolumn": "DATA",
+            "keepflags": true
+          },
+          "outputs": [
+            {
+              "kind": "measurement-set",
+              "path": "twhya_smoothed.gui.ms"
+            },
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/gui/06-science-target-split-gui-run.png"
+            },
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/gui/06-science-target-split-gui-summary.png"
+            }
+          ]
+        },
+        {
+          "id": "06-oracle-science-target-split",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "split",
+          "parameters": {
+            "vis": "twhya_calibrated.ms",
+            "field": "5",
+            "width": "8",
+            "outputvis": ".casa-rs/workspace/oracle/06-science-target-split/casa-twhya_smoothed.ms",
+            "datacolumn": "data"
+          },
+          "outputs": [
+            {
+              "kind": "measurement-set",
+              "path": ".casa-rs/workspace/oracle/06-science-target-split/casa-twhya_smoothed.ms"
+            },
+            {
+              "kind": "text",
+              "path": ".casa-rs/workspace/oracle/06-science-target-split/casa-listobs.txt"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": ".casa-rs/evidence/review/06-science-target-split.json"
+      }
+    },
+    {
+      "id": "07-science-target-auto-clean",
+      "sequence": 7,
+      "title": "Clean science target non-interactively",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        "section_anchor": "Image_the_Science_Target",
+        "task_calls": [
+          {
+            "task_id": "tclean",
+            "parameters": {
+              "vis": "twhya_smoothed.ms",
+              "imagename": "twhya_cont_auto",
+              "field": "0",
+              "specmode": "mfs",
+              "deconvolver": "hogbom",
+              "gridder": "standard",
+              "imsize": [
+                250,
+                250
+              ],
+              "cell": [
+                "0.1arcsec"
+              ],
+              "weighting": "briggs",
+              "robust": 0.5,
+              "niter": 10000,
+              "threshold": "15mJy",
+              "interactive": false,
+              "mask": "box[[100pix,100pix],[150pix,150pix]]"
+            }
+          }
+        ]
+      },
+      "observable_result": "A cleaned science-target continuum image, residual, model, PSF, sumwt, and PB product generated from the smoothed TW Hya split MeasurementSet.",
+      "input_refs": [
+        "twhya-calibrated-ms"
+      ],
+      "tasks": [
+        "imager"
+      ],
+      "steps": [
+        {
+          "id": "07-cli-science-target-auto-clean",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "imager",
+          "command_template": "casars-imager --ms twhya_smoothed.cli.ms --imagename .casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli --imsize 250 --cell-arcsec 0.1 --field 0 --phasecenter-field 0 --specmode mfs --deconvolver hogbom --weighting briggs --robust 0.5 --threshold-jy 0.015 --niter 10000 --mask-box 100,100,150,150 --pblimit 0.2 --write-pb",
+          "parameters": {
+            "ms": "twhya_smoothed.cli.ms",
+            "imagename": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli",
+            "imsize": 250,
+            "cell_arcsec": 0.1,
+            "field": 0,
+            "phasecenter_field": 0,
+            "weighting": "briggs",
+            "robust": 0.5,
+            "niter": 10000,
+            "threshold_jy": 0.015,
+            "mask_box": "100,100,150,150",
+            "pblimit": 0.2,
+            "write_pb": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli.image"
+            },
+            {
+              "kind": "png",
+              "path": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli.image.png"
+            }
+          ]
+        },
+        {
+          "id": "07-python-science-target-auto-clean",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "imager",
+          "parameters": {
+            "measurement_set": "twhya_smoothed.cli.ms",
+            "image_name": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.python",
+            "image_size": 250,
+            "cell_arcsec": 0.1,
+            "field_ids": [
+              0
+            ],
+            "phasecenter_field": 0,
+            "weighting": "briggs",
+            "robust": 0.5,
+            "deconvolver": "hogbom",
+            "niter": 10000,
+            "threshold_jy": 0.015,
+            "mosaic_pb_limit": 0.2,
+            "write_pb": true,
+            "dirty_only": false,
+            "mask_boxes": [
+              [
+                100,
+                100,
+                150,
+                150
+              ]
+            ]
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.python.image"
+            }
+          ]
+        },
+        {
+          "id": "07-tui-science-target-auto-clean",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "imager",
+          "ui_path": "Tasks > Imager",
+          "parameters": {
+            "ms": "twhya_smoothed.cli.ms",
+            "imagename": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.tui",
+            "field": 0,
+            "phasecenter_field": 0,
+            "niter": 10000,
+            "threshold_jy": 0.015,
+            "mask_box": "100,100,150,150",
+            "pblimit": 0.2,
+            "write_pb": true
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/headless/07-science-target-auto-clean-tui.png"
+            }
+          ]
+        },
+        {
+          "id": "07-gui-science-target-auto-clean",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "imager",
+          "ui_path": "Tasks > Imager",
+          "parameters": {
+            "ms": "twhya_smoothed.cli.ms",
+            "imagename": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.gui",
+            "field": 0,
+            "phasecenter_field": 0,
+            "niter": 10000,
+            "threshold_jy": 0.015,
+            "mask_box": "100,100,150,150",
+            "pblimit": 0.2,
+            "write_pb": true
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/gui/07-science-target-auto-clean-gui-parameters.png"
+            },
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/gui/07-science-target-auto-clean-gui-imexplore.png"
+            }
+          ]
+        },
+        {
+          "id": "07-oracle-science-target-auto-clean",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "tclean",
+          "parameters": {
+            "vis": "twhya_smoothed.ms",
+            "imagename": ".casa-rs/workspace/oracle/07-science-target-auto-clean/twhya_cont_auto.casa",
+            "field": "0",
+            "specmode": "mfs",
+            "deconvolver": "hogbom",
+            "gridder": "standard",
+            "imsize": [
+              250,
+              250
+            ],
+            "cell": [
+              "0.1arcsec"
+            ],
+            "weighting": "briggs",
+            "robust": 0.5,
+            "niter": 10000,
+            "threshold": "15mJy",
+            "interactive": false,
+            "mask": "box[[100pix,100pix],[150pix,150pix]]"
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/oracle/07-science-target-auto-clean/twhya_cont_auto.casa.image"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": ".casa-rs/evidence/review/07-science-target-auto-clean.json"
+      }
+    },
+    {
+      "id": "08-primary-beam-correction",
+      "sequence": 8,
+      "title": "Apply primary-beam correction to the cleaned science target",
+      "casa_source": {
+        "guide_url": "https://casaguides.nrao.edu/index.php/First_Look_at_Imaging",
+        "section_anchor": "Interactive_Clean_and_Primary_Beam_Correction",
+        "task_calls": [
+          {
+            "task_id": "impbcor",
+            "parameters": {
+              "imagename": ".casa-rs/workspace/oracle/07-science-target-auto-clean/twhya_cont_auto.casa.image",
+              "pbimage": ".casa-rs/workspace/oracle/07-science-target-auto-clean/twhya_cont_auto.casa.pb",
+              "outfile": ".casa-rs/workspace/oracle/08-primary-beam-correction/twhya_cont_auto.pbcor.casa.image",
+              "overwrite": true
+            }
+          }
+        ]
+      },
+      "observable_result": "Primary-beam corrected science-target image made by dividing the cleaned image by the primary-beam response image.",
+      "input_refs": [
+        "twhya-calibrated-ms"
+      ],
+      "tasks": [
+        "impbcor",
+        "imexplore"
+      ],
+      "steps": [
+        {
+          "id": "08-cli-primary-beam-correction",
+          "surface": "cli",
+          "provider_kind": "native-rust",
+          "task_id": "impbcor",
+          "command_template": "impbcor --imagename .casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli.image --pbimage .casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli.pb --outfile .casa-rs/workspace/native/08-primary-beam-correction/twhya_cont_auto.pbcor.cli.image --overwrite",
+          "parameters": {
+            "imagename": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli.image",
+            "pbimage": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.cli.pb",
+            "outfile": ".casa-rs/workspace/native/08-primary-beam-correction/twhya_cont_auto.pbcor.cli.image",
+            "mode": "divide",
+            "cutoff": -1.0,
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/08-primary-beam-correction/twhya_cont_auto.pbcor.cli.image"
+            }
+          ]
+        },
+        {
+          "id": "08-python-primary-beam-correction",
+          "surface": "python",
+          "provider_kind": "native-rust",
+          "task_id": "impbcor",
+          "parameters": {
+            "imagename": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.python.image",
+            "pbimage": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.python.pb",
+            "outfile": ".casa-rs/workspace/native/08-primary-beam-correction/twhya_cont_auto.pbcor.python.image",
+            "mode": "divide",
+            "cutoff": -1.0,
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/native/08-primary-beam-correction/twhya_cont_auto.pbcor.python.image"
+            }
+          ]
+        },
+        {
+          "id": "08-tui-primary-beam-correction",
+          "surface": "tui",
+          "provider_kind": "native-rust",
+          "task_id": "impbcor",
+          "ui_path": "Tasks > Primary Beam Correction",
+          "parameters": {
+            "imagename": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.tui.image",
+            "pbimage": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.tui.pb",
+            "outfile": ".casa-rs/workspace/native/08-primary-beam-correction/twhya_cont_auto.pbcor.tui.image",
+            "mode": "divide",
+            "cutoff": -1.0,
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/headless/08-primary-beam-correction-tui.png"
+            }
+          ]
+        },
+        {
+          "id": "08-gui-primary-beam-correction",
+          "surface": "gui",
+          "provider_kind": "native-rust",
+          "task_id": "impbcor",
+          "ui_path": "Tasks > Primary Beam Correction",
+          "parameters": {
+            "imagename": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.gui.image",
+            "pbimage": ".casa-rs/workspace/native/07-science-target-auto-clean/twhya_cont_auto.gui.pb",
+            "outfile": ".casa-rs/workspace/native/08-primary-beam-correction/twhya_cont_auto.pbcor.gui.image",
+            "mode": "divide",
+            "cutoff": -1.0,
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/gui/08-primary-beam-correction-gui-parameters.png"
+            },
+            {
+              "kind": "screenshot",
+              "path": ".casa-rs/screenshots/gui/08-primary-beam-correction-gui-imexplore.png"
+            }
+          ]
+        },
+        {
+          "id": "08-oracle-primary-beam-correction",
+          "surface": "oracle",
+          "provider_kind": "casa-oracle",
+          "task_id": "impbcor",
+          "parameters": {
+            "imagename": ".casa-rs/workspace/oracle/07-science-target-auto-clean/twhya_cont_auto.casa.image",
+            "pbimage": ".casa-rs/workspace/oracle/07-science-target-auto-clean/twhya_cont_auto.casa.pb",
+            "outfile": ".casa-rs/workspace/oracle/08-primary-beam-correction/twhya_cont_auto.pbcor.casa.image",
+            "overwrite": true
+          },
+          "outputs": [
+            {
+              "kind": "casa-image",
+              "path": ".casa-rs/workspace/oracle/08-primary-beam-correction/twhya_cont_auto.pbcor.casa.image"
+            }
+          ]
+        }
+      ],
+      "review_checkpoint": {
+        "required": true,
+        "status": "pending-human-review",
+        "record_path": ".casa-rs/evidence/review/08-primary-beam-correction.json"
+      }
+    }
+  ]
+}

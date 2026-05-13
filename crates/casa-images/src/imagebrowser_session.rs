@@ -2414,8 +2414,7 @@ fn crtf_coordinate_parts(text: &str) -> Option<Vec<String>> {
         text[start + 2..end]
             .replace("], [", ",")
             .replace("],[", ",")
-            .replace('[', "")
-            .replace(']', "")
+            .replace(['[', ']'], "")
             .split(',')
             .map(str::trim)
             .filter(|part| !part.is_empty())

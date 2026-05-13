@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import re
 from os import PathLike
+from collections.abc import Sequence
 from typing import Any, Literal, TypeAlias
 
 from .._task_runtime import (
@@ -77,19 +79,63 @@ def plot(
     measurement_set: StrPath,
     output_path: StrPath,
     *,
-    x_axis: str = "Time",
-    y_axis: str = "Amplitude",
+    preset: str | None = None,
+    x_axis: str | None = None,
+    y_axis: str | None = None,
+    y_axes: Sequence[str] | None = None,
     data_column: str = "data",
     color_by: str = "Field",
     format: PlotFormat = "png",
     width: int = 1200,
     height: int = 800,
+    max_plot_points: int = 100000,
+    avgchannel: int | None = None,
+    avgtime: float | None = None,
+    avgscan: bool = False,
+    avgfield: bool = False,
+    avgbaseline: bool = False,
+    avgantenna: bool = False,
+    avgspw: bool = False,
+    scalar_average: bool = False,
+    transform: bool = True,
+    freqframe: str | None = None,
+    restfreq: str | None = None,
+    veldef: str = "RADIO",
+    phasecenter: str | None = None,
+    xframe: str | None = None,
+    xinterp: str | None = None,
+    yframe: str | None = None,
+    yinterp: str | None = None,
+    gridrows: int = 1,
+    gridcols: int = 1,
+    rowindex: int = 0,
+    colindex: int = 0,
+    plotindex: int = 0,
+    iteraxis: str | None = None,
+    xselfscale: bool = False,
+    yselfscale: bool = False,
+    xsharedaxis: bool = False,
+    ysharedaxis: bool = False,
     selection: dict[str, Any] | None = None,
     title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    symbol_size: float | None = None,
+    showlegend: bool = False,
+    legendposition: str = "upperRight",
+    showmajorgrid: bool = False,
+    showminorgrid: bool = False,
+    flag_edit: dict[str, Any] | None = None,
     binary: StrPath | None = None,
 ) -> TaskResult:
     """Render one ``plotms``-style visibility plot through ``msexplore``."""
 
+    resolved_x_axis, resolved_y_axes = _plot_axes_request(
+        preset=preset,
+        x_axis=x_axis,
+        y_axis=y_axis,
+        y_axes=y_axes,
+    )
     request = {
         "spec": {
             "ms_path": os.fspath(measurement_set),
@@ -98,20 +144,60 @@ def plot(
             "header_items": [],
             "page_title": None,
             "exprange": "current",
-            "max_plot_points": 100000,
+            "max_plot_points": max_plot_points,
             "plots": [
                 {
-                    "preset": None,
-                    "x_axis": x_axis,
-                    "y_axes": [y_axis],
-                    "data_column": data_column,
-                    "color_by": color_by,
-                    "averaging": _averaging_request(),
-                    "transforms": _transform_request(),
-                    "layout": _layout_request(),
-                    "iteration": _iteration_request(),
-                    "style": _style_request(title=title),
-                    "flag_edit": None,
+                    "preset": preset,
+                    "x_axis": resolved_x_axis,
+                    "y_axes": resolved_y_axes,
+                    "data_column": _protocol_token(data_column),
+                    "color_by": _protocol_token(color_by),
+                    "averaging": _averaging_request(
+                        avgchannel=avgchannel,
+                        avgtime=avgtime,
+                        avgscan=avgscan,
+                        avgfield=avgfield,
+                        avgbaseline=avgbaseline,
+                        avgantenna=avgantenna,
+                        avgspw=avgspw,
+                        scalar_average=scalar_average,
+                    ),
+                    "transforms": _transform_request(
+                        transform=transform,
+                        freqframe=freqframe,
+                        restfreq=restfreq,
+                        veldef=veldef,
+                        phasecenter=phasecenter,
+                        xframe=xframe,
+                        xinterp=xinterp,
+                        yframe=yframe,
+                        yinterp=yinterp,
+                    ),
+                    "layout": _layout_request(
+                        gridrows=gridrows,
+                        gridcols=gridcols,
+                        rowindex=rowindex,
+                        colindex=colindex,
+                        plotindex=plotindex,
+                    ),
+                    "iteration": _iteration_request(
+                        iteraxis=iteraxis,
+                        xselfscale=xselfscale,
+                        yselfscale=yselfscale,
+                        xsharedaxis=xsharedaxis,
+                        ysharedaxis=ysharedaxis,
+                    ),
+                    "style": _style_request(
+                        title=title,
+                        xlabel=xlabel,
+                        ylabel=ylabel,
+                        symbol_size=symbol_size,
+                        showlegend=showlegend,
+                        legendposition=legendposition,
+                        showmajorgrid=showmajorgrid,
+                        showminorgrid=showminorgrid,
+                    ),
+                    "flag_edit": flag_edit,
                 }
             ],
         },
@@ -159,69 +245,177 @@ def _selection_request(selection: dict[str, Any] | None) -> dict[str, Any]:
 
 def _plot_format(format: PlotFormat) -> str:
     if format == "png":
-        return "Png"
+        return "png"
     if format == "pdf":
-        return "Pdf"
+        return "pdf"
     if format == "txt":
-        return "Txt"
+        return "txt"
     raise ValueError("format must be 'png', 'pdf', or 'txt'")
 
 
-def _averaging_request() -> dict[str, Any]:
+def _protocol_token(value: str) -> str:
+    """Normalize common display/Python spellings to Rust protocol enum tokens."""
+
+    if "_" in value or value.islower():
+        return value
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", value).lower()
+
+
+def _plot_axes_request(
+    *,
+    preset: str | None,
+    x_axis: str | None,
+    y_axis: str | None,
+    y_axes: Sequence[str] | None,
+) -> tuple[str, list[str]]:
+    if x_axis is None or (y_axis is None and y_axes is None):
+        preset_axes = _PRESET_AXES.get(_protocol_token(preset) if preset is not None else None)
+    else:
+        preset_axes = None
+    resolved_x_axis = x_axis if x_axis is not None else (preset_axes[0] if preset_axes else "Time")
+    if y_axes is not None:
+        resolved_y_axes = list(y_axes)
+    elif y_axis is not None:
+        resolved_y_axes = [y_axis]
+    elif preset_axes:
+        resolved_y_axes = list(preset_axes[1])
+    else:
+        resolved_y_axes = ["Amplitude"]
+    return _protocol_token(resolved_x_axis), [_protocol_token(axis) for axis in resolved_y_axes]
+
+
+_PRESET_AXES: dict[str | None, tuple[str, tuple[str, ...]]] = {
+    "uv_coverage": ("u", ("v",)),
+    "amplitude_vs_time": ("time", ("amplitude",)),
+    "phase_vs_time": ("time", ("phase",)),
+    "amplitude_phase_vs_time": ("time", ("amplitude", "phase")),
+    "amplitude_phase_vs_time_stacked": ("time", ("amplitude", "phase")),
+    "amplitude_vs_uv_distance": ("uv_distance", ("amplitude",)),
+    "weight_vs_time": ("time", ("weight",)),
+    "sigma_vs_time": ("time", ("sigma",)),
+    "flag_vs_time": ("time", ("flag",)),
+    "weight_spectrum_vs_time": ("time", ("weight_spectrum",)),
+    "sigma_spectrum_vs_time": ("time", ("sigma_spectrum",)),
+    "flagrow_vs_time": ("time", ("flag_row",)),
+    "elevation_vs_time": ("time", ("elevation",)),
+    "azimuth_vs_time": ("time", ("azimuth",)),
+    "hour_angle_vs_time": ("time", ("hour_angle",)),
+    "parallactic_angle_vs_time": ("time", ("parallactic_angle",)),
+    "azimuth_vs_elevation": ("elevation", ("azimuth",)),
+    "amplitude_vs_channel": ("channel", ("amplitude",)),
+    "phase_vs_channel": ("channel", ("phase",)),
+    "phase_vs_frequency": ("frequency", ("phase",)),
+    "amplitude_vs_frequency": ("frequency", ("amplitude",)),
+    "amplitude_vs_velocity": ("velocity", ("amplitude",)),
+    "phase_vs_velocity": ("velocity", ("phase",)),
+    "u_v": ("u", ("v",)),
+    "amplitude_vs_u": ("u", ("amplitude",)),
+    "amplitude_vs_v": ("v", ("amplitude",)),
+    "amplitude_vs_w": ("w", ("amplitude",)),
+    "real_vs_imaginary": ("real", ("imaginary",)),
+}
+
+
+def _averaging_request(
+    *,
+    avgchannel: int | None = None,
+    avgtime: float | None = None,
+    avgscan: bool = False,
+    avgfield: bool = False,
+    avgbaseline: bool = False,
+    avgantenna: bool = False,
+    avgspw: bool = False,
+    scalar_average: bool = False,
+) -> dict[str, Any]:
     return {
-        "avgchannel": None,
-        "avgtime": None,
-        "avgscan": False,
-        "avgfield": False,
-        "avgbaseline": False,
-        "avgantenna": False,
-        "avgspw": False,
-        "scalar": False,
+        "avgchannel": avgchannel,
+        "avgtime": avgtime,
+        "avgscan": avgscan,
+        "avgfield": avgfield,
+        "avgbaseline": avgbaseline,
+        "avgantenna": avgantenna,
+        "avgspw": avgspw,
+        "scalar": scalar_average,
     }
 
 
-def _transform_request() -> dict[str, Any]:
+def _transform_request(
+    *,
+    transform: bool = True,
+    freqframe: str | None = None,
+    restfreq: str | None = None,
+    veldef: str = "RADIO",
+    phasecenter: str | None = None,
+    xframe: str | None = None,
+    xinterp: str | None = None,
+    yframe: str | None = None,
+    yinterp: str | None = None,
+) -> dict[str, Any]:
     return {
-        "transform": True,
-        "freqframe": None,
-        "restfreq": None,
-        "veldef": "RADIO",
-        "phasecenter": None,
-        "xframe": None,
-        "xinterp": None,
-        "yframe": None,
-        "yinterp": None,
+        "transform": transform,
+        "freqframe": freqframe,
+        "restfreq": restfreq,
+        "veldef": veldef,
+        "phasecenter": phasecenter,
+        "xframe": xframe,
+        "xinterp": xinterp,
+        "yframe": yframe,
+        "yinterp": yinterp,
     }
 
 
-def _layout_request() -> dict[str, int]:
+def _layout_request(
+    *,
+    gridrows: int = 1,
+    gridcols: int = 1,
+    rowindex: int = 0,
+    colindex: int = 0,
+    plotindex: int = 0,
+) -> dict[str, int]:
     return {
-        "gridrows": 1,
-        "gridcols": 1,
-        "rowindex": 0,
-        "colindex": 0,
-        "plotindex": 0,
+        "gridrows": gridrows,
+        "gridcols": gridcols,
+        "rowindex": rowindex,
+        "colindex": colindex,
+        "plotindex": plotindex,
     }
 
 
-def _iteration_request() -> dict[str, Any]:
+def _iteration_request(
+    *,
+    iteraxis: str | None = None,
+    xselfscale: bool = False,
+    yselfscale: bool = False,
+    xsharedaxis: bool = False,
+    ysharedaxis: bool = False,
+) -> dict[str, Any]:
     return {
-        "iteraxis": None,
-        "xselfscale": False,
-        "yselfscale": False,
-        "xsharedaxis": False,
-        "ysharedaxis": False,
+        "iteraxis": iteraxis,
+        "xselfscale": xselfscale,
+        "yselfscale": yselfscale,
+        "xsharedaxis": xsharedaxis,
+        "ysharedaxis": ysharedaxis,
     }
 
 
-def _style_request(*, title: str | None) -> dict[str, Any]:
+def _style_request(
+    *,
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    symbol_size: float | None = None,
+    showlegend: bool = False,
+    legendposition: str = "upperRight",
+    showmajorgrid: bool = False,
+    showminorgrid: bool = False,
+) -> dict[str, Any]:
     return {
         "title": title,
-        "xlabel": None,
-        "ylabel": None,
-        "symbol_size": None,
-        "showlegend": False,
-        "legendposition": "upperRight",
-        "showmajorgrid": False,
-        "showminorgrid": False,
+        "xlabel": xlabel,
+        "ylabel": ylabel,
+        "symbol_size": symbol_size,
+        "showlegend": showlegend,
+        "legendposition": legendposition,
+        "showmajorgrid": showmajorgrid,
+        "showminorgrid": showminorgrid,
     }

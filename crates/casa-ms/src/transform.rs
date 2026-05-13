@@ -4,8 +4,9 @@
 //! CASA routes `mstransform` through the `mstransformer` tool and a chain of
 //! TVI layers. This module implements the IRC+10216 tutorial subset needed by
 //! downstream line-imaging workflows: row selection plus per-SPW channel
-//! selection into a new on-disk MeasurementSet while preserving the standard
-//! subtables and updating spectral-window channel metadata.
+//! selection and channel averaging into a new on-disk MeasurementSet while
+//! preserving the standard subtables and updating spectral-window channel
+//! metadata.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -56,6 +57,8 @@ pub struct MsTransformRequest {
     pub output_ms: PathBuf,
     /// CASA-style SPW/channel selector such as `0:7~58`.
     pub spw: String,
+    /// Number of adjacent selected channels to average into each output channel.
+    pub width: usize,
     /// Source visibility data column to copy into output `DATA`.
     pub data_column: TransformDataColumn,
     /// Structured row selection.
@@ -86,6 +89,8 @@ pub struct MsTransformReport {
     pub spectral_window_ids: Vec<i32>,
     /// Output channel counts by spectral window.
     pub output_channels_by_spw: BTreeMap<i32, usize>,
+    /// Number of adjacent selected channels averaged into each output channel.
+    pub width: usize,
     /// End-to-end runtime in nanoseconds.
     pub elapsed_ns: u64,
 }
@@ -237,6 +242,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     }
     let stage_started_at = Instant::now();
     let channel_selection = resolve_transform_channels(&input, &request.spw)?;
+    let channel_bins = channel_bins_by_spw(&channel_selection, request.width)?;
     let ddid_to_spw = data_description_spw_map(&input)?;
     let raw_ddids = input
         .main_table()
@@ -253,7 +259,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         let Some(spw) = ddid_to_spw.get(&ddid) else {
             continue;
         };
-        if channel_selection.contains_key(spw) {
+        if channel_bins.contains_key(spw) {
             filtered_rows.push(row_index);
             filtered_ddids.push(ddid);
         }
@@ -347,6 +353,8 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         selected_ddids.push(ddid);
     }
     let selected_ddids_for_metadata = selected_ddids.clone();
+    let selected_field_ids_for_metadata =
+        selected_field_ids_for_rows(input.main_table(), &selected_rows, &request.output_ms)?;
     maybe_log_transform_progress(
         "sort_rows_by_time",
         stage_started_at.elapsed(),
@@ -372,9 +380,14 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     let compact_metadata = compact_spectral_subtables(
         &request.input_ms,
         &request.output_ms,
-        &channel_selection,
+        &channel_bins,
         &selected_ddids_for_metadata,
         &ddid_to_spw,
+    )?;
+    let field_id_map = compact_field_subtable(
+        &request.input_ms,
+        &request.output_ms,
+        &selected_field_ids_for_metadata,
     )?;
     maybe_log_transform_progress(
         "compact_spectral_subtables",
@@ -460,29 +473,33 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
                 reason: format!("MAIN row {row_index} references DATA_DESC_ID {ddid}, which has no DATA_DESCRIPTION row"),
             }
         })?;
-        let channels = channel_selection.get(&spw_id).ok_or_else(|| MsTransformError::InvalidSpw {
+        let bins = channel_bins.get(&spw_id).ok_or_else(|| MsTransformError::InvalidSpw {
             selector: request.spw.clone(),
             reason: format!("selected row {row_index} maps to spectral window {spw_id}, but --spw does not include that SPW"),
         })?;
-        transformed_data.push(select_channels(data, channels).map_err(|source| {
-            MsTransformError::MutateMeasurementSet {
-                path: request.output_ms.display().to_string(),
-                source: Box::new(source),
-            }
-        })?);
-        transformed_flags.push(select_channels(flags, channels).map_err(|source| {
-            MsTransformError::MutateMeasurementSet {
-                path: request.output_ms.display().to_string(),
-                source: Box::new(source),
-            }
-        })?);
+        transformed_data.push(
+            transform_data_channels(data, &flags, bins).map_err(|source| {
+                MsTransformError::MutateMeasurementSet {
+                    path: request.output_ms.display().to_string(),
+                    source: Box::new(source),
+                }
+            })?,
+        );
+        transformed_flags.push(
+            transform_flag_channels(flags.clone(), bins).map_err(|source| {
+                MsTransformError::MutateMeasurementSet {
+                    path: request.output_ms.display().to_string(),
+                    source: Box::new(source),
+                }
+            })?,
+        );
         if let Some(values) = weight_spectrum_values.as_mut() {
             let weight_spectrum = values.next().flatten();
             if let Some(transformed) = transformed_weight_spectrum.as_mut() {
                 transformed.push(
                     weight_spectrum
                         .map(|value| {
-                            select_channels(value, channels).map_err(|source| {
+                            transform_weight_channels(value, &flags, bins).map_err(|source| {
                                 MsTransformError::MutateMeasurementSet {
                                     path: request.output_ms.display().to_string(),
                                     source: Box::new(source),
@@ -542,6 +559,24 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
             })
             .collect::<Result<Vec<_>, _>>()?,
     );
+    output_column_overrides.insert(
+        "FIELD_ID".to_string(),
+        selected_field_ids_for_metadata
+            .iter()
+            .map(|field_id| {
+                field_id_map
+                    .get(field_id)
+                    .copied()
+                    .ok_or_else(|| MsTransformError::SpectralMetadata {
+                        path: request.output_ms.display().to_string(),
+                        reason: format!(
+                            "selected FIELD_ID {field_id} was not present in compacted FIELD metadata"
+                        ),
+                    })
+                    .map(|compact| Some(Value::Scalar(ScalarValue::Int32(compact))))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    );
     output_main
         .save_with_bindings_and_column_overrides_assuming_valid(
             measurement_set_table_options(&request.output_ms),
@@ -558,7 +593,7 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    update_spectral_window_metadata(&compact_metadata.channel_selection, &request.output_ms)?;
+    update_spectral_window_metadata(&compact_metadata.channel_bins, &request.output_ms)?;
     maybe_log_transform_progress(
         "update_spectral_window",
         stage_started_at.elapsed(),
@@ -573,10 +608,11 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
         output_column: VisibilityDataColumn::Data.name().to_string(),
         spw: request.spw.clone(),
         spectral_window_ids: touched_spws.into_iter().collect(),
-        output_channels_by_spw: channel_selection
+        output_channels_by_spw: channel_bins
             .iter()
-            .map(|(spw, channels)| (*spw, channels.len()))
+            .map(|(spw, bins)| (*spw, bins.len()))
             .collect(),
+        width: normalized_width(request.width),
         elapsed_ns: started_at.elapsed().as_nanos() as u64,
     })
 }
@@ -752,29 +788,29 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> 
 
 struct CompactSpectralMetadata {
     ddid_map: BTreeMap<i32, i32>,
-    channel_selection: BTreeMap<i32, Vec<usize>>,
+    channel_bins: BTreeMap<i32, Vec<Vec<usize>>>,
 }
 
 fn compact_spectral_subtables(
     input_ms: &Path,
     output_ms: &Path,
-    channel_selection: &BTreeMap<i32, Vec<usize>>,
+    channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
     selected_ddids: &[i32],
     ddid_to_spw: &BTreeMap<i32, i32>,
 ) -> Result<CompactSpectralMetadata, MsTransformError> {
-    let selected_spws = channel_selection.keys().copied().collect::<Vec<_>>();
+    let selected_spws = channel_bins.keys().copied().collect::<Vec<_>>();
     let spw_map = selected_spws
         .iter()
         .enumerate()
         .map(|(new_id, old_id)| (*old_id, new_id as i32))
         .collect::<BTreeMap<_, _>>();
-    let compact_channel_selection = selected_spws
+    let compact_channel_bins = selected_spws
         .iter()
         .enumerate()
         .map(|(new_id, old_id)| {
             (
                 new_id as i32,
-                channel_selection.get(old_id).cloned().unwrap_or_default(),
+                channel_bins.get(old_id).cloned().unwrap_or_default(),
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -837,8 +873,54 @@ fn compact_spectral_subtables(
     unique_ddids.clear();
     Ok(CompactSpectralMetadata {
         ddid_map,
-        channel_selection: compact_channel_selection,
+        channel_bins: compact_channel_bins,
     })
+}
+
+fn selected_field_ids_for_rows(
+    table: &Table,
+    selected_rows: &[usize],
+    output_path: &Path,
+) -> Result<Vec<i32>, MsTransformError> {
+    table
+        .column_accessor("FIELD_ID")
+        .and_then(|column| column.scalar_cells_owned_for_rows(selected_rows))
+        .map_err(|source| MsTransformError::MutateMeasurementSet {
+            path: output_path.display().to_string(),
+            source: Box::new(source),
+        })?
+        .into_iter()
+        .zip(selected_rows.iter().copied())
+        .map(|(value, row_index)| scalar_i32(value.as_ref(), "FIELD_ID", row_index))
+        .collect()
+}
+
+fn compact_field_subtable(
+    input_ms: &Path,
+    output_ms: &Path,
+    selected_field_ids: &[i32],
+) -> Result<BTreeMap<i32, i32>, MsTransformError> {
+    let ordered_field_ids = selected_field_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let field_id_map = ordered_field_ids
+        .iter()
+        .enumerate()
+        .map(|(new_id, old_id)| (*old_id, new_id as i32))
+        .collect::<BTreeMap<_, _>>();
+    rewrite_selected_table_rows(
+        &input_ms.join(SubtableId::Field.name()),
+        &output_ms.join(SubtableId::Field.name()),
+        &ordered_field_ids
+            .iter()
+            .map(|field_id| *field_id as usize)
+            .collect::<Vec<_>>(),
+        |_, row| Ok(row),
+    )?;
+    Ok(field_id_map)
 }
 
 fn rewrite_selected_table_rows<F>(
@@ -910,16 +992,25 @@ fn resolve_transform_channels(
     ms: &MeasurementSet,
     spw: &str,
 ) -> Result<BTreeMap<i32, Vec<usize>>, MsTransformError> {
-    let selectors = parse_spw_selector(spw).map_err(|source| MsTransformError::InvalidSpw {
-        selector: spw.to_string(),
-        reason: source.to_string(),
-    })?;
     let spectral_window =
         ms.spectral_window()
             .map_err(|source| MsTransformError::SpectralMetadata {
                 path: "<measurement-set/SPECTRAL_WINDOW>".to_string(),
                 reason: source.to_string(),
             })?;
+    let selectors = if spw.trim().is_empty() {
+        (0..spectral_window.row_count())
+            .map(|row| crate::selection_syntax::SpwSelector {
+                spw_id: row as i32,
+                channels: None,
+            })
+            .collect()
+    } else {
+        parse_spw_selector(spw).map_err(|source| MsTransformError::InvalidSpw {
+            selector: spw.to_string(),
+            reason: source.to_string(),
+        })?
+    };
     let mut by_spw = BTreeMap::new();
     for selector in selectors {
         if selector.spw_id < 0 {
@@ -975,6 +1066,32 @@ fn resolve_transform_channels(
             });
         }
         by_spw.insert(selector.spw_id, indices);
+    }
+    Ok(by_spw)
+}
+
+fn normalized_width(width: usize) -> usize {
+    width.max(1)
+}
+
+fn channel_bins_by_spw(
+    channel_selection: &BTreeMap<i32, Vec<usize>>,
+    width: usize,
+) -> Result<BTreeMap<i32, Vec<Vec<usize>>>, MsTransformError> {
+    let width = normalized_width(width);
+    let mut by_spw = BTreeMap::new();
+    for (&spw_id, channels) in channel_selection {
+        let bins = channels
+            .chunks(width)
+            .map(|chunk| chunk.to_vec())
+            .collect::<Vec<_>>();
+        if bins.is_empty() {
+            return Err(MsTransformError::InvalidSpw {
+                selector: format!("{spw_id}"),
+                reason: format!("spectral-window {spw_id} selection produced no channel bins"),
+            });
+        }
+        by_spw.insert(spw_id, bins);
     }
     Ok(by_spw)
 }
@@ -1074,6 +1191,161 @@ fn select_channels(value: ArrayValue, channels: &[usize]) -> Result<ArrayValue, 
     }
 }
 
+fn transform_data_channels(
+    value: ArrayValue,
+    flags: &ArrayValue,
+    bins: &[Vec<usize>],
+) -> Result<ArrayValue, TableError> {
+    if bins_are_single_channel(bins) {
+        let channels = bins.iter().map(|bin| bin[0]).collect::<Vec<_>>();
+        return select_channels(value, &channels);
+    }
+    let ArrayValue::Complex32(values) = value else {
+        return Err(TableError::Schema(
+            "visibility DATA arrays must be Complex32 rank-2 [corr, chan]".to_string(),
+        ));
+    };
+    let ArrayValue::Bool(flags) = flags else {
+        return Err(TableError::Schema(
+            "FLAG arrays must be Bool rank-2 [corr, chan]".to_string(),
+        ));
+    };
+    if values.ndim() != 2 || flags.ndim() != 2 || values.shape() != flags.shape() {
+        return Err(TableError::Schema(
+            "DATA and FLAG arrays must have matching rank-2 [corr, chan] shapes".to_string(),
+        ));
+    }
+    let corr_count = values.shape()[0];
+    let chan_count = values.shape()[1];
+    validate_channel_bins(bins, chan_count)?;
+    let mut output = ndarray::Array2::<casa_types::Complex32>::zeros((corr_count, bins.len()));
+    for corr in 0..corr_count {
+        for (out_chan, bin) in bins.iter().enumerate() {
+            let mut sum = casa_types::Complex32::new(0.0, 0.0);
+            let mut count = 0usize;
+            for &chan in bin {
+                if !flags[[corr, chan]] {
+                    sum += values[[corr, chan]];
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                for &chan in bin {
+                    sum += values[[corr, chan]];
+                }
+                count = bin.len();
+            }
+            output[[corr, out_chan]] = sum / count as f32;
+        }
+    }
+    Ok(ArrayValue::Complex32(output.into_dyn()))
+}
+
+fn transform_flag_channels(
+    value: ArrayValue,
+    bins: &[Vec<usize>],
+) -> Result<ArrayValue, TableError> {
+    if bins_are_single_channel(bins) {
+        let channels = bins.iter().map(|bin| bin[0]).collect::<Vec<_>>();
+        return select_channels(value, &channels);
+    }
+    let ArrayValue::Bool(values) = value else {
+        return Err(TableError::Schema(
+            "FLAG arrays must be Bool rank-2 [corr, chan]".to_string(),
+        ));
+    };
+    if values.ndim() != 2 {
+        return Err(TableError::Schema(
+            "FLAG arrays must be rank-2 [corr, chan]".to_string(),
+        ));
+    }
+    let corr_count = values.shape()[0];
+    let chan_count = values.shape()[1];
+    validate_channel_bins(bins, chan_count)?;
+    let mut output = ndarray::Array2::<bool>::from_elem((corr_count, bins.len()), false);
+    for corr in 0..corr_count {
+        for (out_chan, bin) in bins.iter().enumerate() {
+            output[[corr, out_chan]] = bin.iter().copied().all(|chan| values[[corr, chan]]);
+        }
+    }
+    Ok(ArrayValue::Bool(output.into_dyn()))
+}
+
+fn transform_weight_channels(
+    value: ArrayValue,
+    flags: &ArrayValue,
+    bins: &[Vec<usize>],
+) -> Result<ArrayValue, TableError> {
+    if bins_are_single_channel(bins) {
+        let channels = bins.iter().map(|bin| bin[0]).collect::<Vec<_>>();
+        return select_channels(value, &channels);
+    }
+    let ArrayValue::Float32(values) = value else {
+        return Err(TableError::Schema(
+            "WEIGHT_SPECTRUM arrays must be Float32 rank-2 [corr, chan]".to_string(),
+        ));
+    };
+    let ArrayValue::Bool(flags) = flags else {
+        return Err(TableError::Schema(
+            "FLAG arrays must be Bool rank-2 [corr, chan]".to_string(),
+        ));
+    };
+    if values.ndim() != 2 || flags.ndim() != 2 || values.shape() != flags.shape() {
+        return Err(TableError::Schema(
+            "WEIGHT_SPECTRUM and FLAG arrays must have matching rank-2 [corr, chan] shapes"
+                .to_string(),
+        ));
+    }
+    let corr_count = values.shape()[0];
+    let chan_count = values.shape()[1];
+    validate_channel_bins(bins, chan_count)?;
+    let mut output = ndarray::Array2::<f32>::zeros((corr_count, bins.len()));
+    for corr in 0..corr_count {
+        for (out_chan, bin) in bins.iter().enumerate() {
+            let mut sum = 0.0f32;
+            for &chan in bin {
+                if !flags[[corr, chan]] {
+                    sum += values[[corr, chan]];
+                }
+            }
+            if sum == 0.0 {
+                for &chan in bin {
+                    sum += values[[corr, chan]];
+                }
+            }
+            output[[corr, out_chan]] = sum;
+        }
+    }
+    Ok(ArrayValue::Float32(output.into_dyn()))
+}
+
+fn bins_are_single_channel(bins: &[Vec<usize>]) -> bool {
+    bins.iter().all(|bin| bin.len() == 1)
+}
+
+fn validate_channel_bins(bins: &[Vec<usize>], channel_count: usize) -> Result<(), TableError> {
+    if bins.is_empty() {
+        return Err(TableError::Schema(
+            "channel averaging produced no output channels".to_string(),
+        ));
+    }
+    for bin in bins {
+        if bin.is_empty() {
+            return Err(TableError::Schema(
+                "channel averaging bin was empty".to_string(),
+            ));
+        }
+        for &channel in bin {
+            if channel >= channel_count {
+                return Err(TableError::Schema(format!(
+                    "channel {channel} is outside array with {channel_count} channels"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn select_fortran_contiguous_axis1<T: Clone>(
     values: ndarray::ArrayViewD<'_, T>,
     start: usize,
@@ -1115,7 +1387,7 @@ fn all_channels_selected(channels: &[usize], channel_count: usize) -> bool {
 }
 
 fn update_spectral_window_metadata(
-    channel_selection: &BTreeMap<i32, Vec<usize>>,
+    channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
     output_ms: &Path,
 ) -> Result<(), MsTransformError> {
     let spw_path = output_ms.join(SubtableId::SpectralWindow.name());
@@ -1125,22 +1397,16 @@ fn update_spectral_window_metadata(
             source: Box::new(source),
         }
     })?;
-    for (&spw_id, channels) in channel_selection {
+    for (&spw_id, bins) in channel_bins {
         let row = spw_id as usize;
-        update_f64_vector_column(&mut spectral_window, row, "CHAN_FREQ", channels, &spw_path)?;
-        update_f64_vector_column(&mut spectral_window, row, "CHAN_WIDTH", channels, &spw_path)?;
-        update_f64_vector_column(
-            &mut spectral_window,
-            row,
-            "EFFECTIVE_BW",
-            channels,
-            &spw_path,
-        )?;
-        update_f64_vector_column(&mut spectral_window, row, "RESOLUTION", channels, &spw_path)?;
+        update_f64_frequency_column(&mut spectral_window, row, "CHAN_FREQ", bins, &spw_path)?;
+        update_f64_width_column(&mut spectral_window, row, "CHAN_WIDTH", bins, &spw_path)?;
+        update_f64_width_column(&mut spectral_window, row, "EFFECTIVE_BW", bins, &spw_path)?;
+        update_f64_width_column(&mut spectral_window, row, "RESOLUTION", bins, &spw_path)?;
         spectral_window
             .column_accessor_mut("NUM_CHAN")
             .and_then(|mut column| {
-                column.set_scalar_assuming_valid(row, ScalarValue::Int32(channels.len() as i32))
+                column.set_scalar_assuming_valid(row, ScalarValue::Int32(bins.len() as i32))
             })
             .map_err(|source| MsTransformError::SpectralMetadata {
                 path: spw_path.display().to_string(),
@@ -1157,20 +1423,15 @@ fn update_spectral_window_metadata(
                     path: spw_path.display().to_string(),
                     reason: source.to_string(),
                 })?;
-            let total_bw = if chan_freq.len() > 1 {
-                (last - first).abs()
-                    + f64_vector_cell(&spectral_window, row, "CHAN_WIDTH", &spw_path)
-                        .ok()
-                        .and_then(|widths| widths.first().copied())
-                        .unwrap_or(0.0)
-                        .abs()
-            } else {
-                f64_vector_cell(&spectral_window, row, "CHAN_WIDTH", &spw_path)
-                    .ok()
-                    .and_then(|widths| widths.first().copied())
-                    .unwrap_or(0.0)
-                    .abs()
-            };
+            let total_bw = f64_vector_cell(&spectral_window, row, "CHAN_WIDTH", &spw_path)
+                .map(|widths| widths.iter().map(|width| width.abs()).sum())
+                .unwrap_or_else(|_| {
+                    if chan_freq.len() > 1 {
+                        (last - first).abs()
+                    } else {
+                        0.0
+                    }
+                });
             spectral_window
                 .column_accessor_mut("TOTAL_BANDWIDTH")
                 .and_then(|mut column| {
@@ -1191,11 +1452,11 @@ fn update_spectral_window_metadata(
     Ok(())
 }
 
-fn update_f64_vector_column(
+fn update_f64_frequency_column(
     spectral_window: &mut Table,
     row: usize,
     column: &str,
-    channels: &[usize],
+    bins: &[Vec<usize>],
     spw_path: &Path,
 ) -> Result<(), MsTransformError> {
     let values = spectral_window
@@ -1217,18 +1478,98 @@ fn update_f64_vector_column(
             reason: format!("{column} must be rank-1"),
         });
     }
+    validate_bins_for_vector(bins, values.len(), column, spw_path)?;
+    let averaged = bins
+        .iter()
+        .map(|bin| {
+            bin.iter()
+                .copied()
+                .map(|channel| values[channel])
+                .sum::<f64>()
+                / bin.len() as f64
+        })
+        .collect::<Vec<_>>();
     spectral_window
         .column_accessor_mut(column)
         .and_then(|mut column| {
             column.set_array_assuming_valid(
                 row,
-                ArrayValue::Float64(values.select(Axis(0), channels)),
+                ArrayValue::Float64(ndarray::Array1::from(averaged).into_dyn()),
             )
         })
         .map_err(|source| MsTransformError::SpectralMetadata {
             path: spw_path.display().to_string(),
             reason: source.to_string(),
         })
+}
+
+fn update_f64_width_column(
+    spectral_window: &mut Table,
+    row: usize,
+    column: &str,
+    bins: &[Vec<usize>],
+    spw_path: &Path,
+) -> Result<(), MsTransformError> {
+    let values = spectral_window
+        .cell_accessor(row, column)
+        .and_then(|cell| cell.array().cloned())
+        .map_err(|source| MsTransformError::MutateMeasurementSet {
+            path: spw_path.display().to_string(),
+            source: Box::new(source),
+        })?;
+    let ArrayValue::Float64(values) = values else {
+        return Err(MsTransformError::SpectralMetadata {
+            path: spw_path.display().to_string(),
+            reason: format!("{column} must be a Float64 vector"),
+        });
+    };
+    if values.ndim() != 1 {
+        return Err(MsTransformError::SpectralMetadata {
+            path: spw_path.display().to_string(),
+            reason: format!("{column} must be rank-1"),
+        });
+    }
+    validate_bins_for_vector(bins, values.len(), column, spw_path)?;
+    let averaged = bins
+        .iter()
+        .map(|bin| {
+            bin.iter()
+                .copied()
+                .map(|channel| values[channel])
+                .sum::<f64>()
+        })
+        .collect::<Vec<_>>();
+    spectral_window
+        .column_accessor_mut(column)
+        .and_then(|mut column| {
+            column.set_array_assuming_valid(
+                row,
+                ArrayValue::Float64(ndarray::Array1::from(averaged).into_dyn()),
+            )
+        })
+        .map_err(|source| MsTransformError::SpectralMetadata {
+            path: spw_path.display().to_string(),
+            reason: source.to_string(),
+        })
+}
+
+fn validate_bins_for_vector(
+    bins: &[Vec<usize>],
+    len: usize,
+    column: &str,
+    spw_path: &Path,
+) -> Result<(), MsTransformError> {
+    for bin in bins {
+        for &channel in bin {
+            if channel >= len {
+                return Err(MsTransformError::SpectralMetadata {
+                    path: spw_path.display().to_string(),
+                    reason: format!("{column} channel {channel} is outside vector length {len}"),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn f64_vector_cell(

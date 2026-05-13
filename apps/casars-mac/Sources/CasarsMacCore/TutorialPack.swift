@@ -248,6 +248,7 @@ public enum TutorialPackInputStatus: String, Codable, Equatable {
 public struct TutorialPackInputState: Codable, Equatable, Identifiable {
     public var id: String
     public var displayName: String
+    public var kind: String
     public var filename: String
     public var registryKey: String
     public var sourceArtifactURL: String
@@ -309,6 +310,7 @@ public struct TutorialPackContext: Codable, Equatable {
             return TutorialPackInputState(
                 id: input.id,
                 displayName: input.displayName,
+                kind: input.kind,
                 filename: input.filename,
                 registryKey: input.registryKey,
                 sourceArtifactURL: input.sourceArtifactURL,
@@ -339,11 +341,12 @@ public struct TutorialPackContext: Codable, Equatable {
     public func datasetSummaries() -> [DatasetSummary] {
         inputs.compactMap { input in
             guard input.status == .staged else { return nil }
+            let pathURL = URL(fileURLWithPath: input.resolvedPath)
             return DatasetSummary(
                 id: input.resolvedPath,
-                name: input.filename,
+                name: pathURL.lastPathComponent,
                 path: input.resolvedPath,
-                kind: .imageCube,
+                kind: input.datasetKind,
                 size: "tutorial input",
                 units: "",
                 notes: "Tutorial pack input: \(input.displayName)",
@@ -352,6 +355,30 @@ public struct TutorialPackContext: Codable, Equatable {
                     "pack_path=\(input.packPath)"
                 ]
             )
+        }
+    }
+}
+
+private extension TutorialPackInputState {
+    var datasetKind: DatasetKind {
+        switch kind.lowercased() {
+        case "measurement-set":
+            return .measurementSet
+        case "calibration-table":
+            return .calibrationTable
+        case "region":
+            return .region
+        case "table":
+            return .table
+        default:
+            let lowerPath = packPath.lowercased()
+            if lowerPath.hasSuffix(".ms") {
+                return .measurementSet
+            }
+            if lowerPath.hasSuffix(".crtf") {
+                return .region
+            }
+            return .imageCube
         }
     }
 }

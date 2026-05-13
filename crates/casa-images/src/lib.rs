@@ -83,10 +83,11 @@ pub use analysis::{
     ImageAnalysisProtocolInfo, ImageAnalysisTaskRequest, ImageAnalysisTaskResult,
     ImageAnalysisTaskSchemaBundle, ImageHeaderSummary, ImageMathSummary, ImageRegridSummary,
     ImageStatisticsSummary, ImageSubimageSummary, ImheadRequest, ImmathRequest, ImmomentsRequest,
-    ImportFitsRequest, ImpvRequest, ImregridRequest, ImstatRequest, ImsubimageRequest,
-    MomentMapSummary, PvImageSummary, export_fits, feather, image_analysis_ui_schema_json, imhead,
-    imhead_put, immath, immoments, import_fits, impv, imregrid, imstat, imsubimage,
-    read_image_analysis_request_source, run_image_analysis_task,
+    ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest, ImstatRequest,
+    ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary, export_fits, feather,
+    image_analysis_ui_schema_json, imhead, imhead_put, immath, immoments, impbcor, import_fits,
+    impv, imregrid, imstat, imsubimage, read_image_analysis_request_source,
+    run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use browser_render::{
