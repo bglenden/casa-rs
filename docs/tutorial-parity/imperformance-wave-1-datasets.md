@@ -10,8 +10,11 @@ Child issue: #248
 This note defines the deterministic simulated data inputs for ImPerformance
 Wave 1. The goal is to benchmark imaging behavior, not calibration behavior.
 The datasets therefore use visually interesting deterministic sky models, a
-realistic but simple noise term, and explicit CASA C++ versus `casa-rs`
-simulation request plans.
+realistic but simple noise term, and explicit CASA C++ generation plans.
+
+For Wave 1, CASA C++ is allowed to be the dataset generator of record. Native
+`casa-rs` simulation gaps discovered by this plan are tracked as backlog issues
+instead of blocking benchmark dataset staging.
 
 ## Size Tiers
 
@@ -34,23 +37,24 @@ The staging root is always explicit. Set `CASA_RS_IMPERF_DATA_ROOT` or pass
 
 ## Instruments And Families
 
-The registry includes both VLA and ALMA simulated datasets:
+The registry includes both VLA and ALMA simulated datasets. CASA C++ generation
+is the current path for all Wave 1 benchmark datasets.
 
 | Instrument | Single-field datasets | Mosaic datasets | Native `casa-rs` simulation status |
 |---|---:|---:|---|
-| VLA | small, medium, large | small, medium, large | VLA single-field is supported by the existing native `simobserve` path |
+| VLA | small, medium, large | small, medium, large | VLA single-field single-plane is supported by the existing native `simobserve` path; native cube spectral structure and true mosaic generation are backlog |
 | ALMA | small, medium, large | small, medium, large | request-plan-only until ALMA simulation parity is checked |
 
 The registry also includes both single-field and mosaic families:
 
 | Family | Wave 1 modes | Status |
 |---|---|---|
-| single | standard MFS dirty, standard MFS clean, standard cube, MT-MFS sentinel | usable first for VLA single-field; ALMA request plans are emitted for parity work |
-| mosaic | mosaic MFS clean, mosaic cube bounded | planned and preflighted; true multi-field native simulation is blocked by the current one-FIELD simulator |
+| single | standard MFS dirty, standard MFS clean, standard cube, MT-MFS sentinel | CASA C++ generated datasets are usable now; native spectral cube model prediction is backlog #255 |
+| mosaic | mosaic MFS clean, mosaic cube bounded | CASA C++ generated datasets are usable now; native multi-field mosaic generation is backlog #254 |
 
-The blocked mosaic status is intentional. It prevents the benchmark program
-from claiming a generated mosaic dataset before either CASA-side staged mosaic
-generation or native multi-field MS generation exists.
+The native blocked/request-plan statuses are intentional. They prevent the
+benchmark program from claiming native simulation capability while allowing the
+performance wave to proceed from CASA C++ generated datasets.
 
 ## Source Model
 
@@ -71,17 +75,18 @@ The cube profile is also deterministic and includes frequency structure:
 - weak velocity-gradient metadata for the extended arms.
 
 The current native simulator reads a single FITS plane. The staging tool
-therefore writes a continuum FITS model plus a spectral-profile JSON file. Cube
-benchmarks must record whether the spectral profile was applied by CASA
-simulation, by a future native cube-model predictor, or was unavailable.
+therefore writes a continuum FITS model plus a spectral-profile JSON file.
+CASA C++ dataset generation must apply the spectral profile for cube benchmark
+datasets. Native use of the spectral profile is backlog #255.
 
 ## Simulation Parity And Performance Checks
 
 Each staged dataset plan includes:
 
-- a `casars-simobserve.json` request for the native task protocol;
-- a `casa-simulation-plan.json` describing the matching CASA C++ simulation
-  work to run or mark blocked;
+- a `casa-simulation-plan.json` describing the CASA C++ simulation work to run
+  for the Wave 1 benchmark dataset;
+- a `casars-simobserve.json` request for native capability comparison where
+  supported;
 - model/source provenance, shape, noise, storage, and selected-mode metadata.
 
 The simulation comparison is part of #248/#251 evidence because generated data
@@ -96,6 +101,17 @@ becomes benchmark input. The comparison must record:
 This is not a calibration benchmark. The noise term is simple deterministic
 complex visibility noise, tuned to make images realistic enough for repeated
 inspection without adding calibration-solver scope.
+
+## Native Simulation Follow-Ups
+
+Native simulation is not on the critical path for Wave 1 dataset generation.
+The missing capabilities are tracked separately:
+
+- #254: native multi-field mosaic simulation generation.
+- #255: native spectral cube model simulation.
+- #180: ALMA protoplanetary-disk simulation breadth.
+- #181: simalma workflow parity.
+- #182: ACA simulation parity.
 
 ## Commands
 
@@ -141,22 +157,21 @@ Use `--allow-non-external-large-root` only for a deliberate one-off override.
 ## Issue #248 Acceptance Mapping
 
 - Deterministic generation path or registry entry for selected mode/tier
-  combinations: `wave1_dataset_registry.json`.
+  combinations: `wave1_dataset_registry.json` plus CASA C++ simulation plans.
 - Metadata needed to reproduce benchmark workloads: generated dataset plan,
   source model files, spectral profile, and simulation request plans.
 - Provenance, size, checksum, path, and tier policy: this document plus the
   generated `wave1-dataset-plan.json`.
 - Clear preflight failures: missing `CASA_RS_IMPERF_DATA_ROOT`, medium/large
-  root outside `/Volumes/GLENDENNING`, and unsupported mosaic native simulation
-  are explicit statuses.
+  root outside `/Volumes/GLENDENNING`, and native simulation gaps are explicit
+  statuses with follow-up issues.
 - Shared-data policy: explicit root only; no bulky generated data in git.
 - Performance tier intent: small, memory-sized, and larger-than-memory staged
   datasets.
 
 ## Stop Conditions Preserved
 
-The current tool does not widen native simulation semantics. It records blocked
-status for true native mosaic generation and request-plan-only status for ALMA
-until those paths have CASA parity evidence. Implementing multi-field native
-simulation, CASA `simalma` parity, or a native cube-model predictor should be a
-separate approved scope change if the wave needs it before baseline timing.
+The current tool does not widen native simulation semantics. It records native
+gaps while allowing CASA C++ generation for Wave 1 datasets. Implementing
+multi-field native simulation, CASA `simalma` parity, ALMA/ACA native parity,
+or a native cube-model predictor should be separate approved scope.

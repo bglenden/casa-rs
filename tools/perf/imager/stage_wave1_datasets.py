@@ -245,18 +245,27 @@ def native_status_for(
     if family_name == "mosaic":
         return {
             "casars_simulation": "blocked",
-            "casa_simulation": "planned",
+            "casa_simulation": "generation-path",
+            "native_backlog_issue": "#254",
             "reason": "current native simulator writes one FIELD; true mosaic staging requires multi-field generation or CASA simulation",
         }
     if required_str(spec, "instrument") != "vla":
         return {
             "casars_simulation": "request-plan-only",
-            "casa_simulation": "planned",
+            "casa_simulation": "generation-path",
+            "native_backlog_issue": "#180/#181/#182",
             "reason": instrument_status,
+        }
+    if int_value(spec, "channels") > 1:
+        return {
+            "casars_simulation": "supported-single-plane",
+            "casa_simulation": "generation-path",
+            "native_backlog_issue": "#255",
+            "reason": "native VLA single-field simobserve can write a multi-channel MS from one 2D model plane; CASA generation is required for deterministic channel-varying source structure",
         }
     return {
         "casars_simulation": "supported",
-        "casa_simulation": "planned",
+        "casa_simulation": "generation-path",
         "reason": "native VLA single-field simobserve parity path exists; CASA side is retained for simulation performance/parity checks",
     }
 

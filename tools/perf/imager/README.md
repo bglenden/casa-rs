@@ -51,6 +51,11 @@ Medium and large datasets are expected to live on the external drive on this
 system. The staging tool requires those tiers under `/Volumes/GLENDENNING`
 unless `--allow-non-external-large-root` is passed explicitly.
 
+For Wave 1, CASA C++ generation is the dataset source of truth. The staging
+tool also emits native `casa-rs` simulation request plans where useful, but
+native mosaic generation and native channel-varying cube source prediction are
+tracked as backlog work rather than Wave 1 blockers.
+
 To run the same workload for real:
 
 ```sh
