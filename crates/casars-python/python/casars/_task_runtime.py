@@ -34,6 +34,9 @@ MSEXPLORE_PROTOCOL_VERSION = 1
 MSEXPLORE_BINARY_NAME = "msexplore"
 MSEXPLORE_BINARY_ENVVAR = "CASARS_MSEXPLORE_BIN"
 
+MSTRANSFORM_BINARY_NAME = "mstransform"
+MSTRANSFORM_BINARY_ENVVAR = "CASARS_MSTRANSFORM_BIN"
+
 IMAGER_PROTOCOL_NAME = "casa_imager_task"
 IMAGER_PROTOCOL_VERSION = 1
 IMAGER_BINARY_NAME = "casars-imager"
@@ -51,6 +54,8 @@ IMSUBIMAGE_BINARY_NAME = "imsubimage"
 IMSUBIMAGE_BINARY_ENVVAR = "CASARS_IMSUBIMAGE_BIN"
 IMMATH_BINARY_NAME = "immath"
 IMMATH_BINARY_ENVVAR = "CASARS_IMMATH_BIN"
+IMPBCOR_BINARY_NAME = "impbcor"
+IMPBCOR_BINARY_ENVVAR = "CASA_RS_IMPBCOR_BIN"
 EXPORTFITS_BINARY_NAME = "exportfits"
 EXPORTFITS_BINARY_ENVVAR = "CASARS_EXPORTFITS_BIN"
 IMPORTFITS_BINARY_NAME = "importfits"
@@ -62,12 +67,14 @@ _configured_calibrate_binary: str | None = None
 _configured_importvla_binary: str | None = None
 _configured_simobserve_binary: str | None = None
 _configured_msexplore_binary: str | None = None
+_configured_mstransform_binary: str | None = None
 _configured_imager_binary: str | None = None
 _configured_imexplore_binary: str | None = None
 _configured_immoments_binary: str | None = None
 _configured_impv_binary: str | None = None
 _configured_imsubimage_binary: str | None = None
 _configured_immath_binary: str | None = None
+_configured_impbcor_binary: str | None = None
 _configured_exportfits_binary: str | None = None
 _configured_importfits_binary: str | None = None
 
@@ -118,6 +125,14 @@ class MsExploreProtocolMismatchError(RuntimeError):
 
 class MsExploreInvocationError(RuntimeError):
     """Raised when the ``msexplore`` subprocess returns a non-zero status."""
+
+
+class MsTransformBinaryNotFoundError(FileNotFoundError):
+    """Raised when the ``mstransform`` binary cannot be resolved."""
+
+
+class MsTransformInvocationError(RuntimeError):
+    """Raised when the ``mstransform`` subprocess returns a non-zero status."""
 
 
 class ImagerBinaryNotFoundError(FileNotFoundError):
@@ -182,6 +197,13 @@ def configure_msexplore_binary(binary: StrPath | None) -> None:
     _configured_msexplore_binary = None if binary is None else os.fspath(binary)
 
 
+def configure_mstransform_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default mstransform binary override."""
+
+    global _configured_mstransform_binary
+    _configured_mstransform_binary = None if binary is None else os.fspath(binary)
+
+
 def configure_imager_binary(binary: StrPath | None) -> None:
     """Set or clear the module-wide default imager binary override."""
 
@@ -222,6 +244,13 @@ def configure_immath_binary(binary: StrPath | None) -> None:
 
     global _configured_immath_binary
     _configured_immath_binary = None if binary is None else os.fspath(binary)
+
+
+def configure_impbcor_binary(binary: StrPath | None) -> None:
+    """Set or clear the module-wide default impbcor binary override."""
+
+    global _configured_impbcor_binary
+    _configured_impbcor_binary = None if binary is None else os.fspath(binary)
 
 
 def configure_exportfits_binary(binary: StrPath | None) -> None:
@@ -287,6 +316,19 @@ def resolve_msexplore_binary(binary: StrPath | None = None) -> str:
         binary_name=MSEXPLORE_BINARY_NAME,
         missing_error_cls=MsExploreBinaryNotFoundError,
         description="msexplore",
+    )
+
+
+def resolve_mstransform_binary(binary: StrPath | None = None) -> str:
+    """Resolve the mstransform binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_mstransform_binary,
+        envvar=MSTRANSFORM_BINARY_ENVVAR,
+        binary_name=MSTRANSFORM_BINARY_NAME,
+        missing_error_cls=MsTransformBinaryNotFoundError,
+        description="mstransform",
     )
 
 
@@ -365,6 +407,19 @@ def resolve_immath_binary(binary: StrPath | None = None) -> str:
         binary_name=IMMATH_BINARY_NAME,
         missing_error_cls=ImageAnalysisBinaryNotFoundError,
         description="immath",
+    )
+
+
+def resolve_impbcor_binary(binary: StrPath | None = None) -> str:
+    """Resolve the impbcor binary using the documented precedence order."""
+
+    return _resolve_task_binary(
+        binary=binary,
+        configured_binary=_configured_impbcor_binary,
+        envvar=IMPBCOR_BINARY_ENVVAR,
+        binary_name=IMPBCOR_BINARY_NAME,
+        missing_error_cls=ImageAnalysisBinaryNotFoundError,
+        description="impbcor",
     )
 
 
@@ -511,6 +566,19 @@ def get_immath_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     )
 
 
+def get_impbcor_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
+    """Return validated protocol info for the selected impbcor binary."""
+
+    resolved = resolve_impbcor_binary(binary)
+    return _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+
+
 def get_exportfits_protocol_info(binary: StrPath | None = None) -> ProtocolInfo:
     """Return validated protocol info for the selected exportfits binary."""
 
@@ -605,6 +673,14 @@ def fetch_immath_schema(binary: StrPath | None = None) -> dict[str, Any]:
     """Fetch the JSON schema bundle advertised by the immath binary."""
 
     resolved = resolve_immath_binary(binary)
+    stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
+    return json.loads(stdout)
+
+
+def fetch_impbcor_schema(binary: StrPath | None = None) -> dict[str, Any]:
+    """Fetch the JSON schema bundle advertised by the impbcor binary."""
+
+    resolved = resolve_impbcor_binary(binary)
     stdout = _run_process([resolved, "--json-schema"], error_cls=ImageAnalysisInvocationError)
     return json.loads(stdout)
 
@@ -838,6 +914,30 @@ def invoke_immath_task(
         invocation_error_cls=ImageAnalysisInvocationError,
     )
     payload = json.dumps({"kind": "immath", "request": request}, sort_keys=True)
+    stdout = _run_process(
+        [resolved, "--json-run", "-"],
+        stdin=payload,
+        error_cls=ImageAnalysisInvocationError,
+    )
+    return json.loads(stdout)
+
+
+def invoke_impbcor_task(
+    *,
+    request: dict[str, Any],
+    binary: StrPath | None = None,
+) -> dict[str, Any]:
+    """Run one impbcor task request through ``impbcor --json-run -``."""
+
+    resolved = resolve_impbcor_binary(binary)
+    _validated_protocol_info(
+        resolved,
+        protocol_name=IMAGE_ANALYSIS_PROTOCOL_NAME,
+        protocol_version=IMAGE_ANALYSIS_PROTOCOL_VERSION,
+        mismatch_error_cls=ImageAnalysisProtocolMismatchError,
+        invocation_error_cls=ImageAnalysisInvocationError,
+    )
+    payload = json.dumps({"kind": "impbcor", "request": request}, sort_keys=True)
     stdout = _run_process(
         [resolved, "--json-run", "-"],
         stdin=payload,

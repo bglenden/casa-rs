@@ -503,6 +503,7 @@ fn base_config(ms_path: PathBuf, spectral_mode: SpectralMode) -> CliConfig {
         psf_cutoff: 0.35,
         mosaic_pb_limit: 0.1,
         pbcor: false,
+        write_pb: false,
         minor_cycle_length: 2,
         cyclefactor: 1.0,
         min_psf_fraction: 0.1,

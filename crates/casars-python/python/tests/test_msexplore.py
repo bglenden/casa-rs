@@ -110,9 +110,15 @@ def test_plot_wrapper_encodes_plot_export_request(tmp_path: Path) -> None:
     result = msexplore.plot(
         "ppdisk.synthetic.ms",
         "amp-time.png",
+        preset="uv_coverage",
         x_axis="Time",
         y_axis="Amplitude",
         data_column="data",
+        color_by="Field",
+        avgchannel=10000,
+        avgtime=1e9,
+        avgspw=False,
+        avgscan=False,
         title="Synthetic amplitudes",
         binary=binary,
     )
@@ -120,15 +126,49 @@ def test_plot_wrapper_encodes_plot_export_request(tmp_path: Path) -> None:
     request = result["result"]["request"]
     assert request["plot_export"] == {
         "output_path": "amp-time.png",
-        "format": "Png",
+        "format": "png",
         "width": 1200,
         "height": 800,
     }
     plot = request["spec"]["plots"][0]
-    assert plot["x_axis"] == "Time"
-    assert plot["y_axes"] == ["Amplitude"]
+    assert plot["preset"] == "uv_coverage"
+    assert plot["x_axis"] == "time"
+    assert plot["y_axes"] == ["amplitude"]
     assert plot["data_column"] == "data"
+    assert plot["color_by"] == "field"
+    assert plot["averaging"]["avgchannel"] == 10000
+    assert plot["averaging"]["avgtime"] == 1e9
+    assert plot["averaging"]["avgspw"] is False
+    assert plot["averaging"]["avgscan"] is False
     assert plot["style"]["title"] == "Synthetic amplitudes"
+
+
+def test_plot_wrapper_uses_preset_axes_when_axes_are_omitted(tmp_path: Path) -> None:
+    binary = _write_stub_binary(tmp_path / "ok" / "msexplore", version="ok")
+
+    uv_result = msexplore.plot(
+        "twhya_calibrated.ms",
+        "uv-coverage.txt",
+        preset="uv_coverage",
+        format="txt",
+        binary=binary,
+    )
+    uv_plot = uv_result["result"]["request"]["spec"]["plots"][0]
+    assert uv_plot["preset"] == "uv_coverage"
+    assert uv_plot["x_axis"] == "u"
+    assert uv_plot["y_axes"] == ["v"]
+
+    result = msexplore.plot(
+        "twhya_calibrated.ms",
+        "amp-uvdist.png",
+        preset="amplitude_vs_uv_distance",
+        binary=binary,
+    )
+
+    plot = result["result"]["request"]["spec"]["plots"][0]
+    assert plot["preset"] == "amplitude_vs_uv_distance"
+    assert plot["x_axis"] == "uv_distance"
+    assert plot["y_axes"] == ["amplitude"]
 
 
 def _write_stub_binary(

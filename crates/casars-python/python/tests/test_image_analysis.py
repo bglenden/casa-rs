@@ -18,6 +18,7 @@ def reset_image_analysis_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
         impv_binary=None,
         imsubimage_binary=None,
         immath_binary=None,
+        impbcor_binary=None,
         exportfits_binary=None,
         importfits_binary=None,
     )
@@ -26,6 +27,7 @@ def reset_image_analysis_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CASARS_IMPV_BIN", raising=False)
     monkeypatch.delenv("CASARS_IMSUBIMAGE_BIN", raising=False)
     monkeypatch.delenv("CASARS_IMMATH_BIN", raising=False)
+    monkeypatch.delenv("CASA_RS_IMPBCOR_BIN", raising=False)
     monkeypatch.delenv("CASARS_EXPORTFITS_BIN", raising=False)
     monkeypatch.delenv("CASARS_IMPORTFITS_BIN", raising=False)
     monkeypatch.delenv("CASARS_SUITE_ROOT", raising=False)
@@ -200,6 +202,28 @@ def test_immath_wrapper_accepts_single_input_scalar_expression(tmp_path: Path) -
     request = result["result"]["request"]
     assert request["imagename"] == ["SNR_G55_10s.ms.MTMFS.wProj.image.tt0"]
     assert request["expr"] == "1.222e6*IM0/1.579^2/(29.30*29.03)"
+
+
+def test_impbcor_wrapper_encodes_task_request(tmp_path: Path) -> None:
+    binary = _write_task_stub(tmp_path / "bin" / "impbcor", version="ok")
+
+    result = image_analysis.impbcor(
+        "twhya_cont.image",
+        "twhya_cont.pb",
+        "twhya_cont.pbcor.image",
+        cutoff=0.2,
+        overwrite=True,
+        binary=binary,
+    )
+
+    assert result["kind"] == "impbcor"
+    request = result["result"]["request"]
+    assert request["imagename"] == "twhya_cont.image"
+    assert request["pbimage"] == "twhya_cont.pb"
+    assert request["outfile"] == "twhya_cont.pbcor.image"
+    assert request["mode"] == "divide"
+    assert request["cutoff"] == 0.2
+    assert request["overwrite"] is True
 
 
 def test_importfits_wrapper_encodes_task_request(tmp_path: Path) -> None:

@@ -355,19 +355,22 @@ public struct GenericTaskRequest: Equatable {
     public var schema: TaskUISchema
     public var values: [String: String]
     public var toggles: [String: Bool]
+    public var workingDirectoryPath: String?
 
     public init(
         runID: String,
         task: TaskCatalogEntry,
         schema: TaskUISchema,
         values: [String: String],
-        toggles: [String: Bool]
+        toggles: [String: Bool],
+        workingDirectoryPath: String? = nil
     ) {
         self.runID = runID
         self.task = task
         self.schema = schema
         self.values = values
         self.toggles = toggles
+        self.workingDirectoryPath = workingDirectoryPath
     }
 }
 
@@ -376,6 +379,18 @@ public struct GenericTaskResult: Equatable {
     public var arguments: [String]
     public var stdout: String
     public var stderr: String
+
+    public init(
+        taskID: String,
+        arguments: [String],
+        stdout: String,
+        stderr: String
+    ) {
+        self.taskID = taskID
+        self.arguments = arguments
+        self.stdout = stdout
+        self.stderr = stderr
+    }
 }
 
 public struct GenericTaskFailure: Error, Equatable {
@@ -418,10 +433,12 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         let execution = ProcessDirtyImagingTaskExecution()
         queue.async {
             do {
+                try Self.createOutputParentDirectories(for: request)
                 let output = try Self.runProcess(
                     binaryName: request.task.binaryName,
                     overrideEnv: request.task.overrideEnv,
                     arguments: arguments,
+                    workingDirectoryPath: request.workingDirectoryPath,
                     execution: execution
                 )
                 if execution.isCancelled {
@@ -444,6 +461,51 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
             }
         }
         return execution
+    }
+
+    static func createOutputParentDirectories(for request: GenericTaskRequest) throws {
+        for path in outputArgumentPaths(for: request) {
+            let url = resolvedTaskPath(path, workingDirectoryPath: request.workingDirectoryPath)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        }
+    }
+
+    static func outputArgumentPaths(for request: GenericTaskRequest) -> [String] {
+        request.schema.arguments
+            .filter { argument in
+                !argument.hiddenInTUI
+                    && ["option", "positional"].contains(argument.parser.kind)
+                    && argumentLooksLikeOutput(argument)
+            }
+            .compactMap { argument in
+                let value = (request.values[argument.id] ?? argument.default ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+    }
+
+    private static func argumentLooksLikeOutput(_ argument: TaskUIArgument) -> Bool {
+        if argument.parameterType?.hasPrefix("output_") == true {
+            return true
+        }
+        return ["outfile", "output", "outputvis", "outputms", "fitsimage"].contains(argument.id)
+            && argument.parameterType != "fits_path"
+    }
+
+    private static func resolvedTaskPath(_ path: String, workingDirectoryPath: String?) -> URL {
+        let expanded = (path as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return URL(fileURLWithPath: expanded).standardizedFileURL
+        }
+        guard let workingDirectoryPath, !workingDirectoryPath.isEmpty else {
+            return URL(fileURLWithPath: expanded).standardizedFileURL
+        }
+        return URL(fileURLWithPath: workingDirectoryPath, isDirectory: true)
+            .appendingPathComponent(expanded)
+            .standardizedFileURL
     }
 
     static func arguments(for request: GenericTaskRequest) throws -> [String] {
@@ -502,6 +564,7 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         binaryName: String,
         overrideEnv: String,
         arguments: [String],
+        workingDirectoryPath: String?,
         execution: ProcessDirtyImagingTaskExecution
     ) throws -> ProcessOutput {
         if execution.isCancelled {
@@ -519,6 +582,9 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
+        if let workingDirectoryPath, !workingDirectoryPath.isEmpty {
+            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectoryPath, isDirectory: true)
+        }
         guard execution.setProcess(process) else {
             return ProcessOutput(exitCode: -1, stdout: "", stderr: "cancelled before launch")
         }
@@ -537,32 +603,41 @@ public final class ProcessGenericTaskClient: GenericTaskClient {
         )
     }
 
-    private static func resolvedExecutablePath(binaryName: String, overrideEnv: String) -> String? {
-        let environment = ProcessInfo.processInfo.environment
+    static func resolvedExecutablePath(
+        binaryName: String,
+        overrideEnv: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        bundleExecutableURL: URL? = Bundle.main.executableURL,
+        currentDirectoryPath: String = FileManager.default.currentDirectoryPath,
+        isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> String? {
         if let path = environment[overrideEnv], !path.isEmpty {
             return path
         }
-        let fileManager = FileManager.default
-        if let bundled = Bundle.main.executableURL?
+        if let bundled = bundleExecutableURL?
             .deletingLastPathComponent()
             .appendingPathComponent(binaryName)
             .path,
-           fileManager.isExecutableFile(atPath: bundled) {
+           isExecutable(bundled) {
             return bundled
         }
         if let repoRoot = environment["CASA_RS_REPO_ROOT"], !repoRoot.isEmpty {
-            let candidate = URL(fileURLWithPath: repoRoot, isDirectory: true)
-                .appendingPathComponent("target/debug/\(binaryName)")
-                .path
-            if fileManager.isExecutableFile(atPath: candidate) {
-                return candidate
+            for profile in ["release", "debug"] {
+                let candidate = URL(fileURLWithPath: repoRoot, isDirectory: true)
+                    .appendingPathComponent("target/\(profile)/\(binaryName)")
+                    .path
+                if isExecutable(candidate) {
+                    return candidate
+                }
             }
         }
-        var cursor = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+        var cursor = URL(fileURLWithPath: currentDirectoryPath, isDirectory: true)
         for _ in 0..<6 {
-            let candidate = cursor.appendingPathComponent("target/debug/\(binaryName)").path
-            if fileManager.isExecutableFile(atPath: candidate) {
-                return candidate
+            for profile in ["release", "debug"] {
+                let candidate = cursor.appendingPathComponent("target/\(profile)/\(binaryName)").path
+                if isExecutable(candidate) {
+                    return candidate
+                }
             }
             let parent = cursor.deletingLastPathComponent()
             if parent.path == cursor.path {

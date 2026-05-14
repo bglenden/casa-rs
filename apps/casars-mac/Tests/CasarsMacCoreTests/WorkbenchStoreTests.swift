@@ -52,6 +52,465 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.activeTab, "")
     }
 
+    func testTutorialPackContextLoadsTemplateAndInputStatus() throws {
+        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
+        defer { removeTemporaryTutorialPack(packURL) }
+
+        let context = try TutorialPackContext.load(path: packURL.path)
+
+        XCTAssertEqual(context.packID, "alma-first-look-image-analysis")
+        XCTAssertEqual(context.title, "ALMA First Look: Image Analysis")
+        XCTAssertEqual(context.selectedSection?.id, "01-imhead-continuum-header")
+        XCTAssertEqual(context.inputs.map(\.status), [.staged, .missing])
+        XCTAssertEqual(context.datasetSummaries().map(\.name), ["twhya_cont.image"])
+        XCTAssertEqual(
+            context.learnerDocsIndex,
+            packURL.appendingPathComponent("README.md").standardizedFileURL.path
+        )
+    }
+
+    func testTutorialPackMeasurementSetInputKeepsMeasurementSetKind() throws {
+        let packURL = try makeTemporaryTutorialPack(
+            stagedInputPaths: ["twhya_calibrated.ms"],
+            templateName: "alma-first-look-imaging.template.json"
+        )
+        defer { removeTemporaryTutorialPack(packURL) }
+
+        let context = try TutorialPackContext.load(path: packURL.path)
+        let dataset = try XCTUnwrap(context.datasetSummaries().first { $0.name == "twhya_calibrated.ms" })
+
+        XCTAssertEqual(dataset.kind, .measurementSet)
+        XCTAssertEqual(dataset.path, packURL.appendingPathComponent("twhya_calibrated.ms").standardizedFileURL.path)
+    }
+
+    func testOpenTutorialPackPopulatesGuiDebugSnapshot() throws {
+        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
+        defer { removeTemporaryTutorialPack(packURL) }
+        let store = WorkbenchStore(
+            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImheadTaskCatalogEntry()]),
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.openTutorialPack(path: packURL.path)
+        let snapshot = store.debugSnapshot()
+
+        XCTAssertEqual(snapshot.activeProject, "ALMA First Look: Image Analysis")
+        XCTAssertEqual(snapshot.activeProjectSource, .tutorialPack)
+        XCTAssertEqual(snapshot.activeProjectRoot, packURL.standardizedFileURL.path)
+        XCTAssertEqual(snapshot.openTabs, ["Tutorial"])
+        XCTAssertEqual(snapshot.activeTab, "Tutorial")
+        XCTAssertEqual(snapshot.selectedDataset, "twhya_cont.image")
+        XCTAssertEqual(snapshot.tutorialPack?.packID, "alma-first-look-image-analysis")
+        XCTAssertEqual(snapshot.tutorialPack?.selectedSectionID, "01-imhead-continuum-header")
+        XCTAssertEqual(snapshot.tutorialPack?.inputs.map(\.status), [.staged, .missing])
+        XCTAssertEqual(
+            snapshot.tutorialPack.map { Array($0.sections.map(\.id).prefix(4)) },
+            [
+                "01-imhead-continuum-header",
+                "02-imstat-continuum-statistics",
+                "03-immoments-n2hp-moment-map",
+                "04-exportfits-products"
+            ]
+        )
+        XCTAssertTrue(snapshot.probeDiagnostics.contains("Tutorial input twhya_cont.image: staged"))
+        XCTAssertTrue(snapshot.probeDiagnostics.contains("Tutorial input twhya_n2hp.image: missing"))
+    }
+
+    func testOpenTutorialPackUsesImageProbeMetadataForInspector() throws {
+        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
+        defer { removeTemporaryTutorialPack(packURL) }
+        let imageURL = packURL.appendingPathComponent("twhya_cont.image").standardizedFileURL
+        let probedDataset = DatasetSummary(
+            id: imageURL.path,
+            name: "twhya_cont.image",
+            path: imageURL.path,
+            kind: .imageCube,
+            size: "250 x 250 x 1 x 1",
+            units: "Jy/beam",
+            sizeBytes: 369_373,
+            fields: [],
+            spectralWindows: [],
+            scans: [],
+            arrays: [],
+            observations: [],
+            antennas: [],
+            intents: [],
+            feeds: [],
+            correlations: [],
+            columns: ["map"],
+            dataColumns: [],
+            subtables: [],
+            shape: [250, 250, 1, 1],
+            notes: "Recognized by opening the path as a casa-rs image.",
+            diagnostics: [
+                "Pixel type: float32",
+                "Direction ref=J2000 axes=Right Ascension/Declination",
+                "Beam 0: major=0.5 arcsec minor=0.4 arcsec pa=75 deg"
+            ]
+        )
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "inputs",
+                        rootPath: packURL.path,
+                        datasets: [probedDataset],
+                        source: .probed
+                    ),
+                    diagnostics: ["probed tutorial inputs"]
+                )
+            ),
+            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImheadTaskCatalogEntry()]),
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.openTutorialPack(path: packURL.path)
+
+        let dataset = try XCTUnwrap(store.state.selectedDataset)
+        XCTAssertEqual(dataset.name, "twhya_cont.image")
+        XCTAssertEqual(dataset.size, "250 x 250 x 1 x 1")
+        XCTAssertEqual(dataset.shape, [250, 250, 1, 1])
+        XCTAssertEqual(dataset.units, "Jy/beam")
+        XCTAssertTrue(dataset.notes.contains("Tutorial pack input: TW Hya continuum image"))
+        XCTAssertTrue(dataset.notes.contains("Recognized by opening the path as a casa-rs image."))
+        XCTAssertTrue(dataset.diagnostics.contains("registry_key=alma/first-look/twhya/continuum-image"))
+        XCTAssertTrue(dataset.diagnostics.contains("Pixel type: float32"))
+        XCTAssertTrue(store.state.probeDiagnostics.contains("probed tutorial inputs"))
+    }
+
+    func testOpenTutorialPackMarksUnrecognizedStagedImageForInspector() throws {
+        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
+        defer { removeTemporaryTutorialPack(packURL) }
+        let store = WorkbenchStore(
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "inputs",
+                        rootPath: packURL.path,
+                        datasets: [],
+                        source: .probed
+                    ),
+                    diagnostics: ["input probe completed without recognized datasets"]
+                )
+            ),
+            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImheadTaskCatalogEntry()]),
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.openTutorialPack(path: packURL.path)
+
+        let dataset = try XCTUnwrap(store.state.selectedDataset)
+        XCTAssertEqual(dataset.name, "twhya_cont.image")
+        XCTAssertTrue(
+            dataset.diagnostics.contains {
+                $0.contains("Image validation failed: cannot open or read CASA image")
+            }
+        )
+        XCTAssertTrue(store.state.probeDiagnostics.contains("input probe completed without recognized datasets"))
+    }
+
+    func testOpenTutorialSectionTaskAppliesGuiImheadParameters() throws {
+        let packURL = try makeTemporaryTutorialPack(stagedInputPaths: ["twhya_cont.image"])
+        defer { removeTemporaryTutorialPack(packURL) }
+        let store = WorkbenchStore(
+            taskCatalogClient: StubTaskCatalogClient(tasks: [makeImheadTaskCatalogEntry()]),
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.openTutorialPack(path: packURL.path)
+        store.openTutorialSectionTask("01-imhead-continuum-header")
+
+        let snapshot = store.debugSnapshot()
+        XCTAssertEqual(store.state.activeTaskID, "imhead")
+        XCTAssertEqual(snapshot.activeTab, "Image Header")
+        XCTAssertEqual(snapshot.activeTaskID, "imhead")
+        XCTAssertEqual(store.state.tabs.last?.taskID, "imhead")
+        XCTAssertEqual(
+            store.state.genericTaskValues["imhead"]?["image_path"],
+            packURL.appendingPathComponent("twhya_cont.image").standardizedFileURL.path
+        )
+        XCTAssertEqual(store.state.genericTaskValues["imhead"]?["mode"], "summary")
+        XCTAssertEqual(store.state.genericTaskToggles["imhead"]?["json"], true)
+        XCTAssertEqual(snapshot.activeTaskValues["mode"], "summary")
+        XCTAssertEqual(snapshot.activeTaskToggles["json"], true)
+        XCTAssertEqual(store.state.taskRun.requestSummary, "image_path=twhya_cont.image, mode=summary, json=true")
+        XCTAssertTrue(store.state.lastErrors.isEmpty)
+    }
+
+    func testTaskTabsCanOpenMultiplePanesAndRenameToSelectedTask() throws {
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            taskCatalogClient: StubTaskCatalogClient(tasks: [
+                makeImheadTaskCatalogEntry(),
+                makeTaskCatalogEntry(id: "immoments", displayName: "Image Moments"),
+            ]),
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.openDefaultTab(kind: .task)
+        let firstTaskTabID = try XCTUnwrap(store.state.activeTabID)
+        store.selectTask("imhead", tabID: firstTaskTabID)
+        store.openDefaultTab(kind: .task)
+        let secondTaskTabID = try XCTUnwrap(store.state.activeTabID)
+        XCTAssertEqual(store.taskID(forTab: secondTaskTabID), "")
+        XCTAssertEqual(store.state.tabs.last?.title, "Tasks")
+        store.selectTask("immoments", tabID: secondTaskTabID)
+
+        XCTAssertNotEqual(firstTaskTabID, secondTaskTabID)
+        XCTAssertEqual(store.state.tabs.map(\.id), [firstTaskTabID, secondTaskTabID])
+        XCTAssertEqual(store.state.tabs.map(\.title), ["Image Header", "Image Moments"])
+        XCTAssertEqual(store.taskID(forTab: firstTaskTabID), "imhead")
+        XCTAssertEqual(store.taskID(forTab: secondTaskTabID), "immoments")
+    }
+
+    func testRegionDatasetDoesNotSeedImagePathInput() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-region-seed-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let imageURL = rootURL.appendingPathComponent("twhya_cont.image")
+        let regionURL = rootURL.appendingPathComponent("regions/twhya_cont.image-region.crtf")
+        try FileManager.default.createDirectory(at: imageURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: regionURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#CRTFv0 CASA Region Text Format version 0\nbox[[100pix,100pix],[150pix,150pix]]\n"
+            .write(to: regionURL, atomically: true, encoding: .utf8)
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "Tutorial",
+            rootPath: rootURL.path,
+            datasets: [
+                DatasetSummary(
+                    id: imageURL.path,
+                    name: "twhya_cont.image",
+                    path: imageURL.path,
+                    kind: .imageCube,
+                    size: "250 x 250",
+                    units: "Jy/beam",
+                    notes: "image"
+                ),
+                DatasetSummary(
+                    id: regionURL.path,
+                    name: regionURL.lastPathComponent,
+                    path: regionURL.path,
+                    kind: .region,
+                    size: "region file",
+                    units: "pixels",
+                    notes: "region"
+                )
+            ],
+            source: .tutorialPack
+        )
+        state.selectedDatasetID = regionURL.path
+        state.taskCatalog = [
+            TaskCatalogEntry(
+                id: "imstat",
+                category: "Images",
+                displayName: "Image Statistics",
+                binaryName: "imexplore",
+                cargoPackage: "casa-images",
+                overrideEnv: "CASARS_IMEXPLORE_BIN",
+                shellKind: "workflow",
+                interaction: "one_shot",
+                browserKind: nil,
+                datasetKinds: ["image_cube"],
+                schemaSource: "binary",
+                showInTUI: true,
+                showInSwift: true,
+                includeInSuite: true
+            )
+        ]
+        let store = WorkbenchStore(
+            state: state,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImstatTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.loadTaskUISchemaIfNeeded("imstat")
+
+        XCTAssertNil(store.state.genericTaskValues["imstat"]?["image_path"])
+        XCTAssertEqual(store.state.genericTaskValues["imstat"]?["region"], "regions/twhya_cont.image-region.crtf")
+    }
+
+    func testRegionDatasetCanLoadIntoMatchingImageExplorer() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-region-load-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let imageURL = rootURL.appendingPathComponent("twhya_cont.image")
+        let regionURL = rootURL.appendingPathComponent("regions/twhya_cont.image-region.crtf")
+        try FileManager.default.createDirectory(at: imageURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: regionURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#CRTFv0 CASA Region Text Format version 0\nbox[[100pix,100pix],[150pix,150pix]]\n"
+            .write(to: regionURL, atomically: true, encoding: .utf8)
+        let imageDataset = DatasetSummary(
+            id: imageURL.path,
+            name: "twhya_cont.image",
+            path: imageURL.path,
+            kind: .imageCube,
+            size: "250 x 250",
+            units: "Jy/beam",
+            notes: "image"
+        )
+        let regionDataset = DatasetSummary(
+            id: regionURL.path,
+            name: regionURL.lastPathComponent,
+            path: regionURL.path,
+            kind: .region,
+            size: "region file",
+            units: "pixels",
+            notes: "region",
+            diagnostics: ["Region source image: twhya_cont.image"]
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "Tutorial",
+            rootPath: rootURL.path,
+            datasets: [imageDataset, regionDataset],
+            source: .tutorialPack
+        )
+        state.selectedDatasetID = regionDataset.id
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        let store = WorkbenchStore(state: state, imageExplorerClient: imageClient)
+
+        store.loadRegionFileIntoImageExplorer(regionDatasetID: regionDataset.id)
+
+        XCTAssertEqual(store.state.activeTabID, imageDataset.explorerTabID)
+        XCTAssertEqual(store.state.selectedDatasetID, imageDataset.id)
+        XCTAssertEqual(imageClient.requests.last?.datasetPath, imageDataset.path)
+        XCTAssertEqual(imageClient.requests.last?.commands, [.appendRegionFile(path: regionDataset.path)])
+        XCTAssertEqual(imageClient.requests.last?.transientCommands, [])
+    }
+
+    func testImageExplorerCanDeleteIndividualRegionShapes() throws {
+        let imageDataset = DatasetSummary(
+            id: "/data/restored.image",
+            name: "restored.image",
+            path: "/data/restored.image",
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "Recognized by Rust probe."
+        )
+        var snapshot = makeImageExplorerSnapshot()
+        snapshot.displayAxes = [
+            ImageExplorerSnapshot.DisplayAxis(axis: 0, name: "Right Ascension", unit: "pix", blc: 0, trc: 3, inc: 1, sampledLen: 4),
+            ImageExplorerSnapshot.DisplayAxis(axis: 1, name: "Declination", unit: "pix", blc: 0, trc: 3, inc: 1, sampledLen: 4)
+        ]
+        snapshot.region = ImageExplorerSnapshot.Region(
+            label: "active region",
+            shapeCount: 2,
+            closedShapeCount: 2,
+            editing: false,
+            overlayShapes: [
+                ImageExplorerSnapshot.Region.OverlayShape(
+                    vertices: [
+                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 0, sampledY: 0),
+                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 1, sampledY: 0),
+                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 1, sampledY: 1)
+                    ],
+                    closed: true
+                ),
+                ImageExplorerSnapshot.Region.OverlayShape(
+                    vertices: [
+                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 2, sampledY: 2),
+                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 3, sampledY: 2),
+                        ImageExplorerSnapshot.Region.OverlayVertex(sampledX: 3, sampledY: 3)
+                    ],
+                    closed: true
+                )
+            ]
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [imageDataset], source: .probed)
+        state.imageExplorers[imageDataset.id] = ImageExplorerSessionState(
+            datasetID: imageDataset.id,
+            selectedView: "plane",
+            status: .ready,
+            snapshot: snapshot
+        )
+        let imageClient = StubImageExplorerClient(snapshot: snapshot)
+        let store = WorkbenchStore(state: state, imageExplorerClient: imageClient)
+
+        store.deleteImageExplorerRegionShape(index: 0, datasetID: imageDataset.id)
+
+        let commands = imageClient.requests.last?.commands ?? []
+        XCTAssertEqual(commands.map(\.command), [
+            "start_region_shape",
+            "append_region_vertex",
+            "append_region_vertex",
+            "append_region_vertex",
+            "close_region_shape",
+        ])
+        XCTAssertEqual(commands.compactMap(\.x), [2, 3, 3])
+        XCTAssertEqual(commands.compactMap(\.y), [2, 2, 3])
+    }
+
+    func testReloadingDirtyRegionFileRestoresSavedFileCommand() throws {
+        let imageDataset = DatasetSummary(
+            id: "/data/restored.image",
+            name: "restored.image",
+            path: "/data/restored.image",
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "Recognized by Rust probe."
+        )
+        let regionPath = "/data/regions/restored.crtf"
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [imageDataset], source: .probed)
+        var explorerState = ImageExplorerSessionState(
+            datasetID: imageDataset.id,
+            selectedView: "plane",
+            status: .ready,
+            snapshot: makeImageExplorerSnapshot()
+        )
+        explorerState.activeRegionFilePath = regionPath
+        explorerState.regionCommands = [.loadRegionFile(path: regionPath)]
+        state.imageExplorers[imageDataset.id] = explorerState
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        let store = WorkbenchStore(state: state, imageExplorerClient: imageClient)
+
+        store.setImageExplorerRegionShapes([[(x: 1, y: 1), (x: 3, y: 1), (x: 3, y: 3), (x: 1, y: 3)]], datasetID: imageDataset.id)
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.activeRegionFilePath, regionPath)
+        XCTAssertEqual(imageClient.requests.last?.commands.map(\.command), [
+            "start_region_shape",
+            "append_region_vertex",
+            "append_region_vertex",
+            "append_region_vertex",
+            "append_region_vertex",
+            "close_region_shape",
+        ])
+
+        store.appendImageExplorerRegionFile(path: regionPath, datasetID: imageDataset.id)
+
+        XCTAssertEqual(imageClient.requests.last?.commands, [.loadRegionFile(path: regionPath)])
+        XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.activeRegionFilePath, regionPath)
+    }
+
+    func testRegionFileInspectionReportsPixelAndWorldExtents() throws {
+        let pixel = RegionFileInspection.inspect(
+            text: "#CRTFv0 CASA Region Text Format version 0\nbox[[100pix,100pix],[150pix,160pix]]\n"
+        )
+        XCTAssertEqual(pixel?.kind, "Box")
+        XCTAssertEqual(pixel?.coordinateSystem, "Pixel")
+        XCTAssertEqual(pixel?.xExtentLabel, "50 px")
+        XCTAssertEqual(pixel?.yExtentLabel, "60 px")
+
+        let world = RegionFileInspection.inspect(
+            text: "#CRTFv0 CASA Region Text Format version 0\nbox[[0rad,0rad],[0.00024240684055476798rad,0.00012120342027738399rad]]\n"
+        )
+        XCTAssertEqual(world?.coordinateSystem, "World")
+        XCTAssertEqual(world?.xExtentLabel, "50.00 arcsec")
+        XCTAssertEqual(world?.yExtentLabel, "25.00 arcsec")
+    }
+
     func testTaskCatalogLoadsFromFrontendServicesIntoDebugState() throws {
         let store = WorkbenchStore()
 
@@ -138,11 +597,11 @@ final class WorkbenchStoreTests: XCTestCase {
             "ms", "imagename", "imsize", "cell_arcsec", "field", "phasecenter_field",
             "spw", "datacolumn", "specmode", "channel_count", "start", "width",
             "outframe", "restfreq", "deconvolver", "weighting", "robust",
-            "perchanweightdensity", "restoringbeam", "niter", "nmajor", "gain",
+            "gridder", "perchanweightdensity", "restoringbeam", "niter", "nmajor", "gain",
             "threshold_jy", "usemask", "noisethreshold", "sidelobethreshold",
             "lownoisethreshold", "minbeamfrac", "negativethreshold",
             "deconvolver", "scales", "smallscalebias", "wterm", "wprojplanes",
-            "nterms", "savemodel", "outlierfile", "pbcor", "pblimit"
+            "nterms", "savemodel", "outlierfile", "write_pb", "pbcor", "pblimit"
         ]
 
         for argumentID in tutorialArguments {
@@ -276,6 +735,128 @@ final class WorkbenchStoreTests: XCTestCase {
         )
     }
 
+    func testGenericTaskCreatesParentDirectoriesForOutputPaths() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "exportfits",
+          "invocation_name": "exportfits",
+          "display_name": "Export FITS",
+          "category": "Images",
+          "summary": "Export CASA images to FITS.",
+          "usage": "exportfits <imagename> <fitsimage>",
+          "arguments": [
+            {"id":"imagename","label":"Image","order":0,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","parameter_type":"image_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"fitsimage","label":"FITS","order":1,"parser":{"kind":"positional","metavar":"fitsimage"},"value_kind":"path","parameter_type":"output_fits_path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false},
+            {"id":"overwrite","label":"Overwrite","order":2,"parser":{"kind":"toggle","true_flags":["--overwrite"],"false_flags":["--no-overwrite"]},"value_kind":"bool","required":false,"default":"true","help":"","group":"Output","advanced":false,"hidden_in_tui":false}
+          ]
+        }
+        """.utf8))
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-output-parent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let outputDirectory = rootURL.appendingPathComponent("casa-rs-runs", isDirectory: true)
+        let request = GenericTaskRequest(
+            runID: "run-1",
+            task: TaskCatalogEntry(
+                id: "exportfits",
+                category: "Images",
+                displayName: "Export FITS",
+                binaryName: "exportfits",
+                cargoPackage: "casa-images",
+                overrideEnv: "CASARS_EXPORTFITS_BIN",
+                shellKind: "workflow",
+                interaction: "one_shot",
+                browserKind: nil,
+                datasetKinds: ["image"],
+                schemaSource: "binary",
+                showInTUI: true,
+                showInSwift: true,
+                includeInSuite: true
+            ),
+            schema: schema,
+            values: ["imagename": "twhya_cont.image", "fitsimage": "casa-rs-runs/twhya_cont.fits"],
+            toggles: ["overwrite": true],
+            workingDirectoryPath: rootURL.path
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputDirectory.path))
+
+        try ProcessGenericTaskClient.createOutputParentDirectories(for: request)
+
+        var isDirectory = ObjCBool(false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputDirectory.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+        XCTAssertEqual(
+            ProcessGenericTaskClient.outputArgumentPaths(for: request),
+            ["casa-rs-runs/twhya_cont.fits"]
+        )
+    }
+
+    func testGenericJsonTaskRequiresExplicitSaveToRunFile() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-generic-json-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let imageURL = rootURL.appendingPathComponent("twhya_cont.image", isDirectory: true)
+        let taskClient = HoldingGenericTaskClient()
+        taskClient.stdout = #"{"shape":[250,250,1,1],"units":"Jy/beam"}"#
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "Tutorial",
+            rootPath: rootURL.path,
+            datasets: [
+                DatasetSummary(
+                    id: imageURL.path,
+                    name: "twhya_cont.image",
+                    path: imageURL.path,
+                    kind: .imageCube,
+                    size: "250 x 250 x 1 x 1",
+                    units: "Jy/beam",
+                    shape: [250, 250, 1, 1],
+                    notes: "test image"
+                )
+            ],
+            source: .tutorialPack
+        )
+        state.selectedDatasetID = imageURL.path
+        state.taskCatalog = [makeImheadTaskCatalogEntry()]
+        state.activeTaskID = "imhead"
+        state.genericTaskValues["imhead"] = ["image_path": imageURL.path, "mode": "summary"]
+        state.genericTaskToggles["imhead"] = ["json": true]
+
+        let store = WorkbenchStore(
+            state: state,
+            genericTaskClient: taskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskExecutionMatrixClient: StubTaskExecutionMatrixClient(rows: [])
+        )
+
+        store.loadTaskUISchemaIfNeeded("imhead")
+        store.runTask()
+        try taskClient.emitSucceeded()
+        waitFor("generic JSON task output to finish") {
+            store.state.taskRun.state == .succeeded
+        }
+
+        XCTAssertTrue(store.hasSaveableActiveTaskOutput())
+        XCTAssertEqual(store.taskOutputSaveDirectory(), rootURL.path)
+        XCTAssertEqual(store.taskOutputSaveFilename(), "imhead-result.json")
+        XCTAssertTrue(store.state.taskRun.outputPaths.isEmpty)
+
+        let outputPath = rootURL.appendingPathComponent("imhead-result.json").path
+        store.saveActiveTaskOutput(to: outputPath)
+
+        XCTAssertTrue(outputPath.hasSuffix("/imhead-result.json"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputPath))
+        let saved = try String(contentsOfFile: outputPath, encoding: .utf8)
+        XCTAssertTrue(saved.contains(#""units":"Jy/beam""#))
+        XCTAssertTrue(store.debugSnapshot().taskOutputPaths.contains(outputPath))
+        XCTAssertTrue(store.state.history.last?.affectedPaths.contains(outputPath) == true)
+    }
+
     func testGenericTaskRequestSummaryDisplaysProjectRelativePaths() throws {
         let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
         {
@@ -311,6 +892,584 @@ final class WorkbenchStoreTests: XCTestCase {
         let summary = try XCTUnwrap(store.state.taskRun.requestSummary)
         XCTAssertTrue(summary.contains("vis=input.ms"))
         XCTAssertFalse(summary.contains("/data/project/input.ms"))
+    }
+
+    func testGenericTaskRegistersRelativeOutputProductUnderProjectRoot() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "immoments",
+          "invocation_name": "immoments",
+          "display_name": "Image Moments",
+          "category": "Images",
+          "summary": "Create CASA-style image moment maps.",
+          "usage": "immoments <imagename> --outfile <path>",
+          "arguments": [
+            {"id":"imagename","label":"Image","order":0,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"outfile","label":"Output","order":1,"parser":{"kind":"option","flags":["--outfile"],"metavar":"path","choices":[]},"value_kind":"path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
+          ]
+        }
+        """.utf8))
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-generic-product-\(UUID().uuidString)", isDirectory: true)
+        let outputURL = rootURL.appendingPathComponent(".casa-rs/workspace/native/mom0.image", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let outputPath = outputURL.standardizedFileURL.path
+        let outputDataset = DatasetSummary(
+            id: outputPath,
+            name: "mom0.image",
+            path: outputPath,
+            kind: .imageCube,
+            size: "250 x 250 x 1 x 1",
+            units: "Jy/beam.km/s",
+            sizeBytes: 1024,
+            notes: "Recognized by Rust probe."
+        )
+        let probeClient = StubProjectProbeClient(
+            result: ProjectFixtureProbe(
+                project: ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed),
+                diagnostics: []
+            ),
+            probedPaths: [outputPath: outputDataset]
+        )
+        let taskClient = StubGenericTaskClient()
+        taskClient.stdout = """
+        {
+          "kind": "immoments",
+          "result": {
+            "outfile": ".casa-rs/workspace/native/mom0.image",
+            "shape": [250, 250, 1, 1],
+            "units": "Jy/beam.km/s"
+          }
+        }
+        """
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed)
+        state.taskCatalog = [
+            TaskCatalogEntry(
+                id: "immoments",
+                category: "Images",
+                displayName: "Image Moments",
+                binaryName: "immoments",
+                cargoPackage: "casa-images",
+                overrideEnv: "CASARS_IMMOMENTS_BIN",
+                shellKind: "workflow",
+                interaction: "one_shot",
+                browserKind: nil,
+                datasetKinds: ["image"],
+                schemaSource: "binary",
+                showInTUI: true,
+                showInSwift: true,
+                includeInSuite: true
+            )
+        ]
+        state.activeTaskID = "immoments"
+        let store = WorkbenchStore(
+            state: state,
+            probeClient: probeClient,
+            genericTaskClient: taskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: schema)
+        )
+
+        store.loadTaskUISchemaIfNeeded("immoments")
+        store.setGenericTaskValue(taskID: "immoments", argumentID: "imagename", value: "twhya_n2hp.image")
+        store.setGenericTaskValue(taskID: "immoments", argumentID: "outfile", value: ".casa-rs/workspace/native/mom0.image")
+        store.setGenericTaskConfirmation(taskID: "immoments", confirmed: true)
+        store.runTask()
+        waitFor("generic product task completion") {
+            store.state.taskRun.state != .running
+        }
+
+        XCTAssertEqual(store.state.taskRun.state, TaskRunState.succeeded)
+        XCTAssertEqual(store.state.taskRun.outputPaths, [outputPath])
+        XCTAssertTrue(store.state.project.datasets.contains { $0.path == outputPath })
+        XCTAssertEqual(store.state.runProductGroups.first?.products.first?.path, outputPath)
+        XCTAssertEqual(taskClient.requests.first?.workingDirectoryPath, rootURL.path)
+    }
+
+    func testGenericImportFitsRegistersImagenameOutputProduct() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "importfits",
+          "invocation_name": "importfits",
+          "display_name": "Import FITS",
+          "category": "Images",
+          "summary": "Import FITS files as CASA images.",
+          "usage": "importfits <fitsimage> <imagename>",
+          "arguments": [
+            {"id":"fitsimage","label":"FITS","order":0,"parser":{"kind":"positional","metavar":"fitsimage"},"value_kind":"path","parameter_type":"fits_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"imagename","label":"Image","order":1,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","parameter_type":"output_image_path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
+          ]
+        }
+        """.utf8))
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-importfits-product-\(UUID().uuidString)", isDirectory: true)
+        let outputURL = rootURL.appendingPathComponent("twhya_cont-importfits.image", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let outputPath = outputURL.standardizedFileURL.path
+        let outputDataset = DatasetSummary(
+            id: outputPath,
+            name: "twhya_cont-importfits.image",
+            path: outputPath,
+            kind: .imageCube,
+            size: "250 x 250 x 1 x 1",
+            units: "Jy/beam",
+            notes: "Recognized by Rust probe."
+        )
+        let probeClient = StubProjectProbeClient(
+            result: ProjectFixtureProbe(
+                project: ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed),
+                diagnostics: []
+            ),
+            probedPaths: [outputPath: outputDataset]
+        )
+        let taskClient = StubGenericTaskClient()
+        taskClient.stdout = """
+        {
+          "kind": "importfits",
+          "result": {
+            "fitsimage": "twhya_cont.fits",
+            "imagename": "twhya_cont-importfits.image",
+            "shape": [250, 250, 1, 1]
+          }
+        }
+        """
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed)
+        state.taskCatalog = [makeTaskCatalogEntry(id: "importfits", displayName: "Import FITS")]
+        state.activeTaskID = "importfits"
+        let store = WorkbenchStore(
+            state: state,
+            probeClient: probeClient,
+            genericTaskClient: taskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: schema)
+        )
+
+        store.loadTaskUISchemaIfNeeded("importfits")
+        store.setGenericTaskValue(taskID: "importfits", argumentID: "fitsimage", value: "twhya_cont.fits")
+        store.setGenericTaskValue(taskID: "importfits", argumentID: "imagename", value: "twhya_cont-importfits.image")
+        store.setGenericTaskConfirmation(taskID: "importfits", confirmed: true)
+        store.runTask()
+        waitFor("importfits product registration") {
+            store.state.taskRun.state != .running
+        }
+
+        XCTAssertEqual(store.state.taskRun.state, TaskRunState.succeeded)
+        XCTAssertEqual(store.state.taskRun.outputPaths, [outputPath])
+        XCTAssertTrue(store.state.project.datasets.contains { $0.path == outputPath })
+    }
+
+    func testProjectDiskRefreshSurfacesLooseFitsFileFromProjectTree() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-disk-refresh-\(UUID().uuidString)", isDirectory: true)
+        let outputURL = rootURL.appendingPathComponent("casa-rs-runs/twhya_cont.fits")
+        try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([0x53, 0x49, 0x4d]).write(to: outputURL)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: rootURL.path)
+        store.refreshProjectFromDisk()
+
+        let producedDataset = try XCTUnwrap(store.state.project.datasets.first { $0.path == outputURL.standardizedFileURL.path })
+        XCTAssertEqual(producedDataset.kind, .runProduct)
+        XCTAssertEqual(producedDataset.name, "twhya_cont.fits")
+        XCTAssertEqual(producedDataset.diagnostics, ["Project-relative path: casa-rs-runs/twhya_cont.fits"])
+    }
+
+    func testProjectDiskRefreshDeduplicatesDatasetsByCanonicalPath() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-disk-refresh-dedupe-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let imagePath = rootURL.appendingPathComponent("twhya_cont.image", isDirectory: true).path
+        let original = DatasetSummary(
+            id: imagePath,
+            name: "twhya_cont.image",
+            path: imagePath,
+            kind: .imageCube,
+            size: "unprobed",
+            units: "",
+            notes: "manifest"
+        )
+        let replacement = DatasetSummary(
+            id: imagePath,
+            name: "twhya_cont.image",
+            path: imagePath,
+            kind: .imageCube,
+            size: "250 x 250 x 1 x 1",
+            units: "Jy/beam",
+            notes: "probe"
+        )
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(
+                        name: "project",
+                        rootPath: rootURL.path,
+                        datasets: [original, replacement],
+                        source: .probed
+                    ),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: rootURL.path)
+        store.refreshProjectFromDisk()
+
+        let matching = store.state.project.datasets.filter {
+            URL(fileURLWithPath: $0.path).standardizedFileURL.path == URL(fileURLWithPath: imagePath).standardizedFileURL.path
+        }
+        XCTAssertEqual(matching.count, 1)
+        XCTAssertEqual(matching.first?.size, "250 x 250 x 1 x 1")
+    }
+
+    func testProjectDiskRefreshSurfacesLooseCasaImageDirectoryFromProjectTree() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-disk-refresh-image-\(UUID().uuidString)", isDirectory: true)
+        let outputURL = rootURL.appendingPathComponent("twhya_cont-importfits.image", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        try Data([0x54, 0x61, 0x62, 0x6c, 0x65]).write(to: outputURL.appendingPathComponent("table.dat"))
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let outputPath = outputURL.standardizedFileURL.path
+        let outputDataset = DatasetSummary(
+            id: outputPath,
+            name: "twhya_cont-importfits.image",
+            path: outputPath,
+            kind: .imageCube,
+            size: "250 x 250 x 1 x 1",
+            units: "Jy/beam",
+            notes: "Recognized by Rust probe."
+        )
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed),
+                    diagnostics: []
+                ),
+                probedPaths: [outputPath: outputDataset]
+            )
+        )
+
+        store.openProject(path: rootURL.path)
+        store.refreshProjectFromDisk()
+
+        let producedDataset = try XCTUnwrap(store.state.project.datasets.first { $0.path == outputPath })
+        XCTAssertEqual(producedDataset.kind, .imageCube)
+        XCTAssertEqual(producedDataset.name, "twhya_cont-importfits.image")
+    }
+
+    func testProjectDiskRefreshSurfacesLooseImagerProductDirectoriesFromProjectTree() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-disk-refresh-imager-products-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let productNames = [
+            "phase_cal.psf",
+            "phase_cal.residual",
+            "phase_cal.model",
+            "phase_cal.image",
+            "phase_cal.image.pbcor",
+            "phase_cal.psf.tt0",
+            "phase_cal.alpha.error",
+        ]
+        var probedPaths: [String: DatasetSummary] = [:]
+        for name in productNames {
+            let productURL = rootURL.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: productURL, withIntermediateDirectories: true)
+            try Data([0x54, 0x61, 0x62, 0x6c, 0x65]).write(to: productURL.appendingPathComponent("table.dat"))
+            let path = productURL.standardizedFileURL.path
+            probedPaths[path] = DatasetSummary(
+                id: path,
+                name: name,
+                path: path,
+                kind: .imageCube,
+                size: "250 x 250 x 1 x 1",
+                units: "Jy/beam",
+                notes: "Recognized by Rust probe."
+            )
+        }
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed),
+                    diagnostics: []
+                ),
+                probedPaths: probedPaths
+            )
+        )
+
+        store.openProject(path: rootURL.path)
+        store.refreshProjectFromDisk()
+
+        let surfacedNames = Set(store.state.project.datasets.map(\.name))
+        XCTAssertTrue(productNames.allSatisfy { surfacedNames.contains($0) })
+    }
+
+    func testProjectDiskRefreshDoesNotProbeLooseDirectoryBySuffixAlone() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-disk-refresh-not-table-\(UUID().uuidString)", isDirectory: true)
+        let outputURL = rootURL.appendingPathComponent("phase_cal.psf", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let outputPath = outputURL.standardizedFileURL.path
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed),
+                    diagnostics: []
+                ),
+                probedPaths: [
+                    outputPath: DatasetSummary(
+                        id: outputPath,
+                        name: "phase_cal.psf",
+                        path: outputPath,
+                        kind: .imageCube,
+                        size: "250 x 250 x 1 x 1",
+                        units: "Jy/beam",
+                        notes: "Should not be used without table.dat."
+                    )
+                ]
+            )
+        )
+
+        store.openProject(path: rootURL.path)
+        store.refreshProjectFromDisk()
+
+        XCTAssertFalse(store.state.project.datasets.contains { $0.path == outputPath })
+    }
+
+    func testProjectDiskRefreshSurfacesTopLevelRegionFile() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-disk-refresh-region-\(UUID().uuidString)", isDirectory: true)
+        let regionURL = rootURL.appendingPathComponent("twhya_cont.image-region.crtf")
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try "#CRTFv0 CASA Region Text Format version 0\nbox[[100pix,100pix],[150pix,150pix]]\n"
+            .write(to: regionURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "project", rootPath: rootURL.path, datasets: [], source: .probed),
+                    diagnostics: []
+                )
+            )
+        )
+
+        store.openProject(path: rootURL.path)
+        store.refreshProjectFromDisk()
+
+        let regionDataset = try XCTUnwrap(store.state.project.datasets.first { $0.path == regionURL.standardizedFileURL.path })
+        XCTAssertEqual(regionDataset.kind, .region)
+        XCTAssertEqual(regionDataset.name, "twhya_cont.image-region.crtf")
+        XCTAssertTrue(regionDataset.diagnostics.contains("Region parameter syntax: --region twhya_cont.image-region.crtf"))
+    }
+
+    func testGenericImageTaskSeedsImagenameFromSelectedImage() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "immoments",
+          "invocation_name": "immoments",
+          "display_name": "Image Moments",
+          "category": "Images",
+          "summary": "Create CASA-style image moment maps.",
+          "usage": "immoments <imagename> --outfile <path>",
+          "arguments": [
+            {"id":"imagename","label":"Image","order":0,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"outfile","label":"Output","order":1,"parser":{"kind":"option","flags":["--outfile"],"metavar":"path","choices":[]},"value_kind":"path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
+          ]
+        }
+        """.utf8))
+        let image = DatasetSummary(
+            id: "/data/project/twhya_n2hp.image",
+            name: "twhya_n2hp.image",
+            path: "/data/project/twhya_n2hp.image",
+            kind: .imageCube,
+            size: "250 x 250 x 1 x 15",
+            units: "Jy/beam",
+            shape: [250, 250, 1, 15],
+            notes: "test image"
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "project",
+            rootPath: "/data/project",
+            datasets: [image],
+            source: .probed
+        )
+        state.selectedDatasetID = image.id
+        state.activeTaskID = "immoments"
+        let store = WorkbenchStore(
+            state: state,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: schema)
+        )
+
+        store.loadTaskUISchemaIfNeeded("immoments")
+
+        XCTAssertEqual(store.state.genericTaskValues["immoments"]?["imagename"], "twhya_n2hp.image")
+    }
+
+    func testGenericExportFitsSeedsSelectedImageAndManagedFitsOutput() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "exportfits",
+          "invocation_name": "exportfits",
+          "display_name": "Export FITS",
+          "category": "Images",
+          "summary": "Export CASA images to FITS.",
+          "usage": "exportfits <imagename> <fitsimage>",
+          "arguments": [
+            {"id":"imagename","label":"Image","order":0,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","parameter_type":"image_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"fitsimage","label":"FITS","order":1,"parser":{"kind":"positional","metavar":"fitsimage"},"value_kind":"path","parameter_type":"output_fits_path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
+          ]
+        }
+        """.utf8))
+        let image = DatasetSummary(
+            id: "/data/project/twhya_cont.image",
+            name: "twhya_cont.image",
+            path: "/data/project/twhya_cont.image",
+            kind: .imageCube,
+            size: "250 x 250 x 1 x 1",
+            units: "Jy/beam",
+            shape: [250, 250, 1, 1],
+            notes: "test image"
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "project",
+            rootPath: "/data/project",
+            datasets: [image],
+            source: .probed
+        )
+        state.selectedDatasetID = image.id
+        state.activeTaskID = "exportfits"
+        let store = WorkbenchStore(
+            state: state,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: schema)
+        )
+
+        store.loadTaskUISchemaIfNeeded("exportfits")
+
+        XCTAssertEqual(store.state.genericTaskValues["exportfits"]?["imagename"], "twhya_cont.image")
+        XCTAssertEqual(
+            store.state.genericTaskValues["exportfits"]?["fitsimage"],
+            "twhya_cont.fits"
+        )
+    }
+
+    func testGenericImportFitsKeepsFitsInputSeparateFromManagedImageOutput() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "importfits",
+          "invocation_name": "importfits",
+          "display_name": "Import FITS",
+          "category": "Images",
+          "summary": "Import FITS files as CASA images.",
+          "usage": "importfits <fitsimage> <imagename>",
+          "arguments": [
+            {"id":"fitsimage","label":"FITS","order":0,"parser":{"kind":"positional","metavar":"fitsimage"},"value_kind":"path","parameter_type":"fits_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"imagename","label":"Image","order":1,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","parameter_type":"output_image_path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
+          ]
+        }
+        """.utf8))
+        let fits = DatasetSummary(
+            id: "/data/project/twhya_cont.fits",
+            name: "twhya_cont.fits",
+            path: "/data/project/twhya_cont.fits",
+            kind: .runProduct,
+            size: "369 KB",
+            units: "FITS",
+            notes: "test FITS"
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "project",
+            rootPath: "/data/project",
+            datasets: [fits],
+            source: .probed
+        )
+        state.selectedDatasetID = fits.id
+        state.activeTaskID = "importfits"
+        let store = WorkbenchStore(
+            state: state,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: schema)
+        )
+
+        store.loadTaskUISchemaIfNeeded("importfits")
+
+        XCTAssertEqual(store.state.genericTaskValues["importfits"]?["fitsimage"], "twhya_cont.fits")
+        XCTAssertEqual(
+            store.state.genericTaskValues["importfits"]?["imagename"],
+            "twhya_cont-importfits.image"
+        )
+    }
+
+    func testGenericImportFitsSeedsSubdirectoryFitsPathRelativeToProject() throws {
+        let schema = try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+        {
+          "schema_version": 1,
+          "command_id": "importfits",
+          "invocation_name": "importfits",
+          "display_name": "Import FITS",
+          "category": "Images",
+          "summary": "Import FITS files as CASA images.",
+          "usage": "importfits <fitsimage> <imagename>",
+          "arguments": [
+            {"id":"fitsimage","label":"FITS","order":0,"parser":{"kind":"positional","metavar":"fitsimage"},"value_kind":"path","parameter_type":"fits_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+            {"id":"imagename","label":"Image","order":1,"parser":{"kind":"positional","metavar":"imagename"},"value_kind":"path","parameter_type":"output_image_path","required":true,"default":null,"help":"","group":"Output","advanced":false,"hidden_in_tui":false}
+          ]
+        }
+        """.utf8))
+        let fits = DatasetSummary(
+            id: "/data/project/casa-rs-runs/twhya_cont.fits",
+            name: "twhya_cont.fits",
+            path: "/data/project/casa-rs-runs/twhya_cont.fits",
+            kind: .runProduct,
+            size: "369 KB",
+            units: "FITS",
+            notes: "test FITS"
+        )
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "project",
+            rootPath: "/data/project",
+            datasets: [fits],
+            source: .probed
+        )
+        state.selectedDatasetID = fits.id
+        state.activeTaskID = "importfits"
+        let store = WorkbenchStore(
+            state: state,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: schema)
+        )
+
+        store.loadTaskUISchemaIfNeeded("importfits")
+
+        XCTAssertEqual(store.state.genericTaskValues["importfits"]?["fitsimage"], "casa-rs-runs/twhya_cont.fits")
+        XCTAssertEqual(
+            store.state.genericTaskValues["importfits"]?["imagename"],
+            "twhya_cont-importfits.image"
+        )
     }
 
     func testGenericImagerArgumentsIncludeTutorialParametersAndManagedOutput() throws {
@@ -352,6 +1511,7 @@ final class WorkbenchStoreTests: XCTestCase {
                 "deconvolver": "mtmfs",
                 "weighting": "briggsbwtaper",
                 "robust": "0.5",
+                "gridder": "wproject",
                 "restoringbeam": "common",
                 "niter": "1000",
                 "nmajor": "4",
@@ -374,6 +1534,7 @@ final class WorkbenchStoreTests: XCTestCase {
             ],
             toggles: [
                 "perchanweightdensity": true,
+                "write_pb": true,
                 "pbcor": true,
                 "write_preview_pngs": false
             ]
@@ -388,8 +1549,8 @@ final class WorkbenchStoreTests: XCTestCase {
             "--restoringbeam", "--nmajor", "--gain", "--threshold-jy", "--usemask",
             "--noisethreshold", "--sidelobethreshold", "--lownoisethreshold",
             "--minbeamfrac", "--negativethreshold", "--scales", "--smallscalebias",
-            "--wterm", "--wprojplanes", "--nterms", "--savemodel", "--outlierfile",
-            "--pbcor", "--pblimit", "--no-preview-pngs"
+            "--gridder", "--wterm", "--wprojplanes", "--nterms", "--savemodel", "--outlierfile",
+            "--write-pb", "--pbcor", "--pblimit", "--no-preview-pngs"
         ] {
             XCTAssertTrue(arguments.contains(flag), "missing \(flag)")
         }
@@ -448,6 +1609,12 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         let taskClient = StubGenericTaskClient()
         var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(
+            name: "project",
+            rootPath: "/data/project",
+            datasets: [],
+            source: .probed
+        )
         state.taskCatalog = [task]
         state.taskExecutionMatrixRows = [matrixRow]
         state.activeTaskID = "flagdata"
@@ -469,6 +1636,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.runTask()
 
         XCTAssertEqual(taskClient.requests.count, 1)
+        XCTAssertEqual(taskClient.requests.first?.workingDirectoryPath, "/data/project")
     }
 
     func testMeasurementSetPlotMaxPointParserAcceptsSuffixes() {
@@ -1043,6 +2211,220 @@ final class WorkbenchStoreTests: XCTestCase {
         store.runImageExplorerCommandOnce(.setDefaultMask(name: "mask0"), datasetID: imageDataset.id)
         XCTAssertEqual(imageClient.requests.last?.transientCommands.map(\.command), ["set_default_mask"])
         XCTAssertEqual(store.state.imageExplorers[imageDataset.id]?.transientCommands, [])
+    }
+
+    func testImageExplorerBoxRegionReplacesQueuedRegionCommands() throws {
+        let imageDataset = DatasetSummary(
+            id: "/data/restored.image",
+            name: "restored.image",
+            path: "/data/restored.image",
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "Recognized by Rust probe."
+        )
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [imageDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            imageExplorerClient: imageClient
+        )
+
+        store.openProject(path: "/data")
+        store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: imageDataset.id)
+        store.setImageExplorerBoxRegion("150, 100, 100, 150", datasetID: imageDataset.id)
+
+        let commands = try XCTUnwrap(imageClient.requests.last?.commands)
+        XCTAssertEqual(
+            commands.map(\.command),
+            [
+                "start_region_shape",
+                "append_region_vertex",
+                "append_region_vertex",
+                "append_region_vertex",
+                "append_region_vertex",
+                "close_region_shape",
+            ]
+        )
+        XCTAssertEqual(commands.compactMap(\.x), [100, 150, 150, 100])
+        XCTAssertEqual(commands.compactMap(\.y), [100, 100, 150, 150])
+    }
+
+    func testImageExplorerBoxRegionCanAppendToExistingRegionCommands() throws {
+        let imageDataset = DatasetSummary(
+            id: "/data/restored.image",
+            name: "restored.image",
+            path: "/data/restored.image",
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "Recognized by Rust probe."
+        )
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [imageDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            imageExplorerClient: imageClient
+        )
+
+        store.openProject(path: "/data")
+        store.setImageExplorerBoxRegion("10,20,30,40", datasetID: imageDataset.id)
+        store.appendImageExplorerBoxRegion("100,110,120,130", datasetID: imageDataset.id)
+
+        let commands = try XCTUnwrap(imageClient.requests.last?.commands)
+        XCTAssertEqual(
+            commands.map(\.command),
+            [
+                "start_region_shape",
+                "append_region_vertex",
+                "append_region_vertex",
+                "append_region_vertex",
+                "append_region_vertex",
+                "close_region_shape",
+                "start_region_shape",
+                "append_region_vertex",
+                "append_region_vertex",
+                "append_region_vertex",
+                "append_region_vertex",
+                "close_region_shape",
+            ]
+        )
+        XCTAssertEqual(commands.compactMap(\.x), [10, 30, 30, 10, 100, 120, 120, 100])
+        XCTAssertEqual(commands.compactMap(\.y), [20, 20, 40, 40, 110, 110, 130, 130])
+    }
+
+    func testImageExplorerPolygonRegionReplacesQueuedRegionCommands() throws {
+        let imageDataset = DatasetSummary(
+            id: "/data/restored.image",
+            name: "restored.image",
+            path: "/data/restored.image",
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "Recognized by Rust probe."
+        )
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [imageDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            imageExplorerClient: imageClient
+        )
+
+        store.openProject(path: "/data")
+        store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: imageDataset.id)
+        store.setImageExplorerPolygonRegion(vertices: [(1, 2), (3, 4), (5, 6)], datasetID: imageDataset.id)
+
+        let commands = try XCTUnwrap(imageClient.requests.last?.commands)
+        XCTAssertEqual(
+            commands.map(\.command),
+            [
+                "start_region_shape",
+                "append_region_vertex",
+                "append_region_vertex",
+                "append_region_vertex",
+                "close_region_shape",
+            ]
+        )
+        XCTAssertEqual(commands.compactMap(\.x), [1, 3, 5])
+        XCTAssertEqual(commands.compactMap(\.y), [2, 4, 6])
+    }
+
+    func testImageExplorerRegionShapesReplaceAllShapesWithoutDroppingUntouchedShapes() throws {
+        let imageDataset = DatasetSummary(
+            id: "/data/restored.image",
+            name: "restored.image",
+            path: "/data/restored.image",
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "Recognized by Rust probe."
+        )
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [imageDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            imageExplorerClient: imageClient
+        )
+
+        store.openProject(path: "/data")
+        store.setImageExplorerRegionShapes(
+            [
+                [(x: 1, y: 1), (x: 3, y: 1), (x: 3, y: 3), (x: 1, y: 3)],
+                [(x: 10, y: 10), (x: 12, y: 10), (x: 11, y: 12)],
+            ],
+            datasetID: imageDataset.id
+        )
+
+        let commands = try XCTUnwrap(imageClient.requests.last?.commands)
+        XCTAssertEqual(commands.map(\.command).filter { $0 == "start_region_shape" }.count, 2)
+        XCTAssertEqual(commands.map(\.command).filter { $0 == "close_region_shape" }.count, 2)
+        XCTAssertEqual(commands.compactMap(\.x), [1, 3, 3, 1, 10, 12, 11])
+        XCTAssertEqual(commands.compactMap(\.y), [1, 1, 3, 3, 10, 10, 12])
+    }
+
+    func testImageExplorerClearsBadQueuedRegionCommandsAndRecovers() throws {
+        let imageDataset = DatasetSummary(
+            id: "/data/restored.image",
+            name: "restored.image",
+            path: "/data/restored.image",
+            kind: .imageCube,
+            size: "4 x 4 x 8",
+            units: "Jy/beam",
+            shape: [4, 4, 8],
+            notes: "Recognized by Rust probe."
+        )
+        let imageClient = StubImageExplorerClient(snapshot: makeImageExplorerSnapshot())
+        imageClient.failWhenCommandsAreQueued = true
+        let store = WorkbenchStore(
+            state: EmptyWorkbench.makeState(),
+            probeClient: StubProjectProbeClient(
+                result: ProjectFixtureProbe(
+                    project: ProjectFixture(name: "Real Project", rootPath: "/data", datasets: [imageDataset], source: .probed),
+                    diagnostics: []
+                )
+            ),
+            imageExplorerClient: imageClient
+        )
+
+        store.openProject(path: "/data")
+        store.appendImageExplorerRegionCommand(.appendRegionVertex(x: 2, y: 3), datasetID: imageDataset.id)
+
+        let recovered = try XCTUnwrap(store.state.imageExplorers[imageDataset.id])
+        XCTAssertEqual(recovered.status, .ready)
+        XCTAssertNil(recovered.lastError)
+        XCTAssertNotNil(recovered.snapshot)
+        XCTAssertEqual(recovered.regionCommands, [])
+        XCTAssertEqual(recovered.transientCommands, [])
+        XCTAssertEqual(imageClient.requests.suffix(2).map { $0.commands.map(\.command) }, [["append_region_vertex"], []])
+        XCTAssertTrue(
+            store.state.lastErrors.contains {
+                $0.contains("Cleared invalid image explorer region command sequence")
+            }
+        )
     }
 
     func testRealTableBrowserUsesRustBackedSnapshotState() throws {
@@ -2270,6 +3652,73 @@ final class WorkbenchStoreTests: XCTestCase {
             )
         )
     }
+
+    func testGenericTaskClientFindsBundledAndReleaseHelpers() {
+        let bundleExecutable = URL(fileURLWithPath: "/Applications/casars-mac.app/Contents/MacOS/casars-mac")
+
+        XCTAssertEqual(
+            ProcessGenericTaskClient.resolvedExecutablePath(
+                binaryName: "immoments",
+                overrideEnv: "CASARS_IMMOMENTS_BIN",
+                environment: ["CASARS_IMMOMENTS_BIN": "/custom/immoments"],
+                bundleExecutableURL: bundleExecutable,
+                isExecutable: { _ in true }
+            ),
+            "/custom/immoments"
+        )
+        XCTAssertEqual(
+            ProcessGenericTaskClient.resolvedExecutablePath(
+                binaryName: "immoments",
+                overrideEnv: "CASARS_IMMOMENTS_BIN",
+                environment: [:],
+                bundleExecutableURL: bundleExecutable,
+                isExecutable: { $0 == "/Applications/casars-mac.app/Contents/MacOS/immoments" }
+            ),
+            "/Applications/casars-mac.app/Contents/MacOS/immoments"
+        )
+        XCTAssertEqual(
+            ProcessGenericTaskClient.resolvedExecutablePath(
+                binaryName: "immoments",
+                overrideEnv: "CASARS_IMMOMENTS_BIN",
+                environment: ["CASA_RS_REPO_ROOT": "/repo"],
+                bundleExecutableURL: nil,
+                isExecutable: { $0 == "/repo/target/release/immoments" }
+            ),
+            "/repo/target/release/immoments"
+        )
+        XCTAssertEqual(
+            ProcessGenericTaskClient.resolvedExecutablePath(
+                binaryName: "immoments",
+                overrideEnv: "CASARS_IMMOMENTS_BIN",
+                environment: [:],
+                bundleExecutableURL: nil,
+                currentDirectoryPath: "/repo/apps/casars-mac",
+                isExecutable: { $0 == "/repo/target/debug/immoments" }
+            ),
+            "/repo/target/debug/immoments"
+        )
+    }
+
+    func testGenericTaskClientCanResolveEverySwiftVisibleBundledHelper() throws {
+        let bundleExecutable = URL(fileURLWithPath: "/Applications/casars-mac.app/Contents/MacOS/casars-mac")
+        let tasks = try UniFFITaskCatalogClient().loadTaskCatalog()
+        let binaries = Set(tasks.filter(\.showInSwift).map(\.binaryName))
+
+        for binary in binaries.sorted() {
+            let bundledPath = "/Applications/casars-mac.app/Contents/MacOS/\(binary)"
+            XCTAssertEqual(
+                ProcessGenericTaskClient.resolvedExecutablePath(
+                    binaryName: binary,
+                    overrideEnv: "__unused_\(binary)",
+                    environment: [:],
+                    bundleExecutableURL: bundleExecutable,
+                    isExecutable: { $0 == bundledPath }
+                ),
+                bundledPath,
+                "Expected \(binary) to resolve from the app bundle"
+            )
+        }
+    }
 }
 
 private struct StubProjectProbeClient: ProjectProbeClient {
@@ -2352,6 +3801,7 @@ private final class StubImageExplorerClient: ImageExplorerClient {
     private(set) var paths: [String] = []
     private(set) var requests: [Request] = []
     var snapshot: ImageExplorerSnapshot
+    var failWhenCommandsAreQueued = false
 
     init(snapshot: ImageExplorerSnapshot) {
         self.snapshot = snapshot
@@ -2374,6 +3824,9 @@ private final class StubImageExplorerClient: ImageExplorerClient {
                 transientCommands: request.transientCommands
             )
         )
+        if failWhenCommandsAreQueued && (!request.commands.isEmpty || !request.transientCommands.isEmpty) {
+            throw NSError(domain: "StubImageExplorerClient", code: 42, userInfo: [NSLocalizedDescriptionKey: "bad region command sequence"])
+        }
         var nextSnapshot = snapshot
         if let x = request.cursorX, let y = request.cursorY {
             nextSnapshot.planeCursor = ImageExplorerSnapshot.PlaneCursor(
@@ -2824,6 +4277,14 @@ private struct StubTaskUISchemaClient: TaskUISchemaClient {
     }
 }
 
+private struct StubTaskCatalogClient: TaskCatalogClient {
+    var tasks: [TaskCatalogEntry]
+
+    func loadTaskCatalog() throws -> [TaskCatalogEntry] {
+        tasks
+    }
+}
+
 private struct StubTaskExecutionMatrixClient: TaskExecutionMatrixClient {
     var rows: [TaskExecutionMatrixRow]
 
@@ -2835,6 +4296,101 @@ private struct StubTaskExecutionMatrixClient: TaskExecutionMatrixClient {
             rows: rows
         )
     }
+}
+
+private func makeTemporaryTutorialPack(
+    stagedInputPaths: Set<String> = [],
+    templateName: String = "alma-first-look-image-analysis.template.json"
+) throws -> URL {
+    let fileManager = FileManager.default
+    let packURL = fileManager.temporaryDirectory
+        .appendingPathComponent("casars-tutorial-pack-\(UUID().uuidString).pack", isDirectory: true)
+    try fileManager.createDirectory(at: packURL, withIntermediateDirectories: true)
+    let templateURL = repositoryRootURL()
+        .appendingPathComponent("resources/tutorial-packs/\(templateName)")
+    try fileManager.copyItem(at: templateURL, to: packURL.appendingPathComponent("pack.json"))
+    for relativePath in stagedInputPaths {
+        let inputURL = packURL.appendingPathComponent(relativePath, isDirectory: true)
+        try fileManager.createDirectory(at: inputURL, withIntermediateDirectories: true)
+        try "stub tutorial input\n".write(
+            to: inputURL.appendingPathComponent("table.dat"),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+    return packURL
+}
+
+private func removeTemporaryTutorialPack(_ url: URL) {
+    try? FileManager.default.removeItem(at: url)
+}
+
+private func repositoryRootURL() -> URL {
+    var url = URL(fileURLWithPath: #filePath)
+    for _ in 0..<5 {
+        url.deleteLastPathComponent()
+    }
+    return url
+}
+
+private func makeImheadTaskCatalogEntry() -> TaskCatalogEntry {
+    makeTaskCatalogEntry(id: "imhead", displayName: "Image Header")
+}
+
+private func makeTaskCatalogEntry(id: String, displayName: String) -> TaskCatalogEntry {
+    TaskCatalogEntry(
+        id: id,
+        category: "Images",
+        displayName: displayName,
+        binaryName: "imexplore",
+        cargoPackage: "casa-images",
+        overrideEnv: "CASARS_IMEXPLORE_BIN",
+        shellKind: "workflow",
+        interaction: "one_shot",
+        browserKind: nil,
+        datasetKinds: ["image_cube"],
+        schemaSource: "binary",
+        showInTUI: true,
+        showInSwift: true,
+        includeInSuite: true
+    )
+}
+
+private func makeImheadTaskUISchema() throws -> TaskUISchema {
+    try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+    {
+      "schema_version": 1,
+      "command_id": "imhead",
+      "invocation_name": "imexplore",
+      "display_name": "Image Header",
+      "category": "Images",
+      "summary": "Inspect CASA image metadata.",
+      "usage": "imexplore imhead <image>",
+      "arguments": [
+        {"id":"image_path","label":"Image","order":0,"parser":{"kind":"option","flags":["--image"],"metavar":"IMAGE","choices":[]},"value_kind":"path","parameter_type":"image_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+        {"id":"mode","label":"Mode","order":1,"parser":{"kind":"option","flags":["--mode"],"metavar":"MODE","choices":["summary","list"]},"value_kind":"choice","required":false,"default":"summary","help":"","group":"Output","advanced":false,"hidden_in_tui":false},
+        {"id":"json","label":"JSON","order":2,"parser":{"kind":"toggle","true_flags":["--json"],"false_flags":["--no-json"]},"value_kind":"bool","required":false,"default":"false","help":"","group":"Output","advanced":false,"hidden_in_tui":false}
+      ]
+    }
+    """.utf8))
+}
+
+private func makeImstatTaskUISchema() throws -> TaskUISchema {
+    try JSONDecoder().decode(TaskUISchema.self, from: Data("""
+    {
+      "schema_version": 1,
+      "command_id": "imstat",
+      "invocation_name": "imexplore",
+      "display_name": "Image Statistics",
+      "category": "Images",
+      "summary": "Measure CASA image statistics.",
+      "usage": "imexplore imstat <image>",
+      "arguments": [
+        {"id":"image_path","label":"Image","order":0,"parser":{"kind":"option","flags":["--image"],"metavar":"IMAGE","choices":[]},"value_kind":"path","parameter_type":"image_path","required":true,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false},
+        {"id":"region","label":"Region","order":1,"parser":{"kind":"option","flags":["--region"],"metavar":"REGION","choices":[]},"value_kind":"path","parameter_type":"region_path_or_box","required":false,"default":null,"help":"","group":"Input","advanced":false,"hidden_in_tui":false}
+      ]
+    }
+    """.utf8))
 }
 
 private final class HoldingDirtyImagingTaskClient: DirtyImagingTaskClient {
@@ -2875,6 +4431,8 @@ private final class HoldingDirtyImagingTaskClient: DirtyImagingTaskClient {
 private final class HoldingGenericTaskClient: GenericTaskClient {
     var requests: [GenericTaskRequest] = []
     var handler: ((GenericTaskEvent) -> Void)?
+    var stdout = ""
+    var stderr = ""
     let execution = StubDirtyImagingExecution()
 
     func startTask(
@@ -2891,8 +4449,8 @@ private final class HoldingGenericTaskClient: GenericTaskClient {
         handler?(.succeeded(GenericTaskResult(
             taskID: request.task.id,
             arguments: try ProcessGenericTaskClient.arguments(for: request),
-            stdout: "",
-            stderr: ""
+            stdout: stdout,
+            stderr: stderr
         )))
     }
 }

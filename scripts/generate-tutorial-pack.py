@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""Generate a local tutorial pack directory from a checked-in template."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import tarfile
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+TEMPLATE_PATHS = {
+    "alma-first-look-image-analysis": REPO_ROOT
+    / "resources"
+    / "tutorial-packs"
+    / "alma-first-look-image-analysis.template.json",
+    "alma-first-look-imaging": REPO_ROOT
+    / "resources"
+    / "tutorial-packs"
+    / "alma-first-look-imaging.template.json",
+}
+REVIEW_SCHEMA_PATH = REPO_ROOT / "resources" / "tutorial-pack-review.schema.json"
+
+
+def default_tutorial_root() -> Path:
+    override = os.environ.get("CASA_RS_TUTORIAL_DATA_ROOT")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / "SoftwareProjects" / "casa-tutorial-data"
+
+
+def default_output(pack_id: str) -> Path:
+    suffixes = {
+        "alma-first-look-image-analysis": (
+            "image-analysis",
+            "alma-first-look-image-analysis.pack",
+        ),
+        "alma-first-look-imaging": ("imaging", "alma-first-look-imaging.pack"),
+    }
+    try:
+        tutorial_suffix, pack_name = suffixes[pack_id]
+    except KeyError:
+        raise ValueError(f"unknown pack {pack_id!r}") from None
+    return (
+        default_tutorial_root()
+        / "tutorial-parity"
+        / "alma"
+        / "first-look"
+        / "twhya"
+        / tutorial_suffix
+        / pack_name
+    )
+
+
+def copy_directory(source: Path, destination: Path) -> None:
+    if destination.exists() or destination.is_symlink():
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination)
+        else:
+            destination.unlink()
+    shutil.copytree(source, destination)
+
+
+def remove_existing(path: Path) -> None:
+    if path.exists() or path.is_symlink():
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+
+def is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def extract_tar_member_source(member_name: str) -> str:
+    return member_name.split("/", 1)[0]
+
+
+def extract_tar(source: Path, destination: Path) -> None:
+    remove_existing(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    extract_root = destination.parent
+    expected_root = destination.name
+    with tarfile.open(source) as archive:
+        for member in archive.getmembers():
+            if member.name.startswith("/") or ".." in Path(member.name).parts:
+                raise SystemExit(f"refusing unsafe tar member {member.name!r} in {source}")
+            if extract_tar_member_source(member.name) != expected_root:
+                raise SystemExit(
+                    f"tar {source} does not extract to expected top-level {expected_root!r}"
+                )
+            target = (extract_root / member.name).resolve()
+            if not is_relative_to(target, extract_root.resolve()):
+                raise SystemExit(f"refusing tar member outside pack root: {member.name!r}")
+        try:
+            archive.extractall(extract_root, filter="fully_trusted")
+        except TypeError:
+            archive.extractall(extract_root)
+    if not destination.exists():
+        raise SystemExit(f"tar {source} did not produce expected input {destination}")
+
+
+def materialize_input(source: Path, destination: Path) -> None:
+    if source.is_dir():
+        copy_directory(source, destination)
+        return
+    if source.is_file() and source.suffix == ".tar":
+        extract_tar(source, destination)
+        return
+    raise SystemExit(f"cannot materialize input source {source}")
+
+
+def write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def input_source_path(tutorial_root: Path, input_entry: dict[str, Any]) -> Path:
+    registry_key = input_entry["registry_key"]
+    if registry_key == "alma/first-look/twhya/continuum-image":
+        return tutorial_root / "tutorial-parity" / "alma" / "first-look" / "twhya" / "twhya_cont.image"
+    if registry_key == "alma/first-look/twhya/n2hp-image":
+        return tutorial_root / "tutorial-parity" / "alma" / "first-look" / "twhya" / "twhya_n2hp.image"
+    if registry_key == "alma/first-look/twhya/calibrated-ms":
+        extracted = tutorial_root / "tutorial-parity" / "alma" / "first-look" / "twhya" / "twhya_calibrated.ms"
+        if extracted.exists():
+            return extracted
+        return extracted.with_suffix(".ms.tar")
+    return tutorial_root / "tutorial-parity" / registry_key
+
+
+def validate_expected_input_masks(input_entry: dict[str, Any], image_path: Path) -> None:
+    for mask_name in input_entry.get("expected_masks", []):
+        mask_path = image_path / mask_name
+        if not mask_path.exists():
+            raise SystemExit(
+                f"input {input_entry['id']} expected mask {mask_name!r} missing from {image_path}"
+            )
+    default_mask = input_entry.get("expected_default_mask")
+    if default_mask and not (image_path / default_mask).exists():
+        raise SystemExit(
+            f"input {input_entry['id']} expected default mask {default_mask!r} missing from {image_path}"
+        )
+
+
+def generate_pack(pack_id: str, output: Path, tutorial_root: Path, materialize_inputs: bool) -> dict[str, Any]:
+    template_path = TEMPLATE_PATHS[pack_id]
+    manifest = json.loads(template_path.read_text(encoding="utf-8"))
+
+    output.mkdir(parents=True, exist_ok=True)
+    for relative in [
+        ".casa-rs/workspace/native",
+        ".casa-rs/workspace/oracle",
+        ".casa-rs/workspace/scratch",
+        "regions",
+        "docs/sections",
+        ".casa-rs/evidence/review",
+        ".casa-rs/screenshots/source",
+        ".casa-rs/screenshots/annotated",
+        ".casa-rs/screenshots/specs",
+    ]:
+        (output / relative).mkdir(parents=True, exist_ok=True)
+
+    input_records: list[dict[str, Any]] = []
+    for input_entry in manifest["inputs"]:
+        source = input_source_path(tutorial_root, input_entry)
+        destination = output / input_entry["pack_path"]
+        status = "missing"
+        if source.exists() and materialize_inputs:
+            if source.is_dir():
+                validate_expected_input_masks(input_entry, source)
+            materialize_input(source, destination)
+            validate_expected_input_masks(input_entry, destination)
+            status = "staged"
+        elif destination.exists():
+            validate_expected_input_masks(input_entry, destination)
+            status = "staged"
+        input_records.append(
+            {
+                "id": input_entry["id"],
+                "registry_key": input_entry["registry_key"],
+                "source": str(source),
+                "pack_path": input_entry["pack_path"],
+                "status": status,
+                "checksum_policy": input_entry["checksum_policy"],
+                "size_bytes": input_entry["size_bytes"],
+                "expected_default_mask": input_entry.get("expected_default_mask"),
+                "expected_masks": input_entry.get("expected_masks", []),
+                "source_artifact_url": input_entry.get("source_artifact_url"),
+                "source_note": input_entry.get("source_note"),
+            }
+        )
+
+    shutil.copy2(REVIEW_SCHEMA_PATH, output / ".casa-rs" / "evidence" / "review" / "tutorial-pack-review.schema.json")
+    write_json(output / "pack.json", manifest)
+    write_json(
+        output / ".casa-rs" / "evidence" / "data-manifest.json",
+        {
+            "schema_version": "tutorial-pack-data-manifest.v0",
+            "pack_id": manifest["pack_id"],
+            "tutorial_id": manifest["tutorial_id"],
+            "tutorial_root": str(tutorial_root),
+            "inputs": input_records,
+        },
+    )
+    (output / "README.md").write_text(
+        f"# {manifest['title']}\n\nGenerated tutorial pack skeleton. Section docs are generated as tutorial chunks are reviewed.\n",
+        encoding="utf-8",
+    )
+    return {
+        "pack_id": manifest["pack_id"],
+        "path": str(output),
+        "manifest": str(output / "pack.json"),
+        "inputs": input_records,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--pack",
+        choices=sorted(TEMPLATE_PATHS),
+        default="alma-first-look-image-analysis",
+    )
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--tutorial-root", type=Path, default=default_tutorial_root())
+    parser.add_argument(
+        "--no-materialize-inputs",
+        action="store_true",
+        help="create the pack skeleton but leave inputs missing even if local tutorial data exists",
+    )
+    args = parser.parse_args()
+
+    output = args.output.expanduser() if args.output else default_output(args.pack)
+    summary = generate_pack(
+        args.pack,
+        output=output,
+        tutorial_root=args.tutorial_root.expanduser(),
+        materialize_inputs=not args.no_materialize_inputs,
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

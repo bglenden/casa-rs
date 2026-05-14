@@ -1,7 +1,7 @@
 # casars-mac
 
 Truth class: current descriptive
-Last reality check: 2026-05-05
+Last reality check: 2026-05-09
 Verification: swift test; swift run casars-mac --dump-debug-state --simulate-main-flow; ./script/build_and_run.sh --verify
 
 `casars-mac` is the SwiftUI prototype for the native macOS `casa-rs`
@@ -18,10 +18,12 @@ From this directory:
 swift test
 swift build
 swift run casars-mac --dump-debug-state --simulate-main-flow
+swift run casars-mac --dump-debug-state --open-tutorial-pack /path/to/tutorial.pack
 ./script/build_and_run.sh
 ./script/build_and_run.sh --verify
 ./script/install-local-gui.sh --force
 ./script/build_and_run.sh --project /path/to/project
+./script/build_and_run.sh --tutorial-pack /path/to/tutorial.pack
 ./script/build_and_run.sh --empty
 ```
 
@@ -46,9 +48,12 @@ back to the bundled `mssel_test_small_multifield_spw.ms.tgz` fixture and its
 NGC4826-F3/SPW 5/raw YY defaults. Demo-mode temporary projects are removed
 after the launched app exits; the default launcher stays attached until that
 exit so cleanup is deterministic. Pass `--project` to inspect an existing
-project directory, or `--empty` to start without opening a project. `swift run
-casars-mac` is reserved for non-interactive debug-state commands and low-level
-executable diagnosis.
+project directory, `--tutorial-pack` to inspect a generated tutorial learning
+pack, or `--empty` to start without opening a project. Tutorial packs open on
+the Tutorial tab with input staging status, section checkpoints, learner docs,
+and an action that applies each section's GUI parameters to the task panel.
+`swift run casars-mac` is reserved for non-interactive debug-state commands and
+low-level executable diagnosis.
 
 Use `./script/install-local-gui.sh --force` to install the staged app under
 `~/.local/opt/casa-rs/<version>/Applications/casars-mac.app` and update the

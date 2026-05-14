@@ -29,6 +29,7 @@ public enum DatasetKind: String, Codable, Equatable {
     case imageCube
     case calibrationTable
     case table
+    case region
     case runProduct
 
     public var explorerName: String {
@@ -41,6 +42,8 @@ public enum DatasetKind: String, Codable, Equatable {
             "Calibration Table Explorer"
         case .table:
             "Table Explorer"
+        case .region:
+            "Region File"
         case .runProduct:
             "Run Product Explorer"
         }
@@ -56,6 +59,8 @@ public enum DatasetKind: String, Codable, Equatable {
             "Cal"
         case .table:
             "Table"
+        case .region:
+            "Region"
         case .runProduct:
             "Product"
         }
@@ -206,6 +211,7 @@ public enum ProjectSource: String, Codable, Equatable {
     case none
     case fixture
     case probed
+    case tutorialPack
 }
 
 public extension ProjectSource {
@@ -217,6 +223,7 @@ public extension ProjectSource {
 public enum WorkbenchTabKind: String, Codable, Equatable {
     case datasetExplorer
     case tableBrowser
+    case tutorial
     case task
     case plotSamples
     case aiChat
@@ -229,12 +236,14 @@ public struct WorkbenchTab: Identifiable, Codable, Equatable {
     public var title: String
     public var kind: WorkbenchTabKind
     public var datasetID: String?
+    public var taskID: String?
 
-    public init(id: String, title: String, kind: WorkbenchTabKind, datasetID: String? = nil) {
+    public init(id: String, title: String, kind: WorkbenchTabKind, datasetID: String? = nil, taskID: String? = nil) {
         self.id = id
         self.title = title
         self.kind = kind
         self.datasetID = datasetID
+        self.taskID = taskID
     }
 }
 
@@ -790,6 +799,12 @@ public enum MeasurementSetExplorerPlotPreset: String, CaseIterable, Codable, Equ
 
     public var id: String { rawValue }
 
+    public static var menuCases: [MeasurementSetExplorerPlotPreset] {
+        allCases.sorted { lhs, rhs in
+            lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+    }
+
     public var title: String {
         switch self {
         case .uvCoverage:
@@ -844,6 +859,86 @@ public enum MeasurementSetExplorerPlotPreset: String, CaseIterable, Codable, Equ
             "Amplitude vs Time"
         case .realVsImaginary:
             "Real vs Imaginary"
+        }
+    }
+}
+
+public enum MeasurementSetPlotColorAxis: String, CaseIterable, Codable, Equatable, Identifiable {
+    case none
+    case field
+    case scan
+    case spectralWindow
+    case baseline
+    case correlation
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .none:
+            "None"
+        case .field:
+            "Field"
+        case .scan:
+            "Scan"
+        case .spectralWindow:
+            "Spectral Window"
+        case .baseline:
+            "Baseline"
+        case .correlation:
+            "Correlation"
+        }
+    }
+
+    public var protocolValue: String {
+        switch self {
+        case .none:
+            "none"
+        case .field:
+            "field"
+        case .scan:
+            "scan"
+        case .spectralWindow:
+            "spw"
+        case .baseline:
+            "baseline"
+        case .correlation:
+            "correlation"
+        }
+    }
+}
+
+public enum MeasurementSetPlotIterationAxis: String, CaseIterable, Codable, Equatable, Identifiable {
+    case field
+    case scan
+    case spectralWindow
+    case correlation
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .field:
+            "Field"
+        case .scan:
+            "Scan"
+        case .spectralWindow:
+            "Spectral Window"
+        case .correlation:
+            "Correlation"
+        }
+    }
+
+    public var protocolValue: String {
+        switch self {
+        case .field:
+            "field"
+        case .scan:
+            "scan"
+        case .spectralWindow:
+            "spw"
+        case .correlation:
+            "correlation"
         }
     }
 }
@@ -985,6 +1080,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
     public var selectedFeed: String?
     public var selectedMSSelect: String?
     public var dataColumn: String
+    public var colorBy: MeasurementSetPlotColorAxis
     public var avgChannel: UInt64?
     public var avgTime: Double?
     public var avgScan: Bool
@@ -993,6 +1089,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
     public var avgAntenna: Bool
     public var avgSPW: Bool
     public var scalarAverage: Bool
+    public var iterationAxis: MeasurementSetPlotIterationAxis?
     public var maxPlotPoints: UInt64
     public var status: MeasurementSetPlotStatus
     public var lastError: String?
@@ -1015,6 +1112,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         selectedFeed: String? = nil,
         selectedMSSelect: String? = nil,
         dataColumn: String,
+        colorBy: MeasurementSetPlotColorAxis = .field,
         avgChannel: UInt64? = nil,
         avgTime: Double? = nil,
         avgScan: Bool = false,
@@ -1023,6 +1121,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         avgAntenna: Bool = false,
         avgSPW: Bool = false,
         scalarAverage: Bool = false,
+        iterationAxis: MeasurementSetPlotIterationAxis? = nil,
         maxPlotPoints: UInt64 = WorkbenchState.defaultMeasurementSetPlotMaxPoints,
         status: MeasurementSetPlotStatus,
         lastError: String?,
@@ -1044,6 +1143,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         self.selectedFeed = selectedFeed
         self.selectedMSSelect = selectedMSSelect
         self.dataColumn = dataColumn
+        self.colorBy = colorBy
         self.avgChannel = avgChannel
         self.avgTime = avgTime
         self.avgScan = avgScan
@@ -1052,6 +1152,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
         self.avgAntenna = avgAntenna
         self.avgSPW = avgSPW
         self.scalarAverage = scalarAverage
+        self.iterationAxis = iterationAxis
         self.maxPlotPoints = maxPlotPoints
         self.status = status
         self.lastError = lastError
@@ -1066,6 +1167,7 @@ public struct MeasurementSetExplorerPlotState: Codable, Equatable {
             selectedSpectralWindow: nil,
             selectedCorrelation: nil,
             dataColumn: dataset.dataColumns.first ?? "DATA",
+            colorBy: .field,
             maxPlotPoints: WorkbenchState.defaultMeasurementSetPlotMaxPoints,
             status: .idle,
             lastError: nil,
@@ -1216,6 +1318,7 @@ public struct ImageExplorerCommand: Codable, Equatable {
     public var name: String?
     public var newName: String?
     public var setDefault: Bool?
+    public var path: String?
 
     public init(
         command: String,
@@ -1223,7 +1326,8 @@ public struct ImageExplorerCommand: Codable, Equatable {
         y: Int? = nil,
         name: String? = nil,
         newName: String? = nil,
-        setDefault: Bool? = nil
+        setDefault: Bool? = nil,
+        path: String? = nil
     ) {
         self.command = command
         self.x = x
@@ -1231,6 +1335,7 @@ public struct ImageExplorerCommand: Codable, Equatable {
         self.name = name
         self.newName = newName
         self.setDefault = setDefault
+        self.path = path
     }
 
     public static let startRegionShape = ImageExplorerCommand(command: "start_region_shape")
@@ -1259,6 +1364,15 @@ public struct ImageExplorerCommand: Codable, Equatable {
     public static func writeRegionMask(name: String?, setDefault: Bool) -> ImageExplorerCommand {
         ImageExplorerCommand(command: "write_region_mask", name: name, setDefault: setDefault)
     }
+    public static func exportRegionFile(path: String) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "export_region_file", path: path)
+    }
+    public static func loadRegionFile(path: String) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "load_region_file", path: path)
+    }
+    public static func appendRegionFile(path: String) -> ImageExplorerCommand {
+        ImageExplorerCommand(command: "append_region_file", path: path)
+    }
 
     enum CodingKeys: String, CodingKey {
         case command
@@ -1267,6 +1381,7 @@ public struct ImageExplorerCommand: Codable, Equatable {
         case name
         case newName = "new_name"
         case setDefault = "set_default"
+        case path
     }
 }
 
@@ -1584,11 +1699,17 @@ public struct ImageExplorerSessionState: Codable, Equatable {
     public var movieAxis: Int?
     public var movieFramesPerSecond: Double = 6.0
     public var movieLoop: Bool = true
+    public var regionTool: String = "select"
     public var regionCommands: [ImageExplorerCommand] = []
+    public var activeRegionFilePath: String?
     public var transientCommands: [ImageExplorerCommand] = []
     public var status: ExplorerSessionStatus
     public var lastError: String?
     public var snapshot: ImageExplorerSnapshot?
+
+    public var hasQueuedImageExplorerCommands: Bool {
+        !regionCommands.isEmpty || !transientCommands.isEmpty
+    }
 
     public func snapshotRequest(datasetPath: String) -> ImageExplorerSnapshotRequest {
         ImageExplorerSnapshotRequest(
@@ -2390,6 +2511,7 @@ public struct WorkbenchState: Codable, Equatable {
     public var runProductGroups: [RunProductGroup]
     public var taskCatalog: [TaskCatalogEntry]
     public var taskExecutionMatrixRows: [TaskExecutionMatrixRow]
+    public var tutorialPack: TutorialPackContext?
     public var activeTaskID: String
     public var taskUISchemas: [String: TaskUISchema]
     public var genericTaskValues: [String: [String: String]]
@@ -2425,6 +2547,7 @@ public struct WorkbenchState: Codable, Equatable {
         runProductGroups: [RunProductGroup] = [],
         taskCatalog: [TaskCatalogEntry] = [],
         taskExecutionMatrixRows: [TaskExecutionMatrixRow] = [],
+        tutorialPack: TutorialPackContext? = nil,
         activeTaskID: String = "imager",
         taskUISchemas: [String: TaskUISchema] = [:],
         genericTaskValues: [String: [String: String]] = [:],
@@ -2459,6 +2582,7 @@ public struct WorkbenchState: Codable, Equatable {
         self.runProductGroups = runProductGroups
         self.taskCatalog = taskCatalog
         self.taskExecutionMatrixRows = taskExecutionMatrixRows
+        self.tutorialPack = tutorialPack
         self.activeTaskID = activeTaskID
         self.taskUISchemas = taskUISchemas
         self.genericTaskValues = genericTaskValues
@@ -2534,14 +2658,19 @@ public struct DebugStateSnapshot: Codable, Equatable {
     public var selectedDatasetSummary: DebugDatasetSnapshot?
     public var activeProjectRoot: String
     public var activeProjectSource: ProjectSource
+    public var tutorialPack: DebugTutorialPackSnapshot?
     public var discoveredDatasets: [String]
     public var probeDiagnostics: [String]
     public var inspectorCollapsed: Bool
     public var openTabs: [String]
     public var explorerTabs: [DebugExplorerTabSnapshot]
     public var activeTab: String
+    public var activeTaskID: String
+    public var activeTaskValues: [String: String]
+    public var activeTaskToggles: [String: Bool]
     public var taskState: TaskRunState
     public var taskRequest: DirtyImagingTaskParameters?
+    public var taskLogLines: [String]
     public var taskDiagnostics: [String]
     public var taskOutputPaths: [String]
     public var taskCatalog: [TaskCatalogEntry]
@@ -2564,6 +2693,7 @@ public struct DebugStateSnapshot: Codable, Equatable {
         activeProject = state.project.name
         activeProjectRoot = state.project.rootPath
         activeProjectSource = state.project.source
+        tutorialPack = state.tutorialPack.map(DebugTutorialPackSnapshot.init(context:))
         activeLeftDockMode = state.dockMode
         leftDockCollapsed = state.leftDockCollapsed
         selectedDataset = state.selectedDataset?.name
@@ -2576,8 +2706,12 @@ public struct DebugStateSnapshot: Codable, Equatable {
             .filter { $0.kind == .datasetExplorer }
             .map { DebugExplorerTabSnapshot(tab: $0, state: state) }
         activeTab = state.tabs.first { $0.id == state.activeTabID }?.title ?? state.activeTabID
+        activeTaskID = state.activeTaskID
+        activeTaskValues = state.genericTaskValues[state.activeTaskID] ?? [:]
+        activeTaskToggles = state.genericTaskToggles[state.activeTaskID] ?? [:]
         taskState = state.taskRun.state
         taskRequest = state.dirtyImagingTaskParameters
+        taskLogLines = state.taskRun.logLines
         taskDiagnostics = state.taskRun.diagnostics
         taskOutputPaths = state.taskRun.outputPaths
         taskCatalog = state.taskCatalog
@@ -2611,6 +2745,60 @@ public struct DebugStateSnapshot: Codable, Equatable {
         commandQuery = state.commandQuery
         lastErrors = state.lastErrors
         interfaceFontSize = state.interfaceFontSize
+    }
+}
+
+public struct DebugTutorialPackSnapshot: Codable, Equatable {
+    public var packID: String
+    public var tutorialID: String
+    public var title: String
+    public var declaredCasaVersion: String
+    public var rootPath: String
+    public var manifestPath: String
+    public var selectedSectionID: String?
+    public var selectedSectionTitle: String?
+    public var inputs: [TutorialPackInputState]
+    public var sections: [DebugTutorialPackSectionSnapshot]
+    public var workspaceRoot: String
+    public var nativeWorkspacePath: String
+    public var oracleWorkspacePath: String
+    public var reviewPath: String
+    public var learnerDocsIndex: String
+
+    public init(context: TutorialPackContext) {
+        packID = context.packID
+        tutorialID = context.tutorialID
+        title = context.title
+        declaredCasaVersion = context.declaredCasaVersion
+        rootPath = context.rootPath
+        manifestPath = context.manifestPath
+        selectedSectionID = context.selectedSection?.id
+        selectedSectionTitle = context.selectedSection?.title
+        inputs = context.inputs
+        sections = context.sections.map(DebugTutorialPackSectionSnapshot.init(section:))
+        workspaceRoot = context.workspaceRoot
+        nativeWorkspacePath = context.nativeWorkspacePath
+        oracleWorkspacePath = context.oracleWorkspacePath
+        reviewPath = context.reviewPath
+        learnerDocsIndex = context.learnerDocsIndex
+    }
+}
+
+public struct DebugTutorialPackSectionSnapshot: Codable, Equatable {
+    public var id: String
+    public var sequence: UInt64
+    public var title: String
+    public var tasks: [String]
+    public var reviewStatus: String
+    public var reviewRecordPath: String
+
+    public init(section: TutorialPackSection) {
+        id = section.id
+        sequence = section.sequence
+        title = section.title
+        tasks = section.tasks
+        reviewStatus = section.reviewCheckpoint.status
+        reviewRecordPath = section.reviewCheckpoint.recordPath
     }
 }
 
@@ -2724,6 +2912,7 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
     public var selectedFeed: String?
     public var selectedMSSelect: String?
     public var dataColumn: String
+    public var colorBy: MeasurementSetPlotColorAxis
     public var avgChannel: UInt64?
     public var avgTime: Double?
     public var avgScan: Bool
@@ -2764,6 +2953,7 @@ public struct DebugMeasurementSetPlotSnapshot: Codable, Equatable {
         selectedFeed = plotState.selectedFeed
         selectedMSSelect = plotState.selectedMSSelect
         dataColumn = plotState.dataColumn
+        colorBy = plotState.colorBy
         avgChannel = plotState.avgChannel
         avgTime = plotState.avgTime
         avgScan = plotState.avgScan
@@ -2856,5 +3046,132 @@ public struct DebugTableBrowserSnapshot: Codable, Equatable {
         contentLineCount = state.snapshot?.contentLines.count ?? 0
         inspectorTitle = state.snapshot?.inspector?.title
         lastError = state.lastError
+    }
+}
+
+public struct RegionFileInspection: Equatable {
+    public struct Point: Equatable {
+        public var x: Double
+        public var y: Double
+
+        public init(x: Double, y: Double) {
+            self.x = x
+            self.y = y
+        }
+    }
+
+    public var kind: String
+    public var coordinateSystem: String
+    public var xExtentLabel: String
+    public var yExtentLabel: String
+    public var points: [Point]
+
+    public static func inspect(path: String) -> RegionFileInspection? {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return nil
+        }
+        return inspect(text: text)
+    }
+
+    public static func inspect(text: String) -> RegionFileInspection? {
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+            let kind: String
+            if line.hasPrefix("box[[") {
+                kind = "Box"
+            } else if line.hasPrefix("poly [") {
+                kind = "Polygon"
+            } else {
+                continue
+            }
+            let coordinates = coordinatePairs(in: line)
+            guard coordinates.count >= 2 else { return nil }
+            let allPixel = coordinates.allSatisfy { $0.x.unit == "pix" && $0.y.unit == "pix" }
+            let points = coordinates.map { pair in
+                Point(
+                    x: allPixel ? pair.x.value : pair.x.arcseconds,
+                    y: allPixel ? pair.y.value : pair.y.arcseconds
+                )
+            }
+            guard let minX = points.map(\.x).min(),
+                  let maxX = points.map(\.x).max(),
+                  let minY = points.map(\.y).min(),
+                  let maxY = points.map(\.y).max()
+            else {
+                return nil
+            }
+            let unit = allPixel ? "px" : "arcsec"
+            return RegionFileInspection(
+                kind: kind,
+                coordinateSystem: allPixel ? "Pixel" : "World",
+                xExtentLabel: formatExtent(maxX - minX, unit: unit),
+                yExtentLabel: formatExtent(maxY - minY, unit: unit),
+                points: points
+            )
+        }
+        return nil
+    }
+
+    private struct Coordinate: Equatable {
+        var value: Double
+        var unit: String
+
+        var arcseconds: Double {
+            switch unit {
+            case "rad": value * 206_264.80624709636
+            case "deg": value * 3_600.0
+            case "arcmin": value * 60.0
+            case "arcsec": value
+            default: value
+            }
+        }
+    }
+
+    private static func coordinatePairs(in text: String) -> [(x: Coordinate, y: Coordinate)] {
+        let pattern = #"\[\s*([^\[\],]+)\s*,\s*([^\[\],]+)\s*\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+        let nsText = text as NSString
+        return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap { match in
+            guard match.numberOfRanges == 3,
+                  let x = parseCoordinate(nsText.substring(with: match.range(at: 1))),
+                  let y = parseCoordinate(nsText.substring(with: match.range(at: 2)))
+            else {
+                return nil
+            }
+            return (x: x, y: y)
+        }
+    }
+
+    private static func parseCoordinate(_ text: String) -> Coordinate? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = #"^([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z]*)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: trimmed, range: NSRange(location: 0, length: (trimmed as NSString).length)),
+              match.numberOfRanges == 3
+        else {
+            return nil
+        }
+        let nsText = trimmed as NSString
+        guard let value = Double(nsText.substring(with: match.range(at: 1))) else {
+            return nil
+        }
+        let unit = nsText.substring(with: match.range(at: 2)).lowercased()
+        return Coordinate(value: value, unit: unit.isEmpty ? "rad" : unit)
+    }
+
+    private static func formatExtent(_ value: Double, unit: String) -> String {
+        if unit == "px" {
+            return "\(Int(value.rounded())) px"
+        }
+        if abs(value) >= 100 {
+            return String(format: "%.1f %@", value, unit)
+        }
+        if abs(value) >= 10 {
+            return String(format: "%.2f %@", value, unit)
+        }
+        return String(format: "%.3f %@", value, unit)
     }
 }

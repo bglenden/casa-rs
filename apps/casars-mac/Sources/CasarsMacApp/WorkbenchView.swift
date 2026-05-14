@@ -15,24 +15,30 @@ private let datasetClickLogger = Logger(
 
 struct WorkbenchView: View {
     @ObservedObject var store: WorkbenchStore
+    var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
+    @State private var leftDockWidth: CGFloat = 250
+    @State private var inspectorWidth: CGFloat = 250
 
     var body: some View {
         HStack(spacing: 0) {
             if !store.state.leftDockCollapsed {
                 LeftDockView(store: store)
-                    .frame(width: 250)
+                    .frame(width: leftDockWidth)
 
-                Divider()
+                HorizontalResizeHandle(width: $leftDockWidth, range: 190...420)
             }
 
             if !store.state.inspectorCollapsed {
                 InspectorView(store: store)
-                    .frame(width: 250)
+                    .frame(width: inspectorWidth)
 
-                Divider()
+                HorizontalResizeHandle(width: $inspectorWidth, range: 220...520)
             }
 
-            CentralWorkspaceView(store: store)
+            CentralWorkspaceView(
+                store: store,
+                initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
+            )
                 .frame(minWidth: 560)
         }
         .toolbar {
@@ -51,6 +57,9 @@ struct WorkbenchView: View {
                 CommandSearchField(store: store)
             }
 
+        }
+        .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { date in
+            store.refreshProjectFromDiskIfNeeded(now: date)
         }
     }
 }
@@ -85,6 +94,7 @@ struct CommandSearchField: View {
 
 struct LeftDockView: View {
     @ObservedObject var store: WorkbenchStore
+    @State private var datasetOrder: DatasetOrder = .alphabetical
 
     var body: some View {
         VStack(spacing: 0) {
@@ -177,45 +187,56 @@ struct LeftDockView: View {
                     }
                 )
             } else {
-                List(selection: Binding(
-                    get: { store.state.selectedDatasetID },
-                    set: { id in
-                        if let id {
-                            store.selectDataset(id)
+                VStack(spacing: 0) {
+                    HStack(spacing: 8) {
+                        Text("Order by")
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.secondary)
+                        Picker("Order by", selection: $datasetOrder) {
+                            ForEach(DatasetOrder.allCases) { order in
+                                Text(order.title).tag(order)
+                            }
+                        }
+                        .labelsHidden()
+                        .controlSize(.small)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+
+                    List(selection: Binding(
+                        get: { store.state.selectedDatasetID },
+                        set: { id in
+                            if let id {
+                                store.selectDataset(id)
+                            }
+                        }
+                    )) {
+                        if datasetOrder == .type {
+                            ForEach(datasetGroups) { group in
+                                Section(group.title) {
+                                    ForEach(group.datasets) { dataset in
+                                        datasetRow(dataset)
+                                    }
+                                }
+                            }
+                        } else if datasetOrder == .folder {
+                            ForEach(datasetFolderGroups) { group in
+                                Section(group.title) {
+                                    ForEach(group.datasets) { dataset in
+                                        datasetRow(dataset)
+                                    }
+                                }
+                            }
+                        } else {
+                            ForEach(orderedDatasets) { dataset in
+                                datasetRow(dataset)
+                            }
                         }
                     }
-                )) {
-                    ForEach(store.state.project.datasets) { dataset in
-                        DatasetRow(dataset: dataset)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                            .tag(Optional(dataset.id))
-                            .overlay {
-                                DatasetRowClickTarget(
-                                    datasetID: dataset.id,
-                                    onSingleClick: {
-                                        store.selectDataset(dataset.id)
-                                    },
-                                    onDoubleClick: {
-                                        store.openDatasetExplorer(dataset.id)
-                                    }
-                                )
-                            }
-                            .contextMenu {
-                                Button("Open Explorer") {
-                                    store.openDatasetExplorer(dataset.id)
-                                }
-                                if dataset.kind == .measurementSet || dataset.kind == .table || dataset.kind == .calibrationTable {
-                                    Button("Open in Table Browser") {
-                                        store.openDatasetTableBrowser(dataset.id)
-                                    }
-                                }
-                            }
-                            .accessibilityIdentifier("dataset.row.\(dataset.id)")
-                    }
+                    .listStyle(.sidebar)
+                    .accessibilityIdentifier("dock.datasets")
                 }
-                .listStyle(.sidebar)
-                .accessibilityIdentifier("dock.datasets")
             }
 
         case .files:
@@ -261,12 +282,153 @@ struct LeftDockView: View {
         }
     }
 
+    private func datasetRow(_ dataset: DatasetSummary) -> some View {
+        DatasetRow(
+            dataset: dataset,
+            disambiguator: datasetDisambiguator(dataset),
+            isNestedInProject: datasetRelativeParent(dataset) != nil
+        )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .tag(Optional(dataset.id))
+            .overlay {
+                DatasetRowClickTarget(
+                    datasetID: dataset.id,
+                    onSingleClick: {
+                        store.selectDataset(dataset.id)
+                    },
+                    onDoubleClick: {
+                        store.openDatasetExplorer(dataset.id)
+                    }
+                )
+            }
+            .contextMenu {
+                Button("Open Explorer") {
+                    store.openDatasetExplorer(dataset.id)
+                }
+                if dataset.kind == .measurementSet || dataset.kind == .table || dataset.kind == .calibrationTable {
+                    Button("Open in Table Browser") {
+                        store.openDatasetTableBrowser(dataset.id)
+                    }
+                }
+            }
+            .accessibilityIdentifier("dataset.row.\(dataset.id)")
+    }
+
     private var projectSourceLabel: String {
         switch store.state.project.source {
         case .none: "No project"
         case .fixture: "Demo project"
         case .probed: "Real project"
+        case .tutorialPack: "Tutorial pack"
         }
+    }
+
+    private var datasetGroups: [DatasetGroup] {
+        let order: [DatasetKind] = [.measurementSet, .imageCube, .region, .runProduct, .calibrationTable, .table]
+        let grouped = Dictionary(grouping: store.state.project.datasets, by: \.kind)
+        return order.compactMap { kind in
+            guard let datasets = grouped[kind], !datasets.isEmpty else {
+                return nil
+            }
+            return DatasetGroup(
+                kind: kind,
+                title: datasetGroupTitle(kind),
+                datasets: datasets.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            )
+        }
+    }
+
+    private var datasetFolderGroups: [DatasetFolderGroup] {
+        let grouped = Dictionary(grouping: store.state.project.datasets, by: datasetFolderGroupTitle)
+        return grouped.keys.sorted { lhs, rhs in
+            if lhs == projectRootFolderTitle {
+                return true
+            }
+            if rhs == projectRootFolderTitle {
+                return false
+            }
+            return lhs.localizedStandardCompare(rhs) == .orderedAscending
+        }.map { title in
+            DatasetFolderGroup(
+                title: title,
+                datasets: (grouped[title] ?? []).sorted(by: datasetAlphabeticalSort)
+            )
+        }
+    }
+
+    private var orderedDatasets: [DatasetSummary] {
+        switch datasetOrder {
+        case .alphabetical, .type, .folder:
+            store.state.project.datasets.sorted(by: datasetAlphabeticalSort)
+        case .time:
+            store.state.project.datasets.sorted(by: datasetTimeSort)
+        }
+    }
+
+    private func datasetAlphabeticalSort(_ lhs: DatasetSummary, _ rhs: DatasetSummary) -> Bool {
+        let nameOrder = lhs.name.localizedStandardCompare(rhs.name)
+        if nameOrder != .orderedSame {
+            return nameOrder == .orderedAscending
+        }
+        return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending
+    }
+
+    private func datasetTimeSort(_ lhs: DatasetSummary, _ rhs: DatasetSummary) -> Bool {
+        let lhsTime = lhs.modifiedUnixSeconds ?? lhs.probedUnixSeconds ?? 0
+        let rhsTime = rhs.modifiedUnixSeconds ?? rhs.probedUnixSeconds ?? 0
+        if lhsTime != rhsTime {
+            return lhsTime > rhsTime
+        }
+        return datasetAlphabeticalSort(lhs, rhs)
+    }
+
+    private func datasetGroupTitle(_ kind: DatasetKind) -> String {
+        switch kind {
+        case .measurementSet: "Measurement Sets"
+        case .imageCube: "Images"
+        case .region: "Regions"
+        case .runProduct: "Products"
+        case .calibrationTable: "Calibration Tables"
+        case .table: "Tables"
+        }
+    }
+
+    private var projectRootFolderTitle: String {
+        "Project Root"
+    }
+
+    private func datasetFolderGroupTitle(_ dataset: DatasetSummary) -> String {
+        datasetRelativeParent(dataset) ?? projectRootFolderTitle
+    }
+
+    private func datasetRelativeParent(_ dataset: DatasetSummary) -> String? {
+        let root = store.state.project.rootPath
+        guard !root.isEmpty else {
+            return nil
+        }
+        let rootURL = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
+        let parent = URL(fileURLWithPath: dataset.path)
+            .deletingLastPathComponent()
+            .standardizedFileURL
+        if parent.path == rootURL.path {
+            return nil
+        }
+        let prefix = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
+        guard parent.path.hasPrefix(prefix) else {
+            return nil
+        }
+        let relativeParent = String(parent.path.dropFirst(prefix.count))
+        return relativeParent.isEmpty ? nil : relativeParent
+    }
+
+    private func datasetDisambiguator(_ dataset: DatasetSummary) -> String? {
+        let duplicateCount = store.state.project.datasets.filter { $0.name == dataset.name }.count
+        guard duplicateCount > 1 else {
+            return nil
+        }
+        let parent = URL(fileURLWithPath: dataset.path).deletingLastPathComponent().standardizedFileURL
+        return datasetRelativeParent(dataset) ?? parent.lastPathComponent
     }
 
     @ViewBuilder
@@ -287,27 +449,41 @@ struct LeftDockView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("dock.files")
         } else if store.state.hasProject {
-            List(store.state.project.datasets) { dataset in
-                Label {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(dataset.name)
-                            .lineLimit(1)
-                        Text(dataset.path)
-                            .workbenchFont(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+            let nodes = ProjectFileNode.scan(
+                rootPath: store.state.project.rootPath,
+                datasetPaths: Set(store.state.project.datasets.map(\.path))
+            )
+            if nodes.isEmpty {
+                EmptyDockState(
+                    title: "No project files",
+                    message: "The project directory is empty or could not be read.",
+                    primaryActionTitle: "Refresh",
+                    primarySystemImage: "arrow.clockwise",
+                    primaryAction: {
+                        store.refreshProjectFromDisk()
+                    },
+                    secondaryActionTitle: "Open Project",
+                    secondarySystemImage: "folder",
+                    secondaryAction: {
+                        if let url = ProjectOpenPanel.chooseDirectory() {
+                            store.openProject(path: url.path)
+                        }
                     }
-                } icon: {
-                    Image(systemName: "doc")
+                )
+            } else {
+                List {
+                    OutlineGroup(nodes, children: \.children) { node in
+                        ProjectFileRow(node: node)
+                            .accessibilityIdentifier("file.row.\(node.id)")
+                    }
                 }
-                .accessibilityIdentifier("file.row.\(dataset.id)")
+                .listStyle(.sidebar)
+                .accessibilityIdentifier("dock.files")
             }
-            .listStyle(.sidebar)
-            .accessibilityIdentifier("dock.files")
         } else {
             EmptyDockState(
                 title: "No project files",
-                message: "Open a project directory to inspect its recognized datasets.",
+                message: "Open a project directory to inspect its file tree.",
                 primaryActionTitle: "Open Project",
                 primarySystemImage: "folder",
                 primaryAction: {
@@ -321,6 +497,218 @@ struct LeftDockView: View {
                     store.openFixtureProject()
                 }
             )
+        }
+    }
+}
+
+private struct DatasetGroup: Identifiable {
+    let kind: DatasetKind
+    let title: String
+    let datasets: [DatasetSummary]
+
+    var id: String { kind.rawValue }
+}
+
+private struct DatasetFolderGroup: Identifiable {
+    let title: String
+    let datasets: [DatasetSummary]
+
+    var id: String { title }
+}
+
+private enum DatasetOrder: String, CaseIterable, Identifiable {
+    case alphabetical
+    case type
+    case folder
+    case time
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .alphabetical: "Alphabetical"
+        case .type: "Dataset Type"
+        case .folder: "Folder"
+        case .time: "Time"
+        }
+    }
+}
+
+private struct HorizontalResizeHandle: View {
+    @Binding var width: CGFloat
+    let range: ClosedRange<CGFloat>
+    @State private var dragStartWidth: CGFloat?
+
+    var body: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(0.8))
+            .frame(width: 5)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let startingWidth = dragStartWidth ?? width
+                        dragStartWidth = startingWidth
+                        width = min(max(startingWidth + value.translation.width, range.lowerBound), range.upperBound)
+                    }
+                    .onEnded { _ in
+                        dragStartWidth = nil
+                    }
+            )
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .accessibilityLabel("Resize panel")
+            .accessibilityIdentifier("split.resizeHandle")
+    }
+}
+
+private struct ProjectFileNode: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let path: String
+    let relativePath: String
+    let isDirectory: Bool
+    let sizeBytes: Int?
+    let children: [ProjectFileNode]?
+
+    static func scan(rootPath: String, datasetPaths: Set<String>) -> [ProjectFileNode] {
+        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
+        let datasetDirectoryPaths = Set(datasetPaths.compactMap { path -> String? in
+            var isDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+                  isDirectory.boolValue
+            else {
+                return nil
+            }
+            return URL(fileURLWithPath: path).standardizedFileURL.path
+        })
+        var remaining = 700
+        return scanDirectory(
+            rootURL,
+            rootURL: rootURL,
+            datasetDirectoryPaths: datasetDirectoryPaths,
+            depth: 0,
+            remaining: &remaining
+        )
+    }
+
+    private static func scanDirectory(
+        _ directory: URL,
+        rootURL: URL,
+        datasetDirectoryPaths: Set<String>,
+        depth: Int,
+        remaining: inout Int
+    ) -> [ProjectFileNode] {
+        guard depth <= 5, remaining > 0 else {
+            return []
+        }
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
+            options: []
+        )) ?? []
+        return entries
+            .filter { $0.lastPathComponent != ".DS_Store" }
+            .sorted { lhs, rhs in
+                let lhsIsDirectory = (try? lhs.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                let rhsIsDirectory = (try? rhs.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                if lhsIsDirectory != rhsIsDirectory {
+                    return lhsIsDirectory
+                }
+                return lhs.lastPathComponent.localizedStandardCompare(rhs.lastPathComponent) == .orderedAscending
+            }
+            .compactMap { entry -> ProjectFileNode? in
+                guard remaining > 0 else {
+                    return nil
+                }
+                remaining -= 1
+                let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+                let isDirectory = values?.isDirectory == true
+                let standardizedPath = entry.standardizedFileURL.path
+                let relativePath = relativePath(for: entry, rootURL: rootURL)
+                let children: [ProjectFileNode]?
+                if isDirectory, !datasetDirectoryPaths.contains(standardizedPath) {
+                    children = scanDirectory(
+                        entry,
+                        rootURL: rootURL,
+                        datasetDirectoryPaths: datasetDirectoryPaths,
+                        depth: depth + 1,
+                        remaining: &remaining
+                    )
+                } else {
+                    children = nil
+                }
+                return ProjectFileNode(
+                    id: standardizedPath,
+                    name: entry.lastPathComponent,
+                    path: standardizedPath,
+                    relativePath: relativePath,
+                    isDirectory: isDirectory,
+                    sizeBytes: values?.fileSize,
+                    children: children
+                )
+            }
+    }
+
+    private static func relativePath(for url: URL, rootURL: URL) -> String {
+        let rootPath = rootURL.path
+        let path = url.standardizedFileURL.path
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        guard path.hasPrefix(prefix) else {
+            return path
+        }
+        return String(path.dropFirst(prefix.count))
+    }
+}
+
+private struct ProjectFileRow: View {
+    let node: ProjectFileNode
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(node.name)
+                    .lineLimit(1)
+                Text(secondaryText)
+                    .workbenchFont(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        } icon: {
+            Image(systemName: icon)
+                .foregroundStyle(.secondary)
+        }
+        .help(node.relativePath)
+    }
+
+    private var secondaryText: String {
+        if node.isDirectory {
+            return "Folder"
+        }
+        if let sizeBytes = node.sizeBytes {
+            return ByteCountFormatter.string(fromByteCount: Int64(sizeBytes), countStyle: .file)
+        }
+        return "File"
+    }
+
+    private var icon: String {
+        if node.isDirectory {
+            return "folder"
+        }
+        switch URL(fileURLWithPath: node.path).pathExtension.lowercased() {
+        case "fits", "fit", "fts":
+            return "doc.richtext"
+        case "json":
+            return "curlybraces"
+        case "log", "txt", "md":
+            return "doc.text"
+        default:
+            return "doc"
         }
     }
 }
@@ -401,6 +789,8 @@ struct EmptyDockState: View {
 
 struct DatasetRow: View {
     let dataset: DatasetSummary
+    let disambiguator: String?
+    let isNestedInProject: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -409,14 +799,36 @@ struct DatasetRow: View {
                 .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(dataset.name)
-                    .lineLimit(1)
-                Text(dataset.path)
+                HStack(spacing: 5) {
+                    Text(dataset.name)
+                        .lineLimit(1)
+                    if isNestedInProject {
+                        Image(systemName: "folder")
+                            .workbenchFont(.caption2)
+                            .foregroundStyle(.secondary)
+                            .help("This dataset is in a project subdirectory.")
+                    }
+                }
+                Text(datasetSubtitle)
                     .workbenchFont(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
+        .help(dataset.path)
+    }
+
+    private var datasetSubtitle: String {
+        let base: String
+        if !dataset.size.isEmpty {
+            base = "\(dataset.kind.rawValue) - \(dataset.size)"
+        } else {
+            base = dataset.kind.rawValue
+        }
+        if let disambiguator, !disambiguator.isEmpty {
+            return "\(base) - \(disambiguator)"
+        }
+        return base
     }
 
     private var icon: String {
@@ -425,6 +837,7 @@ struct DatasetRow: View {
         case .imageCube: "cube"
         case .calibrationTable: "tablecells"
         case .table: "tablecells.badge.ellipsis"
+        case .region: "selection.pin.in.out"
         case .runProduct: "checkmark.seal"
         }
     }
@@ -500,6 +913,7 @@ struct InspectorView: View {
         case .none: "No project"
         case .fixture: "Demo metadata"
         case .probed: "Real probe metadata"
+        case .tutorialPack: "Tutorial pack metadata"
         }
     }
 
@@ -543,14 +957,26 @@ struct InspectorView: View {
 
         case .imageCube:
             InfoRow(label: "Shape", value: formatShape(dataset.shape))
+            imageHeaderDetails(dataset)
             if !dataset.diagnostics.isEmpty {
-                DisclosureGroup("Image details (\(dataset.diagnostics.count))", isExpanded: $showColumns) {
+                DisclosureGroup("Raw image details (\(dataset.diagnostics.count))", isExpanded: $showColumns) {
                     valueList(dataset.diagnostics)
                 }
                 .workbenchFont(.caption)
             }
             if let snapshot = store.state.imageExplorers[dataset.id]?.snapshot {
                 imageExplorerLiveDetails(snapshot)
+            }
+
+        case .region:
+            InfoRow(label: "Path", value: dataset.path)
+            InfoRow(label: "Use with", value: "--region \(dataset.path)")
+            RegionFilePreview(path: dataset.path)
+            if !dataset.diagnostics.isEmpty {
+                DisclosureGroup("Region details (\(dataset.diagnostics.count))", isExpanded: $showColumns) {
+                    valueList(dataset.diagnostics)
+                }
+                .workbenchFont(.caption)
             }
 
         case .calibrationTable, .table, .runProduct:
@@ -571,6 +997,21 @@ struct InspectorView: View {
                     valueList(dataset.subtables)
                 }
                 .workbenchFont(.caption)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func imageHeaderDetails(_ dataset: DatasetSummary) -> some View {
+        let rows = humanReadableImageHeaderRows(for: dataset)
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Image Header")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(rows) { row in
+                    InfoRow(label: row.label, value: row.value)
+                }
             }
         }
     }
@@ -753,11 +1194,119 @@ private struct InspectorUpdateTelemetry: NSViewRepresentable {
     }
 }
 
+private struct RegionFilePreview: View {
+    let path: String
+
+    private var inspection: RegionFileInspection? {
+        RegionFileInspection.inspect(path: path)
+    }
+
+    var body: some View {
+        if let inspection {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Region Shape")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                Canvas { context, size in
+                    drawRegion(inspection, in: &context, size: size)
+                }
+                .frame(height: 110)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.45))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                )
+                CompactInfoRow(label: "Shape", value: "\(inspection.kind), \(inspection.coordinateSystem)")
+                CompactInfoRow(label: "X extent", value: inspection.xExtentLabel)
+                CompactInfoRow(label: "Y extent", value: inspection.yExtentLabel)
+            }
+        } else {
+            Text("No supported CRTF box or polygon preview available.")
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func drawRegion(_ inspection: RegionFileInspection, in context: inout GraphicsContext, size: CGSize) {
+        guard inspection.points.count >= 2,
+              let minX = inspection.points.map(\.x).min(),
+              let maxX = inspection.points.map(\.x).max(),
+              let minY = inspection.points.map(\.y).min(),
+              let maxY = inspection.points.map(\.y).max()
+        else {
+            return
+        }
+        let padding = 14.0
+        let width = max(maxX - minX, 1.0)
+        let height = max(maxY - minY, 1.0)
+        let scale = min((size.width - padding * 2) / width, (size.height - padding * 2) / height)
+        let drawnWidth = width * scale
+        let drawnHeight = height * scale
+        let xOffset = (size.width - drawnWidth) / 2.0
+        let yOffset = (size.height - drawnHeight) / 2.0
+        let points = inspection.points.map { point in
+            CGPoint(
+                x: xOffset + (point.x - minX) * scale,
+                y: yOffset + drawnHeight - (point.y - minY) * scale
+            )
+        }
+        var path = Path()
+        path.move(to: points[0])
+        for point in points.dropFirst() {
+            path.addLine(to: point)
+        }
+        path.closeSubpath()
+        context.fill(path, with: .color(.green.opacity(0.14)))
+        context.stroke(path, with: .color(.green.opacity(0.9)), lineWidth: 2)
+        for point in points {
+            context.fill(
+                Path(ellipseIn: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)),
+                with: .color(.green)
+            )
+        }
+    }
+}
+
 private struct InspectorDynamicLine: Identifiable {
     let label: String
     let value: String
 
     var id: String { "\(label)-\(value)" }
+}
+
+private func humanReadableImageHeaderRows(for dataset: DatasetSummary) -> [InspectorDynamicLine] {
+    var rows: [InspectorDynamicLine] = []
+
+    func append(_ label: String, _ value: String?) {
+        guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+        rows.append(InspectorDynamicLine(label: label, value: value))
+    }
+
+    append("Object", imageDiagnosticValue(dataset, prefix: "Object:"))
+    append("Image Type", imageDiagnosticValue(dataset, prefix: "Image type:"))
+    append("Pixel Type", imageDiagnosticValue(dataset, prefix: "Pixel type:"))
+    append("Cell Size", imageDiagnosticValue(dataset, prefix: "Cell size:"))
+    append("Center", imageDiagnosticValue(dataset, prefix: "Center:"))
+    append("Frequency", imageDiagnosticValue(dataset, prefix: "Cube center frequency:"))
+    append("Bandwidth", imageDiagnosticValue(dataset, prefix: "Total bandwidth:"))
+    append("Channel Width", imageDiagnosticValue(dataset, prefix: "Channel separation:"))
+    append("Beam", imageDiagnosticValue(dataset, prefix: "Beam:"))
+    append("Masks", imageDiagnosticValue(dataset, prefix: "Masks:"))
+    append("Default Mask", imageDiagnosticValue(dataset, prefix: "Default mask:"))
+    append("Regions", imageDiagnosticValue(dataset, prefix: "Regions:"))
+
+    return rows
+}
+
+private func imageDiagnosticValue(_ dataset: DatasetSummary, prefix: String) -> String? {
+    dataset.diagnostics.first { line in
+        line.hasPrefix(prefix)
+    }?
+    .dropFirst(prefix.count)
+    .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 private struct CompactInfoRow: View {

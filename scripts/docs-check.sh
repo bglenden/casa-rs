@@ -34,6 +34,8 @@ for spec in "${required_headers[@]}"; do
   }
 done
 
+python3 scripts/check-tutorial-pack-contract.py
+
 [[ -f "CLAUDE.md" ]] || {
   echo "docs-check: missing CLAUDE.md" >&2
   exit 1

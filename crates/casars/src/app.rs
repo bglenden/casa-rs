@@ -2145,6 +2145,29 @@ struct ClickState {
     at: Instant,
 }
 
+fn imager_summary_correlation_selector(value: Option<String>) -> Option<String> {
+    let value = value?;
+    let mut parts = Vec::new();
+    for raw_part in value.split(',') {
+        let part = raw_part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let normalized = part
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_ascii_uppercase();
+        if !matches!(
+            normalized.as_str(),
+            "RR" | "RL" | "LR" | "LL" | "XX" | "XY" | "YX" | "YY"
+        ) {
+            return None;
+        }
+        parts.push(normalized);
+    }
+    (!parts.is_empty()).then(|| parts.join(","))
+}
+
 impl AppState {
     pub(crate) fn from_schema(app: RegistryApp, schema: UiCommandSchema) -> Self {
         Self::from_schema_with_config(app, schema, ConfigStore::load_default())
@@ -10330,9 +10353,7 @@ impl AppState {
             array: None,
             timerange: None,
             uvrange: None,
-            correlation: self
-                .field_text("polarization")
-                .filter(|value| !value.trim().is_empty()),
+            correlation: imager_summary_correlation_selector(self.field_text("polarization")),
             intent: None,
             msselect: None,
             feed: None,
@@ -10671,6 +10692,8 @@ impl AppState {
     }
 
     fn pump_plot_panel(&mut self) {
+        let plot_label = self.selected_plot_label();
+        let was_pending = self.plot_workspace.preview_invalidated;
         let Some(panel) = self.plot_workspace.panel.as_mut() else {
             return;
         };
@@ -10680,6 +10703,23 @@ impl AppState {
                     panel.image_size = panel.renderer.image_size();
                     self.plot_workspace.preview_invalidated = false;
                     self.plot_workspace.placeholder_protocol = None;
+                    if matches!(self.result.status_kind, StatusKind::Info)
+                        && (self.result.status_line.contains("preview")
+                            || self.result.status_line.contains("Rendering"))
+                    {
+                        self.result.status_line = format!("{plot_label} preview ready.");
+                        self.result.status_kind = StatusKind::Ok;
+                    }
+                }
+                if !changed
+                    && was_pending
+                    && panel.renderer.protocol().is_some()
+                    && matches!(self.result.status_kind, StatusKind::Info)
+                {
+                    self.plot_workspace.preview_invalidated = false;
+                    self.plot_workspace.placeholder_protocol = None;
+                    self.result.status_line = format!("{plot_label} preview ready.");
+                    self.result.status_kind = StatusKind::Ok;
                 }
             }
             Err(error) => {
@@ -14485,12 +14525,31 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
         let product_ids = ["imagename", "write_preview_pngs"];
         let stage_ids = [
             "specmode",
-            "dirty_only",
-            "deconvolver",
-            "weighting",
+            "start",
+            "width",
+            "outframe",
+            "veltype",
+            "interpolation",
+            "restfreq",
+            "restoringbeam",
             "perchanweightdensity",
-            "wterm",
+            "dirty_only",
+            "niter",
+            "threshold_jy",
+            "deconvolver",
+            "nterms",
+            "scales",
+            "smallscalebias",
+            "weighting",
+            "robust",
+            "uvtaper",
+            "gridder",
             "wprojplanes",
+            "usepointing",
+            "write_pb",
+            "pbcor",
+            "pblimit",
+            "wterm",
         ];
         let stage_parameters = fields
             .iter()
@@ -17592,6 +17651,18 @@ mod tests {
             .filter_map(FormField::from_schema)
             .collect::<Vec<_>>();
         let sections = build_workflow_sections("imager", &fields);
+        let stages = sections
+            .iter()
+            .find(|section| section.name == "Stages")
+            .expect("stages section");
+        let FormSectionContent::Items(stage_items) = &stages.content;
+        let stage_ids = stage_items
+            .iter()
+            .map(|item| match item {
+                StaticFormItem::Field(index) => fields[*index].schema.id.as_str(),
+                other => panic!("unexpected stages item: {other:?}"),
+            })
+            .collect::<Vec<_>>();
         let stage_parameters = sections
             .iter()
             .find(|section| section.name == "Stage Parameters")
@@ -17604,8 +17675,10 @@ mod tests {
                 other => panic!("unexpected stage-parameters item: {other:?}"),
             })
             .collect::<Vec<_>>();
+        assert!(stage_ids.contains(&"dirty_only"));
+        assert!(stage_ids.contains(&"niter"));
+        assert!(stage_ids.contains(&"threshold_jy"));
         assert!(ids.contains(&"imsize"));
-        assert!(ids.contains(&"niter"));
         assert!(!ids.contains(&"ui_schema"));
         assert!(!ids.contains(&"help"));
     }

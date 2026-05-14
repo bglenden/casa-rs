@@ -2904,13 +2904,15 @@ mod tests {
         let root = dir.path().join("casatestdata");
         std::fs::create_dir(&root).unwrap();
 
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let old_root = std::env::var_os("CASA_RS_TESTDATA_ROOT");
         unsafe { std::env::set_var("CASA_RS_TESTDATA_ROOT", &root) };
         assert_eq!(casatestdata_root(), Some(normalize_existing_path(&root)));
         assert_eq!(
             casatestdata_path("measurementset/demo.ms"),
             Some(normalize_existing_path(&root).join("measurementset/demo.ms"))
         );
-        unsafe { std::env::remove_var("CASA_RS_TESTDATA_ROOT") };
+        unsafe { restore_env_var("CASA_RS_TESTDATA_ROOT", old_root) };
     }
 
     #[test]
@@ -2919,6 +2921,8 @@ mod tests {
         let tutorial_root = dir.path().join("casa-tutorial-data");
         std::fs::create_dir(&tutorial_root).unwrap();
 
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let old_tutorial_root = std::env::var_os("CASA_RS_TUTORIAL_DATA_ROOT");
         unsafe { std::env::set_var("CASA_RS_TUTORIAL_DATA_ROOT", &tutorial_root) };
         let path = tutorial_dataset_path("alma/first-look/twhya/calibrated-ms").unwrap();
         assert_eq!(
@@ -2926,7 +2930,7 @@ mod tests {
             normalize_existing_path(&tutorial_root)
                 .join("tutorial-parity/alma/first-look/twhya/twhya_calibrated.ms.tar")
         );
-        unsafe { std::env::remove_var("CASA_RS_TUTORIAL_DATA_ROOT") };
+        unsafe { restore_env_var("CASA_RS_TUTORIAL_DATA_ROOT", old_tutorial_root) };
     }
 
     #[test]

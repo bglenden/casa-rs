@@ -12,14 +12,15 @@ use casa_ms::msexplore::cli::command_schema;
 use casa_ms::msexplore::cli::{UiArgumentParser, UiValueKind};
 use casa_ms::subtables::SubTable;
 use casa_ms::{
-    DEFAULT_MAX_PLOT_POINTS, MSEXPLORE_TASK_PROTOCOL_NAME, MeasurementSet, MeasurementSetPlotTheme,
-    MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn, MsExploreFlagEditRequest,
+    DEFAULT_MAX_PLOT_POINTS, MSEXPLORE_TASK_PROTOCOL_NAME, MeasurementSet, MeasurementSetPlotKind,
+    MeasurementSetPlotSpec, MeasurementSetPlotTheme, MeasurementSetSummaryOutputFormat,
+    MeasurementSetUvCoverage, MsAxis, MsColorAxis, MsDataColumn, MsExploreFlagEditRequest,
     MsExploreRunTaskRequest, MsExploreSpec, MsFlagAction, MsFlagEditSpec, MsFlagRegion,
     MsIterationAxis, MsLayoutSpec, MsLegendPosition, MsPageExportRange, MsPageHeaderItem,
     MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelectionSpec, apply_msexplore_flag_edit,
-    apply_msexplore_flag_edit_for_request, build_msexplore_payload,
-    build_msexplore_payload_from_spec, build_msexplore_plot_payload, export_msexplore_plot,
-    preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
+    apply_msexplore_flag_edit_for_request, build_measurement_set_uv_plot_payload,
+    build_msexplore_payload, build_msexplore_payload_from_spec, build_msexplore_plot_payload,
+    export_msexplore_plot, preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
     render_msexplore_plot_image,
 };
 use casa_types::ArrayValue;
@@ -1406,27 +1407,21 @@ fn msexplore_export_api_writes_grid_page_png_pdf_and_manifest_outputs() {
 }
 
 #[test]
-fn msexplore_export_api_rejects_text_for_listobs_payloads() {
+fn msexplore_export_api_writes_uv_coverage_manifest() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_geometry_fixture_ms(temp.path());
-
-    let payload = build_msexplore_payload_from_spec(&MsExploreSpec {
-        ms_path,
-        summary_format: MeasurementSetSummaryOutputFormat::Text,
-        selection: MsSelectionSpec::default(),
-        header_items: Vec::new(),
-        page_title: None,
-        exprange: MsPageExportRange::Current,
-        max_plot_points: DEFAULT_MAX_PLOT_POINTS,
-        plots: vec![MsPlotSpec::from_preset(MsPlotPreset::UvCoverage)],
-    })
-    .expect("build listobs payload");
-    let MsPlotPayload::ListObs(_) = &payload else {
-        panic!("expected listobs payload");
-    };
+    let ms = MeasurementSet::open(&ms_path).expect("open geometry fixture");
+    let coverage = MeasurementSetUvCoverage::from_ms(&ms).expect("build uv coverage");
+    let payload = MsPlotPayload::ListObs(
+        build_measurement_set_uv_plot_payload(
+            &coverage,
+            &MeasurementSetPlotSpec::new(MeasurementSetPlotKind::UvCoverage),
+        )
+        .expect("build listobs uv coverage payload"),
+    );
 
     let output = temp.path().join("uv.txt");
-    let error = export_msexplore_plot(
+    export_msexplore_plot(
         &payload,
         MeasurementSetPlotTheme::light(),
         &output,
@@ -1434,8 +1429,13 @@ fn msexplore_export_api_rejects_text_for_listobs_payloads() {
         1200,
         800,
     )
-    .unwrap_err();
-    assert!(error.contains("text export"));
+    .expect("export uv coverage manifest");
+    let manifest = std::fs::read_to_string(&output).expect("read uv coverage manifest");
+    assert!(manifest.contains("# payload=listobs_uv_coverage"));
+    assert!(manifest.contains("# x_axis=u_lambda"));
+    assert!(manifest.contains("series_key\tseries_label\tmirrored\tx\ty"));
+    assert!(manifest.contains("\tfalse\t"));
+    assert!(manifest.contains("\ttrue\t"));
 }
 
 #[test]

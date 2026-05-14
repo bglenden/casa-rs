@@ -252,7 +252,13 @@ private struct PlotSampleCard: View {
             return fallback
         }
 
-        let plotRect = WorkbenchPlotLayout.plotRect(for: plotCanvasSize)
+        let plotRect = WorkbenchPlotLayout.plotRect(
+            for: plotCanvasSize,
+            equalAspectAxes: WorkbenchPlotLayout.equalAspectAxes(
+                axes: plot.allAxes,
+                layers: plot.allLayers
+            )
+        )
         let rasterSize = WorkbenchPlotLayout.pointRasterSize(for: plotRect)
         if
             let pointRaster = layer.pointRaster,
@@ -326,21 +332,54 @@ private struct PlotCanvasSizePreferenceKey: PreferenceKey {
 }
 
 enum WorkbenchPlotLayout {
+    struct EqualAspectAxes {
+        var xRange: WorkbenchPlotRange
+        var yRange: WorkbenchPlotRange
+    }
+
     static func plotRect(
         for size: CGSize,
         characterSize: Double = WorkbenchState.defaultInterfaceFontSize,
-        reservedRightGutter: Double = 0
+        reservedRightGutter: Double = 0,
+        equalAspectAxes: EqualAspectAxes? = nil
     ) -> CGRect {
         let left = max(96.0, characterSize * 8.0)
         let top = max(26.0, characterSize * 2.0)
         let right = 26.0 + max(0, reservedRightGutter)
         let bottom = max(56.0, characterSize * 4.3)
-        return CGRect(
+        var rect = CGRect(
             x: left,
             y: top,
             width: max(20, size.width - left - right),
             height: max(20, size.height - top - bottom)
         )
+        guard
+            let equalAspectAxes,
+            equalAspectAxes.xRange.span.isFinite,
+            equalAspectAxes.yRange.span.isFinite,
+            equalAspectAxes.xRange.span > 0,
+            equalAspectAxes.yRange.span > 0,
+            rect.width > 0,
+            rect.height > 0
+        else {
+            return rect
+        }
+
+        let desiredAspect = equalAspectAxes.xRange.span / equalAspectAxes.yRange.span
+        guard desiredAspect.isFinite, desiredAspect > 0 else {
+            return rect
+        }
+        let currentAspect = rect.width / rect.height
+        if currentAspect > desiredAspect {
+            let adjustedWidth = max(20, rect.height * desiredAspect)
+            rect.origin.x += (rect.width - adjustedWidth) / 2
+            rect.size.width = adjustedWidth
+        } else if currentAspect < desiredAspect {
+            let adjustedHeight = max(20, rect.width / desiredAspect)
+            rect.origin.y += (rect.height - adjustedHeight) / 2
+            rect.size.height = adjustedHeight
+        }
+        return rect
     }
 
     static func pointRasterSize(for plotRect: CGRect) -> (width: Int, height: Int) {
@@ -348,6 +387,50 @@ enum WorkbenchPlotLayout {
             width: max(64, min(2_048, Int(plotRect.width.rounded(.up)))),
             height: max(64, min(2_048, Int(plotRect.height.rounded(.up))))
         )
+    }
+
+    static func equalAspectAxes(
+        axes: [WorkbenchPlotAxis],
+        layers: [WorkbenchPlotLayer]
+    ) -> EqualAspectAxes? {
+        for layer in layers where layer.style.visible {
+            guard
+                let xAxis = axes.first(where: { $0.id == layer.xAxisID }),
+                let yAxis = axes.first(where: { $0.id == layer.yAxisID }),
+                axesUseEqualAspect(xAxis, yAxis)
+            else {
+                continue
+            }
+            return EqualAspectAxes(xRange: xAxis.range, yRange: yAxis.range)
+        }
+        return nil
+    }
+
+    private static func axesUseEqualAspect(
+        _ xAxis: WorkbenchPlotAxis,
+        _ yAxis: WorkbenchPlotAxis
+    ) -> Bool {
+        guard
+            xAxis.scale == .linear,
+            yAxis.scale == .linear,
+            xAxis.laneLabels.isEmpty,
+            yAxis.laneLabels.isEmpty,
+            xAxis.range.span.isFinite,
+            yAxis.range.span.isFinite,
+            xAxis.range.span > 0,
+            yAxis.range.span > 0
+        else {
+            return false
+        }
+        let xUnit = normalizedUnit(xAxis.unit)
+        let yUnit = normalizedUnit(yAxis.unit)
+        return !xUnit.isEmpty && xUnit == yUnit
+    }
+
+    private static func normalizedUnit(_ unit: String) -> String {
+        unit.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " ", with: "")
+            .lowercased()
     }
 }
 
@@ -396,7 +479,11 @@ struct WorkbenchPlotView: View {
                     let plotRect = WorkbenchPlotLayout.plotRect(
                         for: bounds.size,
                         characterSize: characterSize,
-                        reservedRightGutter: reservedRightGutter
+                        reservedRightGutter: reservedRightGutter,
+                        equalAspectAxes: WorkbenchPlotLayout.equalAspectAxes(
+                            axes: panel.axes,
+                            layers: panel.layers
+                        )
                     )
                     .offsetBy(dx: bounds.minX, dy: bounds.minY)
                     drawPlot(
@@ -420,7 +507,11 @@ struct WorkbenchPlotView: View {
         WorkbenchPlotLayout.plotRect(
             for: size,
             characterSize: characterSize,
-            reservedRightGutter: reservedRightGutter
+            reservedRightGutter: reservedRightGutter,
+            equalAspectAxes: WorkbenchPlotLayout.equalAspectAxes(
+                axes: plot.axes,
+                layers: plot.layers
+            )
         )
     }
 
@@ -440,7 +531,7 @@ struct WorkbenchPlotView: View {
         size: CGSize,
         plotRect: CGRect
     ) {
-        drawBackground(in: &context, size: size, plotRect: plotRect)
+        drawBackground(in: &context, size: size, plotRect: plotRect, axes: axes)
         if let title {
             context.draw(Text(title).font(plotFont(.caption)).foregroundColor(.secondary), at: CGPoint(x: plotRect.minX, y: plotRect.minY - max(12, characterSize)), anchor: .leading)
         }
@@ -454,23 +545,27 @@ struct WorkbenchPlotView: View {
         }
     }
 
-    private func drawBackground(in context: inout GraphicsContext, size: CGSize, plotRect: CGRect) {
+    private func drawBackground(
+        in context: inout GraphicsContext,
+        size: CGSize,
+        plotRect: CGRect,
+        axes: [WorkbenchPlotAxis]
+    ) {
         context.fill(Path(CGRect(x: plotRect.minX - 64, y: plotRect.minY - 26, width: size.width, height: size.height)), with: .color(Color(nsColor: .textBackgroundColor)))
         context.fill(Path(plotRect), with: .color(Color(nsColor: .controlBackgroundColor)))
-
-        let gridColor = Color.secondary.opacity(0.16)
-        for fraction in stride(from: 0.0, through: 1.0, by: 0.2) {
-            let x = plotRect.minX + plotRect.width * fraction
-            var vertical = Path()
-            vertical.move(to: CGPoint(x: x, y: plotRect.minY))
-            vertical.addLine(to: CGPoint(x: x, y: plotRect.maxY))
-            context.stroke(vertical, with: .color(gridColor), lineWidth: 1)
-
-            let y = plotRect.minY + plotRect.height * fraction
-            var horizontal = Path()
-            horizontal.move(to: CGPoint(x: plotRect.minX, y: y))
-            horizontal.addLine(to: CGPoint(x: plotRect.maxX, y: y))
-            context.stroke(horizontal, with: .color(gridColor), lineWidth: 1)
+        if let xAxis = axes.first {
+            for value in axisTicks(for: xAxis) {
+                guard let fraction = axisFraction(for: value, axis: xAxis), fraction.isFinite else { continue }
+                let x = plotRect.minX + plotRect.width * fraction
+                drawGridLine(horizontal: false, position: x, in: &context, plotRect: plotRect)
+            }
+        }
+        if let yAxis = axes.dropFirst().first(where: { !$0.drawsOnTrailingEdge }) {
+            for value in axisTicks(for: yAxis) {
+                guard let fraction = axisFraction(for: value, axis: yAxis), fraction.isFinite else { continue }
+                let y = plotRect.maxY - plotRect.height * fraction
+                drawGridLine(horizontal: true, position: y, in: &context, plotRect: plotRect)
+            }
         }
     }
 
@@ -780,10 +875,13 @@ struct WorkbenchPlotView: View {
         in context: inout GraphicsContext,
         plotRect: CGRect
     ) {
-        for fraction in stride(from: 0.0, through: 1.0, by: 0.25) {
-            let value = axisValue(at: fraction, axis: axis)
+        let ticks = axisTicks(for: axis)
+        let tickStep = axisTickStep(for: ticks, axis: axis)
+        for value in ticks {
+            guard let fraction = axisFraction(for: value, axis: axis), fraction.isFinite else {
+                continue
+            }
             let displayValue = value - timeAxisOffset(for: axis)
-            let tickStep = abs(axis.range.span) / 4.0
             let text = Text(axisTickLabel(displayValue, step: tickStep)).font(plotFont(.caption2))
             if horizontal {
                 let x = plotRect.minX + plotRect.width * fraction
@@ -802,6 +900,135 @@ struct WorkbenchPlotView: View {
             let y = plotRect.maxY - plotRect.height * fraction
             context.draw(Text(label).font(plotFont(.caption2)), at: CGPoint(x: plotRect.minX - 8, y: y), anchor: .trailing)
         }
+    }
+
+    private func drawGridLine(
+        horizontal: Bool,
+        position: Double,
+        in context: inout GraphicsContext,
+        plotRect: CGRect
+    ) {
+        var path = Path()
+        if horizontal {
+            path.move(to: CGPoint(x: plotRect.minX, y: position))
+            path.addLine(to: CGPoint(x: plotRect.maxX, y: position))
+        } else {
+            path.move(to: CGPoint(x: position, y: plotRect.minY))
+            path.addLine(to: CGPoint(x: position, y: plotRect.maxY))
+        }
+        context.stroke(path, with: .color(Color.secondary.opacity(0.16)), lineWidth: 1)
+    }
+
+    private func axisTicks(for axis: WorkbenchPlotAxis, targetCount: Int = 5) -> [Double] {
+        guard
+            axis.range.lower.isFinite,
+            axis.range.upper.isFinite,
+            axis.range.span.isFinite,
+            axis.range.span != 0
+        else {
+            return []
+        }
+        switch axis.scale {
+        case .linear:
+            return linearAxisTicks(for: axis.range, targetCount: targetCount)
+        case .logarithmic:
+            return logarithmicAxisTicks(for: axis.range, targetCount: targetCount)
+        }
+    }
+
+    private func linearAxisTicks(for range: WorkbenchPlotRange, targetCount: Int) -> [Double] {
+        let lower = min(range.lower, range.upper)
+        let upper = max(range.lower, range.upper)
+        let span = upper - lower
+        guard span.isFinite, span > 0 else {
+            return [range.lower]
+        }
+
+        let step = niceTickStep(for: span, targetCount: targetCount)
+        guard step.isFinite, step > 0 else {
+            return fallbackAxisTicks(for: range, count: targetCount)
+        }
+        let tolerance = step * 1e-9
+        var value = ceil((lower - tolerance) / step) * step
+        let end = floor((upper + tolerance) / step) * step
+        var ticks: [Double] = []
+        while value <= end + tolerance, ticks.count < 32 {
+            ticks.append(cleanTickValue(value, step: step))
+            value += step
+        }
+        return ticks.count >= 2 ? ticks : fallbackAxisTicks(for: range, count: targetCount)
+    }
+
+    private func logarithmicAxisTicks(for range: WorkbenchPlotRange, targetCount: Int) -> [Double] {
+        guard range.lower > 0, range.upper > 0 else {
+            return fallbackAxisTicks(for: range, count: targetCount)
+        }
+        let lower = min(range.lower, range.upper)
+        let upper = max(range.lower, range.upper)
+        let firstPower = Int(ceil(log10(lower)))
+        let lastPower = Int(floor(log10(upper)))
+        guard firstPower <= lastPower else {
+            return fallbackAxisTicks(for: range, count: targetCount)
+        }
+        let powers = (firstPower...lastPower)
+            .map { pow(10, Double($0)) }
+            .filter { $0 >= lower && $0 <= upper }
+        return powers.count >= 2 ? powers : fallbackAxisTicks(for: range, count: targetCount)
+    }
+
+    private func fallbackAxisTicks(for range: WorkbenchPlotRange, count: Int) -> [Double] {
+        let boundedCount = max(2, count)
+        return (0..<boundedCount).map { index in
+            let fraction = Double(index) / Double(boundedCount - 1)
+            return axisValue(at: fraction, range: range)
+        }
+    }
+
+    private func axisValue(at fraction: Double, range: WorkbenchPlotRange) -> Double {
+        range.lower + range.span * fraction
+    }
+
+    private func niceTickStep(for span: Double, targetCount: Int) -> Double {
+        let intervals = max(1, targetCount - 1)
+        let roughStep = span / Double(intervals)
+        guard roughStep.isFinite, roughStep > 0 else {
+            return roughStep
+        }
+        let exponent = floor(log10(roughStep))
+        let magnitude = pow(10, exponent)
+        let fraction = roughStep / magnitude
+        let niceFraction: Double
+        if fraction <= 1 {
+            niceFraction = 1
+        } else if fraction <= 3 {
+            niceFraction = 2
+        } else if fraction <= 7 {
+            niceFraction = 5
+        } else {
+            niceFraction = 10
+        }
+        return niceFraction * magnitude
+    }
+
+    private func cleanTickValue(_ value: Double, step: Double) -> Double {
+        let decimals = tickFractionDigits(step: step)
+        guard decimals > 0 else {
+            let rounded = value.rounded()
+            return rounded == -0 ? 0 : rounded
+        }
+        let scale = pow(10, Double(decimals))
+        let rounded = (value * scale).rounded() / scale
+        return rounded == -0 ? 0 : rounded
+    }
+
+    private func axisTickStep(for ticks: [Double], axis: WorkbenchPlotAxis) -> Double {
+        guard ticks.count >= 2 else {
+            return abs(axis.range.span) / 4.0
+        }
+        return zip(ticks, ticks.dropFirst())
+            .map { abs($1 - $0) }
+            .filter { $0.isFinite && $0 > 0 }
+            .min() ?? abs(axis.range.span) / 4.0
     }
 
     private func screenPoint(

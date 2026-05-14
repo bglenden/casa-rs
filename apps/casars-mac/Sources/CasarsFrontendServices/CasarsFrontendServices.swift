@@ -809,6 +809,7 @@ public struct MeasurementSetPlotRequest {
     public var feed: String?
     public var msselect: String?
     public var dataColumn: String
+    public var colorBy: String?
     public var avgchannel: UInt64?
     public var avgtime: Double?
     public var avgscan: Bool
@@ -817,13 +818,14 @@ public struct MeasurementSetPlotRequest {
     public var avgantenna: Bool
     public var avgspw: Bool
     public var scalar: Bool
+    public var iteraxis: String?
     public var width: UInt32
     public var height: UInt32
     public var maxPlotPoints: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(datasetPath: String, preset: MeasurementSetPlotPreset, field: String?, spectralWindow: String?, timerange: String?, uvrange: String?, antenna: String?, scan: String?, correlation: String?, array: String?, observation: String?, intent: String?, feed: String?, msselect: String?, dataColumn: String, avgchannel: UInt64?, avgtime: Double?, avgscan: Bool, avgfield: Bool, avgbaseline: Bool, avgantenna: Bool, avgspw: Bool, scalar: Bool, width: UInt32, height: UInt32, maxPlotPoints: UInt64) {
+    public init(datasetPath: String, preset: MeasurementSetPlotPreset, field: String?, spectralWindow: String?, timerange: String?, uvrange: String?, antenna: String?, scan: String?, correlation: String?, array: String?, observation: String?, intent: String?, feed: String?, msselect: String?, dataColumn: String, colorBy: String?, avgchannel: UInt64?, avgtime: Double?, avgscan: Bool, avgfield: Bool, avgbaseline: Bool, avgantenna: Bool, avgspw: Bool, scalar: Bool, iteraxis: String?, width: UInt32, height: UInt32, maxPlotPoints: UInt64) {
         self.datasetPath = datasetPath
         self.preset = preset
         self.field = field
@@ -839,6 +841,7 @@ public struct MeasurementSetPlotRequest {
         self.feed = feed
         self.msselect = msselect
         self.dataColumn = dataColumn
+        self.colorBy = colorBy
         self.avgchannel = avgchannel
         self.avgtime = avgtime
         self.avgscan = avgscan
@@ -847,6 +850,7 @@ public struct MeasurementSetPlotRequest {
         self.avgantenna = avgantenna
         self.avgspw = avgspw
         self.scalar = scalar
+        self.iteraxis = iteraxis
         self.width = width
         self.height = height
         self.maxPlotPoints = maxPlotPoints
@@ -905,6 +909,9 @@ extension MeasurementSetPlotRequest: Equatable, Hashable {
         if lhs.dataColumn != rhs.dataColumn {
             return false
         }
+        if lhs.colorBy != rhs.colorBy {
+            return false
+        }
         if lhs.avgchannel != rhs.avgchannel {
             return false
         }
@@ -927,6 +934,9 @@ extension MeasurementSetPlotRequest: Equatable, Hashable {
             return false
         }
         if lhs.scalar != rhs.scalar {
+            return false
+        }
+        if lhs.iteraxis != rhs.iteraxis {
             return false
         }
         if lhs.width != rhs.width {
@@ -957,6 +967,7 @@ extension MeasurementSetPlotRequest: Equatable, Hashable {
         hasher.combine(feed)
         hasher.combine(msselect)
         hasher.combine(dataColumn)
+        hasher.combine(colorBy)
         hasher.combine(avgchannel)
         hasher.combine(avgtime)
         hasher.combine(avgscan)
@@ -965,6 +976,7 @@ extension MeasurementSetPlotRequest: Equatable, Hashable {
         hasher.combine(avgantenna)
         hasher.combine(avgspw)
         hasher.combine(scalar)
+        hasher.combine(iteraxis)
         hasher.combine(width)
         hasher.combine(height)
         hasher.combine(maxPlotPoints)
@@ -997,6 +1009,7 @@ public struct FfiConverterTypeMeasurementSetPlotRequest: FfiConverterRustBuffer 
                 feed: FfiConverterOptionString.read(from: &buf),
                 msselect: FfiConverterOptionString.read(from: &buf),
                 dataColumn: FfiConverterString.read(from: &buf),
+                colorBy: FfiConverterOptionString.read(from: &buf),
                 avgchannel: FfiConverterOptionUInt64.read(from: &buf),
                 avgtime: FfiConverterOptionDouble.read(from: &buf),
                 avgscan: FfiConverterBool.read(from: &buf),
@@ -1005,6 +1018,7 @@ public struct FfiConverterTypeMeasurementSetPlotRequest: FfiConverterRustBuffer 
                 avgantenna: FfiConverterBool.read(from: &buf),
                 avgspw: FfiConverterBool.read(from: &buf),
                 scalar: FfiConverterBool.read(from: &buf),
+                iteraxis: FfiConverterOptionString.read(from: &buf),
                 width: FfiConverterUInt32.read(from: &buf),
                 height: FfiConverterUInt32.read(from: &buf),
                 maxPlotPoints: FfiConverterUInt64.read(from: &buf)
@@ -1027,6 +1041,7 @@ public struct FfiConverterTypeMeasurementSetPlotRequest: FfiConverterRustBuffer 
         FfiConverterOptionString.write(value.feed, into: &buf)
         FfiConverterOptionString.write(value.msselect, into: &buf)
         FfiConverterString.write(value.dataColumn, into: &buf)
+        FfiConverterOptionString.write(value.colorBy, into: &buf)
         FfiConverterOptionUInt64.write(value.avgchannel, into: &buf)
         FfiConverterOptionDouble.write(value.avgtime, into: &buf)
         FfiConverterBool.write(value.avgscan, into: &buf)
@@ -1035,6 +1050,7 @@ public struct FfiConverterTypeMeasurementSetPlotRequest: FfiConverterRustBuffer 
         FfiConverterBool.write(value.avgantenna, into: &buf)
         FfiConverterBool.write(value.avgspw, into: &buf)
         FfiConverterBool.write(value.scalar, into: &buf)
+        FfiConverterOptionString.write(value.iteraxis, into: &buf)
         FfiConverterUInt32.write(value.width, into: &buf)
         FfiConverterUInt32.write(value.height, into: &buf)
         FfiConverterUInt64.write(value.maxPlotPoints, into: &buf)
@@ -1222,6 +1238,270 @@ public func FfiConverterTypeMeasurementSetPlotResult_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeMeasurementSetPlotResult_lower(_ value: MeasurementSetPlotResult) -> RustBuffer {
     return FfiConverterTypeMeasurementSetPlotResult.lower(value)
+}
+
+
+public struct MeasurementSetSummaryRequest {
+    public var datasetPath: String
+    public var format: String
+    public var field: String?
+    public var spectralWindow: String?
+    public var timerange: String?
+    public var uvrange: String?
+    public var antenna: String?
+    public var scan: String?
+    public var correlation: String?
+    public var array: String?
+    public var observation: String?
+    public var intent: String?
+    public var feed: String?
+    public var msselect: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(datasetPath: String, format: String, field: String?, spectralWindow: String?, timerange: String?, uvrange: String?, antenna: String?, scan: String?, correlation: String?, array: String?, observation: String?, intent: String?, feed: String?, msselect: String?) {
+        self.datasetPath = datasetPath
+        self.format = format
+        self.field = field
+        self.spectralWindow = spectralWindow
+        self.timerange = timerange
+        self.uvrange = uvrange
+        self.antenna = antenna
+        self.scan = scan
+        self.correlation = correlation
+        self.array = array
+        self.observation = observation
+        self.intent = intent
+        self.feed = feed
+        self.msselect = msselect
+    }
+}
+
+#if compiler(>=6)
+extension MeasurementSetSummaryRequest: Sendable {}
+#endif
+
+
+extension MeasurementSetSummaryRequest: Equatable, Hashable {
+    public static func ==(lhs: MeasurementSetSummaryRequest, rhs: MeasurementSetSummaryRequest) -> Bool {
+        if lhs.datasetPath != rhs.datasetPath {
+            return false
+        }
+        if lhs.format != rhs.format {
+            return false
+        }
+        if lhs.field != rhs.field {
+            return false
+        }
+        if lhs.spectralWindow != rhs.spectralWindow {
+            return false
+        }
+        if lhs.timerange != rhs.timerange {
+            return false
+        }
+        if lhs.uvrange != rhs.uvrange {
+            return false
+        }
+        if lhs.antenna != rhs.antenna {
+            return false
+        }
+        if lhs.scan != rhs.scan {
+            return false
+        }
+        if lhs.correlation != rhs.correlation {
+            return false
+        }
+        if lhs.array != rhs.array {
+            return false
+        }
+        if lhs.observation != rhs.observation {
+            return false
+        }
+        if lhs.intent != rhs.intent {
+            return false
+        }
+        if lhs.feed != rhs.feed {
+            return false
+        }
+        if lhs.msselect != rhs.msselect {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(datasetPath)
+        hasher.combine(format)
+        hasher.combine(field)
+        hasher.combine(spectralWindow)
+        hasher.combine(timerange)
+        hasher.combine(uvrange)
+        hasher.combine(antenna)
+        hasher.combine(scan)
+        hasher.combine(correlation)
+        hasher.combine(array)
+        hasher.combine(observation)
+        hasher.combine(intent)
+        hasher.combine(feed)
+        hasher.combine(msselect)
+    }
+}
+
+extension MeasurementSetSummaryRequest: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMeasurementSetSummaryRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MeasurementSetSummaryRequest {
+        return
+            try MeasurementSetSummaryRequest(
+                datasetPath: FfiConverterString.read(from: &buf),
+                format: FfiConverterString.read(from: &buf),
+                field: FfiConverterOptionString.read(from: &buf),
+                spectralWindow: FfiConverterOptionString.read(from: &buf),
+                timerange: FfiConverterOptionString.read(from: &buf),
+                uvrange: FfiConverterOptionString.read(from: &buf),
+                antenna: FfiConverterOptionString.read(from: &buf),
+                scan: FfiConverterOptionString.read(from: &buf),
+                correlation: FfiConverterOptionString.read(from: &buf),
+                array: FfiConverterOptionString.read(from: &buf),
+                observation: FfiConverterOptionString.read(from: &buf),
+                intent: FfiConverterOptionString.read(from: &buf),
+                feed: FfiConverterOptionString.read(from: &buf),
+                msselect: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MeasurementSetSummaryRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.datasetPath, into: &buf)
+        FfiConverterString.write(value.format, into: &buf)
+        FfiConverterOptionString.write(value.field, into: &buf)
+        FfiConverterOptionString.write(value.spectralWindow, into: &buf)
+        FfiConverterOptionString.write(value.timerange, into: &buf)
+        FfiConverterOptionString.write(value.uvrange, into: &buf)
+        FfiConverterOptionString.write(value.antenna, into: &buf)
+        FfiConverterOptionString.write(value.scan, into: &buf)
+        FfiConverterOptionString.write(value.correlation, into: &buf)
+        FfiConverterOptionString.write(value.array, into: &buf)
+        FfiConverterOptionString.write(value.observation, into: &buf)
+        FfiConverterOptionString.write(value.intent, into: &buf)
+        FfiConverterOptionString.write(value.feed, into: &buf)
+        FfiConverterOptionString.write(value.msselect, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetSummaryRequest_lift(_ buf: RustBuffer) throws -> MeasurementSetSummaryRequest {
+    return try FfiConverterTypeMeasurementSetSummaryRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetSummaryRequest_lower(_ value: MeasurementSetSummaryRequest) -> RustBuffer {
+    return FfiConverterTypeMeasurementSetSummaryRequest.lower(value)
+}
+
+
+public struct MeasurementSetSummaryResult {
+    public var datasetPath: String
+    public var format: String
+    public var summaryText: String
+    public var selectionSummary: String
+    public var diagnostics: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(datasetPath: String, format: String, summaryText: String, selectionSummary: String, diagnostics: [String]) {
+        self.datasetPath = datasetPath
+        self.format = format
+        self.summaryText = summaryText
+        self.selectionSummary = selectionSummary
+        self.diagnostics = diagnostics
+    }
+}
+
+#if compiler(>=6)
+extension MeasurementSetSummaryResult: Sendable {}
+#endif
+
+
+extension MeasurementSetSummaryResult: Equatable, Hashable {
+    public static func ==(lhs: MeasurementSetSummaryResult, rhs: MeasurementSetSummaryResult) -> Bool {
+        if lhs.datasetPath != rhs.datasetPath {
+            return false
+        }
+        if lhs.format != rhs.format {
+            return false
+        }
+        if lhs.summaryText != rhs.summaryText {
+            return false
+        }
+        if lhs.selectionSummary != rhs.selectionSummary {
+            return false
+        }
+        if lhs.diagnostics != rhs.diagnostics {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(datasetPath)
+        hasher.combine(format)
+        hasher.combine(summaryText)
+        hasher.combine(selectionSummary)
+        hasher.combine(diagnostics)
+    }
+}
+
+extension MeasurementSetSummaryResult: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMeasurementSetSummaryResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MeasurementSetSummaryResult {
+        return
+            try MeasurementSetSummaryResult(
+                datasetPath: FfiConverterString.read(from: &buf),
+                format: FfiConverterString.read(from: &buf),
+                summaryText: FfiConverterString.read(from: &buf),
+                selectionSummary: FfiConverterString.read(from: &buf),
+                diagnostics: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MeasurementSetSummaryResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.datasetPath, into: &buf)
+        FfiConverterString.write(value.format, into: &buf)
+        FfiConverterString.write(value.summaryText, into: &buf)
+        FfiConverterString.write(value.selectionSummary, into: &buf)
+        FfiConverterSequenceString.write(value.diagnostics, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetSummaryResult_lift(_ buf: RustBuffer) throws -> MeasurementSetSummaryResult {
+    return try FfiConverterTypeMeasurementSetSummaryResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMeasurementSetSummaryResult_lower(_ value: MeasurementSetSummaryResult) -> RustBuffer {
+    return FfiConverterTypeMeasurementSetSummaryResult.lower(value)
 }
 
 
@@ -3594,6 +3874,13 @@ public func buildMeasurementSetPlot(request: MeasurementSetPlotRequest)throws  -
     )
 })
 }
+public func buildMeasurementSetSummary(request: MeasurementSetSummaryRequest)throws  -> MeasurementSetSummaryResult  {
+    return try  FfiConverterTypeMeasurementSetSummaryResult_lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+    uniffi_casars_frontend_services_fn_func_build_measurement_set_summary(
+        FfiConverterTypeMeasurementSetSummaryRequest_lower(request),$0
+    )
+})
+}
 public func buildTableBrowserCellValueJson(requestJson: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_build_table_browser_cell_value_json(
@@ -3709,6 +3996,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_measurement_set_plot() != 34309) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_casars_frontend_services_checksum_func_build_measurement_set_summary() != 55295) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_build_table_browser_cell_value_json() != 53999) {

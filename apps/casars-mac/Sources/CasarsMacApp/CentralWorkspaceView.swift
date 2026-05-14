@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 struct CentralWorkspaceView: View {
     @ObservedObject var store: WorkbenchStore
+    var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
 
     var body: some View {
         VStack(spacing: 0) {
@@ -64,6 +65,10 @@ struct CentralWorkspaceView: View {
                 Button("Tasks") {
                     store.openDefaultTab(kind: .task)
                 }
+                Button("Tutorial") {
+                    store.openDefaultTab(kind: .tutorial)
+                }
+                .disabled(store.state.tutorialPack == nil)
                 Button("Plot Samples") {
                     store.openDefaultTab(kind: .plotSamples)
                 }
@@ -98,11 +103,23 @@ struct CentralWorkspaceView: View {
         if let tab = store.state.tabs.first(where: { $0.id == store.state.activeTabID }) {
             switch tab.kind {
             case .datasetExplorer:
-                DatasetExplorerPanel(store: store, datasetID: tab.datasetID)
+                DatasetExplorerPanel(
+                    store: store,
+                    datasetID: tab.datasetID,
+                    initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
+                )
             case .tableBrowser:
-                DatasetExplorerPanel(store: store, datasetID: tab.datasetID, forceTableBrowser: true)
+                DatasetExplorerPanel(
+                    store: store,
+                    datasetID: tab.datasetID,
+                    forceTableBrowser: true,
+                    initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
+                )
+            case .tutorial:
+                TutorialPackPanel(store: store)
             case .task:
-                TaskPanel(store: store)
+                TaskPanel(store: store, tab: tab)
+                    .id(tab.id)
             case .plotSamples:
                 PlotSamplesPanel(store: store)
             case .aiChat:
@@ -121,6 +138,7 @@ struct CentralWorkspaceView: View {
         switch kind {
         case .datasetExplorer: "chart.xyaxis.line"
         case .tableBrowser: "tablecells"
+        case .tutorial: "book"
         case .task: "slider.horizontal.3"
         case .plotSamples: "chart.xyaxis.line"
         case .aiChat: "sparkles"
@@ -153,6 +171,15 @@ struct EmptyWorkbenchPanel: View {
                 .accessibilityIdentifier("empty.openProject")
 
                 Button {
+                    if let url = TutorialPackOpenPanel.choosePack() {
+                        store.openTutorialPack(path: url.path)
+                    }
+                } label: {
+                    Label("Open Tutorial Pack", systemImage: "book")
+                }
+                .accessibilityIdentifier("empty.openTutorialPack")
+
+                Button {
                     store.openFixtureProject()
                 } label: {
                     Label("Open Demo Project", systemImage: "shippingbox")
@@ -170,10 +197,146 @@ struct EmptyWorkbenchPanel: View {
     }
 }
 
+struct TutorialPackPanel: View {
+    @ObservedObject var store: WorkbenchStore
+
+    var body: some View {
+        ScrollView {
+            if let context = store.state.tutorialPack {
+                VStack(alignment: .leading, spacing: 18) {
+                    PanelHeader(
+                        title: context.title,
+                        subtitle: "\(context.tutorialID) - CASA \(context.declaredCasaVersion)"
+                    )
+
+                    HStack(alignment: .top, spacing: 16) {
+                        SummaryBox(
+                            title: "Pack",
+                            values: [
+                                "pack_id=\(context.packID)",
+                                "root=\(context.rootPath)",
+                                "workspace=\(context.workspaceRoot)",
+                                "review=\(context.reviewPath)"
+                            ]
+                        )
+                        SummaryBox(
+                            title: "Learner",
+                            values: [
+                                "docs=\(context.learnerDocsIndex)",
+                                "sections=\(context.sections.count)"
+                            ]
+                        )
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Inputs")
+                            .workbenchFont(.headline)
+                        ForEach(context.inputs) { input in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Image(systemName: input.status == .staged ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                    .foregroundStyle(input.status == .staged ? .green : .orange)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(input.filename)
+                                        .workbenchFont(.subheadline, weight: .semibold)
+                                    Text(input.displayName)
+                                        .workbenchFont(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(input.packPath)
+                                        .workbenchFont(.caption, design: .monospaced)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(input.status.rawValue)
+                                    .workbenchFont(.caption, weight: .semibold)
+                                    .foregroundStyle(input.status == .staged ? .green : .orange)
+                            }
+                            .accessibilityIdentifier("tutorial.input.\(input.id)")
+                        }
+                    }
+                    .taskCard()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Sections")
+                            .workbenchFont(.headline)
+                        ForEach(context.sections) { section in
+                            tutorialSectionRow(section, context: context)
+                        }
+                    }
+                    .taskCard()
+                }
+                .padding(20)
+            } else {
+                VStack(alignment: .leading, spacing: 18) {
+                    PanelHeader(title: "Tutorial Pack", subtitle: "Open a tutorial pack directory or pack.json")
+                    Button {
+                        if let url = TutorialPackOpenPanel.choosePack() {
+                            store.openTutorialPack(path: url.path)
+                        }
+                    } label: {
+                        Label("Open Tutorial Pack", systemImage: "book")
+                    }
+                    .accessibilityIdentifier("tutorial.openPack")
+                }
+                .padding(28)
+                .frame(maxWidth: 560, alignment: .leading)
+            }
+        }
+        .accessibilityIdentifier("panel.tutorialPack")
+    }
+
+    private func tutorialSectionRow(_ section: TutorialPackSection, context: TutorialPackContext) -> some View {
+        let isSelected = context.selectedSection?.id == section.id
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(section.sequence). \(section.title)")
+                        .workbenchFont(.subheadline, weight: .semibold)
+                    Text(section.observableResult)
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(section.reviewCheckpoint.status)
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                ForEach(section.tasks, id: \.self) { task in
+                    Text(task)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+                Spacer()
+                Button {
+                    store.selectTutorialSection(section.id)
+                } label: {
+                    Label(isSelected ? "Selected" : "Select", systemImage: isSelected ? "checkmark.circle" : "circle")
+                }
+                .accessibilityIdentifier("tutorial.section.select.\(section.id)")
+
+                Button {
+                    store.openTutorialSectionTask(section.id)
+                } label: {
+                    Label("Open Task", systemImage: "slider.horizontal.3")
+                }
+                .accessibilityIdentifier("tutorial.section.openTask.\(section.id)")
+            }
+        }
+        .padding(10)
+        .background(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("tutorial.section.\(section.id)")
+    }
+}
+
 struct DatasetExplorerPanel: View {
     @ObservedObject var store: WorkbenchStore
     let datasetID: String?
     var forceTableBrowser: Bool = false
+    var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
 
     var body: some View {
         Group {
@@ -181,7 +344,11 @@ struct DatasetExplorerPanel: View {
                 if forceTableBrowser && !store.state.isDemoProject {
                     tableBrowserRoot(for: dataset)
                 } else if dataset.kind == .measurementSet && !store.state.isDemoProject {
-                    MeasurementSetPlotPanel(store: store, dataset: dataset)
+                    MeasurementSetPlotPanel(
+                        store: store,
+                        dataset: dataset,
+                        initialExplorerMode: initialMeasurementSetExplorerMode
+                    )
                 } else if dataset.kind == .imageCube && !store.state.isDemoProject {
                     VStack(alignment: .leading, spacing: 10) {
                         PanelHeader(title: dataset.kind.explorerName, subtitle: explorerSubtitle(for: dataset))
@@ -279,9 +446,20 @@ struct DatasetExplorerPanel: View {
             imageExplorerContent(for: dataset)
         case .calibrationTable, .table:
             tableExplorerContent(for: dataset)
+        case .region:
+            regionExplorerContent(for: dataset)
         case .runProduct:
             productExplorerContent(for: dataset)
         }
+    }
+
+    @ViewBuilder
+    private func regionExplorerContent(for dataset: DatasetSummary) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SummaryBox(title: "Region File", values: [dataset.path])
+            SummaryBox(title: "Use As Task Input", values: dataset.diagnostics)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -530,6 +708,8 @@ struct DatasetExplorerPanel: View {
             "Fields"
         case .imageCube:
             "Axes and planes"
+        case .region:
+            "Region file"
         case .calibrationTable, .table:
             "Rows and columns"
         }
@@ -541,6 +721,8 @@ struct DatasetExplorerPanel: View {
             dataset.fields
         case .imageCube:
             [dataset.size, dataset.units] + dataset.spectralWindows
+        case .region:
+            [dataset.path]
         case .calibrationTable, .table:
             [dataset.size, dataset.units]
         }
@@ -550,6 +732,8 @@ struct DatasetExplorerPanel: View {
         switch dataset.kind {
         case .measurementSet, .imageCube, .runProduct:
             "Spectral windows"
+        case .region:
+            "Task parameter"
         case .calibrationTable:
             "Solutions"
         case .table:
@@ -561,6 +745,8 @@ struct DatasetExplorerPanel: View {
         switch dataset.kind {
         case .measurementSet, .imageCube, .runProduct:
             dataset.spectralWindows
+        case .region:
+            dataset.diagnostics
         case .calibrationTable:
             dataset.fields + dataset.spectralWindows + dataset.scans
         case .table:
@@ -589,6 +775,11 @@ struct DatasetExplorerPanel: View {
             [
                 ExplorerPlot(title: "Table preview", caption: "schema and rows"),
                 ExplorerPlot(title: "Column statistics", caption: "numeric columns")
+            ]
+        case .region:
+            [
+                ExplorerPlot(title: "Region input", caption: "--region path"),
+                ExplorerPlot(title: "Inline syntax", caption: "box[[x0pix,y0pix],[x1pix,y1pix]]")
             ]
         case .runProduct:
             [
@@ -623,6 +814,13 @@ private struct ImageExplorerControlsView: View {
     @State private var parameters: ImageExplorerParameters
     @State private var cursorXText: String
     @State private var cursorYText: String
+    @State private var regionBoxText: String
+    @State private var regionLoadText: String
+    @State private var regionLoadStatus: String = ""
+    @State private var coordinateEntryExpanded = false
+    @State private var viewControlsExpanded = true
+    @State private var regionControlsExpanded = true
+    @State private var imageAttachedRegionsExpanded = false
     @State private var movieFPSText: String
 
     init(
@@ -639,24 +837,30 @@ private struct ImageExplorerControlsView: View {
         _parameters = State(initialValue: parameters)
         _cursorXText = State(initialValue: String(explorerState?.cursorX ?? snapshot?.planeCursor?.pixelX ?? 0))
         _cursorYText = State(initialValue: String(explorerState?.cursorY ?? snapshot?.planeCursor?.pixelY ?? 0))
+        _regionBoxText = State(initialValue: Self.defaultRegionBoxText(snapshot: snapshot))
+        _regionLoadText = State(initialValue: Self.defaultRegionLoadText(store: store, imageDatasetID: datasetID))
         _movieFPSText = State(initialValue: Self.formatMovieFramesPerSecond(explorerState?.movieFramesPerSecond ?? 6.0))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            controlsSection("View") {
-                modeAndCursorControls
-            }
-            controlsSection("Display") {
-                displayParameterControls
-            }
-            if snapshot?.nonDisplayAxes?.isEmpty == false {
-                controlsSection("Linked axes") {
-                    movieControls
-                    nonDisplayAxisControls
+            DisclosureGroup("View", isExpanded: $viewControlsExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    controlsSection("Plane") {
+                        modeAndCursorControls
+                    }
+                    controlsSection("Display") {
+                        displayParameterControls
+                    }
+                    if snapshot?.nonDisplayAxes?.isEmpty == false {
+                        controlsSection("Linked axes") {
+                            movieControls
+                            nonDisplayAxisControls
+                        }
+                    }
                 }
             }
-            controlsSection("Regions and masks") {
+            DisclosureGroup("Regions and masks", isExpanded: $regionControlsExpanded) {
                 regionMaskControls
             }
         }
@@ -695,19 +899,25 @@ private struct ImageExplorerControlsView: View {
             TextField("X", text: $cursorXText)
                 .frame(width: 54)
                 .textFieldStyle(.roundedBorder)
+                .onSubmit(applyCursorText)
             TextField("Y", text: $cursorYText)
                 .frame(width: 54)
                 .textFieldStyle(.roundedBorder)
+                .onSubmit(applyCursorText)
             Button {
-                store.setImageExplorerCursor(
-                    x: Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)),
-                    y: Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)),
-                    datasetID: datasetID
-                )
+                applyCursorText()
             } label: {
                 Label("Set", systemImage: "scope")
             }
         }
+    }
+
+    private func applyCursorText() {
+        store.setImageExplorerCursor(
+            x: Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)),
+            y: Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)),
+            datasetID: datasetID
+        )
     }
 
     private var planeModePicker: some View {
@@ -903,49 +1113,241 @@ private struct ImageExplorerControlsView: View {
         return String(format: "%.1f", clamped)
     }
 
+    private static func defaultRegionBoxText(snapshot: ImageExplorerSnapshot?) -> String {
+        guard let width = snapshot?.shape.first, width > 4,
+              snapshot?.shape.count ?? 0 > 1,
+              let height = snapshot?.shape[1], height > 4
+        else {
+            return ""
+        }
+        let x0 = Int(width) * 2 / 5
+        let x1 = Int(width) * 3 / 5
+        let y0 = Int(height) * 2 / 5
+        let y1 = Int(height) * 3 / 5
+        return "\(x0),\(y0),\(x1),\(y1)"
+    }
+
+    private static func defaultRegionLoadText(store: WorkbenchStore, imageDatasetID: String) -> String {
+        let selected = store.state.selectedDataset
+        if selected?.kind == .region {
+            return selected?.path ?? ""
+        }
+        let imageDataset = store.state.project.datasets.first { $0.id == imageDatasetID }
+        if let imageDataset {
+            let sourceNeedle = "Region source image:"
+            let imagePaths = [
+                imageDataset.path,
+                Self.projectRelativePath(imageDataset.path, rootPath: store.state.project.rootPath)
+            ]
+            if let region = store.state.project.datasets.first(where: { dataset in
+                guard dataset.kind == .region else {
+                    return false
+                }
+                return dataset.diagnostics.contains { diagnostic in
+                    guard diagnostic.hasPrefix(sourceNeedle) else {
+                        return false
+                    }
+                    let value = diagnostic.dropFirst(sourceNeedle.count).trimmingCharacters(in: .whitespacesAndNewlines)
+                    return imagePaths.contains(String(value))
+                }
+            }) {
+                return region.path
+            }
+        }
+        return store.state.project.datasets.first { $0.kind == .region }?.path ?? ""
+    }
+
+    private static func projectRelativePath(_ path: String, rootPath: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !rootPath.isEmpty else {
+            return path
+        }
+        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
+        let pathURL = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath).standardizedFileURL
+        let root = rootURL.path
+        let absolutePath = pathURL.path
+        let prefix = root.hasSuffix("/") ? root : root + "/"
+        if absolutePath.hasPrefix(prefix) {
+            return String(absolutePath.dropFirst(prefix.count))
+        }
+        return path
+    }
+
     private var regionMaskControls: some View {
-        HStack(spacing: 6) {
-            Button {
-                store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: datasetID)
-            } label: {
-                Label("Start", systemImage: "pencil.and.outline")
-            }
-            Button {
-                let cursor = currentCursor()
-                store.appendImageExplorerRegionCommand(
-                    .appendRegionVertex(x: cursor.x, y: cursor.y),
-                    datasetID: datasetID
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Menu {
+                    Button {
+                        store.setImageExplorerRegionTool("box", datasetID: datasetID)
+                    } label: {
+                        Label("Box", systemImage: "rectangle")
+                    }
+                    Button {
+                        store.setImageExplorerRegionTool("polygon", datasetID: datasetID)
+                    } label: {
+                        Label("Polygon", systemImage: "pentagon")
+                    }
+                } label: {
+                    Label("New...", systemImage: "plus")
+                }
+                .help("Start drawing a new region.")
+
+                DatasetPathInputControl(
+                    store: store,
+                    label: "Region",
+                    value: $regionLoadText,
+                    help: "CASA CRTF region file to load into this Image Explorer pane.",
+                    choices: regionPathChoices(),
+                    canBrowse: true,
+                    actionTitle: nil,
+                    actionSystemImage: "square.and.arrow.up",
+                    allowInlineSyntax: false,
+                    syncSelectedRegion: true,
+                    onAction: nil
                 )
-            } label: {
-                Label("Add Cursor", systemImage: "plus")
+                .frame(minWidth: 240)
+
+                Button {
+                    loadRegionFile(resolvedRegionLoadPath(), replacing: false)
+                } label: {
+                    Label("Load", systemImage: "square.and.arrow.up")
+                }
+                .disabled(resolvedRegionLoadPath().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help("Add the selected region file to this Image Explorer pane.")
+
+                Button {
+                    loadRegionFile(resolvedRegionLoadPath(), replacing: true)
+                } label: {
+                    Label("Replace", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(resolvedRegionLoadPath().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help("Replace the active region with the selected region file.")
+
+                Button {
+                    store.setImageExplorerRegionTool("select", datasetID: datasetID)
+                } label: {
+                    Label("Select", systemImage: "cursorarrow")
+                }
+                .disabled((explorerState?.regionTool ?? "select") == "select")
+
+                Button {
+                    store.exportImageExplorerRegionFile(datasetID: datasetID)
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .help("Write the active region to the tutorial workspace and add it to the dataset list.")
+
+                regionDeleteMenu
+
+                Menu("Mask") {
+                    Button("Create mask from region") {
+                        store.runImageExplorerCommandOnce(.writeRegionMask(name: nil, setDefault: true), datasetID: datasetID)
+                    }
+                    Button("Unset default mask") {
+                        store.runImageExplorerCommandOnce(.unsetDefaultMask, datasetID: datasetID)
+                    }
+                    ForEach(snapshot?.maskNames ?? [], id: \.self) { name in
+                        Button("Set \(name) default") {
+                            store.runImageExplorerCommandOnce(.setDefaultMask(name: name), datasetID: datasetID)
+                        }
+                        Button("Delete \(name)") {
+                            store.runImageExplorerCommandOnce(.deleteMask(name: name), datasetID: datasetID)
+                        }
+                    }
+                }
             }
-            Button {
-                store.appendImageExplorerRegionCommand(.closeRegionShape, datasetID: datasetID)
-            } label: {
-                Label("Close", systemImage: "checkmark")
+            Text(activeRegionSummary)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if !regionLoadStatus.isEmpty {
+                Text(regionLoadStatus)
+                    .foregroundStyle(regionLoadStatus.hasPrefix("Region load failed") ? .red : .secondary)
+                    .lineLimit(2)
             }
-            Button {
-                store.appendImageExplorerRegionCommand(.undoRegionVertex, datasetID: datasetID)
-            } label: {
-                Label("Undo", systemImage: "arrow.uturn.backward")
+            HStack(spacing: 6) {
+                Button {
+                    store.appendImageExplorerRegionCommand(.closeRegionShape, datasetID: datasetID)
+                    store.setImageExplorerRegionTool("select", datasetID: datasetID)
+                } label: {
+                    Label("Finish", systemImage: "checkmark")
+                }
+                .help("Close the active polygon. You can also click near the first vertex.")
+                Button {
+                    store.appendImageExplorerRegionCommand(.undoRegionVertex, datasetID: datasetID)
+                } label: {
+                    Label("Undo Point", systemImage: "arrow.uturn.backward")
+                }
+                Button {
+                    store.appendImageExplorerRegionCommand(.cancelRegionShape, datasetID: datasetID)
+                } label: {
+                    Label("Cancel Drawing", systemImage: "xmark")
+                }
             }
-            Button {
-                store.appendImageExplorerRegionCommand(.cancelRegionShape, datasetID: datasetID)
-            } label: {
-                Label("Cancel", systemImage: "xmark")
+            DisclosureGroup("Coordinate entry", isExpanded: $coordinateEntryExpanded) {
+                HStack(spacing: 6) {
+                    TextField("x0,y0,x1,y1", text: $regionBoxText)
+                        .frame(width: 140)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(createBoxRegion)
+                    Button {
+                        createBoxRegion()
+                    } label: {
+                        Label("Create Box Region", systemImage: "rectangle")
+                    }
+                    Text("Pixel coordinates")
+                        .foregroundStyle(.secondary)
+                }
             }
-            Button {
+            DisclosureGroup("Image-attached regions", isExpanded: $imageAttachedRegionsExpanded) {
+                imageAttachedRegionControls
+            }
+            .help("Native CASA/casacore regions stored inside the image table, separate from CRTF region files.")
+            Text(regionToolHint)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .controlSize(.small)
+    }
+
+    private var regionDeleteMenu: some View {
+        Menu {
+            Button("Delete Last Shape") {
+                store.deleteLastImageExplorerRegionShape(datasetID: datasetID)
+                regionLoadStatus = "Deleted the last region shape."
+            }
+            .disabled(!hasActiveRegionShapes)
+            ForEach(Array((snapshot?.region?.overlayShapes ?? []).indices), id: \.self) { index in
+                Button("Delete Shape \(index + 1)") {
+                    store.deleteImageExplorerRegionShape(index: index, datasetID: datasetID)
+                    regionLoadStatus = "Deleted region shape \(index + 1)."
+                }
+            }
+            Divider()
+            Button("Delete All Shapes") {
                 store.clearImageExplorerRegionCommands(datasetID: datasetID)
-            } label: {
-                Label("Clear", systemImage: "trash")
+                regionLoadStatus = "Deleted all region shapes."
             }
-            Menu("Regions") {
-                Button("Save current") {
-                    store.runImageExplorerCommandOnce(.saveRegionDefinition, datasetID: datasetID)
-                }
-                Button("Load next") {
-                    store.runImageExplorerCommandOnce(.loadNextRegionDefinition, datasetID: datasetID)
-                }
+            .disabled(!hasActiveRegionShapes)
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+        .disabled(!hasActiveRegionShapes)
+    }
+
+    private var hasActiveRegionShapes: Bool {
+        (snapshot?.region?.overlayShapes?.isEmpty == false)
+    }
+
+    private var imageAttachedRegionControls: some View {
+        HStack(spacing: 6) {
+            Button("Save to Image") {
+                store.runImageExplorerCommandOnce(.saveRegionDefinition, datasetID: datasetID)
+            }
+            Button("Load Next") {
+                store.runImageExplorerCommandOnce(.loadNextRegionDefinition, datasetID: datasetID)
+            }
+            .disabled(snapshot?.savedRegionNames.isEmpty ?? true)
+            Menu("Saved") {
                 ForEach(snapshot?.savedRegionNames ?? [], id: \.self) { name in
                     Button("Load \(name)") {
                         store.runImageExplorerCommandOnce(.loadRegionDefinition(name: name), datasetID: datasetID)
@@ -955,24 +1357,44 @@ private struct ImageExplorerControlsView: View {
                     }
                 }
             }
-            Menu("Masks") {
-                Button("Write region mask") {
-                    store.runImageExplorerCommandOnce(.writeRegionMask(name: nil, setDefault: true), datasetID: datasetID)
-                }
-                Button("Unset default") {
-                    store.runImageExplorerCommandOnce(.unsetDefaultMask, datasetID: datasetID)
-                }
-                ForEach(snapshot?.maskNames ?? [], id: \.self) { name in
-                    Button("Set \(name) default") {
-                        store.runImageExplorerCommandOnce(.setDefaultMask(name: name), datasetID: datasetID)
-                    }
-                    Button("Delete \(name)") {
-                        store.runImageExplorerCommandOnce(.deleteMask(name: name), datasetID: datasetID)
-                    }
-                }
-            }
+            .disabled(snapshot?.savedRegionNames.isEmpty ?? true)
         }
-        .controlSize(.small)
+    }
+
+    private var regionToolHint: String {
+        switch explorerState?.regionTool ?? "select" {
+        case "box":
+            return "New box: click one corner, move the pointer to preview the outline, then click the opposite corner. Esc cancels."
+        case "polygon":
+            return "New polygon: click to place vertices, move the pointer to preview the next edge, and click near the first vertex to close. Esc cancels."
+        default:
+            return "Select: drag a vertex to resize, or drag inside the shape to move the region."
+        }
+    }
+
+    private var activeRegionSummary: String {
+        guard let region = snapshot?.region else {
+            return "No active region loaded."
+        }
+        let vertices = region.overlayShapes?.reduce(0) { $0 + $1.vertices.count } ?? 0
+        let persistence = activeRegionIsSaved ? "Saved region" : "Unsaved region"
+        if let stats = region.stats {
+            return "\(persistence): \(region.label), \(region.closedShapeCount) shape(s), \(vertices) vertices, \(stats.pixelCount) pixels."
+        }
+        return "\(persistence): \(region.label), \(region.closedShapeCount) shape(s), \(vertices) vertices."
+    }
+
+    private var activeRegionIsSaved: Bool {
+        guard snapshot?.region != nil else {
+            return false
+        }
+        guard let commands = explorerState?.regionCommands, !commands.isEmpty else {
+            return snapshot?.activeRegionDefinitionName != nil
+        }
+        guard commands.count == 1, let command = commands.first?.command else {
+            return false
+        }
+        return command == "load_region_file" || command == "append_region_file"
     }
 
     private func currentCursor() -> (x: Int, y: Int) {
@@ -980,6 +1402,71 @@ private struct ImageExplorerControlsView: View {
             Int(cursorXText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor?.pixelX ?? 0,
             Int(cursorYText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? snapshot?.planeCursor?.pixelY ?? 0
         )
+    }
+
+    private func createBoxRegion() {
+        store.appendImageExplorerBoxRegion(regionBoxText, datasetID: datasetID)
+    }
+
+    private func loadRegionFile(_ path: String, replacing: Bool) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            regionLoadStatus = "Region load failed: no region file path was selected."
+            return
+        }
+        guard FileManager.default.fileExists(atPath: trimmed) else {
+            regionLoadStatus = "Region load failed: \(displayRegionPath(trimmed)) does not exist."
+            return
+        }
+        let previousShapeCount = snapshot?.region?.closedShapeCount ?? 0
+        if replacing {
+            store.loadImageExplorerRegionFile(path: path, datasetID: datasetID)
+        } else {
+            store.appendImageExplorerRegionFile(path: path, datasetID: datasetID)
+        }
+        store.setImageExplorerRegionTool("select", datasetID: datasetID)
+        if let region = store.state.imageExplorers[datasetID]?.snapshot?.region {
+            let commands = store.state.imageExplorers[datasetID]?.regionCommands ?? []
+            let reloadedFile = commands.count == 1 && commands.first?.command == "load_region_file"
+            let verb = replacing ? "Replaced with" : (reloadedFile && previousShapeCount > 0 ? "Reloaded" : (previousShapeCount > 0 ? "Added" : "Loaded"))
+            regionLoadStatus = "\(verb) \(displayRegionPath(trimmed)): \(region.closedShapeCount) shape(s)."
+        } else if let error = store.state.imageExplorers[datasetID]?.lastError {
+            regionLoadStatus = "Region load failed: \(error)"
+        } else if let error = store.state.lastErrors.last {
+            regionLoadStatus = "Region load failed: \(error)"
+        } else {
+            regionLoadStatus = "Region load did not produce an active region."
+        }
+    }
+
+    private func resolvedRegionLoadPath() -> String {
+        let trimmed = regionLoadText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return regionLoadText
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return expanded
+        }
+        let root = store.state.project.rootPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else {
+            return regionLoadText
+        }
+        return URL(fileURLWithPath: root, isDirectory: true)
+            .appendingPathComponent(trimmed)
+            .standardizedFileURL
+            .path
+    }
+
+    private func regionPathChoices() -> [DatasetPathChoice] {
+        store.state.project.datasets
+            .filter { $0.kind == .region }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            .map { DatasetPathChoice(name: $0.name, path: $0.path) }
+    }
+
+    private func displayRegionPath(_ path: String) -> String {
+        Self.projectRelativePath(path, rootPath: store.state.project.rootPath)
     }
 }
 
@@ -1039,11 +1526,29 @@ private struct ImageExplorerSnapshotView: View {
                 store: store,
                 datasetID: datasetID,
                 snapshot: snapshot,
+                regionTool: explorerState?.regionTool ?? "select",
+                regionIsSaved: Self.regionIsSaved(explorerState: explorerState, snapshot: snapshot),
                 colorMap: explorerState?.planeColorMap ?? .grayscale
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .accessibilityIdentifier("imageExplorer.snapshot")
+    }
+
+    private static func regionIsSaved(
+        explorerState: ImageExplorerSessionState?,
+        snapshot: ImageExplorerSnapshot
+    ) -> Bool {
+        guard snapshot.region != nil else {
+            return false
+        }
+        guard let commands = explorerState?.regionCommands, !commands.isEmpty else {
+            return snapshot.activeRegionDefinitionName != nil
+        }
+        guard commands.count == 1, let command = commands.first?.command else {
+            return false
+        }
+        return command == "load_region_file" || command == "append_region_file"
     }
 
     private var quickMovieControls: some View {
@@ -1128,6 +1633,8 @@ private struct ImageExplorerImageWorkspaceView: View {
     @ObservedObject var store: WorkbenchStore
     let datasetID: String
     let snapshot: ImageExplorerSnapshot
+    let regionTool: String
+    let regionIsSaved: Bool
     let colorMap: ImageExplorerColorMap
 
     var body: some View {
@@ -1142,13 +1649,15 @@ private struct ImageExplorerImageWorkspaceView: View {
                         displayAxes: snapshot.displayAxes ?? [],
                         probe: snapshot.probe,
                         nonDisplayAxes: snapshot.nonDisplayAxes ?? [],
+                        regionTool: regionTool,
+                        regionIsSaved: regionIsSaved,
                         colorMap: colorMap
-                    ) { x, y in
-                        store.setImageExplorerCursor(x: x, y: y, datasetID: datasetID)
+                    ) { interaction in
+                        handleImagePlaneInteraction(interaction)
                     } onClipRangeChange: { low, high in
                         store.setImageExplorerManualClip(low: low, high: high, datasetID: datasetID)
                     }
-                    .id(colorMap.rawValue)
+                    .id(rasterRenderIdentity)
                     .frame(height: max(1, geometry.size.height - profileHeight))
                 } else {
                     Text("No renderable plane in current image browser snapshot.")
@@ -1180,6 +1689,88 @@ private struct ImageExplorerImageWorkspaceView: View {
         let preferred = size.height * 0.26
         let maximum = min(210, size.height * 0.42)
         return min(max(150, preferred), maximum)
+    }
+
+    private var rasterRenderIdentity: String {
+        let regionIdentity: String
+        if let region = snapshot.region {
+            let vertices = region.overlayShapes?.reduce(0) { $0 + $1.vertices.count } ?? 0
+            regionIdentity = "\(region.label)-\(region.shapeCount)-\(region.closedShapeCount)-\(vertices)"
+        } else {
+            regionIdentity = "no-region"
+        }
+        return "\(colorMap.rawValue)-\(regionIdentity)"
+    }
+
+    private func handleImagePlaneInteraction(_ interaction: ImagePlaneInteraction) {
+        switch interaction {
+        case .selectPixel(let x, let y):
+            store.setImageExplorerCursor(x: x, y: y, datasetID: datasetID)
+        case .appendPolygonVertex(let x, let y):
+            if snapshot.region?.editing != true {
+                store.appendImageExplorerRegionCommand(.startRegionShape, datasetID: datasetID)
+            }
+            store.appendImageExplorerRegionCommand(.appendRegionVertex(x: x, y: y), datasetID: datasetID)
+        case .closePolygon:
+            store.appendImageExplorerRegionCommand(.closeRegionShape, datasetID: datasetID)
+            store.setImageExplorerRegionTool("select", datasetID: datasetID)
+        case .createRectangle(let x0, let y0, let x1, let y1):
+            store.appendImageExplorerBoxRegion("\(x0),\(y0),\(x1),\(y1)", datasetID: datasetID)
+            store.setImageExplorerRegionTool("select", datasetID: datasetID)
+        case .replaceRegionShapes(let shapes):
+            store.setImageExplorerRegionShapes(shapes, datasetID: datasetID)
+        case .deleteRegionShape(let index):
+            store.deleteImageExplorerRegionShape(index: index, datasetID: datasetID)
+        case .rejectRegionEdit(let message):
+            store.reportImageExplorerRegionError(message)
+        }
+    }
+}
+
+private struct ImagePlaneKeyCaptureView: NSViewRepresentable {
+    let focusNonce: Int
+    let onDelete: () -> Bool
+
+    func makeNSView(context: Context) -> KeyCaptureNSView {
+        let view = KeyCaptureNSView()
+        view.onDelete = onDelete
+        return view
+    }
+
+    func updateNSView(_ nsView: KeyCaptureNSView, context: Context) {
+        nsView.onDelete = onDelete
+        guard focusNonce != context.coordinator.lastFocusNonce else {
+            return
+        }
+        context.coordinator.lastFocusNonce = focusNonce
+        DispatchQueue.main.async {
+            nsView.window?.makeFirstResponder(nsView)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator {
+        var lastFocusNonce = 0
+    }
+}
+
+private final class KeyCaptureNSView: NSView {
+    var onDelete: (() -> Bool)?
+
+    override var acceptsFirstResponder: Bool {
+        true
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 51 || event.keyCode == 117 {
+            if onDelete?() == true {
+                return
+            }
+        }
+        super.keyDown(with: event)
     }
 }
 
@@ -1326,6 +1917,41 @@ private struct ProfileXAxisPresentation {
     }
 }
 
+private enum ImagePlaneInteraction {
+    case selectPixel(Int, Int)
+    case appendPolygonVertex(Int, Int)
+    case closePolygon
+    case createRectangle(Int, Int, Int, Int)
+    case replaceRegionShapes([[(x: Int, y: Int)]])
+    case deleteRegionShape(Int)
+    case rejectRegionEdit(String)
+}
+
+private struct ImagePlaneVertexSelection {
+    let shapeIndex: Int
+    let vertexIndex: Int
+}
+
+private struct ImagePlaneRegionDrag {
+    enum Kind {
+        case vertex(ImagePlaneVertexSelection)
+        case shape(Int)
+    }
+
+    let kind: Kind
+    let startPixel: (x: Int, y: Int)
+    let baseVertices: [(x: Int, y: Int)]
+
+    var shapeIndex: Int {
+        switch kind {
+        case .vertex(let selection):
+            selection.shapeIndex
+        case .shape(let index):
+            index
+        }
+    }
+}
+
 private struct ImagePlaneRasterView: View {
     let plane: ImageExplorerSnapshot.Plane
     let cursor: ImageExplorerSnapshot.PlaneCursor?
@@ -1333,14 +1959,22 @@ private struct ImagePlaneRasterView: View {
     let displayAxes: [ImageExplorerSnapshot.DisplayAxis]
     let probe: ImageExplorerSnapshot.Probe?
     let nonDisplayAxes: [ImageExplorerSnapshot.NonDisplayAxis]
+    let regionTool: String
+    let regionIsSaved: Bool
     let colorMap: ImageExplorerColorMap
-    let onCursorSelect: (Int, Int) -> Void
+    let onInteraction: (ImagePlaneInteraction) -> Void
     let onClipRangeChange: (Double, Double) -> Void
     @Environment(\.workbenchFontSize) private var workbenchFontSize
     @State private var image: NSImage?
     @State private var draggingClipMarker: ImagePlaneClipMarker?
+    @State private var draggingRegion: ImagePlaneRegionDrag?
     @State private var previewClipMin: Double?
     @State private var previewClipMax: Double?
+    @State private var pendingBoxStart: (x: Int, y: Int)?
+    @State private var hoverPixel: (x: Int, y: Int)?
+    @State private var dragPreviewVertices: [(x: Int, y: Int)]?
+    @State private var selectedRegionShapeIndex: Int?
+    @State private var keyboardFocusNonce = 0
 
     var body: some View {
         GeometryReader { geometry in
@@ -1371,11 +2005,27 @@ private struct ImagePlaneRasterView: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        if draggingClipMarker == nil {
+                        if draggingClipMarker == nil && draggingRegion == nil {
                             draggingClipMarker = clipMarker(at: value.startLocation, layout: layout)
                         }
                         if let marker = draggingClipMarker {
                             updatePreviewClip(marker: marker, y: value.location.y, layout: layout)
+                        } else if regionTool == "select" {
+                            if draggingRegion == nil,
+                               let start = sourcePixel(at: value.startLocation, layout: layout) {
+                                draggingRegion = regionDrag(at: value.startLocation, startPixel: start, layout: layout)
+                                selectedRegionShapeIndex = draggingRegion?.shapeIndex
+                                if draggingRegion != nil {
+                                    keyboardFocusNonce += 1
+                                }
+                            }
+                            if let draggingRegion,
+                               let pixel = sourcePixel(at: value.location, layout: layout) {
+                                let moved = pixel.x != draggingRegion.startPixel.x || pixel.y != draggingRegion.startPixel.y
+                                dragPreviewVertices = moved ? verticesDragging(draggingRegion, to: pixel) : nil
+                            }
+                        } else if let pixel = sourcePixel(at: value.location, layout: layout) {
+                            hoverPixel = pixel
                         }
                     }
                     .onEnded { value in
@@ -1384,11 +2034,40 @@ private struct ImagePlaneRasterView: View {
                             previewClipMin = clip.low
                             previewClipMax = clip.high
                             onClipRangeChange(clip.low, clip.high)
+                        } else if let preview = dragPreviewVertices, let draggingRegion {
+                            commitRegionDrag(draggingRegion, vertices: preview)
+                        } else if draggingRegion != nil {
+                            keyboardFocusNonce += 1
+                        } else if regionTool == "box",
+                                  let pixel = sourcePixel(at: value.location, layout: layout) {
+                            handleBoxPointerEnd(value: value, pixel: pixel, layout: layout)
+                        } else if regionTool == "polygon",
+                                  let pixel = sourcePixel(at: value.location, layout: layout) {
+                            handlePolygonClick(pixel: pixel, layout: layout)
                         } else if let pixel = sourcePixel(at: value.location, layout: layout) {
-                            onCursorSelect(pixel.x, pixel.y)
+                            selectedRegionShapeIndex = nil
+                            onInteraction(.selectPixel(pixel.x, pixel.y))
                         }
                         draggingClipMarker = nil
+                        draggingRegion = nil
+                        dragPreviewVertices = nil
                     }
+            )
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
+                    hoverPixel = sourcePixel(at: location, layout: layout)
+                case .ended:
+                    hoverPixel = nil
+                }
+            }
+            .onExitCommand {
+                cancelRegionDrawing()
+            }
+            .background(
+                ImagePlaneKeyCaptureView(focusNonce: keyboardFocusNonce) {
+                    deleteSelectedRegionShape()
+                }
             )
         }
         .background(Color(nsColor: .textBackgroundColor))
@@ -1397,6 +2076,7 @@ private struct ImagePlaneRasterView: View {
         .onChange(of: colorMap) { _ in updateImage() }
         .onChange(of: plane.clipMin) { _ in clearPreviewClip() }
         .onChange(of: plane.clipMax) { _ in clearPreviewClip() }
+        .onChange(of: regionTool) { _ in cancelRegionDrawing() }
     }
 
     private var displayClipMin: Double {
@@ -1405,6 +2085,77 @@ private struct ImagePlaneRasterView: View {
 
     private var displayClipMax: Double {
         previewClipMax ?? plane.clipMax
+    }
+
+    private func handleBoxPointerEnd(
+        value: DragGesture.Value,
+        pixel: (x: Int, y: Int),
+        layout: ImagePlaneViewportGeometry
+    ) {
+        let distance = hypot(value.location.x - value.startLocation.x, value.location.y - value.startLocation.y)
+        if distance <= 4 {
+            handleBoxClick(pixel: pixel)
+            return
+        }
+        if pendingBoxStart == nil {
+            pendingBoxStart = sourcePixel(at: value.startLocation, layout: layout)
+        }
+        hoverPixel = pixel
+    }
+
+    private func handleBoxClick(pixel: (x: Int, y: Int)) {
+        if let start = pendingBoxStart {
+            if start.x != pixel.x || start.y != pixel.y {
+                onInteraction(.createRectangle(start.x, start.y, pixel.x, pixel.y))
+            }
+            pendingBoxStart = nil
+            hoverPixel = nil
+        } else {
+            pendingBoxStart = pixel
+            hoverPixel = pixel
+        }
+    }
+
+    private func handlePolygonClick(pixel: (x: Int, y: Int), layout: ImagePlaneViewportGeometry) {
+        if shouldClosePolygon(at: pixel, layout: layout) {
+            onInteraction(.closePolygon)
+            hoverPixel = nil
+            return
+        }
+        if proposedPolygonWouldIntersect(with: pixel) {
+            onInteraction(.rejectRegionEdit("Polygon edges cannot cross."))
+            return
+        }
+        onInteraction(.appendPolygonVertex(pixel.x, pixel.y))
+    }
+
+    private func commitRegionDrag(_ drag: ImagePlaneRegionDrag, vertices: [(x: Int, y: Int)]) {
+        guard vertices.count >= 3 else { return }
+        if polygonSelfIntersects(vertices) {
+            onInteraction(.rejectRegionEdit("Polygon edges cannot cross."))
+            return
+        }
+        guard let shapes = regionShapesReplacing(drag: drag, with: vertices) else { return }
+        onInteraction(.replaceRegionShapes(shapes))
+        selectedRegionShapeIndex = drag.shapeIndex
+    }
+
+    private func deleteSelectedRegionShape() -> Bool {
+        guard let selectedRegionShapeIndex,
+              region?.overlayShapes?.indices.contains(selectedRegionShapeIndex) == true
+        else {
+            return false
+        }
+        onInteraction(.deleteRegionShape(selectedRegionShapeIndex))
+        self.selectedRegionShapeIndex = nil
+        return true
+    }
+
+    private func cancelRegionDrawing() {
+        pendingBoxStart = nil
+        hoverPixel = nil
+        dragPreviewVertices = nil
+        draggingRegion = nil
     }
 
     private func drawAxisAnnotations(in context: inout GraphicsContext, layout: ImagePlaneViewportGeometry) {
@@ -1562,22 +2313,22 @@ private struct ImagePlaneRasterView: View {
 
     private func drawPlaneOverlays(in context: inout GraphicsContext, layout: ImagePlaneViewportGeometry) {
         if let region {
-            for shape in region.overlayShapes ?? [] {
-                var path = Path()
-                for (index, vertex) in shape.vertices.enumerated() {
+            let regionColor = regionIsSaved ? Color.green : Color.yellow
+            for (shapeIndex, shape) in (region.overlayShapes ?? []).enumerated() {
+                let points = shape.vertices.map { overlayPoint($0.sampledX, $0.sampledY, rect: layout.imageRect) }
+                strokeRegionPath(points: points, closed: shape.closed, color: regionColor.opacity(0.85), in: &context)
+                if selectedRegionShapeIndex == shapeIndex {
+                    strokeRegionPath(points: points, closed: shape.closed, color: Color.white.opacity(0.92), lineWidth: 3.0, in: &context)
+                }
+                for vertex in shape.vertices {
                     let point = overlayPoint(vertex.sampledX, vertex.sampledY, rect: layout.imageRect)
-                    if index == 0 {
-                        path.move(to: point)
-                    } else {
-                        path.addLine(to: point)
-                    }
+                    let handle = CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)
+                    context.fill(Path(ellipseIn: handle), with: .color(regionColor.opacity(0.95)))
+                    context.stroke(Path(ellipseIn: handle), with: .color(Color.black.opacity(0.75)), lineWidth: 1)
                 }
-                if shape.closed {
-                    path.closeSubpath()
-                }
-                context.stroke(path, with: .color(Color.yellow.opacity(0.85)), lineWidth: 1.5)
             }
         }
+        drawRegionInteractionPreview(in: &context, layout: layout)
         if let cursor {
             let point = overlayPoint(Double(cursor.sampledX), Double(cursor.sampledY), rect: layout.imageRect)
             var path = Path()
@@ -1588,6 +2339,57 @@ private struct ImagePlaneRasterView: View {
             context.stroke(path, with: .color(Color.cyan.opacity(0.95)), lineWidth: 1.2)
         }
         drawFrameLabel(in: &context, layout: layout)
+    }
+
+    private func drawRegionInteractionPreview(in context: inout GraphicsContext, layout: ImagePlaneViewportGeometry) {
+        if let preview = dragPreviewVertices {
+            let points = preview.map { overlayPoint(sourcePixel: $0, layout: layout) }
+            let color = polygonSelfIntersects(preview) ? Color.red.opacity(0.9) : Color.orange.opacity(0.92)
+            strokeRegionPath(points: points, closed: true, color: color, in: &context)
+            return
+        }
+        if regionTool == "box", let start = pendingBoxStart, let hover = hoverPixel {
+            let vertices = boxVertices(start: start, end: hover)
+            strokeRegionPath(
+                points: vertices.map { overlayPoint(sourcePixel: $0, layout: layout) },
+                closed: true,
+                color: .orange.opacity(0.95),
+                in: &context
+            )
+        } else if regionTool == "polygon",
+                  let hover = hoverPixel,
+                  let vertices = activeOpenShapeVertices(),
+                  let last = vertices.last {
+            var path = Path()
+            path.move(to: overlayPoint(sourcePixel: last, layout: layout))
+            path.addLine(to: overlayPoint(sourcePixel: hover, layout: layout))
+            let color = proposedPolygonWouldIntersect(with: hover) ? Color.red.opacity(0.9) : Color.orange.opacity(0.9)
+            context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+            if vertices.count >= 3, let first = vertices.first {
+                let point = overlayPoint(sourcePixel: first, layout: layout)
+                let halo = CGRect(x: point.x - 7, y: point.y - 7, width: 14, height: 14)
+                context.stroke(Path(ellipseIn: halo), with: .color(Color.orange.opacity(0.95)), lineWidth: 1.5)
+            }
+        }
+    }
+
+    private func strokeRegionPath(
+        points: [CGPoint],
+        closed: Bool,
+        color: Color,
+        lineWidth: CGFloat = 1.5,
+        in context: inout GraphicsContext
+    ) {
+        guard let first = points.first else { return }
+        var path = Path()
+        path.move(to: first)
+        for point in points.dropFirst() {
+            path.addLine(to: point)
+        }
+        if closed {
+            path.closeSubpath()
+        }
+        context.stroke(path, with: .color(color), lineWidth: lineWidth)
     }
 
     private func drawFrameLabel(in context: inout GraphicsContext, layout: ImagePlaneViewportGeometry) {
@@ -1618,6 +2420,168 @@ private struct ImagePlaneRasterView: View {
         CGPoint(
             x: rect.minX + rect.width * CGFloat(x) / CGFloat(max(plane.width - 1, 1)),
             y: rect.minY + rect.height * CGFloat(y) / CGFloat(max(plane.height - 1, 1))
+        )
+    }
+
+    private func overlayPoint(sourcePixel pixel: (x: Int, y: Int), layout: ImagePlaneViewportGeometry) -> CGPoint {
+        let sampled = sampledPixel(sourcePixel: pixel)
+        return overlayPoint(Double(sampled.x), Double(sampled.y), rect: layout.imageRect)
+    }
+
+    private func sampledPixel(sourcePixel pixel: (x: Int, y: Int)) -> (x: Int, y: Int) {
+        guard let xAxis = displayAxes.first, let yAxis = displayAxes[safe: 1] else {
+            return pixel
+        }
+        return (
+            x: Int((Double(pixel.x - xAxis.blc) / Double(max(xAxis.inc, 1))).rounded()),
+            y: Int((Double(pixel.y - yAxis.blc) / Double(max(yAxis.inc, 1))).rounded())
+        )
+    }
+
+    private func regionVertex(
+        at location: CGPoint,
+        layout: ImagePlaneViewportGeometry
+    ) -> ImagePlaneVertexSelection? {
+        guard let shapes = region?.overlayShapes else { return nil }
+        let threshold: CGFloat = 10
+        var best: (selection: ImagePlaneVertexSelection, distance: CGFloat)?
+        for (shapeIndex, shape) in shapes.enumerated() {
+            for (vertexIndex, vertex) in shape.vertices.enumerated() {
+                let point = overlayPoint(vertex.sampledX, vertex.sampledY, rect: layout.imageRect)
+                let distance = hypot(point.x - location.x, point.y - location.y)
+                guard distance <= threshold else { continue }
+                if best == nil || distance < best!.distance {
+                    best = (ImagePlaneVertexSelection(shapeIndex: shapeIndex, vertexIndex: vertexIndex), distance)
+                }
+            }
+        }
+        return best?.selection
+    }
+
+    private func regionDrag(
+        at location: CGPoint,
+        startPixel: (x: Int, y: Int),
+        layout: ImagePlaneViewportGeometry
+    ) -> ImagePlaneRegionDrag? {
+        if let vertex = regionVertex(at: location, layout: layout),
+           let vertices = regionShapeVertices(shapeIndex: vertex.shapeIndex) {
+            return ImagePlaneRegionDrag(kind: .vertex(vertex), startPixel: startPixel, baseVertices: vertices)
+        }
+        if let shapeIndex = regionShape(at: location, layout: layout),
+           let vertices = regionShapeVertices(shapeIndex: shapeIndex) {
+            return ImagePlaneRegionDrag(kind: .shape(shapeIndex), startPixel: startPixel, baseVertices: vertices)
+        }
+        return nil
+    }
+
+    private func verticesDragging(_ drag: ImagePlaneRegionDrag, to pixel: (x: Int, y: Int)) -> [(x: Int, y: Int)] {
+        switch drag.kind {
+        case .vertex(let selection):
+            return drag.baseVertices.enumerated().map { index, vertex in
+                clampSourcePixel(index == selection.vertexIndex ? pixel : vertex)
+            }
+        case .shape:
+            let dx = pixel.x - drag.startPixel.x
+            let dy = pixel.y - drag.startPixel.y
+            return drag.baseVertices.map { vertex in
+                clampSourcePixel((x: vertex.x + dx, y: vertex.y + dy))
+            }
+        }
+    }
+
+    private func regionShapeVertices(shapeIndex: Int) -> [(x: Int, y: Int)]? {
+        guard let shapes = region?.overlayShapes,
+              shapes.indices.contains(shapeIndex)
+        else {
+            return nil
+        }
+        var vertices = shapes[shapeIndex].vertices.map { sourcePixel(sampledX: $0.sampledX, sampledY: $0.sampledY) }
+        guard vertices.count >= 3 else { return nil }
+        vertices = vertices.map(clampSourcePixel)
+        return vertices
+    }
+
+    private func regionShapesReplacing(
+        drag: ImagePlaneRegionDrag,
+        with vertices: [(x: Int, y: Int)]
+    ) -> [[(x: Int, y: Int)]]? {
+        guard let shapes = region?.overlayShapes else { return nil }
+        let targetShapeIndex: Int
+        switch drag.kind {
+        case .vertex(let selection):
+            targetShapeIndex = selection.shapeIndex
+        case .shape(let shapeIndex):
+            targetShapeIndex = shapeIndex
+        }
+        guard shapes.indices.contains(targetShapeIndex) else { return nil }
+        return shapes.enumerated().compactMap { shapeIndex, shape in
+            if shapeIndex == targetShapeIndex {
+                return vertices.map(clampSourcePixel)
+            }
+            guard shape.closed, shape.vertices.count >= 3 else { return nil }
+            return shape.vertices
+                .map { sourcePixel(sampledX: $0.sampledX, sampledY: $0.sampledY) }
+                .map(clampSourcePixel)
+        }
+    }
+
+    private func regionShape(at location: CGPoint, layout: ImagePlaneViewportGeometry) -> Int? {
+        guard let shapes = region?.overlayShapes else { return nil }
+        for (shapeIndex, shape) in shapes.enumerated().reversed() where shape.closed {
+            let points = shape.vertices.map { overlayPoint($0.sampledX, $0.sampledY, rect: layout.imageRect) }
+            if pointInPolygon(location, points: points) {
+                return shapeIndex
+            }
+        }
+        return nil
+    }
+
+    private func activeOpenShapeVertices() -> [(x: Int, y: Int)]? {
+        guard let shape = region?.overlayShapes?.last(where: { !$0.closed }) else { return nil }
+        return shape.vertices.map { sourcePixel(sampledX: $0.sampledX, sampledY: $0.sampledY) }
+    }
+
+    private func shouldClosePolygon(at pixel: (x: Int, y: Int), layout: ImagePlaneViewportGeometry) -> Bool {
+        guard let vertices = activeOpenShapeVertices(), vertices.count >= 3, let first = vertices.first else {
+            return false
+        }
+        let firstPoint = overlayPoint(sourcePixel: first, layout: layout)
+        let clickPoint = overlayPoint(sourcePixel: pixel, layout: layout)
+        return hypot(firstPoint.x - clickPoint.x, firstPoint.y - clickPoint.y) <= 10
+    }
+
+    private func proposedPolygonWouldIntersect(with pixel: (x: Int, y: Int)) -> Bool {
+        guard let vertices = activeOpenShapeVertices(), vertices.count >= 2 else {
+            return false
+        }
+        let proposed = vertices + [pixel]
+        return openPolylineSelfIntersects(proposed)
+    }
+
+    private func boxVertices(start: (x: Int, y: Int), end: (x: Int, y: Int)) -> [(x: Int, y: Int)] {
+        let x0 = min(start.x, end.x)
+        let x1 = max(start.x, end.x)
+        let y0 = min(start.y, end.y)
+        let y1 = max(start.y, end.y)
+        return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    }
+
+    private func clampSourcePixel(_ pixel: (x: Int, y: Int)) -> (x: Int, y: Int) {
+        (
+            x: min(max(pixel.x, 0), max(plane.width - 1, 0)),
+            y: min(max(pixel.y, 0), max(plane.height - 1, 0))
+        )
+    }
+
+    private func sourcePixel(sampledX: Double, sampledY: Double) -> (x: Int, y: Int) {
+        let sampledXInt = Int(sampledX.rounded())
+        let sampledYInt = Int(sampledY.rounded())
+        guard let xAxis = displayAxes.first, let yAxis = displayAxes[safe: 1] else {
+            return (sampledXInt, sampledYInt)
+        }
+        return (
+            xAxis.blc + sampledXInt * max(xAxis.inc, 1),
+            yAxis.blc + sampledYInt * max(yAxis.inc, 1)
         )
     }
 
@@ -1866,6 +2830,88 @@ private struct ImagePlaneRasterView: View {
         }
         image = output
     }
+}
+
+private func pointInPolygon(_ point: CGPoint, points: [CGPoint]) -> Bool {
+    guard points.count >= 3 else { return false }
+    var inside = false
+    var previous = points.count - 1
+    for current in points.indices {
+        let a = points[current]
+        let b = points[previous]
+        if ((a.y > point.y) != (b.y > point.y)) {
+            let x = (b.x - a.x) * (point.y - a.y) / max(b.y - a.y, CGFloat.leastNonzeroMagnitude) + a.x
+            if point.x < x {
+                inside.toggle()
+            }
+        }
+        previous = current
+    }
+    return inside
+}
+
+private func openPolylineSelfIntersects(_ vertices: [(x: Int, y: Int)]) -> Bool {
+    guard vertices.count >= 4 else { return false }
+    let lastSegment = (vertices[vertices.count - 2], vertices[vertices.count - 1])
+    for index in 0..<(vertices.count - 3) {
+        let segment = (vertices[index], vertices[index + 1])
+        if segmentsIntersect(lastSegment.0, lastSegment.1, segment.0, segment.1) {
+            return true
+        }
+    }
+    return false
+}
+
+private func polygonSelfIntersects(_ vertices: [(x: Int, y: Int)]) -> Bool {
+    guard vertices.count >= 4 else { return false }
+    for left in vertices.indices {
+        let nextLeft = (left + 1) % vertices.count
+        for right in (left + 1)..<vertices.count {
+            let nextRight = (right + 1) % vertices.count
+            if left == right || left == nextRight || nextLeft == right || nextLeft == nextRight {
+                continue
+            }
+            if segmentsIntersect(vertices[left], vertices[nextLeft], vertices[right], vertices[nextRight]) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+private func segmentsIntersect(
+    _ a0: (x: Int, y: Int),
+    _ a1: (x: Int, y: Int),
+    _ b0: (x: Int, y: Int),
+    _ b1: (x: Int, y: Int)
+) -> Bool {
+    let p1 = CGPoint(x: a0.x, y: a0.y)
+    let p2 = CGPoint(x: a1.x, y: a1.y)
+    let q1 = CGPoint(x: b0.x, y: b0.y)
+    let q2 = CGPoint(x: b1.x, y: b1.y)
+    let o1 = orientation(p1, p2, q1)
+    let o2 = orientation(p1, p2, q2)
+    let o3 = orientation(q1, q2, p1)
+    let o4 = orientation(q1, q2, p2)
+    if (o1 > 0) != (o2 > 0), (o3 > 0) != (o4 > 0) {
+        return true
+    }
+    return pointOnSegment(q1, p1, p2)
+        || pointOnSegment(q2, p1, p2)
+        || pointOnSegment(p1, q1, q2)
+        || pointOnSegment(p2, q1, q2)
+}
+
+private func orientation(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> CGFloat {
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
+private func pointOnSegment(_ point: CGPoint, _ a: CGPoint, _ b: CGPoint) -> Bool {
+    abs(orientation(a, b, point)) < 1.0e-9
+        && point.x >= min(a.x, b.x)
+        && point.x <= max(a.x, b.x)
+        && point.y >= min(a.y, b.y)
+        && point.y <= max(a.y, b.y)
 }
 
 private struct ImagePlaneAxisTick {
@@ -3578,10 +4624,29 @@ private struct SelectionHelperOption: Identifiable, Equatable {
     var id: String { "\(label)=\(value)" }
 }
 
+enum MeasurementSetExplorerMode: String, CaseIterable, Identifiable {
+    case summary
+    case plots
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .summary: "Summary"
+        case .plots: "Plots"
+        }
+    }
+}
+
 struct MeasurementSetPlotPanel: View {
     @ObservedObject var store: WorkbenchStore
     let dataset: DatasetSummary
     @Environment(\.workbenchFontSize) private var workbenchFontSize
+    @State private var explorerMode: MeasurementSetExplorerMode = .summary
+    @State private var summaryStatus: MeasurementSetPlotStatus = .idle
+    @State private var summaryResult: MeasurementSetSummaryResultSummary?
+    @State private var summaryError: String?
+    @State private var summaryFormat = "text"
     @State private var showingAdvancedSetup = false
     @State private var showingPlotControls = false
     @State private var plotDisplayMode: WorkbenchPlotDisplayMode = .automatic
@@ -3609,15 +4674,45 @@ struct MeasurementSetPlotPanel: View {
     @State private var msSelectValue = ""
     @State private var avgTimeUnit = "s"
     private let metadataClient: MeasurementSetMetadataClient = UniFFIMeasurementSetMetadataClient()
+    private let summaryClient: MeasurementSetSummaryClient = UniFFIMeasurementSetSummaryClient()
+
+    init(
+        store: WorkbenchStore,
+        dataset: DatasetSummary,
+        initialExplorerMode: MeasurementSetExplorerMode = .summary
+    ) {
+        self.store = store
+        self.dataset = dataset
+        _explorerMode = State(initialValue: initialExplorerMode)
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
-            plotSurface
-            plotCommandBar
+            if explorerMode == .summary {
+                summarySurface
+            } else {
+                plotSurface
+            }
+            explorerCommandBar
                 .padding(.top, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("msPlot.panel.\(dataset.id)")
+        .onAppear {
+            if summaryStatus == .idle {
+                runMeasurementSetSummary()
+            }
+        }
+        .onChange(of: explorerMode) { mode in
+            if mode == .summary && summaryResult == nil && summaryStatus != .running {
+                runMeasurementSetSummary()
+            }
+        }
+        .onChange(of: summaryFormat) { _ in
+            if explorerMode == .summary {
+                runMeasurementSetSummary()
+            }
+        }
     }
 
     private var plotState: MeasurementSetExplorerPlotState {
@@ -3631,19 +4726,39 @@ struct MeasurementSetPlotPanel: View {
         return result
     }
 
-    private var plotCommandBar: some View {
+    private var explorerCommandBar: some View {
         HStack(spacing: 10) {
-            Picker("Plot", selection: Binding(
-                get: { plotState.preset },
-                set: { store.setMeasurementSetPlotPreset($0, datasetID: dataset.id) }
-            )) {
-                ForEach(MeasurementSetExplorerPlotPreset.allCases) { preset in
-                    Text(preset.title).tag(preset)
+            Picker("View", selection: $explorerMode) {
+                ForEach(MeasurementSetExplorerMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
                 }
             }
             .labelsHidden()
-            .frame(width: 220)
-            .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
+            .pickerStyle(.segmented)
+            .frame(width: 170)
+            .accessibilityIdentifier("msExplore.mode.\(dataset.id)")
+
+            if explorerMode == .plots {
+                Picker("Plot", selection: Binding(
+                    get: { plotState.preset },
+                    set: { store.setMeasurementSetPlotPreset($0, datasetID: dataset.id) }
+                )) {
+                    ForEach(MeasurementSetExplorerPlotPreset.menuCases) { preset in
+                        Text(preset.title).tag(preset)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+                .accessibilityIdentifier("msPlot.preset.\(dataset.id)")
+            } else {
+                Picker("Format", selection: $summaryFormat) {
+                    Text("Text").tag("text")
+                    Text("JSON").tag("json")
+                }
+                .labelsHidden()
+                .frame(width: 105)
+                .accessibilityIdentifier("msSummary.format.\(dataset.id)")
+            }
 
             Button {
                 showingAdvancedSetup.toggle()
@@ -3658,13 +4773,31 @@ struct MeasurementSetPlotPanel: View {
             }
             .accessibilityIdentifier("msPlot.selections.\(dataset.id)")
 
-            Button {
-                store.runMeasurementSetPlot(datasetID: dataset.id)
-            } label: {
-                Label(plotState.status == .running ? "Generating" : "Generate", systemImage: "play.fill")
+            if explorerMode == .summary {
+                Button {
+                    runMeasurementSetSummary()
+                } label: {
+                    Label(summaryStatus == .running ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(summaryStatus == .running)
+                .accessibilityIdentifier("msSummary.refresh.\(dataset.id)")
+
+                Button {
+                    saveMeasurementSetSummary()
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .disabled(summaryResult == nil || summaryResult?.format != summaryFormat)
+                .accessibilityIdentifier("msSummary.save.\(dataset.id)")
+            } else {
+                Button {
+                    store.runMeasurementSetPlot(datasetID: dataset.id)
+                } label: {
+                    Label(plotState.status == .running ? "Generating" : "Generate", systemImage: "play.fill")
+                }
+                .disabled(plotState.status == .running)
+                .accessibilityIdentifier("msPlot.generate.\(dataset.id)")
             }
-            .disabled(plotState.status == .running)
-            .accessibilityIdentifier("msPlot.generate.\(dataset.id)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -3851,6 +4984,29 @@ struct MeasurementSetPlotPanel: View {
             .disabled(plotState.preset == .uvCoverage)
             .accessibilityIdentifier("msPlot.dataColumn.\(dataset.id)")
 
+            Picker("Color By", selection: Binding(
+                get: { plotState.colorBy },
+                set: { store.setMeasurementSetPlotColorBy($0, datasetID: dataset.id) }
+            )) {
+                ForEach(MeasurementSetPlotColorAxis.allCases) { axis in
+                    Text(axis.title).tag(axis)
+                }
+            }
+            .help("CASA plotms color/group axis. Field groups source fields; Baseline groups antenna pairs; None draws one series.")
+            .accessibilityIdentifier("msPlot.colorBy.\(dataset.id)")
+
+            Picker("Iterate by", selection: Binding<MeasurementSetPlotIterationAxis?>(
+                get: { plotState.iterationAxis },
+                set: { store.setMeasurementSetPlotIterationAxis($0, datasetID: dataset.id) }
+            )) {
+                Text("None").tag(nil as MeasurementSetPlotIterationAxis?)
+                ForEach(MeasurementSetPlotIterationAxis.allCases) { axis in
+                    Text(axis.title).tag(Optional(axis))
+                }
+            }
+            .help("CASA plotms Page tab Iteration Axis. Field splits amplitude/UV-distance plots into one panel per source field.")
+            .accessibilityIdentifier("msPlot.iterationAxis.\(dataset.id)")
+
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("Max plotted points")
@@ -3947,6 +5103,127 @@ struct MeasurementSetPlotPanel: View {
     private var plotSurface: some View {
         plotDocumentSurface
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var summarySurface: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ListObs Summary")
+                        .workbenchFont(.headline)
+                    Text(summaryResult?.selectionSummary ?? "CASA-style MeasurementSet metadata")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if summaryStatus == .running {
+                    ProgressView()
+                        .scaleEffect(0.75)
+                }
+            }
+
+            if let summaryError {
+                Text(summaryError)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let summaryResult {
+                ScrollView([.vertical, .horizontal]) {
+                    Text(summaryResult.summaryText)
+                        .workbenchFont(.caption, design: .monospaced)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(12)
+                }
+                .background(Color(nsColor: .textBackgroundColor))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.20)))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                if let diagnostic = summaryResult.diagnostics.first {
+                    Text(diagnostic)
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.20)))
+                    VStack(spacing: 10) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .workbenchFont(.largeTitle)
+                        Text(summaryStatus == .running ? "Reading MeasurementSet summary" : "No summary loaded")
+                            .workbenchFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .padding(.top, 76)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityIdentifier("msSummary.document.\(dataset.id)")
+    }
+
+    private func runMeasurementSetSummary() {
+        let request = MeasurementSetSummaryBuildRequest(
+            datasetPath: dataset.path,
+            format: summaryFormat,
+            field: selectorToken(plotState.selectedField),
+            spectralWindow: spectralWindowSelectorToken(plotState),
+            timerange: plotState.selectedTimerange,
+            uvRange: plotState.selectedUVRange,
+            antenna: plotState.selectedAntenna,
+            scan: plotState.selectedScan,
+            correlation: selectorToken(plotState.selectedCorrelation),
+            array: plotState.selectedArray,
+            observation: plotState.selectedObservation,
+            intent: plotState.selectedIntent,
+            feed: plotState.selectedFeed,
+            msselect: plotState.selectedMSSelect
+        )
+        summaryStatus = .running
+        summaryError = nil
+        summaryResult = nil
+        Task {
+            do {
+                let result = try summaryClient.buildSummary(request: request)
+                await MainActor.run {
+                    summaryResult = result
+                    summaryStatus = .ready
+                    summaryError = nil
+                }
+            } catch {
+                await MainActor.run {
+                    summaryStatus = .failed
+                    summaryError = "\(error)"
+                }
+            }
+        }
+    }
+
+    private func saveMeasurementSetSummary() {
+        guard let summaryResult else { return }
+        let panel = NSSavePanel()
+        panel.title = "Save MeasurementSet Summary"
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.directoryURL = URL(fileURLWithPath: dataset.path).deletingLastPathComponent()
+        panel.nameFieldStringValue = "\(dataset.name)-listobs.\(summaryFileExtension)"
+        panel.allowedContentTypes = summaryFormat == "json" ? [.json] : [.plainText]
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try summaryResult.summaryText.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                summaryError = "Save failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private var summaryFileExtension: String {
+        summaryFormat == "json" ? "json" : "txt"
     }
 
     private func selectionTextField(
@@ -5067,6 +6344,34 @@ struct MeasurementSetPlotPanel: View {
         return String(format: "%.6g", value)
     }
 
+    private func selectorToken(_ value: String?) -> String? {
+        guard let value = normalizedPickerValue(value) else {
+            return nil
+        }
+        if let colon = value.firstIndex(of: ":") {
+            return String(value[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value
+    }
+
+    private func spectralWindowSelectorToken(_ plotState: MeasurementSetExplorerPlotState) -> String? {
+        guard let spectralWindow = selectorToken(plotState.selectedSpectralWindow) else {
+            return nil
+        }
+        guard let channelSelection = plotState.selectedChannelSelection, !channelSelection.isEmpty else {
+            return spectralWindow
+        }
+        return "\(spectralWindow):\(channelSelection)"
+    }
+
+    private func normalizedPickerValue(_ value: String?) -> String? {
+        let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let normalized, !normalized.isEmpty, normalized != "all" else {
+            return nil
+        }
+        return normalized
+    }
+
     @ViewBuilder
     private var plotMetadata: some View {
         if let result = visiblePlotResult {
@@ -5235,12 +6540,13 @@ struct MeasurementSetPlotPanel: View {
 
 struct TaskPanel: View {
     @ObservedObject var store: WorkbenchStore
+    let tab: WorkbenchTab
 
     var body: some View {
         if store.state.isDemoProject {
             fixtureTaskBody
         } else {
-            GenericTaskPanel(store: store)
+            GenericTaskPanel(store: store, tabID: tab.id)
         }
     }
 
@@ -5278,7 +6584,8 @@ struct TaskPanel: View {
                     TaskCatalogBlock(
                         tasks: store.state.taskCatalog,
                         activeTaskID: "calibrate",
-                        categoryFilter: .constant(.all)
+                        categoryFilter: .constant(.all),
+                        searchText: .constant("")
                     )
                     parameterBlock
                     aiProposalBlock
@@ -5395,7 +6702,8 @@ struct DirtyImagingTaskPanel: View {
                         tasks: store.state.taskCatalog,
                         activeTaskID: store.state.activeTaskID,
                         categoryFilter: .constant(.all),
-                        selectTask: store.selectTask
+                        searchText: .constant(""),
+                        selectTask: { store.selectTask($0) }
                     )
                     if let parameters = store.state.dirtyImagingTaskParameters {
                         selectionBlock(parameters: parameters)
@@ -5822,18 +7130,29 @@ private struct TaskParameterGroup: Identifiable {
 
 struct GenericTaskPanel: View {
     @ObservedObject var store: WorkbenchStore
+    let tabID: String
     @State private var showingTaskList = true
+    @State private var taskSearchText = ""
     @State private var categoryFilter: CasaTaskCategoryFilter = .all
+    @State private var activeGenericSelectionHelper: String?
+    @State private var genericChannelStartText = ""
+    @State private var genericChannelEndText = ""
+    @State private var genericChannelStepText = ""
+    @State private var showingAdvancedParameters = false
     private let parameterGridColumns = [
         GridItem(.adaptive(minimum: 260), alignment: .topLeading)
     ]
 
     private var task: TaskCatalogEntry? {
-        store.state.taskCatalog.first { $0.id == store.state.activeTaskID }
+        store.state.taskCatalog.first { $0.id == activeTaskID }
     }
 
     private var schema: TaskUISchema? {
-        store.state.taskUISchemas[store.state.activeTaskID]
+        store.state.taskUISchemas[activeTaskID]
+    }
+
+    private var activeTaskID: String {
+        store.taskID(forTab: tabID)
     }
 
     var body: some View {
@@ -5855,6 +7174,7 @@ struct GenericTaskPanel: View {
                     .accessibilityIdentifier("task.change")
                 }
                 Button {
+                    store.selectTask(activeTaskID, tabID: tabID)
                     store.runTask()
                 } label: {
                     Label(store.state.taskRun.state == .running ? "Running" : "Run", systemImage: "play.fill")
@@ -5863,7 +7183,7 @@ struct GenericTaskPanel: View {
                     showingTaskList
                         || store.state.taskRun.state == .running
                         || schema == nil
-                        || (store.taskRequiresConfirmation() && !store.taskHasConfirmation())
+                        || (store.taskRequiresConfirmation(taskID: activeTaskID) && !store.taskHasConfirmation(taskID: activeTaskID))
                 )
 
                 Button {
@@ -5881,10 +7201,11 @@ struct GenericTaskPanel: View {
                     if showingTaskList {
                         TaskCatalogBlock(
                             tasks: filteredTasks,
-                            activeTaskID: store.state.activeTaskID,
-                            categoryFilter: $categoryFilter
+                            activeTaskID: activeTaskID,
+                            categoryFilter: $categoryFilter,
+                            searchText: $taskSearchText
                         ) { taskID in
-                            store.selectTask(taskID)
+                            store.selectTask(taskID, tabID: tabID)
                             showingTaskList = false
                         }
                     } else if let schema {
@@ -5903,15 +7224,53 @@ struct GenericTaskPanel: View {
             }
         }
         .task {
-            store.loadTaskUISchemaIfNeeded()
+            if !activeTaskID.isEmpty {
+                store.loadTaskUISchemaIfNeeded(activeTaskID)
+            }
+        }
+        .onAppear {
+            revealActiveTaskIfNeeded()
+        }
+        .onChange(of: activeTaskID) { _ in
+            revealActiveTaskIfNeeded()
         }
     }
 
+    private var activeTaskWasPreparedOutsideCatalog: Bool {
+        guard !activeTaskID.isEmpty else {
+            return false
+        }
+        if activeTaskID != "imager" {
+            return true
+        }
+        if let values = store.state.genericTaskValues[activeTaskID], !values.isEmpty {
+            return true
+        }
+        if let toggles = store.state.genericTaskToggles[activeTaskID], !toggles.isEmpty {
+            return true
+        }
+        return false
+    }
+
+    private func revealActiveTaskIfNeeded() {
+        guard activeTaskWasPreparedOutsideCatalog else { return }
+        showingTaskList = false
+    }
+
     private var filteredTasks: [TaskCatalogEntry] {
-        store.state.taskCatalog
+        let query = taskSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return store.state.taskCatalog
             .filter { $0.showInSwift }
             .filter { !Self.explorerTaskIDs.contains($0.id) }
             .filter { categoryFilter.matches(task: $0) }
+            .filter { task in
+                query.isEmpty
+                    || task.displayName.lowercased().contains(query)
+                    || task.id.lowercased().contains(query)
+                    || task.category.lowercased().contains(query)
+                    || task.binaryName.lowercased().contains(query)
+                    || task.shellKind.lowercased().contains(query)
+            }
             .sorted {
                 let ordering = $0.displayName.localizedCaseInsensitiveCompare($1.displayName)
                 if ordering == .orderedSame {
@@ -5925,9 +7284,22 @@ struct GenericTaskPanel: View {
 
     private func genericParameterBlock(schema: TaskUISchema) -> some View {
         let groups = parameterGroups(for: schema)
+        let hiddenAdvancedCount = schema.arguments
+            .filter { !$0.hiddenInTUI && $0.advanced && !shouldRevealAdvancedArgument($0) }
+            .count
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Parameters")
-                .workbenchFont(.headline)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Parameters")
+                    .workbenchFont(.headline)
+                Spacer()
+                if hiddenAdvancedCount > 0 {
+                    Toggle("Advanced", isOn: $showingAdvancedParameters)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .help("Show less common parameters. CASA exposes many of these only after selecting related modes.")
+                        .accessibilityIdentifier("task.parameters.advanced")
+                }
+            }
             ForEach(groups) { group in
                 VStack(alignment: .leading, spacing: 6) {
                     if groups.count > 1 {
@@ -5949,6 +7321,7 @@ struct GenericTaskPanel: View {
     private func parameterGroups(for schema: TaskUISchema) -> [TaskParameterGroup] {
         let arguments = schema.arguments
             .filter { !$0.hiddenInTUI }
+            .filter { shouldShowArgument($0) }
             .sorted { $0.order < $1.order }
         var groups: [TaskParameterGroup] = []
         for argument in arguments {
@@ -5963,10 +7336,72 @@ struct GenericTaskPanel: View {
         return groups
     }
 
+    private func shouldShowArgument(_ argument: TaskUIArgument) -> Bool {
+        if activeTaskID == "imager",
+           ["niter", "threshold_jy"].contains(argument.id),
+            genericTaskToggle("dirty_only") {
+            return false
+        }
+        return !argument.advanced
+            || showingAdvancedParameters
+            || shouldRevealAdvancedArgument(argument)
+    }
+
+    private func shouldRevealAdvancedArgument(_ argument: TaskUIArgument) -> Bool {
+        guard activeTaskID == "imager" else {
+            return hasNonDefaultGenericValue(argument)
+        }
+
+        switch argument.id {
+        case "robust":
+            return ["briggs", "briggsbwtaper"].contains(genericTaskValue("weighting"))
+        case "start", "width", "outframe", "veltype", "interpolation", "restfreq", "restoringbeam",
+             "channel_start", "channel_count", "perchanweightdensity":
+            return ["cube", "cubedata"].contains(genericTaskValue("specmode"))
+        case "nterms":
+            return genericTaskValue("deconvolver") == "mtmfs"
+        case "scales", "smallscalebias":
+            return genericTaskValue("deconvolver") == "multiscale"
+        case "sidelobethreshold", "noisethreshold", "lownoisethreshold", "negativethreshold",
+             "minbeamfrac", "growiterations":
+            return genericTaskValue("usemask") == "auto-multithresh"
+        case "wprojplanes":
+            return genericTaskValue("gridder") == "wproject" || genericTaskValue("wterm") == "wproject"
+        case "usepointing":
+            return ["mosaic", "awproject", "awp2", "awphpg"].contains(genericTaskValue("gridder"))
+        case "pblimit", "pbcor":
+            return genericTaskToggle("write_pb") || genericTaskToggle("pbcor") || ["mosaic", "awproject", "awp2", "awphpg"].contains(genericTaskValue("gridder"))
+        default:
+            return hasNonDefaultGenericValue(argument)
+        }
+    }
+
+    private func hasNonDefaultGenericValue(_ argument: TaskUIArgument) -> Bool {
+        if argument.parser.kind == "toggle" {
+            let current = genericTaskToggle(argument.id)
+            let defaultValue = argument.default == "true"
+            return current != defaultValue
+        }
+        let current = genericTaskValue(argument.id)
+        let defaultValue = argument.default ?? ""
+        return !current.isEmpty && current != defaultValue
+    }
+
+    private func genericTaskValue(_ argumentID: String) -> String {
+        store.state.genericTaskValues[activeTaskID]?[argumentID]
+            ?? schema?.arguments.first { $0.id == argumentID }?.default
+            ?? ""
+    }
+
+    private func genericTaskToggle(_ argumentID: String) -> Bool {
+        store.state.genericTaskToggles[activeTaskID]?[argumentID]
+            ?? (schema?.arguments.first { $0.id == argumentID }?.default == "true")
+    }
+
     @ViewBuilder
     private var genericSafetyBlock: some View {
-        if store.taskRequiresConfirmation() {
-            let taskID = store.state.activeTaskID
+        if store.taskRequiresConfirmation(taskID: activeTaskID) {
+            let taskID = activeTaskID
             let confirmed = Binding(
                 get: { store.taskHasConfirmation(taskID: taskID) },
                 set: { store.setGenericTaskConfirmation(taskID: taskID, confirmed: $0) }
@@ -5987,7 +7422,7 @@ struct GenericTaskPanel: View {
 
     @ViewBuilder
     private func genericControl(argument: TaskUIArgument) -> some View {
-        let taskID = store.state.activeTaskID
+        let taskID = activeTaskID
         let value = Binding(
             get: { store.state.genericTaskValues[taskID]?[argument.id] ?? argument.default ?? "" },
             set: { store.setGenericTaskValue(taskID: taskID, argumentID: argument.id, value: $0) }
@@ -6008,8 +7443,36 @@ struct GenericTaskPanel: View {
                 Text(label)
                     .workbenchFont(.caption, weight: .semibold)
                     .foregroundStyle(.secondary)
-                if isPathArgument(argument) {
-                    pathControl(argument: argument, value: pathValueBinding(rawValue: value), choices: selectableChoices)
+                if isRegionArgument(argument) {
+                    DatasetPathInputControl(
+                        store: store,
+                        label: label,
+                        value: value,
+                        help: argument.help,
+                        choices: datasetPathChoices(for: argument),
+                        browseParameterType: argument.parameterType,
+                        canBrowse: true,
+                        actionTitle: nil,
+                        actionSystemImage: "folder",
+                        allowInlineSyntax: true,
+                        syncSelectedRegion: false,
+                        onAction: nil
+                    )
+                } else if isPathArgument(argument) {
+                    DatasetPathInputControl(
+                        store: store,
+                        label: label,
+                        value: value,
+                        help: argument.help,
+                        choices: datasetPathChoices(for: argument),
+                        browseParameterType: argument.parameterType,
+                        canBrowse: canBrowse(argument: argument),
+                        actionTitle: nil,
+                        actionSystemImage: "folder",
+                        allowInlineSyntax: false,
+                        syncSelectedRegion: false,
+                        onAction: nil
+                    )
                 } else if !selectableChoices.isEmpty {
                     Picker(label, selection: value) {
                         ForEach(selectableChoices, id: \.self) { choice in
@@ -6018,52 +7481,307 @@ struct GenericTaskPanel: View {
                     }
                     .labelsHidden()
                     .help(argument.help)
+                } else if isChannelSelectionArgument(argument) {
+                    genericChannelSelectionControl(label: label, value: value, argument: argument)
                 } else {
-                    TextField(label, text: value)
+                    TextField(prompt(for: argument), text: value)
                         .textFieldStyle(.roundedBorder)
-                        .help(argument.help)
+                        .help(helpText(for: argument))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    @ViewBuilder
-    private func pathControl(
-        argument: TaskUIArgument,
+    private func genericChannelSelectionControl(
+        label: String,
         value: Binding<String>,
-        choices: [String]
+        argument: TaskUIArgument
     ) -> some View {
-        if !choices.isEmpty || canBrowse(argument: argument) {
+        let limit = genericImageChannelLimit()
+        let isValid = isValidGenericChannelSelection(value.wrappedValue, channelLimit: limit)
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                if !choices.isEmpty {
-                    Picker(displayLabel(for: argument), selection: value) {
-                        ForEach(choices, id: \.self) { choice in
-                            Text(displayPath(choice)).tag(displayPath(choice))
-                        }
-                    }
-                    .labelsHidden()
-                } else {
-                    TextField(displayLabel(for: argument), text: value)
-                        .textFieldStyle(.roundedBorder)
+                TextField(label, text: value)
+                    .textFieldStyle(.roundedBorder)
+                    .foregroundStyle(isValid ? Color.primary : Color.red)
+                    .help(helpText(for: argument))
+                Button {
+                    populateGenericChannelFieldsForHelper(from: value.wrappedValue)
+                    activeGenericSelectionHelper = argument.id
+                } label: {
+                    Image(systemName: "number")
                 }
-                if canBrowse(argument: argument) {
-                    Button {
-                        if let url = TaskParameterOpenPanel.choosePath(parameterType: argument.parameterType) {
-                            value.wrappedValue = displayPath(url.path)
+                .buttonStyle(.borderless)
+                .help("Build a CASA channel selector from the selected image channel range.")
+                .popover(isPresented: Binding(
+                    get: { activeGenericSelectionHelper == argument.id },
+                    set: { isPresented in
+                        if !isPresented && activeGenericSelectionHelper == argument.id {
+                            activeGenericSelectionHelper = nil
                         }
-                    } label: {
-                        Image(systemName: "folder")
                     }
-                    .buttonStyle(.borderless)
-                    .help("Choose \(displayLabel(for: argument))")
+                )) {
+                    genericChannelHelperPopover(text: value)
                 }
             }
-            .help(argument.help)
+            if let limit {
+                Text("Valid channels: 0 through \(max(0, limit - 1))")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                Text(genericChannelSelectionSummary(value.wrappedValue, channelLimit: limit))
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func genericChannelHelperPopover(text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Builds CASA channel syntax such as 4~12 or 0~14^2 from the selected image shape. Leave blank for all channels.")
+                .workbenchFont(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let limit = genericImageChannelLimit() {
+                Text("Valid channel IDs: 0 through \(max(0, limit - 1))")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                Text(genericChannelSelectionSummary(text.wrappedValue, channelLimit: limit))
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Select an image with a known spectral axis to validate the range.")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                TextField("start", text: $genericChannelStartText)
+                    .textFieldStyle(.roundedBorder)
+                Text("to")
+                    .foregroundStyle(.secondary)
+                TextField("end", text: $genericChannelEndText)
+                    .textFieldStyle(.roundedBorder)
+                Text("step")
+                    .foregroundStyle(.secondary)
+                TextField("1", text: $genericChannelStepText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 48)
+            }
+            HStack {
+                Button("Apply range") {
+                    applyGenericChannelSelection(text: text)
+                }
+                Button("Clear") {
+                    genericChannelStartText = ""
+                    genericChannelEndText = ""
+                    genericChannelStepText = ""
+                    text.wrappedValue = ""
+                }
+                Spacer()
+                Button("All") {
+                    text.wrappedValue = ""
+                    populateGenericChannelFieldsForHelper(from: "")
+                }
+            }
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(genericChannelSelectionOptions) { option in
+                        Button(option.label) {
+                            text.wrappedValue = option.value
+                            populateGenericChannelFieldsForHelper(from: option.value)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 150)
+        }
+        .padding(12)
+        .frame(width: 420, alignment: .leading)
+        .onAppear {
+            populateGenericChannelFieldsForHelper(from: text.wrappedValue)
+        }
+    }
+
+    private var genericChannelSelectionOptions: [SelectionHelperOption] {
+        guard let limit = genericImageChannelLimit(), limit > 0 else {
+            return [SelectionHelperOption(label: "All channels", value: "")]
+        }
+        var options = [SelectionHelperOption(label: "All channels", value: "")]
+        options.append(SelectionHelperOption(label: "First channel", value: "0"))
+        if limit > 1 {
+            options.append(SelectionHelperOption(label: "All explicit", value: "0~\(limit - 1)"))
+        }
+        if limit >= 8 {
+            let start = limit / 4
+            let end = max(start, (limit * 3 / 4) - 1)
+            options.append(SelectionHelperOption(label: "Middle half", value: "\(start)~\(end)"))
+        }
+        if limit >= 16 {
+            options.append(SelectionHelperOption(label: "Every fourth", value: "0~\(limit - 1)^4"))
+        }
+        return options
+    }
+
+    private func applyGenericChannelSelection(text: Binding<String>) {
+        let start = genericChannelStartText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let end = genericChannelEndText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let step = genericChannelStepText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !start.isEmpty, Int(start) != nil else {
+            return
+        }
+        let candidate: String
+        if end.isEmpty {
+            candidate = start
+        } else if step.isEmpty || step == "1" {
+            candidate = "\(start)~\(end)"
         } else {
-            TextField(displayLabel(for: argument), text: value)
-                .textFieldStyle(.roundedBorder)
-                .help(argument.help)
+            candidate = "\(start)~\(end)^\(step)"
+        }
+        if isValidGenericChannelSelection(candidate, channelLimit: genericImageChannelLimit()) {
+            text.wrappedValue = candidate
+        }
+    }
+
+    private func populateGenericChannelFields(from value: String) {
+        let first = value
+            .split(whereSeparator: { $0 == ";" || $0 == "," })
+            .first
+            .map(String.init) ?? ""
+        guard !first.isEmpty else {
+            genericChannelStartText = ""
+            genericChannelEndText = ""
+            genericChannelStepText = ""
+            return
+        }
+        let stepped = first.split(separator: "^", omittingEmptySubsequences: false)
+        genericChannelStepText = stepped.count == 2 ? String(stepped[1]) : ""
+        let range = stepped[0].split(separator: "~", omittingEmptySubsequences: false)
+        genericChannelStartText = range.first.map(String.init) ?? ""
+        genericChannelEndText = range.count == 2 ? String(range[1]) : ""
+    }
+
+    private func populateGenericChannelFieldsForHelper(from value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty else {
+            populateGenericChannelFields(from: value)
+            return
+        }
+        genericChannelStartText = "0"
+        genericChannelEndText = genericImageChannelLimit().map { String(max(0, $0 - 1)) } ?? ""
+        genericChannelStepText = ""
+    }
+
+    private func genericChannelSelectionSummary(_ value: String, channelLimit: Int) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return "Current selector: all channels (0~\(max(0, channelLimit - 1)))"
+        }
+        return "Current selector: \(trimmed)"
+    }
+
+    private func isValidGenericChannelSelection(_ value: String, channelLimit: Int?) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let channelLimit, channelLimit > 0 else {
+            return true
+        }
+        return trimmed
+            .split(whereSeparator: { $0 == ";" || $0 == "," })
+            .allSatisfy { rawPart in
+                let part = String(rawPart).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !part.isEmpty else { return false }
+                let stepped = part.split(separator: "^", omittingEmptySubsequences: false)
+                guard stepped.count <= 2 else { return false }
+                if stepped.count == 2 {
+                    guard let step = Int(stepped[1]), step > 0 else { return false }
+                }
+                let rangeParts = stepped[0].split(separator: "~", omittingEmptySubsequences: false)
+                if rangeParts.count == 1, let channel = Int(rangeParts[0]) {
+                    return channel >= 0 && channel < channelLimit
+                }
+                guard rangeParts.count == 2,
+                      let start = Int(rangeParts[0]),
+                      let end = Int(rangeParts[1])
+                else {
+                    return false
+                }
+                return start >= 0 && start <= end && end < channelLimit
+            }
+    }
+
+    private func isChannelSelectionArgument(_ argument: TaskUIArgument) -> Bool {
+        argument.id == "chans" || argument.parameterType == "channel_selector"
+    }
+
+    private func prompt(for argument: TaskUIArgument) -> String {
+        switch argument.id {
+        case "chans":
+            return "4~12 or 0~14^2"
+        case "includepix":
+            return "0.03,100"
+        default:
+            if let metavar = argument.parser.metavar?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !metavar.isEmpty {
+                return metavar
+            }
+            return displayLabel(for: argument)
+        }
+    }
+
+    private func helpText(for argument: TaskUIArgument) -> String {
+        let base = argument.help.trimmingCharacters(in: .whitespacesAndNewlines)
+        let example: String?
+        switch argument.id {
+        case "chans":
+            example = "Accepted channel syntax: single channel 4, inclusive range 4~12, or stepped range 0~14^2. Leave blank for all channels."
+        case "includepix":
+            example = "Accepted pixel range syntax: min,max, for example 0.03,100. Pixels outside the inclusive range are excluded."
+        default:
+            example = nil
+        }
+        guard let example else {
+            return base
+        }
+        return base.isEmpty ? example : "\(base) \(example)"
+    }
+
+    private func genericImageChannelLimit() -> Int? {
+        guard let dataset = genericImageDataset(), dataset.shape.count >= 3 else {
+            return nil
+        }
+        let nonSpatialAxes = dataset.shape.dropFirst(2)
+        if let spectralLikeAxis = nonSpatialAxes.reversed().first(where: { $0 > 1 }) {
+            return Int(spectralLikeAxis)
+        }
+        return 1
+    }
+
+    private func genericImageDataset() -> DatasetSummary? {
+        guard let schema else {
+            return store.state.selectedDataset?.kind == .imageCube ? store.state.selectedDataset : nil
+        }
+        let values = store.state.genericTaskValues[schema.commandID] ?? [:]
+        let imageArgument = schema.arguments.first { argument in
+            argument.id == "imagename"
+                || argument.id == "image_path"
+                || argument.parameterType == "image_path"
+        }
+        if let argument = imageArgument,
+           let value = values[argument.id],
+           let dataset = imageDataset(matching: value) {
+            return dataset
+        }
+        return store.state.selectedDataset?.kind == .imageCube ? store.state.selectedDataset : nil
+    }
+
+    private func imageDataset(matching value: String) -> DatasetSummary? {
+        let absolute = absolutePath(fromDisplayedPath: value)
+        let standardized = URL(fileURLWithPath: absolute).standardizedFileURL.path
+        return store.state.project.datasets.first { dataset in
+            guard dataset.kind == .imageCube else { return false }
+            let datasetPath = URL(fileURLWithPath: dataset.path).standardizedFileURL.path
+            return datasetPath == standardized || dataset.name == value
         }
     }
 
@@ -6082,6 +7800,22 @@ struct GenericTaskPanel: View {
                 .map(\.path)
             if !images.isEmpty {
                 return images
+            }
+        }
+        if argument.parameterType == "fits_path" {
+            let fits = store.state.project.datasets
+                .filter(isFitsDataset)
+                .map(\.path)
+            if !fits.isEmpty {
+                return fits
+            }
+        }
+        if argument.parameterType == "region_path_or_box" || argument.id == "region" {
+            let regions = store.state.project.datasets
+                .filter { $0.kind == .region }
+                .map(\.path)
+            if !regions.isEmpty {
+                return regions
             }
         }
         if ["table_path", "calibration_table_path"].contains(argument.parameterType ?? "") {
@@ -6133,6 +7867,24 @@ struct GenericTaskPanel: View {
         return argument.parser.choices ?? []
     }
 
+    private func datasetPathChoices(for argument: TaskUIArgument) -> [DatasetPathChoice] {
+        choices(for: argument).map { path in
+            DatasetPathChoice(name: displayPath(path), path: storedPathValue(fromDisplayedPath: path))
+        }
+    }
+
+    private func isFitsDataset(_ dataset: DatasetSummary) -> Bool {
+        guard dataset.kind == .runProduct else {
+            return false
+        }
+        switch URL(fileURLWithPath: dataset.path).pathExtension.lowercased() {
+        case "fits", "fit", "fts":
+            return true
+        default:
+            return false
+        }
+    }
+
     private func displayLabel(for argument: TaskUIArgument) -> String {
         let label = argument.label.trimmingCharacters(in: .whitespacesAndNewlines)
         if !label.isEmpty {
@@ -6150,18 +7902,53 @@ struct GenericTaskPanel: View {
         argument.valueKind == "path" || argument.parameterType?.contains("path") == true
     }
 
+    private func isRegionArgument(_ argument: TaskUIArgument) -> Bool {
+        argument.parameterType == "region_path_or_box" || argument.id == "region"
+    }
+
     private func canBrowse(argument: TaskUIArgument) -> Bool {
         guard isPathArgument(argument) else {
             return false
         }
-        return argument.parameterType?.hasPrefix("output_") != true
+        return true
+    }
+
+    private func taskPathChooserRoot() -> URL? {
+        let root = store.state.project.rootPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else {
+            return nil
+        }
+        return URL(fileURLWithPath: (root as NSString).expandingTildeInPath, isDirectory: true)
+            .standardizedFileURL
     }
 
     private func pathValueBinding(rawValue: Binding<String>) -> Binding<String> {
         Binding(
             get: { displayPath(rawValue.wrappedValue) },
-            set: { rawValue.wrappedValue = absolutePath(fromDisplayedPath: $0) }
+            set: { rawValue.wrappedValue = storedPathValue(fromDisplayedPath: $0) }
         )
+    }
+
+    private func pathDisplayBinding(rawValue: Binding<String>, argument: TaskUIArgument) -> Binding<String> {
+        guard argument.parameterType == "region_path_or_box" else {
+            return pathValueBinding(rawValue: rawValue)
+        }
+        return Binding(
+            get: {
+                isInlineRegionSyntax(rawValue.wrappedValue) ? rawValue.wrappedValue : displayPath(rawValue.wrappedValue)
+            },
+            set: { value in
+                rawValue.wrappedValue = isInlineRegionSyntax(value) ? value : storedPathValue(fromDisplayedPath: value)
+            }
+        )
+    }
+
+    private func isInlineRegionSyntax(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.hasPrefix("box[[")
+            || trimmed.hasPrefix("poly [[")
+            || trimmed.hasPrefix("box:")
+            || trimmed.hasPrefix("pixelbox(")
     }
 
     private func displayPath(_ path: String) -> String {
@@ -6185,6 +7972,18 @@ struct GenericTaskPanel: View {
             return String(absolutePath.dropFirst(prefix.count))
         }
         return path
+    }
+
+    private func storedPathValue(fromDisplayedPath path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return path
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return displayPath(expanded)
+        }
+        return trimmed
     }
 
     private func absolutePath(fromDisplayedPath path: String) -> String {
@@ -6216,8 +8015,28 @@ struct GenericTaskPanel: View {
             valueList("Log", values: store.state.taskRun.logLines)
             valueList("Diagnostics", values: store.state.taskRun.diagnostics)
             valueList("Products", values: store.state.taskRun.products.map(displayPath))
+            Button {
+                saveTaskOutput()
+            } label: {
+                Label("Save Output...", systemImage: "square.and.arrow.down")
+            }
+            .disabled(!store.hasSaveableActiveTaskOutput())
+            .help("Save the latest task output to a file")
         }
         .taskCard()
+    }
+
+    private func saveTaskOutput() {
+        let panel = NSSavePanel()
+        panel.title = "Save Task Output"
+        panel.prompt = "Save"
+        panel.directoryURL = URL(fileURLWithPath: store.taskOutputSaveDirectory(), isDirectory: true)
+        panel.nameFieldStringValue = store.taskOutputSaveFilename()
+        panel.canCreateDirectories = true
+        panel.allowedContentTypes = store.taskOutputSaveFilename().hasSuffix(".json") ? [.json] : [.plainText]
+        if panel.runModal() == .OK, let url = panel.url {
+            store.saveActiveTaskOutput(to: url.path)
+        }
     }
 
     private func valueList(_ title: String, values: [String]) -> some View {
@@ -6240,15 +8059,206 @@ struct GenericTaskPanel: View {
     }
 }
 
+private struct DatasetPathChoice: Hashable {
+    let name: String
+    let path: String
+}
+
+private struct DatasetPathInputControl: View {
+    @ObservedObject var store: WorkbenchStore
+    let label: String
+    @Binding var value: String
+    let help: String
+    let choices: [DatasetPathChoice]
+    var browseParameterType: String? = nil
+    let canBrowse: Bool
+    let actionTitle: String?
+    let actionSystemImage: String
+    let allowInlineSyntax: Bool
+    let syncSelectedRegion: Bool
+    let onAction: ((String) -> Void)?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            TextField(label, text: displayBinding)
+                .textFieldStyle(.roundedBorder)
+                .help(helpText)
+
+            if !choices.isEmpty {
+                Menu {
+                    ForEach(choices, id: \.self) { choice in
+                        Button(choice.name) {
+                            value = storedPathValue(fromDisplayedPath: choice.path)
+                        }
+                        .help(displayPath(choice.path))
+                    }
+                } label: {
+                    Image(systemName: "list.bullet.rectangle")
+                }
+                .buttonStyle(.borderless)
+                .help("Use a path from the dataset list")
+            }
+
+            if canBrowse {
+                Button {
+                    if let url = TaskParameterOpenPanel.choosePath(
+                        parameterType: browseParameterType ?? "region_path_or_box",
+                        directoryURL: projectRootURL()
+                    ) {
+                        value = storedPathValue(fromDisplayedPath: url.path)
+                    }
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.borderless)
+                .help("Choose \(label)")
+            }
+
+            if let actionTitle, let onAction {
+                Button {
+                    onAction(resolvedFilePath)
+                } label: {
+                    Label(actionTitle, systemImage: actionSystemImage)
+                }
+                .disabled(resolvedFilePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isInlineRegionSyntax(value))
+                .help("Load the selected region file")
+            }
+        }
+        .onAppear(perform: syncSelectedRegionIfNeeded)
+        .onChange(of: store.state.selectedDataset?.id) { _ in
+            syncSelectedRegionIfNeeded()
+        }
+    }
+
+    private var displayBinding: Binding<String> {
+        Binding(
+            get: {
+                if allowInlineSyntax, isInlineRegionSyntax(value) {
+                    return value
+                }
+                return displayPath(value)
+            },
+            set: { nextValue in
+                if allowInlineSyntax, isInlineRegionSyntax(nextValue) {
+                    value = nextValue
+                } else {
+                    value = storedPathValue(fromDisplayedPath: nextValue)
+                }
+            }
+        )
+    }
+
+    private var resolvedFilePath: String {
+        if allowInlineSyntax, isInlineRegionSyntax(value) {
+            return value
+        }
+        return absolutePath(fromDisplayedPath: value)
+    }
+
+    private var helpText: String {
+        if allowInlineSyntax {
+            return help
+        }
+        return "\(help) Inline CRTF syntax is accepted by analysis tasks, but Image Explorer loading requires a CRTF file."
+    }
+
+    private func syncSelectedRegionIfNeeded() {
+        guard syncSelectedRegion, let selected = store.state.selectedDataset, selected.kind == .region else {
+            return
+        }
+        value = storedPathValue(fromDisplayedPath: selected.path)
+    }
+
+    private func projectRootURL() -> URL? {
+        let root = store.state.project.rootPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else {
+            return nil
+        }
+        return URL(fileURLWithPath: (root as NSString).expandingTildeInPath, isDirectory: true)
+            .standardizedFileURL
+    }
+
+    private func displayPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return path
+        }
+        guard let rootURL = projectRootURL() else {
+            return path
+        }
+        let pathURL = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath).standardizedFileURL
+        let rootPath = rootURL.path
+        let absolutePath = pathURL.path
+        if absolutePath == rootPath {
+            return "."
+        }
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        if absolutePath.hasPrefix(prefix) {
+            return String(absolutePath.dropFirst(prefix.count))
+        }
+        return path
+    }
+
+    private func storedPathValue(fromDisplayedPath path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return path
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return displayPath(expanded)
+        }
+        return trimmed
+    }
+
+    private func absolutePath(fromDisplayedPath path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return path
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return expanded
+        }
+        guard let rootURL = projectRootURL() else {
+            return path
+        }
+        return rootURL.appendingPathComponent(trimmed).standardizedFileURL.path
+    }
+
+    private func isInlineRegionSyntax(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.hasPrefix("box[[")
+            || trimmed.hasPrefix("poly [[")
+            || trimmed.hasPrefix("box:")
+            || trimmed.hasPrefix("pixelbox(")
+    }
+}
+
 private enum TaskParameterOpenPanel {
-    static func choosePath(parameterType: String?) -> URL? {
+    static func choosePath(parameterType: String?, directoryURL: URL?) -> URL? {
+        if isOutputPath(parameterType: parameterType) {
+            let panel = NSSavePanel()
+            panel.prompt = "Choose"
+            panel.message = message(for: parameterType)
+            panel.directoryURL = directoryURL
+            panel.canCreateDirectories = true
+            if isFitsPath(parameterType: parameterType) {
+                panel.allowedContentTypes = ["fit", "fits", "fts"].compactMap { UTType(filenameExtension: $0) }
+            }
+            guard panel.runModal() == .OK, let url = panel.url else {
+                return nil
+            }
+            return url
+        }
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
         panel.message = message(for: parameterType)
+        panel.directoryURL = directoryURL
         panel.canChooseDirectories = acceptsDirectories(parameterType: parameterType)
         panel.canChooseFiles = acceptsFiles(parameterType: parameterType)
-        if parameterType == "fits_path" {
+        if isFitsPath(parameterType: parameterType) {
             panel.allowedContentTypes = ["fit", "fits", "fts"].compactMap { UTType(filenameExtension: $0) }
         }
         guard panel.runModal() == .OK, let url = panel.url else {
@@ -6273,6 +8283,16 @@ private enum TaskParameterOpenPanel {
             return "Choose a CASA table directory."
         case "fits_path":
             return "Choose a FITS file."
+        case "output_fits_path":
+            return "Choose where to write the FITS file."
+        case "output_image_path":
+            return "Choose where to write the CASA image directory."
+        case "output_measurement_set_path":
+            return "Choose where to write the MeasurementSet directory."
+        case "output_calibration_table_path":
+            return "Choose where to write the calibration table directory."
+        case "region_path_or_box":
+            return "Choose a CASA CRTF region file, or type inline CRTF such as box[[100pix,100pix],[150pix,150pix]] or poly [[100pix,100pix],...]."
         default:
             return "Choose a path."
         }
@@ -6280,7 +8300,7 @@ private enum TaskParameterOpenPanel {
 
     private static func acceptsDirectories(parameterType: String?) -> Bool {
         switch parameterType {
-        case "fits_path":
+        case "fits_path", "output_fits_path":
             return false
         default:
             return true
@@ -6300,7 +8320,7 @@ private enum TaskParameterOpenPanel {
         switch parameterType {
         case "measurement_set_path":
             return isDirectory(url) && url.pathExtension.localizedCaseInsensitiveCompare("ms") == .orderedSame
-        case "fits_path":
+        case "fits_path", "output_fits_path":
             return ["fit", "fits", "fts"].contains(url.pathExtension.lowercased())
         case "image_path", "calibration_table_path", "table_path":
             return isDirectory(url)
@@ -6313,12 +8333,21 @@ private enum TaskParameterOpenPanel {
         var isDirectory = ObjCBool(false)
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
+
+    private static func isOutputPath(parameterType: String?) -> Bool {
+        parameterType?.hasPrefix("output_") == true
+    }
+
+    private static func isFitsPath(parameterType: String?) -> Bool {
+        parameterType == "fits_path" || parameterType == "output_fits_path"
+    }
 }
 
 struct TaskCatalogBlock: View {
     var tasks: [TaskCatalogEntry]
     var activeTaskID: String
     @Binding var categoryFilter: CasaTaskCategoryFilter
+    @Binding var searchText: String
     var selectTask: ((String) -> Void)? = nil
     private static let explorerTaskIDs: Set<String> = ["imexplore", "msexplore", "tablebrowser"]
 
@@ -6334,6 +8363,16 @@ struct TaskCatalogBlock: View {
                 }
             }
             .accessibilityIdentifier("task.categoryFilter")
+
+            TextField("Search tasks", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .help("Filter tasks by name, id, category, or summary.")
+                .accessibilityIdentifier("task.search")
+
+            if taskRows.isEmpty {
+                Text("No matching tasks")
+                    .foregroundStyle(.secondary)
+            }
 
             ForEach(taskRows) { task in
                 Button {

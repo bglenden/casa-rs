@@ -34,6 +34,16 @@ persistent data while preserving on-disk interoperability.
 - Local GUI install: `just install-local-gui`
 - Release install: `just install-release <version>`
 - Local CASA/C++ task runs use `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python`, which has the `~/SoftwareProjects/casa` built `casatasks` and `casatools` wheels installed.
+- CASA `plotms` oracle PNGs should use the headless export path:
+  set `DISPLAY=${DISPLAY:-:99}`, `QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-offscreen}`,
+  and `MPLBACKEND=${MPLBACKEND:-Agg}`, then call `casaplotms.plotms`
+  with `showgui=False`, `plotfile=...`, `expformat="png"`, and
+  `overwrite=True`. On the local macOS CASA build, no Xvfb command is part of
+  the working recipe; `plotms` still requires `DISPLAY` to be present.
+  Do not run this CASA/Qt path inside a shell sandbox that blocks `sysctl`
+  CPU-feature queries: Qt may mis-detect the arm64 NEON feature and print
+  `Incompatible processor`. Run CASA oracle exports in the normal user
+  environment or an explicitly unsandboxed command runner.
 
 ## WDAD Workflow
 
@@ -102,6 +112,12 @@ Use `Closes #N` only for issues that should auto-close on merge.
 - Use `casa-*` for reusable libraries and `casars-*` for app/runtime crates.
 - API docs belong in source comments rendered by `cargo doc`.
 - For `casars` TUI work, follow `docs/casars-tui-framework.md`.
+- For tutorial or regression evidence that needs `casars` TUI screenshots,
+  use the GhosttyKit surface helper in `tools/ghostty-surface-capture`, not
+  visible terminal/window screenshots. It runs the TUI in an offscreen macOS
+  Ghostty surface with `TERM=xterm-ghostty` and writes PNG screenshots from
+  Ghostty's renderer layer, so Kitty graphics and terminal cells are one real
+  captured artifact.
 - For provider contracts, follow `docs/provider-contracts.md`; versioned schema bundles are the boundary contract.
 - Prefer red/green development when practical.
 - When implementing new casacore-C++ functionality, document public items at roughly the corresponding upstream doxygen level.

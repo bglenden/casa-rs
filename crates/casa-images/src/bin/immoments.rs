@@ -128,5 +128,5 @@ fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: immoments <imagename> --outfile <path> [--moments 0|1] [--chans 4~12] [--mask image>threshold] [--includepix min,max] [--overwrite] | immoments --json-run <SOURCE>".to_string()
+    "usage: immoments <imagename> --outfile <path> [--moments -1|0|1|2|3] [--chans 4~12] [--mask image>threshold] [--includepix min,max] [--overwrite] | immoments --json-run <SOURCE>".to_string()
 }

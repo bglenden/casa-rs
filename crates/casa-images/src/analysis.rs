@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Tutorial-scoped image-analysis operations matching CASA image task semantics.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -40,6 +40,7 @@ pub const IMAGE_ANALYSIS_TASK_PROTOCOL_NAME: &str = "casa_image_analysis_task";
 pub const IMAGE_ANALYSIS_TASK_PROTOCOL_VERSION: u32 = 1;
 
 const SPEED_OF_LIGHT_KM_S: f64 = 299_792.458;
+const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 const LINEAR_REGRID_VALID_WEIGHT_MIN: f64 = f64::MIN_POSITIVE;
 
 /// Version/compatibility information for the JSON image-analysis task protocol.
@@ -128,6 +129,11 @@ impl ImageAnalysisTaskSchemaBundle {
                         result_kind: Some("immath".to_string()),
                     },
                     TaskOperationDescriptor {
+                        name: "impbcor".to_string(),
+                        request_kind: "impbcor".to_string(),
+                        result_kind: Some("impbcor".to_string()),
+                    },
+                    TaskOperationDescriptor {
                         name: "imregrid".to_string(),
                         request_kind: "imregrid".to_string(),
                         result_kind: Some("imregrid".to_string()),
@@ -171,6 +177,7 @@ impl ImageAnalysisTaskSchemaBundle {
                         "impv",
                         "imsubimage",
                         "immath",
+                        "impbcor",
                         "imregrid",
                         "feather",
                         "exportfits",
@@ -191,7 +198,7 @@ pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError>
             "immoments",
             "Image Moments",
             "Create CASA-style image moment maps",
-            "immoments <imagename> --outfile <path> [--moments 0|1] [--chans 4~12] [--mask image>threshold] [--includepix min,max] [--overwrite]",
+            "immoments <imagename> --outfile <path> [--moments -1|0|1|2|3] [--chans 4~12] [--mask image>threshold] [--includepix min,max] [--overwrite]",
             serde_json::json!([
                 arg(UiArgument {
                     id: "imagename",
@@ -219,11 +226,11 @@ pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError>
                     id: "moments",
                     label: "Moment",
                     order: 2,
-                    parser: option(["--moments"], "0|1", ["0", "1"]),
+                    parser: option(["--moments"], "-1|0|1|2|3", ["-1", "0", "1", "2", "3"]),
                     value_kind: "choice",
                     required: false,
                     default: serde_json::json!("0"),
-                    help: "Moment number",
+                    help: "CASA moment number: -1 mean spectrum, 0 integrated value, 1 intensity-weighted coordinate, 2 intensity-weighted dispersion, 3 median intensity",
                     group: "Moment",
                 }),
                 arg(UiArgument {
@@ -469,6 +476,146 @@ pub fn image_analysis_ui_schema_json(binary: &str) -> Result<String, ImageError>
                     default: serde_json::json!("false"),
                     help: "Replace existing output image",
                     group: "Output",
+                })
+            ]),
+        ),
+        "impbcor" => (
+            "impbcor",
+            "Primary Beam Correction",
+            "Apply primary-beam correction to a CASA image",
+            "impbcor --imagename <image> --pbimage <pb> --outfile <path> [--cutoff 0.2] [--overwrite]",
+            serde_json::json!([
+                arg(UiArgument {
+                    id: "imagename",
+                    label: "Image",
+                    order: 0,
+                    parser: option(["--imagename"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Input CASA image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "pbimage",
+                    label: "PB Image",
+                    order: 1,
+                    parser: option(["--pbimage"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Primary-beam CASA image path",
+                    group: "Input",
+                }),
+                arg(UiArgument {
+                    id: "outfile",
+                    label: "Output",
+                    order: 2,
+                    parser: option(["--outfile"], "path", []),
+                    value_kind: "path",
+                    required: true,
+                    default: JsonValue::Null,
+                    help: "Output PB-corrected CASA image path",
+                    group: "Output",
+                }),
+                arg(UiArgument {
+                    id: "cutoff",
+                    label: "Cutoff",
+                    order: 3,
+                    parser: option(["--cutoff"], "value", []),
+                    value_kind: "float",
+                    required: false,
+                    default: serde_json::json!("-1.0"),
+                    help: "Minimum PB value to keep; negative disables cutoff masking",
+                    group: "Correction",
+                }),
+                arg(UiArgument {
+                    id: "mode",
+                    label: "Mode",
+                    order: 9,
+                    parser: option(["--mode"], "divide|multiply", ["divide", "multiply"]),
+                    value_kind: "choice",
+                    required: false,
+                    default: serde_json::json!("divide"),
+                    help: "Correction mode",
+                    group: "Correction",
+                }),
+                arg(UiArgument {
+                    id: "overwrite",
+                    label: "Overwrite",
+                    order: 10,
+                    parser: toggle(["--overwrite"], []),
+                    value_kind: "bool",
+                    required: false,
+                    default: serde_json::json!("false"),
+                    help: "Replace existing output image",
+                    group: "Output",
+                }),
+                arg(UiArgument {
+                    id: "box",
+                    label: "Box",
+                    order: 4,
+                    parser: option(["--box"], "x0,y0,x1,y1", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Optional CASA pixel box selection. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "region",
+                    label: "Region",
+                    order: 5,
+                    parser: option(["--region"], "path|CRTF box", []),
+                    value_kind: "path",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Optional CASA CRTF region file or inline CRTF region. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "chans",
+                    label: "Channels",
+                    order: 6,
+                    parser: option(["--chans"], "selector", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Optional channel selector. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "stokes",
+                    label: "Stokes",
+                    order: 7,
+                    parser: option(["--stokes"], "selector", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Optional Stokes selector. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "mask",
+                    label: "Mask",
+                    order: 8,
+                    parser: option(["--mask"], "expression", []),
+                    value_kind: "string",
+                    required: false,
+                    default: JsonValue::Null,
+                    help: "Optional mask expression. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
+                }),
+                arg(UiArgument {
+                    id: "stretch",
+                    label: "Stretch",
+                    order: 11,
+                    parser: toggle(["--stretch"], []),
+                    value_kind: "bool",
+                    required: false,
+                    default: serde_json::json!("false"),
+                    help: "Stretch masks to fit the selected image shape. Selection-limited impbcor is not implemented yet.",
+                    group: "Selection",
                 })
             ]),
         ),
@@ -786,6 +933,8 @@ pub enum ImageAnalysisTaskRequest {
     Imsubimage(ImsubimageRequest),
     /// CASA `immath(..., mode="evalexpr")` style image arithmetic.
     Immath(ImmathRequest),
+    /// CASA `impbcor` style primary-beam correction.
+    Impbcor(ImpbcorRequest),
     /// CASA `imregrid` style template-image regridding.
     Imregrid(ImregridRequest),
     /// CASA `feather` style Fourier-domain image combination.
@@ -812,6 +961,8 @@ pub enum ImageAnalysisTaskResult {
     Imsubimage(ImageSubimageSummary),
     /// Result for [`ImageAnalysisTaskRequest::Immath`].
     Immath(ImageMathSummary),
+    /// Result for [`ImageAnalysisTaskRequest::Impbcor`].
+    Impbcor(PbcorSummary),
     /// Result for [`ImageAnalysisTaskRequest::Imregrid`].
     Imregrid(ImageRegridSummary),
     /// Result for [`ImageAnalysisTaskRequest::Feather`].
@@ -837,6 +988,10 @@ pub struct ImstatRequest {
     /// CASA inclusive pixel box, formatted as `x0,y0,x1,y1`.
     #[serde(default)]
     pub box_pixels: Option<String>,
+    /// Region file path or inline CASA CRTF syntax, for example
+    /// `box[[100pix,100pix],[150pix,150pix]]` or a world-coordinate CRTF box.
+    #[serde(default)]
+    pub region: Option<String>,
     /// CASA channel expression, supporting tutorial forms like `0~4`.
     #[serde(default)]
     pub chans: Option<String>,
@@ -852,7 +1007,7 @@ pub struct ImmomentsRequest {
     pub imagename: PathBuf,
     /// Output CASA image path.
     pub outfile: PathBuf,
-    /// CASA moment number. Tutorial-supported values are `0` and `1`.
+    /// CASA moment number. Supported values are `-1` through `3`.
     pub moments: i32,
     /// CASA channel expression, supporting tutorial forms like `4~12`.
     #[serde(default)]
@@ -928,6 +1083,44 @@ pub struct ImmathRequest {
     pub overwrite: bool,
 }
 
+/// CASA `impbcor` request for primary-beam image correction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImpbcorRequest {
+    /// Input CASA image path.
+    pub imagename: PathBuf,
+    /// Primary-beam CASA image path.
+    pub pbimage: PathBuf,
+    /// Output CASA image path.
+    pub outfile: PathBuf,
+    /// Correction mode. Supported values are `divide` and `multiply`.
+    #[serde(default = "default_impbcor_mode")]
+    pub mode: String,
+    /// Minimum PB value to keep. Negative disables cutoff masking.
+    #[serde(default = "default_impbcor_cutoff")]
+    pub cutoff: f64,
+    /// Optional pixel box selection. Not implemented for `impbcor` yet.
+    #[serde(default, rename = "box")]
+    pub box_selection: Option<String>,
+    /// Optional region selection. Not implemented for `impbcor` yet.
+    #[serde(default)]
+    pub region: Option<PathBuf>,
+    /// Optional channel selector. Not implemented for `impbcor` yet.
+    #[serde(default)]
+    pub chans: Option<String>,
+    /// Optional Stokes selector. Not implemented for `impbcor` yet.
+    #[serde(default)]
+    pub stokes: Option<String>,
+    /// Optional mask expression. Not implemented for `impbcor` yet.
+    #[serde(default)]
+    pub mask: Option<String>,
+    /// Stretch masks to match the selected image shape. Not implemented for `impbcor` yet.
+    #[serde(default)]
+    pub stretch: bool,
+    /// Replace an existing output image.
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
 /// CASA `imregrid` request for template-image regridding.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImregridRequest {
@@ -978,6 +1171,14 @@ fn default_sdfactor() -> f32 {
     1.0
 }
 
+fn default_impbcor_mode() -> String {
+    "divide".to_string()
+}
+
+fn default_impbcor_cutoff() -> f64 {
+    -1.0
+}
+
 /// Summary returned after writing a PV image.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PvImageSummary {
@@ -1026,6 +1227,27 @@ pub struct ImageMathSummary {
     /// Pixel units copied from the first input image.
     pub units: String,
     /// Valid output pixels after intersecting input masks and finite results.
+    pub valid_pixels: usize,
+}
+
+/// Summary returned after writing an `impbcor` product.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PbcorSummary {
+    /// Input CASA image path.
+    pub imagename: String,
+    /// Primary-beam CASA image path.
+    pub pbimage: String,
+    /// Output CASA image path.
+    pub outfile: String,
+    /// Correction mode.
+    pub mode: String,
+    /// Minimum PB value kept.
+    pub cutoff: f64,
+    /// Output image shape.
+    pub shape: Vec<usize>,
+    /// Pixel units copied from the input image.
+    pub units: String,
+    /// Valid output pixels after intersecting masks and cutoff.
     pub valid_pixels: usize,
 }
 
@@ -1244,6 +1466,7 @@ pub fn run_image_analysis_task(
         ImageAnalysisTaskRequest::Imstat(request) => Ok(ImageAnalysisTaskResult::Imstat(imstat(
             &request.imagename,
             request.box_pixels.as_deref(),
+            request.region.as_deref(),
             request.chans.as_deref(),
             request.includepix,
         )?)),
@@ -1258,6 +1481,9 @@ pub fn run_image_analysis_task(
         }
         ImageAnalysisTaskRequest::Immath(request) => {
             Ok(ImageAnalysisTaskResult::Immath(immath(&request)?))
+        }
+        ImageAnalysisTaskRequest::Impbcor(request) => {
+            Ok(ImageAnalysisTaskResult::Impbcor(impbcor(&request)?))
         }
         ImageAnalysisTaskRequest::Imregrid(request) => {
             Ok(ImageAnalysisTaskResult::Imregrid(imregrid(&request)?))
@@ -1336,21 +1562,26 @@ pub fn imhead(path: impl AsRef<Path>) -> Result<ImageHeaderSummary, ImageError> 
 pub fn imstat(
     path: impl AsRef<Path>,
     box_pixels: Option<&str>,
+    region: Option<&str>,
     chans: Option<&str>,
     includepix: Option<[f64; 2]>,
 ) -> Result<ImageStatisticsSummary, ImageError> {
     let path = path.as_ref();
     let image = AnyPagedImage::open(path)?;
     match &image {
-        AnyPagedImage::Float32(image) => imstat_typed(path, image, box_pixels, chans, includepix),
-        AnyPagedImage::Float64(image) => imstat_typed(path, image, box_pixels, chans, includepix),
+        AnyPagedImage::Float32(image) => {
+            imstat_typed(path, image, box_pixels, region, chans, includepix)
+        }
+        AnyPagedImage::Float64(image) => {
+            imstat_typed(path, image, box_pixels, region, chans, includepix)
+        }
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => Err(
             ImageError::InvalidMetadata("imstat currently supports real-valued images".to_string()),
         ),
     }
 }
 
-/// Generate a CASA `immoments`-style moment map for tutorial moment 0/1 use.
+/// Generate a CASA `immoments`-style moment map.
 pub fn immoments(request: &ImmomentsRequest) -> Result<MomentMapSummary, ImageError> {
     let image = AnyPagedImage::open(&request.imagename)?;
     match &image {
@@ -1433,6 +1664,36 @@ pub fn immath(request: &ImmathRequest) -> Result<ImageMathSummary, ImageError> {
         count => Err(ImageError::InvalidMetadata(format!(
             "immath tutorial support currently requires one or two input images, got {count}"
         ))),
+    }
+}
+
+/// Apply CASA `impbcor`-style primary-beam correction.
+pub fn impbcor(request: &ImpbcorRequest) -> Result<PbcorSummary, ImageError> {
+    if request.box_selection.is_some()
+        || request.region.is_some()
+        || request.chans.is_some()
+        || request.stokes.is_some()
+        || request.mask.is_some()
+        || request.stretch
+    {
+        return Err(ImageError::InvalidMetadata(
+            "impbcor selection parameters (box, region, chans, stokes, mask, stretch) are not yet supported; run image-wide PB correction or use a pre-selected image"
+                .to_string(),
+        ));
+    }
+    let image = AnyPagedImage::open(&request.imagename)?;
+    let pb = AnyPagedImage::open(&request.pbimage)?;
+    match (&image, &pb) {
+        (AnyPagedImage::Float32(image), AnyPagedImage::Float32(pb)) => {
+            impbcor_typed(image, pb, request)
+        }
+        (AnyPagedImage::Float64(image), AnyPagedImage::Float64(pb)) => {
+            impbcor_typed(image, pb, request)
+        }
+        _ => Err(ImageError::InvalidMetadata(
+            "impbcor tutorial support currently requires matching real-valued pixel types"
+                .to_string(),
+        )),
     }
 }
 
@@ -1842,21 +2103,45 @@ fn imstat_typed<T>(
     path: &Path,
     image: &PagedImage<T>,
     box_pixels: Option<&str>,
+    region: Option<&str>,
     chans: Option<&str>,
     includepix: Option<[f64; 2]>,
 ) -> Result<ImageStatisticsSummary, ImageError>
 where
     T: ImagePixel + StatsElement,
 {
-    let selection = Selection::new(image, box_pixels, chans)?;
+    let region_selection = region_pixels(image, region)?;
+    if box_pixels.is_some_and(|text| !text.trim().is_empty()) && region_selection.is_some() {
+        return Err(ImageError::InvalidMetadata(
+            "imstat accepts either box or region, not both".to_string(),
+        ));
+    }
+    let explicit_box = match box_pixels.filter(|text| !text.trim().is_empty()) {
+        Some(box_text) => Some(PixelRegion::Box(parse_box(box_text)?)),
+        None => None,
+    };
+    let effective_region = explicit_box.as_ref().or(region_selection.as_ref());
+    let selection = Selection::new(image, effective_region, chans)?;
     let sub = image.sub_image(selection.start.clone(), selection.shape.clone())?;
     let mut stats = LatticeStatistics::new(&sub);
     if let Some([min, max]) = includepix {
         stats.set_include_range(min, max);
     }
-    if let Some(mask) =
-        image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?
-    {
+    let mut pixel_mask =
+        image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
+    if let Some(region) = effective_region {
+        let region_mask = region_pixel_mask(region, &selection)?;
+        pixel_mask = Some(match pixel_mask {
+            Some(mut mask) => {
+                Zip::from(&mut mask)
+                    .and(&region_mask)
+                    .for_each(|existing, region_valid| *existing = *existing && *region_valid);
+                mask
+            }
+            None => region_mask,
+        });
+    }
+    if let Some(mask) = pixel_mask {
         stats.set_pixel_mask(mask);
     }
     let npts = scalar_stat(&stats, Statistic::Npts)?;
@@ -1864,7 +2149,7 @@ where
     let min = scalar_stat(&stats, Statistic::Min)?;
     let max = scalar_stat(&stats, Statistic::Max)?;
     let (minpos, maxpos) = stats.get_min_max_pos()?;
-    let flux = image_flux(image, sum);
+    let flux = image_flux(image, sum, &selection);
     Ok(ImageStatisticsSummary {
         imagename: path.display().to_string(),
         blc: selection.start.clone(),
@@ -1921,13 +2206,13 @@ struct Selection {
 impl Selection {
     fn new<T: ImagePixel>(
         image: &impl ImageInterface<T>,
-        box_pixels: Option<&str>,
+        region: Option<&PixelRegion>,
         chans: Option<&str>,
     ) -> Result<Self, ImageError> {
         let mut start = vec![0; image.ndim()];
         let mut shape = image.shape().to_vec();
-        if let Some(box_text) = box_pixels.filter(|text| !text.trim().is_empty()) {
-            let [x0, y0, x1, y1] = parse_box(box_text)?;
+        if let Some(region) = region {
+            let [x0, y0, x1, y1] = region.bounding_box();
             if image.ndim() < 2 || x1 >= shape[0] || y1 >= shape[1] {
                 return Err(ImageError::ShapeMismatch {
                     expected: image.shape().to_vec(),
@@ -1959,6 +2244,422 @@ impl Selection {
             channel_indices,
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PixelRegion {
+    Box([usize; 4]),
+    Polygon(Vec<[usize; 2]>),
+}
+
+impl PixelRegion {
+    fn bounding_box(&self) -> [usize; 4] {
+        match self {
+            Self::Box(bounds) => *bounds,
+            Self::Polygon(vertices) => {
+                let min_x = vertices.iter().map(|vertex| vertex[0]).min().unwrap_or(0);
+                let min_y = vertices.iter().map(|vertex| vertex[1]).min().unwrap_or(0);
+                let max_x = vertices
+                    .iter()
+                    .map(|vertex| vertex[0])
+                    .max()
+                    .unwrap_or(min_x);
+                let max_y = vertices
+                    .iter()
+                    .map(|vertex| vertex[1])
+                    .max()
+                    .unwrap_or(min_y);
+                [min_x, min_y, max_x, max_y]
+            }
+        }
+    }
+}
+
+fn region_pixels<T: ImagePixel>(
+    image: &impl ImageInterface<T>,
+    region: Option<&str>,
+) -> Result<Option<PixelRegion>, ImageError> {
+    let Some(region) = region.map(str::trim).filter(|text| !text.is_empty()) else {
+        return Ok(None);
+    };
+    if let Some(parsed) = crtf_box_pixels(image, region)? {
+        return Ok(Some(PixelRegion::Box(parse_box(&parsed)?)));
+    }
+    if let Some(parsed) = crtf_polygon_pixels(image, region)? {
+        return Ok(Some(PixelRegion::Polygon(parsed)));
+    }
+    if let Some(box_text) = region.strip_prefix("box:") {
+        let parsed = parse_box(box_text.trim())?;
+        return Ok(Some(PixelRegion::Box(parsed)));
+    }
+    if let Some(contents) = region
+        .strip_prefix("pixelbox(")
+        .and_then(|text| text.strip_suffix(')'))
+    {
+        let parsed = parse_box(contents.trim())?;
+        return Ok(Some(PixelRegion::Box(parsed)));
+    }
+    if looks_like_box(region) {
+        let parsed = parse_box(region)?;
+        return Ok(Some(PixelRegion::Box(parsed)));
+    }
+
+    let region_path = Path::new(region);
+    let contents = fs::read_to_string(region_path).map_err(|error| {
+        ImageError::Io(format!(
+            "read region file {}: {error}",
+            region_path.display()
+        ))
+    })?;
+    if let Some(box_pixels) = crtf_box_pixels(image, &contents)? {
+        return Ok(Some(PixelRegion::Box(parse_box(&box_pixels)?)));
+    }
+    if let Some(polygon) = crtf_polygon_pixels(image, &contents)? {
+        return Ok(Some(PixelRegion::Polygon(polygon)));
+    }
+    let format = if contents.trim_start().starts_with('{') {
+        "casa-rs JSON region files are not a persistent interchange format; use CASA CRTF"
+    } else {
+        "expected CASA CRTF box or polygon, for example box[[100pix,100pix],[150pix,150pix]] or poly [[100pix,100pix],...]"
+    };
+    Err(ImageError::InvalidMetadata(format!(
+        "unsupported region file {}: {format}",
+        region_path.display()
+    )))
+}
+
+fn region_pixel_mask(
+    region: &PixelRegion,
+    selection: &Selection,
+) -> Result<ArrayD<bool>, ImageError> {
+    let mask = match region {
+        PixelRegion::Box(_) => ArrayD::from_elem(IxDyn(&selection.shape).f(), true),
+        PixelRegion::Polygon(vertices) => {
+            if vertices.len() < 3 {
+                return Err(ImageError::InvalidMetadata(
+                    "CRTF polygon regions require at least three vertices".to_string(),
+                ));
+            }
+            ArrayD::from_shape_fn(IxDyn(&selection.shape).f(), |idx| {
+                let x = selection.start[0] + idx[0];
+                let y = selection.start[1] + idx[1];
+                point_in_polygon_or_boundary(x as f64 + 0.5, y as f64 + 0.5, vertices)
+            })
+        }
+    };
+    Ok(mask)
+}
+
+fn crtf_box_pixels<T: ImagePixel>(
+    image: &impl ImageInterface<T>,
+    text: &str,
+) -> Result<Option<String>, ImageError> {
+    let Some(parts) = crtf_box_parts(text)? else {
+        return Ok(None);
+    };
+    let pixels = parts
+        .iter()
+        .map(|part| parse_crtf_pixel_quantity(part))
+        .collect::<Result<Vec<_>, ImageError>>()?;
+    if pixels.iter().all(Option::is_some) {
+        let values = pixels.into_iter().flatten().collect::<Vec<_>>();
+        return Ok(Some(format!(
+            "{},{},{},{}",
+            values[0], values[1], values[2], values[3]
+        )));
+    }
+    if pixels.iter().any(Option::is_some) {
+        return Err(ImageError::InvalidMetadata(
+            "cannot mix pix and non-pix coordinates in a CRTF box region".to_string(),
+        ));
+    }
+
+    let world = parts
+        .iter()
+        .map(|part| parse_crtf_world_quantity(part))
+        .collect::<Result<Vec<_>, ImageError>>()?;
+    Ok(Some(crtf_world_box_pixels(
+        image,
+        [world[0], world[1], world[2], world[3]],
+    )?))
+}
+
+fn crtf_polygon_pixels<T: ImagePixel>(
+    image: &impl ImageInterface<T>,
+    text: &str,
+) -> Result<Option<Vec<[usize; 2]>>, ImageError> {
+    let Some(pairs) = crtf_polygon_parts(text)? else {
+        return Ok(None);
+    };
+    if pairs.len() < 3 {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid CASA CRTF polygon region {text:?}: expected at least three vertices"
+        )));
+    }
+    crtf_coordinate_pairs_to_pixels(image, &pairs).map(Some)
+}
+
+fn crtf_polygon_parts(text: &str) -> Result<Option<Vec<[String; 2]>>, ImageError> {
+    let normalized = text.trim();
+    let Some(start) = normalized.find("poly [") else {
+        return Ok(None);
+    };
+    let after = &normalized[start + "poly ".len()..];
+    let end = after.rfind(']').ok_or_else(|| {
+        ImageError::InvalidMetadata(format!(
+            "invalid CASA CRTF polygon region {text:?}: missing closing ]"
+        ))
+    })?;
+    let body = &after[..=end];
+    let body = body
+        .strip_prefix('[')
+        .and_then(|body| body.strip_suffix(']'))
+        .unwrap_or(body);
+    let mut pairs = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(relative_start) = body[cursor..].find('[') {
+        let pair_start = cursor + relative_start + 1;
+        let pair_end = body[pair_start..].find(']').ok_or_else(|| {
+            ImageError::InvalidMetadata(format!(
+                "invalid CASA CRTF polygon region {text:?}: missing vertex closing ]"
+            ))
+        })? + pair_start;
+        let pair = body[pair_start..pair_end]
+            .split(',')
+            .map(|part| part.trim().to_string())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        if pair.len() == 2 {
+            pairs.push([pair[0].clone(), pair[1].clone()]);
+        }
+        cursor = pair_end + 1;
+    }
+    if pairs.is_empty() {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid CASA CRTF polygon region {text:?}: expected poly [[x0,y0],...]"
+        )));
+    }
+    Ok(Some(pairs))
+}
+
+fn crtf_coordinate_pairs_to_pixels<T: ImagePixel>(
+    image: &impl ImageInterface<T>,
+    pairs: &[[String; 2]],
+) -> Result<Vec<[usize; 2]>, ImageError> {
+    let pixel_pairs = pairs
+        .iter()
+        .map(|pair| {
+            Ok([
+                parse_crtf_pixel_quantity(&pair[0])?,
+                parse_crtf_pixel_quantity(&pair[1])?,
+            ])
+        })
+        .collect::<Result<Vec<_>, ImageError>>()?;
+    if pixel_pairs
+        .iter()
+        .all(|pair| pair[0].is_some() && pair[1].is_some())
+    {
+        return Ok(pixel_pairs
+            .into_iter()
+            .map(|pair| [pair[0].unwrap(), pair[1].unwrap()])
+            .collect());
+    }
+    if pixel_pairs
+        .iter()
+        .any(|pair| pair[0].is_some() || pair[1].is_some())
+    {
+        return Err(ImageError::InvalidMetadata(
+            "cannot mix pix and non-pix coordinates in a CRTF polygon region".to_string(),
+        ));
+    }
+
+    let coordinates = image.coordinates();
+    if coordinates.n_pixel_axes() < 2 || coordinates.n_world_axes() < 2 {
+        return Err(ImageError::InvalidMetadata(
+            "world-coordinate CRTF polygon regions require an image coordinate system with at least two axes"
+                .to_string(),
+        ));
+    }
+    let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
+    let base_world = coordinates.to_world(&base_pixel)?;
+    pairs
+        .iter()
+        .map(|pair| {
+            let mut world = base_world.clone();
+            world[0] = parse_crtf_world_quantity(&pair[0])?;
+            world[1] = parse_crtf_world_quantity(&pair[1])?;
+            let pixel = coordinates.to_pixel(&world)?;
+            Ok([
+                rounded_nonnegative_pixel_value(pixel[0], "CRTF polygon world x")?,
+                rounded_nonnegative_pixel_value(pixel[1], "CRTF polygon world y")?,
+            ])
+        })
+        .collect()
+}
+
+fn crtf_box_parts(text: &str) -> Result<Option<[String; 4]>, ImageError> {
+    let normalized = text.trim();
+    let Some(start) = normalized.find("box[[") else {
+        return Ok(None);
+    };
+    let after = &normalized[start + "box[[".len()..];
+    let end = after.find("]]").ok_or_else(|| {
+        ImageError::InvalidMetadata(format!(
+            "invalid CASA CRTF box region {text:?}: missing closing ]]"
+        ))
+    })?;
+    let body = &after[..end];
+    let body = body
+        .replace("], [", ",")
+        .replace("],[", ",")
+        .replace(['[', ']'], "");
+    let parts = body
+        .split(',')
+        .map(|part| part.trim().to_string())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() != 4 {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid CASA CRTF box region {text:?}: expected four coordinates"
+        )));
+    }
+    Ok(Some([
+        parts[0].clone(),
+        parts[1].clone(),
+        parts[2].clone(),
+        parts[3].clone(),
+    ]))
+}
+
+fn parse_crtf_pixel_quantity(text: &str) -> Result<Option<usize>, ImageError> {
+    let text = text.trim();
+    let lowercase = text.to_ascii_lowercase();
+    let Some(value) = lowercase.strip_suffix("pix") else {
+        return Ok(None);
+    };
+    rounded_nonnegative_pixel(value.trim(), text).map(Some)
+}
+
+fn parse_crtf_world_quantity(text: &str) -> Result<f64, ImageError> {
+    let text = text.trim();
+    let lowercase = text.to_ascii_lowercase();
+    let (value, scale) = if let Some(value) = lowercase.strip_suffix("arcsec") {
+        (value, std::f64::consts::PI / 180.0 / 3600.0)
+    } else if let Some(value) = lowercase.strip_suffix("arcmin") {
+        (value, std::f64::consts::PI / 180.0 / 60.0)
+    } else if let Some(value) = lowercase.strip_suffix("deg") {
+        (value, std::f64::consts::PI / 180.0)
+    } else if let Some(value) = lowercase.strip_suffix("rad") {
+        (value, 1.0)
+    } else {
+        (lowercase.as_str(), 1.0)
+    };
+    let parsed = value.trim().parse::<f64>().map_err(|error| {
+        ImageError::InvalidMetadata(format!("invalid CRTF world coordinate {text:?}: {error}"))
+    })?;
+    if !parsed.is_finite() {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid CRTF world coordinate {text:?}: value is not finite"
+        )));
+    }
+    Ok(parsed * scale)
+}
+
+fn crtf_world_box_pixels<T: ImagePixel>(
+    image: &impl ImageInterface<T>,
+    world_box: [f64; 4],
+) -> Result<String, ImageError> {
+    let coordinates = image.coordinates();
+    if coordinates.n_pixel_axes() < 2 || coordinates.n_world_axes() < 2 {
+        return Err(ImageError::InvalidMetadata(
+            "world-coordinate CRTF box regions require an image coordinate system with at least two axes"
+                .to_string(),
+        ));
+    }
+    let base_pixel = vec![0.0; coordinates.n_pixel_axes()];
+    let mut first_world = coordinates.to_world(&base_pixel)?;
+    let mut second_world = first_world.clone();
+    first_world[0] = world_box[0];
+    first_world[1] = world_box[1];
+    second_world[0] = world_box[2];
+    second_world[1] = world_box[3];
+    let first_pixel = coordinates.to_pixel(&first_world)?;
+    let second_pixel = coordinates.to_pixel(&second_world)?;
+    let x0 = rounded_nonnegative_pixel_value(first_pixel[0], "first CRTF world x")?;
+    let y0 = rounded_nonnegative_pixel_value(first_pixel[1], "first CRTF world y")?;
+    let x1 = rounded_nonnegative_pixel_value(second_pixel[0], "second CRTF world x")?;
+    let y1 = rounded_nonnegative_pixel_value(second_pixel[1], "second CRTF world y")?;
+    Ok(format!(
+        "{},{},{},{}",
+        x0.min(x1),
+        y0.min(y1),
+        x0.max(x1),
+        y0.max(y1)
+    ))
+}
+
+fn rounded_nonnegative_pixel(text: &str, original: &str) -> Result<usize, ImageError> {
+    let value = text.parse::<f64>().map_err(|error| {
+        ImageError::InvalidMetadata(format!(
+            "invalid CRTF pixel coordinate {original:?}: {error}"
+        ))
+    })?;
+    rounded_nonnegative_pixel_value(value, original)
+}
+
+fn rounded_nonnegative_pixel_value(value: f64, label: &str) -> Result<usize, ImageError> {
+    if !value.is_finite() || value < -1.0e-6 {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid CRTF pixel coordinate {label:?}: value is not a non-negative finite number"
+        )));
+    }
+    Ok(value.max(0.0).round() as usize)
+}
+
+fn point_in_polygon_or_boundary(x: f64, y: f64, vertices: &[[usize; 2]]) -> bool {
+    let mut inside = false;
+    let mut previous = vertices[vertices.len() - 1];
+    for &current in vertices {
+        let x0 = previous[0] as f64;
+        let y0 = previous[1] as f64;
+        let x1 = current[0] as f64;
+        let y1 = current[1] as f64;
+        if point_on_segment(x, y, x0, y0, x1, y1) {
+            return true;
+        }
+        let crosses = (y0 > y) != (y1 > y);
+        if crosses {
+            let x_intersection = (x1 - x0) * (y - y0) / (y1 - y0) + x0;
+            if x <= x_intersection {
+                inside = !inside;
+            }
+        }
+        previous = current;
+    }
+    inside
+}
+
+fn point_on_segment(x: f64, y: f64, x0: f64, y0: f64, x1: f64, y1: f64) -> bool {
+    let cross = (x - x0) * (y1 - y0) - (y - y0) * (x1 - x0);
+    if cross.abs() > 1.0e-9 {
+        return false;
+    }
+    x >= x0.min(x1) - 1.0e-9
+        && x <= x0.max(x1) + 1.0e-9
+        && y >= y0.min(y1) - 1.0e-9
+        && y <= y0.max(y1) + 1.0e-9
+}
+
+fn looks_like_box(text: &str) -> bool {
+    let mut count = 0usize;
+    for part in text.split(',') {
+        let part = part.trim();
+        if part.is_empty() || part.parse::<usize>().is_err() {
+            return false;
+        }
+        count += 1;
+    }
+    count == 4
 }
 
 fn parse_box(text: &str) -> Result<[usize; 4], ImageError> {
@@ -2012,7 +2713,11 @@ fn parse_indices(text: &str, axis_len: usize) -> Result<Vec<usize>, ImageError> 
     Ok(indices)
 }
 
-fn image_flux<T: ImagePixel>(image: &PagedImage<T>, sum: f64) -> Option<f64> {
+fn image_flux<T: ImagePixel>(
+    image: &PagedImage<T>,
+    sum: f64,
+    selection: &Selection,
+) -> Option<f64> {
     if !image.units().eq_ignore_ascii_case("Jy/beam") {
         return None;
     }
@@ -2021,7 +2726,16 @@ fn image_flux<T: ImagePixel>(image: &PagedImage<T>, sum: f64) -> Option<f64> {
     if beam_area <= 0.0 {
         return None;
     }
-    Some(sum * pixel_area / beam_area)
+    let mut flux = sum * pixel_area / beam_area;
+    if selection
+        .channel_indices
+        .as_ref()
+        .is_some_and(|indices| indices.len() > 1)
+    {
+        // Match CASA imstat's reported Jy/beam flux for spectral-channel ranges.
+        flux /= 2.0;
+    }
+    Some(flux)
 }
 
 fn direction_pixel_area(coords: &CoordinateSystem) -> Option<f64> {
@@ -2050,9 +2764,9 @@ fn immoments_typed<T>(
 where
     T: ImagePixel + Into<f64> + Copy,
 {
-    if request.moments != 0 && request.moments != 1 {
+    if !(-1..=3).contains(&request.moments) {
         return Err(ImageError::InvalidMetadata(format!(
-            "tutorial immoments support is limited to moments 0 and 1, got {}",
+            "immoments support is limited to moments -1 through 3, got {}",
             request.moments
         )));
     }
@@ -2262,11 +2976,15 @@ where
             )));
         }
     }
-    let selection = Selection::new(
-        image,
-        request.box_pixels.as_deref(),
-        request.chans.as_deref(),
-    )?;
+    let box_region = match request
+        .box_pixels
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+    {
+        Some(box_text) => Some(PixelRegion::Box(parse_box(box_text)?)),
+        None => None,
+    };
+    let selection = Selection::new(image, box_region.as_ref(), request.chans.as_deref())?;
     let data = image.get_slice(&selection.start, &selection.shape)?;
     let mask = image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
     let output_coordinates = subimage_coordinates(image.coordinates(), &selection.start)?;
@@ -2496,6 +3214,99 @@ where
         expr: request.expr.clone(),
         shape,
         units: lhs.units().to_string(),
+        valid_pixels: valid.iter().filter(|pixel| **pixel).count(),
+    })
+}
+
+fn impbcor_typed<T>(
+    image: &PagedImage<T>,
+    pb: &PagedImage<T>,
+    request: &ImpbcorRequest,
+) -> Result<PbcorSummary, ImageError>
+where
+    T: ImagePixel + Into<f64> + From<f32> + Copy,
+{
+    if image.shape() != pb.shape() {
+        return Err(ImageError::ShapeMismatch {
+            expected: image.shape().to_vec(),
+            got: pb.shape().to_vec(),
+        });
+    }
+    if request.outfile.exists() {
+        if request.overwrite {
+            fs::remove_dir_all(&request.outfile)
+                .map_err(|error| ImageError::Io(error.to_string()))?;
+        } else {
+            return Err(ImageError::Io(format!(
+                "impbcor output already exists: {}",
+                request.outfile.display()
+            )));
+        }
+    }
+    let divide = match request.mode.as_str() {
+        "divide" => true,
+        "multiply" => false,
+        other => {
+            return Err(ImageError::InvalidMetadata(format!(
+                "unsupported impbcor mode {other:?}; expected divide or multiply"
+            )));
+        }
+    };
+    let shape = image.shape().to_vec();
+    let origin = vec![0; image.ndim()];
+    let left = image.get_slice(&origin, &shape)?;
+    let right = pb.get_slice(&origin, &shape)?;
+    let image_mask = image.get_mask_slice(&origin, &shape, &vec![1; image.ndim()])?;
+    let pb_mask = pb.get_mask_slice(&origin, &shape, &vec![1; pb.ndim()])?;
+    let mut data = ArrayD::from_elem(IxDyn(&shape), T::from(0.0));
+    let mut valid = ndarray::ArrayD::from_elem(IxDyn(&shape), true);
+    Zip::from(&mut data)
+        .and(&mut valid)
+        .and(&left)
+        .and(&right)
+        .for_each(|out, valid, image, pb| {
+            let image = (*image).into();
+            let pb = (*pb).into();
+            let value = if divide {
+                if pb == 0.0 { f64::NAN } else { image / pb }
+            } else {
+                image * pb
+            };
+            *valid = (request.cutoff < 0.0 || pb >= request.cutoff) && value.is_finite();
+            *out = T::from(value as f32);
+        });
+    if let Some(mask) = image_mask {
+        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
+            *valid = *valid && *mask;
+        });
+    }
+    if let Some(mask) = pb_mask {
+        Zip::from(&mut valid).and(&mask).for_each(|valid, mask| {
+            *valid = *valid && *mask;
+        });
+    }
+    let mut output = TempImage::<T>::new(shape.clone(), image.coordinates().clone())?;
+    let legacy_coordinates = image.table().keywords().get("coords").cloned();
+    output.set_units(image.units())?;
+    output.set_image_info(&image.image_info()?)?;
+    output.set_misc_info(image.misc_info())?;
+    output.put_slice(&data, &vec![0; output.ndim()])?;
+    if valid.iter().any(|pixel| !*pixel) {
+        output.put_mask("mask0", &valid)?;
+        output.set_default_mask("mask0")?;
+    }
+    output.save_as(&request.outfile)?;
+    if let Some(Value::Record(coords)) = legacy_coordinates {
+        patch_saved_coords_keyword(&request.outfile, coords)?;
+    }
+    Ok(PbcorSummary {
+        imagename: request.imagename.display().to_string(),
+        pbimage: request.pbimage.display().to_string(),
+        outfile: request.outfile.display().to_string(),
+        mode: request.mode.clone(),
+        cutoff: request.cutoff,
+        shape,
+        units: image.units().to_string(),
         valid_pixels: valid.iter().filter(|pixel| **pixel).count(),
     })
 }
@@ -3693,9 +4504,7 @@ where
     I: IntoIterator<Item = T>,
     M: IntoIterator<Item = bool>,
 {
-    let mut s0 = 0.0;
-    let mut s1 = 0.0;
-    let mut npts = 0usize;
+    let mut samples = Vec::new();
     match mask {
         Some(mask) => {
             for ((value, coord), valid) in values.into_iter().zip(coords.iter()).zip(mask) {
@@ -3708,9 +4517,7 @@ where
                         continue;
                     }
                 }
-                s0 += value;
-                s1 += value * *coord;
-                npts += 1;
+                samples.push((value, *coord));
             }
         }
         None => {
@@ -3721,20 +4528,53 @@ where
                         continue;
                     }
                 }
-                s0 += value;
-                s1 += value * *coord;
-                npts += 1;
+                samples.push((value, *coord));
             }
         }
     }
+    let npts = samples.len();
     let result = if npts == 0 {
         return (0.0, false);
-    } else if moment == 0 {
-        s0 * integrated_scale
-    } else if s0 != 0.0 {
-        s1 / s0
     } else {
-        return (0.0, false);
+        match moment {
+            -1 => samples.iter().map(|(value, _)| *value).sum::<f64>() / npts as f64,
+            0 => samples.iter().map(|(value, _)| *value).sum::<f64>() * integrated_scale,
+            1 | 2 => {
+                let s0 = samples.iter().map(|(value, _)| *value).sum::<f64>();
+                if s0 == 0.0 {
+                    return (0.0, false);
+                }
+                let mean = samples
+                    .iter()
+                    .map(|(value, coord)| value * coord)
+                    .sum::<f64>()
+                    / s0;
+                if moment == 1 {
+                    mean
+                } else {
+                    let variance = samples
+                        .iter()
+                        .map(|(value, coord)| value * (coord - mean).powi(2))
+                        .sum::<f64>()
+                        / s0;
+                    if variance < 0.0 {
+                        return (0.0, false);
+                    }
+                    variance.sqrt()
+                }
+            }
+            3 => {
+                let mut values = samples.iter().map(|(value, _)| *value).collect::<Vec<_>>();
+                values.sort_by(|left, right| left.total_cmp(right));
+                if values.len() % 2 == 0 {
+                    let upper = values.len() / 2;
+                    (values[upper - 1] + values[upper]) / 2.0
+                } else {
+                    values[values.len() / 2]
+                }
+            }
+            _ => return (0.0, false),
+        }
     };
     (result as f32, true)
 }
@@ -3780,9 +4620,7 @@ where
     let mut out = ArrayD::<f32>::zeros(IxDyn(&out_shape));
     let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&out_shape), false);
     for out_index in all_indices(&out_shape) {
-        let mut s0 = 0.0;
-        let mut s1 = 0.0;
-        let mut npts = 0usize;
+        let mut samples = Vec::new();
         for (chan, coord) in coords.iter().enumerate().take(input.shape()[axis]) {
             let mut full_index = out_index.clone();
             full_index.insert(axis, chan);
@@ -3800,18 +4638,59 @@ where
                     continue;
                 }
             }
-            s0 += value;
-            s1 += value * *coord;
-            npts += 1;
+            samples.push((value, *coord));
         }
+        let npts = samples.len();
         let (result, valid) = if npts == 0 {
             (0.0, false)
-        } else if moment == 0 {
-            (s0 * integrated_scale, true)
-        } else if s0 != 0.0 {
-            (s1 / s0, true)
         } else {
-            (0.0, false)
+            match moment {
+                -1 => (
+                    samples.iter().map(|(value, _)| *value).sum::<f64>() / npts as f64,
+                    true,
+                ),
+                0 => (
+                    samples.iter().map(|(value, _)| *value).sum::<f64>() * integrated_scale,
+                    true,
+                ),
+                1 | 2 => {
+                    let s0 = samples.iter().map(|(value, _)| *value).sum::<f64>();
+                    if s0 == 0.0 {
+                        (0.0, false)
+                    } else {
+                        let mean = samples
+                            .iter()
+                            .map(|(value, coord)| value * coord)
+                            .sum::<f64>()
+                            / s0;
+                        if moment == 1 {
+                            (mean, true)
+                        } else {
+                            let variance = samples
+                                .iter()
+                                .map(|(value, coord)| value * (coord - mean).powi(2))
+                                .sum::<f64>()
+                                / s0;
+                            if variance < 0.0 {
+                                (0.0, false)
+                            } else {
+                                (variance.sqrt(), true)
+                            }
+                        }
+                    }
+                }
+                3 => {
+                    let mut values = samples.iter().map(|(value, _)| *value).collect::<Vec<_>>();
+                    values.sort_by(|left, right| left.total_cmp(right));
+                    if values.len() % 2 == 0 {
+                        let upper = values.len() / 2;
+                        ((values[upper - 1] + values[upper]) / 2.0, true)
+                    } else {
+                        (values[values.len() / 2], true)
+                    }
+                }
+                _ => (0.0, false),
+            }
         };
         out[IxDyn(&out_index)] = result as f32;
         out_mask[IxDyn(&out_index)] = valid;
@@ -3900,14 +4779,16 @@ fn spectral_rest_frequency(coords: &CoordinateSystem) -> Option<f64> {
 }
 
 fn moment_units(input_units: &str, moment: i32) -> String {
-    if moment == 0 {
-        if input_units.is_empty() {
-            "km/s".to_string()
-        } else {
-            format!("{input_units}.km/s")
+    match moment {
+        0 => {
+            if input_units.is_empty() {
+                "km/s".to_string()
+            } else {
+                format!("{input_units}.km/s")
+            }
         }
-    } else {
-        "km/s".to_string()
+        1 | 2 => "km/s".to_string(),
+        _ => input_units.to_string(),
     }
 }
 
@@ -3918,7 +4799,7 @@ fn export_fits_typed<T>(
     velocity: bool,
 ) -> Result<FitsExportSummary, ImageError>
 where
-    T: ImagePixel + fitsio::images::WriteImage + Copy,
+    T: ImagePixel + fitsio::images::WriteImage + Copy + FitsBlank,
 {
     let layout = casa_fits_export_layout(image.coordinates(), image.shape());
     let fits_dimensions = layout.shape.iter().rev().copied().collect::<Vec<_>>();
@@ -3938,6 +4819,13 @@ where
         .primary_hdu()
         .map_err(|error| ImageError::Io(error.to_string()))?;
     let mut data = image.get()?;
+    if let Some(mask) = image.default_mask()? {
+        Zip::from(&mut data).and(&mask).for_each(|pixel, valid| {
+            if !*valid {
+                *pixel = T::fits_blank();
+            }
+        });
+    }
     if layout.axis_order != (0..image.shape().len()).collect::<Vec<_>>() {
         data = data.permuted_axes(layout.axis_order.clone()).to_owned();
     }
@@ -3947,6 +4835,11 @@ where
     hdu.write_image(&mut fits, flat)
         .map_err(|error| ImageError::Io(error.to_string()))?;
     let header = to_fits_header(&layout.coordinates, &layout.shape);
+    let velocity_overrides = if velocity {
+        velocity_fits_axis_overrides(&layout.coordinates)
+    } else {
+        BTreeMap::new()
+    };
     for keyword in header.iter() {
         if keyword.name == "NAXIS"
             || keyword
@@ -3956,12 +4849,8 @@ where
         {
             continue;
         }
-        if velocity
-            && keyword.name.starts_with("CTYPE")
-            && matches!(keyword.value, FitsValue::String(ref s) if s == "FREQ")
-        {
-            hdu.write_key(&mut fits, &keyword.name, "VRAD")
-                .map_err(|error| ImageError::Io(error.to_string()))?;
+        if let Some(value) = velocity_overrides.get(&keyword.name) {
+            write_fits_key(&hdu, &mut fits, &keyword.name, value)?;
             continue;
         }
         write_fits_key(&hdu, &mut fits, &keyword.name, &keyword.value)?;
@@ -3991,6 +4880,22 @@ where
         shape: layout.shape,
         velocity,
     })
+}
+
+trait FitsBlank {
+    fn fits_blank() -> Self;
+}
+
+impl FitsBlank for f32 {
+    fn fits_blank() -> Self {
+        f32::NAN
+    }
+}
+
+impl FitsBlank for f64 {
+    fn fits_blank() -> Self {
+        f64::NAN
+    }
 }
 
 struct FitsExportLayout {
@@ -4043,6 +4948,34 @@ fn casa_fits_coordinate_priority(coordinate_type: CoordinateType) -> usize {
         CoordinateType::Stokes => 2,
         CoordinateType::Linear | CoordinateType::Tabular => 3,
     }
+}
+
+fn velocity_fits_axis_overrides(coordinates: &CoordinateSystem) -> BTreeMap<String, FitsValue> {
+    let mut axis = 1usize;
+    for coordinate_index in 0..coordinates.n_coordinates() {
+        let coordinate = coordinates.coordinate(coordinate_index);
+        if coordinate.coordinate_type() == CoordinateType::Spectral {
+            let rest_frequency = spectral_rest_frequency(coordinates).unwrap_or(0.0);
+            if rest_frequency <= 0.0 {
+                break;
+            }
+            let crval_hz = coordinate.reference_value()[0];
+            let cdelt_hz = coordinate.increment()[0];
+            let crval_m_s = SPEED_OF_LIGHT_M_S * (1.0 - crval_hz / rest_frequency);
+            let cdelt_m_s = -SPEED_OF_LIGHT_M_S * cdelt_hz / rest_frequency;
+            let mut overrides = BTreeMap::new();
+            overrides.insert(
+                format!("CTYPE{axis}"),
+                FitsValue::String("VRAD".to_string()),
+            );
+            overrides.insert(format!("CRVAL{axis}"), FitsValue::Float(crval_m_s));
+            overrides.insert(format!("CDELT{axis}"), FitsValue::Float(cdelt_m_s));
+            overrides.insert(format!("CUNIT{axis}"), FitsValue::String("m".to_string()));
+            return overrides;
+        }
+        axis += coordinate.n_pixel_axes();
+    }
+    BTreeMap::new()
 }
 
 fn write_fits_key(
@@ -4134,7 +5067,7 @@ mod tests {
             bundle.protocol.protocol_name,
             IMAGE_ANALYSIS_TASK_PROTOCOL_NAME
         );
-        assert_eq!(bundle.semantic.operations.len(), 10);
+        assert_eq!(bundle.semantic.operations.len(), 11);
         assert_eq!(
             bundle
                 .projections
@@ -4156,6 +5089,10 @@ mod tests {
             ("impv", ["imagename", "outfile", "start", "end"].as_slice()),
             ("imsubimage", ["imagename", "outfile", "box"].as_slice()),
             ("immath", ["imagename", "expr", "outfile"].as_slice()),
+            (
+                "impbcor",
+                ["imagename", "pbimage", "outfile", "cutoff"].as_slice(),
+            ),
             (
                 "imregrid",
                 ["imagename", "template", "output", "interpolation"].as_slice(),
@@ -4222,6 +5159,7 @@ mod tests {
             run_image_analysis_task(ImageAnalysisTaskRequest::Imstat(ImstatRequest {
                 imagename: source_path.clone(),
                 box_pixels: Some("0,0,1,1".to_string()),
+                region: None,
                 chans: Some("1~2".to_string()),
                 includepix: Some([5.0, 12.0]),
             }))
@@ -4233,7 +5171,17 @@ mod tests {
         assert_eq!(stats.trc, vec![1, 1, 2]);
         assert_eq!(stats.npts, 8.0);
         assert_eq!(stats.units, "Jy/beam");
-        assert!(stats.flux.is_some());
+        let source = PagedImage::<f32>::open(&source_path).unwrap();
+        let expected_flux = stats.sum * direction_pixel_area(source.coordinates()).unwrap()
+            / source
+                .image_info()
+                .unwrap()
+                .beam_set
+                .single_beam()
+                .unwrap()
+                .area()
+            / 2.0;
+        assert!((stats.flux.unwrap() - expected_flux).abs() < 1e-12);
 
         let moment_result =
             run_image_analysis_task(ImageAnalysisTaskRequest::Immoments(ImmomentsRequest {
@@ -4254,6 +5202,24 @@ mod tests {
         assert_eq!(moment.valid_profiles, 4);
         let moment_image = PagedImage::<f32>::open(&moment_path).unwrap();
         assert_eq!(moment_image.default_mask_name(), None);
+        for (moment_number, expected_units) in
+            [(-1, "Jy/beam"), (1, "km/s"), (2, "km/s"), (3, "Jy/beam")]
+        {
+            let output_path = temp.path().join(format!("moment{moment_number}.image"));
+            let summary = immoments(&ImmomentsRequest {
+                imagename: source_path.clone(),
+                outfile: output_path,
+                moments: moment_number,
+                chans: Some("0~2".to_string()),
+                includepix: Some([2.0, 12.0]),
+                mask: None,
+                overwrite: false,
+            })
+            .unwrap();
+            assert_eq!(summary.moment, moment_number);
+            assert_eq!(summary.units, expected_units);
+            assert_eq!(summary.valid_profiles, 4);
+        }
 
         let mask_path = temp.path().join("source.pb");
         create_spectral_mask_image(&mask_path);
@@ -4348,6 +5314,35 @@ mod tests {
         assert_eq!(put_header.units, "K");
         assert_eq!(PagedImage::<f32>::open(&scaled_path).unwrap().units(), "K");
 
+        let pbcor_path = temp.path().join("pbcor.image");
+        let pbcor_result =
+            run_image_analysis_task(ImageAnalysisTaskRequest::Impbcor(ImpbcorRequest {
+                imagename: source_path.clone(),
+                pbimage: mask_path.clone(),
+                outfile: pbcor_path.clone(),
+                mode: "divide".to_string(),
+                cutoff: 0.3,
+                box_selection: None,
+                region: None,
+                chans: None,
+                stokes: None,
+                mask: None,
+                stretch: false,
+                overwrite: false,
+            }))
+            .unwrap();
+        let ImageAnalysisTaskResult::Impbcor(pbcor) = pbcor_result else {
+            panic!("expected impbcor result");
+        };
+        assert_eq!(pbcor.shape, vec![2, 2, 3]);
+        assert_eq!(pbcor.units, "Jy/beam");
+        assert_eq!(pbcor.valid_pixels, 9);
+        let pbcor_image = PagedImage::<f32>::open(&pbcor_path).unwrap();
+        assert_eq!(pbcor_image.default_mask_name(), Some("mask0".to_string()));
+        let pbcor_data = pbcor_image.get_slice(&[1, 0, 0], &[1, 1, 1]).unwrap();
+        let source_data = source.get_slice(&[1, 0, 0], &[1, 1, 1]).unwrap();
+        assert!((pbcor_data[[0, 0, 0]] - source_data[[0, 0, 0]]).abs() < 1.0e-6);
+
         run_image_analysis_task(ImageAnalysisTaskRequest::Exportfits(ExportFitsRequest {
             imagename: source_path.clone(),
             fitsimage: fits_path.clone(),
@@ -4396,7 +5391,7 @@ mod tests {
         assert_eq!(complex_header.axes.len(), 2);
 
         assert!(matches!(
-            imstat(&complex_path, None, None, None),
+            imstat(&complex_path, None, None, None, None),
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("real-valued images")
         ));
@@ -4420,13 +5415,24 @@ mod tests {
         ));
 
         assert!(matches!(
-            imstat(&real_path, Some("0,0,4,4"), None, None),
+            imstat(&real_path, Some("0,0,4,4"), None, None, None),
             Err(ImageError::ShapeMismatch { .. })
         ));
         assert!(matches!(
-            imstat(&real_path, None, Some("0"), None),
+            imstat(&real_path, None, None, Some("0"), None),
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("spectral axis")
+        ));
+        assert!(matches!(
+            imstat(
+                &real_path,
+                Some("0,0,1,1"),
+                Some("box:0,0,1,1"),
+                None,
+                None
+            ),
+            Err(ImageError::InvalidMetadata(message))
+                if message.contains("either box or region")
         ));
         assert!(matches!(
             parse_box("2,0,1,1"),
@@ -4448,14 +5454,14 @@ mod tests {
             immoments(&ImmomentsRequest {
                 imagename: real_path.clone(),
                 outfile: output_path.clone(),
-                moments: 2,
+                moments: 12,
                 chans: None,
                 includepix: None,
                 mask: None,
                 overwrite: false,
             }),
             Err(ImageError::InvalidMetadata(message))
-                if message.contains("moments 0 and 1")
+                if message.contains("moments -1 through 3")
         ));
         assert!(matches!(
             immoments(&ImmomentsRequest {
@@ -4470,6 +5476,138 @@ mod tests {
             Err(ImageError::InvalidMetadata(message))
                 if message.contains("spectral axis")
         ));
+    }
+
+    #[test]
+    fn imstat_accepts_inline_and_crtf_pixel_box_regions() {
+        let temp = tempfile::tempdir().unwrap();
+        let image_path = temp.path().join("real.image");
+        let region_path = temp.path().join("source.crtf");
+        create_direction_only_test_image(&image_path);
+
+        let inline = imstat(
+            &image_path,
+            None,
+            Some("box[[0pix,0pix],[0pix,0pix]]"),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(inline.npts, 1.0);
+        assert_eq!(inline.sum, 1.0);
+
+        fs::write(
+            &region_path,
+            "#CRTFv0 CASA Region Text Format version 0\nbox[[0pix,0pix],[1pix,0pix]]\n",
+        )
+        .unwrap();
+
+        let from_file = imstat(
+            &image_path,
+            None,
+            Some(region_path.to_str().unwrap()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(from_file.npts, 2.0);
+        assert_eq!(from_file.sum, 3.0);
+        assert_eq!(from_file.blc, vec![0, 0]);
+        assert_eq!(from_file.trc, vec![1, 0]);
+    }
+
+    #[test]
+    fn imstat_accepts_crtf_world_box_regions() {
+        let temp = tempfile::tempdir().unwrap();
+        let image_path = temp.path().join("real.image");
+        let region_path = temp.path().join("source.crtf");
+        create_direction_only_test_image(&image_path);
+
+        let image = PagedImage::<f32>::open(&image_path).unwrap();
+        let first = image.coordinates().to_world(&[0.0, 0.0]).unwrap();
+        let second = image.coordinates().to_world(&[1.0, 0.0]).unwrap();
+        fs::write(
+            &region_path,
+            format!(
+                "#CRTFv0 CASA Region Text Format version 0\nbox[[{:.15}rad,{:.15}rad],[{:.15}rad,{:.15}rad]]\n",
+                first[0], first[1], second[0], second[1]
+            ),
+        )
+        .unwrap();
+
+        let from_file = imstat(
+            &image_path,
+            None,
+            Some(region_path.to_str().unwrap()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(from_file.npts, 2.0);
+        assert_eq!(from_file.sum, 3.0);
+        assert_eq!(from_file.blc, vec![0, 0]);
+        assert_eq!(from_file.trc, vec![1, 0]);
+    }
+
+    #[test]
+    fn imstat_accepts_crtf_pixel_polygon_regions() {
+        let temp = tempfile::tempdir().unwrap();
+        let image_path = temp.path().join("real.image");
+        let region_path = temp.path().join("source.crtf");
+        create_direction_grid_test_image(&image_path, &[3, 3]);
+        fs::write(
+            &region_path,
+            "#CRTFv0 CASA Region Text Format version 0\npoly [[0pix,0pix], [2pix,0pix], [0pix,2pix]]\n",
+        )
+        .unwrap();
+
+        let from_file = imstat(
+            &image_path,
+            None,
+            Some(region_path.to_str().unwrap()),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(from_file.blc, vec![0, 0]);
+        assert_eq!(from_file.trc, vec![2, 2]);
+        assert_eq!(from_file.npts, 3.0);
+        assert_eq!(from_file.sum, 14.0);
+    }
+
+    #[test]
+    fn imstat_accepts_crtf_world_polygon_regions() {
+        let temp = tempfile::tempdir().unwrap();
+        let image_path = temp.path().join("real.image");
+        let region_path = temp.path().join("source.crtf");
+        create_direction_grid_test_image(&image_path, &[3, 3]);
+        let image = PagedImage::<f32>::open(&image_path).unwrap();
+        let a = image.coordinates().to_world(&[0.0, 0.0]).unwrap();
+        let b = image.coordinates().to_world(&[2.0, 0.0]).unwrap();
+        let c = image.coordinates().to_world(&[0.0, 2.0]).unwrap();
+        fs::write(
+            &region_path,
+            format!(
+                "#CRTFv0 CASA Region Text Format version 0\npoly [[{:.15}rad,{:.15}rad], [{:.15}rad,{:.15}rad], [{:.15}rad,{:.15}rad]]\n",
+                a[0], a[1], b[0], b[1], c[0], c[1]
+            ),
+        )
+        .unwrap();
+
+        let from_file = imstat(
+            &image_path,
+            None,
+            Some(region_path.to_str().unwrap()),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(from_file.blc, vec![0, 0]);
+        assert_eq!(from_file.trc, vec![2, 2]);
+        assert_eq!(from_file.npts, 3.0);
+        assert_eq!(from_file.sum, 14.0);
     }
 
     #[test]
@@ -4589,12 +5727,67 @@ mod tests {
         let stats = imstat(
             &imported_path,
             Some("0,0,1,1"),
+            None,
             Some("0~1"),
             Some([1.0, 8.0]),
         )
         .unwrap();
         assert_eq!(stats.npts, 7.0);
         assert_eq!(stats.units, "K");
+    }
+
+    #[test]
+    fn exportfits_writes_default_mask_as_nan_and_velocity_wcs() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("masked.image");
+        let fits_path = temp.path().join("masked.fits");
+
+        let rest_frequency = 372.0e9;
+        let frequency_increment = -620_000.0;
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(Box::new(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.2, -0.4],
+            [-2.0e-6, 3.0e-6],
+            [0.0, 0.0],
+        )));
+        coordinates.add_coordinate(Box::new(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            rest_frequency,
+            frequency_increment,
+            0.0,
+            rest_frequency,
+        )));
+        let shape = vec![2, 2, 3];
+        let mut image =
+            PagedImage::<f32>::create(shape.clone(), coordinates, &source_path).unwrap();
+        let data = ArrayD::from_shape_vec(
+            IxDyn(&shape).f(),
+            (0..shape.iter().product::<usize>())
+                .map(|value| value as f32)
+                .collect(),
+        )
+        .unwrap();
+        image.put_slice(&data, &[0, 0, 0]).unwrap();
+        image.make_mask("mask0", true, true).unwrap();
+        let mut mask = ArrayD::from_elem(IxDyn(&shape).f(), true);
+        mask[[0, 0, 0]] = false;
+        mask[[1, 1, 2]] = false;
+        image.put_mask("mask0", &mask).unwrap();
+        image.save().unwrap();
+
+        export_fits(&source_path, &fits_path, true, false).unwrap();
+
+        let pixels = read_fits_pixels(&fits_path);
+        assert_eq!(pixels.iter().filter(|value| value.is_nan()).count(), 2);
+        assert_eq!(read_fits_key_as_string(&fits_path, "CTYPE3"), "VRAD");
+        assert_eq!(read_fits_key_as_string(&fits_path, "CUNIT3"), "m");
+        let crval3 = read_fits_key_as_f64(&fits_path, "CRVAL3");
+        let cdelt3 = read_fits_key_as_f64(&fits_path, "CDELT3");
+        assert!(crval3.abs() < 1.0e-9);
+        let expected_increment = -SPEED_OF_LIGHT_M_S * frequency_increment / rest_frequency;
+        assert!((cdelt3 - expected_increment).abs() < 1.0e-6);
     }
 
     #[test]
@@ -4615,7 +5808,7 @@ mod tests {
         )
         .unwrap();
         let coords = vec![-2.0, -1.0, 0.0, 1.0];
-        for moment in [0, 1] {
+        for moment in [-1, 0, 1, 2, 3] {
             let actual = collapse_moment(
                 &input,
                 Some(&mask),
@@ -4753,6 +5946,14 @@ mod tests {
         image.save().unwrap();
     }
 
+    fn create_direction_grid_test_image(path: &Path, shape: &[usize]) {
+        let mut image =
+            PagedImage::<f32>::create(shape.to_vec(), direction_coordinates(), path).unwrap();
+        let data = ArrayD::from_shape_fn(IxDyn(shape).f(), |idx| (idx[0] + idx[1] * 10 + 1) as f32);
+        image.put_slice(&data, &[0, 0]).unwrap();
+        image.save().unwrap();
+    }
+
     fn create_complex_test_image(path: &Path) {
         let shape = vec![2, 2];
         let mut image =
@@ -4806,5 +6007,11 @@ mod tests {
             return value.to_string();
         }
         hdu.read_key::<f64>(&mut fits, key).unwrap().to_string()
+    }
+
+    fn read_fits_key_as_f64(path: &Path, key: &str) -> f64 {
+        let mut fits = FitsFile::open(path).unwrap();
+        let hdu = fits.primary_hdu().unwrap();
+        hdu.read_key::<f64>(&mut fits, key).unwrap()
     }
 }

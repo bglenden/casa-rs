@@ -20,6 +20,9 @@ SpectralMode: TypeAlias = Literal["mfs", "cube", "cubedata"]
 Deconvolver: TypeAlias = Literal["hogbom", "mtmfs", "clark", "multiscale"]
 RestoringBeamMode: TypeAlias = Literal["per_plane", "common"]
 WTermMode: TypeAlias = Literal["none", "direct", "wproject"]
+GridderMode: TypeAlias = Literal[
+    "standard", "wproject", "widefield", "mosaic", "awproject", "awp2", "awphpg"
+]
 PlaneSelection: TypeAlias = Literal["I", "Q", "U", "V", "XX", "YY", "RR", "LL"]
 SaveModel: TypeAlias = Literal["none", "modelcolumn"]
 CleanMaskMode: TypeAlias = Literal["user", "auto-multithresh"]
@@ -69,6 +72,7 @@ def mfs(
     correlation: PlaneSelection | None = None,
     weighting: str = "natural",
     robust: float = 0.5,
+    gridder: GridderMode = "standard",
     use_pointing: bool = False,
     deconvolver: Deconvolver = "hogbom",
     nterms: int = 1,
@@ -76,6 +80,9 @@ def mfs(
     gain: float = 0.1,
     threshold_jy: float = 0.0,
     nsigma: float = 0.0,
+    write_pb: bool = False,
+    pbcor: bool = False,
+    mosaic_pb_limit: float = 0.2,
     use_mask: CleanMaskMode = "user",
     auto_mask: dict[str, Any] | None = None,
     mask_boxes: list[tuple[int, int, int, int]] | None = None,
@@ -91,6 +98,12 @@ def mfs(
     The executable remains the owner of imaging behavior; this helper only
     builds the documented JSON request shape and delegates to ``--json-run``.
     """
+
+    resolved_w_term_mode = _gridder_w_term_mode(gridder)
+    if w_term_mode != "none" and resolved_w_term_mode != w_term_mode:
+        raise ValueError("gridder and w_term_mode conflict; prefer gridder for CASA-style use")
+    if w_term_mode != "none":
+        resolved_w_term_mode = w_term_mode
 
     request = {
         "measurement_set": os.fspath(measurement_set),
@@ -119,11 +132,14 @@ def mfs(
         "gain": gain,
         "threshold_jy": threshold_jy,
         "nsigma": nsigma,
+        "write_pb": write_pb,
+        "pbcor": pbcor,
+        "mosaic_pb_limit": mosaic_pb_limit,
         "use_mask": use_mask,
         "auto_mask": {} if auto_mask is None else dict(auto_mask),
         "mask_boxes": [list(box) for box in (mask_boxes or [])],
         "mask_image": None if mask_image is None else os.fspath(mask_image),
-        "w_term_mode": w_term_mode,
+        "w_term_mode": resolved_w_term_mode,
         "w_project_planes": w_project_planes,
         "dirty_only": dirty_only,
         "write_preview_pngs": write_preview_pngs,
@@ -141,3 +157,20 @@ def _weighting_request(weighting: str, robust: float) -> dict[str, Any]:
     if weighting == "briggsbwtaper":
         return {"kind": "briggs_bw_taper", "robust": robust}
     raise ValueError("weighting must be 'natural', 'uniform', 'briggs', or 'briggsbwtaper'")
+
+
+def _gridder_w_term_mode(gridder: GridderMode) -> WTermMode:
+    if gridder in {"standard", "mosaic"}:
+        return "none"
+    if gridder == "wproject":
+        return "wproject"
+    if gridder in {"widefield", "awproject", "awp2", "awphpg"}:
+        raise NotImplementedError(
+            f"gridder={gridder!r} is not implemented by casa-rs imager yet; "
+            "supported gridder values are 'standard', 'wproject', and 'mosaic'. "
+            "Track widefield/AW-family parity in https://github.com/bglenden/casa-rs/issues/52"
+        )
+    raise ValueError(
+        "gridder must be 'standard', 'wproject', 'widefield', 'mosaic', "
+        "'awproject', 'awp2', or 'awphpg'"
+    )

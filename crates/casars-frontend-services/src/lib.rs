@@ -17,10 +17,10 @@ use casa_ms::plot::{
     SpectralWindowCoverageBar, SpectralWindowCoveragePlotPayload, UvCoverageSeries,
 };
 use casa_ms::{
-    MeasurementSet, MeasurementSetPlotPayload, MeasurementSetSummaryOutputFormat, MsExploreSpec,
-    MsPageExportRange, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsScatterGridPayload,
-    MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelectionSpec,
-    VisibilityDataColumn, build_msexplore_payload_from_spec,
+    MeasurementSet, MeasurementSetPlotPayload, MeasurementSetSummary,
+    MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange, MsPlotPayload,
+    MsPlotPreset, MsPlotSpec, MsScatterGridPayload, MsScatterPagePayload, MsScatterPlotPayload,
+    MsScatterSeries, MsSelectionSpec, VisibilityDataColumn, build_msexplore_payload_from_spec,
 };
 use casa_tables::{ArrayShapeContract, ColumnType, Table, TableBrowser, TableOptions};
 use casa_types::measures::direction::{
@@ -459,6 +459,7 @@ pub struct MeasurementSetPlotRequest {
     pub feed: Option<String>,
     pub msselect: Option<String>,
     pub data_column: String,
+    pub color_by: Option<String>,
     pub avgchannel: Option<u64>,
     pub avgtime: Option<f64>,
     pub avgscan: bool,
@@ -467,9 +468,37 @@ pub struct MeasurementSetPlotRequest {
     pub avgantenna: bool,
     pub avgspw: bool,
     pub scalar: bool,
+    pub iteraxis: Option<String>,
     pub width: u32,
     pub height: u32,
     pub max_plot_points: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MeasurementSetSummaryRequest {
+    pub dataset_path: String,
+    pub format: String,
+    pub field: Option<String>,
+    pub spectral_window: Option<String>,
+    pub timerange: Option<String>,
+    pub uvrange: Option<String>,
+    pub antenna: Option<String>,
+    pub scan: Option<String>,
+    pub correlation: Option<String>,
+    pub array: Option<String>,
+    pub observation: Option<String>,
+    pub intent: Option<String>,
+    pub feed: Option<String>,
+    pub msselect: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MeasurementSetSummaryResult {
+    pub dataset_path: String,
+    pub format: String,
+    pub summary_text: String,
+    pub selection_summary: String,
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -1209,11 +1238,12 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
             mode: None,
             subcommand: None,
             summary: "Create a selected MeasurementSet subset, equivalent to CASA split.",
-            usage: "mstransform --ms <input.ms> --out <output.ms> --spw <spw[:channels]>",
+            usage: "mstransform --ms <input.ms> --out <output.ms> [--spw <spw[:channels]>] [--width <n>]",
             visible_arguments: &[
                 "ms",
                 "out",
                 "spw",
+                "width",
                 "field",
                 "scan",
                 "antenna",
@@ -1222,7 +1252,7 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
                 "datacolumn",
                 "keepflags",
             ],
-            required_arguments: &["ms", "out", "spw"],
+            required_arguments: &["ms", "out"],
             extra_arguments: &[],
         }),
         "plotms" => Some(TaskAlias {
@@ -1396,9 +1426,9 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
         "imstat" => Some(TaskAlias {
             mode: None,
             subcommand: Some("imstat"),
-            summary: "Compute CASA image statistics over optional pixel and channel selections.",
-            usage: "imexplore imstat <image> [--box x0,y0,x1,y1] [--chans 0~4] [--json]",
-            visible_arguments: &["image_path", "box", "chans", "json"],
+            summary: "Compute CASA image statistics over optional pixel, region, and channel selections.",
+            usage: "imexplore imstat <image> [--box x0,y0,x1,y1] [--region path|box[[x0pix,y0pix],[x1pix,y1pix]]|world CRTF box] [--chans 0~4] [--json]",
+            visible_arguments: &["image_path", "box", "region", "chans", "json"],
             required_arguments: &["image_path"],
             extra_arguments: &[
                 ExtraAliasArgument {
@@ -1434,7 +1464,7 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
                 ExtraAliasArgument {
                     id: "chans",
                     label: "Channels",
-                    order: 3,
+                    order: 4,
                     parser: ExtraAliasParser::Option {
                         flags: &["--chans"],
                         metavar: "range",
@@ -1449,9 +1479,26 @@ fn task_alias(task_id: &str) -> Option<TaskAlias> {
                     hidden: false,
                 },
                 ExtraAliasArgument {
+                    id: "region",
+                    label: "Region",
+                    order: 3,
+                    parser: ExtraAliasParser::Option {
+                        flags: &["--region"],
+                        metavar: "path|CRTF box",
+                        choices: &[],
+                    },
+                    value_kind: "path",
+                    required: false,
+                    default: None,
+                    help: "CASA CRTF region file, inline CRTF pixel box such as box[[100pix,100pix],[150pix,150pix]], or a world-coordinate CRTF box exported by the image explorer.",
+                    group: "Selection",
+                    advanced: false,
+                    hidden: false,
+                },
+                ExtraAliasArgument {
                     id: "json",
                     label: "JSON",
-                    order: 4,
+                    order: 5,
                     parser: ExtraAliasParser::Toggle {
                         true_flags: &["--json"],
                         false_flags: &[],
@@ -1585,6 +1632,7 @@ fn infer_task_parameter_type(
         "interpolation" => "interpolation_mode",
         "phasecenter" => "direction",
         "box" | "mask_box" => "pixel_box",
+        "region" => "region_path_or_box",
         "includepix" => "pixel_range",
         "moments" => "image_moment_list",
         "expr" => "image_math_expression",
@@ -1804,6 +1852,74 @@ pub fn probe_project(path: String) -> FrontendResult<ProjectProbe> {
 }
 
 #[uniffi::export]
+pub fn build_measurement_set_summary(
+    request: MeasurementSetSummaryRequest,
+) -> FrontendResult<MeasurementSetSummaryResult> {
+    let dataset_path = PathBuf::from(&request.dataset_path);
+    if !dataset_path.is_dir() {
+        return Err(FrontendServiceError::InvalidPath {
+            reason: format!(
+                "{} is not a MeasurementSet directory",
+                dataset_path.display()
+            ),
+        });
+    }
+
+    let format = match request.format.trim().to_ascii_lowercase().as_str() {
+        "" | "text" => MeasurementSetSummaryOutputFormat::Text,
+        "json" => MeasurementSetSummaryOutputFormat::Json,
+        other => {
+            return Err(FrontendServiceError::Probe {
+                reason: format!("unsupported MeasurementSet summary format {other:?}"),
+            });
+        }
+    };
+    let selection = MsSelectionSpec {
+        field: normalized_optional(request.field.clone()),
+        spw: normalized_optional(request.spectral_window.clone()),
+        timerange: normalized_optional(request.timerange.clone()),
+        uvrange: normalized_optional(request.uvrange.clone()),
+        antenna: normalized_optional(request.antenna.clone()),
+        scan: normalized_optional(request.scan.clone()),
+        correlation: normalized_optional(request.correlation.clone()),
+        array: normalized_optional(request.array.clone()),
+        observation: normalized_optional(request.observation.clone()),
+        intent: normalized_optional(request.intent.clone()),
+        feed: normalized_optional(request.feed.clone()),
+        msselect: normalized_optional(request.msselect.clone()),
+        ..MsSelectionSpec::default()
+    };
+    let started = Instant::now();
+    let ms = MeasurementSet::open(&dataset_path).map_err(|error| FrontendServiceError::Probe {
+        reason: format!("open MeasurementSet {}: {error}", dataset_path.display()),
+    })?;
+    let summary = MeasurementSetSummary::from_ms_with_options(&ms, &selection.to_summary_options())
+        .map_err(|error| FrontendServiceError::Probe {
+            reason: format!(
+                "summarize MeasurementSet {}: {error}",
+                dataset_path.display()
+            ),
+        })?;
+    let summary_text = summary
+        .render(format)
+        .map_err(|error| FrontendServiceError::Probe {
+            reason: format!("render MeasurementSet summary: {error}"),
+        })?;
+    let elapsed = started.elapsed();
+    Ok(MeasurementSetSummaryResult {
+        dataset_path: dataset_path.display().to_string(),
+        format: match format {
+            MeasurementSetSummaryOutputFormat::Text => "text",
+            MeasurementSetSummaryOutputFormat::Json => "json",
+        }
+        .to_string(),
+        summary_text,
+        selection_summary: measurement_set_summary_selection_summary(&request),
+        diagnostics: vec![format!("timing: summary={} ms", elapsed.as_millis())],
+    })
+}
+
+#[uniffi::export]
 pub fn build_measurement_set_plot(
     request: MeasurementSetPlotRequest,
 ) -> FrontendResult<MeasurementSetPlotResult> {
@@ -1830,6 +1946,12 @@ pub fn build_measurement_set_plot(
         casa_ms::MsDataColumn::parse(&data_column).map_err(|error| FrontendServiceError::Plot {
             reason: format!("{}: {error}", dataset_path.display()),
         })?;
+    if let Some(color_by) = normalized_optional(request.color_by.clone()) {
+        plot.color_by =
+            casa_ms::MsColorAxis::parse(&color_by).map_err(|error| FrontendServiceError::Plot {
+                reason: format!("{}: {error}", dataset_path.display()),
+            })?;
+    }
     plot.averaging.avgchannel = request
         .avgchannel
         .map(usize::try_from)
@@ -1844,6 +1966,12 @@ pub fn build_measurement_set_plot(
     plot.averaging.avgantenna = request.avgantenna;
     plot.averaging.avgspw = request.avgspw;
     plot.averaging.scalar = request.scalar;
+    plot.iteration.iteraxis = normalized_optional(request.iteraxis.clone())
+        .map(|iteraxis| casa_ms::MsIterationAxis::parse(&iteraxis))
+        .transpose()
+        .map_err(|error| FrontendServiceError::Plot {
+            reason: format!("{}: {error}", dataset_path.display()),
+        })?;
 
     let selection = MsSelectionSpec {
         field: normalized_optional(request.field.clone()),
@@ -4193,6 +4321,30 @@ fn normalized_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty() && value != "all")
 }
 
+fn measurement_set_summary_selection_summary(request: &MeasurementSetSummaryRequest) -> String {
+    let mut parts = Vec::new();
+    if let Some(field) = normalized_optional(request.field.clone()) {
+        parts.push(format!("field {field}"));
+    }
+    if let Some(spw) = normalized_optional(request.spectral_window.clone()) {
+        parts.push(format!("spw {spw}"));
+    }
+    if let Some(correlation) = normalized_optional(request.correlation.clone()) {
+        parts.push(format!("correlation {correlation}"));
+    }
+    if let Some(scan) = normalized_optional(request.scan.clone()) {
+        parts.push(format!("scan {scan}"));
+    }
+    if let Some(timerange) = normalized_optional(request.timerange.clone()) {
+        parts.push(format!("timerange {timerange}"));
+    }
+    if parts.is_empty() {
+        "all rows".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
 fn selection_summary(request: &MeasurementSetPlotRequest) -> String {
     let mut parts = vec![format!(
         "data column {}",
@@ -4686,7 +4838,22 @@ fn probe_image(path: &Path, metadata: &fs::Metadata) -> Result<Option<DatasetPro
     let region_names = image.region_names();
     let brightness_unit = image_units(&image).to_string();
     diagnostics.push(format!("Pixel type: {pixel_type}"));
+    match image_info(&image) {
+        Ok(info) => {
+            if !info.object_name.is_empty() {
+                diagnostics.push(format!("Object: {}", info.object_name));
+            }
+            diagnostics.push(format!("Image type: {}", info.image_type));
+        }
+        Err(error) => diagnostics.push(format!("Image info unavailable: {error}")),
+    }
     diagnostics.extend(image_coordinate_diagnostics(&image));
+    if !mask_names.is_empty() {
+        diagnostics.push(format!("Masks: {}", mask_names.join(", ")));
+    }
+    if !region_names.is_empty() {
+        diagnostics.push(format!("Regions: {}", region_names.join(", ")));
+    }
     if let Some(default_mask) = image.default_mask_name() {
         diagnostics.push(format!("Default mask: {default_mask}"));
     }
@@ -5482,6 +5649,14 @@ mod tests {
                 && argument["required"] == true
                 && argument["parameter_type"] == "output_measurement_set_path"
         }));
+        assert!(
+            split_arguments
+                .iter()
+                .any(|argument| { argument["id"] == "spw" && argument["required"] == false })
+        );
+        assert!(split_arguments.iter().any(|argument| {
+            argument["id"] == "width" && argument["required"] == false && argument["default"] == "1"
+        }));
 
         let uvcontsub_schema_json =
             task_ui_schema_json("uvcontsub".to_string()).expect("uvcontsub schema");
@@ -5573,6 +5748,72 @@ mod tests {
         assert!(imstat_arguments.iter().any(|argument| {
             argument["id"] == "box" && argument["parameter_type"] == "pixel_box"
         }));
+        assert!(imstat_arguments.iter().any(|argument| {
+            argument["id"] == "region" && argument["parameter_type"] == "region_path_or_box"
+        }));
+    }
+
+    #[test]
+    fn swift_visible_task_schemas_expose_path_parameter_roles() {
+        let catalog: serde_json::Value =
+            serde_json::from_str(TASK_CATALOG_JSON).expect("task catalog json");
+        let tasks = catalog["tasks"].as_array().expect("tasks array");
+
+        for task in tasks
+            .iter()
+            .filter(|task| task["show_in_swift"].as_bool() == Some(true))
+        {
+            let task_id = task["id"].as_str().expect("task id");
+            let schema_json =
+                task_ui_schema_json(task_id.to_string()).expect("Swift-visible task schema");
+            let schema: serde_json::Value =
+                serde_json::from_str(&schema_json).expect("Swift-visible schema json");
+            let arguments = schema["arguments"].as_array().expect("schema arguments");
+
+            assert!(
+                !arguments.is_empty(),
+                "{task_id} should expose at least one schema argument"
+            );
+            for argument in arguments
+                .iter()
+                .filter(|argument| argument["hidden_in_tui"].as_bool() != Some(true))
+            {
+                if argument["value_kind"].as_str() == Some("path") {
+                    assert!(
+                        argument["parameter_type"]
+                            .as_str()
+                            .is_some_and(|parameter_type| !parameter_type.is_empty()),
+                        "{task_id}.{} should expose a path parameter_type",
+                        argument["id"].as_str().unwrap_or("<unknown>")
+                    );
+                }
+            }
+        }
+
+        let exportfits_schema: serde_json::Value = serde_json::from_str(
+            &task_ui_schema_json("exportfits".to_string()).expect("exportfits schema"),
+        )
+        .expect("exportfits schema json");
+        let exportfits_arguments = exportfits_schema["arguments"]
+            .as_array()
+            .expect("exportfits arguments");
+        assert!(exportfits_arguments.iter().any(|argument| {
+            argument["id"] == "fitsimage" && argument["parameter_type"] == "output_fits_path"
+        }));
+
+        let importfits_schema: serde_json::Value = serde_json::from_str(
+            &task_ui_schema_json("importfits".to_string()).expect("importfits schema"),
+        )
+        .expect("importfits schema json");
+        let importfits_arguments = importfits_schema["arguments"]
+            .as_array()
+            .expect("importfits arguments");
+        assert!(importfits_arguments.iter().any(|argument| {
+            argument["id"] == "fitsimage" && argument["parameter_type"] == "fits_path"
+        }));
+        assert!(importfits_arguments.iter().any(|argument| {
+            argument["id"] == "imagename" && argument["parameter_type"] == "output_image_path"
+        }));
     }
 
     #[test]
@@ -5626,6 +5867,34 @@ mod tests {
     }
 
     #[test]
+    fn measurement_set_summary_builds_listobs_text_for_gui() {
+        let (_dir, ms_path) = unpack_small_ms();
+
+        let result = build_measurement_set_summary(MeasurementSetSummaryRequest {
+            dataset_path: ms_path.display().to_string(),
+            format: "text".to_string(),
+            field: None,
+            spectral_window: None,
+            timerange: None,
+            uvrange: None,
+            antenna: None,
+            scan: None,
+            correlation: None,
+            array: None,
+            observation: None,
+            intent: None,
+            feed: None,
+            msselect: None,
+        })
+        .expect("build listobs-style summary");
+
+        assert_eq!(result.format, "text");
+        assert_eq!(result.selection_summary, "all rows");
+        assert!(result.summary_text.contains("Observation"));
+        assert!(result.summary_text.contains("Spectral Windows"));
+    }
+
+    #[test]
     fn measurement_set_plot_builds_typed_document_without_gui_png_work() {
         let (_dir, ms_path) = unpack_small_ms();
 
@@ -5650,6 +5919,7 @@ mod tests {
                 feed: None,
                 msselect: None,
                 data_column: "DATA".to_string(),
+                color_by: None,
                 avgchannel: None,
                 avgtime: None,
                 avgscan: false,
@@ -5658,6 +5928,7 @@ mod tests {
                 avgantenna: false,
                 avgspw: false,
                 scalar: false,
+                iteraxis: None,
                 width: DEFAULT_PLOT_WIDTH,
                 height: DEFAULT_PLOT_HEIGHT,
                 max_plot_points: 10_000,
@@ -5770,6 +6041,7 @@ mod tests {
                 feed: None,
                 msselect: None,
                 data_column: "DATA".to_string(),
+                color_by: None,
                 avgchannel: None,
                 avgtime: None,
                 avgscan: false,
@@ -5778,6 +6050,7 @@ mod tests {
                 avgantenna: false,
                 avgspw: false,
                 scalar: false,
+                iteraxis: None,
                 width: DEFAULT_PLOT_WIDTH,
                 height: DEFAULT_PLOT_HEIGHT,
                 max_plot_points: 250_000,
@@ -5937,6 +6210,18 @@ mod tests {
             probe
                 .diagnostics
                 .iter()
+                .any(|line| line == "Object: TW Hya")
+        );
+        assert!(
+            probe
+                .diagnostics
+                .iter()
+                .any(|line| line == "Image type: Intensity")
+        );
+        assert!(
+            probe
+                .diagnostics
+                .iter()
                 .any(|line| line == "Cell size: 0.1 x 0.1 arcsec")
         );
         assert!(
@@ -6044,6 +6329,67 @@ mod tests {
         assert_eq!(requested_snapshot["focus"], "inspector");
         assert_eq!(requested_snapshot["plane_cursor"]["pixel_x"], 1);
         assert_eq!(requested_snapshot["plane_cursor"]["pixel_y"], 1);
+
+        let region_path = path.with_extension("crtf");
+        fs::write(
+            &region_path,
+            "#CRTFv0 CASA Region Text Format version 0\nbox[[1pix,1pix],[2pix,2pix]]\n",
+        )
+        .expect("write test region");
+        let region_request_json = serde_json::json!({
+            "dataset_path": path.display().to_string(),
+            "width": 100,
+            "height": 32,
+            "inspector_height": 8,
+            "plane_pixel_width": 128,
+            "plane_pixel_height": 96,
+            "active_view": "plane",
+            "commands": [
+                {
+                    "command": "load_region_file",
+                    "path": region_path.display().to_string()
+                }
+            ],
+            "include_profile": true
+        })
+        .to_string();
+        let region_snapshot_json =
+            build_image_explorer_snapshot_from_request_json(region_request_json)
+                .expect("image explorer region load snapshot");
+        let region_snapshot: serde_json::Value =
+            serde_json::from_str(&region_snapshot_json).expect("region snapshot json");
+        assert_eq!(region_snapshot["region"]["label"], "restored");
+        assert_eq!(region_snapshot["region"]["shape_count"], 1);
+
+        let append_region_request_json = serde_json::json!({
+            "dataset_path": path.display().to_string(),
+            "width": 100,
+            "height": 32,
+            "inspector_height": 8,
+            "plane_pixel_width": 128,
+            "plane_pixel_height": 96,
+            "active_view": "plane",
+            "commands": [
+                {"command": "start_region_shape"},
+                {"command": "append_region_vertex", "x": 0, "y": 0},
+                {"command": "append_region_vertex", "x": 1, "y": 0},
+                {"command": "append_region_vertex", "x": 1, "y": 1},
+                {"command": "close_region_shape"},
+                {
+                    "command": "append_region_file",
+                    "path": region_path.display().to_string()
+                }
+            ],
+            "include_profile": true
+        })
+        .to_string();
+        let appended_region_snapshot_json =
+            build_image_explorer_snapshot_from_request_json(append_region_request_json)
+                .expect("image explorer region append snapshot");
+        let appended_region_snapshot: serde_json::Value =
+            serde_json::from_str(&appended_region_snapshot_json)
+                .expect("appended region snapshot json");
+        assert_eq!(appended_region_snapshot["region"]["shape_count"], 2);
     }
 
     #[test]

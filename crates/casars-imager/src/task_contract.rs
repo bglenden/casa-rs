@@ -906,6 +906,9 @@ pub struct ImagerRunTaskRequest {
     /// Write CASA-style PB-corrected mosaic image products.
     #[serde(default)]
     pub pbcor: bool,
+    /// Write the primary-beam image used for PB correction.
+    #[serde(default)]
+    pub write_pb: bool,
     /// Residual-refresh cadence.
     #[serde(default = "default_minor_cycle_length")]
     pub minor_cycle_length: usize,
@@ -992,6 +995,7 @@ impl ImagerRunTaskRequest {
             psf_cutoff: config.psf_cutoff,
             mosaic_pb_limit: config.mosaic_pb_limit,
             pbcor: config.pbcor,
+            write_pb: config.write_pb,
             minor_cycle_length: config.minor_cycle_length,
             cyclefactor: config.cyclefactor,
             min_psf_fraction: config.min_psf_fraction,
@@ -1103,6 +1107,7 @@ impl ImagerRunTaskRequest {
             psf_cutoff: self.psf_cutoff,
             mosaic_pb_limit: self.mosaic_pb_limit,
             pbcor: self.pbcor,
+            write_pb: self.write_pb,
             minor_cycle_length: self.minor_cycle_length,
             cyclefactor: self.cyclefactor,
             min_psf_fraction: self.min_psf_fraction,
@@ -1478,7 +1483,7 @@ fn default_psf_cutoff() -> f32 {
 }
 
 fn default_mosaic_pb_limit() -> f32 {
-    0.1
+    0.2
 }
 
 fn default_minor_cycle_length() -> usize {
@@ -1652,6 +1657,19 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
                 PathBuf::from(format!("{base}.alpha")),
                 alpha_preview,
             ));
+            if request.write_pb || request.pbcor {
+                for term in 0..request.nterms {
+                    let suffix = format!("pb.tt{term}");
+                    let preview = (term == 0 && request.write_preview_pngs)
+                        .then(|| PathBuf::from(format!("{base}.{suffix}.png")));
+                    artifacts.push(artifact(
+                        ImagerArtifactKind::PrimaryBeam,
+                        format!("Primary Beam tt{term}"),
+                        PathBuf::from(format!("{base}.{suffix}")),
+                        preview,
+                    ));
+                }
+            }
         }
         _ => {
             for (kind, label) in [
@@ -1672,22 +1690,30 @@ fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
                     preview,
                 ));
             }
+            if request.write_pb || request.pbcor {
+                let suffix = ImagerArtifactKind::PrimaryBeam.as_suffix();
+                let preview = request
+                    .write_preview_pngs
+                    .then(|| PathBuf::from(format!("{base}.{suffix}.png")));
+                artifacts.push(artifact(
+                    ImagerArtifactKind::PrimaryBeam,
+                    "Primary Beam".to_string(),
+                    PathBuf::from(format!("{base}.{suffix}")),
+                    preview,
+                ));
+            }
             if request.pbcor {
-                for (kind, label) in [
-                    (ImagerArtifactKind::PrimaryBeam, "Primary Beam"),
-                    (ImagerArtifactKind::ImagePbcor, "PB-corrected Image"),
-                ] {
-                    let suffix = kind.as_suffix();
-                    let preview = request
-                        .write_preview_pngs
-                        .then(|| PathBuf::from(format!("{base}.{suffix}.png")));
-                    artifacts.push(artifact(
-                        kind,
-                        label.to_string(),
-                        PathBuf::from(format!("{base}.{suffix}")),
-                        preview,
-                    ));
-                }
+                let kind = ImagerArtifactKind::ImagePbcor;
+                let suffix = kind.as_suffix();
+                let preview = request
+                    .write_preview_pngs
+                    .then(|| PathBuf::from(format!("{base}.{suffix}.png")));
+                artifacts.push(artifact(
+                    kind,
+                    "PB-corrected Image".to_string(),
+                    PathBuf::from(format!("{base}.{suffix}")),
+                    preview,
+                ));
             }
         }
     }
@@ -1894,8 +1920,9 @@ mod tests {
             threshold_jy: 0.0,
             nsigma: 0.0,
             psf_cutoff: 0.35,
-            mosaic_pb_limit: 0.1,
+            mosaic_pb_limit: 0.2,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -1956,6 +1983,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -2199,6 +2227,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -2359,6 +2388,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.1,
@@ -2504,6 +2534,7 @@ mod tests {
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.2,
             pbcor: false,
+            write_pb: false,
             minor_cycle_length: 8,
             cyclefactor: 1.0,
             min_psf_fraction: 0.05,

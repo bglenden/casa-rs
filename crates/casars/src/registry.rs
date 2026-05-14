@@ -681,11 +681,12 @@ fn registry_task_alias(task_id: &str) -> Option<RegistryTaskAlias> {
             mode: None,
             subcommand: None,
             summary: "Create a selected MeasurementSet subset, equivalent to CASA split.",
-            usage: "mstransform --ms <input.ms> --out <output.ms> --spw <spw[:channels]>",
+            usage: "mstransform --ms <input.ms> --out <output.ms> [--spw <spw[:channels]>] [--width <n>]",
             visible_arguments: &[
                 "ms",
                 "out",
                 "spw",
+                "width",
                 "field",
                 "scan",
                 "antenna",
@@ -694,7 +695,7 @@ fn registry_task_alias(task_id: &str) -> Option<RegistryTaskAlias> {
                 "datacolumn",
                 "keepflags",
             ],
-            required_arguments: &["ms", "out", "spw"],
+            required_arguments: &["ms", "out"],
             extra_arguments: &[],
         }),
         "plotms" => Some(RegistryTaskAlias {
@@ -868,9 +869,9 @@ fn registry_task_alias(task_id: &str) -> Option<RegistryTaskAlias> {
         "imstat" => Some(RegistryTaskAlias {
             mode: None,
             subcommand: Some("imstat"),
-            summary: "Compute CASA image statistics over optional pixel and channel selections.",
-            usage: "imexplore imstat <image> [--box x0,y0,x1,y1] [--chans 0~4] [--json]",
-            visible_arguments: &["image_path", "box", "chans", "json"],
+            summary: "Compute CASA image statistics over optional pixel, region, and channel selections.",
+            usage: "imexplore imstat <image> [--box x0,y0,x1,y1] [--region path|box[[x0pix,y0pix],[x1pix,y1pix]]|world CRTF box] [--chans 0~4] [--json]",
+            visible_arguments: &["image_path", "box", "region", "chans", "json"],
             required_arguments: &["image_path"],
             extra_arguments: &[
                 RegistryExtraAliasArgument {
@@ -906,7 +907,7 @@ fn registry_task_alias(task_id: &str) -> Option<RegistryTaskAlias> {
                 RegistryExtraAliasArgument {
                     id: "chans",
                     label: "Channels",
-                    order: 3,
+                    order: 4,
                     parser: RegistryExtraAliasParser::Option {
                         flags: &["--chans"],
                         metavar: "range",
@@ -921,9 +922,26 @@ fn registry_task_alias(task_id: &str) -> Option<RegistryTaskAlias> {
                     hidden: false,
                 },
                 RegistryExtraAliasArgument {
+                    id: "region",
+                    label: "Region",
+                    order: 3,
+                    parser: RegistryExtraAliasParser::Option {
+                        flags: &["--region"],
+                        metavar: "path|CRTF box",
+                        choices: &[],
+                    },
+                    value_kind: "path",
+                    required: false,
+                    default: None,
+                    help: "CASA CRTF region file, inline CRTF pixel box such as box[[100pix,100pix],[150pix,150pix]], or a world-coordinate CRTF box exported by the image explorer.",
+                    group: "Selection",
+                    advanced: false,
+                    hidden: false,
+                },
+                RegistryExtraAliasArgument {
                     id: "json",
                     label: "JSON",
-                    order: 4,
+                    order: 5,
                     parser: RegistryExtraAliasParser::Toggle {
                         true_flags: &["--json"],
                         false_flags: &[],
@@ -1484,6 +1502,7 @@ mod tests {
             "restfreq",
             "deconvolver",
             "weighting",
+            "gridder",
             "perchanweightdensity",
             "restoringbeam",
             "usemask",
@@ -1499,6 +1518,7 @@ mod tests {
             "nterms",
             "savemodel",
             "outlierfile",
+            "write_pb",
             "pbcor",
             "pblimit",
         ] {
@@ -1510,6 +1530,78 @@ mod tests {
             assert!(
                 !argument.hidden_in_tui,
                 "{argument_id} should be TUI invokable"
+            );
+        }
+
+        for argument_id in [
+            "ms",
+            "imagename",
+            "imsize",
+            "cell_arcsec",
+            "field",
+            "phasecenter_field",
+            "spw",
+            "specmode",
+            "dirty_only",
+            "deconvolver",
+            "weighting",
+            "gridder",
+            "niter",
+            "threshold_jy",
+        ] {
+            let argument = schema
+                .arguments
+                .iter()
+                .find(|argument| argument.id == argument_id)
+                .unwrap_or_else(|| panic!("missing imager argument {argument_id}"));
+            assert!(
+                !argument.advanced,
+                "{argument_id} should be in the default imager form"
+            );
+        }
+
+        for argument_id in [
+            "savemodel",
+            "ddid",
+            "polarization",
+            "wterm",
+            "nmajor",
+            "gain",
+            "usemask",
+            "sidelobethreshold",
+            "noisethreshold",
+        ] {
+            let argument = schema
+                .arguments
+                .iter()
+                .find(|argument| argument.id == argument_id)
+                .unwrap_or_else(|| panic!("missing imager argument {argument_id}"));
+            assert!(
+                argument.advanced,
+                "{argument_id} should stay behind advanced or conditional disclosure"
+            );
+        }
+
+        let dirty_order = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "dirty_only")
+            .expect("dirty_only")
+            .order;
+        for argument_id in ["niter", "threshold_jy"] {
+            let argument = schema
+                .arguments
+                .iter()
+                .find(|argument| argument.id == argument_id)
+                .unwrap_or_else(|| panic!("missing imager argument {argument_id}"));
+            assert_eq!(argument.group, "Stages");
+            assert!(
+                argument.order > dirty_order,
+                "{argument_id} should appear immediately after dirty_only"
+            );
+            assert!(
+                argument.help.contains("Dirty Only"),
+                "{argument_id} should explain the Dirty Only interaction"
             );
         }
     }
@@ -1596,6 +1688,7 @@ mod tests {
             Some("imstat")
         );
         assert!(imstat.argument("box").is_some());
+        assert!(imstat.argument("region").is_some());
         assert!(imstat.argument("chans").is_some());
         assert!(imstat.argument("clip_low").is_none());
     }
