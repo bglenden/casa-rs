@@ -44,6 +44,7 @@ functionality.
 ## ImPerformance Artifacts
 
 - [Wave 1 mode selection and target styles](imperformance-wave-1-mode-selection.md)
+- [Wave 1 simulated dataset plan](imperformance-wave-1-datasets.md)
 
 ## Source Pages
 

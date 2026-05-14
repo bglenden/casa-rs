@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "root_env": "CASA_RS_IMPERF_DATA_ROOT",
+  "external_root_hint": "/Volumes/GLENDENNING/casa-rs-imperformance",
+  "description": "Deterministic simulated imaging datasets for ImPerformance Wave 1.",
+  "tiers": {
+    "small": {
+      "target_size_bytes": 1073741824,
+      "storage_label": "well-below-memory",
+      "external_root_required": false
+    },
+    "medium": {
+      "target_size_bytes": 34359738368,
+      "storage_label": "about-memory",
+      "external_root_required": true
+    },
+    "large": {
+      "target_size_bytes": 107374182400,
+      "storage_label": "larger-than-memory",
+      "external_root_required": true
+    }
+  },
+  "instruments": {
+    "vla": {
+      "display_name": "VLA",
+      "array_configuration": "synthetic VLA A-like",
+      "dish_diameter_m": 25.0,
+      "native_casars_status": "supported"
+    },
+    "alma": {
+      "display_name": "ALMA",
+      "array_configuration": "synthetic compact 12m-like",
+      "dish_diameter_m": 12.0,
+      "native_casars_status": "request-plan-only until ALMA parity is checked"
+    }
+  },
+  "families": {
+    "single": {
+      "display_name": "single-field standard-gridder",
+      "selected_modes": [
+        "standard-mfs-dirty-control",
+        "standard-mfs-clean-current",
+        "standard-cube-line",
+        "mtmfs-wideband-sentinel"
+      ],
+      "pointing_count": 1
+    },
+    "mosaic": {
+      "display_name": "overlapping-field mosaic",
+      "selected_modes": [
+        "mosaic-mfs-clean-primary",
+        "mosaic-cube-bounded"
+      ],
+      "pointing_count": 7
+    }
+  },
+  "source_model": {
+    "name": "structured star-forming field",
+    "continuum_components": [
+      "bright compact core",
+      "faint offset compact sources",
+      "two extended spiral arms",
+      "partial ring",
+      "broad diffuse halo"
+    ],
+    "cube_components": [
+      "continuum baseline with spectral index",
+      "central broad emission line",
+      "offset narrow emission line",
+      "absorption notch against the core",
+      "weak velocity gradient across the extended arms"
+    ],
+    "noise_model": "deterministic simple complex visibility noise"
+  },
+  "datasets": [
+    {
+      "id": "wave1-vla-single-small",
+      "instrument": "vla",
+      "family": "single",
+      "tier": "small",
+      "model_pixels": 512,
+      "image_pixels": 512,
+      "channels": 16,
+      "duration_seconds": 192,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.001
+    },
+    {
+      "id": "wave1-vla-single-medium",
+      "instrument": "vla",
+      "family": "single",
+      "tier": "medium",
+      "model_pixels": 2048,
+      "image_pixels": 2048,
+      "channels": 64,
+      "duration_seconds": 2160,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.001
+    },
+    {
+      "id": "wave1-vla-single-large",
+      "instrument": "vla",
+      "family": "single",
+      "tier": "large",
+      "model_pixels": 4096,
+      "image_pixels": 4096,
+      "channels": 256,
+      "duration_seconds": 5760,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.001
+    },
+    {
+      "id": "wave1-vla-mosaic-small",
+      "instrument": "vla",
+      "family": "mosaic",
+      "tier": "small",
+      "model_pixels": 512,
+      "image_pixels": 512,
+      "channels": 8,
+      "duration_seconds": 128,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.0012
+    },
+    {
+      "id": "wave1-vla-mosaic-medium",
+      "instrument": "vla",
+      "family": "mosaic",
+      "tier": "medium",
+      "model_pixels": 2048,
+      "image_pixels": 2048,
+      "channels": 32,
+      "duration_seconds": 2160,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.0012
+    },
+    {
+      "id": "wave1-vla-mosaic-large",
+      "instrument": "vla",
+      "family": "mosaic",
+      "tier": "large",
+      "model_pixels": 4096,
+      "image_pixels": 4096,
+      "channels": 96,
+      "duration_seconds": 5760,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.0012
+    },
+    {
+      "id": "wave1-alma-single-small",
+      "instrument": "alma",
+      "family": "single",
+      "tier": "small",
+      "model_pixels": 512,
+      "image_pixels": 512,
+      "channels": 16,
+      "duration_seconds": 192,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.0007
+    },
+    {
+      "id": "wave1-alma-single-medium",
+      "instrument": "alma",
+      "family": "single",
+      "tier": "medium",
+      "model_pixels": 2048,
+      "image_pixels": 2048,
+      "channels": 64,
+      "duration_seconds": 2160,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.0007
+    },
+    {
+      "id": "wave1-alma-single-large",
+      "instrument": "alma",
+      "family": "single",
+      "tier": "large",
+      "model_pixels": 4096,
+      "image_pixels": 4096,
+      "channels": 256,
+      "duration_seconds": 5760,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.0007
+    },
+    {
+      "id": "wave1-alma-mosaic-small",
+      "instrument": "alma",
+      "family": "mosaic",
+      "tier": "small",
+      "model_pixels": 512,
+      "image_pixels": 512,
+      "channels": 8,
+      "duration_seconds": 128,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.0008
+    },
+    {
+      "id": "wave1-alma-mosaic-medium",
+      "instrument": "alma",
+      "family": "mosaic",
+      "tier": "medium",
+      "model_pixels": 2048,
+      "image_pixels": 2048,
+      "channels": 32,
+      "duration_seconds": 2160,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.0008
+    },
+    {
+      "id": "wave1-alma-mosaic-large",
+      "instrument": "alma",
+      "family": "mosaic",
+      "tier": "large",
+      "model_pixels": 4096,
+      "image_pixels": 4096,
+      "channels": 96,
+      "duration_seconds": 5760,
+      "integration_seconds": 2,
+      "noise_simplenoise_jy": 0.0008
+    }
+  ]
+}

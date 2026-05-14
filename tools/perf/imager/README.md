@@ -9,6 +9,14 @@ imager.
   - runs one JSON workload manifest, preflights support, delegates supported
     workloads to `scripts/bench-imager-vs-casa.sh`, and writes a normalized
     machine-readable result JSON
+- `tools/perf/imager/stage_wave1_datasets.py`
+  - validates the ImPerformance Wave 1 simulated-dataset registry, enforces the
+    explicit data-root policy, and can materialize deterministic source models,
+    spectral profiles, simulation request plans, and generated workload
+    manifests
+- `tools/perf/imager/wave1_dataset_registry.json`
+  - records the VLA/ALMA, single-field/mosaic, small/medium/large simulated
+    dataset plan for #248
 - `crates/casars-imager/examples/profile_imager.rs`
   - runs repeated Rust imaging passes and reports median stage timings from the
     pure `casa-imaging` core
@@ -30,6 +38,18 @@ tools/perf/imager/run_workload.py --dry-run wave1-standard-mfs-dirty-smoke
 
 The command writes a JSON plan under `target/imperformance-wave1/` without
 requiring CASA Python or a local MeasurementSet.
+
+To validate the Wave 1 simulated-dataset plan:
+
+```sh
+tools/perf/imager/stage_wave1_datasets.py \
+  --dry-run \
+  --data-root /Volumes/GLENDENNING/casa-rs-imperformance
+```
+
+Medium and large datasets are expected to live on the external drive on this
+system. The staging tool requires those tiers under `/Volumes/GLENDENNING`
+unless `--allow-non-external-large-root` is passed explicitly.
 
 To run the same workload for real:
 
