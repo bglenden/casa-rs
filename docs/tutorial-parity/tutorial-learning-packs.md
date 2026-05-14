@@ -48,11 +48,12 @@ Version 0 is a directory pack:
     specs/
 ```
 
-`pack.json` follows [`resources/tutorial-pack.schema.json`](../../resources/tutorial-pack.schema.json).
+`pack.json` follows
+[`resources/tutorial-pack.schema.json`](https://github.com/bglenden/casa-rs/blob/main/resources/tutorial-pack.schema.json).
 Section review records follow
-[`resources/tutorial-pack-review.schema.json`](../../resources/tutorial-pack-review.schema.json).
+[`resources/tutorial-pack-review.schema.json`](https://github.com/bglenden/casa-rs/blob/main/resources/tutorial-pack-review.schema.json).
 The no-data pilot template is
-[`resources/tutorial-packs/alma-first-look-image-analysis.template.json`](../../resources/tutorial-packs/alma-first-look-image-analysis.template.json).
+[`resources/tutorial-packs/alma-first-look-image-analysis.template.json`](https://github.com/bglenden/casa-rs/blob/main/resources/tutorial-packs/alma-first-look-image-analysis.template.json).
 
 Top-level CASA datasets are immutable once a pack is generated. The pack root is
 also the working directory learners can use for shell and Python examples, so
