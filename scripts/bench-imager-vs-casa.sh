@@ -42,6 +42,7 @@ spw="${IMAGER_BENCH_SPW:-0}"
 channel_start="${IMAGER_BENCH_CHANNEL_START:-0}"
 channel_count="${IMAGER_BENCH_CHANNEL_COUNT:-1}"
 specmode="${IMAGER_BENCH_SPECMODE:-mfs}"
+gridder="${IMAGER_BENCH_GRIDDER:-standard}"
 interpolation="${IMAGER_BENCH_INTERPOLATION:-linear}"
 imsize="${IMAGER_BENCH_IMSIZE:-128}"
 cell_arcsec="${IMAGER_BENCH_CELL_ARCSEC:-30}"
@@ -68,6 +69,11 @@ fi
 
 if [[ "$specmode" != "mfs" && "$specmode" != "cube" ]]; then
   echo "error: IMAGER_BENCH_SPECMODE must be mfs or cube" >&2
+  exit 2
+fi
+
+if [[ "$gridder" != "standard" && "$gridder" != "mosaic" ]]; then
+  echo "error: IMAGER_BENCH_GRIDDER must be standard or mosaic" >&2
   exit 2
 fi
 
@@ -99,7 +105,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode field=$field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction"
+echo "mode=$mode specmode=$specmode gridder=$gridder field=$field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -125,6 +131,7 @@ for run in $(seq 1 "$repeats"); do
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
       --specmode "$specmode" \
+      --gridder "$gridder" \
       --interpolation "$interpolation" \
       --datacolumn DATA \
       --weighting "$weighting" \
@@ -155,6 +162,7 @@ for run in $(seq 1 "$repeats"); do
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
       --specmode "$specmode" \
+      --gridder "$gridder" \
       --interpolation "$interpolation" \
       --datacolumn DATA \
       --weighting "$weighting" \
@@ -190,6 +198,7 @@ if [[ -n "$scales" ]]; then
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
     --specmode "$specmode" \
+    --gridder "$gridder" \
     --interpolation "$interpolation" \
     --datacolumn DATA \
     --weighting "$weighting" \
@@ -220,6 +229,7 @@ else
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
     --specmode "$specmode" \
+    --gridder "$gridder" \
     --interpolation "$interpolation" \
     --datacolumn DATA \
     --weighting "$weighting" \
@@ -271,6 +281,7 @@ maxpsffraction = float(os.environ["CASA_RS_BENCH_MAX_PSFFRACTION"])
 weighting = os.environ["CASA_RS_BENCH_WEIGHTING"]
 robust = float(os.environ["CASA_RS_BENCH_ROBUST"])
 deconvolver = os.environ["CASA_RS_BENCH_DECONVOLVER"]
+gridder = os.environ["CASA_RS_BENCH_GRIDDER"]
 scales = [] if os.environ["CASA_RS_BENCH_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_RS_BENCH_SCALES"].split(",")]
 specmode = os.environ["CASA_RS_BENCH_SPECMODE"]
 interpolation = os.environ["CASA_RS_BENCH_INTERPOLATION"]
@@ -288,7 +299,7 @@ with tempfile.TemporaryDirectory() as td:
             field=field,
             stokes="I",
             specmode=specmode,
-            gridder="standard",
+            gridder=gridder,
             weighting=weighting,
             deconvolver=deconvolver,
             scales=scales,
@@ -341,6 +352,7 @@ CASA_RS_BENCH_SPW="$spw" \
 CASA_RS_BENCH_CHANNEL_START="$channel_start" \
 CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
 CASA_RS_BENCH_SPECMODE="$specmode" \
+CASA_RS_BENCH_GRIDDER="$gridder" \
 CASA_RS_BENCH_IMSIZE="$imsize" \
 CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
 CASA_RS_BENCH_WEIGHTING="$weighting" \
@@ -368,6 +380,7 @@ CASA_RS_BENCH_SPW="$spw" \
 CASA_RS_BENCH_CHANNEL_START="$channel_start" \
 CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
 CASA_RS_BENCH_SPECMODE="$specmode" \
+CASA_RS_BENCH_GRIDDER="$gridder" \
 CASA_RS_BENCH_IMSIZE="$imsize" \
 CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
 CASA_RS_BENCH_WEIGHTING="$weighting" \

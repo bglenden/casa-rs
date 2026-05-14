@@ -7,6 +7,11 @@ This directory holds reusable performance-analysis tooling for the repository.
 - `calibrate/`
   - `README.md`: apply-path tracing and analysis notes
   - `report.py`: JSONL-to-summary report script
+- `imager/`
+  - `README.md`: MeasurementSet-backed imaging benchmark notes
+  - `run_workload.py`: manifest-driven CASA C++ versus `casa-rs` benchmark
+    wrapper
+  - `workloads/`: checked-in workload manifests
 - `imexplore/`
   - `README.md`: feature-specific tracing and analysis notes
   - `report.py`: JSONL-to-summary report script

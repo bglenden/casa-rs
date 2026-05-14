@@ -1,0 +1,475 @@
+#!/usr/bin/env python3
+"""Run manifest-driven CASA C++ versus casa-rs imaging benchmarks."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import pathlib
+import re
+import statistics
+import subprocess
+import sys
+import uuid
+from typing import Any
+
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+WORKLOAD_DIR = pathlib.Path(__file__).resolve().parent / "workloads"
+BENCH_SCRIPT = REPO_ROOT / "scripts" / "bench-imager-vs-casa.sh"
+SUPPORTED_GRIDDER_VALUES = {"mosaic", "standard"}
+SUPPORTED_SPEC_MODES = {"mfs", "cube"}
+SUPPORTED_BENCH_MODES = {"dirty", "clean"}
+SUPPORTED_INTERPOLATION = {"nearest", "linear"}
+
+
+class HarnessError(Exception):
+    """Error that should be shown without a Python traceback."""
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("workload", help="workload manifest id or JSON path")
+    parser.add_argument(
+        "--output-dir",
+        type=pathlib.Path,
+        default=pathlib.Path("target/imperformance-wave1"),
+        help="directory for result JSON and benchmark log",
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=None,
+        help="override manifest run.repeats",
+    )
+    parser.add_argument(
+        "--run-label",
+        default=None,
+        help="override manifest run.run_label, for example cold, warm, or fresh-open",
+    )
+    parser.add_argument(
+        "--storage-label",
+        default=None,
+        help="override manifest run.storage_label",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate manifest support and write the planned command without running",
+    )
+    args = parser.parse_args()
+
+    try:
+        manifest_path = resolve_workload(args.workload)
+        manifest = load_manifest(manifest_path)
+        plan = build_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            repeats_override=args.repeats,
+            run_label_override=args.run_label,
+            storage_label_override=args.storage_label,
+            dry_run=args.dry_run,
+        )
+        output_dir = args.output_dir.resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        result_path = output_dir / f"{plan['run_id']}.json"
+        log_path = output_dir / f"{plan['run_id']}.log"
+
+        if args.dry_run:
+            result = {
+                "schema_version": 1,
+                "status": "dry_run",
+                **plan,
+                "logs": {"benchmark_log": None},
+                "results": empty_results(casa_status="not_run", reason="dry run"),
+            }
+            write_json(result_path, result)
+            print(result_path)
+            return
+
+        result = run_plan(plan, log_path)
+        result["logs"] = {"benchmark_log": str(log_path)}
+        write_json(result_path, result)
+        print(result_path)
+    except HarnessError as error:
+        print(f"error: {error}", file=sys.stderr)
+        raise SystemExit(2) from None
+
+
+def resolve_workload(value: str) -> pathlib.Path:
+    candidate = pathlib.Path(value)
+    if candidate.exists():
+        return candidate.resolve()
+    if candidate.suffix != ".json":
+        candidate = WORKLOAD_DIR / f"{value}.json"
+    if candidate.exists():
+        return candidate.resolve()
+    raise HarnessError(f"workload manifest not found: {value}")
+
+
+def load_manifest(path: pathlib.Path) -> dict[str, Any]:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except json.JSONDecodeError as error:
+        raise HarnessError(f"parse {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise HarnessError(f"{path} must contain a JSON object")
+    return value
+
+
+def build_plan(
+    *,
+    manifest_path: pathlib.Path,
+    manifest: dict[str, Any],
+    repeats_override: int | None,
+    run_label_override: str | None,
+    storage_label_override: str | None,
+    dry_run: bool,
+) -> dict[str, Any]:
+    workload_id = required_str(manifest, "id")
+    mode_id = required_str(manifest, "mode_id")
+    dataset = required_object(manifest, "dataset")
+    imaging = required_object(manifest, "imaging")
+    run = object_value(manifest, "run")
+
+    specmode = enum_value(imaging, "specmode", SUPPORTED_SPEC_MODES)
+    gridder = enum_value(imaging, "gridder", SUPPORTED_GRIDDER_VALUES)
+    bench_mode = enum_value(imaging, "mode", SUPPORTED_BENCH_MODES)
+    interpolation = enum_value_default(imaging, "interpolation", "linear", SUPPORTED_INTERPOLATION)
+    wterm = str_value(imaging, "wterm", "none")
+    if wterm != "none":
+        raise HarnessError(
+            f"{workload_id}: wterm={wterm!r} is not supported by this harness yet"
+        )
+    repeats = repeats_override if repeats_override is not None else int_value(run, "repeats", 5)
+    if repeats < 1:
+        raise HarnessError("repeats must be >= 1")
+
+    dataset_path = resolve_dataset_path(dataset, dry_run=dry_run)
+    casa_python = os.environ.get("CASA_RS_CASA_PYTHON")
+    if not dry_run and not casa_python:
+        raise HarnessError("CASA_RS_CASA_PYTHON is required for a benchmark run")
+    if not dry_run and casa_python and not pathlib.Path(casa_python).is_file():
+        raise HarnessError(f"CASA_RS_CASA_PYTHON does not exist: {casa_python}")
+
+    env = {
+        "BENCH_REPEATS": str(repeats),
+        "IMAGER_BENCH_MODE": bench_mode,
+        "IMAGER_BENCH_SPECMODE": specmode,
+        "IMAGER_BENCH_GRIDDER": gridder,
+        "IMAGER_BENCH_INTERPOLATION": interpolation,
+        "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
+        "IMAGER_BENCH_SPW": str_value(imaging, "spw", "0"),
+        "IMAGER_BENCH_CHANNEL_START": str(int_value(imaging, "channel_start", 0)),
+        "IMAGER_BENCH_CHANNEL_COUNT": str(int_value(imaging, "channel_count", 1)),
+        "IMAGER_BENCH_IMSIZE": str(int_value(imaging, "imsize", 128)),
+        "IMAGER_BENCH_CELL_ARCSEC": str(float_value(imaging, "cell_arcsec", 30.0)),
+        "IMAGER_BENCH_WEIGHTING": str_value(imaging, "weighting", "natural"),
+        "IMAGER_BENCH_ROBUST": str(float_value(imaging, "robust", 0.5)),
+        "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
+        "IMAGER_BENCH_SCALES": scales_value(imaging),
+        "IMAGER_BENCH_WTERM": wterm,
+        "IMAGER_BENCH_NITER": str(int_value(imaging, "niter", 4)),
+        "IMAGER_BENCH_GAIN": str(float_value(imaging, "gain", 0.1)),
+        "IMAGER_BENCH_THRESHOLD_JY": str(float_value(imaging, "threshold_jy", 0.0)),
+        "IMAGER_BENCH_NSIGMA": str(float_value(imaging, "nsigma", 0.0)),
+        "IMAGER_BENCH_PSFCUTOFF": str(float_value(imaging, "psfcutoff", 0.35)),
+        "IMAGER_BENCH_MINOR_CYCLE_LENGTH": str(
+            int_value(imaging, "minor_cycle_length", 2)
+        ),
+        "IMAGER_BENCH_CYCLEFACTOR": str(float_value(imaging, "cyclefactor", 1.0)),
+        "IMAGER_BENCH_MIN_PSFFRACTION": str(
+            float_value(imaging, "min_psf_fraction", 0.05)
+        ),
+        "IMAGER_BENCH_MAX_PSFFRACTION": str(
+            float_value(imaging, "max_psf_fraction", 0.8)
+        ),
+    }
+
+    command = [str(BENCH_SCRIPT), str(dataset_path)]
+    return {
+        "run_id": f"{utc_stamp()}-{workload_id}-{uuid.uuid4().hex[:8]}",
+        "created_at": utc_now(),
+        "manifest_path": str(manifest_path),
+        "workload": {
+            "id": workload_id,
+            "mode_id": mode_id,
+            "description": str_value(manifest, "description", ""),
+        },
+        "dataset": {
+            "key": required_str(dataset, "key"),
+            "path": str(dataset_path),
+            "relative_path": dataset.get("relative_path"),
+            "root_env": dataset.get("root_env"),
+        },
+        "mode": {
+            "specmode": specmode,
+            "gridder": gridder,
+            "bench_mode": bench_mode,
+            "image_shape": [int_value(imaging, "imsize", 128), int_value(imaging, "imsize", 128)],
+            "channel_count": int_value(imaging, "channel_count", 1),
+            "weighting": str_value(imaging, "weighting", "natural"),
+            "deconvolver": str_value(imaging, "deconvolver", "hogbom"),
+            "niter": int_value(imaging, "niter", 4),
+        },
+        "run": {
+            "repeats": repeats,
+            "run_label": run_label_override or str_value(run, "run_label", "warm"),
+            "storage_label": storage_label_override
+            or str_value(run, "storage_label", "script-staged-tempdir"),
+        },
+        "command": {
+            "argv": command,
+            "env": env,
+        },
+        "environment": collect_environment(casa_python),
+    }
+
+
+def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
+    env = os.environ.copy()
+    env.update(plan["command"]["env"])
+    started = utc_now()
+    completed = subprocess.run(
+        plan["command"]["argv"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    log_path.write_text(completed.stdout, encoding="utf-8")
+    if completed.returncode != 0:
+        return {
+            "schema_version": 1,
+            "status": "failed",
+            **plan,
+            "started_at": started,
+            "completed_at": utc_now(),
+            "exit_code": completed.returncode,
+            "results": empty_results(
+                casa_status="blocked",
+                reason=f"benchmark command exited {completed.returncode}",
+            ),
+        }
+
+    parsed = parse_benchmark_log(completed.stdout)
+    return {
+        "schema_version": 1,
+        "status": "completed",
+        **plan,
+        "started_at": started,
+        "completed_at": utc_now(),
+        "exit_code": completed.returncode,
+        "results": parsed,
+    }
+
+
+def empty_results(*, casa_status: str, reason: str) -> dict[str, Any]:
+    return {
+        "rust": {"status": "not_run", "timings_seconds": {"runs": [], "median": None}},
+        "casa": {
+            "status": casa_status,
+            "reason": reason,
+            "timings_seconds": {"runs": [], "median": None},
+        },
+        "stage_medians_ms": {"rust": {}, "casa": {}},
+    }
+
+
+def parse_benchmark_log(text: str) -> dict[str, Any]:
+    rust_runs, rust_median = parse_timing_section(text, "Rust release CLI timings")
+    casa_runs, casa_median = parse_timing_section(text, "CASA tclean timings")
+    rust_stages = parse_stage_section(text, "Rust stage medians")
+    casa_stages = parse_stage_section(text, "CASA PySynthesisImager stage medians")
+    return {
+        "rust": {
+            "status": "ran",
+            "timings_seconds": {"runs": rust_runs, "median": rust_median},
+        },
+        "casa": {
+            "status": "ran",
+            "reason": None,
+            "timings_seconds": {"runs": casa_runs, "median": casa_median},
+        },
+        "stage_medians_ms": {"rust": rust_stages, "casa": casa_stages},
+    }
+
+
+def parse_timing_section(text: str, heading: str) -> tuple[list[float], float | None]:
+    lines = section_lines(text, f"{heading} ")
+    runs = []
+    median_value = None
+    for line in lines:
+        run_match = re.search(r"\brun=\d+\s+real=([0-9.]+)", line)
+        if run_match:
+            runs.append(float(run_match.group(1)))
+        median_match = re.search(r"\bmedian=([0-9.]+)", line)
+        if median_match:
+            median_value = float(median_match.group(1))
+    if median_value is None and runs:
+        median_value = statistics.median(runs)
+    return runs, median_value
+
+
+def parse_stage_section(text: str, heading: str) -> dict[str, float]:
+    lines = section_lines(text, f"{heading} ")
+    stages: dict[str, float] = {}
+    for line in lines:
+        for name, value in re.findall(r"([A-Za-z0-9_]+)=([0-9.]+)", line):
+            if name != "run":
+                stages[name] = float(value)
+    return stages
+
+
+def section_lines(text: str, heading_prefix: str) -> list[str]:
+    lines = text.splitlines()
+    result = []
+    collecting = False
+    for line in lines:
+        if line.startswith(heading_prefix):
+            collecting = True
+            continue
+        if collecting and line.strip() == "":
+            break
+        if collecting:
+            result.append(line.strip())
+    return result
+
+
+def resolve_dataset_path(dataset: dict[str, Any], *, dry_run: bool) -> pathlib.Path:
+    if "path" in dataset:
+        path = pathlib.Path(os.path.expanduser(required_str(dataset, "path")))
+    else:
+        root_env = str_value(dataset, "root_env", "CASA_RS_TESTDATA_ROOT")
+        root = os.environ.get(root_env)
+        if not root:
+            if dry_run:
+                root = f"${root_env}"
+            else:
+                raise HarnessError(f"{root_env} is required for dataset {dataset.get('key')!r}")
+        path = pathlib.Path(root) / required_str(dataset, "relative_path")
+    if not dry_run and not path.is_dir():
+        raise HarnessError(f"dataset path does not exist: {path}")
+    return path
+
+
+def collect_environment(casa_python: str | None) -> dict[str, Any]:
+    return {
+        "repo_root": str(REPO_ROOT),
+        "git_commit": git_value(["rev-parse", "HEAD"]),
+        "git_branch": git_value(["branch", "--show-current"]),
+        "python": sys.version.split()[0],
+        "casa_python": casa_python,
+        "bench_script": str(BENCH_SCRIPT),
+        "bench_script_sha256": file_sha256(BENCH_SCRIPT),
+    }
+
+
+def git_value(args: list[str]) -> str | None:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip()
+
+
+def file_sha256(path: pathlib.Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def utc_now() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def utc_stamp() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def write_json(path: pathlib.Path, value: dict[str, Any]) -> None:
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def required_object(obj: dict[str, Any], key: str) -> dict[str, Any]:
+    value = obj.get(key)
+    if not isinstance(value, dict):
+        raise HarnessError(f"missing object field {key!r}")
+    return value
+
+
+def object_value(obj: dict[str, Any], key: str) -> dict[str, Any]:
+    value = obj.get(key, {})
+    if not isinstance(value, dict):
+        raise HarnessError(f"{key!r} must be an object")
+    return value
+
+
+def required_str(obj: dict[str, Any], key: str) -> str:
+    value = obj.get(key)
+    if not isinstance(value, str) or not value:
+        raise HarnessError(f"missing string field {key!r}")
+    return value
+
+
+def str_value(obj: dict[str, Any], key: str, default: str) -> str:
+    value = obj.get(key, default)
+    if not isinstance(value, str):
+        raise HarnessError(f"{key!r} must be a string")
+    return value
+
+
+def int_value(obj: dict[str, Any], key: str, default: int) -> int:
+    value = obj.get(key, default)
+    if not isinstance(value, int):
+        raise HarnessError(f"{key!r} must be an integer")
+    return value
+
+
+def float_value(obj: dict[str, Any], key: str, default: float) -> float:
+    value = obj.get(key, default)
+    if not isinstance(value, (int, float)):
+        raise HarnessError(f"{key!r} must be numeric")
+    return float(value)
+
+
+def enum_value(obj: dict[str, Any], key: str, allowed: set[str]) -> str:
+    return enum_value_default(obj, key, None, allowed)
+
+
+def enum_value_default(
+    obj: dict[str, Any], key: str, default: str | None, allowed: set[str]
+) -> str:
+    value = obj.get(key, default)
+    if not isinstance(value, str) or value not in allowed:
+        allowed_text = ", ".join(sorted(allowed))
+        raise HarnessError(f"{key!r} must be one of: {allowed_text}")
+    return value
+
+
+def scales_value(imaging: dict[str, Any]) -> str:
+    value = imaging.get("scales", "")
+    if value == "":
+        return ""
+    if not isinstance(value, list) or not all(isinstance(item, int) for item in value):
+        raise HarnessError("'scales' must be a list of integers")
+    return ",".join(str(item) for item in value)
+
+
+if __name__ == "__main__":
+    main()

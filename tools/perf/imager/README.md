@@ -5,6 +5,10 @@ imager.
 
 ## Entry points
 
+- `tools/perf/imager/run_workload.py`
+  - runs one JSON workload manifest, preflights support, delegates supported
+    workloads to `scripts/bench-imager-vs-casa.sh`, and writes a normalized
+    machine-readable result JSON
 - `crates/casars-imager/examples/profile_imager.rs`
   - runs repeated Rust imaging passes and reports median stage timings from the
     pure `casa-imaging` core
@@ -18,11 +22,32 @@ imager.
 scripts/bench-imager-vs-casa.sh
 ```
 
+To run the Wave 1 manifest harness in validation mode:
+
+```sh
+tools/perf/imager/run_workload.py --dry-run wave1-standard-mfs-dirty-smoke
+```
+
+The command writes a JSON plan under `target/imperformance-wave1/` without
+requiring CASA Python or a local MeasurementSet.
+
+To run the same workload for real:
+
+```sh
+CASA_RS_TESTDATA_ROOT=/path/to/casatestdata \
+CASA_RS_CASA_PYTHON=/path/to/casa-python \
+tools/perf/imager/run_workload.py wave1-standard-mfs-dirty-smoke
+```
+
 To force a different dataset:
 
 ```sh
 scripts/bench-imager-vs-casa.sh /path/to.ms
 ```
+
+The manifest runner intentionally resolves data only from an explicit manifest
+path or from the manifest's `dataset.root_env` plus `dataset.relative_path`.
+It does not add personal workstation data fallbacks.
 
 ## Environment variables
 
@@ -34,6 +59,10 @@ scripts/bench-imager-vs-casa.sh /path/to.ms
   - number of repeated Rust/CASA wall-clock runs
 - `IMAGER_BENCH_MODE`
   - `dirty` or `clean`
+- `IMAGER_BENCH_SPECMODE`
+  - `mfs` or `cube`
+- `IMAGER_BENCH_GRIDDER`
+  - `standard` or `mosaic`
 - `IMAGER_BENCH_INTERPOLATION`
   - cube spectral interpolation mode: `nearest` or `linear`
 - `IMAGER_BENCH_FIELD`
@@ -54,6 +83,43 @@ scripts/bench-imager-vs-casa.sh /path/to.ms
 - `IMAGER_BENCH_MINOR_CYCLE_LENGTH`
 - `IMAGER_BENCH_WTERM`
   - currently only `none` is supported in the Rust-vs-CASA benchmark script because the Rust-only `direct` mode has no matching `tclean` configuration in this harness
+
+## Manifest fields
+
+Workload manifests live in `tools/perf/imager/workloads/`. The first Wave 1
+manifest is `wave1-standard-mfs-dirty-smoke.json`.
+
+Required top-level fields:
+
+- `id`: stable workload id used in result filenames
+- `mode_id`: selected Wave 1 mode id, such as `standard-mfs-dirty-control`
+- `dataset`: `key`, plus either `path` or `root_env` and `relative_path`
+- `imaging`: CASA-like mode parameters
+
+Supported `imaging` values for the #252 harness slice:
+
+- `mode`: `dirty` or `clean`
+- `specmode`: `mfs` or `cube`
+- `gridder`: `standard` or `mosaic`
+- `interpolation`: `nearest` or `linear`
+- `wterm`: `none`
+
+Unsupported modes fail before timing claims are written. In particular,
+W-projection and AW/widefield manifests should be rejected by this ticket until
+their benchmark support is added or delegated to the owning follow-up.
+
+## Result JSON
+
+`run_workload.py` writes one JSON file per run with:
+
+- `run_id`, manifest path, git branch/commit, CASA Python path, benchmark script
+  hash, and the exact delegated command/env
+- dataset key/path, selected mode, image shape, channel count, weighting,
+  deconvolver, `niter`, run label, storage label, and repeat count
+- Rust CLI per-run wallclock and median wallclock
+- CASA `tclean` per-run wallclock and median wallclock when CASA ran
+- parsed Rust and CASA stage medians when present
+- a clear `dry_run`, `completed`, or `failed` status
 
 The active Wave 8 clean cube gate can now be reproduced directly through the
 same harness by setting, for example:
