@@ -41,6 +41,10 @@ functionality.
 - [Performance closeout](wave-7-performance-closeout.md)
 - [Ticket-level performance closeout](wave-7-ticket-closeout.md)
 
+## ImPerformance Artifacts
+
+- [Wave 1 mode selection and target styles](imperformance-wave-1-mode-selection.md)
+
 ## Source Pages
 
 - CASA Guides main page:

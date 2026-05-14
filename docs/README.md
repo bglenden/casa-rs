@@ -35,6 +35,8 @@ This directory holds stable project documentation.
   [`casa-vla-importvla-parity.md`](casa-vla-importvla-parity.md)
 - tutorial learning packs:
   [`tutorial-parity/tutorial-learning-packs.md`](tutorial-parity/tutorial-learning-packs.md)
+- ImPerformance Wave 1 mode selection:
+  [`tutorial-parity/imperformance-wave-1-mode-selection.md`](tutorial-parity/imperformance-wave-1-mode-selection.md)
 
 ## Planning And Program Reference
 
