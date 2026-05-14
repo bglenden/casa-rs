@@ -69,7 +69,7 @@ Interpretation:
 |---|---|---|---|
 | `standard-mfs-dirty-control` | `specmode='mfs'`, `gridder='standard'`, dirty-only | Fast control case for harness overhead, gridding, FFT, normalization, and product write cost. | Benchmark and keep near or faster than CASA C++. |
 | `standard-mfs-clean-current` | `specmode='mfs'`, `gridder='standard'`, `deconvolver='multiscale'`, optional `auto-multithresh` | Current single-field continuum practice; covers major/minor-cycle overhead without PB/mosaic cost. | Benchmark, correctness check, and stage budget. |
-| `standard-cube-line` | `specmode='cube'`, `gridder='standard'`, dirty and bounded clean variants | Current spectral-line practice; separates per-channel scaling from mosaic/PB overhead. | Benchmark and identify cube scaling budget without using #56 runtime controls. |
+| `standard-cube-line` | `specmode='cube'`, `gridder='standard'`, dirty and bounded clean variants | Current spectral-line practice; includes deconvolution coverage while separating per-channel scaling from mosaic/PB overhead. | Benchmark dirty and bounded-clean variants; identify cube scaling budget without using #56 runtime controls. |
 | `mosaic-mfs-clean-primary` | `specmode='mfs'`, `gridder='mosaic'`, multiscale clean, PB products | Common ALMA/VLA tutorial mode and current high-leverage slow area in `casa-rs`. | Primary follow-on optimization target. |
 | `mosaic-cube-bounded` | `specmode='cube'`, `gridder='mosaic'`, small channel count first | Exercises the expensive interaction between cube scaling, mosaic/PB work, and product generation. | Bounded benchmark and bottleneck ledger; large-cube controls stay with #56. |
 | `mtmfs-wideband-sentinel` | `specmode='mfs'`, `deconvolver='mtmfs'`, `nterms > 1` | Current wideband continuum algorithm family; useful to keep in view before backend planning hardens. | Baseline-only sentinel unless it becomes the dominant bottleneck. |
@@ -81,7 +81,7 @@ Interpretation:
 | W-projection speed work | Deferred | `casa-rs` exposes a W-term request path, but Wave 1 should not turn W-projection into the first optimization target without baseline evidence and a supported CASA comparison harness. |
 | AW/widefield gridder family | Deferred to #52 | Capability surface and CF-planning controls belong to #52. Wave 1 should leave hooks for future backend/resource planning but not implement AW. |
 | CASA-like `parallel` / `chanchunks` | Deferred to #56 | User-visible large-cube runtime controls already have an owner. Wave 1 can measure cube scaling but should not add these controls. |
-| GPU/Kokkos/CUDA execution | Deferred | LibRA shows that a backend/resource boundary is useful, but Wave 1 should not introduce GPU dependencies or runtime behavior. |
+| GPU/Kokkos/CUDA implementation | Not a mode; defer from #247 mode selection | LibRA suggests that a backend/resource boundary is useful, and Wave 1 should keep GPU-readiness in view. This ticket should not add GPU dependencies or runtime behavior before the benchmark modes and stage budgets exist. |
 | Distributed execution | Deferred | Not needed for first local CASA C++ versus `casa-rs` wallclock baselines. |
 
 ## Workload Shapes
@@ -93,7 +93,7 @@ owned by #252. These shapes define what those tickets must support.
 |---|---|---|---|---|---|
 | `standard-mfs-dirty-control` | small, medium, large | deterministic single-field continuum simulation | 512, 2048, and 4096 pixel images; one MFS plane | dirty-only, natural and Briggs variants | `.psf`, `.residual`, `.image`, timing JSON |
 | `standard-mfs-clean-current` | small, medium, large | deterministic single-field continuum with compact plus extended structure | 512, 2048, and 4096 pixel images | multiscale scales including zero; bounded `niter`; `auto-multithresh` on at least medium | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, timing JSON |
-| `standard-cube-line` | small, medium, large | deterministic spectral-line cube with known line structure | 16, 64, and 256 channels; 512 to 2048 pixel images | dirty-only plus bounded multiscale/automask clean | cube `.psf`, `.residual`, `.image`, optional `.model`, timing JSON |
+| `standard-cube-line` | small, medium, large | deterministic spectral-line cube with known line structure | 16, 64, and 256 channels; 512 to 2048 pixel images | dirty-only plus bounded multiscale/auto-multithresh clean | cube `.psf`, `.residual`, `.image`, `.model` for clean variants, timing JSON |
 | `mosaic-mfs-clean-primary` | small, medium, large | deterministic mosaic with overlapping pointings; include one real tutorial case | 512, 2048, and tutorial-scale images | multiscale clean; PB products enabled; Briggs weighting | `.psf`, `.residual`, `.model`, `.image`, `.image.pbcor`, `.pb`, timing JSON |
 | `mosaic-cube-bounded` | small, medium | deterministic line mosaic | 8 and 32 channels; 512 to 1024 pixel images | dirty-only plus short clean probe | cube products, PB products where supported, timing JSON |
 | `mtmfs-wideband-sentinel` | medium | wideband continuum simulation | 2048 pixel image; `nterms=2` initially | MT-MFS bounded clean; multiscale sentinel if already supported by path | Taylor-term products, alpha products, timing JSON |
@@ -107,7 +107,7 @@ wallclock. It should fail if it cannot produce trustworthy evidence.
 |---|---|---|
 | `standard-mfs-dirty-control` | median wallclock ratio, stage budget, correctness delta | 10x CASA C++ stretch target after backend/workspace work. |
 | `standard-mfs-clean-current` | median wallclock ratio, major/minor-cycle budget, correctness delta | 10x target for practical single-field continuum workflows. |
-| `standard-cube-line` | per-channel scaling, wallclock ratio, correctness delta | 10x target after cube dataflow and backend work; #56 owns user-visible chunk/parallel controls. |
+| `standard-cube-line` | dirty and bounded-clean per-channel scaling, wallclock ratio, correctness delta | 10x target after cube dataflow and backend work; #56 owns user-visible chunk/parallel controls. |
 | `mosaic-mfs-clean-primary` | primary bottleneck ledger plus CASA C++ ratio | First follow-on optimization target because previous evidence showed mosaic/CLEAN slower than CASA and the mode is current practice. |
 | `mosaic-cube-bounded` | bounded scaling and PB/product cost ledger | Decide whether the next ticket is mosaic gridding, PB/product writeback, or cube runtime controls. |
 | `mtmfs-wideband-sentinel` | baseline-only unless unexpectedly dominant | Keep wideband continuum visible before backend structure hardens. |
@@ -125,6 +125,10 @@ Rationale:
   CASA C++ while standard MFS dirty imaging was close to CASA.
 - The path is likely to exercise the same structural seams needed for later
   cube, PB, workspace residency, backend, and GPU work.
+
+The target is workload-level. The implementation path may be CPU dataflow
+repair, GPU/backend preparation, or both, depending on #251 stage evidence. Do
+not assume that CPU-only work can reach the long-term 10x target.
 
 If #251 shows that the dominant cost is MS/table preparation, image writing, or
 preview generation instead of imaging proper, split the follow-on target before
