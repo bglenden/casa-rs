@@ -78,7 +78,7 @@ jobs:
           CASARS_MSEXPLORE_BIN="$GITHUB_WORKSPACE/target/release/msexplore" \
           CASARS_IMAGER_BIN="$GITHUB_WORKSPACE/target/release/casars-imager" \
           CASARS_IMMOMENTS_BIN="$GITHUB_WORKSPACE/target/release/immoments" \
-          CASARS_IMPBCOR_BIN="$GITHUB_WORKSPACE/target/release/impbcor" \
+          CASA_RS_IMPBCOR_BIN="$GITHUB_WORKSPACE/target/release/impbcor" \
           CASARS_EXPORTFITS_BIN="$GITHUB_WORKSPACE/target/release/exportfits" \
           CASARS_IMPORTFITS_BIN="$GITHUB_WORKSPACE/target/release/importfits" \
           python - <<'PY'
@@ -167,7 +167,7 @@ jobs:
           CASARS_MSEXPLORE_BIN="$GITHUB_WORKSPACE/target/debug/msexplore" \
           CASARS_IMAGER_BIN="$GITHUB_WORKSPACE/target/debug/casars-imager" \
           CASARS_IMMOMENTS_BIN="$GITHUB_WORKSPACE/target/debug/immoments" \
-          CASARS_IMPBCOR_BIN="$GITHUB_WORKSPACE/target/debug/impbcor" \
+          CASA_RS_IMPBCOR_BIN="$GITHUB_WORKSPACE/target/debug/impbcor" \
           CASARS_EXPORTFITS_BIN="$GITHUB_WORKSPACE/target/debug/exportfits" \
           CASARS_IMPORTFITS_BIN="$GITHUB_WORKSPACE/target/debug/importfits" \
           python - <<'PY'
