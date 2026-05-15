@@ -80,6 +80,7 @@ Each completed run records:
 - Rust CLI per-run wallclock and median;
 - CASA `tclean` per-run wallclock and median;
 - Rust and CASA stage medians when available;
+- normalized `stage_breakdown` categories for the Wave 1 bottleneck ledger;
 - preserved product root, Rust prefix, and CASA prefix;
 - product comparison metrics for configured suffixes.
 

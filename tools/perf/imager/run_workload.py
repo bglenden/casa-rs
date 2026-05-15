@@ -278,6 +278,7 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
         }
 
     parsed = parse_benchmark_log(completed.stdout)
+    attach_stage_breakdown(plan, parsed)
     comparison = compare_products(plan, parsed, log_path)
     parsed["product_comparison"] = comparison
     return {
@@ -300,6 +301,7 @@ def empty_results(*, casa_status: str, reason: str) -> dict[str, Any]:
             "timings_seconds": {"runs": [], "median": None},
         },
         "stage_medians_ms": {"rust": {}, "casa": {}},
+        "stage_breakdown": empty_stage_breakdown(reason),
         "product_paths": {},
         "product_comparison": {"status": "skipped", "reason": reason, "products": {}},
     }
@@ -322,6 +324,215 @@ def parse_benchmark_log(text: str) -> dict[str, Any]:
         },
         "stage_medians_ms": {"rust": rust_stages, "casa": casa_stages},
         "product_paths": parse_product_paths(text),
+    }
+
+
+def attach_stage_breakdown(plan: dict[str, Any], parsed: dict[str, Any]) -> None:
+    medians = parsed.get("stage_medians_ms", {})
+    parsed["stage_breakdown"] = {
+        "schema_version": 1,
+        "units": "milliseconds",
+        "instrumentation_scope": "benchmark-harness",
+        "contract_review": (
+            "local benchmark result JSON only; no provider protocol or managed-output "
+            "schema change"
+        ),
+        "rust": build_rust_stage_breakdown(plan, medians.get("rust", {})),
+        "casa": build_casa_stage_breakdown(medians.get("casa", {})),
+    }
+
+
+def empty_stage_breakdown(reason: str) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "units": "milliseconds",
+        "instrumentation_scope": "benchmark-harness",
+        "rust": {"status": "skipped", "reason": reason, "categories": {}},
+        "casa": {"status": "skipped", "reason": reason, "categories": {}},
+    }
+
+
+def build_rust_stage_breakdown(plan: dict[str, Any], stages: dict[str, float]) -> dict[str, Any]:
+    dirty_only = plan["mode"]["bench_mode"] == "dirty" or plan["mode"]["niter"] == 0
+    categories = {
+        "frontend_ms_preparation": stage_category(
+            stages,
+            ["open_measurement_set", "prepare_plane_input", "extract_phase_center"],
+            "MS open, selection, row adaptation, and phase-center resolution.",
+        ),
+        "visibility_adaptation_and_chunking": stage_category(
+            stages,
+            ["prepare_plane_input"],
+            "Visibility adaptation before entering the imaging core.",
+        ),
+        "weighting_density_setup": stage_category(
+            stages,
+            ["weighting"],
+            "Imaging weights, density grids, and taper setup.",
+        ),
+        "projection_pb_cf_preparation": stage_category(
+            stages,
+            [],
+            "No dedicated Wave 1 casa-rs timing field yet; projection/PB setup is included in the gridding/PB product paths where applicable.",
+            skipped=True,
+        ),
+        "gridding_degridding": stage_category(
+            stages,
+            ["psf_grid", "residual_degrid_grid"],
+            "PSF gridding plus residual degrid/grid work.",
+        ),
+        "fft": stage_category(
+            stages,
+            ["psf_fft", "model_fft", "residual_fft"],
+            "PSF, model, and residual FFT work.",
+        ),
+        "normalization_pb_correction": stage_category(
+            stages,
+            ["psf_normalize", "residual_normalize"],
+            "PSF and residual normalization; PB correction is included when the selected mode produces PB products.",
+        ),
+        "deconvolution_minor_cycle": stage_category(
+            stages,
+            ["minor_cycle_solve"],
+            "Minor-cycle component selection and subtraction.",
+            skipped=dirty_only,
+            skip_reason="dirty-only or niter=0 workload",
+        ),
+        "model_prediction_and_residual_refresh": stage_category(
+            stages,
+            ["major_cycle_refresh"],
+            "Major-cycle model prediction and residual refresh aggregate.",
+            skipped=dirty_only,
+            skip_reason="dirty-only or niter=0 workload",
+        ),
+        "restore_and_beam_fit": stage_category(
+            stages,
+            ["beam_fit", "restore"],
+            "Restoring-beam fit and restored-image generation.",
+            skipped=dirty_only,
+            skip_reason="dirty-only or niter=0 workload",
+        ),
+        "coordinate_and_product_writeback": stage_category(
+            stages,
+            ["build_coordinate_system", "write_products"],
+            "Output coordinate construction and image product writeback.",
+        ),
+        "preview_sidecar_generation": stage_category(
+            stages,
+            [],
+            "The benchmark script passes --no-preview-pngs, so preview sidecars are disabled.",
+            skipped=True,
+            skip_reason="disabled by benchmark harness",
+        ),
+        "frontend_total": stage_category(
+            stages,
+            ["frontend_total"],
+            "Total frontend wallclock from the Rust profiler.",
+        ),
+        "core_total": stage_category(
+            stages,
+            ["total"],
+            "Total pure imaging-core wallclock from the Rust profiler.",
+        ),
+    }
+    return {"status": "reported" if stages else "missing", "categories": categories}
+
+
+def build_casa_stage_breakdown(stages: dict[str, float]) -> dict[str, Any]:
+    categories = {
+        "setup_and_tool_construction": stage_category(
+            stages,
+            [
+                "parameter_setup",
+                "construct_imager",
+                "initialize_imagers",
+                "initialize_normalizers",
+                "initialize_deconvolvers",
+                "initialize_iteration_control",
+                "estimate_memory",
+            ],
+            "CASA PySynthesisImager setup, construction, and initialization.",
+        ),
+        "weighting_density_setup": stage_category(
+            stages,
+            ["set_weighting"],
+            "CASA weighting setup.",
+        ),
+        "psf_and_primary_beam": stage_category(
+            stages,
+            ["make_psf", "make_pb"],
+            "CASA PSF and PB construction.",
+        ),
+        "major_cycle_residual": stage_category(
+            stages,
+            ["calcres_major_cycle", "clean_major_cycle"],
+            "CASA residual major-cycle and clean major-cycle work.",
+        ),
+        "deconvolution_minor_cycle": stage_category(
+            stages,
+            ["minor_cycle", "update_mask", "has_converged"],
+            "CASA minor-cycle, mask update, and convergence checks.",
+        ),
+        "restore_and_cleanup": stage_category(
+            stages,
+            ["restore_images", "delete_tools"],
+            "CASA restore and tool cleanup.",
+        ),
+        "total": stage_category(stages, ["total"], "CASA phase probe total."),
+    }
+    return {"status": "reported" if stages else "missing", "categories": categories}
+
+
+def stage_category(
+    stages: dict[str, float],
+    fields: list[str],
+    description: str,
+    *,
+    skipped: bool = False,
+    skip_reason: str | None = None,
+) -> dict[str, Any]:
+    components = {field: stages[field] for field in fields if field in stages}
+    if skipped and not components:
+        return {
+            "status": "skipped",
+            "reason": skip_reason or description,
+            "total_ms": None,
+            "components_ms": {},
+            "source_fields": fields,
+            "description": description,
+        }
+    if not fields:
+        return {
+            "status": "not_reported",
+            "reason": description,
+            "total_ms": None,
+            "components_ms": {},
+            "source_fields": [],
+            "description": description,
+        }
+    missing = [field for field in fields if field not in stages]
+    if components:
+        total = sum(components.values())
+        status = "measured" if total > 0 else "measured_zero"
+        if skipped and total == 0:
+            status = "skipped"
+        return {
+            "status": status,
+            "reason": skip_reason if status == "skipped" else None,
+            "total_ms": total,
+            "components_ms": components,
+            "source_fields": fields,
+            "missing_fields": missing,
+            "description": description,
+        }
+    return {
+        "status": "missing",
+        "reason": f"no source timing fields found: {', '.join(fields)}",
+        "total_ms": None,
+        "components_ms": {},
+        "source_fields": fields,
+        "missing_fields": missing,
+        "description": description,
     }
 
 

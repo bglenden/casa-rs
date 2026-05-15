@@ -41,6 +41,8 @@ This directory holds stable project documentation.
   [`tutorial-parity/imperformance-wave-1-datasets.md`](tutorial-parity/imperformance-wave-1-datasets.md)
 - ImPerformance Wave 1 benchmark harness:
   [`tutorial-parity/imperformance-wave-1-benchmark-harness.md`](tutorial-parity/imperformance-wave-1-benchmark-harness.md)
+- ImPerformance Wave 1 stage instrumentation:
+  [`tutorial-parity/imperformance-wave-1-stage-instrumentation.md`](tutorial-parity/imperformance-wave-1-stage-instrumentation.md)
 
 ## Planning And Program Reference
 

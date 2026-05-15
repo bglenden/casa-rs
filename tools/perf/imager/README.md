@@ -145,6 +145,10 @@ their benchmark support is added or delegated to the owning follow-up.
 - Rust CLI per-run wallclock and median wallclock
 - CASA `tclean` per-run wallclock and median wallclock when CASA ran
 - parsed Rust and CASA stage medians when present
+- normalized `stage_breakdown` categories that distinguish frontend/MS
+  preparation, visibility adaptation, weighting, gridding/degridding, FFT,
+  normalization/PB correction, deconvolution, model refresh, and product
+  writeback
 - preserved product prefixes when a real run is executed
 - CASA-backed product-comparison metrics for configured product suffixes
 - a clear `dry_run`, `completed`, or `failed` status
