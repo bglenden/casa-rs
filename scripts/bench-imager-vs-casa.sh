@@ -61,6 +61,7 @@ gain="${IMAGER_BENCH_GAIN:-0.1}"
 threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
 nsigma="${IMAGER_BENCH_NSIGMA:-0}"
 psfcutoff="${IMAGER_BENCH_PSFCUTOFF:-0.35}"
+keep_output_root="${IMAGER_BENCH_KEEP_OUTPUT_ROOT:-}"
 
 if [[ "$wterm" != "none" ]]; then
   echo "error: scripts/bench-imager-vs-casa.sh only supports IMAGER_BENCH_WTERM=none for Rust-vs-CASA comparisons" >&2
@@ -103,6 +104,31 @@ print(f"{statistics.median(values):.6f}")
 PY
 }
 
+run_timed_command() {
+  local stderr_file="$1"
+  shift
+  local start
+  local status
+  start="$(python3 - <<'PY'
+import time
+print(f"{time.perf_counter():.9f}")
+PY
+)"
+  "$@" >/dev/null 2>"$stderr_file"
+  status="$?"
+  python3 - "$start" "$stderr_file" <<'PY'
+import sys
+import time
+
+start = float(sys.argv[1])
+stderr_file = sys.argv[2]
+elapsed = time.perf_counter() - start
+with open(stderr_file, "a", encoding="utf-8") as handle:
+    handle.write(f"real {elapsed:.6f}\n")
+PY
+  return "$status"
+}
+
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
 echo "mode=$mode specmode=$specmode gridder=$gridder field=$field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction"
@@ -115,13 +141,26 @@ trap 'rm -rf "$tmpdir"' EXIT
 staged_ms_path="$tmpdir/benchmark.ms"
 cp -R "$ms_path" "$staged_ms_path"
 ms_path="$staged_ms_path"
+if [[ -n "$keep_output_root" ]]; then
+  mkdir -p "$keep_output_root/rust" "$keep_output_root/casa"
+  rust_keep_prefix="$keep_output_root/rust/rust"
+  casa_keep_prefix="$keep_output_root/casa/casa"
+else
+  rust_keep_prefix=""
+  casa_keep_prefix=""
+fi
 
 echo "Rust release CLI timings (seconds):"
 rust_cli_file="$tmpdir/rust-cli.txt"
 for run in $(seq 1 "$repeats"); do
-  prefix="$tmpdir/rust-run-$run"
+  if [[ -n "$rust_keep_prefix" && "$run" == "$repeats" ]]; then
+    prefix="$rust_keep_prefix"
+  else
+    prefix="$tmpdir/rust-run-$run"
+  fi
+  rust_stderr="$tmpdir/rust-$run.stderr"
   if [[ -n "$scales" ]]; then
-    /usr/bin/time -lp target/release/casars-imager \
+    if ! run_timed_command "$rust_stderr" target/release/casars-imager \
       --ms "$ms_path" \
       --imagename "$prefix" \
       --imsize "$imsize" \
@@ -149,10 +188,13 @@ for run in $(seq 1 "$repeats"); do
       --maxpsffraction "$max_psf_fraction" \
       --wterm "$wterm" \
       --no-preview-pngs \
-      $dirty_flag \
-      >/dev/null 2>"$tmpdir/rust-$run.stderr"
+      $dirty_flag; then
+      echo "error: Rust casars-imager run $run failed" >&2
+      cat "$rust_stderr" >&2
+      exit 1
+    fi
   else
-    /usr/bin/time -lp target/release/casars-imager \
+    if ! run_timed_command "$rust_stderr" target/release/casars-imager \
       --ms "$ms_path" \
       --imagename "$prefix" \
       --imsize "$imsize" \
@@ -179,14 +221,20 @@ for run in $(seq 1 "$repeats"); do
       --maxpsffraction "$max_psf_fraction" \
       --wterm "$wterm" \
       --no-preview-pngs \
-      $dirty_flag \
-      >/dev/null 2>"$tmpdir/rust-$run.stderr"
+      $dirty_flag; then
+      echo "error: Rust casars-imager run $run failed" >&2
+      cat "$rust_stderr" >&2
+      exit 1
+    fi
   fi
-  real_seconds="$(awk '/^real / {print $2}' "$tmpdir/rust-$run.stderr")"
+  real_seconds="$(awk '/^real / {print $2}' "$rust_stderr")"
   printf "  run=%s real=%s\n" "$run" "$real_seconds"
   printf "%s\n" "$real_seconds" >>"$rust_cli_file"
 done
 echo "  median=$(median_from_file "$rust_cli_file")"
+if [[ -n "$rust_keep_prefix" ]]; then
+  echo "  kept_rust_prefix=$rust_keep_prefix"
+fi
 echo
 
 echo "Rust stage medians (milliseconds):"
@@ -285,12 +333,18 @@ gridder = os.environ["CASA_RS_BENCH_GRIDDER"]
 scales = [] if os.environ["CASA_RS_BENCH_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_RS_BENCH_SCALES"].split(",")]
 specmode = os.environ["CASA_RS_BENCH_SPECMODE"]
 interpolation = os.environ["CASA_RS_BENCH_INTERPOLATION"]
+keep_output_root = os.environ.get("CASA_RS_BENCH_KEEP_OUTPUT_ROOT", "")
+casa_keep_prefix = os.path.join(keep_output_root, "casa", "casa") if keep_output_root else ""
 spw_selector = f"{spw}:{chan_start}" if chan_count == 1 else f"{spw}:{chan_start}~{chan_start + chan_count - 1}"
 times = []
 
 with tempfile.TemporaryDirectory() as td:
     for run in range(repeats):
-        prefix = os.path.join(td, f"run-{run}")
+        if casa_keep_prefix and run == repeats - 1:
+            os.makedirs(os.path.dirname(casa_keep_prefix), exist_ok=True)
+            prefix = casa_keep_prefix
+        else:
+            prefix = os.path.join(td, f"run-{run}")
         start = time.perf_counter()
         kwargs = dict(
             vis=vis,
@@ -342,6 +396,8 @@ with tempfile.TemporaryDirectory() as td:
         print(f"run={run + 1} real={elapsed:.6f}")
 
 print(f"median={statistics.median(times):.6f}")
+if casa_keep_prefix:
+    print(f"kept_casa_prefix={casa_keep_prefix}")
 PY
 
 echo "CASA tclean timings (seconds):"
@@ -369,8 +425,17 @@ CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
 CASA_RS_BENCH_MIN_PSFFRACTION="$min_psf_fraction" \
 CASA_RS_BENCH_MAX_PSFFRACTION="$max_psf_fraction" \
 CASA_RS_BENCH_INTERPOLATION="$interpolation" \
+CASA_RS_BENCH_KEEP_OUTPUT_ROOT="$keep_output_root" \
   "$CASA_RS_CASA_PYTHON" "$tmpdir/casa-imager-bench.py" | sed 's/^/  /'
 echo
+
+if [[ -n "$keep_output_root" ]]; then
+  echo "Kept benchmark products:"
+  echo "  product_root=$keep_output_root"
+  echo "  rust_prefix=$rust_keep_prefix"
+  echo "  casa_prefix=$casa_keep_prefix"
+  echo
+fi
 
 echo "CASA PySynthesisImager stage medians (milliseconds):"
 CASA_RS_BENCH_MS_PATH="$ms_path" \

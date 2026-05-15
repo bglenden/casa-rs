@@ -39,6 +39,8 @@ This directory holds stable project documentation.
   [`tutorial-parity/imperformance-wave-1-mode-selection.md`](tutorial-parity/imperformance-wave-1-mode-selection.md)
 - ImPerformance Wave 1 simulated dataset plan:
   [`tutorial-parity/imperformance-wave-1-datasets.md`](tutorial-parity/imperformance-wave-1-datasets.md)
+- ImPerformance Wave 1 benchmark harness:
+  [`tutorial-parity/imperformance-wave-1-benchmark-harness.md`](tutorial-parity/imperformance-wave-1-benchmark-harness.md)
 
 ## Planning And Program Reference
 

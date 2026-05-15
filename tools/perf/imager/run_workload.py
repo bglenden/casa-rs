@@ -23,6 +23,7 @@ SUPPORTED_GRIDDER_VALUES = {"mosaic", "standard"}
 SUPPORTED_SPEC_MODES = {"mfs", "cube"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
 SUPPORTED_INTERPOLATION = {"nearest", "linear"}
+DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
 
 
 class HarnessError(Exception):
@@ -74,6 +75,7 @@ def main() -> None:
         )
         output_dir = args.output_dir.resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
+        attach_output_paths(plan, output_dir, dry_run=args.dry_run)
         result_path = output_dir / f"{plan['run_id']}.json"
         log_path = output_dir / f"{plan['run_id']}.log"
 
@@ -134,6 +136,7 @@ def build_plan(
     dataset = required_object(manifest, "dataset")
     imaging = required_object(manifest, "imaging")
     run = object_value(manifest, "run")
+    comparison = object_value(manifest, "comparison")
 
     specmode = enum_value(imaging, "specmode", SUPPORTED_SPEC_MODES)
     gridder = enum_value(imaging, "gridder", SUPPORTED_GRIDDER_VALUES)
@@ -221,12 +224,29 @@ def build_plan(
             "storage_label": storage_label_override
             or str_value(run, "storage_label", "script-staged-tempdir"),
         },
+        "comparison": {
+            "products": product_suffixes_value(comparison),
+            "max_elements_per_product": int_value(
+                comparison, "max_elements_per_product", 1_000_000
+            ),
+        },
         "command": {
             "argv": command,
             "env": env,
         },
         "environment": collect_environment(casa_python),
     }
+
+
+def attach_output_paths(plan: dict[str, Any], output_dir: pathlib.Path, *, dry_run: bool) -> None:
+    product_root = output_dir / "products" / plan["run_id"]
+    plan["products"] = {
+        "root": None if dry_run else str(product_root),
+        "rust_prefix": None if dry_run else str(product_root / "rust" / "rust"),
+        "casa_prefix": None if dry_run else str(product_root / "casa" / "casa"),
+    }
+    if not dry_run:
+        plan["command"]["env"]["IMAGER_BENCH_KEEP_OUTPUT_ROOT"] = str(product_root)
 
 
 def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
@@ -258,6 +278,8 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
         }
 
     parsed = parse_benchmark_log(completed.stdout)
+    comparison = compare_products(plan, parsed, log_path)
+    parsed["product_comparison"] = comparison
     return {
         "schema_version": 1,
         "status": "completed",
@@ -278,6 +300,8 @@ def empty_results(*, casa_status: str, reason: str) -> dict[str, Any]:
             "timings_seconds": {"runs": [], "median": None},
         },
         "stage_medians_ms": {"rust": {}, "casa": {}},
+        "product_paths": {},
+        "product_comparison": {"status": "skipped", "reason": reason, "products": {}},
     }
 
 
@@ -297,7 +321,79 @@ def parse_benchmark_log(text: str) -> dict[str, Any]:
             "timings_seconds": {"runs": casa_runs, "median": casa_median},
         },
         "stage_medians_ms": {"rust": rust_stages, "casa": casa_stages},
+        "product_paths": parse_product_paths(text),
     }
+
+
+def parse_product_paths(text: str) -> dict[str, str]:
+    paths = {}
+    for key in ("product_root", "rust_prefix", "casa_prefix"):
+        match = re.search(rf"^\s*{key}=(.+)$", text, flags=re.MULTILINE)
+        if match:
+            paths[key] = match.group(1).strip()
+    return paths
+
+
+def compare_products(
+    plan: dict[str, Any], parsed: dict[str, Any], log_path: pathlib.Path
+) -> dict[str, Any]:
+    product_paths = parsed.get("product_paths", {})
+    rust_prefix = product_paths.get("rust_prefix") or plan.get("products", {}).get("rust_prefix")
+    casa_prefix = product_paths.get("casa_prefix") or plan.get("products", {}).get("casa_prefix")
+    casa_python = plan.get("environment", {}).get("casa_python")
+    if not rust_prefix or not casa_prefix:
+        return {
+            "status": "skipped",
+            "reason": "benchmark did not preserve product prefixes",
+            "products": {},
+        }
+    if not casa_python:
+        return {
+            "status": "skipped",
+            "reason": "CASA Python is required for CASA image product comparison",
+            "products": {},
+        }
+
+    request = {
+        "rust_prefix": rust_prefix,
+        "casa_prefix": casa_prefix,
+        "products": plan["comparison"]["products"],
+        "max_elements_per_product": plan["comparison"]["max_elements_per_product"],
+    }
+    request_path = log_path.with_suffix(".comparison-input.json")
+    output_path = log_path.with_suffix(".comparison.json")
+    script_path = log_path.with_suffix(".compare-products.py")
+    request_path.write_text(json.dumps(request, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    script_path.write_text(PRODUCT_COMPARISON_SCRIPT, encoding="utf-8")
+    completed = subprocess.run(
+        [casa_python, str(script_path), str(request_path), str(output_path)],
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    comparison_log_path = log_path.with_suffix(".comparison.log")
+    comparison_log_path.write_text(completed.stdout, encoding="utf-8")
+    if completed.returncode != 0:
+        return {
+            "status": "failed",
+            "reason": f"product comparison exited {completed.returncode}",
+            "log": str(comparison_log_path),
+            "products": {},
+        }
+    try:
+        comparison = json.loads(output_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return {
+            "status": "failed",
+            "reason": f"read product comparison output: {error}",
+            "log": str(comparison_log_path),
+            "products": {},
+        }
+    comparison["log"] = str(comparison_log_path)
+    comparison["input"] = str(request_path)
+    return comparison
 
 
 def parse_timing_section(text: str, heading: str) -> tuple[list[float], float | None]:
@@ -469,6 +565,163 @@ def scales_value(imaging: dict[str, Any]) -> str:
     if not isinstance(value, list) or not all(isinstance(item, int) for item in value):
         raise HarnessError("'scales' must be a list of integers")
     return ",".join(str(item) for item in value)
+
+
+def product_suffixes_value(comparison: dict[str, Any]) -> list[str]:
+    value = comparison.get("products", DEFAULT_COMPARISON_PRODUCTS)
+    if not isinstance(value, list) or not value:
+        raise HarnessError("'comparison.products' must be a non-empty list")
+    result = []
+    for item in value:
+        if not isinstance(item, str) or not item.startswith("."):
+            raise HarnessError("'comparison.products' values must be suffix strings")
+        result.append(item)
+    return result
+
+
+PRODUCT_COMPARISON_SCRIPT = r'''#!/usr/bin/env python3
+import json
+import math
+import os
+import sys
+
+import numpy as np
+from casatools import image
+
+
+def main():
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        request = json.load(handle)
+    products = {}
+    for suffix in request["products"]:
+        rust_path = request["rust_prefix"] + suffix
+        casa_path = request["casa_prefix"] + suffix
+        products[suffix] = compare_one(
+            rust_path,
+            casa_path,
+            int(request["max_elements_per_product"]),
+        )
+    output = {"status": "completed", "products": products}
+    with open(sys.argv[2], "w", encoding="utf-8") as handle:
+        json.dump(output, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
+def compare_one(rust_path, casa_path, max_elements):
+    if not os.path.isdir(rust_path) or not os.path.isdir(casa_path):
+        return {
+            "status": "missing",
+            "rust_path": rust_path,
+            "casa_path": casa_path,
+            "rust_exists": os.path.isdir(rust_path),
+            "casa_exists": os.path.isdir(casa_path),
+        }
+    rust = load_image(rust_path, max_elements)
+    casa = load_image(casa_path, max_elements)
+    if rust["shape"] != casa["shape"]:
+        return {
+            "status": "shape_mismatch",
+            "rust_path": rust_path,
+            "casa_path": casa_path,
+            "rust_shape": rust["shape"],
+            "casa_shape": casa["shape"],
+        }
+    rust_data = rust["data"]
+    casa_data = casa["data"]
+    mask = np.isfinite(rust_data) & np.isfinite(casa_data)
+    valid_count = int(np.count_nonzero(mask))
+    if valid_count == 0:
+        return {
+            "status": "no_finite_overlap",
+            "rust_path": rust_path,
+            "casa_path": casa_path,
+            "shape": rust["shape"],
+            "sample_stride": rust["sample_stride"],
+            "sampled_elements": int(rust_data.size),
+        }
+    rust_valid = rust_data[mask]
+    casa_valid = casa_data[mask]
+    diff = rust_valid - casa_valid
+    casa_peak = max(abs(float(np.nanmin(casa_valid))), abs(float(np.nanmax(casa_valid))))
+    casa_rms = rms(casa_valid)
+    diff_rms = rms(diff)
+    diff_abs_max = float(np.nanmax(np.abs(diff)))
+    return {
+        "status": "compared",
+        "rust_path": rust_path,
+        "casa_path": casa_path,
+        "shape": rust["shape"],
+        "sample_stride": rust["sample_stride"],
+        "sampled_elements": int(rust_data.size),
+        "finite_overlap": valid_count,
+        "rust_min": finite_float(np.nanmin(rust_valid)),
+        "rust_max": finite_float(np.nanmax(rust_valid)),
+        "rust_rms": finite_float(rms(rust_valid)),
+        "casa_min": finite_float(np.nanmin(casa_valid)),
+        "casa_max": finite_float(np.nanmax(casa_valid)),
+        "casa_rms": finite_float(casa_rms),
+        "diff_abs_max": finite_float(diff_abs_max),
+        "diff_rms": finite_float(diff_rms),
+        "diff_rms_over_casa_rms": finite_float(diff_rms / abs(casa_rms)) if casa_rms else None,
+        "diff_abs_max_over_casa_peak": finite_float(diff_abs_max / casa_peak) if casa_peak else None,
+    }
+
+
+def load_image(path, max_elements):
+    tool = image()
+    try:
+        tool.open(path)
+        shape = [int(v) for v in tool.shape()]
+        stride = stride_for(shape, max_elements)
+        trc = [max(0, v - 1) for v in shape]
+        data = tool.getchunk(
+            blc=[0] * len(shape),
+            trc=trc,
+            inc=stride,
+            dropdeg=False,
+            getmask=False,
+        )
+    finally:
+        tool.close()
+    return {
+        "shape": shape,
+        "sample_stride": stride,
+        "data": np.asarray(data, dtype=np.float64),
+    }
+
+
+def stride_for(shape, max_elements):
+    if max_elements < 1:
+        raise ValueError("max_elements_per_product must be >= 1")
+    stride = [1] * len(shape)
+    sampled = product(shape)
+    index = 0
+    while sampled > max_elements:
+        stride[index % len(stride)] += 1
+        sampled = product(math.ceil(size / step) for size, step in zip(shape, stride))
+        index += 1
+    return stride
+
+
+def product(values):
+    result = 1
+    for value in values:
+        result *= int(value)
+    return result
+
+
+def rms(values):
+    return float(np.sqrt(np.nanmean(values * values)))
+
+
+def finite_float(value):
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+if __name__ == "__main__":
+    main()
+'''
 
 
 if __name__ == "__main__":

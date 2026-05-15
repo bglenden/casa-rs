@@ -22,7 +22,8 @@ imager.
     pure `casa-imaging` core
 - `scripts/bench-imager-vs-casa.sh`
   - compares Rust CLI wall-clock timings and Rust stage medians against CASA
-    `tclean` on the same MeasurementSet selection
+    `tclean` on the same MeasurementSet selection, and can preserve final-run
+    products for harness-level comparison
 
 ## Typical usage
 
@@ -144,6 +145,8 @@ their benchmark support is added or delegated to the owning follow-up.
 - Rust CLI per-run wallclock and median wallclock
 - CASA `tclean` per-run wallclock and median wallclock when CASA ran
 - parsed Rust and CASA stage medians when present
+- preserved product prefixes when a real run is executed
+- CASA-backed product-comparison metrics for configured product suffixes
 - a clear `dry_run`, `completed`, or `failed` status
 
 The active Wave 8 clean cube gate can now be reproduced directly through the
