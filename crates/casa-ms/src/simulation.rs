@@ -7,11 +7,6 @@
 //! spectral window and field, sample the requested observing time range, and
 //! write CASA-compatible MS subtables plus uncorrupted visibility rows.
 
-use std::fs;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::thread;
-
 use casa_coordinates::{Coordinate, DirectionCoordinate, Projection, ProjectionType};
 use casa_imaging::{
     ImageGeometry, PrimaryBeamModel, StandardMfsModelPredictor, primary_beam_voltage_pattern,
@@ -25,6 +20,9 @@ use ndarray::{Array2, ArrayD};
 use num_complex::Complex32;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use crate::column_def::{ColumnDef, ColumnKind};
 use crate::error::{MsError, MsResult};
@@ -1115,121 +1113,11 @@ fn populate_main_rows(
             samples,
         )
     });
-    let context = MainRowBuildContext {
-        request,
-        num_corr,
-        num_chan,
-        main_defs: &main_defs,
-        template: &template,
-        field_plans: &field_plans,
-        corruption: corruption.as_ref(),
-    };
-    let row_batches = build_main_row_batches(&context, samples)?;
     let mut nonzero_visibility_count = 0usize;
 
-    for batch in row_batches {
-        nonzero_visibility_count += batch.nonzero_visibility_count;
-        for row in batch.rows {
-            ms.main_table_mut().add_row(row)?;
-        }
-    }
-    Ok(nonzero_visibility_count)
-}
-
-#[derive(Clone)]
-struct MainRowTemplate {
-    flag: Value,
-    flag_category: Value,
-    weight: Value,
-    sigma: Value,
-}
-
-struct MainRowBatch {
-    rows: Vec<RecordValue>,
-    nonzero_visibility_count: usize,
-}
-
-#[derive(Clone, Copy)]
-struct MainRowBuildContext<'a> {
-    request: &'a SyntheticObservationRequest,
-    num_corr: usize,
-    num_chan: usize,
-    main_defs: &'a [ColumnDef],
-    template: &'a MainRowTemplate,
-    field_plans: &'a [SyntheticFieldPlan],
-    corruption: Option<&'a SyntheticCorruptionState>,
-}
-
-fn build_main_row_batches(
-    context: &MainRowBuildContext<'_>,
-    samples: usize,
-) -> MsResult<Vec<MainRowBatch>> {
-    let baseline_count = context.request.antennas.len() * (context.request.antennas.len() - 1) / 2;
-    let worker_count = synthetic_observation_worker_count(samples, baseline_count);
-    if worker_count <= 1 {
-        return Ok(vec![build_main_row_batch(*context, 0, samples)?]);
-    }
-
-    let chunk_size = samples.div_ceil(worker_count);
-    thread::scope(|scope| {
-        let mut handles = Vec::new();
-        for start_sample in (0..samples).step_by(chunk_size) {
-            let end_sample = (start_sample + chunk_size).min(samples);
-            let context = *context;
-            handles
-                .push(scope.spawn(move || build_main_row_batch(context, start_sample, end_sample)));
-        }
-
-        let mut batches = Vec::with_capacity(handles.len());
-        for handle in handles {
-            let batch = handle.join().map_err(|_| {
-                MsError::SyntheticObservation(
-                    "synthetic-observation row worker panicked".to_string(),
-                )
-            })??;
-            batches.push(batch);
-        }
-        Ok(batches)
-    })
-}
-
-fn synthetic_observation_worker_count(samples: usize, baseline_count: usize) -> usize {
-    let available = thread::available_parallelism()
-        .map(|parallelism| parallelism.get())
-        .unwrap_or(1);
-    let requested = std::env::var("CASA_RS_SIMOBSERVE_WORKERS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(available);
-    synthetic_observation_worker_count_for(samples, baseline_count, requested, available)
-}
-
-fn synthetic_observation_worker_count_for(
-    samples: usize,
-    baseline_count: usize,
-    requested: usize,
-    available: usize,
-) -> usize {
-    if samples <= 1 || baseline_count == 0 {
-        return 1;
-    }
-    requested.max(1).min(available.max(1)).min(samples).max(1)
-}
-
-fn build_main_row_batch(
-    context: MainRowBuildContext<'_>,
-    start_sample: usize,
-    end_sample: usize,
-) -> MsResult<MainRowBatch> {
-    let request = context.request;
-    let baseline_count = request.antennas.len() * (request.antennas.len() - 1) / 2;
-    let mut rows = Vec::with_capacity((end_sample - start_sample) * baseline_count);
-    let mut nonzero_visibility_count = 0usize;
-
-    for sample in start_sample..end_sample {
-        let field_id = sample % context.field_plans.len();
-        let field_plan = &context.field_plans[field_id];
+    for sample in 0..samples {
+        let field_id = sample % field_plans.len();
+        let field_plan = &field_plans[field_id];
         let time =
             request.start_time_mjd_seconds + (sample as f64 + 0.5) * request.integration_seconds;
         let antenna_uvws =
@@ -1245,24 +1133,18 @@ fn build_main_row_batch(
                     field_plan.predictors.as_ref(),
                     &request.spectral_setup,
                     uvw,
-                    context.num_corr,
+                    num_corr,
                 );
-                if let Some(corruption) = context.corruption {
-                    corruption.apply(
-                        &mut data_values,
-                        antenna1,
-                        antenna2,
-                        context.num_chan,
-                        sample,
-                    );
+                if let Some(corruption) = corruption.as_ref() {
+                    corruption.apply(&mut data_values, antenna1, antenna2, num_chan, sample);
                 }
                 nonzero_visibility_count += data_values
                     .iter()
                     .filter(|value| value.re != 0.0 || value.im != 0.0)
                     .count();
-                let data = complex_array(&data_values, vec![context.num_corr, context.num_chan]);
+                let data = complex_array(&data_values, vec![num_corr, num_chan]);
                 let row = row_from_defs(
-                    context.main_defs,
+                    &main_defs,
                     &[
                         ("ANTENNA1", i(antenna1 as i32)),
                         ("ANTENNA2", i(antenna2 as i32)),
@@ -1272,30 +1154,35 @@ fn build_main_row_batch(
                         ("FEED1", i(0)),
                         ("FEED2", i(0)),
                         ("FIELD_ID", i(field_id as i32)),
-                        ("FLAG", context.template.flag.clone()),
-                        ("FLAG_CATEGORY", context.template.flag_category.clone()),
+                        ("FLAG", template.flag.clone()),
+                        ("FLAG_CATEGORY", template.flag_category.clone()),
                         ("FLAG_ROW", b(false)),
                         ("INTERVAL", f(request.integration_seconds)),
                         ("OBSERVATION_ID", i(0)),
                         ("PROCESSOR_ID", i(0)),
                         ("SCAN_NUMBER", i(1)),
-                        ("SIGMA", context.template.sigma.clone()),
+                        ("SIGMA", template.sigma.clone()),
                         ("STATE_ID", i(0)),
                         ("TIME", f(time)),
                         ("TIME_CENTROID", f(time)),
                         ("UVW", f64_array(&uvw, vec![3])),
-                        ("WEIGHT", context.template.weight.clone()),
+                        ("WEIGHT", template.weight.clone()),
                         ("DATA", data),
                     ],
                 );
-                rows.push(row);
+                ms.main_table_mut().add_row(row)?;
             }
         }
     }
-    Ok(MainRowBatch {
-        rows,
-        nonzero_visibility_count,
-    })
+    Ok(nonzero_visibility_count)
+}
+
+#[derive(Clone)]
+struct MainRowTemplate {
+    flag: Value,
+    flag_category: Value,
+    weight: Value,
+    sigma: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -2719,16 +2606,6 @@ fn string_array(values: &[&str], shape: Vec<usize>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn synthetic_observation_worker_count_is_bounded_by_work_and_capacity() {
-        assert_eq!(synthetic_observation_worker_count_for(0, 10, 8, 8), 1);
-        assert_eq!(synthetic_observation_worker_count_for(10, 0, 8, 8), 1);
-        assert_eq!(synthetic_observation_worker_count_for(3, 10, 8, 8), 3);
-        assert_eq!(synthetic_observation_worker_count_for(10, 10, 2, 8), 2);
-        assert_eq!(synthetic_observation_worker_count_for(10, 10, 8, 2), 2);
-        assert_eq!(synthetic_observation_worker_count_for(10, 10, 0, 0), 1);
-    }
 
     #[test]
     fn row_noise_seed_varies_by_row_coordinates() {
