@@ -98,8 +98,8 @@
       "model_pixels": 512,
       "image_pixels": 512,
       "channels": 16,
-      "duration_seconds": 192,
-      "integration_seconds": 2,
+      "duration_seconds": 1200,
+      "integration_seconds": 10,
       "noise_simplenoise_jy": 0.001
     },
     {
@@ -110,8 +110,8 @@
       "model_pixels": 2048,
       "image_pixels": 2048,
       "channels": 64,
-      "duration_seconds": 2160,
-      "integration_seconds": 2,
+      "duration_seconds": 28800,
+      "integration_seconds": 10,
       "noise_simplenoise_jy": 0.001
     },
     {
@@ -122,8 +122,8 @@
       "model_pixels": 512,
       "image_pixels": 512,
       "channels": 8,
-      "duration_seconds": 128,
-      "integration_seconds": 2,
+      "duration_seconds": 600,
+      "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0012
     },
     {
@@ -134,8 +134,8 @@
       "model_pixels": 2048,
       "image_pixels": 2048,
       "channels": 32,
-      "duration_seconds": 2160,
-      "integration_seconds": 2,
+      "duration_seconds": 7200,
+      "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0012
     },
     {
@@ -146,8 +146,8 @@
       "model_pixels": 512,
       "image_pixels": 512,
       "channels": 16,
-      "duration_seconds": 192,
-      "integration_seconds": 2,
+      "duration_seconds": 600,
+      "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0007
     },
     {
@@ -158,8 +158,8 @@
       "model_pixels": 2048,
       "image_pixels": 2048,
       "channels": 64,
-      "duration_seconds": 2160,
-      "integration_seconds": 2,
+      "duration_seconds": 10800,
+      "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0007
     },
     {
@@ -170,8 +170,8 @@
       "model_pixels": 512,
       "image_pixels": 512,
       "channels": 8,
-      "duration_seconds": 128,
-      "integration_seconds": 2,
+      "duration_seconds": 300,
+      "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0008
     },
     {
@@ -182,8 +182,8 @@
       "model_pixels": 2048,
       "image_pixels": 2048,
       "channels": 32,
-      "duration_seconds": 2160,
-      "integration_seconds": 2,
+      "duration_seconds": 2700,
+      "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0008
     },
     {
@@ -191,11 +191,11 @@
       "instrument": "alma",
       "family": "shared-large",
       "tier": "large",
-      "model_pixels": 4096,
+      "model_pixels": 2048,
       "image_pixels": 4096,
-      "channels": 256,
-      "duration_seconds": 86400,
-      "integration_seconds": 2,
+      "channels": 128,
+      "duration_seconds": 57600,
+      "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0008
     }
   ]

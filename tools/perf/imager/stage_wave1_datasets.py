@@ -546,7 +546,7 @@ def estimated_main_rows(spec: dict[str, Any], family: dict[str, Any]) -> int:
     antenna_count = 27 if required_str(spec, "instrument") == "vla" else 43
     baseline_count = antenna_count * (antenna_count - 1) // 2
     samples = math.ceil(float_value(spec, "duration_seconds") / float_value(spec, "integration_seconds"))
-    return baseline_count * samples * int_value(family, "pointing_count")
+    return baseline_count * samples
 
 
 def alma_antennas() -> list[dict[str, Any]]:
