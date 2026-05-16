@@ -3,6 +3,11 @@
   "root_env": "CASA_RS_IMPERF_DATA_ROOT",
   "external_root_hint": "/Volumes/GLENDENNING/casa-rs-imperformance",
   "description": "Deterministic simulated imaging datasets for ImPerformance Wave 1.",
+  "large_tier_policy": {
+    "dataset_count": 1,
+    "dataset_id": "wave1-alma-shared-large",
+    "reason": "The external drive budget allows one approximately 100 GiB dataset. The large tier is therefore a shared ALMA mosaic/cube superset, and benchmark manifests select fields, channels, and gridders from that one MeasurementSet."
+  },
   "tiers": {
     "small": {
       "target_size_bytes": 1073741824,
@@ -52,6 +57,18 @@
         "mosaic-cube-bounded"
       ],
       "pointing_count": 7
+    },
+    "shared-large": {
+      "display_name": "shared large ALMA mosaic/cube superset",
+      "selected_modes": [
+        "standard-mfs-dirty-control",
+        "standard-mfs-clean-current",
+        "standard-cube-line",
+        "mosaic-mfs-clean-primary",
+        "mosaic-cube-bounded",
+        "mtmfs-wideband-sentinel"
+      ],
+      "pointing_count": 7
     }
   },
   "source_model": {
@@ -98,18 +115,6 @@
       "noise_simplenoise_jy": 0.001
     },
     {
-      "id": "wave1-vla-single-large",
-      "instrument": "vla",
-      "family": "single",
-      "tier": "large",
-      "model_pixels": 4096,
-      "image_pixels": 4096,
-      "channels": 256,
-      "duration_seconds": 5760,
-      "integration_seconds": 2,
-      "noise_simplenoise_jy": 0.001
-    },
-    {
       "id": "wave1-vla-mosaic-small",
       "instrument": "vla",
       "family": "mosaic",
@@ -130,18 +135,6 @@
       "image_pixels": 2048,
       "channels": 32,
       "duration_seconds": 2160,
-      "integration_seconds": 2,
-      "noise_simplenoise_jy": 0.0012
-    },
-    {
-      "id": "wave1-vla-mosaic-large",
-      "instrument": "vla",
-      "family": "mosaic",
-      "tier": "large",
-      "model_pixels": 4096,
-      "image_pixels": 4096,
-      "channels": 96,
-      "duration_seconds": 5760,
       "integration_seconds": 2,
       "noise_simplenoise_jy": 0.0012
     },
@@ -170,18 +163,6 @@
       "noise_simplenoise_jy": 0.0007
     },
     {
-      "id": "wave1-alma-single-large",
-      "instrument": "alma",
-      "family": "single",
-      "tier": "large",
-      "model_pixels": 4096,
-      "image_pixels": 4096,
-      "channels": 256,
-      "duration_seconds": 5760,
-      "integration_seconds": 2,
-      "noise_simplenoise_jy": 0.0007
-    },
-    {
       "id": "wave1-alma-mosaic-small",
       "instrument": "alma",
       "family": "mosaic",
@@ -206,14 +187,14 @@
       "noise_simplenoise_jy": 0.0008
     },
     {
-      "id": "wave1-alma-mosaic-large",
+      "id": "wave1-alma-shared-large",
       "instrument": "alma",
-      "family": "mosaic",
+      "family": "shared-large",
       "tier": "large",
       "model_pixels": 4096,
       "image_pixels": 4096,
-      "channels": 96,
-      "duration_seconds": 5760,
+      "channels": 256,
+      "duration_seconds": 86400,
       "integration_seconds": 2,
       "noise_simplenoise_jy": 0.0008
     }

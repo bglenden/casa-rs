@@ -160,6 +160,7 @@ def build_plan(
     tiers = required_object(registry, "tiers")
     instruments = required_object(registry, "instruments")
     families = required_object(registry, "families")
+    validate_large_tier_policy(registry, specs)
     planned = []
     for spec in specs:
         tier_name = required_str(spec, "tier")
@@ -184,9 +185,9 @@ def build_plan(
         casars_request = dataset_dir / "requests" / "casars-simobserve.json"
         casa_request = dataset_dir / "requests" / "casa-simulation-plan.json"
         output_ms = dataset_dir / "ms" / f"{required_str(spec, 'id')}.ms"
-        selected_modes = family.get("selected_modes", [])
+        selected_modes = spec.get("selected_modes", family.get("selected_modes", []))
         if not isinstance(selected_modes, list):
-            raise DatasetError(f"family {family_name} selected_modes must be an array")
+            raise DatasetError(f"{required_str(spec, 'id')} selected_modes must be an array")
         native_status = native_status_for(spec, instrument, family)
         planned.append(
             {
@@ -233,8 +234,33 @@ def build_plan(
         "root_env": required_str(registry, "root_env"),
         "data_root": str(data_root),
         "external_root_hint": registry.get("external_root_hint"),
+        "large_tier_policy": registry.get("large_tier_policy"),
         "datasets": planned,
     }
+
+
+def validate_large_tier_policy(registry: dict[str, Any], specs: list[dict[str, Any]]) -> None:
+    policy = registry.get("large_tier_policy")
+    if not isinstance(policy, dict):
+        return
+    expected_count = policy.get("dataset_count")
+    expected_id = policy.get("dataset_id")
+    large_specs = [spec for spec in specs if required_str(spec, "tier") == "large"]
+    if not large_specs:
+        return
+    if not isinstance(expected_count, int):
+        raise DatasetError("large_tier_policy.dataset_count must be an integer")
+    if expected_count != len(large_specs):
+        raise DatasetError(
+            "large tier policy expects "
+            f"{expected_count} dataset(s), selected {len(large_specs)}"
+        )
+    if isinstance(expected_id, str):
+        large_ids = {required_str(spec, "id") for spec in large_specs}
+        if expected_id not in large_ids:
+            raise DatasetError(
+                f"large tier policy requires shared dataset {expected_id!r}"
+            )
 
 
 def native_status_for(
@@ -242,6 +268,13 @@ def native_status_for(
 ) -> dict[str, str]:
     instrument_status = required_str(instrument, "native_casars_status")
     family_name = required_str(spec, "family")
+    if family_name == "shared-large":
+        return {
+            "casars_simulation": "blocked",
+            "casa_simulation": "generation-path",
+            "native_backlog_issue": "#254/#255/#180/#181/#182",
+            "reason": "shared large ALMA mosaic/cube superset requires CASA generation until native ALMA, multi-field mosaic, and channel-varying cube simulation exist",
+        }
     if family_name == "mosaic":
         return {
             "casars_simulation": "blocked",
@@ -307,12 +340,11 @@ def materialize_workloads(plan: dict[str, Any], output_dir: pathlib.Path) -> Non
 
 
 def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, Any]:
-    family = dataset["family"]
     specmode = "cube" if "cube" in mode_id else "mfs"
-    gridder = "mosaic" if family == "mosaic" else "standard"
+    gridder = "mosaic" if mode_id.startswith("mosaic") else "standard"
     is_clean = "clean" in mode_id or mode_id.startswith("mtmfs")
     deconvolver = "multiscale" if is_clean else "hogbom"
-    channels = dataset["shape"]["channels"] if specmode == "cube" else 1
+    channels = workload_channel_count(dataset, mode_id, specmode)
     if dataset["tier"] == "small":
         niter = 25 if is_clean else 0
     elif dataset["tier"] == "medium":
@@ -332,7 +364,7 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
             "mode": "clean" if is_clean else "dirty",
             "specmode": specmode,
             "gridder": gridder,
-            "field": "0",
+            "field": "" if gridder == "mosaic" else "0",
             "spw": "0",
             "channel_start": 0,
             "channel_count": channels,
@@ -351,6 +383,15 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
             "storage_label": dataset["storage_label"],
         },
     }
+
+
+def workload_channel_count(dataset: dict[str, Any], mode_id: str, specmode: str) -> int:
+    channels = int(dataset["shape"]["channels"])
+    if specmode != "cube":
+        return channels
+    if "bounded" in mode_id:
+        return min(channels, 32)
+    return channels
 
 
 def relative_to_wave_root(path_text: str) -> str:

@@ -15,8 +15,8 @@ imager.
     spectral profiles, simulation request plans, and generated workload
     manifests
 - `tools/perf/imager/wave1_dataset_registry.json`
-  - records the VLA/ALMA, single-field/mosaic, small/medium/large simulated
-    dataset plan for #248
+  - records the VLA/ALMA, single-field/mosaic, small/medium, and one shared
+    large simulated-dataset plan for #248
 - `crates/casars-imager/examples/profile_imager.rs`
   - runs repeated Rust imaging passes and reports median stage timings from the
     pure `casa-imaging` core
@@ -50,7 +50,10 @@ tools/perf/imager/stage_wave1_datasets.py \
 
 Medium and large datasets are expected to live on the external drive on this
 system. The staging tool requires those tiers under `/Volumes/GLENDENNING`
-unless `--allow-non-external-large-root` is passed explicitly.
+unless `--allow-non-external-large-root` is passed explicitly. The large tier
+is intentionally one shared `wave1-alma-shared-large` dataset; standard, cube,
+mosaic, and sentinel large workloads are generated as logical selections from
+that one staged MeasurementSet.
 
 For Wave 1, CASA C++ generation is the dataset source of truth. The staging
 tool also emits native `casa-rs` simulation request plans where useful, but

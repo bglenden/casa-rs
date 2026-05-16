@@ -1,8 +1,8 @@
 # ImPerformance Wave 1 Simulated Dataset Plan
 
 Truth class: current descriptive
-Last reality check: 2026-05-14
-Verification: `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/dataset-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/dataset-small-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --materialize-models --materialize-workloads --output-dir target/imperformance-wave1/dataset-small-materialized`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/generated-workload-dry-run target/imperformance-wave1/dataset-small-materialized/workloads/wave1-vla-single-small-standard-mfs-dirty-control.json`; `just docs-check`; `just quick`
+Last reality check: 2026-05-16
+Verification: `python3 -m py_compile tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/dataset-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/dataset-small-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --materialize-models --materialize-workloads --output-dir target/imperformance-wave1/dataset-small-materialized`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-alma-shared-large --allow-non-external-large-root --materialize-workloads --output-dir target/imperformance-wave1/dataset-large-workloads`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/generated-workload-dry-run target/imperformance-wave1/dataset-small-materialized/workloads/wave1-vla-single-small-standard-mfs-dirty-control.json`; `just docs-check`; `just quick`
 
 Wave issue: #246
 Child issue: #248
@@ -24,7 +24,20 @@ The first performance wave uses three memory-pressure tiers:
 |---|---:|---|---|
 | small | `1 GiB` | much smaller than memory | may live under any explicit `CASA_RS_IMPERF_DATA_ROOT` |
 | medium | `32 GiB` | about memory on this workstation | stage under `/Volumes/GLENDENNING` unless explicitly overridden |
-| large | `100 GiB` | larger than memory on this workstation | stage under `/Volumes/GLENDENNING` unless explicitly overridden |
+| large | `100 GiB` total | larger than memory on this workstation | exactly one shared dataset, staged under `/Volumes/GLENDENNING` unless explicitly overridden |
+
+The large tier is intentionally **not** one 100 GiB dataset per mode. The
+external drive budget allows one large dataset, so the registry contains a
+single shared ALMA mosaic/cube superset:
+
+- dataset id: `wave1-alma-shared-large`;
+- instrument/family: ALMA shared-large mosaic/cube superset;
+- observing shape: 7 pointings, 256 channels, 24 h, 2 s integrations;
+- logical workloads select from this one MS:
+  - standard modes use field `0` with `gridder='standard'`;
+  - mosaic modes use all fields with `gridder='mosaic'`;
+  - bounded mosaic cube uses a 32-channel subset;
+  - MFS modes use the available channel range through `specmode='mfs'`.
 
 Generated MeasurementSets are not committed to git. The checked-in artifact is
 the registry and staging tool:
@@ -42,8 +55,8 @@ is the current path for all Wave 1 benchmark datasets.
 
 | Instrument | Single-field datasets | Mosaic datasets | Native `casa-rs` simulation status |
 |---|---:|---:|---|
-| VLA | small, medium, large | small, medium, large | VLA single-field single-plane is supported by the existing native `simobserve` path; native cube spectral structure and true mosaic generation are backlog |
-| ALMA | small, medium, large | small, medium, large | request-plan-only until ALMA simulation parity is checked |
+| VLA | small, medium | small, medium | VLA single-field single-plane is supported by the existing native `simobserve` path; native cube spectral structure and true mosaic generation are backlog |
+| ALMA | small, medium | small, medium, plus one shared large superset | request-plan-only until ALMA simulation parity is checked |
 
 The registry also includes both single-field and mosaic families:
 
@@ -51,6 +64,7 @@ The registry also includes both single-field and mosaic families:
 |---|---|---|
 | single | standard MFS dirty, standard MFS clean, standard cube, MT-MFS sentinel | CASA C++ generated datasets are usable now; native spectral cube model prediction is backlog #255 |
 | mosaic | mosaic MFS clean, mosaic cube bounded | CASA C++ generated datasets are usable now; native multi-field mosaic generation is backlog #254 |
+| shared-large | all selected Wave 1 modes | one ALMA large-tier superset backs all logical large workloads |
 
 The native blocked/request-plan statuses are intentional. They prevent the
 benchmark program from claiming native simulation capability while allowing the
@@ -154,10 +168,22 @@ tools/perf/imager/stage_wave1_datasets.py --dry-run
 
 Use `--allow-non-external-large-root` only for a deliberate one-off override.
 
+Generate logical workload manifests for the single shared large dataset without
+materializing the 100 GiB MeasurementSet:
+
+```sh
+tools/perf/imager/stage_wave1_datasets.py \
+  --data-root "$CASA_RS_IMPERF_DATA_ROOT" \
+  --dataset wave1-alma-shared-large \
+  --materialize-workloads
+```
+
 ## Issue #248 Acceptance Mapping
 
 - Deterministic generation path or registry entry for selected mode/tier
-  combinations: `wave1_dataset_registry.json` plus CASA C++ simulation plans.
+  combinations: `wave1_dataset_registry.json` plus CASA C++ simulation plans;
+  the large tier intentionally maps all selected modes to
+  `wave1-alma-shared-large`.
 - Metadata needed to reproduce benchmark workloads: generated dataset plan,
   source model files, spectral profile, and simulation request plans.
 - Provenance, size, checksum, path, and tier policy: this document plus the
@@ -166,8 +192,8 @@ Use `--allow-non-external-large-root` only for a deliberate one-off override.
   root outside `/Volumes/GLENDENNING`, and native simulation gaps are explicit
   statuses with follow-up issues.
 - Shared-data policy: explicit root only; no bulky generated data in git.
-- Performance tier intent: small, memory-sized, and larger-than-memory staged
-  datasets.
+- Performance tier intent: small, memory-sized, and one shared
+  larger-than-memory staged dataset.
 
 ## Stop Conditions Preserved
 

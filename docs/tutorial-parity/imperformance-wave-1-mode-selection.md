@@ -87,16 +87,19 @@ Interpretation:
 ## Workload Shapes
 
 Exact datasets will be created or wired by #248. Exact harness manifests will be
-owned by #252. These shapes define what those tickets must support.
+owned by #252. These shapes define what those tickets must support. The large
+tier is a storage-constrained exception: all large logical workloads select
+from one shared ALMA mosaic/cube superset rather than from separate 100 GiB
+single-field and mosaic MeasurementSets.
 
 | Mode ID | Size tier | Dataset style | Image / channel shape | Clean settings | Expected products |
 |---|---|---|---|---|---|
-| `standard-mfs-dirty-control` | small, medium, large | deterministic single-field continuum simulation | 512, 2048, and 4096 pixel images; one MFS plane | dirty-only, natural and Briggs variants | `.psf`, `.residual`, `.image`, timing JSON |
-| `standard-mfs-clean-current` | small, medium, large | deterministic single-field continuum with compact plus extended structure | 512, 2048, and 4096 pixel images | multiscale scales including zero; bounded `niter`; `auto-multithresh` on at least medium | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, timing JSON |
-| `standard-cube-line` | small, medium, large | deterministic spectral-line cube with known line structure | 16, 64, and 256 channels; 512 to 2048 pixel images | dirty-only plus bounded multiscale/auto-multithresh clean | cube `.psf`, `.residual`, `.image`, `.model` for clean variants, timing JSON |
-| `mosaic-mfs-clean-primary` | small, medium, large | deterministic mosaic with overlapping pointings; include one real tutorial case | 512, 2048, and tutorial-scale images | multiscale clean; PB products enabled; Briggs weighting | `.psf`, `.residual`, `.model`, `.image`, `.image.pbcor`, `.pb`, timing JSON |
-| `mosaic-cube-bounded` | small, medium | deterministic line mosaic | 8 and 32 channels; 512 to 1024 pixel images | dirty-only plus short clean probe | cube products, PB products where supported, timing JSON |
-| `mtmfs-wideband-sentinel` | medium | wideband continuum simulation | 2048 pixel image; `nterms=2` initially | MT-MFS bounded clean; multiscale sentinel if already supported by path | Taylor-term products, alpha products, timing JSON |
+| `standard-mfs-dirty-control` | small, medium, large-shared | deterministic single-field continuum simulation; large selects field `0` from the shared ALMA superset | 512, 2048, and 4096 pixel images; MFS over the available channel range | dirty-only, natural and Briggs variants | `.psf`, `.residual`, `.image`, timing JSON |
+| `standard-mfs-clean-current` | small, medium, large-shared | deterministic single-field continuum with compact plus extended structure; large selects field `0` from the shared ALMA superset | 512, 2048, and 4096 pixel images | multiscale scales including zero; bounded `niter`; `auto-multithresh` on at least medium | `.psf`, `.residual`, `.model`, `.image`, `.sumwt`, timing JSON |
+| `standard-cube-line` | small, medium, large-shared | deterministic spectral-line cube with known line structure; large selects field `0` from the shared ALMA superset | 16, 64, and 256 channels; 512 to 4096 pixel images | dirty-only plus bounded multiscale/auto-multithresh clean | cube `.psf`, `.residual`, `.image`, `.model` for clean variants, timing JSON |
+| `mosaic-mfs-clean-primary` | small, medium, large-shared | deterministic mosaic with overlapping pointings; large uses all fields from the shared ALMA superset | 512, 2048, and 4096 pixel images | multiscale clean; PB products enabled; Briggs weighting | `.psf`, `.residual`, `.model`, `.image`, `.image.pbcor`, `.pb`, timing JSON |
+| `mosaic-cube-bounded` | small, medium, large-shared bounded subset | deterministic line mosaic; large uses all fields but a bounded channel slice from the shared ALMA superset | 8, 32, and 32 selected channels; 512 to 4096 pixel images | dirty-only plus short clean probe | cube products, PB products where supported, timing JSON |
+| `mtmfs-wideband-sentinel` | medium, large-shared sentinel | wideband continuum simulation; large selects from the shared ALMA superset | 2048 to 4096 pixel image; `nterms=2` initially | MT-MFS bounded clean; multiscale sentinel if already supported by path | Taylor-term products, alpha products, timing JSON |
 
 ## Target Style
 
