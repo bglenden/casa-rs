@@ -402,6 +402,7 @@ def relative_to_wave_root(path_text: str) -> str:
 
 
 def build_casars_simobserve_request(dataset: dict[str, Any]) -> dict[str, Any]:
+    fields = build_casars_fields(dataset)
     request: dict[str, Any] = {
         "kind": "run",
         "request": {
@@ -409,6 +410,9 @@ def build_casars_simobserve_request(dataset: dict[str, Any]) -> dict[str, Any]:
             "model_peak_jy_per_pixel": 0.003,
             "output_ms": dataset["paths"]["output_ms"],
             "overwrite": True,
+            "telescope_name": dataset["instrument"].upper(),
+            "field_name": dataset["id"],
+            "fields": fields,
             "duration_seconds": dataset["shape"]["duration_seconds"],
             "integration_seconds": dataset["shape"]["integration_seconds"],
             "spectral_setup": {
@@ -430,6 +434,29 @@ def build_casars_simobserve_request(dataset: dict[str, Any]) -> dict[str, Any]:
     if dataset["instrument"] == "alma":
         request["request"]["antennas"] = alma_antennas()
     return request
+
+
+def build_casars_fields(dataset: dict[str, Any]) -> list[dict[str, Any]]:
+    count = int(dataset["shape"]["pointing_count"])
+    if count <= 1:
+        return []
+    spacing_arcsec = 24.0 if dataset["instrument"] == "alma" else 120.0
+    offsets = [(0.0, 0.0)]
+    for index in range(6):
+        angle = math.tau * index / 6.0
+        offsets.append((spacing_arcsec * math.cos(angle), spacing_arcsec * math.sin(angle)))
+    fields = []
+    for index, (dra_arcsec, ddec_arcsec) in enumerate(offsets[:count]):
+        fields.append(
+            {
+                "name": f"{dataset['id']}_field_{index}",
+                "phase_center_rad": [
+                    math.radians(270.000129 + dra_arcsec / 3600.0),
+                    math.radians(-22.999889 + ddec_arcsec / 3600.0),
+                ],
+            }
+        )
+    return fields
 
 
 def build_casa_simulation_plan(dataset: dict[str, Any]) -> dict[str, Any]:

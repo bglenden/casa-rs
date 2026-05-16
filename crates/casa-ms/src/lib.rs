@@ -123,7 +123,7 @@ pub use selection_syntax::{
 };
 pub use simulation::{
     SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
-    SyntheticCorruptionConfig, SyntheticGainCorruption, SyntheticGainMode,
+    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
     SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationReport,
     SyntheticObservationRequest, SyntheticPointingCorruption,
     SyntheticPolarizationLeakageCorruption, SyntheticPolarizationLeakageMode,

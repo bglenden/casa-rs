@@ -17,7 +17,7 @@ use serde_json::Value as JsonValue;
 
 use crate::simulation::{
     SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
-    SyntheticCorruptionConfig, SyntheticGainCorruption, SyntheticGainMode,
+    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
     SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationReport,
     SyntheticObservationRequest, SyntheticPointingCorruption,
     SyntheticPolarizationLeakageCorruption, SyntheticPolarizationLeakageMode,
@@ -70,12 +70,21 @@ pub struct SimobserveRunTaskRequest {
     /// Replace an existing output MeasurementSet directory.
     #[serde(default)]
     pub overwrite: bool,
+    /// Telescope name written to `OBSERVATION`.
+    #[serde(default)]
+    pub telescope_name: Option<String>,
+    /// Single-field name used when `fields` is empty.
+    #[serde(default)]
+    pub field_name: Option<String>,
     /// Antenna configuration. Defaults to the CASA Guide VLA A configuration.
     #[serde(default)]
     pub antennas: Vec<SyntheticAntenna>,
     /// J2000 phase center `[right_ascension, declination]` in radians.
     #[serde(default)]
     pub phase_center_rad: Option<[f64; 2]>,
+    /// Optional multi-field target list. When empty, use the single phase center.
+    #[serde(default)]
+    pub fields: Vec<SyntheticField>,
     /// Observation start time in MJD seconds UTC.
     #[serde(default)]
     pub start_time_mjd_seconds: Option<f64>,
@@ -108,9 +117,16 @@ impl SimobserveRunTaskRequest {
             SyntheticObservationRequest::vla_ppdisk(&self.model_image, &self.output_ms, antennas);
         request.model_peak_jy_per_pixel = self.model_peak_jy_per_pixel;
         request.overwrite = self.overwrite;
+        if let Some(telescope_name) = &self.telescope_name {
+            request.telescope_name = telescope_name.clone();
+        }
+        if let Some(field_name) = &self.field_name {
+            request.field_name = field_name.clone();
+        }
         if let Some(phase_center_rad) = self.phase_center_rad {
             request.phase_center_rad = phase_center_rad;
         }
+        request.fields = self.fields.clone();
         if let Some(start_time_mjd_seconds) = self.start_time_mjd_seconds {
             request.start_time_mjd_seconds = start_time_mjd_seconds;
         }
@@ -601,8 +617,11 @@ fn request_from_cli_args(args: &[std::ffi::OsString]) -> Result<SimobserveRunTas
         model_peak_jy_per_pixel,
         output_ms,
         overwrite: has_flag(args, "--overwrite"),
+        telescope_name: optional_string(args, "--telescope"),
+        field_name: optional_string(args, "--field-name"),
         antennas: Vec::new(),
         phase_center_rad: None,
+        fields: Vec::new(),
         start_time_mjd_seconds: None,
         duration_seconds,
         integration_seconds,

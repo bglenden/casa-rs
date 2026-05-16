@@ -66,12 +66,13 @@ class StageWave1DatasetsTest(unittest.TestCase):
         standard = stage.build_workload_manifest(dataset, "standard-cube-line")
         mfs = stage.build_workload_manifest(dataset, "standard-mfs-dirty-control")
         mosaic = stage.build_workload_manifest(dataset, "mosaic-cube-bounded")
+        all_channels = dataset["shape"]["channels"]
 
         self.assertEqual("standard", standard["imaging"]["gridder"])
         self.assertEqual("0", standard["imaging"]["field"])
-        self.assertEqual(256, standard["imaging"]["channel_count"])
+        self.assertEqual(all_channels, standard["imaging"]["channel_count"])
         self.assertEqual("mfs", mfs["imaging"]["specmode"])
-        self.assertEqual(256, mfs["imaging"]["channel_count"])
+        self.assertEqual(all_channels, mfs["imaging"]["channel_count"])
         self.assertEqual("mosaic", mosaic["imaging"]["gridder"])
         self.assertEqual("", mosaic["imaging"]["field"])
         self.assertEqual(32, mosaic["imaging"]["channel_count"])

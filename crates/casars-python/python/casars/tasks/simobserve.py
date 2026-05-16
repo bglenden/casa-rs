@@ -47,7 +47,10 @@ def vla_ppdisk(
     output_ms: StrPath,
     *,
     overwrite: bool = False,
+    telescope_name: str | None = None,
+    field_name: str | None = None,
     antennas: list[dict[str, Any]] | None = None,
+    fields: list[dict[str, Any]] | None = None,
     model_peak_jy_per_pixel: float | None = 3.0e-5,
     phase_center_rad: tuple[float, float] | None = None,
     start_time_mjd_seconds: float | None = None,
@@ -67,7 +70,10 @@ def vla_ppdisk(
         "model_peak_jy_per_pixel": model_peak_jy_per_pixel,
         "output_ms": os.fspath(output_ms),
         "overwrite": overwrite,
+        "telescope_name": telescope_name,
+        "field_name": field_name,
         "antennas": antennas or [],
+        "fields": fields or [],
         "phase_center_rad": None
         if phase_center_rad is None
         else [phase_center_rad[0], phase_center_rad[1]],
