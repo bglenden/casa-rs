@@ -523,22 +523,25 @@ fn parse_direction(
         .ok_or_else(|| CoordinateError::UnsupportedProjection(proj_code.to_string()))?;
     let proj = Projection::new(proj_type);
 
-    // CRVAL (degrees -> radians)
+    let lon_scale = celestial_unit_scale_to_rad(h, a1)?;
+    let lat_scale = celestial_unit_scale_to_rad(h, a2)?;
+
+    // CRVAL (FITS celestial units -> radians; default is degrees)
     let crval_lon = h
         .get_float(&format!("CRVAL{a1}"))
         .ok_or_else(|| CoordinateError::InvalidRecord(format!("missing CRVAL{a1}")))?
-        * DEG_TO_RAD;
+        * lon_scale;
     let crval_lat = h
         .get_float(&format!("CRVAL{a2}"))
         .ok_or_else(|| CoordinateError::InvalidRecord(format!("missing CRVAL{a2}")))?
-        * DEG_TO_RAD;
+        * lat_scale;
 
     // CRPIX (1-based -> 0-based)
     let crpix_lon = h.get_float(&format!("CRPIX{a1}")).unwrap_or(1.0) - 1.0;
     let crpix_lat = h.get_float(&format!("CRPIX{a2}")).unwrap_or(1.0) - 1.0;
 
-    // CDELT (degrees -> radians) — check for CD matrix first
-    let (cdelt_lon, cdelt_lat, pc) = read_linear_transform_2d(h, a1, a2)?;
+    // CDELT/CD (FITS celestial units -> radians) with PC/CD/CROTA2 support.
+    let (cdelt_lon, cdelt_lat, pc) = read_linear_transform_2d(h, a1, a2, lon_scale, lat_scale)?;
 
     // Direction reference from RADESYS
     let dir_ref = if let Some(radesys) = h.get_string("RADESYS") {
@@ -584,6 +587,8 @@ fn read_linear_transform_2d(
     h: &FitsHeader,
     a1: usize,
     a2: usize,
+    lon_scale: f64,
+    lat_scale: f64,
 ) -> Result<(f64, f64, ndarray::Array2<f64>), CoordinateError> {
     // Check for CD matrix first
     let cd11 = h.get_float(&format!("CD{a1}_{a1}"));
@@ -618,8 +623,7 @@ fn read_linear_transform_2d(
         )
         .unwrap();
 
-        // Convert degrees to radians
-        Ok((cdelt1 * DEG_TO_RAD, cdelt2 * DEG_TO_RAD, pc))
+        Ok((cdelt1 * lon_scale, cdelt2 * lat_scale, pc))
     } else {
         // PC matrix or CROTA2
         let cdelt1 = h
@@ -645,8 +649,22 @@ fn read_linear_transform_2d(
             ndarray::Array2::eye(2)
         };
 
-        // Convert degrees to radians
-        Ok((cdelt1 * DEG_TO_RAD, cdelt2 * DEG_TO_RAD, pc))
+        Ok((cdelt1 * lon_scale, cdelt2 * lat_scale, pc))
+    }
+}
+
+fn celestial_unit_scale_to_rad(h: &FitsHeader, axis: usize) -> Result<f64, CoordinateError> {
+    let unit = h
+        .get_string(&format!("CUNIT{axis}"))
+        .unwrap_or("deg")
+        .trim()
+        .to_ascii_lowercase();
+    match unit.as_str() {
+        "" | "deg" | "degree" | "degrees" => Ok(DEG_TO_RAD),
+        "rad" | "radian" | "radians" => Ok(1.0),
+        other => Err(CoordinateError::InvalidRecord(format!(
+            "unsupported celestial CUNIT{axis}={other:?}; expected deg or rad"
+        ))),
     }
 }
 
@@ -1047,6 +1065,34 @@ mod tests {
             world1[1],
             world2[1]
         );
+    }
+
+    #[test]
+    fn parses_direction_units_in_radians() {
+        let cards = [
+            "NAXIS   =                    2",
+            "NAXIS1  =                   32",
+            "NAXIS2  =                   32",
+            "CTYPE1  = 'RA---SIN'",
+            "CRVAL1  =   1.230000000000000E+00",
+            "CRPIX1  =   1.700000000000000E+01",
+            "CDELT1  =  -1.000000000000000E-06",
+            "CUNIT1  = 'rad     '",
+            "CTYPE2  = 'DEC--SIN'",
+            "CRVAL2  =  -4.500000000000000E-01",
+            "CRPIX2  =   1.700000000000000E+01",
+            "CDELT2  =   1.000000000000000E-06",
+            "CUNIT2  = 'rad     '",
+        ];
+
+        let header = FitsHeader::from_cards(&cards);
+        let cs = from_fits_header(&header, &[32, 32]).unwrap();
+        let dir = cs.coordinate(cs.find_coordinate(CoordinateType::Direction).unwrap());
+
+        assert!((dir.reference_value()[0] - 1.23).abs() < 1e-12);
+        assert!((dir.reference_value()[1] + 0.45).abs() < 1e-12);
+        assert!((dir.increment()[0] + 1e-6).abs() < 1e-18);
+        assert!((dir.increment()[1] - 1e-6).abs() < 1e-18);
     }
 
     #[test]

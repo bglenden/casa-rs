@@ -652,6 +652,7 @@ dependencies = [
  "casa-types",
  "flate2",
  "image 0.25.10",
+ "libm",
  "nalgebra",
  "ndarray",
  "num-complex",

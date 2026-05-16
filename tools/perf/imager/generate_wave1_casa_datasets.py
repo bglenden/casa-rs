@@ -148,6 +148,18 @@ def create_model_image(dataset: dict[str, Any]) -> pathlib.Path:
 
     cs = coordsys()
     cs.newcoordsys(direction=True, stokes=["I"], spectral=True)
+    cs.setunits(["deg", "deg"], type="direction")
+    cs.setincrement(
+        [
+            -cell_arcsec(dataset["instrument"]) / 3600.0,
+            cell_arcsec(dataset["instrument"]) / 3600.0,
+        ],
+        type="direction",
+    )
+    cs.setreferencepixel([pixels / 2.0 - 0.5, pixels / 2.0 - 0.5], type="direction")
+    cs.setreferencevalue([270.000129, -22.999889], type="direction")
+    cs.setreferencevalue(f"{start_frequency_hz(dataset['instrument'])}Hz", type="spectral")
+    cs.setincrement(f"{channel_width_hz(dataset['instrument'])}Hz", type="spectral")
     ia = image()
     out.parent.mkdir(parents=True, exist_ok=True)
     ia.fromshape(
@@ -206,6 +218,8 @@ def source_pixel(cx: float, cy: float, family: str) -> float:
 
 
 def spectral_profile(channels: int) -> list[float]:
+    if channels == 1:
+        return [1.0]
     center = 0.5 * max(0, channels - 1)
     values = []
     for channel in range(channels):
@@ -265,16 +279,15 @@ def run_simobserve(
         simobserve(
             project=project_dir.name,
             skymodel=str(model_image),
-            indirection="J2000 18h00m00.03096s -22d59m59.6004s",
             incell=f"{cell_arcsec(dataset['instrument'])}arcsec",
-            incenter=f"{start_frequency_hz(dataset['instrument'])}Hz",
+            incenter=f"{spw_center_frequency_hz(dataset)}Hz",
             inwidth=f"{channel_width_hz(dataset['instrument'])}Hz",
             setpointings=False,
             ptgfile=str(pointings),
             integration=f"{shape['integration_seconds']}s",
             totaltime=f"{shape['duration_seconds']}s",
             antennalist=antenna_list(dataset["instrument"]),
-            thermalnoise="tsys-atm",
+            thermalnoise=thermalnoise_mode(dataset),
             seed=stable_seed(dataset["id"]),
             graphics="none",
             verbose=False,
@@ -282,6 +295,11 @@ def run_simobserve(
         )
     finally:
         os.chdir(old_cwd)
+
+
+def thermalnoise_mode(dataset: dict[str, Any]) -> str:
+    noise_jy = float(dataset.get("source_model", {}).get("noise_simplenoise_jy", 0.0))
+    return "tsys-atm" if noise_jy > 0.0 else ""
 
 
 def make_preview(
@@ -430,6 +448,13 @@ def start_frequency_hz(instrument: str) -> float:
 
 def channel_width_hz(instrument: str) -> float:
     return 2.0e6 if instrument == "alma" else 128.0e6
+
+
+def spw_center_frequency_hz(dataset: dict[str, Any]) -> float:
+    channels = int(dataset["shape"]["channels"])
+    return start_frequency_hz(dataset["instrument"]) + (channels // 2) * channel_width_hz(
+        dataset["instrument"]
+    )
 
 
 def stable_seed(text: str) -> int:

@@ -21,6 +21,7 @@ casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 image = { version = "0.25", default-features = false, features = ["png"] }
+libm = "0.2"
 nalgebra.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true

@@ -23,6 +23,7 @@ use std::io::{Read as IoRead, Seek, SeekFrom, Write as IoWrite};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Instant;
 
 use casa_aipsio::{AipsIo, AipsOpenOption};
 use casa_types::{
@@ -3150,8 +3151,16 @@ fn encode_column_cube_values(
     Ok(cube_bytes)
 }
 
+#[derive(Debug, Clone, Copy)]
+struct StreamedShapeCubeWrite {
+    bytes: usize,
+    assemble_seconds: f64,
+    write_seconds: f64,
+}
+
 #[allow(clippy::too_many_arguments)]
-fn encode_single_column_shape_cube_direct(
+fn write_single_column_shape_cube_direct_to_file(
+    tsm_path: &Path,
     values: &[Option<&Value>],
     cell_shape: &[usize],
     tile_shape: &[usize],
@@ -3162,7 +3171,7 @@ fn encode_single_column_shape_cube_direct(
     col_offset: usize,
     col_data_type: CasacoreDataType,
     big_endian: bool,
-) -> Result<Option<Vec<u8>>, StorageError> {
+) -> Result<Option<StreamedShapeCubeWrite>, StorageError> {
     if tile_shape.len() != cell_shape.len() + 1 {
         return Ok(None);
     }
@@ -3173,48 +3182,137 @@ fn encode_single_column_shape_cube_direct(
     if rows_per_tile == 0 {
         return Ok(None);
     }
+    if col_data_type != CasacoreDataType::TpBool && col_data_type != CasacoreDataType::TpComplex {
+        return Ok(None);
+    }
+
+    for value in values.iter().flatten() {
+        match (col_data_type, *value) {
+            (CasacoreDataType::TpBool, Value::Array(ArrayValue::Bool(array))) => {
+                if array.len() != cell_nelem {
+                    return Ok(None);
+                }
+            }
+            (CasacoreDataType::TpComplex, Value::Array(ArrayValue::Complex32(array))) => {
+                if array.len() != cell_nelem || array.shape() != cell_shape {
+                    return Ok(None);
+                }
+            }
+            _ => return Ok(None),
+        }
+    }
 
     let row_bytes = cell_nelem * elem_size;
     let tile_nelem: usize = tile_shape.iter().product();
     let tile_storage_len = tile_storage_bytes(col_data_type, tile_nelem);
-    let mut tsm_data = vec![0u8; nr_tiles * bucket_size];
-    for (pos_in_cube, value) in values.iter().enumerate() {
-        let Some(value) = value else {
-            continue;
-        };
-        let (encoded, encoded_type) = encode_array_value(value, big_endian)?;
-        if encoded_type != col_data_type {
-            return Ok(None);
-        }
-        let tile_idx = pos_in_cube / rows_per_tile;
-        let row_in_tile = pos_in_cube % rows_per_tile;
-        let tile_start = tile_idx * bucket_size + col_offset;
-        if col_data_type == CasacoreDataType::TpBool {
-            if encoded.len() != cell_nelem {
-                return Ok(None);
-            }
-            let tile_end = tile_start + tile_storage_len;
-            if tile_end > tsm_data.len() {
-                return Ok(None);
-            }
-            write_bool_bits_from_bytes(
-                &mut tsm_data[tile_start..tile_end],
-                row_in_tile * cell_nelem,
-                &encoded,
-            );
-        } else {
-            if encoded.len() != row_bytes {
-                return Ok(None);
-            }
-            let dst_start = tile_start + row_in_tile * row_bytes;
-            let dst_end = dst_start + row_bytes;
-            if dst_end > tsm_data.len() {
-                return Ok(None);
-            }
-            tsm_data[dst_start..dst_end].copy_from_slice(&encoded);
-        }
+    let tile_end = col_offset + tile_storage_len;
+    if tile_end > bucket_size {
+        return Ok(None);
     }
-    Ok(Some(tsm_data))
+
+    let mut file = std::fs::File::create(tsm_path)?;
+    let mut tile_data = vec![0u8; bucket_size];
+    let mut assemble_seconds = 0.0;
+    let mut write_seconds = 0.0;
+    for tile_idx in 0..nr_tiles {
+        tile_data.fill(0);
+        let assemble_started = Instant::now();
+        for row_in_tile in 0..rows_per_tile {
+            let pos_in_cube = tile_idx * rows_per_tile + row_in_tile;
+            let Some(value) = values.get(pos_in_cube).and_then(|value| *value) else {
+                continue;
+            };
+            if col_data_type == CasacoreDataType::TpBool {
+                let Value::Array(ArrayValue::Bool(array)) = value else {
+                    unreachable!("preflight checked bool tiled shape values");
+                };
+                if array.iter().all(|value| !*value) {
+                    continue;
+                }
+                let bools = array_memory_order_values(array);
+                write_bool_bits(
+                    &mut tile_data[col_offset..tile_end],
+                    row_in_tile * cell_nelem,
+                    &bools,
+                );
+            } else {
+                let Value::Array(ArrayValue::Complex32(array)) = value else {
+                    unreachable!("preflight checked complex tiled shape values");
+                };
+                let dst_start = col_offset + row_in_tile * row_bytes;
+                let dst_end = dst_start + row_bytes;
+                if dst_end > tile_data.len() {
+                    return Ok(None);
+                }
+                encode_complex32_array_into_tile_row(
+                    &mut tile_data[dst_start..dst_end],
+                    array,
+                    cell_shape,
+                    big_endian,
+                )?;
+            }
+        }
+        assemble_seconds += assemble_started.elapsed().as_secs_f64();
+        let write_started = Instant::now();
+        file.write_all(&tile_data)?;
+        write_seconds += write_started.elapsed().as_secs_f64();
+    }
+
+    Ok(Some(StreamedShapeCubeWrite {
+        bytes: nr_tiles * bucket_size,
+        assemble_seconds,
+        write_seconds,
+    }))
+}
+
+fn encode_complex32_array_into_tile_row(
+    dst: &mut [u8],
+    array: &ArrayD<Complex32>,
+    cell_shape: &[usize],
+    big_endian: bool,
+) -> Result<(), StorageError> {
+    if dst.len() != array.len() * 8 {
+        return Err(StorageError::FormatMismatch(
+            "complex tile row has unexpected byte length".to_string(),
+        ));
+    }
+
+    if let Some(slice) = array.as_slice_memory_order()
+        && cell_shape.len() == 2
+        && array.strides() == [cell_shape[1] as isize, 1]
+    {
+        let n0 = cell_shape[0];
+        let n1 = cell_shape[1];
+        for axis1 in 0..n1 {
+            for axis0 in 0..n0 {
+                let value = slice[axis0 * n1 + axis1];
+                let dst_offset = (axis1 * n0 + axis0) * 8;
+                write_complex32_component_bytes(
+                    &mut dst[dst_offset..dst_offset + 8],
+                    value,
+                    big_endian,
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    let slice = array_memory_order_values(array);
+    for (idx, &value) in slice.iter().enumerate() {
+        let dst_offset = idx * 8;
+        write_complex32_component_bytes(&mut dst[dst_offset..dst_offset + 8], value, big_endian);
+    }
+    Ok(())
+}
+
+fn write_complex32_component_bytes(dst: &mut [u8], value: Complex32, big_endian: bool) {
+    if big_endian {
+        write_f32_be(dst, value.re);
+        write_f32_be(&mut dst[4..], value.im);
+    } else {
+        write_f32_le(dst, value.re);
+        write_f32_le(&mut dst[4..], value.im);
+    }
 }
 
 fn save_single_column_tiled_column_stman(
@@ -3503,7 +3601,9 @@ fn save_single_column_tiled_shape_stman(
 
         let group_values: Vec<Option<&Value>> =
             group_rows.iter().map(|&row_idx| values[row_idx]).collect();
-        let tsm_data = if let Some(tsm_data) = encode_single_column_shape_cube_direct(
+        let tsm_path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
+        let file_len = if let Some(streamed) = write_single_column_shape_cube_direct_to_file(
+            &tsm_path,
             &group_values,
             cell_shape,
             &tile_shape,
@@ -3515,7 +3615,22 @@ fn save_single_column_tiled_shape_stman(
             col_data_type,
             big_endian,
         )? {
-            tsm_data
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.mark_with_detail(
+                    "stream_cube_file",
+                    Some(format!(
+                        "cube={} shape={} rows={} tile_shape={} bytes={} assemble={:.3}s write={:.3}s",
+                        cube_idx,
+                        format_shape(&cube_shape),
+                        n_in_cube,
+                        format_shape(&tile_shape),
+                        streamed.bytes,
+                        streamed.assemble_seconds,
+                        streamed.write_seconds
+                    )),
+                );
+            }
+            streamed.bytes
         } else {
             let cube_bytes = encode_column_cube_values(
                 &group_values,
@@ -3560,28 +3675,40 @@ fn save_single_column_tiled_shape_stman(
                     nrpixels,
                 );
             }
-            tsm_data
-        };
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.mark_with_detail(
+                    "assemble_cube",
+                    Some(format!(
+                        "cube={} shape={} rows={} tile_shape={} bytes={}",
+                        cube_idx,
+                        format_shape(&cube_shape),
+                        n_in_cube,
+                        format_shape(&tile_shape),
+                        tsm_data.len()
+                    )),
+                );
+            }
 
-        let tsm_path = tsm_data_path(table_path, dm_seq_nr, file_seq_nr);
-        std::fs::write(&tsm_path, &tsm_data)?;
-        if let Some(profiler) = profiler.as_mut() {
-            profiler.mark_with_detail(
-                "write_cube",
-                Some(format!(
-                    "cube={} shape={} rows={} tile_shape={} bytes={}",
-                    cube_idx,
-                    format_shape(&cube_shape),
-                    n_in_cube,
-                    format_shape(&tile_shape),
-                    tsm_data.len()
-                )),
-            );
-        }
+            std::fs::write(&tsm_path, &tsm_data)?;
+            if let Some(profiler) = profiler.as_mut() {
+                profiler.mark_with_detail(
+                    "write_cube_file",
+                    Some(format!(
+                        "cube={} shape={} rows={} tile_shape={} bytes={}",
+                        cube_idx,
+                        format_shape(&cube_shape),
+                        n_in_cube,
+                        format_shape(&tile_shape),
+                        tsm_data.len()
+                    )),
+                );
+            }
+            tsm_data.len()
+        };
 
         all_files.push(Some(TsmFileInfo {
             seq_nr: file_seq_nr,
-            length: tsm_data.len() as i64,
+            length: file_len as i64,
         }));
 
         cubes.push(TsmCubeInfo {
@@ -6458,6 +6585,43 @@ mod tests {
     fn bool_tile_storage_is_bit_packed() {
         assert_eq!(tile_storage_bytes(CasacoreDataType::TpBool, 4), 1);
         assert_eq!(tile_storage_bytes(CasacoreDataType::TpBool, 9), 2);
+    }
+
+    #[test]
+    fn complex32_tile_row_encoder_uses_fortran_cell_order() {
+        let values = vec![
+            Complex32::new(0.0, -0.0),
+            Complex32::new(1.0, -1.0),
+            Complex32::new(2.0, -2.0),
+            Complex32::new(10.0, -10.0),
+            Complex32::new(11.0, -11.0),
+            Complex32::new(12.0, -12.0),
+        ];
+        let array = ArrayD::from_shape_vec(vec![2, 3], values).expect("array");
+        let mut encoded = vec![0u8; 2 * 3 * 8];
+
+        encode_complex32_array_into_tile_row(&mut encoded, &array, &[2, 3], false)
+            .expect("encode row");
+
+        let decoded = encoded
+            .chunks_exact(8)
+            .map(|chunk| {
+                let re = f32::from_le_bytes(chunk[0..4].try_into().unwrap());
+                let im = f32::from_le_bytes(chunk[4..8].try_into().unwrap());
+                Complex32::new(re, im)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            decoded,
+            vec![
+                Complex32::new(0.0, -0.0),
+                Complex32::new(10.0, -10.0),
+                Complex32::new(1.0, -1.0),
+                Complex32::new(11.0, -11.0),
+                Complex32::new(2.0, -2.0),
+                Complex32::new(12.0, -12.0),
+            ]
+        );
     }
 
     #[test]

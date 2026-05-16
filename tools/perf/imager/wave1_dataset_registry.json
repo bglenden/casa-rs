@@ -28,7 +28,7 @@
   "instruments": {
     "vla": {
       "display_name": "VLA",
-      "array_configuration": "synthetic VLA A-like",
+      "array_configuration": "synthetic VLA D-like",
       "dish_diameter_m": 25.0,
       "native_casars_status": "supported"
     },

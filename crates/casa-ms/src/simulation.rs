@@ -7,7 +7,8 @@
 //! spectral window and field, sample the requested observing time range, and
 //! write CASA-compatible MS subtables plus uncorrupted visibility rows.
 
-use casa_coordinates::{Coordinate, DirectionCoordinate, Projection, ProjectionType};
+use casa_coordinates::fits::{FitsHeader, from_fits_header};
+use casa_coordinates::{Coordinate, CoordinateSystem, CoordinateType};
 use casa_imaging::{
     ImageGeometry, PrimaryBeamModel, StandardMfsModelPredictor, primary_beam_voltage_pattern,
 };
@@ -16,6 +17,7 @@ use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use libm::j1;
 use ndarray::{Array2, ArrayD};
 use num_complex::Complex32;
 use schemars::JsonSchema;
@@ -23,9 +25,12 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::column_def::{ColumnDef, ColumnKind};
 use crate::error::{MsError, MsResult};
+use crate::flagging::shadowed_antennas_from_projected_baselines;
 use crate::schema::{self, SubtableId};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
 
@@ -508,17 +513,57 @@ pub struct SyntheticObservationReport {
     pub nonzero_visibility_count: usize,
     /// Names of corruption effects applied to `MAIN.DATA`.
     pub applied_corruptions: Vec<String>,
+    /// Wall-clock timing breakdown for the native generator.
+    pub timing: SyntheticObservationTimingReport,
+}
+
+/// Wall-clock timing breakdown for one synthetic observation generation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticObservationTimingReport {
+    /// Request validation time.
+    pub validate_millis: u128,
+    /// Existing-output removal and MeasurementSet creation time.
+    pub setup_millis: u128,
+    /// Static metadata subtable write time before MAIN rows.
+    pub metadata_millis: u128,
+    /// FITS model read and predictor preparation time.
+    pub model_prepare_millis: u128,
+    /// MAIN-row generation and writeback timing.
+    pub main_rows: SyntheticMainRowTimingReport,
+    /// MeasurementSet save time.
+    pub save_millis: u128,
+    /// End-to-end generation time inside the native library call.
+    pub total_millis: u128,
+}
+
+/// MAIN table timing breakdown for one synthetic observation generation.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticMainRowTimingReport {
+    /// Number of channel prediction workers selected for each time sample.
+    pub channel_prediction_workers: usize,
+    /// Time spent computing UVW coordinates and row identities.
+    pub uvw_and_row_setup_millis: u128,
+    /// Time spent predicting model visibilities across channels.
+    pub prediction_millis: u128,
+    /// Time spent applying deterministic corruption/noise.
+    pub corruption_millis: u128,
+    /// Time spent constructing MAIN rows and appending them to the table.
+    pub main_write_millis: u128,
 }
 
 /// Generate an uncorrupted CASA-compatible synthetic MeasurementSet.
 ///
 /// The current implementation writes structurally complete MS metadata and can
-/// predict uncorrupted visibility samples from a single-plane FITS model image.
+/// predict uncorrupted visibility samples from a FITS model image.
 pub fn generate_synthetic_observation_ms(
     request: &SyntheticObservationRequest,
 ) -> MsResult<SyntheticObservationReport> {
+    let total_started = Instant::now();
+    let validate_started = Instant::now();
     validate_request(request)?;
+    let validate_millis = elapsed_millis(validate_started.elapsed());
 
+    let setup_started = Instant::now();
     if request.output_ms.exists() {
         if request.overwrite {
             fs::remove_dir_all(&request.output_ms).map_err(|error| {
@@ -539,7 +584,9 @@ pub fn generate_synthetic_observation_ms(
         &request.output_ms,
         MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
     )?;
+    let setup_millis = elapsed_millis(setup_started.elapsed());
 
+    let metadata_started = Instant::now();
     populate_antennas(&mut ms, &request.antennas)?;
     populate_field(&mut ms, request)?;
     populate_pointing(&mut ms, request)?;
@@ -551,22 +598,27 @@ pub fn generate_synthetic_observation_ms(
     populate_feed(&mut ms, request)?;
     populate_observation(&mut ms, request)?;
     populate_history(&mut ms, request)?;
+    let metadata_millis = elapsed_millis(metadata_started.elapsed());
 
     let time_sample_count =
         time_sample_count(request.duration_seconds, request.integration_seconds);
     let baseline_count = request.antennas.len() * (request.antennas.len() - 1) / 2;
+    let model_started = Instant::now();
     let model = if request.predict_model {
         Some(read_fits_model_image(
             &request.model_image,
             request.model_peak_jy_per_pixel,
+            request.spectral_setup.channel_count,
         )?)
     } else {
         None
     };
-    let nonzero_visibility_count =
-        populate_main_rows(&mut ms, request, time_sample_count, model.as_ref())?;
+    let model_prepare_millis = elapsed_millis(model_started.elapsed());
+    let main_rows = populate_main_rows(&mut ms, request, time_sample_count, model.as_ref())?;
 
-    ms.save()?;
+    let save_started = Instant::now();
+    ms.save_assuming_valid()?;
+    let save_millis = elapsed_millis(save_started.elapsed());
 
     Ok(SyntheticObservationReport {
         output_ms: request.output_ms.clone(),
@@ -576,8 +628,17 @@ pub fn generate_synthetic_observation_ms(
         time_sample_count,
         main_row_count: baseline_count * time_sample_count,
         channel_count: request.spectral_setup.channel_count,
-        nonzero_visibility_count,
+        nonzero_visibility_count: main_rows.nonzero_visibility_count,
         applied_corruptions: applied_corruption_names(request.corruption.as_ref()),
+        timing: SyntheticObservationTimingReport {
+            validate_millis,
+            setup_millis,
+            metadata_millis,
+            model_prepare_millis,
+            main_rows: main_rows.timing,
+            save_millis,
+            total_millis: elapsed_millis(total_started.elapsed()),
+        },
     })
 }
 
@@ -1091,15 +1152,13 @@ fn populate_main_rows(
     request: &SyntheticObservationRequest,
     samples: usize,
     model: Option<&FitsModelImage>,
-) -> MsResult<usize> {
+) -> MsResult<MainRowsReport> {
     let num_corr = 2usize;
     let num_chan = request.spectral_setup.channel_count;
+    let channel_prediction_workers = simobserve_channel_worker_count(num_chan);
     let template = MainRowTemplate {
         flag: bool_array(&vec![false; num_corr * num_chan], vec![num_corr, num_chan]),
-        flag_category: bool_array(
-            &vec![false; num_corr * num_chan],
-            vec![1, num_corr, num_chan],
-        ),
+        flag_category: bool_array(&[], vec![0, num_corr, num_chan]),
         weight: f32_array(&vec![1.0; num_corr], vec![num_corr]),
         sigma: f32_array(&vec![1.0; num_corr], vec![num_corr]),
     };
@@ -1114,14 +1173,20 @@ fn populate_main_rows(
         )
     });
     let mut nonzero_visibility_count = 0usize;
+    let mut timing = MainRowTimingDurations {
+        channel_prediction_workers,
+        ..MainRowTimingDurations::default()
+    };
 
     for sample in 0..samples {
+        let uvw_started = Instant::now();
         let field_id = sample % field_plans.len();
         let field_plan = &field_plans[field_id];
         let time =
             request.start_time_mjd_seconds + (sample as f64 + 0.5) * request.integration_seconds;
         let antenna_uvws =
             antenna_uvw_positions(&request.antennas, field_plan.phase_center_rad, time)?;
+        let mut row_specs = Vec::with_capacity(request.antennas.len() * request.antennas.len());
         for antenna1 in 0..request.antennas.len() {
             for antenna2 in (antenna1 + 1)..request.antennas.len() {
                 let uvw = [
@@ -1129,52 +1194,196 @@ fn populate_main_rows(
                     antenna_uvws[antenna2][1] - antenna_uvws[antenna1][1],
                     antenna_uvws[antenna2][2] - antenna_uvws[antenna1][2],
                 ];
-                let mut data_values = predicted_data_values(
-                    field_plan.predictors.as_ref(),
-                    &request.spectral_setup,
+                row_specs.push(MainRowVisibilitySpec {
+                    antenna1,
+                    antenna2,
+                    field_id,
+                    time,
                     uvw,
-                    num_corr,
-                );
-                if let Some(corruption) = corruption.as_ref() {
-                    corruption.apply(&mut data_values, antenna1, antenna2, num_chan, sample);
-                }
-                nonzero_visibility_count += data_values
-                    .iter()
-                    .filter(|value| value.re != 0.0 || value.im != 0.0)
-                    .count();
-                let data = complex_array(&data_values, vec![num_corr, num_chan]);
-                let row = row_from_defs(
-                    &main_defs,
-                    &[
-                        ("ANTENNA1", i(antenna1 as i32)),
-                        ("ANTENNA2", i(antenna2 as i32)),
-                        ("ARRAY_ID", i(0)),
-                        ("DATA_DESC_ID", i(0)),
-                        ("EXPOSURE", f(request.integration_seconds)),
-                        ("FEED1", i(0)),
-                        ("FEED2", i(0)),
-                        ("FIELD_ID", i(field_id as i32)),
-                        ("FLAG", template.flag.clone()),
-                        ("FLAG_CATEGORY", template.flag_category.clone()),
-                        ("FLAG_ROW", b(false)),
-                        ("INTERVAL", f(request.integration_seconds)),
-                        ("OBSERVATION_ID", i(0)),
-                        ("PROCESSOR_ID", i(0)),
-                        ("SCAN_NUMBER", i(1)),
-                        ("SIGMA", template.sigma.clone()),
-                        ("STATE_ID", i(0)),
-                        ("TIME", f(time)),
-                        ("TIME_CENTROID", f(time)),
-                        ("UVW", f64_array(&uvw, vec![3])),
-                        ("WEIGHT", template.weight.clone()),
-                        ("DATA", data),
-                    ],
-                );
-                ms.main_table_mut().add_row(row)?;
+                });
             }
         }
+        let row_uvws = row_specs.iter().map(|spec| spec.uvw).collect::<Vec<_>>();
+        let shadowed_antennas = shadowed_antennas_for_rows(&row_specs, &request.antennas);
+        timing.uvw_and_row_setup += uvw_started.elapsed();
+
+        let prediction_started = Instant::now();
+        let mut data_rows = predicted_data_values_for_rows_with_workers(
+            field_plan.predictors.as_deref(),
+            &request.spectral_setup,
+            &row_uvws,
+            num_corr,
+            channel_prediction_workers,
+        );
+        timing.prediction += prediction_started.elapsed();
+        let corruption_started = Instant::now();
+        nonzero_visibility_count += apply_corruption_and_count_rows_with_workers(
+            corruption.as_ref(),
+            &row_specs,
+            &mut data_rows,
+            num_chan,
+            sample,
+        );
+        timing.corruption += corruption_started.elapsed();
+        for (spec, data_values) in row_specs.into_iter().zip(data_rows) {
+            let write_started = Instant::now();
+            let data = complex_array(&data_values, vec![num_corr, num_chan]);
+            let shadowed_row = shadowed_antennas[spec.antenna1] || shadowed_antennas[spec.antenna2];
+            let row = row_from_defs(
+                &main_defs,
+                &[
+                    ("ANTENNA1", i(spec.antenna1 as i32)),
+                    ("ANTENNA2", i(spec.antenna2 as i32)),
+                    ("ARRAY_ID", i(0)),
+                    ("DATA_DESC_ID", i(0)),
+                    ("EXPOSURE", f(request.integration_seconds)),
+                    ("FEED1", i(0)),
+                    ("FEED2", i(0)),
+                    ("FIELD_ID", i(spec.field_id as i32)),
+                    ("FLAG", template.flag.clone()),
+                    ("FLAG_CATEGORY", template.flag_category.clone()),
+                    ("FLAG_ROW", b(shadowed_row)),
+                    ("INTERVAL", f(request.integration_seconds)),
+                    ("OBSERVATION_ID", i(0)),
+                    ("PROCESSOR_ID", i(0)),
+                    ("SCAN_NUMBER", i(1)),
+                    ("SIGMA", template.sigma.clone()),
+                    ("STATE_ID", i(0)),
+                    ("TIME", f(spec.time)),
+                    ("TIME_CENTROID", f(spec.time)),
+                    ("UVW", f64_array(&spec.uvw, vec![3])),
+                    ("WEIGHT", template.weight.clone()),
+                    ("DATA", data),
+                ],
+            );
+            ms.main_table_mut().add_row_assuming_valid(row)?;
+            timing.main_write += write_started.elapsed();
+        }
     }
-    Ok(nonzero_visibility_count)
+    Ok(MainRowsReport {
+        nonzero_visibility_count,
+        timing: timing.into_report(),
+    })
+}
+
+fn shadowed_antennas_for_rows(
+    rows: &[MainRowVisibilitySpec],
+    antennas: &[SyntheticAntenna],
+) -> Vec<bool> {
+    shadowed_antennas_from_projected_baselines(
+        antennas.len(),
+        rows.iter().map(|spec| {
+            (
+                spec.antenna1,
+                spec.antenna2,
+                spec.uvw,
+                antennas[spec.antenna1].dish_diameter_m,
+                antennas[spec.antenna2].dish_diameter_m,
+            )
+        }),
+    )
+}
+
+fn apply_corruption_and_count_rows_with_workers(
+    corruption: Option<&SyntheticCorruptionState>,
+    row_specs: &[MainRowVisibilitySpec],
+    data_rows: &mut [Vec<Complex32>],
+    channel_count: usize,
+    sample_index: usize,
+) -> usize {
+    let worker_count = simobserve_row_worker_count(data_rows.len(), channel_count);
+    if worker_count <= 1 {
+        return apply_corruption_and_count_rows(
+            corruption,
+            row_specs,
+            data_rows,
+            channel_count,
+            sample_index,
+        );
+    }
+
+    let chunk_size = data_rows.len().div_ceil(worker_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for (spec_chunk, data_chunk) in row_specs
+            .chunks(chunk_size)
+            .zip(data_rows.chunks_mut(chunk_size))
+        {
+            handles.push(scope.spawn(move || {
+                apply_corruption_and_count_rows(
+                    corruption,
+                    spec_chunk,
+                    data_chunk,
+                    channel_count,
+                    sample_index,
+                )
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("synthetic observation row worker should not panic")
+            })
+            .sum()
+    })
+}
+
+fn apply_corruption_and_count_rows(
+    corruption: Option<&SyntheticCorruptionState>,
+    row_specs: &[MainRowVisibilitySpec],
+    data_rows: &mut [Vec<Complex32>],
+    channel_count: usize,
+    sample_index: usize,
+) -> usize {
+    let mut nonzero_visibility_count = 0usize;
+    for (spec, data_values) in row_specs.iter().zip(data_rows.iter_mut()) {
+        if let Some(corruption) = corruption {
+            corruption.apply(
+                data_values,
+                spec.antenna1,
+                spec.antenna2,
+                channel_count,
+                sample_index,
+            );
+        }
+        nonzero_visibility_count += count_nonzero_complex(data_values);
+    }
+    nonzero_visibility_count
+}
+
+fn count_nonzero_complex(values: &[Complex32]) -> usize {
+    values
+        .iter()
+        .filter(|value| value.re != 0.0 || value.im != 0.0)
+        .count()
+}
+
+struct MainRowsReport {
+    nonzero_visibility_count: usize,
+    timing: SyntheticMainRowTimingReport,
+}
+
+#[derive(Default)]
+struct MainRowTimingDurations {
+    channel_prediction_workers: usize,
+    uvw_and_row_setup: Duration,
+    prediction: Duration,
+    corruption: Duration,
+    main_write: Duration,
+}
+
+impl MainRowTimingDurations {
+    fn into_report(self) -> SyntheticMainRowTimingReport {
+        SyntheticMainRowTimingReport {
+            channel_prediction_workers: self.channel_prediction_workers,
+            uvw_and_row_setup_millis: elapsed_millis(self.uvw_and_row_setup),
+            prediction_millis: elapsed_millis(self.prediction),
+            corruption_millis: elapsed_millis(self.corruption),
+            main_write_millis: elapsed_millis(self.main_write),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1185,11 +1394,41 @@ struct MainRowTemplate {
     sigma: Value,
 }
 
+#[derive(Clone, Copy)]
+struct MainRowVisibilitySpec {
+    antenna1: usize,
+    antenna2: usize,
+    field_id: usize,
+    time: f64,
+    uvw: [f64; 3],
+}
+
 #[derive(Debug, Clone)]
 struct FitsModelImage {
     pixels: Array2<f32>,
+    channel_planes: Vec<Array2<f32>>,
     cell_size_rad: [f64; 2],
+    direction_wcs: Option<FitsModelDirectionWcs>,
+    ra_axis_increases_with_x: bool,
     reference_direction_rad: Option<[f64; 2]>,
+}
+
+impl FitsModelImage {
+    fn pixels_for_channel(&self, channel: usize) -> &Array2<f32> {
+        self.channel_planes.get(channel).unwrap_or(&self.pixels)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FitsModelDirectionWcs {
+    coordinate_system: CoordinateSystem,
+    coordinate_index: usize,
+}
+
+impl FitsModelDirectionWcs {
+    fn coordinate(&self) -> &dyn Coordinate {
+        self.coordinate_system.coordinate(self.coordinate_index)
+    }
 }
 
 struct SyntheticChannelPredictor {
@@ -1209,6 +1448,7 @@ struct SyntheticFieldPlan {
 // offset, the tutorial model needs this residual image-x phase alignment to
 // match CASA's GridFT prediction at numerical-noise scale.
 const CASA_GRIDFT_IMAGE_INVERSION_PHASE_PIXELS: f64 = 0.015_122_8;
+const CASA_GRIDFT_NEGATIVE_RA_PHASE_ALIGNMENT_PIXELS: [f64; 2] = [0.001_757_8, 0.001_115_9];
 
 fn build_field_plans(
     request: &SyntheticObservationRequest,
@@ -1285,19 +1525,30 @@ fn build_channel_predictors(
                 + channel as f64 * spectral_setup.channel_width_hz;
             let beam_corrected_pixels = apply_simulator_primary_beam(
                 model,
+                model.pixels_for_channel(channel),
                 phase_center_rad,
                 frequency_hz,
                 pointing_offset_rad,
                 primary_beam,
             );
-            let mut casa_oriented_pixels = Array2::<f32>::zeros(model.pixels.raw_dim());
-            for x in 0..model.pixels.shape()[0] {
-                for y in 0..model.pixels.shape()[1] {
-                    // CASA's simulator image prediction treats positive RA
-                    // offsets with the opposite image-x handedness from this
-                    // crate's pure imaging gridder.
-                    casa_oriented_pixels[(model.pixels.shape()[0] - 1 - x, y)] =
-                        beam_corrected_pixels[(x, y)];
+            let mut casa_oriented_pixels = Array2::<f32>::zeros(beam_corrected_pixels.raw_dim());
+            if model.ra_axis_increases_with_x {
+                for x in 0..beam_corrected_pixels.shape()[0] {
+                    for y in 0..beam_corrected_pixels.shape()[1] {
+                        // CASA's simulator image prediction treats positive RA
+                        // offsets with the opposite image-x handedness from this
+                        // crate's pure imaging gridder. Conventional FITS images
+                        // already have CDELT1 < 0, so only positive-RA image axes
+                        // need this compatibility flip.
+                        casa_oriented_pixels[(beam_corrected_pixels.shape()[0] - 1 - x, y)] =
+                            beam_corrected_pixels[(x, y)];
+                    }
+                }
+            } else {
+                for x in 0..beam_corrected_pixels.shape()[0] {
+                    for y in 0..beam_corrected_pixels.shape()[1] {
+                        casa_oriented_pixels[(x, y)] = beam_corrected_pixels[(x, y)];
+                    }
                 }
             }
             let predictor = StandardMfsModelPredictor::new(geometry, &casa_oriented_pixels)
@@ -1316,28 +1567,33 @@ fn build_channel_predictors(
 
 fn apply_simulator_primary_beam(
     model: &FitsModelImage,
+    model_pixels: &Array2<f32>,
     phase_center_rad: [f64; 2],
     frequency_hz: f64,
     pointing_offset_rad: [f64; 2],
     primary_beam: SyntheticPrimaryBeam,
 ) -> Array2<f32> {
-    let mut pixels = model.pixels.clone();
-    let Some(reference_direction_rad) = model.reference_direction_rad else {
+    let mut pixels = model_pixels.clone();
+    let Some(wcs) = model.direction_wcs.as_ref() else {
         return pixels;
     };
-    let center_ra_offset =
-        circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0])
-            * phase_center_rad[1].cos()
-            - pointing_offset_rad[0];
-    let center_dec_offset =
-        reference_direction_rad[1] - phase_center_rad[1] - pointing_offset_rad[1];
-    let x_ref = model.pixels.shape()[0] as f64 / 2.0;
-    let y_ref = model.pixels.shape()[1] as f64 / 2.0;
+    let pointing_direction_rad = [
+        phase_center_rad[0] + pointing_offset_rad[0] / phase_center_rad[1].cos(),
+        phase_center_rad[1] + pointing_offset_rad[1],
+    ];
+    let coordinate = wcs.coordinate();
+    let Ok(pointing_pixel) = coordinate.to_pixel(&pointing_direction_rad) else {
+        return pixels;
+    };
+    let increments = coordinate.increment();
+    if pointing_pixel.len() < 2 || increments.len() < 2 {
+        return pixels;
+    }
 
-    for x in 0..model.pixels.shape()[0] {
-        for y in 0..model.pixels.shape()[1] {
-            let l = center_ra_offset + (x as f64 - x_ref) * model.cell_size_rad[0];
-            let m = center_dec_offset + (y as f64 - y_ref) * model.cell_size_rad[1];
+    for x in 0..model_pixels.shape()[0] {
+        for y in 0..model_pixels.shape()[1] {
+            let l = (x as f64 - pointing_pixel[0]) * increments[0];
+            let m = (y as f64 - pointing_pixel[1]) * increments[1];
             let vp = synthetic_primary_beam_voltage_pattern(
                 primary_beam,
                 (l * l + m * m).sqrt(),
@@ -1390,18 +1646,14 @@ fn casa_vla_q_primary_beam_voltage_pattern(radius_rad: f64, frequency_hz: f64) -
         return 1.0;
     }
 
-    let quantized_radius_arcmin_ghz =
-        table_index as f64 * CASA_VLA_Q_MAX_RADIUS_ARCMIN / (CASA_AIRY_SAMPLES - 1) as f64;
-    let quantized_radius_rad =
-        (quantized_radius_arcmin_ghz / (frequency_hz / 1.0e9) / 60.0).to_radians();
-    primary_beam_voltage_pattern(
-        PrimaryBeamModel::Airy {
-            dish_diameter_m: DISH_DIAMETER_M,
-            blockage_diameter_m: BLOCKAGE_DIAMETER_M,
-        },
-        quantized_radius_rad,
-        frequency_hz,
-    )
+    let dimensionless_max_radius =
+        CASA_VLA_Q_MAX_RADIUS_ARCMIN * 7.016 / (1.566 * 60.0) * DISH_DIAMETER_M / 24.5;
+    let x = table_index as f64 * dimensionless_max_radius / (CASA_AIRY_SAMPLES - 1) as f64;
+    let area_ratio = (DISH_DIAMETER_M / BLOCKAGE_DIAMETER_M).powi(2);
+    let area_norm = area_ratio - 1.0;
+    let length_ratio = DISH_DIAMETER_M / BLOCKAGE_DIAMETER_M;
+    ((area_ratio * 2.0 * j1(x) / x - 2.0 * j1(x * length_ratio) / (x * length_ratio)) / area_norm)
+        as f32
 }
 
 fn casa_model_phase_offset(model: &FitsModelImage, phase_center_rad: [f64; 2]) -> [f64; 2] {
@@ -1411,10 +1663,21 @@ fn casa_model_phase_offset(model: &FitsModelImage, phase_center_rad: [f64; 2]) -
     let ra_offset = circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0])
         * phase_center_rad[1].cos();
     let dec_offset = reference_direction_rad[1] - phase_center_rad[1];
-    [
-        ra_offset - (0.5 - CASA_GRIDFT_IMAGE_INVERSION_PHASE_PIXELS) * model.cell_size_rad[0],
-        dec_offset - 0.5 * model.cell_size_rad[1],
-    ]
+    if model.ra_axis_increases_with_x {
+        [
+            ra_offset - (0.5 - CASA_GRIDFT_IMAGE_INVERSION_PHASE_PIXELS) * model.cell_size_rad[0],
+            dec_offset - 0.5 * model.cell_size_rad[1],
+        ]
+    } else {
+        // CASA GridFT uses a signed RA increment plus an internal UV negation
+        // convention for conventional FITS images. A phase-residual fit against
+        // CASA's full simulator path shows this leaves a sub-pixel alignment
+        // offset after the larger half-pixel center alignment is accounted for.
+        [
+            ra_offset + CASA_GRIDFT_NEGATIVE_RA_PHASE_ALIGNMENT_PIXELS[0] * model.cell_size_rad[0],
+            dec_offset + CASA_GRIDFT_NEGATIVE_RA_PHASE_ALIGNMENT_PIXELS[1] * model.cell_size_rad[1],
+        ]
+    }
 }
 
 fn circular_angle_delta_rad(delta: f64) -> f64 {
@@ -1422,7 +1685,7 @@ fn circular_angle_delta_rad(delta: f64) -> f64 {
 }
 
 fn predicted_data_values(
-    predictors: Option<&Vec<SyntheticChannelPredictor>>,
+    predictors: Option<&[SyntheticChannelPredictor]>,
     spectral_setup: &SyntheticSpectralSetup,
     uvw_m: [f64; 3],
     num_corr: usize,
@@ -1458,6 +1721,189 @@ fn predicted_data_values(
         }
     }
     values
+}
+
+struct ChannelPredictionChunk {
+    start_channel: usize,
+    values_by_row: Vec<Vec<Complex32>>,
+}
+
+fn predicted_data_values_for_rows_with_workers(
+    predictors: Option<&[SyntheticChannelPredictor]>,
+    spectral_setup: &SyntheticSpectralSetup,
+    row_uvws: &[[f64; 3]],
+    num_corr: usize,
+    worker_count: usize,
+) -> Vec<Vec<Complex32>> {
+    let Some(predictors) = predictors else {
+        return vec![
+            vec![Complex32::new(0.0, 0.0); num_corr * spectral_setup.channel_count];
+            row_uvws.len()
+        ];
+    };
+    if worker_count <= 1 {
+        return row_uvws
+            .iter()
+            .map(|uvw| predicted_data_values(Some(predictors), spectral_setup, *uvw, num_corr))
+            .collect();
+    }
+
+    let channel_count = spectral_setup.channel_count;
+    let chunk_size = channel_count.div_ceil(worker_count);
+    let chunks = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for start_channel in (0..channel_count).step_by(chunk_size) {
+            let end_channel = (start_channel + chunk_size).min(channel_count);
+            handles.push(scope.spawn(move || {
+                predict_channel_chunk(
+                    predictors,
+                    spectral_setup,
+                    row_uvws,
+                    num_corr,
+                    start_channel,
+                    end_channel,
+                )
+            }));
+        }
+
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("synthetic observation prediction worker should not panic")
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let mut values_by_row =
+        vec![vec![Complex32::new(0.0, 0.0); num_corr * channel_count]; row_uvws.len()];
+    for chunk in chunks {
+        if chunk.values_by_row.is_empty() {
+            continue;
+        }
+        let chunk_len = chunk.values_by_row[0].len() / num_corr;
+        for (row_index, row_chunk) in chunk.values_by_row.into_iter().enumerate() {
+            for corr in 0..num_corr {
+                let src_start = corr * chunk_len;
+                let dst_start = corr * channel_count + chunk.start_channel;
+                values_by_row[row_index][dst_start..dst_start + chunk_len]
+                    .copy_from_slice(&row_chunk[src_start..src_start + chunk_len]);
+            }
+        }
+    }
+    values_by_row
+}
+
+fn predict_channel_chunk(
+    predictors: &[SyntheticChannelPredictor],
+    spectral_setup: &SyntheticSpectralSetup,
+    row_uvws: &[[f64; 3]],
+    num_corr: usize,
+    start_channel: usize,
+    end_channel: usize,
+) -> ChannelPredictionChunk {
+    let chunk_len = end_channel - start_channel;
+    let mut values_by_row = Vec::with_capacity(row_uvws.len());
+    for uvw_m in row_uvws {
+        let mut row_values = vec![Complex32::new(0.0, 0.0); num_corr * chunk_len];
+        for (offset, channel) in (start_channel..end_channel).enumerate() {
+            let predictor = &predictors[channel];
+            let visibility = predict_channel_visibility(predictor, spectral_setup, *uvw_m, channel);
+            for corr in 0..num_corr {
+                row_values[corr * chunk_len + offset] = visibility;
+            }
+        }
+        values_by_row.push(row_values);
+    }
+    ChannelPredictionChunk {
+        start_channel,
+        values_by_row,
+    }
+}
+
+fn predict_channel_visibility(
+    predictor: &SyntheticChannelPredictor,
+    spectral_setup: &SyntheticSpectralSetup,
+    uvw_m: [f64; 3],
+    channel: usize,
+) -> Complex32 {
+    let frequency_hz =
+        spectral_setup.start_frequency_hz + channel as f64 * spectral_setup.channel_width_hz;
+    let wavelength_m = 299_792_458.0 / frequency_hz;
+    let prediction_uvw_m =
+        if let Some(model_reference_direction_rad) = predictor.model_reference_direction_rad {
+            rotate_uvw_between_directions(
+                uvw_m,
+                predictor.phase_center_rad,
+                model_reference_direction_rad,
+            )
+        } else {
+            uvw_m
+        };
+    let u_lambda = prediction_uvw_m[0] / wavelength_m;
+    let v_lambda = prediction_uvw_m[1] / wavelength_m;
+    let phase = std::f64::consts::TAU
+        * (u_lambda * predictor.phase_offset_rad[0] + v_lambda * predictor.phase_offset_rad[1]);
+    let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+    predictor.predictor.predict(u_lambda, v_lambda) * phase_shift
+}
+
+fn simobserve_channel_worker_count(channel_count: usize) -> usize {
+    let available = thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(1);
+    let requested = std::env::var("CASA_RS_SIMOBSERVE_CHANNEL_WORKERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(available);
+    let min_channels = std::env::var("CASA_RS_SIMOBSERVE_CHANNEL_PARALLEL_MIN_CHANNELS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(64);
+    simobserve_channel_worker_count_for(channel_count, requested, available, min_channels)
+}
+
+fn simobserve_channel_worker_count_for(
+    channel_count: usize,
+    requested: usize,
+    available: usize,
+    min_channels: usize,
+) -> usize {
+    if channel_count < min_channels {
+        return 1;
+    }
+    requested
+        .max(1)
+        .min(available.max(1))
+        .min(channel_count)
+        .max(1)
+}
+
+fn simobserve_row_worker_count(row_count: usize, channel_count: usize) -> usize {
+    let available = thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(1);
+    let requested = std::env::var("CASA_RS_SIMOBSERVE_ROW_WORKERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(available);
+    simobserve_row_worker_count_for(row_count, channel_count, requested, available, 64 * 1024)
+}
+
+fn simobserve_row_worker_count_for(
+    row_count: usize,
+    channel_count: usize,
+    requested: usize,
+    available: usize,
+    min_values: usize,
+) -> usize {
+    if row_count <= 1 || row_count * channel_count < min_values {
+        return 1;
+    }
+    requested.max(1).min(available.max(1)).min(row_count).max(1)
 }
 
 fn rotate_uvw_between_directions(
@@ -1794,6 +2240,7 @@ impl DeterministicRng {
 fn read_fits_model_image(
     path: &PathBuf,
     model_peak_jy_per_pixel: Option<f32>,
+    spectral_channel_count: usize,
 ) -> MsResult<FitsModelImage> {
     let mut file = fs::File::open(path).map_err(|error| {
         MsError::SyntheticObservation(format!(
@@ -1819,28 +2266,43 @@ fn read_fits_model_image(
     }
     let nx = fits_i64(&cards, "NAXIS1", path)? as usize;
     let ny = fits_i64(&cards, "NAXIS2", path)? as usize;
+    let shape = (1..=naxis)
+        .map(|axis| fits_i64(&cards, &format!("NAXIS{axis}"), path).map(|value| value as usize))
+        .collect::<MsResult<Vec<_>>>()?;
     if nx < 8 || ny < 8 {
         return Err(MsError::SyntheticObservation(format!(
             "model image {} must be at least 8x8 pixels",
             path.display()
         )));
     }
-    let trailing_planes = (3..=naxis)
-        .map(|axis| fits_i64(&cards, &format!("NAXIS{axis}"), path).unwrap_or(1))
-        .product::<i64>();
-    if trailing_planes != 1 {
-        return Err(MsError::SyntheticObservation(format!(
-            "model image {} must have one Stokes/frequency plane for this Wave 5 slice",
-            path.display()
-        )));
-    }
-    let cell_size_rad = [
-        fits_axis_cell_rad(&cards, 1, path)?.abs(),
-        fits_axis_cell_rad(&cards, 2, path)?.abs(),
+    let channel_axis = fits_model_channel_axis(&cards, &shape, spectral_channel_count, path)?;
+    let axis_cell_rad = [
+        fits_axis_cell_rad(&cards, 1, path)?,
+        fits_axis_cell_rad(&cards, 2, path)?,
     ];
-    let reference_direction_rad = fits_center_direction_rad(&cards, nx, ny, path)?;
-    let pixel_count = nx
+    let direction_wcs = fits_model_direction_wcs(&cards, &shape, path)?;
+    let (cell_size_rad, ra_axis_increases_with_x, reference_direction_rad) =
+        if let Some(wcs) = direction_wcs.as_ref() {
+            (
+                fits_direction_cell_size_rad(wcs)?,
+                fits_direction_ra_axis_increases_with_x(wcs, path)?,
+                Some(fits_direction_center_rad(wcs, nx, ny, path)?),
+            )
+        } else {
+            (
+                [axis_cell_rad[0].abs(), axis_cell_rad[1].abs()],
+                axis_cell_rad[0] > 0.0,
+                None,
+            )
+        };
+    let plane_pixel_count = nx
         .checked_mul(ny)
+        .ok_or_else(|| MsError::SyntheticObservation("model image shape overflows".to_string()))?;
+    let total_pixel_count = shape
+        .iter()
+        .try_fold(1usize, |accumulator, axis_len| {
+            accumulator.checked_mul(*axis_len)
+        })
         .ok_or_else(|| MsError::SyntheticObservation("model image shape overflows".to_string()))?;
     let bytes_per_pixel = match bitpix {
         -32 => 4usize,
@@ -1852,7 +2314,7 @@ fn read_fits_model_image(
             )));
         }
     };
-    let data_len = pixel_count * bytes_per_pixel;
+    let data_len = total_pixel_count * bytes_per_pixel;
     if bytes.len() < data_offset + data_len {
         return Err(MsError::SyntheticObservation(format!(
             "model image {} is truncated before primary image data",
@@ -1862,42 +2324,27 @@ fn read_fits_model_image(
 
     let bscale = fits_optional_f64(&cards, "BSCALE").unwrap_or(1.0);
     let bzero = fits_optional_f64(&cards, "BZERO").unwrap_or(0.0);
-    let mut pixels = Array2::<f32>::zeros((nx, ny));
     let data = &bytes[data_offset..data_offset + data_len];
-    for y in 0..ny {
-        for x in 0..nx {
-            let index = y * nx + x;
-            let raw = match bitpix {
-                -32 => {
-                    let start = index * 4;
-                    f32::from_bits(u32::from_be_bytes([
-                        data[start],
-                        data[start + 1],
-                        data[start + 2],
-                        data[start + 3],
-                    ])) as f64
-                }
-                -64 => {
-                    let start = index * 8;
-                    f64::from_bits(u64::from_be_bytes([
-                        data[start],
-                        data[start + 1],
-                        data[start + 2],
-                        data[start + 3],
-                        data[start + 4],
-                        data[start + 5],
-                        data[start + 6],
-                        data[start + 7],
-                    ]))
-                }
-                _ => unreachable!(),
-            };
-            pixels[(x, y)] = (raw * bscale + bzero) as f32;
+    let channel_plane_count = channel_axis
+        .map(|axis| shape[axis])
+        .filter(|count| *count > 1)
+        .unwrap_or(1);
+    let mut channel_planes = Vec::with_capacity(channel_plane_count);
+    for channel in 0..channel_plane_count {
+        let mut plane = Array2::<f32>::zeros((nx, ny));
+        for y in 0..ny {
+            for x in 0..nx {
+                let index = fits_model_flat_index(&shape, x, y, channel_axis, channel);
+                plane[(x, y)] = fits_model_pixel_value(data, bitpix, index, bscale, bzero);
+            }
         }
+        debug_assert_eq!(plane.len(), plane_pixel_count);
+        channel_planes.push(plane);
     }
     if let Some(target_peak) = model_peak_jy_per_pixel {
-        let current_peak = pixels
+        let current_peak = channel_planes
             .iter()
+            .flat_map(|plane| plane.iter())
             .copied()
             .fold(0.0f32, |peak, value| peak.max(value.abs()));
         if current_peak <= 0.0 || !current_peak.is_finite() {
@@ -1907,22 +2354,137 @@ fn read_fits_model_image(
             )));
         }
         let scale = target_peak / current_peak;
-        pixels.mapv_inplace(|value| value * scale);
+        for plane in &mut channel_planes {
+            plane.mapv_inplace(|value| value * scale);
+        }
     }
+    let pixels = channel_planes
+        .first()
+        .cloned()
+        .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
 
     Ok(FitsModelImage {
         pixels,
+        channel_planes,
         cell_size_rad,
+        direction_wcs,
+        ra_axis_increases_with_x,
         reference_direction_rad,
     })
 }
 
-fn fits_center_direction_rad(
+fn fits_model_channel_axis(
     cards: &[String],
-    nx: usize,
-    ny: usize,
+    shape: &[usize],
+    spectral_channel_count: usize,
     path: &Path,
-) -> MsResult<Option<[f64; 2]>> {
+) -> MsResult<Option<usize>> {
+    let mut spectral_axis = None;
+    for axis in 3..=shape.len() {
+        if fits_axis_is_spectral(cards, axis) {
+            spectral_axis = Some(axis - 1);
+            break;
+        }
+    }
+    if spectral_axis.is_none() && spectral_channel_count > 1 {
+        spectral_axis = (2..shape.len()).find(|axis| shape[*axis] == spectral_channel_count);
+    }
+
+    for (axis, axis_len) in shape.iter().copied().enumerate().skip(2) {
+        if Some(axis) == spectral_axis {
+            if axis_len != 1 && axis_len != spectral_channel_count {
+                return Err(MsError::SyntheticObservation(format!(
+                    "model image {} spectral axis length {axis_len} does not match requested channel count {spectral_channel_count}",
+                    path.display()
+                )));
+            }
+        } else if axis_len != 1 && !fits_axis_is_stokes(cards, axis + 1) {
+            return Err(MsError::SyntheticObservation(format!(
+                "model image {} has unsupported non-spectral FITS axis {} with length {}; only singleton or STOKES axes are supported",
+                path.display(),
+                axis + 1,
+                axis_len
+            )));
+        }
+    }
+    Ok(spectral_axis)
+}
+
+fn fits_axis_is_spectral(cards: &[String], axis: usize) -> bool {
+    fits_string(cards, &format!("CTYPE{axis}"))
+        .map(|ctype| {
+            let upper = ctype.to_ascii_uppercase();
+            upper.starts_with("FREQ")
+                || upper.starts_with("VRAD")
+                || upper.starts_with("VOPT")
+                || upper.starts_with("VELO")
+        })
+        .unwrap_or(false)
+}
+
+fn fits_axis_is_stokes(cards: &[String], axis: usize) -> bool {
+    fits_string(cards, &format!("CTYPE{axis}"))
+        .map(|ctype| ctype.to_ascii_uppercase().starts_with("STOKES"))
+        .unwrap_or(false)
+}
+
+fn fits_model_flat_index(
+    shape: &[usize],
+    x: usize,
+    y: usize,
+    channel_axis: Option<usize>,
+    channel: usize,
+) -> usize {
+    let mut index = 0usize;
+    let mut stride = 1usize;
+    for (axis, axis_len) in shape.iter().copied().enumerate() {
+        let axis_index = match axis {
+            0 => x,
+            1 => y,
+            _ if Some(axis) == channel_axis => channel,
+            _ => 0,
+        };
+        debug_assert!(axis_index < axis_len);
+        index += axis_index * stride;
+        stride *= axis_len;
+    }
+    index
+}
+
+fn fits_model_pixel_value(data: &[u8], bitpix: i64, index: usize, bscale: f64, bzero: f64) -> f32 {
+    let raw = match bitpix {
+        -32 => {
+            let start = index * 4;
+            f32::from_bits(u32::from_be_bytes([
+                data[start],
+                data[start + 1],
+                data[start + 2],
+                data[start + 3],
+            ])) as f64
+        }
+        -64 => {
+            let start = index * 8;
+            f64::from_bits(u64::from_be_bytes([
+                data[start],
+                data[start + 1],
+                data[start + 2],
+                data[start + 3],
+                data[start + 4],
+                data[start + 5],
+                data[start + 6],
+                data[start + 7],
+            ]))
+        }
+        _ => unreachable!(),
+    };
+    (raw * bscale + bzero) as f32
+}
+
+fn fits_model_direction_wcs(
+    cards: &[String],
+    shape: &[usize],
+    path: &Path,
+) -> MsResult<Option<FitsModelDirectionWcs>> {
     if !(fits_value(cards, "CRVAL1").is_some()
         && fits_value(cards, "CRVAL2").is_some()
         && fits_value(cards, "CTYPE1").is_some()
@@ -1930,41 +2492,71 @@ fn fits_center_direction_rad(
     {
         return Ok(None);
     }
-    let projection = fits_string(cards, "CTYPE1")
-        .and_then(|ctype| {
-            ctype
-                .rsplit_once('-')
-                .map(|(_, projection)| projection.to_string())
-        })
-        .and_then(|projection| ProjectionType::from_name(&projection))
-        .unwrap_or(ProjectionType::SIN);
-    let crval = [
-        fits_axis_angle_rad(cards, "CRVAL1", path)?,
-        fits_axis_angle_rad(cards, "CRVAL2", path)?,
-    ];
-    let cdelt = [
-        fits_axis_cell_rad(cards, 1, path)?,
-        fits_axis_cell_rad(cards, 2, path)?,
-    ];
-    let crpix = [
-        fits_optional_f64(cards, "CRPIX1").unwrap_or(1.0) - 1.0,
-        fits_optional_f64(cards, "CRPIX2").unwrap_or(1.0) - 1.0,
-    ];
-    let coordinate = DirectionCoordinate::new(
-        DirectionRef::J2000,
-        Projection::new(projection),
-        crval,
-        cdelt,
-        crpix,
-    );
+    let header_cards = cards.iter().map(String::as_str).collect::<Vec<_>>();
+    let header = FitsHeader::from_cards(&header_cards);
+    let coordinate_system = from_fits_header(&header, shape).map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to parse model-image FITS WCS for {}: {error}",
+            path.display()
+        ))
+    })?;
+    let Some(coordinate_index) = coordinate_system.find_coordinate(CoordinateType::Direction)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(FitsModelDirectionWcs {
+        coordinate_system,
+        coordinate_index,
+    }))
+}
+
+fn fits_direction_cell_size_rad(wcs: &FitsModelDirectionWcs) -> MsResult<[f64; 2]> {
+    let increment = wcs.coordinate().increment();
+    if increment.len() < 2 {
+        return Err(MsError::SyntheticObservation(
+            "model image direction coordinate has fewer than two increments".to_string(),
+        ));
+    }
+    Ok([increment[0].abs(), increment[1].abs()])
+}
+
+fn fits_direction_center_rad(
+    wcs: &FitsModelDirectionWcs,
+    nx: usize,
+    ny: usize,
+    path: &Path,
+) -> MsResult<[f64; 2]> {
     let center_pixel = [0.5 * nx as f64, 0.5 * ny as f64];
-    let world = coordinate.to_world(&center_pixel).map_err(|error| {
+    let world = wcs.coordinate().to_world(&center_pixel).map_err(|error| {
         MsError::SyntheticObservation(format!(
             "failed to resolve model-image center direction for {}: {error}",
             path.display()
         ))
     })?;
-    Ok(Some([world[0], world[1]]))
+    Ok([world[0], world[1]])
+}
+
+fn fits_direction_ra_axis_increases_with_x(
+    wcs: &FitsModelDirectionWcs,
+    path: &Path,
+) -> MsResult<bool> {
+    let coordinate = wcs.coordinate();
+    let reference_pixel = coordinate.reference_pixel();
+    let reference_value = coordinate.reference_value();
+    if reference_pixel.len() < 2 || reference_value.len() < 2 {
+        return Err(MsError::SyntheticObservation(
+            "model image direction coordinate has fewer than two axes".to_string(),
+        ));
+    }
+    let x_step_world = coordinate
+        .to_world(&[reference_pixel[0] + 1.0, reference_pixel[1]])
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to resolve model-image RA axis handedness for {}: {error}",
+                path.display()
+            ))
+        })?;
+    Ok(circular_angle_delta_rad(x_step_world[0] - reference_value[0]) > 0.0)
 }
 
 fn parse_fits_header(bytes: &[u8], path: &Path) -> MsResult<(Vec<String>, usize)> {
@@ -2021,26 +2613,6 @@ fn fits_axis_cell_rad(cards: &[String], axis: usize, path: &Path) -> MsResult<f6
     }
 }
 
-fn fits_axis_angle_rad(cards: &[String], key: &str, path: &Path) -> MsResult<f64> {
-    let value = fits_optional_f64(cards, key).ok_or_else(|| {
-        MsError::SyntheticObservation(format!("model image {} missing FITS {key}", path.display()))
-    })?;
-    let axis = key
-        .chars()
-        .last()
-        .and_then(|ch| ch.to_digit(10))
-        .unwrap_or(1) as usize;
-    let unit = fits_string(cards, &format!("CUNIT{axis}")).unwrap_or_else(|| "deg".to_string());
-    match unit.trim().to_ascii_lowercase().as_str() {
-        "deg" | "degree" | "degrees" => Ok(value.to_radians()),
-        "rad" | "radian" | "radians" => Ok(value),
-        other => Err(MsError::SyntheticObservation(format!(
-            "model image {} uses unsupported CUNIT{axis}={other:?}; expected deg or rad",
-            path.display()
-        ))),
-    }
-}
-
 fn fits_optional_f64(cards: &[String], key: &str) -> Option<f64> {
     fits_value(cards, key).and_then(|value| value.parse::<f64>().ok())
 }
@@ -2066,6 +2638,10 @@ fn subtable_mut(ms: &mut MeasurementSet, id: SubtableId) -> MsResult<&mut casa_t
 
 fn time_sample_count(duration_seconds: f64, integration_seconds: f64) -> usize {
     (duration_seconds / integration_seconds).ceil().max(1.0) as usize
+}
+
+fn elapsed_millis(duration: Duration) -> u128 {
+    duration.as_millis()
 }
 
 fn antenna_uvw_positions(
@@ -2615,5 +3191,329 @@ mod tests {
         assert_ne!(base, row_noise_seed(42, 0, 1, 2, 0));
         assert_ne!(base, row_noise_seed(42, 0, 0, 1, 1));
         assert_eq!(base, row_noise_seed(42, 0, 0, 1, 0));
+    }
+
+    #[test]
+    fn fits_model_cube_uses_per_channel_planes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("cube.fits");
+        write_test_fits_cube(&path, 3);
+
+        let model = read_fits_model_image(&path, None, 3).expect("read model cube");
+
+        assert_eq!(model.channel_planes.len(), 3);
+        assert_eq!(model.pixels_for_channel(0)[(2, 3)], 32.0);
+        assert_eq!(model.pixels_for_channel(1)[(2, 3)], 132.0);
+        assert_eq!(model.pixels_for_channel(2)[(2, 3)], 232.0);
+    }
+
+    #[test]
+    fn fits_model_plane_repeats_for_all_requested_channels() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("plane.fits");
+        write_test_fits_plane(&path);
+
+        let model = read_fits_model_image(&path, None, 4).expect("read model plane");
+
+        assert_eq!(model.channel_planes.len(), 1);
+        assert_eq!(model.pixels_for_channel(0)[(2, 3)], 32.0);
+        assert_eq!(model.pixels_for_channel(3)[(2, 3)], 32.0);
+    }
+
+    #[test]
+    fn simobserve_channel_worker_count_is_bounded_by_frequency_work() {
+        assert_eq!(simobserve_channel_worker_count_for(8, 8, 8, 64), 1);
+        assert_eq!(simobserve_channel_worker_count_for(64, 8, 8, 64), 8);
+        assert_eq!(simobserve_channel_worker_count_for(64, 16, 4, 64), 4);
+        assert_eq!(simobserve_channel_worker_count_for(3, 16, 16, 1), 3);
+        assert_eq!(simobserve_channel_worker_count_for(64, 0, 0, 64), 1);
+    }
+
+    #[test]
+    fn simobserve_row_worker_count_is_bounded_by_row_work() {
+        assert_eq!(simobserve_row_worker_count_for(8, 16, 8, 8, 1024), 1);
+        assert_eq!(simobserve_row_worker_count_for(351, 512, 16, 10, 1024), 10);
+        assert_eq!(simobserve_row_worker_count_for(351, 512, 16, 4, 1024), 4);
+        assert_eq!(simobserve_row_worker_count_for(3, 512, 16, 16, 1024), 3);
+        assert_eq!(simobserve_row_worker_count_for(351, 512, 0, 16, 1024), 1);
+    }
+
+    #[test]
+    fn parallel_row_corruption_matches_serial_corruption() {
+        let config = SyntheticCorruptionConfig {
+            seed: 11,
+            noise: Some(SyntheticNoiseCorruption {
+                mode: SyntheticNoiseMode::SimpleNoise,
+                simplenoise_jy: 0.01,
+            }),
+            gain: Some(SyntheticGainCorruption {
+                mode: SyntheticGainMode::Fbm,
+                interval_seconds: 10.0,
+                amplitude: [0.03, 0.02],
+            }),
+            bandpass: Some(SyntheticBandpassCorruption {
+                mode: SyntheticBandpassMode::Calculate,
+                interval_seconds: 10.0,
+                amplitude: [0.02, 0.01],
+            }),
+            leakage: Some(SyntheticPolarizationLeakageCorruption {
+                mode: SyntheticPolarizationLeakageMode::Constant,
+                amplitude: [0.02, 0.01],
+                offset: [0.0, 0.0],
+            }),
+            pointing: None,
+        };
+        let corruption = SyntheticCorruptionState::new(&config, 8, 16, 5);
+        let row_specs = (0..7)
+            .flat_map(|antenna1| {
+                ((antenna1 + 1)..8).map(move |antenna2| MainRowVisibilitySpec {
+                    antenna1,
+                    antenna2,
+                    field_id: 0,
+                    time: 0.0,
+                    uvw: [antenna1 as f64, antenna2 as f64, 0.0],
+                })
+            })
+            .collect::<Vec<_>>();
+        let base_rows = row_specs
+            .iter()
+            .enumerate()
+            .map(|(row, _)| {
+                (0..32)
+                    .map(|index| Complex32::new(row as f32, index as f32 * 0.25))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut serial = base_rows.clone();
+        let mut parallel = base_rows;
+
+        let serial_nonzero =
+            apply_corruption_and_count_rows(Some(&corruption), &row_specs, &mut serial, 16, 3);
+        let parallel_nonzero = apply_corruption_and_count_rows_with_workers(
+            Some(&corruption),
+            &row_specs,
+            &mut parallel,
+            16,
+            3,
+        );
+
+        assert_eq!(serial_nonzero, parallel_nonzero);
+        assert_eq!(serial, parallel);
+    }
+
+    #[test]
+    fn parallel_channel_prediction_matches_serial_prediction() {
+        let channel_count = 96;
+        let spectral_setup = SyntheticSpectralSetup {
+            name: "test".to_string(),
+            start_frequency_hz: 1.0e9,
+            channel_width_hz: 1.0e6,
+            channel_count,
+        };
+        let geometry = ImageGeometry {
+            image_shape: [16, 16],
+            cell_size_rad: [1.0e-5, 1.0e-5],
+        };
+        let model = Array2::<f32>::from_shape_fn((16, 16), |(x, y)| {
+            let dx = x as f32 - 7.5;
+            let dy = y as f32 - 7.5;
+            (-0.03 * (dx * dx + dy * dy)).exp()
+        });
+        let predictors = (0..channel_count)
+            .map(|_| SyntheticChannelPredictor {
+                predictor: StandardMfsModelPredictor::new(geometry, &model).unwrap(),
+                phase_offset_rad: [1.0e-6, -2.0e-6],
+                phase_center_rad: [1.0, -0.5],
+                model_reference_direction_rad: None,
+            })
+            .collect::<Vec<_>>();
+        let row_uvws = [[10.0, 20.0, 0.0], [100.0, -30.0, 5.0], [-55.0, 7.0, -3.0]];
+
+        let serial = predicted_data_values_for_rows_with_workers(
+            Some(&predictors),
+            &spectral_setup,
+            &row_uvws,
+            2,
+            1,
+        );
+        let parallel = predicted_data_values_for_rows_with_workers(
+            Some(&predictors),
+            &spectral_setup,
+            &row_uvws,
+            2,
+            4,
+        );
+
+        assert_eq!(serial, parallel);
+    }
+
+    fn write_test_fits_plane(path: &Path) {
+        let mut cards = test_fits_cards(&[
+            ("SIMPLE", "T"),
+            ("BITPIX", "-32"),
+            ("NAXIS", "2"),
+            ("NAXIS1", "8"),
+            ("NAXIS2", "8"),
+            ("CDELT1", "-0.1"),
+            ("CUNIT1", "'deg'"),
+            ("CDELT2", "0.1"),
+            ("CUNIT2", "'deg'"),
+        ]);
+        let mut bytes = Vec::new();
+        bytes.append(&mut cards);
+        for y in 0..8 {
+            for x in 0..8 {
+                bytes.extend_from_slice(&((x + 10 * y) as f32).to_bits().to_be_bytes());
+            }
+        }
+        pad_fits_block(&mut bytes);
+        std::fs::write(path, bytes).expect("write test FITS plane");
+    }
+
+    fn write_test_fits_cube(path: &Path, channels: usize) {
+        let channels_text = channels.to_string();
+        let mut cards = test_fits_cards(&[
+            ("SIMPLE", "T"),
+            ("BITPIX", "-32"),
+            ("NAXIS", "4"),
+            ("NAXIS1", "8"),
+            ("NAXIS2", "8"),
+            ("NAXIS3", "1"),
+            ("NAXIS4", channels_text.as_str()),
+            ("CDELT1", "-0.1"),
+            ("CUNIT1", "'deg'"),
+            ("CDELT2", "0.1"),
+            ("CUNIT2", "'deg'"),
+            ("CTYPE3", "'STOKES'"),
+            ("CTYPE4", "'FREQ'"),
+        ]);
+        let mut bytes = Vec::new();
+        bytes.append(&mut cards);
+        for channel in 0..channels {
+            for y in 0..8 {
+                for x in 0..8 {
+                    let value = (100 * channel + x + 10 * y) as f32;
+                    bytes.extend_from_slice(&value.to_bits().to_be_bytes());
+                }
+            }
+        }
+        pad_fits_block(&mut bytes);
+        std::fs::write(path, bytes).expect("write test FITS cube");
+    }
+
+    fn test_fits_cards(entries: &[(&str, &str)]) -> Vec<u8> {
+        let mut text = String::new();
+        for (key, value) in entries {
+            text.push_str(
+                &format!("{key:<8}= {value:>20}")
+                    .chars()
+                    .take(80)
+                    .collect::<String>(),
+            );
+            let last_card_len = text.len() % 80;
+            if last_card_len != 0 {
+                text.push_str(&" ".repeat(80 - last_card_len));
+            }
+        }
+        text.push_str(&format!("{:<80}", "END"));
+        let mut bytes = text.into_bytes();
+        pad_fits_block(&mut bytes);
+        bytes
+    }
+
+    fn pad_fits_block(bytes: &mut Vec<u8>) {
+        let pad = (2880 - bytes.len() % 2880) % 2880;
+        bytes.extend(std::iter::repeat_n(b' ', pad));
+    }
+
+    #[test]
+    fn simulator_primary_beam_is_centered_on_fits_reference_pixel() {
+        let mut pixels = Array2::<f32>::zeros((5, 5));
+        pixels[(1, 1)] = 1.0;
+        pixels[(2, 1)] = 1.0;
+        let mut coordinate_system = CoordinateSystem::new();
+        coordinate_system.add_coordinate(Box::new(casa_coordinates::DirectionCoordinate::new(
+            DirectionRef::J2000,
+            casa_coordinates::Projection::new(casa_coordinates::ProjectionType::SIN),
+            [1.25, -0.3],
+            [-1.0e-3, 1.0e-3],
+            [1.0, 1.0],
+        )));
+        let model = FitsModelImage {
+            pixels,
+            channel_planes: Vec::new(),
+            cell_size_rad: [1.0e-3, 1.0e-3],
+            direction_wcs: Some(FitsModelDirectionWcs {
+                coordinate_system,
+                coordinate_index: 0,
+            }),
+            ra_axis_increases_with_x: false,
+            reference_direction_rad: Some([1.25, -0.3]),
+        };
+        let corrected = apply_simulator_primary_beam(
+            &model,
+            &model.pixels,
+            [1.25, -0.3],
+            43.0e9,
+            [0.0, 0.0],
+            SyntheticPrimaryBeam {
+                use_casa_vla_q_table: true,
+                dish_diameter_m: 25.0,
+                blockage_diameter_m: 2.36,
+            },
+        );
+
+        assert_eq!(corrected[(1, 1)], 1.0);
+        assert!(
+            corrected[(2, 1)] < 1.0,
+            "adjacent pixels should be attenuated away from the FITS reference pixel"
+        );
+    }
+
+    #[test]
+    fn casa_vla_q_primary_beam_uses_common_pb_table_support() {
+        let at_half_max_radius =
+            casa_vla_q_primary_beam_voltage_pattern((0.5 * 0.8564_f64).to_radians(), 1.0e9);
+        let at_support = casa_vla_q_primary_beam_voltage_pattern(0.8564_f64.to_radians(), 1.0e9);
+
+        assert!((at_half_max_radius - 0.596_901_4).abs() < 1.0e-7);
+        assert!((at_support - -0.017_125_657).abs() < 1.0e-8);
+    }
+
+    #[test]
+    fn shadowing_marks_nearer_antenna_and_flags_rows_involving_it() {
+        let antennas = vec![
+            SyntheticAntenna::vla("A0", "A0", [0.0, 0.0, 0.0]),
+            SyntheticAntenna::vla("A1", "A1", [0.0, 0.0, 0.0]),
+            SyntheticAntenna::vla("A2", "A2", [0.0, 0.0, 0.0]),
+        ];
+        let rows = vec![
+            MainRowVisibilitySpec {
+                antenna1: 0,
+                antenna2: 1,
+                field_id: 0,
+                time: 0.0,
+                uvw: [10.0, 0.0, 1.0],
+            },
+            MainRowVisibilitySpec {
+                antenna1: 0,
+                antenna2: 2,
+                field_id: 0,
+                time: 0.0,
+                uvw: [100.0, 0.0, -1.0],
+            },
+            MainRowVisibilitySpec {
+                antenna1: 1,
+                antenna2: 2,
+                field_id: 0,
+                time: 0.0,
+                uvw: [10.0, 0.0, -1.0],
+            },
+        ];
+
+        assert_eq!(
+            shadowed_antennas_for_rows(&rows, &antennas),
+            vec![true, false, true]
+        );
     }
 }

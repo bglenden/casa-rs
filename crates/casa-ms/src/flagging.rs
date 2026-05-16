@@ -39,6 +39,32 @@ const CLIP_SCAN_CHUNK_ROWS: usize = 4096;
 type FlagSampleKey = (usize, usize, usize);
 type FlagSampleSet = HashSet<FlagSampleKey>;
 
+pub(crate) fn shadowed_antennas_from_projected_baselines<I>(
+    antenna_count: usize,
+    baselines: I,
+) -> Vec<bool>
+where
+    I: IntoIterator<Item = (usize, usize, [f64; 3], f64, f64)>,
+{
+    let mut shadowed = vec![false; antenna_count];
+    for (antenna1, antenna2, uvw_m, diameter1_m, diameter2_m) in baselines {
+        if antenna1 == antenna2 || antenna1 >= antenna_count || antenna2 >= antenna_count {
+            continue;
+        }
+        let diameter_sum = diameter1_m + diameter2_m;
+        let threshold_squared = diameter_sum * diameter_sum / 4.0;
+        let projected_distance_squared = uvw_m[0] * uvw_m[0] + uvw_m[1] * uvw_m[1];
+        if projected_distance_squared < threshold_squared {
+            if uvw_m[2] > 0.0 {
+                shadowed[antenna1] = true;
+            } else {
+                shadowed[antenna2] = true;
+            }
+        }
+    }
+    shadowed
+}
+
 /// Input visibility column used by automatic flagging modes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -3017,6 +3043,20 @@ mod tests {
             ant1: 0,
             ant2: 1,
         }
+    }
+
+    #[test]
+    fn shadowed_antennas_follow_casa_projected_baseline_rule() {
+        let shadowed = shadowed_antennas_from_projected_baselines(
+            3,
+            [
+                (0, 1, [10.0, 0.0, 1.0], 25.0, 25.0),
+                (0, 2, [100.0, 0.0, -1.0], 25.0, 25.0),
+                (1, 2, [10.0, 0.0, -1.0], 25.0, 25.0),
+            ],
+        );
+
+        assert_eq!(shadowed, vec![true, false, true]);
     }
 
     #[test]

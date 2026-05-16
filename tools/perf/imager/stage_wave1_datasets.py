@@ -316,6 +316,7 @@ def materialize_models(plan: dict[str, Any]) -> None:
         write_structured_fits(
             model_path,
             pixels=int(dataset["shape"]["model_pixels"]),
+            channels=int(dataset["shape"]["channels"]),
             instrument=dataset["instrument"],
             family=dataset["family"],
         )
@@ -407,7 +408,6 @@ def build_casars_simobserve_request(dataset: dict[str, Any]) -> dict[str, Any]:
         "kind": "run",
         "request": {
             "model_image": dataset["paths"]["continuum_model_fits"],
-            "model_peak_jy_per_pixel": 0.003,
             "output_ms": dataset["paths"]["output_ms"],
             "overwrite": True,
             "telescope_name": dataset["instrument"].upper(),
@@ -433,6 +433,8 @@ def build_casars_simobserve_request(dataset: dict[str, Any]) -> dict[str, Any]:
     }
     if dataset["instrument"] == "alma":
         request["request"]["antennas"] = alma_antennas()
+    elif dataset["instrument"] == "vla":
+        request["request"]["antennas"] = vla_d_antennas()
     return request
 
 
@@ -482,42 +484,87 @@ def build_casa_simulation_plan(dataset: dict[str, Any]) -> dict[str, Any]:
 
 
 def write_structured_fits(
-    path: pathlib.Path, *, pixels: int, instrument: str, family: str
+    path: pathlib.Path, *, pixels: int, channels: int, instrument: str, family: str
 ) -> None:
     if pixels < 8:
         raise DatasetError("model FITS must be at least 8x8 pixels")
+    if channels < 1:
+        raise DatasetError("model FITS must have at least one channel")
     cards = [
         ("SIMPLE", "T"),
         ("BITPIX", "-32"),
-        ("NAXIS", "2"),
+        ("NAXIS", "4" if channels > 1 else "2"),
         ("NAXIS1", str(pixels)),
         ("NAXIS2", str(pixels)),
-        ("CTYPE1", "'RA---SIN'"),
-        ("CTYPE2", "'DEC--SIN'"),
-        ("CUNIT1", "'deg'"),
-        ("CUNIT2", "'deg'"),
-        ("CRPIX1", f"{pixels / 2 + 0.5:.6f}"),
-        ("CRPIX2", f"{pixels / 2 + 0.5:.6f}"),
-        ("CRVAL1", "270.000129"),
-        ("CRVAL2", "-22.999889"),
-        ("CDELT1", f"{-cell_deg(instrument):.12g}"),
-        ("CDELT2", f"{cell_deg(instrument):.12g}"),
-        ("BUNIT", "'Jy/pixel'"),
-        ("OBJECT", f"'{instrument.upper()} WAVE1 {family.upper()}'"),
     ]
+    if channels > 1:
+        cards.extend(
+            [
+                ("NAXIS3", "1"),
+                ("NAXIS4", str(channels)),
+            ]
+        )
+    cards.extend(
+        [
+            ("CTYPE1", "'RA---SIN'"),
+            ("CTYPE2", "'DEC--SIN'"),
+            ("CUNIT1", "'deg'"),
+            ("CUNIT2", "'deg'"),
+            ("CRPIX1", f"{pixels / 2 + 0.5:.6f}"),
+            ("CRPIX2", f"{pixels / 2 + 0.5:.6f}"),
+            ("CRVAL1", "270.000129"),
+            ("CRVAL2", "-22.999889"),
+            ("CDELT1", f"{-cell_deg(instrument):.12g}"),
+            ("CDELT2", f"{cell_deg(instrument):.12g}"),
+        ]
+    )
+    if channels > 1:
+        cards.extend(
+            [
+                ("CTYPE3", "'STOKES'"),
+                ("CRPIX3", "1.0"),
+                ("CRVAL3", "1.0"),
+                ("CDELT3", "1.0"),
+                ("CTYPE4", "'FREQ'"),
+                ("CUNIT4", "'Hz'"),
+                ("CRPIX4", "1.0"),
+                ("CRVAL4", f"{start_frequency_hz(instrument):.12g}"),
+                ("CDELT4", f"{channel_width_hz(instrument):.12g}"),
+            ]
+        )
+    cards.extend(
+        [
+            ("BUNIT", "'Jy/pixel'"),
+            ("OBJECT", f"'{instrument.upper()} WAVE1 {family.upper()}'"),
+        ]
+    )
     header = "".join(format_card(key, value) for key, value in cards)
     header += "END".ljust(80)
     header = pad_block(header.encode("ascii"))
     with path.open("wb") as handle:
         handle.write(header)
-        for y in range(pixels):
-            row = bytearray()
-            for x in range(pixels):
-                row.extend(struct.pack(">f", source_pixel(x, y, pixels, family)))
-            handle.write(row)
-        pad = (-pixels * pixels * 4) % 2880
+        for channel in range(channels):
+            scale = spectral_total_scale(channels, channel)
+            for y in range(pixels):
+                row = bytearray()
+                for x in range(pixels):
+                    row.extend(struct.pack(">f", source_pixel(x, y, pixels, family) * scale))
+                handle.write(row)
+        pad = (-(pixels * pixels * channels * 4)) % 2880
         if pad:
             handle.write(b"\0" * pad)
+
+
+def spectral_total_scale(channels: int, channel: int) -> float:
+    if channels == 1:
+        return 1.0
+    center = 0.5 * max(0, channels - 1)
+    x = (channel - center) / max(1.0, center)
+    continuum = max(0.05, 1.0 + x) ** -0.7
+    broad_line = 0.45 * math.exp(-0.5 * ((x - 0.05) / 0.22) ** 2)
+    narrow_line = 0.22 * math.exp(-0.5 * ((x + 0.38) / 0.08) ** 2)
+    absorption = -0.18 * math.exp(-0.5 * ((x - 0.32) / 0.06) ** 2)
+    return max(0.05, continuum + broad_line + narrow_line + absorption)
 
 
 def source_pixel(x: int, y: int, pixels: int, family: str) -> float:
@@ -599,6 +646,47 @@ def alma_antennas() -> list[dict[str, Any]]:
             }
         )
     return antennas
+
+
+def vla_d_antennas() -> list[dict[str, Any]]:
+    rows = [
+        (-1_601_188.989351, -5_042_000.518599, 3_554_843.384480, "W01"),
+        (-1_601_225.230987, -5_041_980.390730, 3_554_855.657987, "W02"),
+        (-1_601_265.110332, -5_041_982.563379, 3_554_834.816409, "W03"),
+        (-1_601_315.874282, -5_041_985.324465, 3_554_808.263784, "W04"),
+        (-1_601_376.950042, -5_041_988.682890, 3_554_776.344871, "W05"),
+        (-1_601_447.176774, -5_041_992.529191, 3_554_739.647266, "W06"),
+        (-1_601_526.335275, -5_041_996.876364, 3_554_698.284889, "W07"),
+        (-1_601_614.061201, -5_042_001.676547, 3_554_652.455603, "W08"),
+        (-1_601_709.987416, -5_042_006.942534, 3_554_602.306306, "W09"),
+        (-1_601_192.424192, -5_042_022.883542, 3_554_810.383317, "E01"),
+        (-1_601_150.027460, -5_042_000.630731, 3_554_860.703495, "E02"),
+        (-1_601_114.318178, -5_042_023.187696, 3_554_844.922416, "E03"),
+        (-1_601_068.771188, -5_042_051.929370, 3_554_824.767363, "E04"),
+        (-1_601_014.405657, -5_042_086.261585, 3_554_800.768970, "E05"),
+        (-1_600_951.545716, -5_042_125.927280, 3_554_772.987195, "E06"),
+        (-1_600_880.545264, -5_042_170.376845, 3_554_741.425036, "E07"),
+        (-1_600_801.880602, -5_042_219.386677, 3_554_706.382285, "E08"),
+        (-1_600_715.918854, -5_042_273.142150, 3_554_668.128757, "E09"),
+        (-1_601_185.553970, -5_041_978.191573, 3_554_876.382645, "N01"),
+        (-1_601_180.820941, -5_041_947.459898, 3_554_921.573373, "N02"),
+        (-1_601_177.368455, -5_041_925.069104, 3_554_954.532566, "N03"),
+        (-1_601_173.903632, -5_041_902.679083, 3_554_987.485762, "N04"),
+        (-1_601_168.735762, -5_041_869.062707, 3_555_036.885577, "N05"),
+        (-1_601_162.553007, -5_041_829.021602, 3_555_095.854771, "N06"),
+        (-1_601_155.593706, -5_041_783.860938, 3_555_162.327771, "N07"),
+        (-1_601_147.885235, -5_041_733.855114, 3_555_235.914849, "N08"),
+        (-1_601_139.483292, -5_041_679.021042, 3_555_316.478099, "N09"),
+    ]
+    return [
+        {
+            "name": name,
+            "station": name,
+            "position_m": [x_m, y_m, z_m],
+            "dish_diameter_m": 25.0,
+        }
+        for x_m, y_m, z_m, name in rows
+    ]
 
 
 def format_card(key: str, value: str) -> str:
