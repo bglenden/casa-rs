@@ -9922,6 +9922,7 @@ fn run_rust_imager_cube_case_with_solver_and_w_term_mode(
         psf_cutoff: 0.35,
         mosaic_pb_limit: 0.1,
         pbcor: false,
+        write_pb: false,
         minor_cycle_length,
         cyclefactor: 1.0,
         min_psf_fraction: 0.1,
