@@ -12,6 +12,12 @@ use casa_coordinates::{Coordinate, CoordinateSystem, CoordinateType};
 use casa_imaging::{
     ImageGeometry, PrimaryBeamModel, StandardMfsModelPredictor, primary_beam_voltage_pattern,
 };
+use casa_tables::{
+    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column,
+    StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer,
+    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_complex32_column,
+    install_streamed_tiled_shape_primitive_column,
+};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
@@ -22,9 +28,11 @@ use ndarray::{Array2, ArrayD};
 use num_complex::Complex32;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -547,6 +555,21 @@ pub struct SyntheticMainRowTimingReport {
     pub prediction_millis: u128,
     /// Time spent applying deterministic corruption/noise.
     pub corruption_millis: u128,
+    /// Time spent waiting to enqueue DATA row batches to the background writer.
+    #[serde(default)]
+    pub data_io_enqueue_millis: u128,
+    /// Time spent joining and finalizing the background DATA writer.
+    #[serde(default)]
+    pub data_io_finalize_millis: u128,
+    /// Time spent packing DATA rows into tiled storage buffers.
+    #[serde(default)]
+    pub data_io_assemble_millis: u128,
+    /// Time spent writing DATA tile buffers to disk.
+    #[serde(default)]
+    pub data_io_write_millis: u128,
+    /// Bytes written through the streamed tiled MAIN column writers.
+    #[serde(default)]
+    pub data_io_bytes: u64,
     /// Time spent constructing MAIN rows and appending them to the table.
     pub main_write_millis: u128,
 }
@@ -584,6 +607,12 @@ pub fn generate_synthetic_observation_ms(
         &request.output_ms,
         MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
     )?;
+    fs::create_dir_all(&request.output_ms).map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to create output MeasurementSet directory {}: {error}",
+            request.output_ms.display()
+        ))
+    })?;
     let setup_millis = elapsed_millis(setup_started.elapsed());
 
     let metadata_started = Instant::now();
@@ -614,10 +643,32 @@ pub fn generate_synthetic_observation_ms(
         None
     };
     let model_prepare_millis = elapsed_millis(model_started.elapsed());
-    let main_rows = populate_main_rows(&mut ms, request, time_sample_count, model.as_ref())?;
+    let mut main_column_writer = SimobserveMainColumnWriter::start(
+        &request.output_ms,
+        baseline_count * time_sample_count,
+        2,
+        request.spectral_setup.channel_count,
+        &request.telescope_name,
+    )?;
+    let mut main_rows = populate_main_rows(
+        &mut ms,
+        request,
+        time_sample_count,
+        model.as_ref(),
+        &mut main_column_writer,
+    )?;
+    let data_io_finalize_started = Instant::now();
+    let streamed_main_columns = main_column_writer.finish()?;
+    main_rows.timing.data_io_finalize_millis = elapsed_millis(data_io_finalize_started.elapsed());
+    main_rows.timing.data_io_assemble_millis =
+        elapsed_seconds_to_millis(streamed_main_columns.assemble_seconds());
+    main_rows.timing.data_io_write_millis =
+        elapsed_seconds_to_millis(streamed_main_columns.write_seconds());
+    main_rows.timing.data_io_bytes = streamed_main_columns.bytes_written() as u64;
 
     let save_started = Instant::now();
-    ms.save_assuming_valid()?;
+    ms.save_assuming_valid_with_main_column_overrides(&main_rows.scalar_column_overrides)?;
+    install_streamed_main_columns(ms.main_table(), &request.output_ms, streamed_main_columns)?;
     let save_millis = elapsed_millis(save_started.elapsed());
 
     Ok(SyntheticObservationReport {
@@ -1152,18 +1203,23 @@ fn populate_main_rows(
     request: &SyntheticObservationRequest,
     samples: usize,
     model: Option<&FitsModelImage>,
+    main_column_writer: &mut SimobserveMainColumnWriter,
 ) -> MsResult<MainRowsReport> {
     let num_corr = 2usize;
     let num_chan = request.spectral_setup.channel_count;
     let channel_prediction_workers = simobserve_channel_worker_count(num_chan);
     let template = MainRowTemplate {
-        flag: bool_array(&vec![false; num_corr * num_chan], vec![num_corr, num_chan]),
         flag_category: bool_array(&[], vec![0, num_corr, num_chan]),
-        weight: f32_array(&vec![1.0; num_corr], vec![num_corr]),
-        sigma: f32_array(&vec![1.0; num_corr], vec![num_corr]),
     };
-    let main_defs = ms_main_defs(ms);
+    let field_plan_started = Instant::now();
     let field_plans = build_field_plans(request, model)?;
+    if trace_simobserve_setup() {
+        eprintln!(
+            "simobserve_setup_trace stage=field_plans fields={} total_millis={}",
+            field_plans.len(),
+            elapsed_millis(field_plan_started.elapsed())
+        );
+    }
     let corruption = request.corruption.as_ref().map(|config| {
         SyntheticCorruptionState::new(
             config,
@@ -1177,6 +1233,9 @@ fn populate_main_rows(
         channel_prediction_workers,
         ..MainRowTimingDurations::default()
     };
+    let baseline_count = request.antennas.len() * (request.antennas.len() - 1) / 2;
+    let mut scalar_column_overrides =
+        MainScalarColumnOverrides::with_capacity(samples * baseline_count);
 
     for sample in 0..samples {
         let uvw_started = Instant::now();
@@ -1225,37 +1284,25 @@ fn populate_main_rows(
             sample,
         );
         timing.corruption += corruption_started.elapsed();
-        for (spec, data_values) in row_specs.into_iter().zip(data_rows) {
+        let flag_rows = row_specs
+            .iter()
+            .map(|spec| shadowed_antennas[spec.antenna1] || shadowed_antennas[spec.antenna2])
+            .collect::<Vec<_>>();
+        let uvw_rows = row_specs.iter().map(|spec| spec.uvw).collect::<Vec<_>>();
+        let data_io_started = Instant::now();
+        main_column_writer.send_batch(SimobserveMainColumnBatch {
+            data_rows,
+            flag_rows: flag_rows.clone(),
+            uvw_rows,
+        })?;
+        timing.data_io_enqueue += data_io_started.elapsed();
+        for (spec, shadowed_row) in row_specs.into_iter().zip(flag_rows.into_iter()) {
             let write_started = Instant::now();
-            let data = complex_array(&data_values, vec![num_corr, num_chan]);
-            let shadowed_row = shadowed_antennas[spec.antenna1] || shadowed_antennas[spec.antenna2];
-            let row = row_from_defs(
-                &main_defs,
-                &[
-                    ("ANTENNA1", i(spec.antenna1 as i32)),
-                    ("ANTENNA2", i(spec.antenna2 as i32)),
-                    ("ARRAY_ID", i(0)),
-                    ("DATA_DESC_ID", i(0)),
-                    ("EXPOSURE", f(request.integration_seconds)),
-                    ("FEED1", i(0)),
-                    ("FEED2", i(0)),
-                    ("FIELD_ID", i(spec.field_id as i32)),
-                    ("FLAG", template.flag.clone()),
-                    ("FLAG_CATEGORY", template.flag_category.clone()),
-                    ("FLAG_ROW", b(shadowed_row)),
-                    ("INTERVAL", f(request.integration_seconds)),
-                    ("OBSERVATION_ID", i(0)),
-                    ("PROCESSOR_ID", i(0)),
-                    ("SCAN_NUMBER", i(1)),
-                    ("SIGMA", template.sigma.clone()),
-                    ("STATE_ID", i(0)),
-                    ("TIME", f(spec.time)),
-                    ("TIME_CENTROID", f(spec.time)),
-                    ("UVW", f64_array(&spec.uvw, vec![3])),
-                    ("WEIGHT", template.weight.clone()),
-                    ("DATA", data),
-                ],
-            );
+            scalar_column_overrides.push(&spec, request.integration_seconds, shadowed_row);
+            let row = RecordValue::new(vec![RecordField::new(
+                "FLAG_CATEGORY",
+                template.flag_category.clone(),
+            )]);
             ms.main_table_mut().add_row_assuming_valid(row)?;
             timing.main_write += write_started.elapsed();
         }
@@ -1263,6 +1310,7 @@ fn populate_main_rows(
     Ok(MainRowsReport {
         nonzero_visibility_count,
         timing: timing.into_report(),
+        scalar_column_overrides: scalar_column_overrides.into_column_overrides(),
     })
 }
 
@@ -1363,6 +1411,379 @@ fn count_nonzero_complex(values: &[Complex32]) -> usize {
 struct MainRowsReport {
     nonzero_visibility_count: usize,
     timing: SyntheticMainRowTimingReport,
+    scalar_column_overrides: HashMap<String, Vec<Option<Value>>>,
+}
+
+struct SimobserveMainColumnBatch {
+    data_rows: Vec<Vec<Complex32>>,
+    flag_rows: Vec<bool>,
+    uvw_rows: Vec<[f64; 3]>,
+}
+
+struct StreamedSimobserveMainColumns {
+    data: StreamedTiledShapeComplex32Column,
+    flag: StreamedTiledPrimitiveColumn,
+    uvw: StreamedTiledPrimitiveColumn,
+    weight: StreamedTiledPrimitiveColumn,
+    sigma: StreamedTiledPrimitiveColumn,
+}
+
+impl StreamedSimobserveMainColumns {
+    fn assemble_seconds(&self) -> f64 {
+        self.data.assemble_seconds()
+            + self.flag.assemble_seconds()
+            + self.uvw.assemble_seconds()
+            + self.weight.assemble_seconds()
+            + self.sigma.assemble_seconds()
+    }
+
+    fn write_seconds(&self) -> f64 {
+        self.data.write_seconds()
+            + self.flag.write_seconds()
+            + self.uvw.write_seconds()
+            + self.weight.write_seconds()
+            + self.sigma.write_seconds()
+    }
+
+    fn bytes_written(&self) -> usize {
+        self.data.bytes_written()
+            + self.flag.bytes_written()
+            + self.uvw.bytes_written()
+            + self.weight.bytes_written()
+            + self.sigma.bytes_written()
+    }
+}
+
+struct SimobserveMainColumnWriter {
+    sender: mpsc::SyncSender<SimobserveMainColumnBatch>,
+    handle: thread::JoinHandle<MsResult<StreamedSimobserveMainColumns>>,
+}
+
+impl SimobserveMainColumnWriter {
+    fn start(
+        output_ms: &Path,
+        row_count: usize,
+        num_corr: usize,
+        num_chan: usize,
+        telescope_name: &str,
+    ) -> MsResult<Self> {
+        let visibility_tile_shape =
+            crate::ms::casa_visibility_tile_shape(num_corr, num_chan, telescope_name);
+        let weight_tile_shape = crate::ms::casa_weight_tile_shape(&visibility_tile_shape);
+        let uvw_tile_shape = crate::ms::casa_uvw_tile_shape(&visibility_tile_shape);
+
+        let data_writer = StreamingTiledShapeComplex32Writer::create(
+            output_ms.join(".casa-rs.DATA.table.f.tmp"),
+            row_count,
+            vec![num_corr, num_chan],
+            visibility_tile_shape.clone(),
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!("failed to create streamed DATA writer: {error}"))
+        })?;
+        let flag_writer = StreamingTiledPrimitiveWriter::create_shape(
+            output_ms.join(".casa-rs.FLAG.table.f.tmp"),
+            row_count,
+            vec![num_corr, num_chan],
+            visibility_tile_shape,
+            StreamedTiledPrimitiveType::Bool,
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!("failed to create streamed FLAG writer: {error}"))
+        })?;
+        let uvw_writer = StreamingTiledPrimitiveWriter::create_column(
+            output_ms.join(".casa-rs.UVW.table.f.tmp"),
+            row_count,
+            vec![3],
+            uvw_tile_shape,
+            StreamedTiledPrimitiveType::Float64,
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!("failed to create streamed UVW writer: {error}"))
+        })?;
+        let weight_writer = StreamingTiledPrimitiveWriter::create_shape(
+            output_ms.join(".casa-rs.WEIGHT.table.f.tmp"),
+            row_count,
+            vec![num_corr],
+            weight_tile_shape.clone(),
+            StreamedTiledPrimitiveType::Float32,
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to create streamed WEIGHT writer: {error}"
+            ))
+        })?;
+        let sigma_writer = StreamingTiledPrimitiveWriter::create_shape(
+            output_ms.join(".casa-rs.SIGMA.table.f.tmp"),
+            row_count,
+            vec![num_corr],
+            weight_tile_shape,
+            StreamedTiledPrimitiveType::Float32,
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to create streamed SIGMA writer: {error}"
+            ))
+        })?;
+
+        let (sender, receiver) =
+            mpsc::sync_channel::<SimobserveMainColumnBatch>(simobserve_io_queue_depth());
+        let handle = thread::spawn(move || {
+            let mut data_writer = data_writer;
+            let mut flag_writer = flag_writer;
+            let mut uvw_writer = uvw_writer;
+            let mut weight_writer = weight_writer;
+            let mut sigma_writer = sigma_writer;
+            let weight_row = vec![1.0f32; num_corr];
+            let sigma_row = vec![1.0f32; num_corr];
+            let flag_true_row = vec![true; num_corr * num_chan];
+
+            for batch in receiver {
+                if batch.data_rows.len() != batch.flag_rows.len()
+                    || batch.data_rows.len() != batch.uvw_rows.len()
+                {
+                    return Err(MsError::SyntheticObservation(format!(
+                        "background MAIN column writer received inconsistent batch sizes: DATA={} FLAG={} UVW={}",
+                        batch.data_rows.len(),
+                        batch.flag_rows.len(),
+                        batch.uvw_rows.len()
+                    )));
+                }
+                for ((data_row, flag_row), uvw_row) in batch
+                    .data_rows
+                    .into_iter()
+                    .zip(batch.flag_rows.into_iter())
+                    .zip(batch.uvw_rows.into_iter())
+                {
+                    data_writer.push_row(&data_row).map_err(|error| {
+                        MsError::SyntheticObservation(format!(
+                            "failed to stream DATA row into tiled storage: {error}"
+                        ))
+                    })?;
+                    if flag_row {
+                        flag_writer.push_bool_row(&flag_true_row).map_err(|error| {
+                            MsError::SyntheticObservation(format!(
+                                "failed to stream FLAG row into tiled storage: {error}"
+                            ))
+                        })?;
+                    } else {
+                        flag_writer.push_zero_row().map_err(|error| {
+                            MsError::SyntheticObservation(format!(
+                                "failed to stream empty FLAG row into tiled storage: {error}"
+                            ))
+                        })?;
+                    }
+                    uvw_writer.push_f64_row(&uvw_row).map_err(|error| {
+                        MsError::SyntheticObservation(format!(
+                            "failed to stream UVW row into tiled storage: {error}"
+                        ))
+                    })?;
+                    weight_writer.push_f32_row(&weight_row).map_err(|error| {
+                        MsError::SyntheticObservation(format!(
+                            "failed to stream WEIGHT row into tiled storage: {error}"
+                        ))
+                    })?;
+                    sigma_writer.push_f32_row(&sigma_row).map_err(|error| {
+                        MsError::SyntheticObservation(format!(
+                            "failed to stream SIGMA row into tiled storage: {error}"
+                        ))
+                    })?;
+                }
+            }
+            Ok(StreamedSimobserveMainColumns {
+                data: data_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed DATA writer: {error}"
+                    ))
+                })?,
+                flag: flag_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed FLAG writer: {error}"
+                    ))
+                })?,
+                uvw: uvw_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed UVW writer: {error}"
+                    ))
+                })?,
+                weight: weight_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed WEIGHT writer: {error}"
+                    ))
+                })?,
+                sigma: sigma_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed SIGMA writer: {error}"
+                    ))
+                })?,
+            })
+        });
+        Ok(Self { sender, handle })
+    }
+
+    fn send_batch(&self, batch: SimobserveMainColumnBatch) -> MsResult<()> {
+        self.sender.send(batch).map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "background MAIN column writer stopped before accepting rows: {error}"
+            ))
+        })
+    }
+
+    fn finish(self) -> MsResult<StreamedSimobserveMainColumns> {
+        drop(self.sender);
+        self.handle.join().map_err(|_| {
+            MsError::SyntheticObservation("background MAIN column writer panicked".to_string())
+        })?
+    }
+}
+
+fn install_streamed_main_columns(
+    main: &casa_tables::Table,
+    output_ms: &Path,
+    streamed: StreamedSimobserveMainColumns,
+) -> MsResult<()> {
+    let data_seq = data_manager_sequence(main, "DATA")?;
+    install_streamed_tiled_shape_complex32_column(output_ms, data_seq, "DATA", streamed.data)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to install streamed DATA column: {error}"
+            ))
+        })?;
+
+    let flag_seq = data_manager_sequence(main, "FLAG")?;
+    install_streamed_tiled_shape_primitive_column(output_ms, flag_seq, "FLAG", streamed.flag)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to install streamed FLAG column: {error}"
+            ))
+        })?;
+
+    let uvw_seq = data_manager_sequence(main, "UVW")?;
+    install_streamed_tiled_column_primitive_column(output_ms, uvw_seq, "UVW", streamed.uvw)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!("failed to install streamed UVW column: {error}"))
+        })?;
+
+    let weight_seq = data_manager_sequence(main, "WEIGHT")?;
+    install_streamed_tiled_shape_primitive_column(output_ms, weight_seq, "WEIGHT", streamed.weight)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to install streamed WEIGHT column: {error}"
+            ))
+        })?;
+
+    let sigma_seq = data_manager_sequence(main, "SIGMA")?;
+    install_streamed_tiled_shape_primitive_column(output_ms, sigma_seq, "SIGMA", streamed.sigma)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to install streamed SIGMA column: {error}"
+            ))
+        })?;
+
+    Ok(())
+}
+
+fn data_manager_sequence(main: &casa_tables::Table, column: &str) -> MsResult<u32> {
+    crate::ms::measurement_set_main_data_manager_sequence(main, column).ok_or_else(|| {
+        MsError::SyntheticObservation(format!(
+            "could not resolve {column} data-manager sequence for streamed install"
+        ))
+    })
+}
+
+fn simobserve_io_queue_depth() -> usize {
+    std::env::var("CASA_RS_SIMOBSERVE_IO_QUEUE_DEPTH")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(2)
+}
+
+struct MainScalarColumnOverrides {
+    antenna1: Vec<Option<Value>>,
+    antenna2: Vec<Option<Value>>,
+    array_id: Vec<Option<Value>>,
+    data_desc_id: Vec<Option<Value>>,
+    exposure: Vec<Option<Value>>,
+    feed1: Vec<Option<Value>>,
+    feed2: Vec<Option<Value>>,
+    field_id: Vec<Option<Value>>,
+    flag_row: Vec<Option<Value>>,
+    interval: Vec<Option<Value>>,
+    observation_id: Vec<Option<Value>>,
+    processor_id: Vec<Option<Value>>,
+    scan_number: Vec<Option<Value>>,
+    state_id: Vec<Option<Value>>,
+    time: Vec<Option<Value>>,
+    time_centroid: Vec<Option<Value>>,
+}
+
+impl MainScalarColumnOverrides {
+    fn with_capacity(row_count: usize) -> Self {
+        Self {
+            antenna1: Vec::with_capacity(row_count),
+            antenna2: Vec::with_capacity(row_count),
+            array_id: Vec::with_capacity(row_count),
+            data_desc_id: Vec::with_capacity(row_count),
+            exposure: Vec::with_capacity(row_count),
+            feed1: Vec::with_capacity(row_count),
+            feed2: Vec::with_capacity(row_count),
+            field_id: Vec::with_capacity(row_count),
+            flag_row: Vec::with_capacity(row_count),
+            interval: Vec::with_capacity(row_count),
+            observation_id: Vec::with_capacity(row_count),
+            processor_id: Vec::with_capacity(row_count),
+            scan_number: Vec::with_capacity(row_count),
+            state_id: Vec::with_capacity(row_count),
+            time: Vec::with_capacity(row_count),
+            time_centroid: Vec::with_capacity(row_count),
+        }
+    }
+
+    fn push(&mut self, spec: &MainRowVisibilitySpec, integration_seconds: f64, flag_row: bool) {
+        self.antenna1.push(Some(i(spec.antenna1 as i32)));
+        self.antenna2.push(Some(i(spec.antenna2 as i32)));
+        self.array_id.push(Some(i(0)));
+        self.data_desc_id.push(Some(i(0)));
+        self.exposure.push(Some(f(integration_seconds)));
+        self.feed1.push(Some(i(0)));
+        self.feed2.push(Some(i(0)));
+        self.field_id.push(Some(i(spec.field_id as i32)));
+        self.flag_row.push(Some(b(flag_row)));
+        self.interval.push(Some(f(integration_seconds)));
+        self.observation_id.push(Some(i(0)));
+        self.processor_id.push(Some(i(0)));
+        self.scan_number.push(Some(i(1)));
+        self.state_id.push(Some(i(0)));
+        self.time.push(Some(f(spec.time)));
+        self.time_centroid.push(Some(f(spec.time)));
+    }
+
+    fn into_column_overrides(self) -> HashMap<String, Vec<Option<Value>>> {
+        HashMap::from([
+            ("ANTENNA1".to_string(), self.antenna1),
+            ("ANTENNA2".to_string(), self.antenna2),
+            ("ARRAY_ID".to_string(), self.array_id),
+            ("DATA_DESC_ID".to_string(), self.data_desc_id),
+            ("EXPOSURE".to_string(), self.exposure),
+            ("FEED1".to_string(), self.feed1),
+            ("FEED2".to_string(), self.feed2),
+            ("FIELD_ID".to_string(), self.field_id),
+            ("FLAG_ROW".to_string(), self.flag_row),
+            ("INTERVAL".to_string(), self.interval),
+            ("OBSERVATION_ID".to_string(), self.observation_id),
+            ("PROCESSOR_ID".to_string(), self.processor_id),
+            ("SCAN_NUMBER".to_string(), self.scan_number),
+            ("STATE_ID".to_string(), self.state_id),
+            ("TIME".to_string(), self.time),
+            ("TIME_CENTROID".to_string(), self.time_centroid),
+        ])
+    }
 }
 
 #[derive(Default)]
@@ -1371,6 +1792,7 @@ struct MainRowTimingDurations {
     uvw_and_row_setup: Duration,
     prediction: Duration,
     corruption: Duration,
+    data_io_enqueue: Duration,
     main_write: Duration,
 }
 
@@ -1381,17 +1803,23 @@ impl MainRowTimingDurations {
             uvw_and_row_setup_millis: elapsed_millis(self.uvw_and_row_setup),
             prediction_millis: elapsed_millis(self.prediction),
             corruption_millis: elapsed_millis(self.corruption),
+            data_io_enqueue_millis: elapsed_millis(self.data_io_enqueue),
+            data_io_finalize_millis: 0,
+            data_io_assemble_millis: 0,
+            data_io_write_millis: 0,
+            data_io_bytes: 0,
             main_write_millis: elapsed_millis(self.main_write),
         }
     }
 }
 
+fn elapsed_seconds_to_millis(seconds: f64) -> u128 {
+    (seconds * 1000.0).round() as u128
+}
+
 #[derive(Clone)]
 struct MainRowTemplate {
-    flag: Value,
     flag_category: Value,
-    weight: Value,
-    sigma: Value,
 }
 
 #[derive(Clone, Copy)]
@@ -1500,10 +1928,20 @@ fn synthetic_primary_beam(request: &SyntheticObservationRequest) -> SyntheticPri
         .sum::<f64>()
         / request.antennas.len().max(1) as f64;
     let telescope_is_vla = request.telescope_name.eq_ignore_ascii_case("VLA");
+    let telescope_is_alma_family = request.telescope_name.eq_ignore_ascii_case("ALMA")
+        || request.telescope_name.eq_ignore_ascii_case("ACA");
+    let (beam_dish_diameter_m, blockage_diameter_m) =
+        if telescope_is_alma_family && (dish_diameter_m - 12.0).abs() < 0.5 {
+            (10.7, 0.75)
+        } else if telescope_is_alma_family && (dish_diameter_m - 7.0).abs() < 0.5 {
+            (6.25, 0.75)
+        } else {
+            (dish_diameter_m, if telescope_is_vla { 2.36 } else { 0.0 })
+        };
     SyntheticPrimaryBeam {
         use_casa_vla_q_table: telescope_is_vla && (dish_diameter_m - 25.0).abs() < 1.0e-6,
-        dish_diameter_m,
-        blockage_diameter_m: if telescope_is_vla { 2.36 } else { 0.0 },
+        dish_diameter_m: beam_dish_diameter_m,
+        blockage_diameter_m,
     }
 }
 
@@ -1519,50 +1957,151 @@ fn build_channel_predictors(
         cell_size_rad: model.cell_size_rad,
     };
     let phase_offset_rad = casa_model_phase_offset(model, phase_center_rad);
-    (0..spectral_setup.channel_count)
-        .map(|channel| {
-            let frequency_hz = spectral_setup.start_frequency_hz
-                + channel as f64 * spectral_setup.channel_width_hz;
-            let beam_corrected_pixels = apply_simulator_primary_beam(
-                model,
-                model.pixels_for_channel(channel),
-                phase_center_rad,
-                frequency_hz,
-                pointing_offset_rad,
-                primary_beam,
+    let context = ChannelPredictorContext {
+        model,
+        spectral_setup,
+        geometry,
+        phase_center_rad,
+        phase_offset_rad,
+        pointing_offset_rad,
+        primary_beam,
+    };
+    let worker_count = simobserve_channel_worker_count(spectral_setup.channel_count);
+    if worker_count <= 1 || spectral_setup.channel_count <= 1 {
+        return build_channel_predictor_range(&context, 0, spectral_setup.channel_count);
+    }
+
+    let chunk_size = spectral_setup.channel_count.div_ceil(worker_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for start_channel in (0..spectral_setup.channel_count).step_by(chunk_size) {
+            let end_channel = (start_channel + chunk_size).min(spectral_setup.channel_count);
+            let worker_context = context;
+            handles.push(scope.spawn(move || {
+                build_channel_predictor_range(&worker_context, start_channel, end_channel)
+            }));
+        }
+
+        let mut predictors = Vec::with_capacity(spectral_setup.channel_count);
+        for handle in handles {
+            predictors.extend(
+                handle
+                    .join()
+                    .expect("synthetic observation predictor setup worker should not panic")?,
             );
-            let mut casa_oriented_pixels = Array2::<f32>::zeros(beam_corrected_pixels.raw_dim());
-            if model.ra_axis_increases_with_x {
-                for x in 0..beam_corrected_pixels.shape()[0] {
-                    for y in 0..beam_corrected_pixels.shape()[1] {
-                        // CASA's simulator image prediction treats positive RA
-                        // offsets with the opposite image-x handedness from this
-                        // crate's pure imaging gridder. Conventional FITS images
-                        // already have CDELT1 < 0, so only positive-RA image axes
-                        // need this compatibility flip.
-                        casa_oriented_pixels[(beam_corrected_pixels.shape()[0] - 1 - x, y)] =
-                            beam_corrected_pixels[(x, y)];
-                    }
-                }
-            } else {
-                for x in 0..beam_corrected_pixels.shape()[0] {
-                    for y in 0..beam_corrected_pixels.shape()[1] {
-                        casa_oriented_pixels[(x, y)] = beam_corrected_pixels[(x, y)];
-                    }
-                }
+        }
+        Ok(predictors)
+    })
+}
+
+#[derive(Clone, Copy)]
+struct ChannelPredictorContext<'a> {
+    model: &'a FitsModelImage,
+    spectral_setup: &'a SyntheticSpectralSetup,
+    geometry: ImageGeometry,
+    phase_center_rad: [f64; 2],
+    phase_offset_rad: [f64; 2],
+    pointing_offset_rad: [f64; 2],
+    primary_beam: SyntheticPrimaryBeam,
+}
+
+fn build_channel_predictor_range(
+    context: &ChannelPredictorContext<'_>,
+    start_channel: usize,
+    end_channel: usize,
+) -> MsResult<Vec<SyntheticChannelPredictor>> {
+    let range_started = Instant::now();
+    let mut timing = ChannelPredictorBuildTiming::default();
+    let mut predictors = Vec::with_capacity(end_channel - start_channel);
+    for channel in start_channel..end_channel {
+        let (predictor, channel_timing) = build_one_channel_predictor(context, channel)?;
+        timing += channel_timing;
+        predictors.push(predictor);
+    }
+    if trace_simobserve_setup() {
+        eprintln!(
+            "simobserve_setup_trace stage=channel_predictor_range start_channel={} end_channel={} channels={} total_millis={} primary_beam_millis={} orientation_millis={} fft_predictor_millis={}",
+            start_channel,
+            end_channel,
+            end_channel - start_channel,
+            elapsed_millis(range_started.elapsed()),
+            elapsed_millis(timing.primary_beam),
+            elapsed_millis(timing.orientation),
+            elapsed_millis(timing.fft_predictor),
+        );
+    }
+    Ok(predictors)
+}
+
+#[derive(Default, Clone, Copy)]
+struct ChannelPredictorBuildTiming {
+    primary_beam: Duration,
+    orientation: Duration,
+    fft_predictor: Duration,
+}
+
+impl std::ops::AddAssign for ChannelPredictorBuildTiming {
+    fn add_assign(&mut self, rhs: Self) {
+        self.primary_beam += rhs.primary_beam;
+        self.orientation += rhs.orientation;
+        self.fft_predictor += rhs.fft_predictor;
+    }
+}
+
+fn build_one_channel_predictor(
+    context: &ChannelPredictorContext<'_>,
+    channel: usize,
+) -> MsResult<(SyntheticChannelPredictor, ChannelPredictorBuildTiming)> {
+    let mut timing = ChannelPredictorBuildTiming::default();
+    let frequency_hz = context.spectral_setup.start_frequency_hz
+        + channel as f64 * context.spectral_setup.channel_width_hz;
+    let primary_beam_started = Instant::now();
+    let beam_corrected_pixels = apply_simulator_primary_beam(
+        context.model,
+        context.model.pixels_for_channel(channel),
+        context.phase_center_rad,
+        frequency_hz,
+        context.pointing_offset_rad,
+        context.primary_beam,
+    );
+    timing.primary_beam = primary_beam_started.elapsed();
+    let orientation_started = Instant::now();
+    let mut casa_oriented_pixels = Array2::<f32>::zeros(beam_corrected_pixels.raw_dim());
+    if context.model.ra_axis_increases_with_x {
+        for x in 0..beam_corrected_pixels.shape()[0] {
+            for y in 0..beam_corrected_pixels.shape()[1] {
+                // CASA's simulator image prediction treats positive RA offsets
+                // with the opposite image-x handedness from this crate's pure
+                // imaging gridder. Conventional FITS images already have
+                // CDELT1 < 0, so only positive-RA image axes need this
+                // compatibility flip.
+                casa_oriented_pixels[(beam_corrected_pixels.shape()[0] - 1 - x, y)] =
+                    beam_corrected_pixels[(x, y)];
             }
-            let predictor = StandardMfsModelPredictor::new(geometry, &casa_oriented_pixels)
-                .map_err(|error| {
-                    MsError::SyntheticObservation(format!("model prediction setup failed: {error}"))
-                })?;
-            Ok(SyntheticChannelPredictor {
-                predictor,
-                phase_offset_rad,
-                phase_center_rad,
-                model_reference_direction_rad: model.reference_direction_rad,
-            })
-        })
-        .collect()
+        }
+    } else {
+        for x in 0..beam_corrected_pixels.shape()[0] {
+            for y in 0..beam_corrected_pixels.shape()[1] {
+                casa_oriented_pixels[(x, y)] = beam_corrected_pixels[(x, y)];
+            }
+        }
+    }
+    timing.orientation = orientation_started.elapsed();
+    let fft_started = Instant::now();
+    let predictor = StandardMfsModelPredictor::new(context.geometry, &casa_oriented_pixels)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!("model prediction setup failed: {error}"))
+        })?;
+    timing.fft_predictor = fft_started.elapsed();
+    Ok((
+        SyntheticChannelPredictor {
+            predictor,
+            phase_offset_rad: context.phase_offset_rad,
+            phase_center_rad: context.phase_center_rad,
+            model_reference_direction_rad: context.model.reference_direction_rad,
+        },
+        timing,
+    ))
 }
 
 fn apply_simulator_primary_beam(
@@ -1715,7 +2254,7 @@ fn predicted_data_values(
             let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
             let visibility = predictor.predictor.predict(u_lambda, v_lambda) * phase_shift;
             for corr in 0..num_corr {
-                let index = corr * spectral_setup.channel_count + channel;
+                let index = ms_data_index(corr, channel, num_corr);
                 values[index] = visibility;
             }
         }
@@ -1782,14 +2321,10 @@ fn predicted_data_values_for_rows_with_workers(
         if chunk.values_by_row.is_empty() {
             continue;
         }
-        let chunk_len = chunk.values_by_row[0].len() / num_corr;
         for (row_index, row_chunk) in chunk.values_by_row.into_iter().enumerate() {
-            for corr in 0..num_corr {
-                let src_start = corr * chunk_len;
-                let dst_start = corr * channel_count + chunk.start_channel;
-                values_by_row[row_index][dst_start..dst_start + chunk_len]
-                    .copy_from_slice(&row_chunk[src_start..src_start + chunk_len]);
-            }
+            let dst_start = chunk.start_channel * num_corr;
+            let dst_end = dst_start + row_chunk.len();
+            values_by_row[row_index][dst_start..dst_end].copy_from_slice(&row_chunk);
         }
     }
     values_by_row
@@ -1811,7 +2346,7 @@ fn predict_channel_chunk(
             let predictor = &predictors[channel];
             let visibility = predict_channel_visibility(predictor, spectral_setup, *uvw_m, channel);
             for corr in 0..num_corr {
-                row_values[corr * chunk_len + offset] = visibility;
+                row_values[ms_data_index(corr, offset, num_corr)] = visibility;
             }
         }
         values_by_row.push(row_values);
@@ -1880,6 +2415,10 @@ fn simobserve_channel_worker_count_for(
         .min(available.max(1))
         .min(channel_count)
         .max(1)
+}
+
+fn trace_simobserve_setup() -> bool {
+    std::env::var("CASA_RS_SIMOBSERVE_TRACE_SETUP").is_ok_and(|value| value != "0")
 }
 
 fn simobserve_row_worker_count(row_count: usize, channel_count: usize) -> usize {
@@ -2002,9 +2541,15 @@ impl SyntheticCorruptionState {
         sample_index: usize,
     ) {
         let gains = &self.gains_by_sample[sample_index % self.gains_by_sample.len()];
+        let correlation_count = if channel_count == 0 {
+            0
+        } else {
+            values.len() / channel_count
+        };
         for (index, value) in values.iter_mut().enumerate() {
-            let channel = index % channel_count;
-            let correlation = index / channel_count;
+            let channel = index / correlation_count;
+            let correlation = index % correlation_count;
+            let logical_index = correlation * channel_count + channel;
             let baseline_gain = gains[antenna1][correlation]
                 * gains[antenna2][correlation].conj()
                 * self.bandpass_gains[antenna1][channel]
@@ -2016,7 +2561,7 @@ impl SyntheticCorruptionState {
                     sample_index,
                     antenna1,
                     antenna2,
-                    index,
+                    logical_index,
                 ));
                 value.re += rng.gaussian_f32() * self.simplenoise_jy;
                 value.im += rng.gaussian_f32() * self.simplenoise_jy;
@@ -2029,8 +2574,8 @@ impl SyntheticCorruptionState {
                 self.leakage_terms[antenna1][1] * self.leakage_terms[antenna2][1].conj();
             if rr_leakage != Complex32::new(0.0, 0.0) || ll_leakage != Complex32::new(0.0, 0.0) {
                 for channel in 0..channel_count {
-                    let rr_index = channel;
-                    let ll_index = channel_count + channel;
+                    let rr_index = ms_data_index(0, channel, 2);
+                    let ll_index = ms_data_index(1, channel, 2);
                     let rr = values[rr_index];
                     let ll = values[ll_index];
                     values[rr_index] = rr + rr_leakage * ll;
@@ -3049,26 +3594,6 @@ fn scale_vector(vector: [f64; 3], scale: f64) -> [f64; 3] {
     [vector[0] * scale, vector[1] * scale, vector[2] * scale]
 }
 
-fn ms_main_defs(ms: &MeasurementSet) -> Vec<ColumnDef> {
-    let all_defs = schema::main_table::REQUIRED_COLUMNS
-        .iter()
-        .chain(schema::main_table::OPTIONAL_COLUMNS.iter())
-        .copied()
-        .collect::<Vec<_>>();
-    ms.main_table()
-        .schema()
-        .expect("main table schema")
-        .columns()
-        .iter()
-        .map(|column| {
-            *all_defs
-                .iter()
-                .find(|definition| definition.name == column.name())
-                .expect("known MS main column")
-        })
-        .collect()
-}
-
 fn row_from_defs(defs: &[ColumnDef], overrides: &[(&str, Value)]) -> RecordValue {
     let fields = defs
         .iter()
@@ -3167,6 +3692,24 @@ fn complex_array(values: &[Complex32], shape: Vec<usize>) -> Value {
     Value::Array(ArrayValue::Complex32(
         ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
     ))
+}
+
+#[cfg(test)]
+fn complex_array_from_ms_data_storage(
+    values: &[Complex32],
+    num_corr: usize,
+    num_chan: usize,
+) -> Value {
+    use ndarray::{IxDyn, ShapeBuilder};
+
+    let shape = IxDyn(&[num_corr, num_chan]).strides(IxDyn(&[1, num_corr]));
+    Value::Array(ArrayValue::Complex32(
+        ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
+    ))
+}
+
+fn ms_data_index(correlation: usize, channel: usize, num_corr: usize) -> usize {
+    channel * num_corr + correlation
 }
 
 fn string_array(values: &[&str], shape: Vec<usize>) -> Value {
@@ -3347,6 +3890,31 @@ mod tests {
         assert_eq!(serial, parallel);
     }
 
+    #[test]
+    fn ms_data_array_uses_casacore_storage_order() {
+        let values = vec![
+            Complex32::new(10.0, 0.0),
+            Complex32::new(20.0, 0.0),
+            Complex32::new(11.0, 0.0),
+            Complex32::new(21.0, 0.0),
+            Complex32::new(12.0, 0.0),
+            Complex32::new(22.0, 0.0),
+        ];
+        let Value::Array(ArrayValue::Complex32(array)) =
+            complex_array_from_ms_data_storage(&values, 2, 3)
+        else {
+            panic!("expected complex DATA array");
+        };
+
+        assert_eq!(array.shape(), &[2, 3]);
+        assert_eq!(array.strides(), &[1, 2]);
+        assert_eq!(array[[0, 0]], Complex32::new(10.0, 0.0));
+        assert_eq!(array[[1, 0]], Complex32::new(20.0, 0.0));
+        assert_eq!(array[[0, 2]], Complex32::new(12.0, 0.0));
+        assert_eq!(array[[1, 2]], Complex32::new(22.0, 0.0));
+        assert_eq!(array.as_slice_memory_order().unwrap(), values.as_slice());
+    }
+
     fn write_test_fits_plane(path: &Path) {
         let mut cards = test_fits_cards(&[
             ("SIMPLE", "T"),
@@ -3478,6 +4046,27 @@ mod tests {
 
         assert!((at_half_max_radius - 0.596_901_4).abs() < 1.0e-7);
         assert!((at_support - -0.017_125_657).abs() < 1.0e-8);
+    }
+
+    #[test]
+    fn alma_primary_beam_uses_casa_effective_diameter_for_model_prediction() {
+        let mut request = SyntheticObservationRequest::vla_ppdisk(
+            PathBuf::from("model.fits"),
+            PathBuf::from("out.ms"),
+            vec![SyntheticAntenna {
+                name: "A000".to_string(),
+                station: "A000".to_string(),
+                position_m: [0.0, 0.0, 0.0],
+                dish_diameter_m: 12.0,
+            }],
+        );
+        request.telescope_name = "ALMA".to_string();
+
+        let primary_beam = synthetic_primary_beam(&request);
+
+        assert_eq!(primary_beam.dish_diameter_m, 10.7);
+        assert_eq!(primary_beam.blockage_diameter_m, 0.75);
+        assert!(!primary_beam.use_casa_vla_q_table);
     }
 
     #[test]

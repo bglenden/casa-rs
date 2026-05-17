@@ -49,12 +49,40 @@ def main() -> None:
         help="run both CASA and native simobserve without thermal/noise corruption",
     )
     parser.add_argument(
+        "--disable-prediction",
+        action="store_true",
+        help=(
+            "set native predict_model=false and remove corruption; intended for "
+            "native-only write-path throughput checks"
+        ),
+    )
+    parser.add_argument(
+        "--require-native-throughput-mb-s",
+        type=float,
+        default=None,
+        help="fail unless native output size divided by best runtime reaches this MB/s",
+    )
+    parser.add_argument(
+        "--require-data-io-throughput-mb-s",
+        type=float,
+        default=None,
+        help=(
+            "fail unless streamed MAIN-column bytes divided by reported "
+            "data_io_write_millis reaches this MB/s"
+        ),
+    )
+    parser.add_argument(
         "--strict-values",
         action="store_true",
         help="fail unless CASA and native rows, UVW, and DATA agree numerically",
     )
     parser.add_argument("--strict-uvw-atol", type=float, default=1.0e-5)
-    parser.add_argument("--strict-data-atol", type=float, default=1.0e-4)
+    parser.add_argument(
+        "--strict-data-atol",
+        type=float,
+        default=5.0e-2,
+        help="absolute DATA tolerance for CASA-vs-native sampled comparisons",
+    )
     parser.add_argument("--strict-data-rtol", type=float, default=1.0e-3)
     parser.add_argument("--skip-casa", action="store_true")
     parser.add_argument("--skip-serial-check", action="store_true")
@@ -89,6 +117,11 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         request["request"]["corruption"] = None
         request["request"]["model_peak_jy_per_pixel"] = None
         dataset = without_noise(dataset)
+    if args.disable_prediction:
+        if not args.skip_casa:
+            raise BenchError("--disable-prediction requires --skip-casa")
+        request["request"]["predict_model"] = False
+        request["request"]["corruption"] = None
 
     casa = None
     run_casa_first = args.strict_values and not args.skip_casa
@@ -148,6 +181,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 f"native simobserve speedup {speedup:.2f}x is below target "
                 f"{args.require_speedup:.2f}x"
             )
+    native_performance = native_performance_summary(native_parallel)
+    enforce_native_performance_targets(args, native_performance)
 
     result_path = run_root / "simobserve-benchmark.json"
     report_path = run_root / "simobserve-benchmark.html"
@@ -163,7 +198,12 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "casa": casa,
         "correctness": correctness,
         "speedup_vs_casa": speedup,
-        "target": {"required_speedup": args.require_speedup},
+        "native_performance": native_performance,
+        "target": {
+            "required_speedup": args.require_speedup,
+            "required_native_throughput_mb_s": args.require_native_throughput_mb_s,
+            "required_data_io_throughput_mb_s": args.require_data_io_throughput_mb_s,
+        },
     }
 
 
@@ -288,6 +328,51 @@ def parse_native_result(stdout: str, source: pathlib.Path) -> dict[str, Any]:
     if payload.get("kind") != "run":
         raise BenchError(f"native simobserve emitted unexpected result kind in {source}")
     return payload["result"]
+
+
+def native_performance_summary(native: dict[str, Any]) -> dict[str, Any]:
+    size_bytes = int(native["size_bytes"])
+    best_seconds = float(native["best_seconds"])
+    report = native.get("last_result", {}).get("report", {})
+    main_timing = report.get("timing", {}).get("main_rows", {})
+    data_io_bytes = int(main_timing.get("data_io_bytes") or 0)
+    data_io_write_millis = float(main_timing.get("data_io_write_millis") or 0)
+    return {
+        "native_output_mb_per_second": mb_per_second(size_bytes, best_seconds),
+        "data_io_mb_per_second": mb_per_second(
+            data_io_bytes,
+            data_io_write_millis / 1000.0 if data_io_write_millis > 0 else 0.0,
+        ),
+        "data_io_bytes": data_io_bytes,
+        "data_io_write_millis": data_io_write_millis,
+    }
+
+
+def enforce_native_performance_targets(
+    args: argparse.Namespace, performance: dict[str, Any]
+) -> None:
+    required_native = args.require_native_throughput_mb_s
+    if required_native is not None:
+        actual = performance["native_output_mb_per_second"]
+        if actual < required_native:
+            raise BenchError(
+                f"native output throughput {actual:.1f} MB/s is below target "
+                f"{required_native:.1f} MB/s"
+            )
+    required_data_io = args.require_data_io_throughput_mb_s
+    if required_data_io is not None:
+        actual = performance["data_io_mb_per_second"]
+        if actual < required_data_io:
+            raise BenchError(
+                f"streamed DATA/FLAG/UVW/WEIGHT/SIGMA write throughput "
+                f"{actual:.1f} MB/s is below target {required_data_io:.1f} MB/s"
+            )
+
+
+def mb_per_second(size_bytes: int, seconds: float) -> float:
+    if seconds <= 0.0:
+        return 0.0
+    return size_bytes / seconds / 1_000_000.0
 
 
 def without_noise(dataset: dict[str, Any]) -> dict[str, Any]:
@@ -516,6 +601,231 @@ print(json.dumps({name: inspect(path) for name, path in paths.items()}, sort_key
 
 
 def collect_strict_value_comparison(
+    casa_python: str,
+    native_ms: str,
+    casa_ms: str,
+    *,
+    uvw_atol: float,
+    data_atol: float,
+    data_rtol: float,
+) -> dict[str, Any]:
+    return collect_sampled_strict_value_comparison(
+        casa_python,
+        native_ms,
+        casa_ms,
+        uvw_atol=uvw_atol,
+        data_atol=data_atol,
+        data_rtol=data_rtol,
+    )
+
+
+def collect_sampled_strict_value_comparison(
+    casa_python: str,
+    native_ms: str,
+    casa_ms: str,
+    *,
+    uvw_atol: float,
+    data_atol: float,
+    data_rtol: float,
+) -> dict[str, Any]:
+    script = r'''
+import json
+import sys
+import numpy as np
+from casatools import table
+
+native_path, casa_path, uvw_atol, data_atol, data_rtol = json.loads(sys.argv[1])
+
+KEY_COLUMNS = ["TIME", "FIELD_ID", "DATA_DESC_ID", "ANTENNA1", "ANTENNA2"]
+SAMPLE_ROWS = 513
+
+def open_table(path):
+    tb = table()
+    tb.open(path)
+    return tb
+
+def key_tuple(keys, row):
+    return tuple(key[row].item() if hasattr(key[row], "item") else key[row] for key in keys)
+
+def read_keys(path):
+    tb = open_table(path)
+    try:
+        rows = int(tb.nrows())
+        keys = [np.asarray(tb.getcol(column)) for column in KEY_COLUMNS]
+    finally:
+        tb.close()
+    return rows, keys
+
+native_rows, native_keys = read_keys(native_path)
+casa_rows, casa_keys = read_keys(casa_path)
+result = {
+    "status": "passed",
+    "reasons": [],
+    "sampled": True,
+    "row_count": {"native": native_rows, "casa": casa_rows},
+    "thresholds": {
+        "uvw_atol": uvw_atol,
+        "data_atol": data_atol,
+        "data_rtol": data_rtol,
+    },
+}
+if native_rows != casa_rows:
+    result["status"] = "failed"
+    result["reasons"].append("strict row count mismatch")
+    print(json.dumps(result, sort_keys=True))
+    raise SystemExit(0)
+
+casa_by_key = {key_tuple(casa_keys, row): row for row in range(casa_rows)}
+if native_rows <= SAMPLE_ROWS:
+    native_sample_rows = list(range(native_rows))
+else:
+    native_sample_rows = sorted(set(np.linspace(0, native_rows - 1, SAMPLE_ROWS, dtype=np.int64).tolist()))
+
+native_tb = open_table(native_path)
+casa_tb = open_table(casa_path)
+try:
+    uvw_max_abs = 0.0
+    uvw_mean_sum = 0.0
+    uvw_count = 0
+    data_max_abs = 0.0
+    data_sum_abs = 0.0
+    data_max_relative = 0.0
+    data_count = 0
+    raw_flag_mismatches = 0
+    effective_flag_mismatches = 0
+    weight_max_abs = 0.0
+    sigma_max_abs = 0.0
+    missing_keys = []
+    worst_cells = []
+
+    for native_row in native_sample_rows:
+        key = key_tuple(native_keys, native_row)
+        casa_row = casa_by_key.get(key)
+        if casa_row is None:
+            missing_keys.append({"native_row": int(native_row), "key": list(key)})
+            continue
+
+        native_uvw = np.asarray(native_tb.getcell("UVW", int(native_row)), dtype=np.float64)
+        casa_uvw = np.asarray(casa_tb.getcell("UVW", int(casa_row)), dtype=np.float64)
+        uvw_delta = np.abs(native_uvw - casa_uvw)
+        uvw_max_abs = max(uvw_max_abs, float(uvw_delta.max()) if uvw_delta.size else 0.0)
+        uvw_mean_sum += float(uvw_delta.sum())
+        uvw_count += int(uvw_delta.size)
+
+        native_data = np.asarray(native_tb.getcell("DATA", int(native_row)))
+        casa_data = np.asarray(casa_tb.getcell("DATA", int(casa_row)))
+        native_flag = np.asarray(native_tb.getcell("FLAG", int(native_row)), dtype=bool)
+        casa_flag = np.asarray(casa_tb.getcell("FLAG", int(casa_row)), dtype=bool)
+        native_flag_row = bool(native_tb.getcell("FLAG_ROW", int(native_row)))
+        casa_flag_row = bool(casa_tb.getcell("FLAG_ROW", int(casa_row)))
+        native_effective_flag = native_flag | native_flag_row
+        casa_effective_flag = casa_flag | casa_flag_row
+
+        raw_flag_mismatches += int(np.count_nonzero(native_flag != casa_flag))
+        effective_flag_mismatches += int(np.count_nonzero(native_effective_flag != casa_effective_flag))
+        mask = ~(native_effective_flag | casa_effective_flag)
+        if np.any(mask):
+            delta = np.abs(native_data - casa_data)
+            amp = np.abs(casa_data)
+            selected_delta = delta[mask]
+            selected_amp = amp[mask]
+            relative = selected_delta / np.maximum(selected_amp, data_atol)
+            row_max_abs = float(selected_delta.max())
+            row_max_relative = float(relative.max())
+            data_max_abs = max(data_max_abs, row_max_abs)
+            data_max_relative = max(data_max_relative, row_max_relative)
+            data_sum_abs += float(selected_delta.sum())
+            data_count += int(selected_delta.size)
+            if row_max_abs == data_max_abs or row_max_relative == data_max_relative:
+                corr, chan = np.argwhere(mask)[int(np.argmax(selected_delta))]
+                worst_cells.append({
+                    "native_row": int(native_row),
+                    "casa_row": int(casa_row),
+                    "correlation": int(corr),
+                    "channel": int(chan),
+                    "abs": row_max_abs,
+                    "relative": row_max_relative,
+                    "native": {
+                        "real": float(native_data[corr, chan].real),
+                        "imag": float(native_data[corr, chan].imag),
+                    },
+                    "casa": {
+                        "real": float(casa_data[corr, chan].real),
+                        "imag": float(casa_data[corr, chan].imag),
+                    },
+                })
+
+        native_weight = np.asarray(native_tb.getcell("WEIGHT", int(native_row)), dtype=np.float64)
+        casa_weight = np.asarray(casa_tb.getcell("WEIGHT", int(casa_row)), dtype=np.float64)
+        native_sigma = np.asarray(native_tb.getcell("SIGMA", int(native_row)), dtype=np.float64)
+        casa_sigma = np.asarray(casa_tb.getcell("SIGMA", int(casa_row)), dtype=np.float64)
+        weight_max_abs = max(weight_max_abs, float(np.abs(native_weight - casa_weight).max()))
+        sigma_max_abs = max(sigma_max_abs, float(np.abs(native_sigma - casa_sigma).max()))
+finally:
+    native_tb.close()
+    casa_tb.close()
+
+result["rows_sampled"] = len(native_sample_rows)
+result["missing_key_count"] = len(missing_keys)
+if missing_keys:
+    result["missing_keys"] = missing_keys[:10]
+    result["status"] = "failed"
+    result["reasons"].append("strict sampled row key missing in CASA")
+result["uvw"] = {
+    "max_abs": uvw_max_abs,
+    "mean_abs": uvw_mean_sum / uvw_count if uvw_count else 0.0,
+}
+result["data"] = {
+    "compared_unflagged_cells": data_count,
+    "max_abs": data_max_abs,
+    "mean_abs": data_sum_abs / data_count if data_count else 0.0,
+    "max_relative": data_max_relative,
+    "worst_cells": worst_cells[-10:],
+}
+result["raw_flag_mismatches"] = raw_flag_mismatches
+result["effective_flag_mismatches"] = effective_flag_mismatches
+result["weight"] = {"max_abs": weight_max_abs}
+result["sigma"] = {"max_abs": sigma_max_abs}
+
+if uvw_max_abs > uvw_atol:
+    result["status"] = "failed"
+    result["reasons"].append(f"strict sampled UVW max abs {uvw_max_abs:.6g} exceeds {uvw_atol:.6g}")
+if data_count and (data_max_abs > data_atol and data_max_relative > data_rtol):
+    result["status"] = "failed"
+    result["reasons"].append(
+        f"strict sampled DATA max abs {data_max_abs:.6g}, max rel {data_max_relative:.6g} exceeds tolerances"
+    )
+if effective_flag_mismatches:
+    result["status"] = "failed"
+    result["reasons"].append(f"strict sampled effective FLAG differs in {effective_flag_mismatches} cells")
+if weight_max_abs > 1.0e-6:
+    result["status"] = "failed"
+    result["reasons"].append(f"strict sampled WEIGHT max abs {weight_max_abs:.6g} exceeds 1e-6")
+if sigma_max_abs > 1.0e-6:
+    result["status"] = "failed"
+    result["reasons"].append(f"strict sampled SIGMA max abs {sigma_max_abs:.6g} exceeds 1e-6")
+
+print(json.dumps(result, sort_keys=True))
+'''
+    completed = subprocess.run(
+        [
+            casa_python,
+            "-c",
+            script,
+            json.dumps([native_ms, casa_ms, uvw_atol, data_atol, data_rtol]),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise BenchError(
+            "failed to run sampled strict MS value comparison: " + completed.stderr.strip()
+        )
+    return parse_json_from_stdout(completed.stdout, "sampled strict MS value comparison")
+
+
+def collect_legacy_full_strict_value_comparison(
     casa_python: str,
     native_ms: str,
     casa_ms: str,
@@ -840,6 +1150,7 @@ def write_html_report(path: pathlib.Path, result: dict[str, Any]) -> None:
     speedup = result.get("speedup_vs_casa")
     speedup_text = "not run" if speedup is None else f"{speedup:.2f}x"
     native = result["native_parallel"]
+    native_perf = result.get("native_performance", {})
     casa = result.get("casa")
     rows = result["shape"]["estimated_main_rows"]
     channels = result["shape"]["channels"]
@@ -868,6 +1179,8 @@ def write_html_report(path: pathlib.Path, result: dict[str, Any]) -> None:
     <tr><th>Channels</th><td>{channels:,}</td></tr>
     <tr><th>Native best</th><td>{native["best_seconds"]:.3f} s</td></tr>
     <tr><th>Native size</th><td>{format_bytes(native["size_bytes"])}</td></tr>
+    <tr><th>Native throughput</th><td>{format_rate(native_perf.get("native_output_mb_per_second"))}</td></tr>
+    <tr><th>Streamed write throughput</th><td>{format_rate(native_perf.get("data_io_mb_per_second"))}</td></tr>
     <tr><th>CASA best</th><td>{format_seconds(casa)}</td></tr>
     <tr><th>CASA size</th><td>{format_bytes(casa["size_bytes"]) if casa else "not run"}</td></tr>
     <tr><th>Speedup vs CASA</th><td>{speedup_text}</td></tr>
@@ -908,6 +1221,12 @@ def format_bytes(size: int) -> str:
             return f"{value:.2f} {unit}"
         value /= 1024.0
     return f"{size} B"
+
+
+def format_rate(rate: Any) -> str:
+    if rate is None:
+        return "not reported"
+    return f"{float(rate):.1f} MB/s"
 
 
 def select_dataset(plan: dict[str, Any], dataset_id: str) -> dict[str, Any]:

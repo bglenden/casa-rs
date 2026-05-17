@@ -192,7 +192,7 @@ def structured_plane(pixels: int, family: str) -> np.ndarray:
     arm2 = 0.14 * np.exp(-((radius - (0.18 - 0.035 * theta)) ** 2) / (2.0 * 0.024**2))
     halo = 0.06 * np.exp(-(radius**2) / (2.0 * 0.26**2))
     ripple = 0.015 * (1.0 + np.sin(37.0 * cx + 19.0 * cy))
-    if "mosaic" in family or family == "shared-large":
+    if "mosaic" in family:
         gradient = 1.0 + 0.10 * cx - 0.07 * cy
     else:
         gradient = 1.0
@@ -213,7 +213,7 @@ def source_pixel(cx: float, cy: float, family: str) -> float:
     arm2 = 0.14 * math.exp(-((radius - (0.18 - 0.035 * theta)) ** 2) / (2.0 * 0.024**2))
     halo = 0.06 * math.exp(-(radius**2) / (2.0 * 0.26**2))
     ripple = 0.015 * (1.0 + math.sin(37.0 * cx + 19.0 * cy))
-    gradient = 1.0 + (0.10 * cx - 0.07 * cy if "mosaic" in family or family == "shared-large" else 0.0)
+    gradient = 1.0 + (0.10 * cx - 0.07 * cy if "mosaic" in family else 0.0)
     return max(0.0, (core + knot1 + knot2 + ring + arm1 + arm2 + halo + ripple) * gradient)
 
 
@@ -318,11 +318,11 @@ def make_preview(
         vis=str(ms),
         imagename=str(imagename),
         datacolumn="data",
-        field="" if dataset["family"] in {"mosaic", "shared-large"} else "0",
+        field="" if "mosaic" in dataset["family"] else "0",
         spw=preview_spw(dataset),
         stokes="I",
         specmode="mfs",
-        gridder="mosaic" if dataset["family"] in {"mosaic", "shared-large"} else "standard",
+        gridder="mosaic" if "mosaic" in dataset["family"] else "standard",
         weighting="natural",
         imsize=imsize,
         cell=f"{cell_arcsec(dataset['instrument'])}arcsec",

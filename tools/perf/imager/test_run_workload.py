@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 from pathlib import Path
 import sys
 
@@ -81,6 +82,41 @@ class StageBreakdownTests(unittest.TestCase):
             "measured",
         )
         self.assertEqual(categories["restore_and_beam_fit"]["total_ms"], 3.0)
+
+    def test_phasecenter_field_flows_to_environment(self) -> None:
+        manifest = {
+            "id": "mosaic-smoke",
+            "mode_id": "mosaic-mfs-clean-primary",
+            "dataset": {
+                "key": "mosaic.ms",
+                "relative_path": "wave1/vla/mosaic/small/ms/mosaic.ms",
+                "root_env": "CASA_RS_IMPERF_DATA_ROOT",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "mosaic",
+                "field": "",
+                "phasecenter_field": 0,
+                "spw": "0",
+            },
+        }
+
+        with mock.patch.dict(
+            "os.environ",
+            {"CASA_RS_IMPERF_DATA_ROOT": "/tmp", "CASA_RS_CASA_PYTHON": "/tmp/casa-python"},
+            clear=False,
+        ):
+            plan = run_workload.build_plan(
+                manifest_path=Path("manifest.json"),
+                manifest=manifest,
+                repeats_override=1,
+                run_label_override=None,
+                storage_label_override=None,
+                dry_run=True,
+            )
+
+        self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASECENTER_FIELD"])
 
     def test_attach_stage_breakdown_does_not_require_casa_stage_data(self) -> None:
         plan = {

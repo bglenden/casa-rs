@@ -14,6 +14,11 @@ import sys
 import time
 from typing import Any
 
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - exercised only in minimal Python installs.
+    np = None
+
 
 TOOL_DIR = pathlib.Path(__file__).resolve().parent
 REGISTRY_PATH = TOOL_DIR / "wave1_dataset_registry.json"
@@ -214,6 +219,7 @@ def build_plan(
                     "duration_seconds": float_value(spec, "duration_seconds"),
                     "integration_seconds": float_value(spec, "integration_seconds"),
                     "estimated_main_rows": estimated_main_rows(spec, family),
+                    "estimated_data_bytes": estimated_data_bytes(spec, family),
                 },
                 "source_model": {
                     "continuum": registry["source_model"]["continuum_components"],
@@ -258,48 +264,19 @@ def validate_large_tier_policy(registry: dict[str, Any], specs: list[dict[str, A
     if isinstance(expected_id, str):
         large_ids = {required_str(spec, "id") for spec in large_specs}
         if expected_id not in large_ids:
-            raise DatasetError(
-                f"large tier policy requires shared dataset {expected_id!r}"
-            )
+                raise DatasetError(
+                    f"large tier policy requires dataset {expected_id!r}"
+                )
 
 
 def native_status_for(
     spec: dict[str, Any], instrument: dict[str, Any], family: dict[str, Any]
 ) -> dict[str, str]:
     instrument_status = required_str(instrument, "native_casars_status")
-    family_name = required_str(spec, "family")
-    if family_name == "shared-large":
-        return {
-            "casars_simulation": "blocked",
-            "casa_simulation": "generation-path",
-            "native_backlog_issue": "#254/#255/#180/#181/#182",
-            "reason": "shared large ALMA mosaic/cube superset requires CASA generation until native ALMA, multi-field mosaic, and channel-varying cube simulation exist",
-        }
-    if family_name == "mosaic":
-        return {
-            "casars_simulation": "blocked",
-            "casa_simulation": "generation-path",
-            "native_backlog_issue": "#254",
-            "reason": "current native simulator writes one FIELD; true mosaic staging requires multi-field generation or CASA simulation",
-        }
-    if required_str(spec, "instrument") != "vla":
-        return {
-            "casars_simulation": "request-plan-only",
-            "casa_simulation": "generation-path",
-            "native_backlog_issue": "#180/#181/#182",
-            "reason": instrument_status,
-        }
-    if int_value(spec, "channels") > 1:
-        return {
-            "casars_simulation": "supported-single-plane",
-            "casa_simulation": "generation-path",
-            "native_backlog_issue": "#255",
-            "reason": "native VLA single-field simobserve can write a multi-channel MS from one 2D model plane; CASA generation is required for deterministic channel-varying source structure",
-        }
     return {
         "casars_simulation": "supported",
         "casa_simulation": "generation-path",
-        "reason": "native VLA single-field simobserve parity path exists; CASA side is retained for simulation performance/parity checks",
+        "reason": f"native simobserve can generate this {instrument_status} benchmark shape; CASA side is retained for simulation performance/parity checks",
     }
 
 
@@ -366,6 +343,7 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
             "specmode": specmode,
             "gridder": gridder,
             "field": "" if gridder == "mosaic" else "0",
+            "phasecenter_field": 0 if gridder == "mosaic" else None,
             "spw": "0",
             "channel_start": 0,
             "channel_count": channels,
@@ -543,13 +521,19 @@ def write_structured_fits(
     header = pad_block(header.encode("ascii"))
     with path.open("wb") as handle:
         handle.write(header)
-        for channel in range(channels):
-            scale = spectral_total_scale(channels, channel)
-            for y in range(pixels):
-                row = bytearray()
-                for x in range(pixels):
-                    row.extend(struct.pack(">f", source_pixel(x, y, pixels, family) * scale))
-                handle.write(row)
+        if np is not None:
+            base = source_plane(pixels, family)
+            for channel in range(channels):
+                plane = (base * spectral_total_scale(channels, channel)).astype(">f4", copy=False)
+                handle.write(plane.tobytes(order="C"))
+        else:
+            for channel in range(channels):
+                scale = spectral_total_scale(channels, channel)
+                for y in range(pixels):
+                    row = bytearray()
+                    for x in range(pixels):
+                        row.extend(struct.pack(">f", source_pixel(x, y, pixels, family) * scale))
+                    handle.write(row)
         pad = (-(pixels * pixels * channels * 4)) % 2880
         if pad:
             handle.write(b"\0" * pad)
@@ -582,9 +566,34 @@ def source_pixel(x: int, y: int, pixels: int, family: str) -> float:
     )
     halo = 0.06 * math.exp(-(radius**2) / (2.0 * 0.26**2))
     ripple = 0.015 * (1.0 + math.sin(37.0 * cx + 19.0 * cy))
-    mosaic_gradient = 1.0 + (0.10 * cx - 0.07 * cy if family == "mosaic" else 0.0)
+    mosaic_gradient = 1.0 + (0.10 * cx - 0.07 * cy if is_mosaic_family(family) else 0.0)
     value = (core + knot1 + knot2 + ring + arm1 + arm2 + halo + ripple) * mosaic_gradient
     return max(0.0, float(value))
+
+
+def source_plane(pixels: int, family: str) -> Any:
+    y, x = np.mgrid[0:pixels, 0:pixels]
+    cx = (x.astype("float32") + 0.5 - pixels / 2.0) / pixels
+    cy = (y.astype("float32") + 0.5 - pixels / 2.0) / pixels
+    radius = np.hypot(cx, cy)
+    theta = np.arctan2(cy, cx)
+    core = np.exp(-((cx**2 + cy**2) / (2.0 * 0.018**2)))
+    knot1 = 0.42 * np.exp(-(((cx + 0.14) ** 2 + (cy - 0.09) ** 2) / (2.0 * 0.028**2)))
+    knot2 = 0.31 * np.exp(-(((cx - 0.18) ** 2 + (cy + 0.11) ** 2) / (2.0 * 0.022**2)))
+    ring = 0.34 * np.exp(-((radius - 0.21) ** 2) / (2.0 * 0.018**2))
+    arm1 = 0.18 * np.exp(-((radius - (0.10 + 0.040 * theta)) ** 2) / (2.0 * 0.020**2))
+    arm2 = 0.14 * np.exp(-((radius - (0.18 - 0.035 * theta)) ** 2) / (2.0 * 0.024**2))
+    halo = 0.06 * np.exp(-(radius**2) / (2.0 * 0.26**2))
+    ripple = 0.015 * (1.0 + np.sin(37.0 * cx + 19.0 * cy))
+    mosaic_gradient = 1.0 + (0.10 * cx - 0.07 * cy if is_mosaic_family(family) else 0.0)
+    return np.maximum(
+        (core + knot1 + knot2 + ring + arm1 + arm2 + halo + ripple) * mosaic_gradient,
+        0.0,
+    ).astype("float32")
+
+
+def is_mosaic_family(family: str) -> bool:
+    return family in {"mosaic", "mosaic-large"}
 
 
 def build_spectral_profile(dataset: dict[str, Any]) -> dict[str, Any]:
@@ -623,8 +632,16 @@ def estimated_main_rows(spec: dict[str, Any], family: dict[str, Any]) -> int:
     return baseline_count * samples
 
 
+def estimated_data_bytes(spec: dict[str, Any], family: dict[str, Any]) -> int:
+    return estimated_main_rows(spec, family) * int_value(spec, "channels") * 2 * 8
+
+
 def alma_antennas() -> list[dict[str, Any]]:
-    center = [-2_225_035.0, -5_441_197.0, -2_481_630.0]
+    config = casa_array_config_path("alma.cycle8.5.cfg")
+    if config is not None:
+        return antennas_from_casa_array_config(config, loc_converter=alma_loc_to_itrf)
+
+    center = [2_225_142.18027137, -5_440_307.37035444, -2_481_029.85184099]
     antennas = []
     for index in range(43):
         arm = index % 3
@@ -649,6 +666,10 @@ def alma_antennas() -> list[dict[str, Any]]:
 
 
 def vla_d_antennas() -> list[dict[str, Any]]:
+    config = casa_array_config_path("vla.d.cfg")
+    if config is not None:
+        return antennas_from_casa_array_config(config)
+
     rows = [
         (-1_601_188.989351, -5_042_000.518599, 3_554_843.384480, "W01"),
         (-1_601_225.230987, -5_041_980.390730, 3_554_855.657987, "W02"),
@@ -686,6 +707,67 @@ def vla_d_antennas() -> list[dict[str, Any]]:
             "dish_diameter_m": 25.0,
         }
         for x_m, y_m, z_m, name in rows
+    ]
+
+
+def casa_array_config_path(file_name: str) -> pathlib.Path | None:
+    candidates = []
+    if root := os.environ.get("CASA_RS_ARRAY_CONFIG_ROOT"):
+        candidates.append(pathlib.Path(root) / file_name)
+    candidates.append(pathlib.Path.home() / ".casa" / "data" / "alma" / "simmos" / file_name)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def antennas_from_casa_array_config(
+    path: pathlib.Path,
+    *,
+    loc_converter: Any | None = None,
+) -> list[dict[str, Any]]:
+    antennas = []
+    for raw_line in path.read_text(encoding="ascii").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 5:
+            raise DatasetError(f"invalid antenna config row in {path}: {raw_line!r}")
+        x_m, y_m, z_m = (float(parts[0]), float(parts[1]), float(parts[2]))
+        diameter_m = float(parts[3])
+        station = parts[4]
+        position = (
+            loc_converter(x_m, y_m, z_m)
+            if loc_converter is not None
+            else [x_m, y_m, z_m]
+        )
+        antennas.append(
+            {
+                "name": station,
+                "station": station,
+                "position_m": position,
+                "dish_diameter_m": diameter_m,
+            }
+        )
+    if not antennas:
+        raise DatasetError(f"antenna config {path} contained no antennas")
+    return antennas
+
+
+def alma_loc_to_itrf(x_m: float, y_m: float, z_m: float) -> list[float]:
+    # CASA's ALMA simulation config uses a local tangent-plane frame.  These
+    # constants reproduce CASA's conversion for alma.cycle8.5.cfg.
+    center = [2_225_142.18027137, -5_440_307.37035444, -2_481_029.85184099]
+    rotation = [
+        [0.92557307, 0.14805787, 0.34841548],
+        [0.37856899, -0.36199050, -0.85184998],
+        [0.0, 0.920348708, -0.391098780],
+    ]
+    local = [x_m, y_m, z_m]
+    return [
+        center[axis] + sum(rotation[axis][local_axis] * local[local_axis] for local_axis in range(3))
+        for axis in range(3)
     ]
 
 

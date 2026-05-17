@@ -165,6 +165,7 @@ def build_plan(
         "IMAGER_BENCH_GRIDDER": gridder,
         "IMAGER_BENCH_INTERPOLATION": interpolation,
         "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
+        "IMAGER_BENCH_PHASECENTER_FIELD": optional_int_string(imaging, "phasecenter_field"),
         "IMAGER_BENCH_SPW": str_value(imaging, "spw", "0"),
         "IMAGER_BENCH_CHANNEL_START": str(int_value(imaging, "channel_start", 0)),
         "IMAGER_BENCH_CHANNEL_COUNT": str(int_value(imaging, "channel_count", 1)),
@@ -746,6 +747,15 @@ def int_value(obj: dict[str, Any], key: str, default: int) -> int:
     if not isinstance(value, int):
         raise HarnessError(f"{key!r} must be an integer")
     return value
+
+
+def optional_int_string(obj: dict[str, Any], key: str) -> str:
+    value = obj.get(key)
+    if value is None:
+        return ""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HarnessError(f"{key!r} must be an integer or null")
+    return str(value)
 
 
 def float_value(obj: dict[str, Any], key: str, default: float) -> float:

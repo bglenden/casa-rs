@@ -14,9 +14,13 @@ imager.
     explicit data-root policy, and can materialize deterministic source models,
     spectral profiles, simulation request plans, and generated workload
     manifests
+- `tools/perf/imager/bench_simobserve.py`
+  - compares native `simobserve` with CASA on selected datasets, records native
+    timing reports, and can enforce native throughput floors for internal-disk
+    storage-manager regression checks
 - `tools/perf/imager/wave1_dataset_registry.json`
-  - records the VLA/ALMA, single-field/mosaic, small/medium, and one shared
-    large simulated-dataset plan for #248
+  - records the VLA/ALMA, single-field/mosaic, small/medium, and one large
+    ALMA mosaic/cube simulated-dataset plan for #248
 - `crates/casars-imager/examples/profile_imager.rs`
   - runs repeated Rust imaging passes and reports median stage timings from the
     pure `casa-imaging` core
@@ -51,14 +55,53 @@ tools/perf/imager/stage_wave1_datasets.py \
 Medium and large datasets are expected to live on the external drive on this
 system. The staging tool requires those tiers under `/Volumes/GLENDENNING`
 unless `--allow-non-external-large-root` is passed explicitly. The large tier
-is intentionally one shared `wave1-alma-shared-large` dataset; standard, cube,
-mosaic, and sentinel large workloads are generated as logical selections from
-that one staged MeasurementSet.
+is intentionally one `wave1-alma-mosaic-large` dataset; standard, cube, mosaic,
+and sentinel large workloads are generated as logical selections from that one
+staged MeasurementSet.
 
-For Wave 1, CASA C++ generation is the dataset source of truth. The staging
-tool also emits native `casa-rs` simulation request plans where useful, but
-native mosaic generation and native channel-varying cube source prediction are
-tracked as backlog work rather than Wave 1 blockers.
+For Wave 1, native `simobserve` is the primary benchmark dataset generator.
+CASA C++ generation remains the small-case oracle for selected parity and
+performance checks.
+
+To compare native `simobserve` with CASA on a selected dataset:
+
+```sh
+python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/plan/wave1-dataset-plan.json \
+  --dataset wave1-vla-single-small \
+  --disable-noise \
+  --strict-values
+```
+
+The strict comparison samples matching rows by time, field, data description,
+and baseline, then checks UVW, flags, weights, sigmas, and DATA. Its default
+DATA tolerance is absolute `0.05 Jy` plus relative `5e-3`, which is tight
+enough to catch model scaling/channel-order mistakes while avoiding false
+failures from small CASA/native numerical differences in low-amplitude cells.
+
+To check that the streamed MeasurementSet writer has not regressed, run a
+native-only write-path benchmark on a fast local disk, not on
+`/Volumes/GLENDENNING`:
+
+```sh
+cargo build --release --bin simobserve
+
+python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/plan/wave1-dataset-plan.json \
+  --dataset wave1-vla-single-medium \
+  --output-dir target/imperformance-wave1/internal-io-check \
+  --skip-casa \
+  --skip-serial-check \
+  --disable-prediction \
+  --require-native-throughput-mb-s 700 \
+  --require-data-io-throughput-mb-s 900
+```
+
+`--disable-prediction` removes model prediction and corruption so the run is
+dominated by MeasurementSet creation and streamed tiled-column writes. On this
+machine, the internal-disk medium write-only run measured about `955 MB/s`
+end-to-end and the full medium run showed only `67 ms` of producer blocking on
+the writer. The same external-drive write pattern measured far lower, so
+internal-disk checks are the meaningful guard for storage-manager regressions;
+external-drive runs remain useful for capacity and end-to-end staging checks.
 
 To run the same workload for real:
 

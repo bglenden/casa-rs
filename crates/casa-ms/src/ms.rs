@@ -174,6 +174,32 @@ impl MeasurementSet {
         Ok(())
     }
 
+    pub(crate) fn save_assuming_valid_with_main_column_overrides(
+        &mut self,
+        column_overrides: &HashMap<String, Vec<Option<Value>>>,
+    ) -> MsResult<()> {
+        let path = self
+            .path
+            .as_ref()
+            .ok_or_else(|| MsError::VersionError("MS has no path; use save_as()".to_string()))?
+            .clone();
+
+        self.refresh_subtable_paths(&path);
+        self.sync_main_metadata(&path);
+        save_main_table_with_policy_and_column_overrides(&self.main, &path, column_overrides)?;
+
+        for (id, table) in &self.subtables {
+            let subtable_path = self
+                .subtable_paths
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| path.join(id.name()));
+            table.save_assuming_valid(measurement_set_table_options(&subtable_path))?;
+        }
+
+        Ok(())
+    }
+
     /// Save only the MS main table back to disk.
     ///
     /// This is intended for workflows that mutate only MAIN columns/keywords
@@ -843,6 +869,28 @@ fn save_main_table_with_policy(main: &Table, path: &Path, assume_valid: bool) ->
     Ok(())
 }
 
+fn save_main_table_with_policy_and_column_overrides(
+    main: &Table,
+    path: &Path,
+    column_overrides: &HashMap<String, Vec<Option<Value>>>,
+) -> MsResult<()> {
+    let options = measurement_set_table_options(path);
+    match measurement_set_save_policy() {
+        MeasurementSetSavePolicy::Standard => {
+            main.save_assuming_valid(options)?;
+        }
+        MeasurementSetSavePolicy::CasaLikeMixed => {
+            let bindings = measurement_set_main_table_bindings(main);
+            main.save_with_bindings_and_column_overrides_assuming_valid(
+                options,
+                &bindings,
+                column_overrides,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn measurement_set_main_table_bindings(main: &Table) -> HashMap<String, ColumnBinding> {
     let column_names: HashSet<_> = main
         .schema()
@@ -855,17 +903,30 @@ pub(crate) fn measurement_set_main_table_bindings(main: &Table) -> HashMap<Strin
         })
         .unwrap_or_default();
     let mut bindings = HashMap::new();
-    let mut bind = |name: &str, data_manager: DataManagerKind| {
+    let mut bind = |name: &str, data_manager: DataManagerKind, tile_shape: Option<Vec<usize>>| {
         if column_names.contains(name) {
             bindings.insert(
                 name.to_string(),
                 ColumnBinding {
                     data_manager,
-                    tile_shape: None,
+                    tile_shape,
                 },
             );
         }
     };
+
+    let (num_corr, num_chan) = main_visibility_cell_shape(main).unwrap_or((4, 128));
+    let visibility_tile = casa_visibility_tile_shape(num_corr, num_chan, "");
+    let visibility_tile_shape = Some(visibility_tile.clone());
+    let flag_tile_shape = Some(visibility_tile.clone());
+    let flag_category_tile_shape = Some(vec![
+        visibility_tile[0],
+        visibility_tile[1],
+        1,
+        visibility_tile[2],
+    ]);
+    let weight_tile_shape = Some(casa_weight_tile_shape(&visibility_tile));
+    let uvw_tile_shape = Some(casa_uvw_tile_shape(&visibility_tile));
 
     for name in [
         "ARRAY_ID",
@@ -873,7 +934,6 @@ pub(crate) fn measurement_set_main_table_bindings(main: &Table) -> HashMap<Strin
         "FEED1",
         "FEED2",
         "FIELD_ID",
-        "FLAG_ROW",
         "INTERVAL",
         "OBSERVATION_ID",
         "PROCESSOR_ID",
@@ -882,25 +942,142 @@ pub(crate) fn measurement_set_main_table_bindings(main: &Table) -> HashMap<Strin
         "TIME",
         "TIME_CENTROID",
     ] {
-        bind(name, DataManagerKind::IncrementalStMan);
+        bind(name, DataManagerKind::IncrementalStMan, None);
     }
-    for name in ["ANTENNA1", "ANTENNA2", "DATA_DESC_ID"] {
-        bind(name, DataManagerKind::StandardStMan);
+    for name in ["ANTENNA1", "ANTENNA2", "DATA_DESC_ID", "FLAG_ROW"] {
+        bind(name, DataManagerKind::StandardStMan, None);
     }
-    for name in [
-        "DATA",
-        "MODEL_DATA",
-        "CORRECTED_DATA",
-        "FLAG",
-        "SIGMA",
-        "WEIGHT",
+    for name in ["DATA", "MODEL_DATA", "CORRECTED_DATA"] {
+        bind(
+            name,
+            DataManagerKind::TiledShapeStMan,
+            visibility_tile_shape.clone(),
+        );
+    }
+    bind("FLAG", DataManagerKind::TiledShapeStMan, flag_tile_shape);
+    bind(
         "FLAG_CATEGORY",
-    ] {
-        bind(name, DataManagerKind::TiledShapeStMan);
+        DataManagerKind::TiledShapeStMan,
+        flag_category_tile_shape,
+    );
+    for name in ["SIGMA", "WEIGHT"] {
+        bind(
+            name,
+            DataManagerKind::TiledShapeStMan,
+            weight_tile_shape.clone(),
+        );
     }
-    bind("UVW", DataManagerKind::TiledColumnStMan);
+    bind("UVW", DataManagerKind::TiledColumnStMan, uvw_tile_shape);
 
     bindings
+}
+
+fn main_visibility_cell_shape(main: &Table) -> Option<(usize, usize)> {
+    let row = main.rows().ok()?.first()?;
+    for column in ["DATA", "MODEL_DATA", "CORRECTED_DATA"] {
+        let Some(Value::Array(array)) = row.get(column) else {
+            continue;
+        };
+        let shape = array.shape();
+        if shape.len() >= 2 && shape[0] > 0 && shape[1] > 0 {
+            return Some((shape[0], shape[1]));
+        }
+    }
+    None
+}
+
+pub(crate) fn casa_visibility_tile_shape(
+    num_corr: usize,
+    num_chan: usize,
+    telescope_name: &str,
+) -> Vec<usize> {
+    let corr_tile = num_corr.max(1);
+    let mut chan_tile = num_chan.max(1);
+    let n_ifr = match telescope_name {
+        "ATCA" => 15usize,
+        "VLA" => 351usize,
+        "WSRT" => 91usize,
+        "BIMA" => 36usize,
+        "DRAO" => 21usize,
+        "SMA" => 28usize,
+        _ => 200usize,
+    };
+    let io_block_size = 131_072usize;
+    let mut element_io_block_size = io_block_size;
+    if chan_tile < 100 {
+        chan_tile = (io_block_size / corr_tile / n_ifr).max(1);
+    } else if chan_tile < 10_000 {
+        chan_tile = ((chan_tile as f32 / 99.9).sqrt().floor() as usize).max(1) * 10;
+    } else {
+        chan_tile = 100;
+    }
+    while (io_block_size / corr_tile / chan_tile) > 10 * n_ifr && chan_tile < num_chan {
+        chan_tile += 2;
+    }
+    if (io_block_size / corr_tile / chan_tile) > 10 * n_ifr {
+        element_io_block_size = 10 * n_ifr * corr_tile * chan_tile;
+    }
+    chan_tile = chan_tile.min(num_chan).max(1);
+    let row_tile = (element_io_block_size / corr_tile / chan_tile).max(1);
+    vec![corr_tile, chan_tile, row_tile]
+}
+
+pub(crate) fn casa_weight_tile_shape(visibility_tile_shape: &[usize]) -> Vec<usize> {
+    vec![
+        visibility_tile_shape[0],
+        visibility_tile_shape[1] * visibility_tile_shape[2],
+    ]
+}
+
+pub(crate) fn casa_uvw_tile_shape(visibility_tile_shape: &[usize]) -> Vec<usize> {
+    vec![
+        3,
+        (visibility_tile_shape[0] * visibility_tile_shape[1] * visibility_tile_shape[2] / 3).max(1),
+    ]
+}
+
+pub(crate) fn measurement_set_main_data_manager_sequence(
+    main: &Table,
+    target_column: &str,
+) -> Option<u32> {
+    let schema = main.schema()?;
+    let bindings = measurement_set_main_table_bindings(main);
+    let mut binding_seq_map: HashMap<String, u32> = HashMap::new();
+    let mut next_seq = 1u32;
+
+    for column in schema.columns() {
+        let column_name = column.name();
+        let Some(binding) = bindings.get(column_name) else {
+            if column_name == target_column {
+                return Some(0);
+            }
+            continue;
+        };
+        let group_key = if matches!(
+            binding.data_manager,
+            DataManagerKind::TiledColumnStMan
+                | DataManagerKind::TiledShapeStMan
+                | DataManagerKind::TiledCellStMan
+                | DataManagerKind::TiledDataStMan
+        ) {
+            format!("{:?}:{column_name}", binding.data_manager)
+        } else {
+            format!("{:?}", binding.data_manager)
+        };
+        let seq = if let Some(seq) = binding_seq_map.get(&group_key) {
+            *seq
+        } else {
+            let seq = next_seq;
+            binding_seq_map.insert(group_key, seq);
+            next_seq += 1;
+            seq
+        };
+        if column_name == target_column {
+            return Some(seq);
+        }
+    }
+
+    None
 }
 
 fn merge_measinfo_keywords(existing: Option<&RecordValue>, defaults: &RecordValue) -> RecordValue {

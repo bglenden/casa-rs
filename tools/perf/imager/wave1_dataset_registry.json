@@ -5,8 +5,8 @@
   "description": "Deterministic simulated imaging datasets for ImPerformance Wave 1.",
   "large_tier_policy": {
     "dataset_count": 1,
-    "dataset_id": "wave1-alma-shared-large",
-    "reason": "The external drive budget allows one approximately 100 GiB dataset. The large tier is therefore a shared ALMA mosaic/cube superset, and benchmark manifests select fields, channels, and gridders from that one MeasurementSet."
+    "dataset_id": "wave1-alma-mosaic-large",
+    "reason": "The external drive budget allows one approximately 100 GiB dataset. The large tier is therefore a single ALMA mosaic/cube superset, and benchmark manifests select fields, channels, and gridders from that one MeasurementSet."
   },
   "tiers": {
     "small": {
@@ -58,8 +58,8 @@
       ],
       "pointing_count": 7
     },
-    "shared-large": {
-      "display_name": "shared large ALMA mosaic/cube superset",
+    "mosaic-large": {
+      "display_name": "large ALMA mosaic/cube superset",
       "selected_modes": [
         "standard-mfs-dirty-control",
         "standard-mfs-clean-current",
@@ -97,8 +97,8 @@
       "tier": "small",
       "model_pixels": 512,
       "image_pixels": 512,
-      "channels": 16,
-      "duration_seconds": 1200,
+      "channels": 512,
+      "duration_seconds": 3730,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.001
     },
@@ -107,10 +107,10 @@
       "instrument": "vla",
       "family": "single",
       "tier": "medium",
-      "model_pixels": 2048,
+      "model_pixels": 512,
       "image_pixels": 2048,
-      "channels": 64,
-      "duration_seconds": 28800,
+      "channels": 512,
+      "duration_seconds": 116640,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.001
     },
@@ -121,20 +121,8 @@
       "tier": "small",
       "model_pixels": 512,
       "image_pixels": 512,
-      "channels": 8,
-      "duration_seconds": 600,
-      "integration_seconds": 10,
-      "noise_simplenoise_jy": 0.0012
-    },
-    {
-      "id": "wave1-vla-mosaic-medium",
-      "instrument": "vla",
-      "family": "mosaic",
-      "tier": "medium",
-      "model_pixels": 2048,
-      "image_pixels": 2048,
-      "channels": 32,
-      "duration_seconds": 7200,
+      "channels": 512,
+      "duration_seconds": 3730,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0012
     },
@@ -145,8 +133,8 @@
       "tier": "small",
       "model_pixels": 512,
       "image_pixels": 512,
-      "channels": 16,
-      "duration_seconds": 600,
+      "channels": 256,
+      "duration_seconds": 2900,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0007
     },
@@ -155,10 +143,10 @@
       "instrument": "alma",
       "family": "single",
       "tier": "medium",
-      "model_pixels": 2048,
+      "model_pixels": 512,
       "image_pixels": 2048,
-      "channels": 64,
-      "duration_seconds": 10800,
+      "channels": 512,
+      "duration_seconds": 47560,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0007
     },
@@ -169,32 +157,20 @@
       "tier": "small",
       "model_pixels": 512,
       "image_pixels": 512,
-      "channels": 8,
-      "duration_seconds": 300,
+      "channels": 256,
+      "duration_seconds": 2900,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0008
     },
     {
-      "id": "wave1-alma-mosaic-medium",
+      "id": "wave1-alma-mosaic-large",
       "instrument": "alma",
-      "family": "mosaic",
-      "tier": "medium",
-      "model_pixels": 2048,
-      "image_pixels": 2048,
-      "channels": 32,
-      "duration_seconds": 2700,
-      "integration_seconds": 10,
-      "noise_simplenoise_jy": 0.0008
-    },
-    {
-      "id": "wave1-alma-shared-large",
-      "instrument": "alma",
-      "family": "shared-large",
+      "family": "mosaic-large",
       "tier": "large",
-      "model_pixels": 2048,
+      "model_pixels": 512,
       "image_pixels": 4096,
-      "channels": 128,
-      "duration_seconds": 57600,
+      "channels": 1024,
+      "duration_seconds": 74300,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0008
     }

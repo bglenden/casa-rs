@@ -264,7 +264,11 @@ pub use schema::{
 };
 pub use sorting::{TableGroup, TableIterator};
 pub use storage::{
-    DataManagerInfo, StorageError, TableInfo, TilePixel, TiledFileIO, set_table_cache_budget_bytes,
+    DataManagerInfo, StorageError, StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType,
+    StreamedTiledShapeComplex32Column, StreamingTiledPrimitiveWriter,
+    StreamingTiledShapeComplex32Writer, TableInfo, TilePixel, TiledFileIO,
+    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_complex32_column,
+    install_streamed_tiled_shape_primitive_column, set_table_cache_budget_bytes,
     table_cache_budget_bytes,
 };
 pub use table::{

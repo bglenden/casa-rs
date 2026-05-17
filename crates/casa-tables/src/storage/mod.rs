@@ -10,7 +10,11 @@ pub(crate) mod stman_array_file;
 pub(crate) mod table_control;
 pub(crate) mod tiled_stman;
 pub use tiled_stman::{
-    TilePixel, TiledFileIO, set_table_cache_budget_bytes, table_cache_budget_bytes,
+    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column,
+    StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer, TilePixel, TiledFileIO,
+    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_complex32_column,
+    install_streamed_tiled_shape_primitive_column, set_table_cache_budget_bytes,
+    table_cache_budget_bytes,
 };
 pub(crate) mod virtual_bitflags;
 pub(crate) mod virtual_compress;

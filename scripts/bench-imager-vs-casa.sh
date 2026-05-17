@@ -38,6 +38,7 @@ fi
 
 repeats="${BENCH_REPEATS:-5}"
 field="${IMAGER_BENCH_FIELD:-0}"
+phasecenter_field="${IMAGER_BENCH_PHASECENTER_FIELD:-}"
 spw="${IMAGER_BENCH_SPW:-0}"
 channel_start="${IMAGER_BENCH_CHANNEL_START:-0}"
 channel_count="${IMAGER_BENCH_CHANNEL_COUNT:-1}"
@@ -131,7 +132,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder field=$field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction"
+echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -152,6 +153,10 @@ fi
 
 echo "Rust release CLI timings (seconds):"
 rust_cli_file="$tmpdir/rust-cli.txt"
+phasecenter_args=()
+if [[ -n "$phasecenter_field" ]]; then
+  phasecenter_args=(--phasecenter-field "$phasecenter_field")
+fi
 for run in $(seq 1 "$repeats"); do
   if [[ -n "$rust_keep_prefix" && "$run" == "$repeats" ]]; then
     prefix="$rust_keep_prefix"
@@ -166,6 +171,7 @@ for run in $(seq 1 "$repeats"); do
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
       --field "$field" \
+      "${phasecenter_args[@]}" \
       --spw "$spw" \
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
@@ -200,6 +206,7 @@ for run in $(seq 1 "$repeats"); do
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
       --field "$field" \
+      "${phasecenter_args[@]}" \
       --spw "$spw" \
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
@@ -242,6 +249,7 @@ if [[ -n "$scales" ]]; then
   target/release/examples/profile_imager \
     "$ms_path" \
     --field "$field" \
+    "${phasecenter_args[@]}" \
     --spw "$spw" \
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
@@ -273,6 +281,7 @@ else
   target/release/examples/profile_imager \
     "$ms_path" \
     --field "$field" \
+    "${phasecenter_args[@]}" \
     --spw "$spw" \
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
@@ -312,6 +321,7 @@ from casatasks import tclean
 vis = os.environ["CASA_RS_BENCH_MS_PATH"]
 repeats = int(os.environ["CASA_RS_BENCH_REPEATS"])
 field = os.environ["CASA_RS_BENCH_FIELD"]
+phasecenter_field = os.environ["CASA_RS_BENCH_PHASECENTER_FIELD"]
 spw = os.environ["CASA_RS_BENCH_SPW"]
 chan_start = int(os.environ["CASA_RS_BENCH_CHANNEL_START"])
 chan_count = int(os.environ["CASA_RS_BENCH_CHANNEL_COUNT"])
@@ -390,6 +400,8 @@ with tempfile.TemporaryDirectory() as td:
             )
         else:
             kwargs.update(spw=spw_selector)
+        if phasecenter_field:
+            kwargs["phasecenter"] = f"FIELD_ID {phasecenter_field}"
         tclean(**kwargs)
         elapsed = time.perf_counter() - start
         times.append(elapsed)
@@ -404,6 +416,7 @@ echo "CASA tclean timings (seconds):"
 CASA_RS_BENCH_MS_PATH="$ms_path" \
 CASA_RS_BENCH_REPEATS="$repeats" \
 CASA_RS_BENCH_FIELD="$field" \
+CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
 CASA_RS_BENCH_SPW="$spw" \
 CASA_RS_BENCH_CHANNEL_START="$channel_start" \
 CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
@@ -441,6 +454,7 @@ echo "CASA PySynthesisImager stage medians (milliseconds):"
 CASA_RS_BENCH_MS_PATH="$ms_path" \
 CASA_RS_BENCH_REPEATS="$repeats" \
 CASA_RS_BENCH_FIELD="$field" \
+CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
 CASA_RS_BENCH_SPW="$spw" \
 CASA_RS_BENCH_CHANNEL_START="$channel_start" \
 CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \

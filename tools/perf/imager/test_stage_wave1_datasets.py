@@ -20,7 +20,7 @@ class StageWave1DatasetsTest(unittest.TestCase):
         self.registry = stage.read_json(stage.REGISTRY_PATH)
         self.data_root = pathlib.Path("/Volumes/GLENDENNING/casa-rs-imperformance")
 
-    def test_full_plan_uses_one_shared_large_dataset(self) -> None:
+    def test_full_plan_uses_one_mosaic_large_dataset(self) -> None:
         specs = stage.select_datasets(
             self.registry,
             dataset_ids=None,
@@ -36,7 +36,7 @@ class StageWave1DatasetsTest(unittest.TestCase):
         )
 
         large = [dataset for dataset in plan["datasets"] if dataset["tier"] == "large"]
-        self.assertEqual(["wave1-alma-shared-large"], [dataset["id"] for dataset in large])
+        self.assertEqual(["wave1-alma-mosaic-large"], [dataset["id"] for dataset in large])
         self.assertEqual(
             [
                 "standard-mfs-dirty-control",
@@ -49,10 +49,10 @@ class StageWave1DatasetsTest(unittest.TestCase):
             large[0]["selected_modes"],
         )
 
-    def test_shared_large_workloads_select_standard_or_mosaic_gridder(self) -> None:
+    def test_mosaic_large_workloads_select_standard_or_mosaic_gridder(self) -> None:
         spec = stage.select_datasets(
             self.registry,
-            dataset_ids=["wave1-alma-shared-large"],
+            dataset_ids=["wave1-alma-mosaic-large"],
             tiers=None,
             instruments=None,
         )
@@ -75,6 +75,7 @@ class StageWave1DatasetsTest(unittest.TestCase):
         self.assertEqual(all_channels, mfs["imaging"]["channel_count"])
         self.assertEqual("mosaic", mosaic["imaging"]["gridder"])
         self.assertEqual("", mosaic["imaging"]["field"])
+        self.assertEqual(0, mosaic["imaging"]["phasecenter_field"])
         self.assertEqual(32, mosaic["imaging"]["channel_count"])
 
     def test_large_tier_policy_rejects_multiple_large_datasets(self) -> None:
