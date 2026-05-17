@@ -1341,7 +1341,7 @@ fn populate_main_rows(
             uvw_rows,
         })?;
         timing.data_io_enqueue += data_io_started.elapsed();
-        for (spec, shadowed_row) in row_specs.into_iter().zip(flag_rows.into_iter()) {
+        for (spec, shadowed_row) in row_specs.into_iter().zip(flag_rows) {
             let write_started = Instant::now();
             scalar_column_overrides.push(&spec, request.integration_seconds, shadowed_row);
             let row = RecordValue::new(vec![RecordField::new(
@@ -1680,8 +1680,8 @@ impl SimobserveMainColumnWriter {
                 for ((data_row, flag_row), uvw_row) in batch
                     .data_rows
                     .into_iter()
-                    .zip(batch.flag_rows.into_iter())
-                    .zip(batch.uvw_rows.into_iter())
+                    .zip(batch.flag_rows)
+                    .zip(batch.uvw_rows)
                 {
                     data_writer.push_row(&data_row).map_err(|error| {
                         MsError::SyntheticObservation(format!(
@@ -2720,11 +2720,12 @@ impl SyntheticCorruptionState {
         sample_index: usize,
     ) {
         let gains = &self.gains_by_sample[sample_index % self.gains_by_sample.len()];
-        let correlation_count = if channel_count == 0 {
-            0
-        } else {
-            values.len() / channel_count
+        let Some(correlation_count) = values.len().checked_div(channel_count) else {
+            return;
         };
+        if correlation_count == 0 {
+            return;
+        }
         for (index, value) in values.iter_mut().enumerate() {
             let channel = index / correlation_count;
             let correlation = index % correlation_count;
