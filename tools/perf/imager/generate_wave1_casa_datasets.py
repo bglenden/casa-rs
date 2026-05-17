@@ -20,6 +20,8 @@ from typing import Any
 
 import numpy as np
 
+import stage_wave1_datasets as stage
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -98,7 +100,7 @@ def generate_dataset(
     if canonical_ms.exists() and overwrite:
         remove_path(canonical_ms)
 
-    model_image = create_model_image(dataset)
+    model_image = create_model_image(dataset, overwrite=overwrite)
     pointings = write_pointings(dataset, casa_dir)
     project_name = dataset_id
     project_dir = casa_dir / project_name
@@ -130,7 +132,7 @@ def generate_dataset(
     }
 
 
-def create_model_image(dataset: dict[str, Any]) -> pathlib.Path:
+def create_model_image(dataset: dict[str, Any], *, overwrite: bool = False) -> pathlib.Path:
     from casatools import coordsys, image
 
     shape = dataset["shape"]
@@ -140,10 +142,12 @@ def create_model_image(dataset: dict[str, Any]) -> pathlib.Path:
     out = pathlib.Path(paths["continuum_model_fits"]).with_name(
         f"structured-cube-{channels}ch.image"
     )
-    if out.exists():
+    if out.exists() and not overwrite:
         return out
+    if out.exists():
+        remove_path(out)
 
-    base = structured_plane(pixels, dataset["family"])
+    base = stage.source_plane(pixels, dataset["family"])
     profile = spectral_profile(channels)
 
     cs = coordsys()
@@ -180,56 +184,17 @@ def create_model_image(dataset: dict[str, Any]) -> pathlib.Path:
 
 
 def structured_plane(pixels: int, family: str) -> np.ndarray:
-    coords = (np.arange(pixels, dtype=np.float32) + 0.5 - pixels / 2.0) / pixels
-    cx, cy = np.meshgrid(coords, coords, indexing="ij")
-    radius = np.hypot(cx, cy)
-    theta = np.arctan2(cy, cx)
-    core = gaussian_array(cx, cy, 0.0, 0.0, 0.018)
-    knot1 = 0.42 * gaussian_array(cx, cy, -0.14, 0.09, 0.028)
-    knot2 = 0.31 * gaussian_array(cx, cy, 0.18, -0.11, 0.022)
-    ring = 0.34 * np.exp(-((radius - 0.21) ** 2) / (2.0 * 0.018**2))
-    arm1 = 0.18 * np.exp(-((radius - (0.10 + 0.040 * theta)) ** 2) / (2.0 * 0.020**2))
-    arm2 = 0.14 * np.exp(-((radius - (0.18 - 0.035 * theta)) ** 2) / (2.0 * 0.024**2))
-    halo = 0.06 * np.exp(-(radius**2) / (2.0 * 0.26**2))
-    ripple = 0.015 * (1.0 + np.sin(37.0 * cx + 19.0 * cy))
-    if "mosaic" in family:
-        gradient = 1.0 + 0.10 * cx - 0.07 * cy
-    else:
-        gradient = 1.0
-    return np.maximum(
-        0.0,
-        (core + knot1 + knot2 + ring + arm1 + arm2 + halo + ripple) * gradient,
-    ).astype(np.float32)
+    return stage.source_plane(pixels, family)
 
 
 def source_pixel(cx: float, cy: float, family: str) -> float:
-    radius = math.hypot(cx, cy)
-    theta = math.atan2(cy, cx)
-    core = gaussian(cx, cy, 0.0, 0.0, 0.018)
-    knot1 = 0.42 * gaussian(cx, cy, -0.14, 0.09, 0.028)
-    knot2 = 0.31 * gaussian(cx, cy, 0.18, -0.11, 0.022)
-    ring = 0.34 * math.exp(-((radius - 0.21) ** 2) / (2.0 * 0.018**2))
-    arm1 = 0.18 * math.exp(-((radius - (0.10 + 0.040 * theta)) ** 2) / (2.0 * 0.020**2))
-    arm2 = 0.14 * math.exp(-((radius - (0.18 - 0.035 * theta)) ** 2) / (2.0 * 0.024**2))
-    halo = 0.06 * math.exp(-(radius**2) / (2.0 * 0.26**2))
-    ripple = 0.015 * (1.0 + math.sin(37.0 * cx + 19.0 * cy))
-    gradient = 1.0 + (0.10 * cx - 0.07 * cy if "mosaic" in family else 0.0)
-    return max(0.0, (core + knot1 + knot2 + ring + arm1 + arm2 + halo + ripple) * gradient)
+    x = int((cx + 0.5) * 512)
+    y = int((cy + 0.5) * 512)
+    return stage.source_pixel(x, y, 512, family)
 
 
 def spectral_profile(channels: int) -> list[float]:
-    if channels == 1:
-        return [1.0]
-    center = 0.5 * max(0, channels - 1)
-    values = []
-    for channel in range(channels):
-        x = 0.0 if channels == 1 else (channel - center) / max(1.0, center)
-        continuum = max(0.05, 1.0 + x) ** -0.7
-        broad_line = 0.45 * math.exp(-0.5 * ((x - 0.05) / 0.22) ** 2)
-        narrow_line = 0.22 * math.exp(-0.5 * ((x + 0.38) / 0.08) ** 2)
-        absorption = -0.18 * math.exp(-0.5 * ((x - 0.32) / 0.06) ** 2)
-        values.append(max(0.05, continuum + broad_line + narrow_line + absorption))
-    return values
+    return [stage.spectral_total_scale(channels, channel) for channel in range(channels)]
 
 
 def write_pointings(dataset: dict[str, Any], casa_dir: pathlib.Path) -> pathlib.Path:
@@ -260,7 +225,7 @@ def format_direction(ra_deg: float, dec_deg: float) -> str:
     dm_float = (dec_abs - dd) * 60.0
     dm = int(dm_float)
     ds = (dm_float - dm) * 60.0
-    return f"J2000 {hh:02d}h{mm:02d}m{ss:08.5f}s {sign}{dd:02d}d{dm:02d}m{ds:07.4f}s 10.0"
+    return f"J2000 {hh:02d}h{mm:02d}m{ss:013.10f}s {sign}{dd:02d}d{dm:02d}m{ds:010.7f}s 10.0"
 
 
 def run_simobserve(
@@ -443,11 +408,11 @@ def cell_arcsec(instrument: str) -> float:
 
 
 def start_frequency_hz(instrument: str) -> float:
-    return 230.0e9 if instrument == "alma" else 44.0e9
+    return 230.0e9 if instrument == "alma" else 8.0e9
 
 
 def channel_width_hz(instrument: str) -> float:
-    return 2.0e6 if instrument == "alma" else 128.0e6
+    return 2.0e6
 
 
 def spw_center_frequency_hz(dataset: dict[str, Any]) -> float:

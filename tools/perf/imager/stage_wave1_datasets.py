@@ -24,6 +24,8 @@ TOOL_DIR = pathlib.Path(__file__).resolve().parent
 REGISTRY_PATH = TOOL_DIR / "wave1_dataset_registry.json"
 DEFAULT_OUTPUT_DIR = pathlib.Path("target/imperformance-wave1/datasets")
 EXTERNAL_PREFIX = pathlib.Path("/Volumes/GLENDENNING")
+MODEL_PHASE_CENTER_RA_DEG = 270.000129
+MODEL_PHASE_CENTER_DEC_DEG = -22.999889
 
 
 class DatasetError(Exception):
@@ -390,6 +392,7 @@ def build_casars_simobserve_request(dataset: dict[str, Any]) -> dict[str, Any]:
             "overwrite": True,
             "telescope_name": dataset["instrument"].upper(),
             "field_name": dataset["id"],
+            "phase_center_rad": phase_center_rad(0.0, 0.0),
             "fields": fields,
             "duration_seconds": dataset["shape"]["duration_seconds"],
             "integration_seconds": dataset["shape"]["integration_seconds"],
@@ -416,6 +419,16 @@ def build_casars_simobserve_request(dataset: dict[str, Any]) -> dict[str, Any]:
     return request
 
 
+def phase_center_rad(dra_arcsec: float, ddec_arcsec: float) -> list[float]:
+    ra_rad = math.radians(MODEL_PHASE_CENTER_RA_DEG + dra_arcsec / 3600.0)
+    if ra_rad > math.pi:
+        ra_rad -= math.tau
+    return [
+        ra_rad,
+        math.radians(MODEL_PHASE_CENTER_DEC_DEG + ddec_arcsec / 3600.0),
+    ]
+
+
 def build_casars_fields(dataset: dict[str, Any]) -> list[dict[str, Any]]:
     count = int(dataset["shape"]["pointing_count"])
     if count <= 1:
@@ -430,10 +443,7 @@ def build_casars_fields(dataset: dict[str, Any]) -> list[dict[str, Any]]:
         fields.append(
             {
                 "name": f"{dataset['id']}_field_{index}",
-                "phase_center_rad": [
-                    math.radians(270.000129 + dra_arcsec / 3600.0),
-                    math.radians(-22.999889 + ddec_arcsec / 3600.0),
-                ],
+                "phase_center_rad": phase_center_rad(dra_arcsec, ddec_arcsec),
             }
         )
     return fields
@@ -488,6 +498,8 @@ def write_structured_fits(
             ("CTYPE2", "'DEC--SIN'"),
             ("CUNIT1", "'deg'"),
             ("CUNIT2", "'deg'"),
+            ("RADESYS", "'FK5'"),
+            ("EQUINOX", "2000.0"),
             ("CRPIX1", f"{pixels / 2 + 0.5:.6f}"),
             ("CRPIX2", f"{pixels / 2 + 0.5:.6f}"),
             ("CRVAL1", "270.000129"),
@@ -506,8 +518,8 @@ def write_structured_fits(
                 ("CTYPE4", "'FREQ'"),
                 ("CUNIT4", "'Hz'"),
                 ("CRPIX4", "1.0"),
-                ("CRVAL4", f"{start_frequency_hz(instrument):.12g}"),
-                ("CDELT4", f"{channel_width_hz(instrument):.12g}"),
+                ("CRVAL4", f"{start_frequency_hz(instrument):.12E}"),
+                ("CDELT4", f"{channel_width_hz(instrument):.12E}"),
             ]
         )
     cards.extend(
@@ -525,7 +537,7 @@ def write_structured_fits(
             base = source_plane(pixels, family)
             for channel in range(channels):
                 plane = (base * spectral_total_scale(channels, channel)).astype(">f4", copy=False)
-                handle.write(plane.tobytes(order="C"))
+                handle.write(plane.T.tobytes(order="C"))
         else:
             for channel in range(channels):
                 scale = spectral_total_scale(channels, channel)
@@ -560,9 +572,15 @@ def source_pixel(x: int, y: int, pixels: int, family: str) -> float:
     knot1 = 0.42 * gaussian(cx, cy, -0.14, 0.09, 0.028)
     knot2 = 0.31 * gaussian(cx, cy, 0.18, -0.11, 0.022)
     ring = 0.34 * math.exp(-((radius - 0.21) ** 2) / (2.0 * 0.018**2))
-    arm1 = 0.18 * math.exp(-((radius - (0.10 + 0.040 * theta)) ** 2) / (2.0 * 0.020**2))
-    arm2 = 0.14 * math.exp(
-        -((radius - (0.18 - 0.035 * theta)) ** 2) / (2.0 * 0.024**2)
+    arm1 = spiral_arm(radius, theta, phase=0.20, pitch=14.0, radius0=0.18, width=0.28, radial_width=0.11)
+    arm2 = 0.78 * spiral_arm(
+        radius,
+        theta,
+        phase=math.pi + 0.55,
+        pitch=12.0,
+        radius0=0.20,
+        width=0.30,
+        radial_width=0.12,
     )
     halo = 0.06 * math.exp(-(radius**2) / (2.0 * 0.26**2))
     ripple = 0.015 * (1.0 + math.sin(37.0 * cx + 19.0 * cy))
@@ -572,17 +590,24 @@ def source_pixel(x: int, y: int, pixels: int, family: str) -> float:
 
 
 def source_plane(pixels: int, family: str) -> Any:
-    y, x = np.mgrid[0:pixels, 0:pixels]
-    cx = (x.astype("float32") + 0.5 - pixels / 2.0) / pixels
-    cy = (y.astype("float32") + 0.5 - pixels / 2.0) / pixels
+    coords = (np.arange(pixels, dtype=np.float32) + 0.5 - pixels / 2.0) / pixels
+    cx, cy = np.meshgrid(coords, coords, indexing="ij")
     radius = np.hypot(cx, cy)
     theta = np.arctan2(cy, cx)
     core = np.exp(-((cx**2 + cy**2) / (2.0 * 0.018**2)))
     knot1 = 0.42 * np.exp(-(((cx + 0.14) ** 2 + (cy - 0.09) ** 2) / (2.0 * 0.028**2)))
     knot2 = 0.31 * np.exp(-(((cx - 0.18) ** 2 + (cy + 0.11) ** 2) / (2.0 * 0.022**2)))
     ring = 0.34 * np.exp(-((radius - 0.21) ** 2) / (2.0 * 0.018**2))
-    arm1 = 0.18 * np.exp(-((radius - (0.10 + 0.040 * theta)) ** 2) / (2.0 * 0.020**2))
-    arm2 = 0.14 * np.exp(-((radius - (0.18 - 0.035 * theta)) ** 2) / (2.0 * 0.024**2))
+    arm1 = spiral_arm_array(radius, theta, phase=0.20, pitch=14.0, radius0=0.18, width=0.28, radial_width=0.11)
+    arm2 = 0.78 * spiral_arm_array(
+        radius,
+        theta,
+        phase=math.pi + 0.55,
+        pitch=12.0,
+        radius0=0.20,
+        width=0.30,
+        radial_width=0.12,
+    )
     halo = 0.06 * np.exp(-(radius**2) / (2.0 * 0.26**2))
     ripple = 0.015 * (1.0 + np.sin(37.0 * cx + 19.0 * cy))
     mosaic_gradient = 1.0 + (0.10 * cx - 0.07 * cy if is_mosaic_family(family) else 0.0)
@@ -590,6 +615,40 @@ def source_plane(pixels: int, family: str) -> Any:
         (core + knot1 + knot2 + ring + arm1 + arm2 + halo + ripple) * mosaic_gradient,
         0.0,
     ).astype("float32")
+
+
+def spiral_arm(
+    radius: float,
+    theta: float,
+    *,
+    phase: float,
+    pitch: float,
+    radius0: float,
+    width: float,
+    radial_width: float,
+) -> float:
+    target = phase + pitch * (radius - radius0)
+    angular = math.atan2(math.sin(theta - target), math.cos(theta - target))
+    angular_profile = math.exp(-(angular**2) / (2.0 * width**2))
+    radial_profile = math.exp(-((radius - radius0) ** 2) / (2.0 * radial_width**2))
+    return 0.18 * angular_profile * radial_profile
+
+
+def spiral_arm_array(
+    radius: Any,
+    theta: Any,
+    *,
+    phase: float,
+    pitch: float,
+    radius0: float,
+    width: float,
+    radial_width: float,
+) -> Any:
+    target = phase + pitch * (radius - radius0)
+    angular = np.arctan2(np.sin(theta - target), np.cos(theta - target))
+    angular_profile = np.exp(-(angular**2) / (2.0 * width**2))
+    radial_profile = np.exp(-((radius - radius0) ** 2) / (2.0 * radial_width**2))
+    return 0.18 * angular_profile * radial_profile
 
 
 def is_mosaic_family(family: str) -> bool:
@@ -756,22 +815,32 @@ def antennas_from_casa_array_config(
 
 
 def alma_loc_to_itrf(x_m: float, y_m: float, z_m: float) -> list[float]:
-    # CASA's ALMA simulation config uses a local tangent-plane frame.  These
-    # constants reproduce CASA's conversion for alma.cycle8.5.cfg.
-    center = [2_225_142.18027137, -5_440_307.37035444, -2_481_029.85184099]
-    rotation = [
-        [0.92557307, 0.14805787, 0.34841548],
-        [0.37856899, -0.36199050, -0.85184998],
-        [0.0, 0.920348708, -0.391098780],
-    ]
-    local = [x_m, y_m, z_m]
+    # CASA's ALMA configs use coordsys=LOC.  simutil.readantenna converts those
+    # rows with locxyz2itrf(obslat, obslon, obsalt, x, y, z), where obslat/lon/alt
+    # come from me.measure(me.observatory("ALMA"), "WGS84").
+    latitude_rad = math.radians(-23.022886)
+    longitude_rad = math.radians(-67.754929)
+    altitude_m = 5056.8
+    sin_lat = math.sin(latitude_rad)
+    cos_lat = math.cos(latitude_rad)
+    cos_lon = math.cos(longitude_rad)
+    sin_lon = math.sin(longitude_rad)
+    semi_major_m = 6_378_137.0
+    semi_minor_m = 6_356_752.3142
+    eccentric_angle = math.acos(semi_minor_m / semi_major_m)
+    radius = semi_major_m / math.sqrt(1.0 - (math.sin(eccentric_angle) * sin_lat) ** 2)
+    local_radius = (radius + z_m + altitude_m) * cos_lat - y_m * sin_lat
     return [
-        center[axis] + sum(rotation[axis][local_axis] * local[local_axis] for local_axis in range(3))
-        for axis in range(3)
+        local_radius * cos_lon - x_m * sin_lon,
+        local_radius * sin_lon + x_m * cos_lon,
+        (radius * (semi_minor_m / semi_major_m) ** 2 + z_m + altitude_m) * sin_lat
+        + y_m * cos_lat,
     ]
 
 
 def format_card(key: str, value: str) -> str:
+    if value.startswith("'") and value.endswith("'"):
+        return f"{key:<8}= {value:<20}".ljust(80)
     return f"{key:<8}= {value:>20}".ljust(80)
 
 
@@ -788,11 +857,11 @@ def cell_deg(instrument: str) -> float:
 
 
 def start_frequency_hz(instrument: str) -> float:
-    return 230.0e9 if instrument == "alma" else 44.0e9
+    return 230.0e9 if instrument == "alma" else 8.0e9
 
 
 def channel_width_hz(instrument: str) -> float:
-    return 2.0e6 if instrument == "alma" else 128.0e6
+    return 2.0e6
 
 
 def stable_seed(text: str) -> int:

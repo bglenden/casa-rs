@@ -13,6 +13,32 @@ import bench_simobserve
 
 
 class NativePerformanceSummaryTests(unittest.TestCase):
+    def test_strict_data_violation_requires_same_cell_to_fail_both_tolerances(self) -> None:
+        self.assertFalse(
+            bench_simobserve.strict_data_cell_violates(
+                0.20,
+                2000.0,
+                data_atol=0.05,
+                data_rtol=0.001,
+            )
+        )
+        self.assertFalse(
+            bench_simobserve.strict_data_cell_violates(
+                0.001,
+                0.002,
+                data_atol=0.05,
+                data_rtol=0.001,
+            )
+        )
+        self.assertTrue(
+            bench_simobserve.strict_data_cell_violates(
+                0.20,
+                1.0,
+                data_atol=0.05,
+                data_rtol=0.001,
+            )
+        )
+
     def test_native_performance_summary_uses_reported_streamed_io_bytes(self) -> None:
         native = {
             "best_seconds": 20.0,

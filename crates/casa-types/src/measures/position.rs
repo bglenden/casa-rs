@@ -8,7 +8,8 @@
 //!   to C++ `MPosition`.
 //!
 //! Conversions between ITRF (geocentric Cartesian) and WGS84 (geodetic) use
-//! the [`sofars`] crate's `gd2gc`/`gc2gd` functions with the WGS84 ellipsoid.
+//! casacore-compatible WGS84 ellipsoid constants for WGS84-to-ITRF and the
+//! [`sofars`] crate's `gc2gd` inverse for ITRF-to-WGS84.
 
 use std::fmt;
 use std::str::FromStr;
@@ -19,6 +20,8 @@ use super::error::MeasureError;
 
 /// WGS84 ellipsoid identifier for sofars (n=1).
 const WGS84_ELLIPSOID: i32 = 1;
+const CASACORE_WGS84_A_M: f64 = 6_378_137.0;
+const CASACORE_WGS84_B_M: f64 = 6_356_752.314_2;
 
 /// Position reference frame types.
 ///
@@ -213,13 +216,9 @@ impl MPosition {
     pub fn as_itrf(&self) -> [f64; 3] {
         match self.refer {
             PositionRef::ITRF => self.values,
-            PositionRef::WGS84 => sofars::coords::gd2gc(
-                WGS84_ELLIPSOID,
-                self.values[0],
-                self.values[1],
-                self.values[2],
-            )
-            .unwrap_or(self.values),
+            PositionRef::WGS84 => {
+                casacore_wgs84_to_itrf(self.values[0], self.values[1], self.values[2])
+            }
         }
     }
 
@@ -252,22 +251,26 @@ impl MPosition {
                     refer: PositionRef::WGS84,
                 })
             }
-            (PositionRef::WGS84, PositionRef::ITRF) => {
-                let xyz = sofars::coords::gd2gc(
-                    WGS84_ELLIPSOID,
-                    self.values[0],
-                    self.values[1],
-                    self.values[2],
-                )
-                .map_err(|code| MeasureError::SofarsError { code })?;
-                Ok(MPosition {
-                    values: xyz,
-                    refer: PositionRef::ITRF,
-                })
-            }
+            (PositionRef::WGS84, PositionRef::ITRF) => Ok(MPosition {
+                values: casacore_wgs84_to_itrf(self.values[0], self.values[1], self.values[2]),
+                refer: PositionRef::ITRF,
+            }),
             _ => unreachable!("only two position reference types exist"),
         }
     }
+}
+
+fn casacore_wgs84_to_itrf(longitude_rad: f64, latitude_rad: f64, height_m: f64) -> [f64; 3] {
+    let e2 = (CASACORE_WGS84_A_M * CASACORE_WGS84_A_M - CASACORE_WGS84_B_M * CASACORE_WGS84_B_M)
+        / (CASACORE_WGS84_A_M * CASACORE_WGS84_A_M);
+    let (sin_lat, cos_lat) = latitude_rad.sin_cos();
+    let (sin_lon, cos_lon) = longitude_rad.sin_cos();
+    let n = CASACORE_WGS84_A_M / (1.0 - e2 * sin_lat * sin_lat).sqrt();
+    [
+        (n + height_m) * cos_lat * cos_lon,
+        (n + height_m) * cos_lat * sin_lon,
+        (n * (1.0 - e2) + height_m) * sin_lat,
+    ]
 }
 
 impl fmt::Display for MPosition {
@@ -330,6 +333,20 @@ mod tests {
         // Latitude should match
         let lat_diff = (itrf.latitude_rad() - wgs.latitude_rad()).abs();
         assert!(lat_diff < 1e-10, "latitude mismatch: {lat_diff}");
+    }
+
+    #[test]
+    fn alma_wgs84_matches_casacore_itrf() {
+        let alma = MPosition::new_wgs84(
+            -67.754_929_f64.to_radians(),
+            -23.022_886_f64.to_radians(),
+            5056.8,
+        );
+        let [x, y, z] = alma.as_itrf();
+
+        assert!((x - 2_225_142.180_271_370_3).abs() < 1.0e-7, "x={x}");
+        assert!((y - -5_440_307.370_354_437).abs() < 1.0e-7, "y={y}");
+        assert!((z - -2_481_029.851_840_987_3).abs() < 1.0e-7, "z={z}");
     }
 
     #[test]

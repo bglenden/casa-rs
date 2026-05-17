@@ -3,6 +3,7 @@
   "root_env": "CASA_RS_IMPERF_DATA_ROOT",
   "external_root_hint": "/Volumes/GLENDENNING/casa-rs-imperformance",
   "description": "Deterministic simulated imaging datasets for ImPerformance Wave 1.",
+  "small_tier_policy": "Small-tier datasets target roughly 1 GiB while preserving full-track uv coverage for visually useful dirty/clean signoff images; they use fewer channels than medium/large tiers.",
   "large_tier_policy": {
     "dataset_count": 1,
     "dataset_id": "wave1-alma-mosaic-large",
@@ -36,7 +37,7 @@
       "display_name": "ALMA",
       "array_configuration": "synthetic compact 12m-like",
       "dish_diameter_m": 12.0,
-      "native_casars_status": "request-plan-only until ALMA parity is checked"
+      "native_casars_status": "supported for single-field generation after strict small-tier parity; mosaic generation remains request-plan-only"
     }
   },
   "families": {
@@ -73,6 +74,7 @@
   },
   "source_model": {
     "name": "structured star-forming field",
+    "frequency_policy": "VLA benchmark datasets use an 8 GHz start frequency with MHz-scale channels so the structured source sits comfortably inside the primary beam; ALMA datasets use 230 GHz with MHz-scale channels.",
     "continuum_components": [
       "bright compact core",
       "faint offset compact sources",
@@ -97,8 +99,8 @@
       "tier": "small",
       "model_pixels": 512,
       "image_pixels": 512,
-      "channels": 512,
-      "duration_seconds": 3730,
+      "channels": 24,
+      "duration_seconds": 86400,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.001
     },
@@ -121,8 +123,8 @@
       "tier": "small",
       "model_pixels": 512,
       "image_pixels": 512,
-      "channels": 512,
-      "duration_seconds": 3730,
+      "channels": 24,
+      "duration_seconds": 86400,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0012
     },
@@ -133,8 +135,8 @@
       "tier": "small",
       "model_pixels": 512,
       "image_pixels": 512,
-      "channels": 256,
-      "duration_seconds": 2900,
+      "channels": 8,
+      "duration_seconds": 86400,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0007
     },
@@ -157,8 +159,8 @@
       "tier": "small",
       "model_pixels": 512,
       "image_pixels": 512,
-      "channels": 256,
-      "duration_seconds": 2900,
+      "channels": 8,
+      "duration_seconds": 86400,
       "integration_seconds": 10,
       "noise_simplenoise_jy": 0.0008
     },

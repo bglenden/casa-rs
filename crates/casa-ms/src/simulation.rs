@@ -8,7 +8,9 @@
 //! write CASA-compatible MS subtables plus uncorrupted visibility rows.
 
 use casa_coordinates::fits::{FitsHeader, from_fits_header};
-use casa_coordinates::{Coordinate, CoordinateSystem, CoordinateType};
+use casa_coordinates::{
+    Coordinate, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection, ProjectionType,
+};
 use casa_imaging::{
     ImageGeometry, PrimaryBeamModel, StandardMfsModelPredictor, primary_beam_voltage_pattern,
 };
@@ -41,6 +43,8 @@ use crate::error::{MsError, MsResult};
 use crate::flagging::shadowed_antennas_from_projected_baselines;
 use crate::schema::{self, SubtableId};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
+
+const CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD: f64 = 8.0_f64.to_radians();
 
 /// Antenna configuration row for a synthetic observation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -290,6 +294,10 @@ impl SyntheticSpectralSetup {
 
     fn total_bandwidth_hz(&self) -> f64 {
         self.channel_width_hz.abs() * self.channel_count as f64
+    }
+
+    fn reference_frequency_hz(&self) -> f64 {
+        self.start_frequency_hz + (self.channel_count / 2) as f64 * self.channel_width_hz
     }
 }
 
@@ -1021,7 +1029,7 @@ fn populate_spectral_window(
         &[
             ("NUM_CHAN", i(spectral_setup.channel_count as i32)),
             ("NAME", s(&spectral_setup.name)),
-            ("REF_FREQUENCY", f(spectral_setup.start_frequency_hz)),
+            ("REF_FREQUENCY", f(spectral_setup.reference_frequency_hz())),
             ("TOTAL_BANDWIDTH", f(spectral_setup.total_bandwidth_hz())),
             (
                 "CHAN_FREQ",
@@ -1236,6 +1244,9 @@ fn populate_main_rows(
     let baseline_count = request.antennas.len() * (request.antennas.len() - 1) / 2;
     let mut scalar_column_overrides =
         MainScalarColumnOverrides::with_capacity(samples * baseline_count);
+    let observatory = simulation_observatory_position(&request.telescope_name, &request.antennas);
+    let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
+    let uvw_production_trace = SimobserveUvwProductionTrace::from_env();
 
     for sample in 0..samples {
         let uvw_started = Instant::now();
@@ -1243,8 +1254,12 @@ fn populate_main_rows(
         let field_plan = &field_plans[field_id];
         let time =
             request.start_time_mjd_seconds + (sample as f64 + 0.5) * request.integration_seconds;
-        let antenna_uvws =
-            antenna_uvw_positions(&request.antennas, field_plan.phase_center_rad, time)?;
+        let antenna_uvws = antenna_uvw_positions(
+            &request.antennas,
+            field_plan.phase_center_rad,
+            time,
+            &observatory,
+        )?;
         let mut row_specs = Vec::with_capacity(request.antennas.len() * request.antennas.len());
         for antenna1 in 0..request.antennas.len() {
             for antenna2 in (antenna1 + 1)..request.antennas.len() {
@@ -1253,6 +1268,24 @@ fn populate_main_rows(
                     antenna_uvws[antenna2][1] - antenna_uvws[antenna1][1],
                     antenna_uvws[antenna2][2] - antenna_uvws[antenna1][2],
                 ];
+                let row_number = sample * baseline_count + row_specs.len();
+                if uvw_production_trace
+                    .as_ref()
+                    .is_some_and(|trace| trace.matches(antenna1, antenna2, time))
+                {
+                    trace_simobserve_production_uvw(
+                        row_number,
+                        sample,
+                        antenna1,
+                        antenna2,
+                        time,
+                        field_plan.phase_center_rad,
+                        &observatory,
+                        &request.antennas,
+                        &antenna_uvws,
+                        uvw,
+                    );
+                }
                 row_specs.push(MainRowVisibilitySpec {
                     antenna1,
                     antenna2,
@@ -1264,6 +1297,13 @@ fn populate_main_rows(
         }
         let row_uvws = row_specs.iter().map(|spec| spec.uvw).collect::<Vec<_>>();
         let shadowed_antennas = shadowed_antennas_for_rows(&row_specs, &request.antennas);
+        let low_elevation_antennas = antennas_below_elevation_limit(
+            field_plan.phase_center_rad,
+            time,
+            &request.antennas,
+            &observatory,
+            elevation_margin_rad,
+        )?;
         timing.uvw_and_row_setup += uvw_started.elapsed();
 
         let prediction_started = Instant::now();
@@ -1286,7 +1326,12 @@ fn populate_main_rows(
         timing.corruption += corruption_started.elapsed();
         let flag_rows = row_specs
             .iter()
-            .map(|spec| shadowed_antennas[spec.antenna1] || shadowed_antennas[spec.antenna2])
+            .map(|spec| {
+                low_elevation_antennas[spec.antenna1]
+                    || low_elevation_antennas[spec.antenna2]
+                    || shadowed_antennas[spec.antenna1]
+                    || shadowed_antennas[spec.antenna2]
+            })
             .collect::<Vec<_>>();
         let uvw_rows = row_specs.iter().map(|spec| spec.uvw).collect::<Vec<_>>();
         let data_io_started = Instant::now();
@@ -1330,6 +1375,84 @@ fn shadowed_antennas_for_rows(
             )
         }),
     )
+}
+
+fn antennas_below_elevation_limit(
+    phase_center_rad: [f64; 2],
+    time_mjd_seconds: f64,
+    antennas: &[SyntheticAntenna],
+    observatory: &MPosition,
+    elevation_margin_rad: f64,
+) -> MsResult<Vec<bool>> {
+    let observatory_elevation_rad =
+        field_elevation_rad(phase_center_rad, time_mjd_seconds, observatory)?;
+    if observatory_elevation_rad + elevation_margin_rad < CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD {
+        return Ok(vec![true; antennas.len()]);
+    }
+    if observatory_elevation_rad - elevation_margin_rad > CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD {
+        return Ok(vec![false; antennas.len()]);
+    }
+
+    antennas
+        .iter()
+        .map(|antenna| {
+            let position = MPosition::new_itrf(
+                antenna.position_m[0],
+                antenna.position_m[1],
+                antenna.position_m[2],
+            );
+            Ok(
+                field_elevation_rad(phase_center_rad, time_mjd_seconds, &position)?
+                    < CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD,
+            )
+        })
+        .collect()
+}
+
+fn antenna_elevation_margin_rad(antennas: &[SyntheticAntenna], observatory: &MPosition) -> f64 {
+    let observatory_itrf = observatory.as_itrf();
+    let observatory_radius_m = vector_norm(observatory_itrf);
+    if observatory_radius_m == 0.0 {
+        return 0.0;
+    }
+
+    antennas
+        .iter()
+        .map(|antenna| {
+            let offset = [
+                antenna.position_m[0] - observatory_itrf[0],
+                antenna.position_m[1] - observatory_itrf[1],
+                antenna.position_m[2] - observatory_itrf[2],
+            ];
+            vector_norm(offset) / observatory_radius_m
+        })
+        .fold(0.0_f64, f64::max)
+        + 1.0e-9
+}
+
+fn field_elevation_rad(
+    phase_center_rad: [f64; 2],
+    time_mjd_seconds: f64,
+    observatory: &MPosition,
+) -> MsResult<f64> {
+    let phase_center = MDirection::from_angles(
+        phase_center_rad[0],
+        phase_center_rad[1],
+        DirectionRef::J2000,
+    );
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd(time_mjd_seconds / 86_400.0, EpochRef::UT1))
+        .with_position(observatory.clone())
+        .with_direction(phase_center.clone())
+        .with_bundled_eop();
+    let azel = phase_center
+        .convert_to(DirectionRef::AZEL, &frame)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "simobserve elevation-limit direction conversion failed: {error}"
+            ))
+        })?;
+    Ok(azel.latitude_rad())
 }
 
 fn apply_corruption_and_count_rows_with_workers(
@@ -1861,22 +1984,22 @@ impl FitsModelDirectionWcs {
 
 struct SyntheticChannelPredictor {
     predictor: StandardMfsModelPredictor,
-    phase_offset_rad: [f64; 2],
+    phase_offset: ModelPhaseOffset,
     phase_center_rad: [f64; 2],
     model_reference_direction_rad: Option<[f64; 2]>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ModelPhaseOffset {
+    l_rad: f64,
+    m_rad: f64,
+    n_minus_one: f64,
 }
 
 struct SyntheticFieldPlan {
     phase_center_rad: [f64; 2],
     predictors: Option<Vec<SyntheticChannelPredictor>>,
 }
-
-// CASA GridFT negates u/v to compensate for an image-inversion convention in
-// the degridding path. After matching that handedness and the FITS center-pixel
-// offset, the tutorial model needs this residual image-x phase alignment to
-// match CASA's GridFT prediction at numerical-noise scale.
-const CASA_GRIDFT_IMAGE_INVERSION_PHASE_PIXELS: f64 = 0.015_122_8;
-const CASA_GRIDFT_NEGATIVE_RA_PHASE_ALIGNMENT_PIXELS: [f64; 2] = [0.001_757_8, 0.001_115_9];
 
 fn build_field_plans(
     request: &SyntheticObservationRequest,
@@ -1956,13 +2079,13 @@ fn build_channel_predictors(
         image_shape: [model.pixels.shape()[0], model.pixels.shape()[1]],
         cell_size_rad: model.cell_size_rad,
     };
-    let phase_offset_rad = casa_model_phase_offset(model, phase_center_rad);
+    let phase_offset = casa_model_phase_offset(model, phase_center_rad);
     let context = ChannelPredictorContext {
         model,
         spectral_setup,
         geometry,
         phase_center_rad,
-        phase_offset_rad,
+        phase_offset,
         pointing_offset_rad,
         primary_beam,
     };
@@ -2000,7 +2123,7 @@ struct ChannelPredictorContext<'a> {
     spectral_setup: &'a SyntheticSpectralSetup,
     geometry: ImageGeometry,
     phase_center_rad: [f64; 2],
-    phase_offset_rad: [f64; 2],
+    phase_offset: ModelPhaseOffset,
     pointing_offset_rad: [f64; 2],
     primary_beam: SyntheticPrimaryBeam,
 }
@@ -2096,7 +2219,7 @@ fn build_one_channel_predictor(
     Ok((
         SyntheticChannelPredictor {
             predictor,
-            phase_offset_rad: context.phase_offset_rad,
+            phase_offset: context.phase_offset,
             phase_center_rad: context.phase_center_rad,
             model_reference_direction_rad: context.model.reference_direction_rad,
         },
@@ -2112,7 +2235,30 @@ fn apply_simulator_primary_beam(
     pointing_offset_rad: [f64; 2],
     primary_beam: SyntheticPrimaryBeam,
 ) -> Array2<f32> {
+    apply_simulator_primary_beam_power(
+        model,
+        model_pixels,
+        phase_center_rad,
+        frequency_hz,
+        pointing_offset_rad,
+        primary_beam,
+        2,
+    )
+}
+
+fn apply_simulator_primary_beam_power(
+    model: &FitsModelImage,
+    model_pixels: &Array2<f32>,
+    phase_center_rad: [f64; 2],
+    frequency_hz: f64,
+    pointing_offset_rad: [f64; 2],
+    primary_beam: SyntheticPrimaryBeam,
+    beam_power: u32,
+) -> Array2<f32> {
     let mut pixels = model_pixels.clone();
+    if beam_power == 0 {
+        return pixels;
+    }
     let Some(wcs) = model.direction_wcs.as_ref() else {
         return pixels;
     };
@@ -2121,10 +2267,36 @@ fn apply_simulator_primary_beam(
         phase_center_rad[1] + pointing_offset_rad[1],
     ];
     let coordinate = wcs.coordinate();
-    let Ok(pointing_pixel) = coordinate.to_pixel(&pointing_direction_rad) else {
+    let raw_increments = coordinate.increment();
+    if raw_increments.len() < 2 {
+        return pixels;
+    }
+    let imported_coordinate;
+    let pb_coordinate: &dyn Coordinate =
+        if let Some(reference_direction_rad) = model.reference_direction_rad {
+            // CASA simobserve imports the FITS model into a casacore image and
+            // recenters the direction coordinate on the image center before
+            // PBMath applies the primary beam.
+            imported_coordinate = DirectionCoordinate::new(
+                DirectionRef::J2000,
+                Projection::new(ProjectionType::SIN),
+                reference_direction_rad,
+                [raw_increments[0], raw_increments[1]],
+                [
+                    model_pixels.shape()[0] as f64 / 2.0,
+                    model_pixels.shape()[1] as f64 / 2.0,
+                ],
+            )
+            .with_longpole(std::f64::consts::PI)
+            .with_latpole(reference_direction_rad[1]);
+            &imported_coordinate
+        } else {
+            coordinate
+        };
+    let Ok(pointing_pixel) = pb_coordinate.to_pixel(&pointing_direction_rad) else {
         return pixels;
     };
-    let increments = coordinate.increment();
+    let increments = pb_coordinate.increment();
     if pointing_pixel.len() < 2 || increments.len() < 2 {
         return pixels;
     }
@@ -2138,7 +2310,12 @@ fn apply_simulator_primary_beam(
                 (l * l + m * m).sqrt(),
                 frequency_hz,
             );
-            pixels[(x, y)] *= vp * vp;
+            let taper = match beam_power {
+                1 => vp,
+                2 => vp * vp,
+                _ => vp.powi(beam_power as i32),
+            };
+            pixels[(x, y)] *= taper;
         }
     }
     pixels
@@ -2195,27 +2372,25 @@ fn casa_vla_q_primary_beam_voltage_pattern(radius_rad: f64, frequency_hz: f64) -
         as f32
 }
 
-fn casa_model_phase_offset(model: &FitsModelImage, phase_center_rad: [f64; 2]) -> [f64; 2] {
+fn casa_model_phase_offset(model: &FitsModelImage, phase_center_rad: [f64; 2]) -> ModelPhaseOffset {
     let Some(reference_direction_rad) = model.reference_direction_rad else {
-        return [0.0, 0.0];
+        return ModelPhaseOffset {
+            l_rad: 0.0,
+            m_rad: 0.0,
+            n_minus_one: 0.0,
+        };
     };
-    let ra_offset = circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0])
-        * phase_center_rad[1].cos();
-    let dec_offset = reference_direction_rad[1] - phase_center_rad[1];
-    if model.ra_axis_increases_with_x {
-        [
-            ra_offset - (0.5 - CASA_GRIDFT_IMAGE_INVERSION_PHASE_PIXELS) * model.cell_size_rad[0],
-            dec_offset - 0.5 * model.cell_size_rad[1],
-        ]
-    } else {
-        // CASA GridFT uses a signed RA increment plus an internal UV negation
-        // convention for conventional FITS images. A phase-residual fit against
-        // CASA's full simulator path shows this leaves a sub-pixel alignment
-        // offset after the larger half-pixel center alignment is accounted for.
-        [
-            ra_offset + CASA_GRIDFT_NEGATIVE_RA_PHASE_ALIGNMENT_PIXELS[0] * model.cell_size_rad[0],
-            dec_offset + CASA_GRIDFT_NEGATIVE_RA_PHASE_ALIGNMENT_PIXELS[1] * model.cell_size_rad[1],
-        ]
+    let delta_ra = circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0]);
+    let cos_delta_ra = delta_ra.cos();
+    let (sin_ref_dec, cos_ref_dec) = reference_direction_rad[1].sin_cos();
+    let (sin_phase_dec, cos_phase_dec) = phase_center_rad[1].sin_cos();
+    let direction_l = delta_ra * phase_center_rad[1].cos();
+    let direction_m = reference_direction_rad[1] - phase_center_rad[1];
+    let direction_n = sin_ref_dec * sin_phase_dec + cos_ref_dec * cos_phase_dec * cos_delta_ra;
+    ModelPhaseOffset {
+        l_rad: direction_l,
+        m_rad: direction_m,
+        n_minus_one: direction_n - 1.0,
     }
 }
 
@@ -2248,9 +2423,11 @@ fn predicted_data_values(
             };
             let u_lambda = prediction_uvw_m[0] / wavelength_m;
             let v_lambda = prediction_uvw_m[1] / wavelength_m;
+            let w_lambda = prediction_uvw_m[2] / wavelength_m;
             let phase = std::f64::consts::TAU
-                * (u_lambda * predictor.phase_offset_rad[0]
-                    + v_lambda * predictor.phase_offset_rad[1]);
+                * (u_lambda * predictor.phase_offset.l_rad
+                    + v_lambda * predictor.phase_offset.m_rad
+                    - w_lambda * predictor.phase_offset.n_minus_one);
             let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
             let visibility = predictor.predictor.predict(u_lambda, v_lambda) * phase_shift;
             for corr in 0..num_corr {
@@ -2378,8 +2555,10 @@ fn predict_channel_visibility(
         };
     let u_lambda = prediction_uvw_m[0] / wavelength_m;
     let v_lambda = prediction_uvw_m[1] / wavelength_m;
+    let w_lambda = prediction_uvw_m[2] / wavelength_m;
     let phase = std::f64::consts::TAU
-        * (u_lambda * predictor.phase_offset_rad[0] + v_lambda * predictor.phase_offset_rad[1]);
+        * (u_lambda * predictor.phase_offset.l_rad + v_lambda * predictor.phase_offset.m_rad
+            - w_lambda * predictor.phase_offset.n_minus_one);
     let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
     predictor.predictor.predict(u_lambda, v_lambda) * phase_shift
 }
@@ -3193,14 +3372,13 @@ fn antenna_uvw_positions(
     antennas: &[SyntheticAntenna],
     phase_center_rad: [f64; 2],
     time_mjd_seconds: f64,
+    observatory: &MPosition,
 ) -> MsResult<Vec<[f64; 3]>> {
     let phase_center = MDirection::from_angles(
         phase_center_rad[0],
         phase_center_rad[1],
         DirectionRef::J2000,
     );
-    let observatory = MPosition::from_observatory_name("VLA")
-        .unwrap_or_else(|| MPosition::new_itrf(-1_601_192.0, -5_041_984.0, 3_554_876.0));
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(time_mjd_seconds / 86_400.0, EpochRef::UT1))
         .with_position(observatory.clone())
@@ -3221,6 +3399,88 @@ fn antenna_uvw_positions(
             Ok(project_j2000_baseline_to_uvw(baseline_j2000, &phase_center))
         })
         .collect()
+}
+
+fn simulation_observatory_position(
+    telescope_name: &str,
+    antennas: &[SyntheticAntenna],
+) -> MPosition {
+    MPosition::from_observatory_name(telescope_name)
+        .unwrap_or_else(|| antenna_centroid_position(antennas))
+}
+
+fn antenna_centroid_position(antennas: &[SyntheticAntenna]) -> MPosition {
+    let count = antennas.len().max(1) as f64;
+    let [x, y, z] = antennas.iter().fold([0.0_f64; 3], |mut sum, antenna| {
+        sum[0] += antenna.position_m[0];
+        sum[1] += antenna.position_m[1];
+        sum[2] += antenna.position_m[2];
+        sum
+    });
+    MPosition::new_itrf(x / count, y / count, z / count)
+}
+
+struct SimobserveUvwProductionTrace {
+    antenna1: usize,
+    antenna2: usize,
+    time_mjd_seconds: f64,
+    time_tolerance_seconds: f64,
+}
+
+impl SimobserveUvwProductionTrace {
+    fn from_env() -> Option<Self> {
+        let antenna_text = std::env::var("CASA_RS_SIMOBSERVE_TRACE_UVW_ANTENNAS").ok()?;
+        let (antenna1_text, antenna2_text) = antenna_text.split_once(',')?;
+        let time_text = std::env::var("CASA_RS_SIMOBSERVE_TRACE_UVW_TIME_S").ok()?;
+        let time_tolerance_seconds = std::env::var("CASA_RS_SIMOBSERVE_TRACE_UVW_TIME_TOL_S")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(1.0e-6);
+        Some(Self {
+            antenna1: antenna1_text.trim().parse().ok()?,
+            antenna2: antenna2_text.trim().parse().ok()?,
+            time_mjd_seconds: time_text.trim().parse().ok()?,
+            time_tolerance_seconds,
+        })
+    }
+
+    fn matches(&self, antenna1: usize, antenna2: usize, time_mjd_seconds: f64) -> bool {
+        self.antenna1 == antenna1
+            && self.antenna2 == antenna2
+            && (self.time_mjd_seconds - time_mjd_seconds).abs() <= self.time_tolerance_seconds
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn trace_simobserve_production_uvw(
+    row_number: usize,
+    sample: usize,
+    antenna1: usize,
+    antenna2: usize,
+    time_mjd_seconds: f64,
+    phase_center_rad: [f64; 2],
+    observatory: &MPosition,
+    antennas: &[SyntheticAntenna],
+    antenna_uvws: &[[f64; 3]],
+    row_uvw: [f64; 3],
+) {
+    let obs_itrf = observatory.as_itrf();
+    let ant1_itrf = antennas[antenna1].position_m;
+    let ant2_itrf = antennas[antenna2].position_m;
+    let ant1_baseline_itrf = [
+        obs_itrf[0] - ant1_itrf[0],
+        obs_itrf[1] - ant1_itrf[1],
+        obs_itrf[2] - ant1_itrf[2],
+    ];
+    let ant2_baseline_itrf = [
+        obs_itrf[0] - ant2_itrf[0],
+        obs_itrf[1] - ant2_itrf[1],
+        obs_itrf[2] - ant2_itrf[2],
+    ];
+    eprintln!(
+        "simobserve_uvw_production_trace row={row_number} sample={sample} ant1={antenna1} ant2={antenna2} time_s={time_mjd_seconds:.15} phase_center_rad={phase_center_rad:?} obs_itrf={obs_itrf:?} ant1_itrf={ant1_itrf:?} ant2_itrf={ant2_itrf:?} ant1_obs_minus_ant_itrf={ant1_baseline_itrf:?} ant2_obs_minus_ant_itrf={ant2_baseline_itrf:?} ant1_uvw={:?} ant2_uvw={:?} row_uvw={row_uvw:?}",
+        antenna_uvws[antenna1], antenna_uvws[antenna2],
+    );
 }
 
 fn project_j2000_baseline_to_uvw(
@@ -3727,6 +3987,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn spectral_setup_reference_frequency_matches_casa_center_channel_convention() {
+        let setup = SyntheticSpectralSetup {
+            name: "spw".to_string(),
+            start_frequency_hz: 8.0e9,
+            channel_width_hz: 2.0e6,
+            channel_count: 512,
+        };
+
+        assert_eq!(setup.channel_frequencies_hz()[0], 8.0e9);
+        assert_eq!(setup.channel_frequencies_hz()[511], 9.022e9);
+        assert_eq!(setup.reference_frequency_hz(), 8.512e9);
+    }
+
+    #[test]
     fn row_noise_seed_varies_by_row_coordinates() {
         let base = row_noise_seed(42, 0, 0, 1, 0);
         assert_ne!(base, row_noise_seed(43, 0, 0, 1, 0));
@@ -3865,7 +4139,11 @@ mod tests {
         let predictors = (0..channel_count)
             .map(|_| SyntheticChannelPredictor {
                 predictor: StandardMfsModelPredictor::new(geometry, &model).unwrap(),
-                phase_offset_rad: [1.0e-6, -2.0e-6],
+                phase_offset: ModelPhaseOffset {
+                    l_rad: 1.0e-6,
+                    m_rad: -2.0e-6,
+                    n_minus_one: 3.0e-12,
+                },
                 phase_center_rad: [1.0, -0.5],
                 model_reference_direction_rad: None,
             })
@@ -3996,9 +4274,9 @@ mod tests {
 
     #[test]
     fn simulator_primary_beam_is_centered_on_fits_reference_pixel() {
-        let mut pixels = Array2::<f32>::zeros((5, 5));
-        pixels[(1, 1)] = 1.0;
-        pixels[(2, 1)] = 1.0;
+        let mut pixels = Array2::<f32>::zeros((6, 6));
+        pixels[(3, 3)] = 1.0;
+        pixels[(4, 3)] = 1.0;
         let mut coordinate_system = CoordinateSystem::new();
         coordinate_system.add_coordinate(Box::new(casa_coordinates::DirectionCoordinate::new(
             DirectionRef::J2000,
@@ -4031,9 +4309,9 @@ mod tests {
             },
         );
 
-        assert_eq!(corrected[(1, 1)], 1.0);
+        assert_eq!(corrected[(3, 3)], 1.0);
         assert!(
-            corrected[(2, 1)] < 1.0,
+            corrected[(4, 3)] < 1.0,
             "adjacent pixels should be attenuated away from the FITS reference pixel"
         );
     }
@@ -4070,6 +4348,378 @@ mod tests {
     }
 
     #[test]
+    fn simobserve_uvw_trace_when_requested() {
+        let Ok(a1_text) = std::env::var("CASA_RS_SIMOBSERVE_UVW_TRACE_A1_ITRF") else {
+            return;
+        };
+        let Ok(a2_text) = std::env::var("CASA_RS_SIMOBSERVE_UVW_TRACE_A2_ITRF") else {
+            return;
+        };
+        let Ok(time_text) = std::env::var("CASA_RS_SIMOBSERVE_UVW_TRACE_TIME_S") else {
+            return;
+        };
+        let a1 = parse_trace_triplet(&a1_text);
+        let a2 = parse_trace_triplet(&a2_text);
+        let time_s = time_text.parse::<f64>().expect("trace time seconds");
+        let phase_center = MDirection::from_angles(
+            -1.570_794_075_320_161_2,
+            -0.401_423_790_643_226_1,
+            DirectionRef::J2000,
+        );
+        let observatory = std::env::var("CASA_RS_SIMOBSERVE_UVW_TRACE_OBSERVATORY")
+            .ok()
+            .and_then(|name| MPosition::from_observatory_name(&name))
+            .unwrap_or_else(|| {
+                MPosition::new_itrf(
+                    2_225_052.376_592_874_5,
+                    -5_440_045.715_534_717,
+                    -2_481_673.806_727_262_7,
+                )
+            });
+        let frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(time_s / 86_400.0, EpochRef::UT1))
+            .with_position(observatory)
+            .with_direction(phase_center.clone())
+            .with_bundled_eop();
+        let a1_j2000 = baseline_itrf_to_j2000(a1, &phase_center, &frame).unwrap();
+        let a2_j2000 = baseline_itrf_to_j2000(a2, &phase_center, &frame).unwrap();
+        let a1_uvw = project_j2000_baseline_to_uvw(a1_j2000, &phase_center);
+        let a2_uvw = project_j2000_baseline_to_uvw(a2_j2000, &phase_center);
+        eprintln!("TRACE_A1_J2000={a1_j2000:?}");
+        eprintln!("TRACE_A2_J2000={a2_j2000:?}");
+        eprintln!("TRACE_A1_UVW={a1_uvw:?}");
+        eprintln!("TRACE_A2_UVW={a2_uvw:?}");
+        eprintln!(
+            "TRACE_A2_MINUS_A1_UVW={:?}",
+            [
+                a2_uvw[0] - a1_uvw[0],
+                a2_uvw[1] - a1_uvw[1],
+                a2_uvw[2] - a1_uvw[2],
+            ]
+        );
+    }
+
+    #[test]
+    fn simobserve_model_predictor_trace_matches_casacore_gridder_when_requested() {
+        let Ok(model_path) = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_FITS") else {
+            return;
+        };
+        let Ok(uvw_text) = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_UVW_M") else {
+            return;
+        };
+        let uvw_m = parse_trace_triplet(&uvw_text);
+        let channel = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_CHANNEL")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let channel_count = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_CHANNEL_COUNT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(channel + 1);
+        let start_frequency_hz = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_START_HZ")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(230.0e9);
+        let channel_width_hz = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_WIDTH_HZ")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(2.0e6);
+        let frequency_hz = start_frequency_hz + channel as f64 * channel_width_hz;
+        let model_path = PathBuf::from(model_path);
+        let model =
+            read_fits_model_image(&model_path, None, channel_count).expect("read trace FITS model");
+        let phase_center_rad = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_PHASE_CENTER_RAD")
+            .ok()
+            .map(|value| parse_trace_triplet(&value)[0..2].try_into().unwrap())
+            .unwrap_or([4.712_391_234_768_306, -0.401_423_788_703_971_4]);
+        if let Some(wcs) = model.direction_wcs.as_ref() {
+            let coordinate = wcs.coordinate();
+            let pointing_pixel = coordinate
+                .to_pixel(&phase_center_rad)
+                .expect("trace phase center pixel");
+            eprintln!(
+                "simobserve_model_predictor_trace_wcs reference_pixel={:?} reference_value={:?} increment={:?} phase_center_rad={phase_center_rad:?} pointing_pixel={pointing_pixel:?} reference_direction_rad={:?} ra_axis_increases_with_x={}",
+                coordinate.reference_pixel(),
+                coordinate.reference_value(),
+                coordinate.increment(),
+                model.reference_direction_rad,
+                model.ra_axis_increases_with_x,
+            );
+        }
+        let primary_beam = SyntheticPrimaryBeam {
+            use_casa_vla_q_table: false,
+            dish_diameter_m: std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_DISH_M")
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(10.7),
+            blockage_diameter_m: std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_BLOCKAGE_M")
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(0.75),
+        };
+        let source_pixels = model.pixels_for_channel(channel);
+        let casa_oriented_pixels = trace_oriented_pixels_for_beam_power(
+            &model,
+            source_pixels,
+            phase_center_rad,
+            frequency_hz,
+            primary_beam,
+            2,
+        );
+        let casa_oriented_moments = trace_pixels_moments(&casa_oriented_pixels);
+        eprintln!(
+            "simobserve_model_predictor_trace_pixels sum={:.9e} peak={:.9e} x_mean={:.9e} y_mean={:.9e} x_rms={:.9e} y_rms={:.9e}",
+            casa_oriented_moments.sum,
+            casa_oriented_moments.peak,
+            casa_oriented_moments.x_mean(),
+            casa_oriented_moments.y_mean(),
+            casa_oriented_moments.x_rms(),
+            casa_oriented_moments.y_rms(),
+        );
+        if let Ok(path) = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_DUMP_PIXELS") {
+            trace_dump_pixels(&casa_oriented_pixels, &path);
+        }
+        let geometry = ImageGeometry {
+            image_shape: [
+                casa_oriented_pixels.shape()[0],
+                casa_oriented_pixels.shape()[1],
+            ],
+            cell_size_rad: model.cell_size_rad,
+        };
+        let predictor = StandardMfsModelPredictor::new(geometry, &casa_oriented_pixels)
+            .expect("build native predictor");
+        let phase_offset = casa_model_phase_offset(&model, phase_center_rad);
+        let casa_small_shift_disabled = model
+            .reference_direction_rad
+            .map(|reference_direction_rad| {
+                let delta_ra =
+                    circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0]);
+                delta_ra.abs() < model.cell_size_rad[0].abs()
+                    && (reference_direction_rad[1] - phase_center_rad[1]).abs()
+                        < model.cell_size_rad[1].abs()
+            })
+            .unwrap_or(false);
+        let prediction_uvw_m = if let Some(model_reference_direction_rad) =
+            model.reference_direction_rad
+        {
+            rotate_uvw_between_directions(uvw_m, phase_center_rad, model_reference_direction_rad)
+        } else {
+            uvw_m
+        };
+        let wavelength_m = 299_792_458.0 / frequency_hz;
+        let u_lambda = prediction_uvw_m[0] / wavelength_m;
+        let v_lambda = prediction_uvw_m[1] / wavelength_m;
+        let w_lambda = prediction_uvw_m[2] / wavelength_m;
+        let phase = std::f64::consts::TAU
+            * (u_lambda * phase_offset.l_rad + v_lambda * phase_offset.m_rad
+                - w_lambda * phase_offset.n_minus_one);
+        let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+        let native_gridder = predictor.predict(u_lambda, v_lambda);
+        let native = native_gridder * phase_shift;
+        let grid_shape = [
+            trace_casa_composite_padded_len(geometry.image_shape[0], 1.3),
+            trace_casa_composite_padded_len(geometry.image_shape[1], 1.3),
+        ];
+        let cpp = casa_test_support::gridder_interop::cpp_convolve_gridder_predict_visibility_2d(
+            grid_shape,
+            geometry.image_shape,
+            [
+                grid_shape[0] as f64 * geometry.cell_size_rad[0],
+                grid_shape[1] as f64 * geometry.cell_size_rad[1],
+            ],
+            [grid_shape[0] as f64 / 2.0, grid_shape[1] as f64 / 2.0],
+            [u_lambda, -v_lambda],
+            casa_oriented_pixels
+                .as_slice()
+                .expect("contiguous oriented model"),
+        )
+        .expect("casacore gridder predictor");
+        let cpp_gridder = Complex32::new(cpp.re, cpp.im);
+        let cpp_value = cpp_gridder * phase_shift;
+        let casa_data = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_CASA_DATA")
+            .ok()
+            .map(|value| parse_trace_complex(&value));
+        for beam_power in [0, 1, 2] {
+            let pixels = trace_oriented_pixels_for_beam_power(
+                &model,
+                source_pixels,
+                phase_center_rad,
+                frequency_hz,
+                primary_beam,
+                beam_power,
+            );
+            if let Ok(prefix) = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_DUMP_VARIANT_PREFIX")
+            {
+                trace_dump_pixels(&pixels, &format!("{prefix}-beam{beam_power}.bin"));
+            }
+            let trace_predictor =
+                StandardMfsModelPredictor::new(geometry, &pixels).expect("build trace predictor");
+            let trace_gridder = trace_predictor.predict(u_lambda, v_lambda);
+            let trace_native = trace_gridder * phase_shift;
+            let casa_delta = casa_data
+                .map(|casa_data| (trace_native - casa_data).norm())
+                .unwrap_or(f32::NAN);
+            let moments = trace_pixels_moments(&pixels);
+            eprintln!(
+                "simobserve_model_predictor_trace_variant beam_power={beam_power} model_sum={:.9e} model_peak={:.9e} x_mean={:.9e} y_mean={:.9e} x_rms={:.9e} y_rms={:.9e} native={trace_native:?} casa_delta_abs={casa_delta:.9e}",
+                moments.sum,
+                moments.peak,
+                moments.x_mean(),
+                moments.y_mean(),
+                moments.x_rms(),
+                moments.y_rms(),
+            );
+        }
+        if casa_small_shift_disabled {
+            let no_shift_gridder =
+                predictor.predict(uvw_m[0] / wavelength_m, uvw_m[1] / wavelength_m);
+            let casa_delta = casa_data
+                .map(|casa_data| (no_shift_gridder - casa_data).norm())
+                .unwrap_or(f32::NAN);
+            eprintln!(
+                "simobserve_model_predictor_trace_casa_small_shift_disabled native_no_rotation_no_phase={no_shift_gridder:?} casa_delta_abs={casa_delta:.9e}"
+            );
+        }
+        eprintln!(
+            "simobserve_model_predictor_trace channel={channel} frequency_hz={frequency_hz:.9e} uvw_m={uvw_m:?} prediction_uvw_m={prediction_uvw_m:?} u_lambda={u_lambda:.9e} v_lambda={v_lambda:.9e} w_lambda={w_lambda:.9e} native_gridder={native_gridder:?} cpp_gridder={cpp_gridder:?} gridder_delta_abs={:.9e} phase_offset=({:.9e},{:.9e},{:.9e}) phase_rad={phase:.9e} native={native:?} cpp={cpp_value:?} final_delta_abs={:.9e}",
+            (native_gridder - cpp_gridder).norm(),
+            phase_offset.l_rad,
+            phase_offset.m_rad,
+            phase_offset.n_minus_one,
+            (native - cpp_value).norm(),
+        );
+        assert!((native_gridder - cpp_gridder).norm() < 1.0e-3);
+    }
+
+    fn trace_oriented_pixels_for_beam_power(
+        model: &FitsModelImage,
+        source_pixels: &Array2<f32>,
+        phase_center_rad: [f64; 2],
+        frequency_hz: f64,
+        primary_beam: SyntheticPrimaryBeam,
+        beam_power: u32,
+    ) -> Array2<f32> {
+        let beam_corrected_pixels = apply_simulator_primary_beam_power(
+            model,
+            source_pixels,
+            phase_center_rad,
+            frequency_hz,
+            [0.0, 0.0],
+            primary_beam,
+            beam_power,
+        );
+        let mut casa_oriented_pixels = Array2::<f32>::zeros(beam_corrected_pixels.raw_dim());
+        if model.ra_axis_increases_with_x {
+            for x in 0..beam_corrected_pixels.shape()[0] {
+                for y in 0..beam_corrected_pixels.shape()[1] {
+                    casa_oriented_pixels[(beam_corrected_pixels.shape()[0] - 1 - x, y)] =
+                        beam_corrected_pixels[(x, y)];
+                }
+            }
+        } else {
+            casa_oriented_pixels.assign(&beam_corrected_pixels);
+        }
+        casa_oriented_pixels
+    }
+
+    struct TracePixelMoments {
+        sum: f64,
+        peak: f64,
+        x_sum: f64,
+        y_sum: f64,
+        xx_sum: f64,
+        yy_sum: f64,
+    }
+
+    impl TracePixelMoments {
+        fn x_mean(&self) -> f64 {
+            self.x_sum / self.sum
+        }
+
+        fn y_mean(&self) -> f64 {
+            self.y_sum / self.sum
+        }
+
+        fn x_rms(&self) -> f64 {
+            (self.xx_sum / self.sum).sqrt()
+        }
+
+        fn y_rms(&self) -> f64 {
+            (self.yy_sum / self.sum).sqrt()
+        }
+    }
+
+    fn trace_pixels_moments(pixels: &Array2<f32>) -> TracePixelMoments {
+        let mut moments = TracePixelMoments {
+            sum: 0.0,
+            peak: 0.0,
+            x_sum: 0.0,
+            y_sum: 0.0,
+            xx_sum: 0.0,
+            yy_sum: 0.0,
+        };
+        for ((x, y), value) in pixels.indexed_iter() {
+            let value = f64::from(*value);
+            let x = x as f64;
+            let y = y as f64;
+            moments.sum += value;
+            moments.peak = moments.peak.max(value.abs());
+            moments.x_sum += value * x;
+            moments.y_sum += value * y;
+            moments.xx_sum += value * x * x;
+            moments.yy_sum += value * y * y;
+        }
+        moments
+    }
+
+    fn trace_dump_pixels(pixels: &Array2<f32>, path: &str) {
+        let mut bytes = Vec::with_capacity(pixels.len() * std::mem::size_of::<f32>());
+        for value in pixels.iter() {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        std::fs::write(path, bytes).expect("write trace pixel dump");
+    }
+
+    fn parse_trace_triplet(text: &str) -> [f64; 3] {
+        let values = text
+            .split(',')
+            .map(|part| part.trim().parse::<f64>().expect("trace triplet value"))
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), 3);
+        [values[0], values[1], values[2]]
+    }
+
+    fn parse_trace_complex(text: &str) -> Complex32 {
+        let values = text
+            .split(',')
+            .map(|part| part.trim().parse::<f32>().expect("trace complex value"))
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), 2);
+        Complex32::new(values[0], values[1])
+    }
+
+    fn trace_casa_composite_padded_len(image_len: usize, padding_factor: f64) -> usize {
+        let padded = (padding_factor * image_len as f64 - 0.5).floor() as usize;
+        let mut padded = padded.max(image_len);
+        if padded % 2 != 0 {
+            padded += 1;
+        }
+        while !trace_is_casa_composite_len(padded) {
+            padded += 2;
+        }
+        padded
+    }
+
+    fn trace_is_casa_composite_len(mut value: usize) -> bool {
+        for factor in [2, 3, 5] {
+            while value > 1 && value % factor == 0 {
+                value /= factor;
+            }
+        }
+        value == 1
+    }
+
+    #[test]
     fn shadowing_marks_nearer_antenna_and_flags_rows_involving_it() {
         let antennas = vec![
             SyntheticAntenna::vla("A0", "A0", [0.0, 0.0, 0.0]),
@@ -4103,6 +4753,24 @@ mod tests {
         assert_eq!(
             shadowed_antennas_for_rows(&rows, &antennas),
             vec![true, false, true]
+        );
+    }
+
+    #[test]
+    fn elevation_limit_identifies_below_limit_full_track_samples() {
+        let observatory = MPosition::from_observatory_name("ALMA").expect("ALMA position");
+        let phase_center = [-1.570_794_075_320_161, -0.401_423_790_643_226_1];
+        let start_time_mjd_seconds = 4_895_178_609.486_364;
+        let first_sample = start_time_mjd_seconds + 5.0;
+        let transit_sample = start_time_mjd_seconds + 43_200.0;
+
+        assert!(
+            field_elevation_rad(phase_center, first_sample, &observatory).unwrap()
+                < CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD
+        );
+        assert!(
+            field_elevation_rad(phase_center, transit_sample, &observatory).unwrap()
+                > CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD
         );
     }
 }

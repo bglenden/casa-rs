@@ -2087,10 +2087,10 @@ fn airy_voltage_pattern(
     {
         return 0.0;
     }
-    let radius_arcmin_ghz = radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9);
-    let support_arcsec_at_100ghz =
-        airy_max_radius_arcsec_at_100ghz(dish_diameter_m, blockage_diameter_m);
-    let maximum_radius_arcmin_ghz = support_arcsec_at_100ghz / 60.0 * 100.0;
+    // CASA PBMath1D stores per-pixel radius terms as Float before looking up
+    // the tabulated voltage pattern.
+    let radius_arcmin_ghz = (radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
+    let maximum_radius_arcmin_ghz = casa_airy_max_radius_arcmin_ghz();
     if radius_arcmin_ghz > maximum_radius_arcmin_ghz {
         return 0.0;
     }
@@ -2128,11 +2128,12 @@ fn primary_beam_max_radius_arcsec_at_100ghz(primary_beam_model: PrimaryBeamModel
 }
 
 fn airy_max_radius_arcsec_at_100ghz(dish_diameter_m: f64, blockage_diameter_m: f64) -> f64 {
-    if dish_diameter_m <= 7.0 && blockage_diameter_m > 0.0 {
-        300.0
-    } else {
-        150.0
-    }
+    let _ = (dish_diameter_m, blockage_diameter_m);
+    casa_airy_max_radius_arcmin_ghz() * 60.0 / 100.0
+}
+
+fn casa_airy_max_radius_arcmin_ghz() -> f64 {
+    1.784 * 60.0
 }
 
 fn evla_common_voltage_pattern(radius_rad: f64, frequency_hz: f64) -> f32 {
@@ -6542,16 +6543,17 @@ mod tests {
     }
 
     #[test]
-    fn alma_aca_airy_voltage_uses_wide_casa_support() {
-        let radius_between_12m_and_7m_support = (220.0_f64 / 3600.0).to_radians();
+    fn alma_aca_airy_voltage_uses_casa_common_pb_radius() {
+        let inside_casa_support = (60.0_f64 / 3600.0).to_radians();
+        let outside_casa_support = (70.0_f64 / 3600.0).to_radians();
 
-        assert_eq!(
+        assert_ne!(
             super::primary_beam_voltage_pattern(
                 PrimaryBeamModel::Airy {
                     dish_diameter_m: 10.7,
                     blockage_diameter_m: 0.75,
                 },
-                radius_between_12m_and_7m_support,
+                inside_casa_support,
                 100.0e9,
             ),
             0.0
@@ -6562,7 +6564,29 @@ mod tests {
                     dish_diameter_m: 6.25,
                     blockage_diameter_m: 0.75,
                 },
-                radius_between_12m_and_7m_support,
+                inside_casa_support,
+                100.0e9,
+            ),
+            0.0
+        );
+        assert_eq!(
+            super::primary_beam_voltage_pattern(
+                PrimaryBeamModel::Airy {
+                    dish_diameter_m: 10.7,
+                    blockage_diameter_m: 0.75,
+                },
+                outside_casa_support,
+                100.0e9,
+            ),
+            0.0
+        );
+        assert_eq!(
+            super::primary_beam_voltage_pattern(
+                PrimaryBeamModel::Airy {
+                    dish_diameter_m: 6.25,
+                    blockage_diameter_m: 0.75,
+                },
+                outside_casa_support,
                 100.0e9,
             ),
             0.0

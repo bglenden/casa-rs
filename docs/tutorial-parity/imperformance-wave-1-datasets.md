@@ -1,8 +1,8 @@
 # ImPerformance Wave 1 Simulated Dataset Plan
 
 Truth class: current descriptive
-Last reality check: 2026-05-16
-Verification: `python3 -m py_compile tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/dataset-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/dataset-small-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --materialize-models --materialize-workloads --output-dir target/imperformance-wave1/dataset-small-materialized`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-alma-shared-large --allow-non-external-large-root --materialize-workloads --output-dir target/imperformance-wave1/dataset-large-workloads`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/generated-workload-dry-run target/imperformance-wave1/dataset-small-materialized/workloads/wave1-vla-single-small-standard-mfs-dirty-control.json`; `just docs-check`; `just quick`
+Last reality check: 2026-05-17
+Verification: `python3 -m py_compile tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/bench_simobserve.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_bench_simobserve.py`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/dataset-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/dataset-small-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --materialize-models --materialize-workloads --output-dir target/imperformance-wave1/dataset-small-materialized`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-alma-mosaic-large --allow-non-external-large-root --materialize-workloads --output-dir target/imperformance-wave1/dataset-large-workloads`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/generated-workload-dry-run target/imperformance-wave1/dataset-small-materialized/workloads/wave1-vla-single-small-standard-mfs-dirty-control.json`; `python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/fixed-axis-vla-small-bench-v2 --disable-noise --strict-values`; `python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-alma-single-small --output-dir target/imperformance-wave1/fixed-axis-alma-small-bench-v2 --disable-noise --strict-values`; `cargo test -p casa-ms`; `just docs-check`; `just quick`
 
 Wave issue: #246
 Child issue: #248
@@ -10,11 +10,13 @@ Child issue: #248
 This note defines the deterministic simulated data inputs for ImPerformance
 Wave 1. The goal is to benchmark imaging behavior, not calibration behavior.
 The datasets therefore use visually interesting deterministic sky models, a
-realistic but simple noise term, and explicit CASA C++ generation plans.
+realistic but simple noise term, and explicit CASA/native generation plans.
 
-For Wave 1, CASA C++ is allowed to be the dataset generator of record. Native
-`casa-rs` simulation gaps discovered by this plan are tracked as backlog issues
-instead of blocking benchmark dataset staging.
+For Wave 1, native `casa-rs` simulation is the primary benchmark dataset
+generator where the capability is supported. CASA C++ generation remains the
+small-case oracle for parity and performance checks. Native gaps discovered by
+this plan are tracked as backlog issues instead of blocking supported dataset
+staging.
 
 ## Size Tiers
 
@@ -28,11 +30,11 @@ The first performance wave uses three memory-pressure tiers:
 
 The large tier is intentionally **not** one 100 GiB dataset per mode. The
 external drive budget allows one large dataset, so the registry contains a
-single shared ALMA mosaic/cube superset:
+single ALMA mosaic/cube superset:
 
-- dataset id: `wave1-alma-shared-large`;
-- instrument/family: ALMA shared-large mosaic/cube superset;
-- observing shape: 7 pointings, 256 channels, 24 h, 2 s integrations;
+- dataset id: `wave1-alma-mosaic-large`;
+- instrument/family: ALMA mosaic-large mosaic/cube superset;
+- observing shape: 7 pointings, 1024 channels, 74300 s, 10 s integrations;
 - logical workloads select from this one MS:
   - standard modes use field `0` with `gridder='standard'`;
   - mosaic modes use all fields with `gridder='mosaic'`;
@@ -50,25 +52,27 @@ The staging root is always explicit. Set `CASA_RS_IMPERF_DATA_ROOT` or pass
 
 ## Instruments And Families
 
-The registry includes both VLA and ALMA simulated datasets. CASA C++ generation
-is the current path for all Wave 1 benchmark datasets.
+The registry includes both VLA and ALMA simulated datasets. Native generation
+is the current path for supported Wave 1 benchmark datasets, with CASA C++
+retained as the parity oracle.
 
 | Instrument | Single-field datasets | Mosaic datasets | Native `casa-rs` simulation status |
 |---|---:|---:|---|
-| VLA | small, medium | small, medium | VLA single-field single-plane is supported by the existing native `simobserve` path; native cube spectral structure and true mosaic generation are backlog |
-| ALMA | small, medium | small, medium, plus one shared large superset | request-plan-only until ALMA simulation parity is checked |
+| VLA | small, medium | small | VLA single-field generation is supported by the existing native `simobserve` path; true mosaic generation is backlog |
+| ALMA | small, medium | small, plus one large mosaic/cube superset | ALMA single-field generation has strict small-tier parity evidence; true mosaic generation is backlog |
 
 The registry also includes both single-field and mosaic families:
 
 | Family | Wave 1 modes | Status |
 |---|---|---|
-| single | standard MFS dirty, standard MFS clean, standard cube, MT-MFS sentinel | CASA C++ generated datasets are usable now; native spectral cube model prediction is backlog #255 |
+| single | standard MFS dirty, standard MFS clean, standard cube, MT-MFS sentinel | Native and CASA C++ small single-field ALMA parity is checked; cube spectral structure remains backlog #255 |
 | mosaic | mosaic MFS clean, mosaic cube bounded | CASA C++ generated datasets are usable now; native multi-field mosaic generation is backlog #254 |
-| shared-large | all selected Wave 1 modes | one ALMA large-tier superset backs all logical large workloads |
+| mosaic-large | all selected Wave 1 modes | one ALMA large-tier superset backs all logical large workloads |
 
-The native blocked/request-plan statuses are intentional. They prevent the
-benchmark program from claiming native simulation capability while allowing the
-performance wave to proceed from CASA C++ generated datasets.
+The native blocked/request-plan statuses are intentional for unsupported
+families. They prevent the benchmark program from claiming native simulation
+capability while allowing the performance wave to proceed from supported native
+datasets and CASA C++ parity oracles.
 
 ## Source Model
 
@@ -116,10 +120,30 @@ This is not a calibration benchmark. The noise term is simple deterministic
 complex visibility noise, tuned to make images realistic enough for repeated
 inspection without adding calibration-solver scope.
 
+Current small-tier strict evidence:
+
+| Dataset | Rows | CASA C++ simobserve | Native simobserve | Speedup | Strict result |
+|---|---:|---:|---:|---:|---|
+| `wave1-vla-single-small` | `3,032,640` | `56.514 s` | `16.051 s` | `3.52x` | rows, UVW, flags, and sampled DATA pass; zero same-cell DATA tolerance violations |
+| `wave1-alma-single-small` | `7,801,920` | `109.738 s` | `24.399 s` | `4.50x` | rows, UVW, flags, and sampled DATA pass; zero same-cell DATA tolerance violations |
+
+The corresponding simulation-isolated image panels run CASA `tclean(niter=0)`
+on both the CASA-generated and native-generated MeasurementSets:
+
+- `target/imperformance-wave1/image-inspection/vla-small/vla-small-simulation-parity-panel.png`
+- `target/imperformance-wave1/image-inspection/alma-small/alma-small-simulation-parity-panel.png`
+
+The current panel statistics are:
+
+| Dataset | Dirty-image difference RMS | Relative RMS |
+|---|---:|---:|
+| `wave1-vla-single-small` | `0.0550370814 Jy/beam` | `1.485678975e-4` |
+| `wave1-alma-single-small` | `0.00293265438 Jy/beam` | `5.168102794e-4` |
+
 ## Native Simulation Follow-Ups
 
-Native simulation is not on the critical path for Wave 1 dataset generation.
-The missing capabilities are tracked separately:
+Native simulation is on the critical path for supported Wave 1 dataset
+generation. Missing families remain tracked separately:
 
 - #254: native multi-field mosaic simulation generation.
 - #255: native spectral cube model simulation.

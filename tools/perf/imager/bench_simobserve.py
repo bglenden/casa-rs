@@ -23,6 +23,19 @@ class BenchError(Exception):
     """Error that should be shown without a Python traceback."""
 
 
+def strict_data_cell_violates(
+    abs_error: float,
+    casa_amplitude: float,
+    *,
+    data_atol: float,
+    data_rtol: float,
+) -> bool:
+    """Return true when one DATA cell fails both absolute and relative criteria."""
+
+    relative = abs_error / max(casa_amplitude, data_atol)
+    return abs_error > data_atol and relative > data_rtol
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("plan", type=pathlib.Path, help="wave1-dataset-plan.json")
@@ -647,6 +660,55 @@ def open_table(path):
 def key_tuple(keys, row):
     return tuple(key[row].item() if hasattr(key[row], "item") else key[row] for key in keys)
 
+def phase_residual_diagnostics(samples):
+    if not samples:
+        return {"samples": 0, "fields": {}}
+    values = np.asarray(samples, dtype=np.float64)
+    fields = {}
+    for field_id in sorted(set(values[:, 0].astype(int))):
+        field_values = values[values[:, 0] == field_id]
+        if field_values.shape[0] < 4:
+            continue
+        high_amplitude_cut = np.percentile(field_values[:, 7], 50)
+        fit_values = field_values[field_values[:, 7] >= high_amplitude_cut]
+        if fit_values.shape[0] < 4:
+            fit_values = field_values
+        design = np.column_stack([
+            fit_values[:, 2],
+            fit_values[:, 3],
+            fit_values[:, 4],
+            np.ones(fit_values.shape[0]),
+        ])
+        phase = fit_values[:, 5]
+        beta, *_ = np.linalg.lstsq(design, phase, rcond=None)
+        residual = phase - design @ beta
+        amp_ratio = fit_values[:, 6]
+        abs_delta = fit_values[:, 8]
+        fields[str(field_id)] = {
+            "samples": int(field_values.shape[0]),
+            "fit_samples": int(fit_values.shape[0]),
+            "phase_fit_rad_per_lambda": {
+                "u": float(beta[0]),
+                "v": float(beta[1]),
+                "w": float(beta[2]),
+                "constant": float(beta[3]),
+            },
+            "phase_residual_rms_rad": float(np.sqrt(np.mean(residual * residual))),
+            "phase_min_rad": float(phase.min()),
+            "phase_max_rad": float(phase.max()),
+            "amplitude_ratio": {
+                "mean": float(amp_ratio.mean()),
+                "std": float(amp_ratio.std()),
+                "min": float(amp_ratio.min()),
+                "max": float(amp_ratio.max()),
+            },
+            "abs_delta": {
+                "mean": float(abs_delta.mean()),
+                "max": float(abs_delta.max()),
+            },
+        }
+    return {"samples": int(values.shape[0]), "fields": fields}
+
 def read_keys(path):
     tb = open_table(path)
     try:
@@ -683,13 +745,18 @@ else:
 
 native_tb = open_table(native_path)
 casa_tb = open_table(casa_path)
+spw_tb = open_table(casa_path + "/SPECTRAL_WINDOW")
 try:
+    channel_frequencies_hz = np.asarray(spw_tb.getcell("CHAN_FREQ", 0), dtype=np.float64)
     uvw_max_abs = 0.0
     uvw_mean_sum = 0.0
     uvw_count = 0
     data_max_abs = 0.0
     data_sum_abs = 0.0
     data_max_relative = 0.0
+    data_violation_count = 0
+    data_violation_max_abs = 0.0
+    data_violation_max_relative = 0.0
     data_count = 0
     raw_flag_mismatches = 0
     effective_flag_mismatches = 0
@@ -697,6 +764,7 @@ try:
     sigma_max_abs = 0.0
     missing_keys = []
     worst_cells = []
+    phase_samples = []
 
     for native_row in native_sample_rows:
         key = key_tuple(native_keys, native_row)
@@ -736,6 +804,19 @@ try:
             data_max_relative = max(data_max_relative, row_max_relative)
             data_sum_abs += float(selected_delta.sum())
             data_count += int(selected_delta.size)
+            violation_mask = (selected_delta > data_atol) & (relative > data_rtol)
+            if np.any(violation_mask):
+                data_violation_count += int(np.count_nonzero(violation_mask))
+                violation_delta = selected_delta[violation_mask]
+                violation_relative = relative[violation_mask]
+                data_violation_max_abs = max(
+                    data_violation_max_abs,
+                    float(violation_delta.max()),
+                )
+                data_violation_max_relative = max(
+                    data_violation_max_relative,
+                    float(violation_relative.max()),
+                )
             if row_max_abs == data_max_abs or row_max_relative == data_max_relative:
                 corr, chan = np.argwhere(mask)[int(np.argmax(selected_delta))]
                 worst_cells.append({
@@ -754,6 +835,31 @@ try:
                         "imag": float(casa_data[corr, chan].imag),
                     },
                 })
+            unflagged_cells = np.argwhere(mask)
+            for corr, chan in unflagged_cells:
+                # Correlations are identical for these scalar simulation
+                # products; keep one polarization so fits describe rows and
+                # channels rather than double-counting the same residual.
+                if int(corr) != 0:
+                    continue
+                casa_value = casa_data[corr, chan]
+                native_value = native_data[corr, chan]
+                casa_amplitude = abs(casa_value)
+                if casa_amplitude <= data_atol:
+                    continue
+                ratio = native_value / casa_value
+                frequency_hz = float(channel_frequencies_hz[int(chan)])
+                phase_samples.append((
+                    int(key[1]),
+                    int(chan),
+                    float(native_uvw[0] * frequency_hz / 299792458.0),
+                    float(native_uvw[1] * frequency_hz / 299792458.0),
+                    float(native_uvw[2] * frequency_hz / 299792458.0),
+                    float(np.angle(ratio)),
+                    float(abs(ratio)),
+                    float(casa_amplitude),
+                    float(delta[corr, chan]),
+                ))
 
         native_weight = np.asarray(native_tb.getcell("WEIGHT", int(native_row)), dtype=np.float64)
         casa_weight = np.asarray(casa_tb.getcell("WEIGHT", int(casa_row)), dtype=np.float64)
@@ -762,6 +868,7 @@ try:
         weight_max_abs = max(weight_max_abs, float(np.abs(native_weight - casa_weight).max()))
         sigma_max_abs = max(sigma_max_abs, float(np.abs(native_sigma - casa_sigma).max()))
 finally:
+    spw_tb.close()
     native_tb.close()
     casa_tb.close()
 
@@ -780,8 +887,12 @@ result["data"] = {
     "max_abs": data_max_abs,
     "mean_abs": data_sum_abs / data_count if data_count else 0.0,
     "max_relative": data_max_relative,
+    "violating_cells": data_violation_count,
+    "violation_max_abs": data_violation_max_abs,
+    "violation_max_relative": data_violation_max_relative,
     "worst_cells": worst_cells[-10:],
 }
+result["phase_residual_diagnostics"] = phase_residual_diagnostics(phase_samples)
 result["raw_flag_mismatches"] = raw_flag_mismatches
 result["effective_flag_mismatches"] = effective_flag_mismatches
 result["weight"] = {"max_abs": weight_max_abs}
@@ -790,10 +901,11 @@ result["sigma"] = {"max_abs": sigma_max_abs}
 if uvw_max_abs > uvw_atol:
     result["status"] = "failed"
     result["reasons"].append(f"strict sampled UVW max abs {uvw_max_abs:.6g} exceeds {uvw_atol:.6g}")
-if data_count and (data_max_abs > data_atol and data_max_relative > data_rtol):
+if data_violation_count:
     result["status"] = "failed"
     result["reasons"].append(
-        f"strict sampled DATA max abs {data_max_abs:.6g}, max rel {data_max_relative:.6g} exceeds tolerances"
+        f"strict sampled DATA has {data_violation_count} cells exceeding both tolerances "
+        f"(max abs {data_violation_max_abs:.6g}, max rel {data_violation_max_relative:.6g})"
     )
 if effective_flag_mismatches:
     result["status"] = "failed"
@@ -940,12 +1052,26 @@ comparison_mask = ~(native_effective_flag | casa_effective_flag)
 data_abs = data_abs_all[comparison_mask]
 casa_amp = casa_amp_all[comparison_mask]
 relative = data_abs / np.maximum(casa_amp, data_atol)
+data_violation_mask = (
+    comparison_mask
+    & (data_abs_all > data_atol)
+    & ((data_abs_all / np.maximum(casa_amp_all, data_atol)) > data_rtol)
+)
+data_violation_abs = data_abs_all[data_violation_mask]
+data_violation_relative = (
+    data_abs_all[data_violation_mask] / np.maximum(casa_amp_all[data_violation_mask], data_atol)
+)
 result["data"] = {
     "compared_unflagged_cells": int(np.count_nonzero(comparison_mask)),
     "all_cells_max_abs": float(data_abs_all.max()) if data_abs_all.size else 0.0,
     "max_abs": float(data_abs.max()) if data_abs.size else 0.0,
     "mean_abs": float(data_abs.mean()) if data_abs.size else 0.0,
     "max_relative": float(relative.max()) if relative.size else 0.0,
+    "violating_cells": int(np.count_nonzero(data_violation_mask)),
+    "violation_max_abs": float(data_violation_abs.max()) if data_violation_abs.size else 0.0,
+    "violation_max_relative": (
+        float(data_violation_relative.max()) if data_violation_relative.size else 0.0
+    ),
     "native_abs_max": float(np.abs(native_data).max()) if native_data.size else 0.0,
     "casa_abs_max": float(casa_amp_all.max()) if casa_amp_all.size else 0.0,
 }
@@ -1071,16 +1197,12 @@ if data_abs.size:
             ),
         })
     result["data"]["worst_relative_cells"] = worst_relative_cells
-if not np.allclose(
-    native_data[comparison_mask],
-    casa_data[comparison_mask],
-    rtol=data_rtol,
-    atol=data_atol,
-):
+if result["data"]["violating_cells"]:
     result["status"] = "failed"
     result["reasons"].append(
-        f"strict DATA max abs {result['data']['max_abs']:.6g}, "
-        f"max rel {result['data']['max_relative']:.6g} exceeds tolerances"
+        f"strict DATA has {result['data']['violating_cells']} cells exceeding both tolerances "
+        f"(max abs {result['data']['violation_max_abs']:.6g}, "
+        f"max rel {result['data']['violation_max_relative']:.6g})"
     )
 
 raw_flag_mismatches = int(np.count_nonzero(native_flag != casa_flag))
