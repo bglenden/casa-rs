@@ -51,6 +51,7 @@ struct Options {
     mask_boxes: Vec<[usize; 4]>,
     mask_image: Option<PathBuf>,
     w_term_mode: WTermMode,
+    force_standard_gridder: bool,
     w_project_planes: Option<usize>,
     dirty_only: bool,
     repeats: usize,
@@ -329,6 +330,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         mask_boxes: options.mask_boxes.clone(),
         mask_image: options.mask_image.clone(),
         w_term_mode: options.w_term_mode,
+        force_standard_gridder: options.force_standard_gridder,
         w_project_planes: options.w_project_planes,
         dirty_only: options.dirty_only,
         write_preview_pngs: false,
@@ -389,6 +391,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut mask_boxes = Vec::<[usize; 4]>::new();
     let mut mask_image = None::<PathBuf>;
     let mut w_term_mode = WTermMode::None;
+    let mut force_standard_gridder = false;
     let mut w_project_planes = None::<usize>;
     let mut dirty_only = false;
     let mut repeats = 5usize;
@@ -458,7 +461,10 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             }
             "--wterm" => w_term_mode = parse_w_term_mode(&next_value(&mut args, "--wterm")?)?,
             "--gridder" => {
-                w_term_mode = parse_gridder_w_term_mode(&next_value(&mut args, "--gridder")?)?
+                let (mode, force_standard) =
+                    parse_gridder_request(&next_value(&mut args, "--gridder")?)?;
+                w_term_mode = mode;
+                force_standard_gridder = force_standard;
             }
             "--wprojplanes" => w_project_planes = Some(parse_next(&mut args, "--wprojplanes")?),
             "--dirty-only" => dirty_only = true,
@@ -514,6 +520,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         mask_boxes,
         mask_image,
         w_term_mode,
+        force_standard_gridder,
         w_project_planes,
         dirty_only,
         repeats,
@@ -567,10 +574,11 @@ fn parse_w_term_mode(text: &str) -> Result<WTermMode, String> {
     }
 }
 
-fn parse_gridder_w_term_mode(text: &str) -> Result<WTermMode, String> {
+fn parse_gridder_request(text: &str) -> Result<(WTermMode, bool), String> {
     match text.to_ascii_lowercase().as_str() {
-        "standard" | "gridft" | "ft" | "mosaic" => Ok(WTermMode::None),
-        "wproject" => Ok(WTermMode::WProject),
+        "standard" | "gridft" | "ft" => Ok((WTermMode::None, true)),
+        "mosaic" => Ok((WTermMode::None, false)),
+        "wproject" => Ok((WTermMode::WProject, false)),
         "widefield" | "awproject" | "awp2" | "awphpg" => Err(format!(
             "gridder={text:?} is not implemented by casa-rs imager yet; \
              supported gridder values are standard, wproject, and mosaic"
@@ -597,8 +605,9 @@ fn parse_deconvolver(text: &str) -> Result<Deconvolver, String> {
         "hogbom" => Ok(Deconvolver::Hogbom),
         "clark" => Ok(Deconvolver::Clark),
         "multiscale" => Ok(Deconvolver::Multiscale),
+        "mtmfs" => Ok(Deconvolver::Mtmfs),
         _ => Err(format!(
-            "unsupported --deconvolver value {text:?}; expected hogbom, clark, or multiscale"
+            "unsupported --deconvolver value {text:?}; expected hogbom, clark, multiscale, or mtmfs"
         )),
     }
 }

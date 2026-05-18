@@ -742,7 +742,9 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
 
     let (managed_output, filtered_args) = extract_option_value(&filtered_args, "--managed-output")?;
     let config = CliConfig::parse(filtered_args)?;
-    let result = ImagerRunTaskRequest::from_cli_config(&config).execute()?;
+    let request = ImagerRunTaskRequest::from_cli_config(&config);
+    let summary = run_from_config(&config)?;
+    let result = ImagerRunTaskResult::from_run(request, &summary);
     if managed_output {
         println!(
             "{}",
@@ -1399,7 +1401,7 @@ fn run_single_image_from_config_with_gridder_override(
         PreparedInput::Mfs(plane) => plane.freq_ref,
         PreparedInput::Cube(cube) => cube.freq_ref,
     };
-    let prepared_input = if force_standard_gridder {
+    let prepared_input = if force_standard_gridder || config.force_standard_gridder {
         force_standard_gridder_mode(prepared)
     } else {
         prepared
@@ -3543,6 +3545,9 @@ pub struct CliConfig {
     pub mask_image: Option<PathBuf>,
     /// Requested `w`-term handling mode.
     pub w_term_mode: WTermMode,
+    /// Explicit CASA-style `gridder='standard'` request. The MFS frontend can
+    /// otherwise infer mosaic metadata from POINTING rows.
+    pub force_standard_gridder: bool,
     /// Optional explicit `wproject` plane budget.
     pub w_project_planes: Option<usize>,
     /// Skip CLEAN and only write dirty/residual products.
@@ -3603,6 +3608,7 @@ impl CliConfig {
         let mut mask_boxes = Vec::<[usize; 4]>::new();
         let mut mask_image = None::<PathBuf>;
         let mut w_term_mode = WTermMode::None;
+        let mut force_standard_gridder = false;
         let mut w_project_planes = None::<usize>;
         let mut dirty_only = false;
         let mut write_preview_pngs = true;
@@ -3752,7 +3758,10 @@ impl CliConfig {
                     continue;
                 }
                 "--gridder" => {
-                    w_term_mode = parse_gridder_w_term_mode(&next_value(&mut args, "--gridder")?)?;
+                    let gridder = next_value(&mut args, "--gridder")?;
+                    let (mode, force_standard) = parse_gridder_request(&gridder)?;
+                    w_term_mode = mode;
+                    force_standard_gridder = force_standard;
                     continue;
                 }
                 "--perchanweightdensity" => {
@@ -4070,6 +4079,7 @@ impl CliConfig {
             mask_boxes,
             mask_image,
             w_term_mode,
+            force_standard_gridder,
             w_project_planes,
             dirty_only,
             write_preview_pngs,
@@ -11715,10 +11725,11 @@ fn parse_w_term_mode(text: &str) -> Result<WTermMode, String> {
     }
 }
 
-fn parse_gridder_w_term_mode(text: &str) -> Result<WTermMode, String> {
+fn parse_gridder_request(text: &str) -> Result<(WTermMode, bool), String> {
     match text.to_ascii_lowercase().as_str() {
-        "standard" | "gridft" | "ft" | "mosaic" => Ok(WTermMode::None),
-        "wproject" => Ok(WTermMode::WProject),
+        "standard" | "gridft" | "ft" => Ok((WTermMode::None, true)),
+        "mosaic" => Ok((WTermMode::None, false)),
+        "wproject" => Ok((WTermMode::WProject, false)),
         "widefield" | "awproject" | "awp2" | "awphpg" => Err(format!(
             "gridder={text:?} is not implemented by casa-rs imager yet; \
              supported gridder values are standard, wproject, and mosaic. \
@@ -15591,6 +15602,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -15647,6 +15659,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -15719,6 +15732,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -15783,6 +15797,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -15850,6 +15865,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -15914,6 +15930,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -15970,6 +15987,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -16847,6 +16865,58 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(config.w_term_mode, WTermMode::WProject);
+        assert!(!config.force_standard_gridder);
+    }
+
+    #[test]
+    fn cli_gridder_standard_forces_standard_mode() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/demo"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+            OsString::from("--gridder"),
+            OsString::from("standard"),
+        ])
+        .unwrap();
+        assert_eq!(config.w_term_mode, WTermMode::None);
+        assert!(config.force_standard_gridder);
+
+        let mosaic = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/demo"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+            OsString::from("--gridder"),
+            OsString::from("mosaic"),
+        ])
+        .unwrap();
+        assert_eq!(mosaic.w_term_mode, WTermMode::None);
+        assert!(!mosaic.force_standard_gridder);
+
+        let wproject = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/demo"),
+            OsString::from("--imsize"),
+            OsString::from("64"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.5"),
+            OsString::from("--gridder"),
+            OsString::from("wproject"),
+        ])
+        .unwrap();
+        assert_eq!(wproject.w_term_mode, WTermMode::WProject);
+        assert!(!wproject.force_standard_gridder);
     }
 
     #[test]
@@ -17108,19 +17178,19 @@ mod tests {
         assert_eq!(parse_w_term_mode("direct").unwrap(), WTermMode::Direct);
         assert!(parse_w_term_mode("wproj").is_err());
         assert_eq!(
-            parse_gridder_w_term_mode("standard").unwrap(),
-            WTermMode::None
+            parse_gridder_request("standard").unwrap(),
+            (WTermMode::None, true)
         );
         assert_eq!(
-            parse_gridder_w_term_mode("mosaic").unwrap(),
-            WTermMode::None
+            parse_gridder_request("mosaic").unwrap(),
+            (WTermMode::None, false)
         );
         assert_eq!(
-            parse_gridder_w_term_mode("wproject").unwrap(),
-            WTermMode::WProject
+            parse_gridder_request("wproject").unwrap(),
+            (WTermMode::WProject, false)
         );
         assert!(
-            parse_gridder_w_term_mode("awproject")
+            parse_gridder_request("awproject")
                 .unwrap_err()
                 .contains("not implemented")
         );
@@ -17838,6 +17908,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             write_preview_pngs: true,
@@ -18127,6 +18198,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -18228,6 +18300,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -18325,6 +18398,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -18474,6 +18548,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -18603,6 +18678,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::WProject,
+            force_standard_gridder: false,
             w_project_planes: Some(6),
             dirty_only: true,
             write_preview_pngs: false,
@@ -18685,6 +18761,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::WProject,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -18799,6 +18876,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -18908,6 +18986,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -18999,6 +19078,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -19144,6 +19224,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -19241,6 +19322,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -19339,6 +19421,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -19432,6 +19515,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -19541,6 +19625,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -19658,6 +19743,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -19752,6 +19838,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -19989,6 +20076,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -20096,6 +20184,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -20220,6 +20309,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             write_preview_pngs: false,
@@ -20361,6 +20451,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             write_preview_pngs: false,
@@ -20469,6 +20560,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -20577,6 +20669,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             write_preview_pngs: false,
@@ -20704,6 +20797,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             write_preview_pngs: true,
@@ -20846,6 +20940,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             write_preview_pngs: false,
@@ -20966,6 +21061,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             write_preview_pngs: false,
@@ -21085,6 +21181,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -21182,6 +21279,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -21273,6 +21371,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -21365,6 +21464,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: true,
             write_preview_pngs: false,
@@ -21460,6 +21560,7 @@ deconvolver=mtmfs
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::None,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             write_preview_pngs: false,

@@ -631,6 +631,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::Direct,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             write_preview_pngs: true,

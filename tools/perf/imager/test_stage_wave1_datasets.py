@@ -46,7 +46,6 @@ class StageWave1DatasetsTest(unittest.TestCase):
                 "standard-cube-line",
                 "mosaic-mfs-clean-primary",
                 "mosaic-cube-bounded",
-                "mtmfs-wideband-sentinel",
             ],
             large[0]["selected_modes"],
         )
@@ -96,6 +95,9 @@ class StageWave1DatasetsTest(unittest.TestCase):
 
         workload = stage.build_workload_manifest(dataset, "mtmfs-wideband-sentinel")
 
+        self.assertEqual("standard", workload["imaging"]["gridder"])
+        self.assertEqual("0", workload["imaging"]["field"])
+        self.assertIsNone(workload["imaging"].get("phasecenter_field"))
         self.assertEqual("mtmfs", workload["imaging"]["deconvolver"])
         self.assertEqual(2, workload["imaging"]["nterms"])
         self.assertEqual([".image.tt0", ".residual.tt0", ".psf.tt0"], workload["comparison"]["products"])

@@ -67,7 +67,7 @@ The registry also includes both single-field and mosaic families:
 |---|---|---|
 | single | standard MFS dirty, standard MFS clean, standard cube, MT-MFS sentinel | Native and CASA C++ small single-field ALMA parity is checked; cube spectral structure remains backlog #255 |
 | mosaic | mosaic MFS clean, mosaic cube bounded | Native request generation covers the selected Wave 1 mosaic-capable shapes; broader native mosaic parity remains backlog #254 |
-| mosaic-large | all selected Wave 1 modes | one ALMA large-tier superset backs all logical large workloads |
+| mosaic-large | standard MFS dirty, standard MFS clean, standard cube, mosaic MFS clean, mosaic cube bounded | one ALMA large-tier superset backs the large logical workloads; MT-MFS stays on standard-gridder single-field datasets and mosaic MT-MFS is backlog #262 |
 
 The native blocked/request-plan statuses are intentional for unsupported
 families. They prevent the benchmark program from claiming native simulation

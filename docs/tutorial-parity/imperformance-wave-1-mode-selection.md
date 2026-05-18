@@ -56,9 +56,10 @@ Interpretation:
   clean workloads, not optional embellishments.
 - Mosaic imaging is common enough, and expensive enough in current `casa-rs`
   evidence, to be a primary performance target.
-- MT-MFS is important for wideband continuum, but should be a Wave 1 sentinel
-  workload rather than the first optimization target unless baseline evidence
-  makes it dominant.
+- MT-MFS is important for wideband continuum, but should be a Wave 1
+  standard-gridder sentinel workload rather than the first optimization target
+  unless baseline evidence makes it dominant. Mosaic/PB-aware MT-MFS is tracked
+  separately in #262.
 - W-projection and AW/widefield imaging matter, but the existing #52 surface is
   the right owner for AW/widefield capability. Wave 1 should avoid making #52 a
   hidden prerequisite.
@@ -72,7 +73,7 @@ Interpretation:
 | `standard-cube-line` | `specmode='cube'`, `gridder='standard'`, dirty and bounded clean variants | Current spectral-line practice; includes deconvolution coverage while separating per-channel scaling from mosaic/PB overhead. | Benchmark dirty and bounded-clean variants; identify cube scaling budget without using #56 runtime controls. |
 | `mosaic-mfs-clean-primary` | `specmode='mfs'`, `gridder='mosaic'`, multiscale clean, PB products | Common ALMA/VLA tutorial mode and current high-leverage slow area in `casa-rs`. | Primary follow-on optimization target. |
 | `mosaic-cube-bounded` | `specmode='cube'`, `gridder='mosaic'`, small channel count first | Exercises the expensive interaction between cube scaling, mosaic/PB work, and product generation. | Bounded benchmark and bottleneck ledger; large-cube controls stay with #56. |
-| `mtmfs-wideband-sentinel` | `specmode='mfs'`, `deconvolver='mtmfs'`, `nterms > 1` | Current wideband continuum algorithm family; useful to keep in view before backend planning hardens. | Baseline-only sentinel unless it becomes the dominant bottleneck. |
+| `mtmfs-wideband-sentinel` | `specmode='mfs'`, `gridder='standard'`, `deconvolver='mtmfs'`, `nterms > 1` | Current wideband continuum algorithm family; useful to keep in view before backend planning hardens. | Baseline-only sentinel unless it becomes the dominant bottleneck; mosaic MT-MFS is backlog #262. |
 
 ## Deferred Or Blocked Modes
 
@@ -99,7 +100,7 @@ single-field and mosaic MeasurementSets.
 | `standard-cube-line` | small, medium, large-shared | deterministic spectral-line cube with known line structure; large selects field `0` from the shared ALMA superset | 16, 64, and 256 channels; 512 to 4096 pixel images | dirty-only plus bounded multiscale/auto-multithresh clean | cube `.psf`, `.residual`, `.image`, `.model` for clean variants, timing JSON |
 | `mosaic-mfs-clean-primary` | small, medium, large-shared | deterministic mosaic with overlapping pointings; large uses all fields from the shared ALMA superset | 512, 2048, and 4096 pixel images | multiscale clean; PB products enabled; Briggs weighting | `.psf`, `.residual`, `.model`, `.image`, `.image.pbcor`, `.pb`, timing JSON |
 | `mosaic-cube-bounded` | small, medium, large-shared bounded subset | deterministic line mosaic; large uses all fields but a bounded channel slice from the shared ALMA superset | 8, 32, and 32 selected channels; 512 to 4096 pixel images | dirty-only plus short clean probe | cube products, PB products where supported, timing JSON |
-| `mtmfs-wideband-sentinel` | medium, large-shared sentinel | wideband continuum simulation; large selects from the shared ALMA superset | 2048 to 4096 pixel image; `nterms=2` initially | MT-MFS bounded clean; multiscale sentinel if already supported by path | Taylor-term products, alpha products, timing JSON |
+| `mtmfs-wideband-sentinel` | small, medium | standard-gridder single-field wideband continuum simulation | 512 to 2048 pixel image; `nterms=2` initially | MT-MFS bounded clean | Taylor-term products, alpha products, timing JSON |
 
 ## Target Style
 
@@ -113,7 +114,7 @@ wallclock. It should fail if it cannot produce trustworthy evidence.
 | `standard-cube-line` | dirty and bounded-clean per-channel scaling, wallclock ratio, correctness delta | 10x target after cube dataflow and backend work; #56 owns user-visible chunk/parallel controls. |
 | `mosaic-mfs-clean-primary` | primary bottleneck ledger plus CASA C++ ratio | First follow-on optimization target because previous evidence showed mosaic/CLEAN slower than CASA and the mode is current practice. |
 | `mosaic-cube-bounded` | bounded scaling and PB/product cost ledger | Decide whether the next ticket is mosaic gridding, PB/product writeback, or cube runtime controls. |
-| `mtmfs-wideband-sentinel` | baseline-only unless unexpectedly dominant | Keep wideband continuum visible before backend structure hardens. |
+| `mtmfs-wideband-sentinel` | baseline-only unless unexpectedly dominant | Keep standard-gridder wideband continuum visible before backend structure hardens; mosaic MT-MFS is #262. |
 
 ## First Follow-On Optimization Target
 
