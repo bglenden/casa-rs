@@ -24,6 +24,30 @@ SUPPORTED_SPEC_MODES = {"mfs", "cube"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
 SUPPORTED_INTERPOLATION = {"nearest", "linear"}
 DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
+RUST_STAGE_FIELDS = {
+    "open_measurement_set",
+    "prepare_plane_input",
+    "extract_phase_center",
+    "run_imaging",
+    "build_coordinate_system",
+    "write_products",
+    "frontend_total",
+    "controller_overhead",
+    "weighting",
+    "psf_grid",
+    "psf_fft",
+    "psf_normalize",
+    "model_fft",
+    "residual_degrid_grid",
+    "residual_fft",
+    "residual_normalize",
+    "major_cycle_refresh",
+    "minor_cycle",
+    "minor_cycle_solve",
+    "beam_fit",
+    "restore",
+    "total",
+}
 
 
 class HarnessError(Exception):
@@ -631,6 +655,8 @@ def parse_stage_section(text: str, heading: str) -> dict[str, float]:
     stages: dict[str, float] = {}
     for line in lines:
         for name, value in re.findall(r"([A-Za-z0-9_]+)=([0-9.]+)", line):
+            if heading == "Rust stage medians" and name not in RUST_STAGE_FIELDS:
+                continue
             if name != "run":
                 stages[name] = float(value)
     return stages

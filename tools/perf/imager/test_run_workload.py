@@ -142,6 +142,57 @@ class StageBreakdownTests(unittest.TestCase):
         self.assertEqual(parsed["stage_breakdown"]["rust"]["status"], "reported")
         self.assertEqual(parsed["stage_breakdown"]["casa"]["status"], "missing")
 
+    def test_parse_rust_stage_section_keeps_full_core_timing_set(self) -> None:
+        log = """Rust stage medians (milliseconds):
+  run=1 frontend_total_ms=100.000 open_ms=1.000 prepare_ms=2.000 phase_center_ms=3.000 imaging_ms=4.000 coords_ms=5.000 write_ms=6.000 core_total_ms=40.000 controller_ms=7.000 weighting_ms=8.000 major_refresh_ms=9.000 psf_grid_ms=10.000 psf_fft_ms=11.000 psf_normalize_ms=12.000 model_fft_ms=13.000 residual_grid_ms=14.000 residual_fft_ms=15.000 residual_normalize_ms=16.000 minor_ms=17.000 minor_solve_ms=18.000 beam_fit_ms=19.000 restore_ms=20.000
+  frontend:
+  open_measurement_set=1.000
+  prepare_plane_input=2.000
+  extract_phase_center=3.000
+  run_imaging=4.000
+  build_coordinate_system=5.000
+  write_products=6.000
+  frontend_total=100.000
+  core:
+  controller_overhead=7.000
+  weighting=8.000
+  psf_grid=10.000
+  psf_fft=11.000
+  psf_normalize=12.000
+  model_fft=13.000
+  residual_degrid_grid=14.000
+  residual_fft=15.000
+  residual_normalize=16.000
+  major_cycle_refresh=9.000
+  minor_cycle=17.000
+  minor_cycle_solve=18.000
+  beam_fit=19.000
+  restore=20.000
+  total=40.000
+
+CASA tclean timings (seconds):
+"""
+
+        stages = run_workload.parse_stage_section(log, "Rust stage medians")
+
+        for name in [
+            "psf_normalize",
+            "model_fft",
+            "residual_normalize",
+            "major_cycle_refresh",
+            "minor_cycle",
+            "minor_cycle_solve",
+            "beam_fit",
+            "restore",
+        ]:
+            self.assertIn(name, stages)
+        self.assertEqual(stages["psf_normalize"], 12.0)
+        self.assertEqual(stages["model_fft"], 13.0)
+        self.assertEqual(stages["restore"], 20.0)
+        self.assertNotIn("niter", stages)
+        self.assertNotIn("imsize", stages)
+        self.assertNotIn("psf_grid_ms", stages)
+
 
 if __name__ == "__main__":
     unittest.main()

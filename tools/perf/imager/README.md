@@ -231,6 +231,14 @@ scripts/bench-imager-vs-casa.sh /Volumes/home/casatestdata/measurementset/vla/re
 
 The Rust profiler reports medians for:
 
+- `open_measurement_set`
+- `prepare_plane_input`
+- `extract_phase_center`
+- `run_imaging`
+- `build_coordinate_system`
+- `write_products`
+- `frontend_total`
+- `controller_overhead`
 - `weighting`
 - `psf_grid`
 - `psf_fft`
@@ -239,7 +247,9 @@ The Rust profiler reports medians for:
 - `residual_degrid_grid`
 - `residual_fft`
 - `residual_normalize`
+- `major_cycle_refresh`
 - `minor_cycle`
+- `minor_cycle_solve`
 - `beam_fit`
 - `restore`
 - `total`
