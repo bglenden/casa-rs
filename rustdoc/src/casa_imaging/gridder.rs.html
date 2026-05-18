@@ -59,7 +59,7 @@
 <a href=#59 id=59 data-nosnippet>59</a>
 <a href=#60 id=60 data-nosnippet>60</a><span class="kw">impl </span>StandardGridder {
 <a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(geometry: ImageGeometry) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ImagingError&gt; {
-<a href=#62 id=62 data-nosnippet>62</a>        <span class="self">Self</span>::new_with_padding(geometry, padded_len)
+<a href=#62 id=62 data-nosnippet>62</a>        <span class="self">Self</span>::new_with_padding(geometry, casa_composite_padded_len)
 <a href=#63 id=63 data-nosnippet>63</a>    }
 <a href=#64 id=64 data-nosnippet>64</a>
 <a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new_unpadded(geometry: ImageGeometry) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ImagingError&gt; {
@@ -2285,125 +2285,135 @@
 <a href=#2285 id=2285 data-nosnippet>2285</a>    }
 <a href=#2286 id=2286 data-nosnippet>2286</a>
 <a href=#2287 id=2287 data-nosnippet>2287</a>    <span class="attr">#[test]
-<a href=#2288 id=2288 data-nosnippet>2288</a>    #[serial(casa_cpp)]
-<a href=#2289 id=2289 data-nosnippet>2289</a>    </span><span class="kw">fn </span>convolve_gridder_degrids_structured_model_like_casacore() {
-<a href=#2290 id=2290 data-nosnippet>2290</a>        <span class="kw">let </span>geometry = ImageGeometry {
-<a href=#2291 id=2291 data-nosnippet>2291</a>            image_shape: [<span class="number">64</span>, <span class="number">64</span>],
-<a href=#2292 id=2292 data-nosnippet>2292</a>            cell_size_rad: [<span class="number">8.0 </span>/ <span class="number">206_264.806_247</span>, <span class="number">8.0 </span>/ <span class="number">206_264.806_247</span>],
-<a href=#2293 id=2293 data-nosnippet>2293</a>        };
-<a href=#2294 id=2294 data-nosnippet>2294</a>        <span class="kw">let </span>gridder = StandardGridder::new(geometry).unwrap();
-<a href=#2295 id=2295 data-nosnippet>2295</a>        <span class="kw">let </span><span class="kw-2">mut </span>model = Array2::&lt;f32&gt;::zeros((<span class="number">64</span>, <span class="number">64</span>));
-<a href=#2296 id=2296 data-nosnippet>2296</a>        model[(<span class="number">32</span>, <span class="number">32</span>)] = <span class="number">1.0</span>;
-<a href=#2297 id=2297 data-nosnippet>2297</a>        model[(<span class="number">21</span>, <span class="number">45</span>)] = -<span class="number">0.35</span>;
-<a href=#2298 id=2298 data-nosnippet>2298</a>        model[(<span class="number">47</span>, <span class="number">18</span>)] = <span class="number">0.2</span>;
-<a href=#2299 id=2299 data-nosnippet>2299</a>        <span class="kw">let </span>model_grid = centered_fft2(<span class="kw-2">&amp;</span>gridder.apodize_model(<span class="kw-2">&amp;</span>model));
-<a href=#2300 id=2300 data-nosnippet>2300</a>        <span class="kw">let </span>samples = [
-<a href=#2301 id=2301 data-nosnippet>2301</a>            (<span class="number">123.456_f64</span>, -<span class="number">78.9_f64</span>),
-<a href=#2302 id=2302 data-nosnippet>2302</a>            (-<span class="number">210.25_f64</span>, <span class="number">98.125_f64</span>),
-<a href=#2303 id=2303 data-nosnippet>2303</a>            (<span class="number">15.875_f64</span>, <span class="number">144.625_f64</span>),
-<a href=#2304 id=2304 data-nosnippet>2304</a>            (<span class="number">301.4_f64</span>, -<span class="number">12.2_f64</span>),
-<a href=#2305 id=2305 data-nosnippet>2305</a>        ];
-<a href=#2306 id=2306 data-nosnippet>2306</a>
-<a href=#2307 id=2307 data-nosnippet>2307</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(u, v) <span class="kw">in </span><span class="kw-2">&amp;</span>samples {
-<a href=#2308 id=2308 data-nosnippet>2308</a>            <span class="kw">let </span>plan = gridder
-<a href=#2309 id=2309 data-nosnippet>2309</a>                .plan_sample(u, v)
-<a href=#2310 id=2310 data-nosnippet>2310</a>                .expect(<span class="string">"sample should lie on grid"</span>);
-<a href=#2311 id=2311 data-nosnippet>2311</a>            <span class="kw">let </span>rust = gridder.degrid_sample_product_planned(<span class="kw-2">&amp;</span>model_grid, <span class="kw-2">&amp;</span>plan.positive);
-<a href=#2312 id=2312 data-nosnippet>2312</a>            <span class="kw">let </span><span class="prelude-val">Ok</span>(cpp) = cpp_convolve_gridder_predict_visibility_2d(
-<a href=#2313 id=2313 data-nosnippet>2313</a>                gridder.grid_shape(),
-<a href=#2314 id=2314 data-nosnippet>2314</a>                geometry.image_shape,
-<a href=#2315 id=2315 data-nosnippet>2315</a>                [
-<a href=#2316 id=2316 data-nosnippet>2316</a>                    gridder.grid_shape()[<span class="number">0</span>] <span class="kw">as </span>f64 * geometry.cell_size_rad[<span class="number">0</span>],
-<a href=#2317 id=2317 data-nosnippet>2317</a>                    gridder.grid_shape()[<span class="number">1</span>] <span class="kw">as </span>f64 * geometry.cell_size_rad[<span class="number">1</span>],
-<a href=#2318 id=2318 data-nosnippet>2318</a>                ],
-<a href=#2319 id=2319 data-nosnippet>2319</a>                [
-<a href=#2320 id=2320 data-nosnippet>2320</a>                    gridder.grid_shape()[<span class="number">0</span>] <span class="kw">as </span>f64 / <span class="number">2.0</span>,
-<a href=#2321 id=2321 data-nosnippet>2321</a>                    gridder.grid_shape()[<span class="number">1</span>] <span class="kw">as </span>f64 / <span class="number">2.0</span>,
-<a href=#2322 id=2322 data-nosnippet>2322</a>                ],
-<a href=#2323 id=2323 data-nosnippet>2323</a>                [u, -v],
-<a href=#2324 id=2324 data-nosnippet>2324</a>                model.as_slice().unwrap(),
-<a href=#2325 id=2325 data-nosnippet>2325</a>            ) <span class="kw">else </span>{
-<a href=#2326 id=2326 data-nosnippet>2326</a>                <span class="kw">return</span>;
-<a href=#2327 id=2327 data-nosnippet>2327</a>            };
-<a href=#2328 id=2328 data-nosnippet>2328</a>            <span class="macro">assert!</span>(
-<a href=#2329 id=2329 data-nosnippet>2329</a>                (rust.re - cpp.re).abs() &lt; <span class="number">1.0e-6</span>,
-<a href=#2330 id=2330 data-nosnippet>2330</a>                <span class="string">"predicted visibility real mismatch at ({u}, {v}): rust={} cpp={}"</span>,
-<a href=#2331 id=2331 data-nosnippet>2331</a>                rust.re,
-<a href=#2332 id=2332 data-nosnippet>2332</a>                cpp.re
-<a href=#2333 id=2333 data-nosnippet>2333</a>            );
-<a href=#2334 id=2334 data-nosnippet>2334</a>            <span class="macro">assert!</span>(
-<a href=#2335 id=2335 data-nosnippet>2335</a>                (rust.im - cpp.im).abs() &lt; <span class="number">1.0e-6</span>,
-<a href=#2336 id=2336 data-nosnippet>2336</a>                <span class="string">"predicted visibility imag mismatch at ({u}, {v}): rust={} cpp={}"</span>,
-<a href=#2337 id=2337 data-nosnippet>2337</a>                rust.im,
-<a href=#2338 id=2338 data-nosnippet>2338</a>                cpp.im
-<a href=#2339 id=2339 data-nosnippet>2339</a>            );
-<a href=#2340 id=2340 data-nosnippet>2340</a>        }
-<a href=#2341 id=2341 data-nosnippet>2341</a>    }
-<a href=#2342 id=2342 data-nosnippet>2342</a>
-<a href=#2343 id=2343 data-nosnippet>2343</a>    <span class="attr">#[test]
-<a href=#2344 id=2344 data-nosnippet>2344</a>    #[serial(casa_cpp)]
-<a href=#2345 id=2345 data-nosnippet>2345</a>    </span><span class="kw">fn </span>convolve_gridder_degrids_odd_composite_padded_model_like_casacore() {
-<a href=#2346 id=2346 data-nosnippet>2346</a>        <span class="kw">let </span>geometry = ImageGeometry {
-<a href=#2347 id=2347 data-nosnippet>2347</a>            image_shape: [<span class="number">257</span>, <span class="number">257</span>],
-<a href=#2348 id=2348 data-nosnippet>2348</a>            cell_size_rad: [<span class="number">8.638_889_530_690e-7_f64</span>.to_radians(); <span class="number">2</span>],
-<a href=#2349 id=2349 data-nosnippet>2349</a>        };
-<a href=#2350 id=2350 data-nosnippet>2350</a>        <span class="kw">let </span>gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
-<a href=#2351 id=2351 data-nosnippet>2351</a>        <span class="macro">assert_eq!</span>(gridder.grid_shape(), [<span class="number">360</span>, <span class="number">360</span>]);
+<a href=#2288 id=2288 data-nosnippet>2288</a>    </span><span class="kw">fn </span>standard_gridder_uses_casa_composite_grid_padding() {
+<a href=#2289 id=2289 data-nosnippet>2289</a>        <span class="kw">let </span>geometry = ImageGeometry {
+<a href=#2290 id=2290 data-nosnippet>2290</a>            image_shape: [<span class="number">512</span>, <span class="number">512</span>],
+<a href=#2291 id=2291 data-nosnippet>2291</a>            cell_size_rad: [<span class="number">0.08 </span>/ <span class="number">206_264.806_247</span>, <span class="number">0.08 </span>/ <span class="number">206_264.806_247</span>],
+<a href=#2292 id=2292 data-nosnippet>2292</a>        };
+<a href=#2293 id=2293 data-nosnippet>2293</a>        <span class="kw">let </span>gridder = StandardGridder::new(geometry).unwrap();
+<a href=#2294 id=2294 data-nosnippet>2294</a>        <span class="macro">assert_eq!</span>(gridder.grid_shape(), [<span class="number">640</span>, <span class="number">640</span>]);
+<a href=#2295 id=2295 data-nosnippet>2295</a>    }
+<a href=#2296 id=2296 data-nosnippet>2296</a>
+<a href=#2297 id=2297 data-nosnippet>2297</a>    <span class="attr">#[test]
+<a href=#2298 id=2298 data-nosnippet>2298</a>    #[serial(casa_cpp)]
+<a href=#2299 id=2299 data-nosnippet>2299</a>    </span><span class="kw">fn </span>convolve_gridder_degrids_structured_model_like_casacore() {
+<a href=#2300 id=2300 data-nosnippet>2300</a>        <span class="kw">let </span>geometry = ImageGeometry {
+<a href=#2301 id=2301 data-nosnippet>2301</a>            image_shape: [<span class="number">64</span>, <span class="number">64</span>],
+<a href=#2302 id=2302 data-nosnippet>2302</a>            cell_size_rad: [<span class="number">8.0 </span>/ <span class="number">206_264.806_247</span>, <span class="number">8.0 </span>/ <span class="number">206_264.806_247</span>],
+<a href=#2303 id=2303 data-nosnippet>2303</a>        };
+<a href=#2304 id=2304 data-nosnippet>2304</a>        <span class="kw">let </span>gridder = StandardGridder::new(geometry).unwrap();
+<a href=#2305 id=2305 data-nosnippet>2305</a>        <span class="kw">let </span><span class="kw-2">mut </span>model = Array2::&lt;f32&gt;::zeros((<span class="number">64</span>, <span class="number">64</span>));
+<a href=#2306 id=2306 data-nosnippet>2306</a>        model[(<span class="number">32</span>, <span class="number">32</span>)] = <span class="number">1.0</span>;
+<a href=#2307 id=2307 data-nosnippet>2307</a>        model[(<span class="number">21</span>, <span class="number">45</span>)] = -<span class="number">0.35</span>;
+<a href=#2308 id=2308 data-nosnippet>2308</a>        model[(<span class="number">47</span>, <span class="number">18</span>)] = <span class="number">0.2</span>;
+<a href=#2309 id=2309 data-nosnippet>2309</a>        <span class="kw">let </span>model_grid = centered_fft2(<span class="kw-2">&amp;</span>gridder.apodize_model(<span class="kw-2">&amp;</span>model));
+<a href=#2310 id=2310 data-nosnippet>2310</a>        <span class="kw">let </span>samples = [
+<a href=#2311 id=2311 data-nosnippet>2311</a>            (<span class="number">123.456_f64</span>, -<span class="number">78.9_f64</span>),
+<a href=#2312 id=2312 data-nosnippet>2312</a>            (-<span class="number">210.25_f64</span>, <span class="number">98.125_f64</span>),
+<a href=#2313 id=2313 data-nosnippet>2313</a>            (<span class="number">15.875_f64</span>, <span class="number">144.625_f64</span>),
+<a href=#2314 id=2314 data-nosnippet>2314</a>            (<span class="number">301.4_f64</span>, -<span class="number">12.2_f64</span>),
+<a href=#2315 id=2315 data-nosnippet>2315</a>        ];
+<a href=#2316 id=2316 data-nosnippet>2316</a>
+<a href=#2317 id=2317 data-nosnippet>2317</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(u, v) <span class="kw">in </span><span class="kw-2">&amp;</span>samples {
+<a href=#2318 id=2318 data-nosnippet>2318</a>            <span class="kw">let </span>plan = gridder
+<a href=#2319 id=2319 data-nosnippet>2319</a>                .plan_sample(u, v)
+<a href=#2320 id=2320 data-nosnippet>2320</a>                .expect(<span class="string">"sample should lie on grid"</span>);
+<a href=#2321 id=2321 data-nosnippet>2321</a>            <span class="kw">let </span>rust = gridder.degrid_sample_product_planned(<span class="kw-2">&amp;</span>model_grid, <span class="kw-2">&amp;</span>plan.positive);
+<a href=#2322 id=2322 data-nosnippet>2322</a>            <span class="kw">let </span><span class="prelude-val">Ok</span>(cpp) = cpp_convolve_gridder_predict_visibility_2d(
+<a href=#2323 id=2323 data-nosnippet>2323</a>                gridder.grid_shape(),
+<a href=#2324 id=2324 data-nosnippet>2324</a>                geometry.image_shape,
+<a href=#2325 id=2325 data-nosnippet>2325</a>                [
+<a href=#2326 id=2326 data-nosnippet>2326</a>                    gridder.grid_shape()[<span class="number">0</span>] <span class="kw">as </span>f64 * geometry.cell_size_rad[<span class="number">0</span>],
+<a href=#2327 id=2327 data-nosnippet>2327</a>                    gridder.grid_shape()[<span class="number">1</span>] <span class="kw">as </span>f64 * geometry.cell_size_rad[<span class="number">1</span>],
+<a href=#2328 id=2328 data-nosnippet>2328</a>                ],
+<a href=#2329 id=2329 data-nosnippet>2329</a>                [
+<a href=#2330 id=2330 data-nosnippet>2330</a>                    gridder.grid_shape()[<span class="number">0</span>] <span class="kw">as </span>f64 / <span class="number">2.0</span>,
+<a href=#2331 id=2331 data-nosnippet>2331</a>                    gridder.grid_shape()[<span class="number">1</span>] <span class="kw">as </span>f64 / <span class="number">2.0</span>,
+<a href=#2332 id=2332 data-nosnippet>2332</a>                ],
+<a href=#2333 id=2333 data-nosnippet>2333</a>                [u, -v],
+<a href=#2334 id=2334 data-nosnippet>2334</a>                model.as_slice().unwrap(),
+<a href=#2335 id=2335 data-nosnippet>2335</a>            ) <span class="kw">else </span>{
+<a href=#2336 id=2336 data-nosnippet>2336</a>                <span class="kw">return</span>;
+<a href=#2337 id=2337 data-nosnippet>2337</a>            };
+<a href=#2338 id=2338 data-nosnippet>2338</a>            <span class="macro">assert!</span>(
+<a href=#2339 id=2339 data-nosnippet>2339</a>                (rust.re - cpp.re).abs() &lt; <span class="number">1.0e-6</span>,
+<a href=#2340 id=2340 data-nosnippet>2340</a>                <span class="string">"predicted visibility real mismatch at ({u}, {v}): rust={} cpp={}"</span>,
+<a href=#2341 id=2341 data-nosnippet>2341</a>                rust.re,
+<a href=#2342 id=2342 data-nosnippet>2342</a>                cpp.re
+<a href=#2343 id=2343 data-nosnippet>2343</a>            );
+<a href=#2344 id=2344 data-nosnippet>2344</a>            <span class="macro">assert!</span>(
+<a href=#2345 id=2345 data-nosnippet>2345</a>                (rust.im - cpp.im).abs() &lt; <span class="number">1.0e-6</span>,
+<a href=#2346 id=2346 data-nosnippet>2346</a>                <span class="string">"predicted visibility imag mismatch at ({u}, {v}): rust={} cpp={}"</span>,
+<a href=#2347 id=2347 data-nosnippet>2347</a>                rust.im,
+<a href=#2348 id=2348 data-nosnippet>2348</a>                cpp.im
+<a href=#2349 id=2349 data-nosnippet>2349</a>            );
+<a href=#2350 id=2350 data-nosnippet>2350</a>        }
+<a href=#2351 id=2351 data-nosnippet>2351</a>    }
 <a href=#2352 id=2352 data-nosnippet>2352</a>
-<a href=#2353 id=2353 data-nosnippet>2353</a>        <span class="kw">let </span><span class="kw-2">mut </span>model = Array2::&lt;f32&gt;::zeros((<span class="number">257</span>, <span class="number">257</span>));
-<a href=#2354 id=2354 data-nosnippet>2354</a>        <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..<span class="number">257 </span>{
-<a href=#2355 id=2355 data-nosnippet>2355</a>            <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..<span class="number">257 </span>{
-<a href=#2356 id=2356 data-nosnippet>2356</a>                <span class="kw">let </span>dx = (x <span class="kw">as </span>f32 - <span class="number">129.25</span>) / <span class="number">27.0</span>;
-<a href=#2357 id=2357 data-nosnippet>2357</a>                <span class="kw">let </span>dy = (y <span class="kw">as </span>f32 - <span class="number">126.5</span>) / <span class="number">19.0</span>;
-<a href=#2358 id=2358 data-nosnippet>2358</a>                <span class="kw">let </span>ring = (-(dx * dx + dy * dy)).exp();
-<a href=#2359 id=2359 data-nosnippet>2359</a>                <span class="kw">let </span>shoulder = (-(((x <span class="kw">as </span>f32 - <span class="number">87.0</span>) / <span class="number">13.0</span>).powi(<span class="number">2</span>)
-<a href=#2360 id=2360 data-nosnippet>2360</a>                    + ((y <span class="kw">as </span>f32 - <span class="number">169.0</span>) / <span class="number">21.0</span>).powi(<span class="number">2</span>)))
-<a href=#2361 id=2361 data-nosnippet>2361</a>                .exp();
-<a href=#2362 id=2362 data-nosnippet>2362</a>                model[(x, y)] = <span class="number">0.0025 </span>* ring - <span class="number">0.0007 </span>* shoulder;
-<a href=#2363 id=2363 data-nosnippet>2363</a>            }
-<a href=#2364 id=2364 data-nosnippet>2364</a>        }
-<a href=#2365 id=2365 data-nosnippet>2365</a>        <span class="kw">let </span>model_grid = centered_fft2(<span class="kw-2">&amp;</span>gridder.apodize_model(<span class="kw-2">&amp;</span>model));
-<a href=#2366 id=2366 data-nosnippet>2366</a>        <span class="kw">let </span>samples = [
-<a href=#2367 id=2367 data-nosnippet>2367</a>            (<span class="number">4_806.297_926_382_51_f64</span>, <span class="number">41_290.840_313_424_32_f64</span>),
-<a href=#2368 id=2368 data-nosnippet>2368</a>            (-<span class="number">38_890.191_177_123_3_f64</span>, -<span class="number">12_300.584_882_047_77_f64</span>),
-<a href=#2369 id=2369 data-nosnippet>2369</a>            (<span class="number">24_915.177_739_689_71_f64</span>, -<span class="number">34_020.365_105_376_14_f64</span>),
-<a href=#2370 id=2370 data-nosnippet>2370</a>            (-<span class="number">9_024.365_419_946_97_f64</span>, <span class="number">7_115.436_092_750_48_f64</span>),
-<a href=#2371 id=2371 data-nosnippet>2371</a>        ];
-<a href=#2372 id=2372 data-nosnippet>2372</a>
-<a href=#2373 id=2373 data-nosnippet>2373</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(u, v) <span class="kw">in </span><span class="kw-2">&amp;</span>samples {
-<a href=#2374 id=2374 data-nosnippet>2374</a>            <span class="kw">let </span>plan = gridder
-<a href=#2375 id=2375 data-nosnippet>2375</a>                .plan_sample(u, v)
-<a href=#2376 id=2376 data-nosnippet>2376</a>                .expect(<span class="string">"sample should lie on grid"</span>);
-<a href=#2377 id=2377 data-nosnippet>2377</a>            <span class="kw">let </span>rust = gridder.degrid_sample_product_planned(<span class="kw-2">&amp;</span>model_grid, <span class="kw-2">&amp;</span>plan.positive);
-<a href=#2378 id=2378 data-nosnippet>2378</a>            <span class="kw">let </span><span class="prelude-val">Ok</span>(cpp) = cpp_convolve_gridder_predict_visibility_2d(
-<a href=#2379 id=2379 data-nosnippet>2379</a>                gridder.grid_shape(),
-<a href=#2380 id=2380 data-nosnippet>2380</a>                geometry.image_shape,
-<a href=#2381 id=2381 data-nosnippet>2381</a>                [
-<a href=#2382 id=2382 data-nosnippet>2382</a>                    gridder.grid_shape()[<span class="number">0</span>] <span class="kw">as </span>f64 * geometry.cell_size_rad[<span class="number">0</span>],
-<a href=#2383 id=2383 data-nosnippet>2383</a>                    gridder.grid_shape()[<span class="number">1</span>] <span class="kw">as </span>f64 * geometry.cell_size_rad[<span class="number">1</span>],
-<a href=#2384 id=2384 data-nosnippet>2384</a>                ],
-<a href=#2385 id=2385 data-nosnippet>2385</a>                [
-<a href=#2386 id=2386 data-nosnippet>2386</a>                    gridder.grid_shape()[<span class="number">0</span>] <span class="kw">as </span>f64 / <span class="number">2.0</span>,
-<a href=#2387 id=2387 data-nosnippet>2387</a>                    gridder.grid_shape()[<span class="number">1</span>] <span class="kw">as </span>f64 / <span class="number">2.0</span>,
-<a href=#2388 id=2388 data-nosnippet>2388</a>                ],
-<a href=#2389 id=2389 data-nosnippet>2389</a>                [u, -v],
-<a href=#2390 id=2390 data-nosnippet>2390</a>                model.as_slice().unwrap(),
-<a href=#2391 id=2391 data-nosnippet>2391</a>            ) <span class="kw">else </span>{
-<a href=#2392 id=2392 data-nosnippet>2392</a>                <span class="kw">return</span>;
-<a href=#2393 id=2393 data-nosnippet>2393</a>            };
-<a href=#2394 id=2394 data-nosnippet>2394</a>            <span class="macro">assert!</span>(
-<a href=#2395 id=2395 data-nosnippet>2395</a>                (rust.re - cpp.re).abs() &lt; <span class="number">1.0e-6</span>,
-<a href=#2396 id=2396 data-nosnippet>2396</a>                <span class="string">"predicted visibility real mismatch at ({u}, {v}): rust={} cpp={}"</span>,
-<a href=#2397 id=2397 data-nosnippet>2397</a>                rust.re,
-<a href=#2398 id=2398 data-nosnippet>2398</a>                cpp.re
-<a href=#2399 id=2399 data-nosnippet>2399</a>            );
-<a href=#2400 id=2400 data-nosnippet>2400</a>            <span class="macro">assert!</span>(
-<a href=#2401 id=2401 data-nosnippet>2401</a>                (rust.im - cpp.im).abs() &lt; <span class="number">1.0e-6</span>,
-<a href=#2402 id=2402 data-nosnippet>2402</a>                <span class="string">"predicted visibility imag mismatch at ({u}, {v}): rust={} cpp={}"</span>,
-<a href=#2403 id=2403 data-nosnippet>2403</a>                rust.im,
-<a href=#2404 id=2404 data-nosnippet>2404</a>                cpp.im
-<a href=#2405 id=2405 data-nosnippet>2405</a>            );
-<a href=#2406 id=2406 data-nosnippet>2406</a>        }
-<a href=#2407 id=2407 data-nosnippet>2407</a>    }
-<a href=#2408 id=2408 data-nosnippet>2408</a>}
+<a href=#2353 id=2353 data-nosnippet>2353</a>    <span class="attr">#[test]
+<a href=#2354 id=2354 data-nosnippet>2354</a>    #[serial(casa_cpp)]
+<a href=#2355 id=2355 data-nosnippet>2355</a>    </span><span class="kw">fn </span>convolve_gridder_degrids_odd_composite_padded_model_like_casacore() {
+<a href=#2356 id=2356 data-nosnippet>2356</a>        <span class="kw">let </span>geometry = ImageGeometry {
+<a href=#2357 id=2357 data-nosnippet>2357</a>            image_shape: [<span class="number">257</span>, <span class="number">257</span>],
+<a href=#2358 id=2358 data-nosnippet>2358</a>            cell_size_rad: [<span class="number">8.638_889_530_690e-7_f64</span>.to_radians(); <span class="number">2</span>],
+<a href=#2359 id=2359 data-nosnippet>2359</a>        };
+<a href=#2360 id=2360 data-nosnippet>2360</a>        <span class="kw">let </span>gridder = StandardGridder::new_with_casa_composite_padding(geometry).unwrap();
+<a href=#2361 id=2361 data-nosnippet>2361</a>        <span class="macro">assert_eq!</span>(gridder.grid_shape(), [<span class="number">360</span>, <span class="number">360</span>]);
+<a href=#2362 id=2362 data-nosnippet>2362</a>
+<a href=#2363 id=2363 data-nosnippet>2363</a>        <span class="kw">let </span><span class="kw-2">mut </span>model = Array2::&lt;f32&gt;::zeros((<span class="number">257</span>, <span class="number">257</span>));
+<a href=#2364 id=2364 data-nosnippet>2364</a>        <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..<span class="number">257 </span>{
+<a href=#2365 id=2365 data-nosnippet>2365</a>            <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..<span class="number">257 </span>{
+<a href=#2366 id=2366 data-nosnippet>2366</a>                <span class="kw">let </span>dx = (x <span class="kw">as </span>f32 - <span class="number">129.25</span>) / <span class="number">27.0</span>;
+<a href=#2367 id=2367 data-nosnippet>2367</a>                <span class="kw">let </span>dy = (y <span class="kw">as </span>f32 - <span class="number">126.5</span>) / <span class="number">19.0</span>;
+<a href=#2368 id=2368 data-nosnippet>2368</a>                <span class="kw">let </span>ring = (-(dx * dx + dy * dy)).exp();
+<a href=#2369 id=2369 data-nosnippet>2369</a>                <span class="kw">let </span>shoulder = (-(((x <span class="kw">as </span>f32 - <span class="number">87.0</span>) / <span class="number">13.0</span>).powi(<span class="number">2</span>)
+<a href=#2370 id=2370 data-nosnippet>2370</a>                    + ((y <span class="kw">as </span>f32 - <span class="number">169.0</span>) / <span class="number">21.0</span>).powi(<span class="number">2</span>)))
+<a href=#2371 id=2371 data-nosnippet>2371</a>                .exp();
+<a href=#2372 id=2372 data-nosnippet>2372</a>                model[(x, y)] = <span class="number">0.0025 </span>* ring - <span class="number">0.0007 </span>* shoulder;
+<a href=#2373 id=2373 data-nosnippet>2373</a>            }
+<a href=#2374 id=2374 data-nosnippet>2374</a>        }
+<a href=#2375 id=2375 data-nosnippet>2375</a>        <span class="kw">let </span>model_grid = centered_fft2(<span class="kw-2">&amp;</span>gridder.apodize_model(<span class="kw-2">&amp;</span>model));
+<a href=#2376 id=2376 data-nosnippet>2376</a>        <span class="kw">let </span>samples = [
+<a href=#2377 id=2377 data-nosnippet>2377</a>            (<span class="number">4_806.297_926_382_51_f64</span>, <span class="number">41_290.840_313_424_32_f64</span>),
+<a href=#2378 id=2378 data-nosnippet>2378</a>            (-<span class="number">38_890.191_177_123_3_f64</span>, -<span class="number">12_300.584_882_047_77_f64</span>),
+<a href=#2379 id=2379 data-nosnippet>2379</a>            (<span class="number">24_915.177_739_689_71_f64</span>, -<span class="number">34_020.365_105_376_14_f64</span>),
+<a href=#2380 id=2380 data-nosnippet>2380</a>            (-<span class="number">9_024.365_419_946_97_f64</span>, <span class="number">7_115.436_092_750_48_f64</span>),
+<a href=#2381 id=2381 data-nosnippet>2381</a>        ];
+<a href=#2382 id=2382 data-nosnippet>2382</a>
+<a href=#2383 id=2383 data-nosnippet>2383</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(u, v) <span class="kw">in </span><span class="kw-2">&amp;</span>samples {
+<a href=#2384 id=2384 data-nosnippet>2384</a>            <span class="kw">let </span>plan = gridder
+<a href=#2385 id=2385 data-nosnippet>2385</a>                .plan_sample(u, v)
+<a href=#2386 id=2386 data-nosnippet>2386</a>                .expect(<span class="string">"sample should lie on grid"</span>);
+<a href=#2387 id=2387 data-nosnippet>2387</a>            <span class="kw">let </span>rust = gridder.degrid_sample_product_planned(<span class="kw-2">&amp;</span>model_grid, <span class="kw-2">&amp;</span>plan.positive);
+<a href=#2388 id=2388 data-nosnippet>2388</a>            <span class="kw">let </span><span class="prelude-val">Ok</span>(cpp) = cpp_convolve_gridder_predict_visibility_2d(
+<a href=#2389 id=2389 data-nosnippet>2389</a>                gridder.grid_shape(),
+<a href=#2390 id=2390 data-nosnippet>2390</a>                geometry.image_shape,
+<a href=#2391 id=2391 data-nosnippet>2391</a>                [
+<a href=#2392 id=2392 data-nosnippet>2392</a>                    gridder.grid_shape()[<span class="number">0</span>] <span class="kw">as </span>f64 * geometry.cell_size_rad[<span class="number">0</span>],
+<a href=#2393 id=2393 data-nosnippet>2393</a>                    gridder.grid_shape()[<span class="number">1</span>] <span class="kw">as </span>f64 * geometry.cell_size_rad[<span class="number">1</span>],
+<a href=#2394 id=2394 data-nosnippet>2394</a>                ],
+<a href=#2395 id=2395 data-nosnippet>2395</a>                [
+<a href=#2396 id=2396 data-nosnippet>2396</a>                    gridder.grid_shape()[<span class="number">0</span>] <span class="kw">as </span>f64 / <span class="number">2.0</span>,
+<a href=#2397 id=2397 data-nosnippet>2397</a>                    gridder.grid_shape()[<span class="number">1</span>] <span class="kw">as </span>f64 / <span class="number">2.0</span>,
+<a href=#2398 id=2398 data-nosnippet>2398</a>                ],
+<a href=#2399 id=2399 data-nosnippet>2399</a>                [u, -v],
+<a href=#2400 id=2400 data-nosnippet>2400</a>                model.as_slice().unwrap(),
+<a href=#2401 id=2401 data-nosnippet>2401</a>            ) <span class="kw">else </span>{
+<a href=#2402 id=2402 data-nosnippet>2402</a>                <span class="kw">return</span>;
+<a href=#2403 id=2403 data-nosnippet>2403</a>            };
+<a href=#2404 id=2404 data-nosnippet>2404</a>            <span class="macro">assert!</span>(
+<a href=#2405 id=2405 data-nosnippet>2405</a>                (rust.re - cpp.re).abs() &lt; <span class="number">1.0e-6</span>,
+<a href=#2406 id=2406 data-nosnippet>2406</a>                <span class="string">"predicted visibility real mismatch at ({u}, {v}): rust={} cpp={}"</span>,
+<a href=#2407 id=2407 data-nosnippet>2407</a>                rust.re,
+<a href=#2408 id=2408 data-nosnippet>2408</a>                cpp.re
+<a href=#2409 id=2409 data-nosnippet>2409</a>            );
+<a href=#2410 id=2410 data-nosnippet>2410</a>            <span class="macro">assert!</span>(
+<a href=#2411 id=2411 data-nosnippet>2411</a>                (rust.im - cpp.im).abs() &lt; <span class="number">1.0e-6</span>,
+<a href=#2412 id=2412 data-nosnippet>2412</a>                <span class="string">"predicted visibility imag mismatch at ({u}, {v}): rust={} cpp={}"</span>,
+<a href=#2413 id=2413 data-nosnippet>2413</a>                rust.im,
+<a href=#2414 id=2414 data-nosnippet>2414</a>                cpp.im
+<a href=#2415 id=2415 data-nosnippet>2415</a>            );
+<a href=#2416 id=2416 data-nosnippet>2416</a>        }
+<a href=#2417 id=2417 data-nosnippet>2417</a>    }
+<a href=#2418 id=2418 data-nosnippet>2418</a>}
 </code></pre></div></section></main></body></html>

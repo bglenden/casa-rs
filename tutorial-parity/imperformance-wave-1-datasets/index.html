@@ -1,0 +1,930 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>ImPerformance Wave 1 Simulated Dataset Plan - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imperformance-wave-1-simulated-dataset-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ImPerformance Wave 1 Simulated Dataset Plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#size-tiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Size Tiers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#instruments-and-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Instruments And Families
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#simulation-parity-and-performance-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Simulation Parity And Performance Checks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#native-simulation-follow-ups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native Simulation Follow-Ups
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imperformance-wave-1-simulated-dataset-plan">ImPerformance Wave 1 Simulated Dataset Plan<a class="headerlink" href="#imperformance-wave-1-simulated-dataset-plan" title="Permanent link">&para;</a></h1>
+<p>Truth class: current descriptive
+Last reality check: 2026-05-17
+Verification: <code>python3 -m py_compile tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/bench_simobserve.py</code>; <code>python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_bench_simobserve.py</code>; <code>tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/dataset-dry-run</code>; <code>tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/dataset-small-dry-run</code>; <code>tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --materialize-models --materialize-workloads --output-dir target/imperformance-wave1/dataset-small-materialized</code>; <code>tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-alma-mosaic-large --allow-non-external-large-root --materialize-workloads --output-dir target/imperformance-wave1/dataset-large-workloads</code>; <code>tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/generated-workload-dry-run target/imperformance-wave1/dataset-small-materialized/workloads/wave1-vla-single-small-standard-mfs-dirty-control.json</code>; <code>python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/fixed-axis-vla-small-bench-v2 --disable-noise --strict-values</code>; <code>python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-alma-single-small --output-dir target/imperformance-wave1/fixed-axis-alma-small-bench-v2 --disable-noise --strict-values</code>; <code>cargo test -p casa-ms</code>; <code>just docs-check</code>; <code>just quick</code></p>
+<p>Wave issue: #246
+Child issue: #248</p>
+<p>This note defines the deterministic simulated data inputs for ImPerformance
+Wave 1. The goal is to benchmark imaging behavior, not calibration behavior.
+The datasets therefore use visually interesting deterministic sky models, a
+realistic but simple noise term, and explicit CASA/native generation plans.</p>
+<p>For Wave 1, native <code>casa-rs</code> simulation is the primary benchmark dataset
+generator where the capability is supported. CASA C++ generation remains the
+small-case oracle for parity and performance checks. Native gaps discovered by
+this plan are tracked as backlog issues instead of blocking supported dataset
+staging.</p>
+<h2 id="size-tiers">Size Tiers<a class="headerlink" href="#size-tiers" title="Permanent link">&para;</a></h2>
+<p>The first performance wave uses three memory-pressure tiers:</p>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th style="text-align: right;">Approximate staged MS size</th>
+<th>Storage intent</th>
+<th>Default policy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>small</td>
+<td style="text-align: right;"><code>1 GiB</code></td>
+<td>much smaller than memory</td>
+<td>may live under any explicit <code>CASA_RS_IMPERF_DATA_ROOT</code></td>
+</tr>
+<tr>
+<td>medium</td>
+<td style="text-align: right;"><code>32 GiB</code></td>
+<td>about memory on this workstation</td>
+<td>stage under <code>/Volumes/GLENDENNING</code> unless explicitly overridden</td>
+</tr>
+<tr>
+<td>large</td>
+<td style="text-align: right;"><code>100 GiB</code> total</td>
+<td>larger than memory on this workstation</td>
+<td>exactly one shared dataset, staged under <code>/Volumes/GLENDENNING</code> unless explicitly overridden</td>
+</tr>
+</tbody>
+</table>
+<p>The large tier is intentionally <strong>not</strong> one 100 GiB dataset per mode. The
+external drive budget allows one large dataset, so the registry contains a
+single ALMA mosaic/cube superset:</p>
+<ul>
+<li>dataset id: <code>wave1-alma-mosaic-large</code>;</li>
+<li>instrument/family: ALMA mosaic-large mosaic/cube superset;</li>
+<li>observing shape: 7 pointings, 1024 channels, 74300 s, 10 s integrations;</li>
+<li>logical workloads select from this one MS:</li>
+<li>standard modes use field <code>0</code> with <code>gridder='standard'</code>;</li>
+<li>mosaic modes use all fields with <code>gridder='mosaic'</code>;</li>
+<li>bounded mosaic cube uses a 32-channel subset;</li>
+<li>MFS modes use the available channel range through <code>specmode='mfs'</code>.</li>
+</ul>
+<p>Generated MeasurementSets are not committed to git. The checked-in artifact is
+the registry and staging tool:</p>
+<ul>
+<li>registry: <code>tools/perf/imager/wave1_dataset_registry.json</code></li>
+<li>staging/preflight tool: <code>tools/perf/imager/stage_wave1_datasets.py</code></li>
+</ul>
+<p>The staging root is always explicit. Set <code>CASA_RS_IMPERF_DATA_ROOT</code> or pass
+<code>--data-root</code>. The tool does not add a personal workstation fallback.</p>
+<h2 id="instruments-and-families">Instruments And Families<a class="headerlink" href="#instruments-and-families" title="Permanent link">&para;</a></h2>
+<p>The registry includes both VLA and ALMA simulated datasets. Native generation
+is the current path for supported Wave 1 benchmark datasets, with CASA C++
+retained as the parity oracle.</p>
+<table>
+<thead>
+<tr>
+<th>Instrument</th>
+<th style="text-align: right;">Single-field datasets</th>
+<th style="text-align: right;">Mosaic datasets</th>
+<th>Native <code>casa-rs</code> simulation status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VLA</td>
+<td style="text-align: right;">small, medium</td>
+<td style="text-align: right;">small</td>
+<td>VLA single-field and selected mosaic-capable request generation are supported by the native <code>simobserve</code> path; strict parity evidence currently covers VLA single small</td>
+</tr>
+<tr>
+<td>ALMA</td>
+<td style="text-align: right;">small, medium</td>
+<td style="text-align: right;">small, plus one large mosaic/cube superset</td>
+<td>ALMA single-field and selected mosaic-capable request generation are supported; strict parity evidence currently covers ALMA single small</td>
+</tr>
+</tbody>
+</table>
+<p>The registry also includes both single-field and mosaic families:</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Wave 1 modes</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>single</td>
+<td>standard MFS dirty, standard MFS clean, standard cube, MT-MFS sentinel</td>
+<td>Native and CASA C++ small single-field ALMA parity is checked; cube spectral structure remains backlog #255</td>
+</tr>
+<tr>
+<td>mosaic</td>
+<td>mosaic MFS clean, mosaic cube bounded</td>
+<td>Native request generation covers the selected Wave 1 mosaic-capable shapes; broader native mosaic parity remains backlog #254</td>
+</tr>
+<tr>
+<td>mosaic-large</td>
+<td>all selected Wave 1 modes</td>
+<td>one ALMA large-tier superset backs all logical large workloads</td>
+</tr>
+</tbody>
+</table>
+<p>The native blocked/request-plan statuses are intentional for unsupported
+families. They prevent the benchmark program from claiming native simulation
+capability while allowing the performance wave to proceed from supported native
+datasets and CASA C++ parity oracles.</p>
+<h2 id="source-model">Source Model<a class="headerlink" href="#source-model" title="Permanent link">&para;</a></h2>
+<p>The continuum model is deterministic and deliberately nontrivial:</p>
+<ul>
+<li>bright compact core;</li>
+<li>faint offset compact sources;</li>
+<li>two extended spiral arms;</li>
+<li>partial ring;</li>
+<li>broad diffuse halo.</li>
+</ul>
+<p>The cube profile is also deterministic and includes frequency structure:</p>
+<ul>
+<li>continuum baseline with spectral index;</li>
+<li>central broad emission line;</li>
+<li>offset narrow emission line;</li>
+<li>absorption notch against the core;</li>
+<li>weak velocity-gradient metadata for the extended arms.</li>
+</ul>
+<p>The current native simulator reads a single FITS plane. The staging tool
+therefore writes a continuum FITS model plus a spectral-profile JSON file.
+CASA C++ dataset generation must apply the spectral profile for cube benchmark
+datasets. Native use of the spectral profile is backlog #255.</p>
+<h2 id="simulation-parity-and-performance-checks">Simulation Parity And Performance Checks<a class="headerlink" href="#simulation-parity-and-performance-checks" title="Permanent link">&para;</a></h2>
+<p>Each staged dataset plan includes:</p>
+<ul>
+<li>a <code>casa-simulation-plan.json</code> describing the CASA C++ simulation work to run
+  for the Wave 1 benchmark dataset;</li>
+<li>a <code>casars-simobserve.json</code> request for native capability comparison where
+  supported;</li>
+<li>model/source provenance, shape, noise, storage, and selected-mode metadata.</li>
+</ul>
+<p>The simulation comparison is part of #248/#251 evidence because generated data
+becomes benchmark input. The comparison must record:</p>
+<ul>
+<li>CASA C++ simulation status: ran, skipped, or blocked with reason;</li>
+<li><code>casa-rs</code> simulation status: ran, skipped, or blocked with reason;</li>
+<li>simulation wallclock for each side when it ran;</li>
+<li>row count, channel count, UVW/time/data sanity statistics;</li>
+<li>model/source checksums.</li>
+</ul>
+<p>This is not a calibration benchmark. The noise term is simple deterministic
+complex visibility noise, tuned to make images realistic enough for repeated
+inspection without adding calibration-solver scope.</p>
+<p>Current small-tier strict evidence:</p>
+<table>
+<thead>
+<tr>
+<th>Dataset</th>
+<th style="text-align: right;">Rows</th>
+<th style="text-align: right;">CASA C++ simobserve</th>
+<th style="text-align: right;">Native simobserve</th>
+<th style="text-align: right;">Speedup</th>
+<th>Strict result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wave1-vla-single-small</code></td>
+<td style="text-align: right;"><code>3,032,640</code></td>
+<td style="text-align: right;"><code>56.514 s</code></td>
+<td style="text-align: right;"><code>16.051 s</code></td>
+<td style="text-align: right;"><code>3.52x</code></td>
+<td>rows, UVW, flags, and sampled DATA pass; zero same-cell DATA tolerance violations</td>
+</tr>
+<tr>
+<td><code>wave1-alma-single-small</code></td>
+<td style="text-align: right;"><code>7,801,920</code></td>
+<td style="text-align: right;"><code>109.738 s</code></td>
+<td style="text-align: right;"><code>24.399 s</code></td>
+<td style="text-align: right;"><code>4.50x</code></td>
+<td>rows, UVW, flags, and sampled DATA pass; zero same-cell DATA tolerance violations</td>
+</tr>
+</tbody>
+</table>
+<p>The corresponding simulation-isolated image panels run CASA <code>tclean(niter=0)</code>
+on both the CASA-generated and native-generated MeasurementSets:</p>
+<ul>
+<li><code>target/imperformance-wave1/image-inspection/vla-small/vla-small-simulation-parity-panel.png</code></li>
+<li><code>target/imperformance-wave1/image-inspection/alma-small/alma-small-simulation-parity-panel.png</code></li>
+</ul>
+<p>The current panel statistics are:</p>
+<table>
+<thead>
+<tr>
+<th>Dataset</th>
+<th style="text-align: right;">Dirty-image difference RMS</th>
+<th style="text-align: right;">Relative RMS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wave1-vla-single-small</code></td>
+<td style="text-align: right;"><code>0.0550370814 Jy/beam</code></td>
+<td style="text-align: right;"><code>1.485678975e-4</code></td>
+</tr>
+<tr>
+<td><code>wave1-alma-single-small</code></td>
+<td style="text-align: right;"><code>0.00293265438 Jy/beam</code></td>
+<td style="text-align: right;"><code>5.168102794e-4</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="native-simulation-follow-ups">Native Simulation Follow-Ups<a class="headerlink" href="#native-simulation-follow-ups" title="Permanent link">&para;</a></h2>
+<p>Native simulation is on the critical path for supported Wave 1 dataset
+generation. Missing families remain tracked separately:</p>
+<ul>
+<li>
+<h1 id="254-native-multi-field-mosaic-simulation-generation">254: native multi-field mosaic simulation generation.<a class="headerlink" href="#254-native-multi-field-mosaic-simulation-generation" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="255-native-spectral-cube-model-simulation">255: native spectral cube model simulation.<a class="headerlink" href="#255-native-spectral-cube-model-simulation" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="180-alma-protoplanetary-disk-simulation-breadth">180: ALMA protoplanetary-disk simulation breadth.<a class="headerlink" href="#180-alma-protoplanetary-disk-simulation-breadth" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="181-simalma-workflow-parity">181: simalma workflow parity.<a class="headerlink" href="#181-simalma-workflow-parity" title="Permanent link">&para;</a></h1>
+</li>
+<li>
+<h1 id="182-aca-simulation-parity">182: ACA simulation parity.<a class="headerlink" href="#182-aca-simulation-parity" title="Permanent link">&para;</a></h1>
+</li>
+</ul>
+<h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
+<p>Dry-run the full registry using the external drive root:</p>
+<div class="codehilite"><pre><span></span><code>tools/perf/imager/stage_wave1_datasets.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--dry-run<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data-root<span class="w"> </span>/Volumes/GLENDENNING/casa-rs-imperformance<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output-dir<span class="w"> </span>target/imperformance-wave1/dataset-dry-run
+</code></pre></div>
+
+<p>Dry-run only the small VLA single-field dataset on a temporary root:</p>
+<div class="codehilite"><pre><span></span><code>tools/perf/imager/stage_wave1_datasets.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--dry-run<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data-root<span class="w"> </span>/tmp/casa-rs-imperformance<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--dataset<span class="w"> </span>wave1-vla-single-small<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output-dir<span class="w"> </span>target/imperformance-wave1/dataset-small-dry-run
+</code></pre></div>
+
+<p>Materialize source models and generated benchmark workload manifests for one
+dataset:</p>
+<div class="codehilite"><pre><span></span><code>tools/perf/imager/stage_wave1_datasets.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data-root<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$CASA_RS_IMPERF_DATA_ROOT</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--dataset<span class="w"> </span>wave1-vla-single-small<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--materialize-models<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--materialize-workloads
+</code></pre></div>
+
+<p>Medium and large tiers require a root under <code>/Volumes/GLENDENNING</code> by default:</p>
+<div class="codehilite"><pre><span></span><code><span class="nv">CASA_RS_IMPERF_DATA_ROOT</span><span class="o">=</span>/Volumes/GLENDENNING/casa-rs-imperformance<span class="w"> </span><span class="se">\</span>
+tools/perf/imager/stage_wave1_datasets.py<span class="w"> </span>--dry-run
+</code></pre></div>
+
+<p>Use <code>--allow-non-external-large-root</code> only for a deliberate one-off override.</p>
+<p>Generate logical workload manifests for the single shared large dataset without
+materializing the 100 GiB MeasurementSet:</p>
+<div class="codehilite"><pre><span></span><code>tools/perf/imager/stage_wave1_datasets.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data-root<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$CASA_RS_IMPERF_DATA_ROOT</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--dataset<span class="w"> </span>wave1-alma-mosaic-large<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--materialize-workloads
+</code></pre></div>
+
+<h2 id="issue-248-acceptance-mapping">Issue #248 Acceptance Mapping<a class="headerlink" href="#issue-248-acceptance-mapping" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Deterministic generation path or registry entry for selected mode/tier
+  combinations: <code>wave1_dataset_registry.json</code> plus CASA C++ simulation plans;
+  the large tier intentionally maps all selected modes to
+  <code>wave1-alma-mosaic-large</code>.</li>
+<li>Metadata needed to reproduce benchmark workloads: generated dataset plan,
+  source model files, spectral profile, and simulation request plans.</li>
+<li>Provenance, size, checksum, path, and tier policy: this document plus the
+  generated <code>wave1-dataset-plan.json</code>.</li>
+<li>Clear preflight failures: missing <code>CASA_RS_IMPERF_DATA_ROOT</code>, medium/large
+  root outside <code>/Volumes/GLENDENNING</code>, and native simulation gaps are explicit
+  statuses with follow-up issues.</li>
+<li>Shared-data policy: explicit root only; no bulky generated data in git.</li>
+<li>Performance tier intent: small, memory-sized, and one shared
+  larger-than-memory staged dataset.</li>
+</ul>
+<h2 id="stop-conditions-preserved">Stop Conditions Preserved<a class="headerlink" href="#stop-conditions-preserved" title="Permanent link">&para;</a></h2>
+<p>The current tool does not widen native simulation semantics. It records native
+gaps while allowing CASA C++ generation for Wave 1 datasets. Implementing
+multi-field native simulation, CASA <code>simalma</code> parity, ALMA/ACA native parity,
+or a native cube-model predictor should be separate approved scope.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

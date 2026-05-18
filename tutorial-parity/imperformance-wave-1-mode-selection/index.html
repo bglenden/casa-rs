@@ -1,0 +1,932 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>ImPerformance Wave 1 Mode Selection - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imperformance-wave-1-mode-selection" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ImPerformance Wave 1 Mode Selection
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#current-practice-signals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current-Practice Signals
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#selected-wave-1-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selected Wave 1 Modes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deferred-or-blocked-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deferred Or Blocked Modes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workload-shapes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workload Shapes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#target-style" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Target Style
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#first-follow-on-optimization-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First Follow-On Optimization Target
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#issue-247-acceptance-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Issue #247 Acceptance Mapping
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imperformance-wave-1-mode-selection">ImPerformance Wave 1 Mode Selection<a class="headerlink" href="#imperformance-wave-1-mode-selection" title="Permanent link">&para;</a></h1>
+<p>Truth class: current descriptive
+Last reality check: 2026-05-14
+Verification: just docs-check; just quick</p>
+<p>Wave issue: #246
+Child issue: #247</p>
+<p>This note fixes the first benchmark targets for ImPerformance Wave 1. The goal
+is not to cover every CASA <code>tclean</code> mode. The goal is to pick a small set of
+current, real imaging use cases that can support reproducible CASA C++ versus
+<code>casa-rs</code> timing, correctness checks, and stage budgets before optimization
+work starts.</p>
+<h2 id="current-practice-signals">Current-Practice Signals<a class="headerlink" href="#current-practice-signals" title="Permanent link">&para;</a></h2>
+<p>The local RadioAstronomyOracle corpus does not provide a statistical survey of
+all current reductions. It does provide current 2024 tutorial and Synthesis
+Imaging Workshop signals about common practice:</p>
+<ul>
+<li>ALMA pipeline material shows a standard imaging recipe that runs continuum
+  and line-imaging flows through <code>hifmakeimlist</code> / <code>hifmakeimages</code>, with
+  <code>specmode='mfs'</code> appearing early in the pipeline recipe. Citation:
+  <code>ALMA-Pipeline-tutorial-SISS2024.pdf, slide 15</code>.</li>
+<li>ALMA manual tutorial material uses <code>tclean</code> with <code>specmode='mfs'</code>,
+  <code>gridder='standard'</code>, Briggs weighting, and Hogbom Clean for a compact
+  calibrator-style example. Citation: <code>ALMA-Manual-tutorial-SISS2024.pdf,
+  slide 137</code>.</li>
+<li>The same 2024 ALMA tutorial uses standard-gridder MFS continuum imaging with
+  <code>deconvolver='multiscale'</code>, Briggs weighting, and large image sizes for
+  science-target continuum. Citation: <code>ALMA-Manual-tutorial-SISS2024.pdf,
+  slide 145</code>.</li>
+<li>The ALMA line-imaging example uses <code>specmode='cube'</code>,
+  <code>deconvolver='multiscale'</code>, <code>restoringbeam='common'</code>,
+  <code>weighting='briggsbwtaper'</code>, and <code>perchanweightdensity=True</code>. Citation:
+  <code>ALMA-Manual-tutorial-SISS2024.pdf, slide 155</code>.</li>
+<li>2024 mosaicking material says that joint mosaic imaging uses
+  <code>gridder='mosaic'</code>, recommends <code>mosweight=True</code>, and recommends
+  <code>perchanwtdensity=True</code> plus <code>briggsbwtaper=True</code> for cubes. It also says
+  <code>gridder='mosaic'</code> is necessary for heterogeneous-array imaging in CASA
+  <code>tclean</code>. Citation: <code>Plunket-Mosaicking2024.pdf, slide 34</code>.</li>
+<li>2024 wideband material identifies CASA MT-MFS as one of the main wideband
+  deconvolution algorithms and notes compatibility with multiscale
+  deconvolution. Citation: <code>Marvil_Wideband2024.pdf, slide 19</code>.</li>
+<li>2024 ALMA tutorial material describes <code>auto-multithresh</code> as available in
+  <code>tclean</code> since CASA 5.1 and deployed in the ALMA Cycle 5 pipeline. Citation:
+  <code>ALMA-Manual-tutorial-SISS2024.pdf, slide 122</code>.</li>
+</ul>
+<p>Interpretation:</p>
+<ul>
+<li>Single-field <code>standard</code> MFS remains a core control case.</li>
+<li>Spectral-line cube imaging is a first-class current workload, not a corner
+  case.</li>
+<li><code>multiscale</code> and <code>auto-multithresh</code> should be treated as current-practice
+  clean workloads, not optional embellishments.</li>
+<li>Mosaic imaging is common enough, and expensive enough in current <code>casa-rs</code>
+  evidence, to be a primary performance target.</li>
+<li>MT-MFS is important for wideband continuum, but should be a Wave 1 sentinel
+  workload rather than the first optimization target unless baseline evidence
+  makes it dominant.</li>
+<li>W-projection and AW/widefield imaging matter, but the existing #52 surface is
+  the right owner for AW/widefield capability. Wave 1 should avoid making #52 a
+  hidden prerequisite.</li>
+</ul>
+<h2 id="selected-wave-1-modes">Selected Wave 1 Modes<a class="headerlink" href="#selected-wave-1-modes" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Mode</th>
+<th>Why it is in Wave 1</th>
+<th>Target status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>standard-mfs-dirty-control</code></td>
+<td><code>specmode='mfs'</code>, <code>gridder='standard'</code>, dirty-only</td>
+<td>Fast control case for harness overhead, gridding, FFT, normalization, and product write cost.</td>
+<td>Benchmark and keep near or faster than CASA C++.</td>
+</tr>
+<tr>
+<td><code>standard-mfs-clean-current</code></td>
+<td><code>specmode='mfs'</code>, <code>gridder='standard'</code>, <code>deconvolver='multiscale'</code>, optional <code>auto-multithresh</code></td>
+<td>Current single-field continuum practice; covers major/minor-cycle overhead without PB/mosaic cost.</td>
+<td>Benchmark, correctness check, and stage budget.</td>
+</tr>
+<tr>
+<td><code>standard-cube-line</code></td>
+<td><code>specmode='cube'</code>, <code>gridder='standard'</code>, dirty and bounded clean variants</td>
+<td>Current spectral-line practice; includes deconvolution coverage while separating per-channel scaling from mosaic/PB overhead.</td>
+<td>Benchmark dirty and bounded-clean variants; identify cube scaling budget without using #56 runtime controls.</td>
+</tr>
+<tr>
+<td><code>mosaic-mfs-clean-primary</code></td>
+<td><code>specmode='mfs'</code>, <code>gridder='mosaic'</code>, multiscale clean, PB products</td>
+<td>Common ALMA/VLA tutorial mode and current high-leverage slow area in <code>casa-rs</code>.</td>
+<td>Primary follow-on optimization target.</td>
+</tr>
+<tr>
+<td><code>mosaic-cube-bounded</code></td>
+<td><code>specmode='cube'</code>, <code>gridder='mosaic'</code>, small channel count first</td>
+<td>Exercises the expensive interaction between cube scaling, mosaic/PB work, and product generation.</td>
+<td>Bounded benchmark and bottleneck ledger; large-cube controls stay with #56.</td>
+</tr>
+<tr>
+<td><code>mtmfs-wideband-sentinel</code></td>
+<td><code>specmode='mfs'</code>, <code>deconvolver='mtmfs'</code>, <code>nterms &gt; 1</code></td>
+<td>Current wideband continuum algorithm family; useful to keep in view before backend planning hardens.</td>
+<td>Baseline-only sentinel unless it becomes the dominant bottleneck.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="deferred-or-blocked-modes">Deferred Or Blocked Modes<a class="headerlink" href="#deferred-or-blocked-modes" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Mode family</th>
+<th>Status</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>W-projection speed work</td>
+<td>Deferred</td>
+<td><code>casa-rs</code> exposes a W-term request path, but Wave 1 should not turn W-projection into the first optimization target without baseline evidence and a supported CASA comparison harness.</td>
+</tr>
+<tr>
+<td>AW/widefield gridder family</td>
+<td>Deferred to #52</td>
+<td>Capability surface and CF-planning controls belong to #52. Wave 1 should leave hooks for future backend/resource planning but not implement AW.</td>
+</tr>
+<tr>
+<td>CASA-like <code>parallel</code> / <code>chanchunks</code></td>
+<td>Deferred to #56</td>
+<td>User-visible large-cube runtime controls already have an owner. Wave 1 can measure cube scaling but should not add these controls.</td>
+</tr>
+<tr>
+<td>GPU/Kokkos/CUDA implementation</td>
+<td>Not a mode; defer from #247 mode selection</td>
+<td>LibRA suggests that a backend/resource boundary is useful, and Wave 1 should keep GPU-readiness in view. This ticket should not add GPU dependencies or runtime behavior before the benchmark modes and stage budgets exist.</td>
+</tr>
+<tr>
+<td>Distributed execution</td>
+<td>Deferred</td>
+<td>Not needed for first local CASA C++ versus <code>casa-rs</code> wallclock baselines.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="workload-shapes">Workload Shapes<a class="headerlink" href="#workload-shapes" title="Permanent link">&para;</a></h2>
+<p>Exact datasets will be created or wired by #248. Exact harness manifests will be
+owned by #252. These shapes define what those tickets must support. The large
+tier is a storage-constrained exception: all large logical workloads select
+from one shared ALMA mosaic/cube superset rather than from separate 100 GiB
+single-field and mosaic MeasurementSets.</p>
+<table>
+<thead>
+<tr>
+<th>Mode ID</th>
+<th>Size tier</th>
+<th>Dataset style</th>
+<th>Image / channel shape</th>
+<th>Clean settings</th>
+<th>Expected products</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>standard-mfs-dirty-control</code></td>
+<td>small, medium, large-shared</td>
+<td>deterministic single-field continuum simulation; large selects field <code>0</code> from the shared ALMA superset</td>
+<td>512, 2048, and 4096 pixel images; MFS over the available channel range</td>
+<td>dirty-only, natural and Briggs variants</td>
+<td><code>.psf</code>, <code>.residual</code>, <code>.image</code>, timing JSON</td>
+</tr>
+<tr>
+<td><code>standard-mfs-clean-current</code></td>
+<td>small, medium, large-shared</td>
+<td>deterministic single-field continuum with compact plus extended structure; large selects field <code>0</code> from the shared ALMA superset</td>
+<td>512, 2048, and 4096 pixel images</td>
+<td>multiscale scales including zero; bounded <code>niter</code>; <code>auto-multithresh</code> on at least medium</td>
+<td><code>.psf</code>, <code>.residual</code>, <code>.model</code>, <code>.image</code>, <code>.sumwt</code>, timing JSON</td>
+</tr>
+<tr>
+<td><code>standard-cube-line</code></td>
+<td>small, medium, large-shared</td>
+<td>deterministic spectral-line cube with known line structure; large selects field <code>0</code> from the shared ALMA superset</td>
+<td>16, 64, and 256 channels; 512 to 4096 pixel images</td>
+<td>dirty-only plus bounded multiscale/auto-multithresh clean</td>
+<td>cube <code>.psf</code>, <code>.residual</code>, <code>.image</code>, <code>.model</code> for clean variants, timing JSON</td>
+</tr>
+<tr>
+<td><code>mosaic-mfs-clean-primary</code></td>
+<td>small, medium, large-shared</td>
+<td>deterministic mosaic with overlapping pointings; large uses all fields from the shared ALMA superset</td>
+<td>512, 2048, and 4096 pixel images</td>
+<td>multiscale clean; PB products enabled; Briggs weighting</td>
+<td><code>.psf</code>, <code>.residual</code>, <code>.model</code>, <code>.image</code>, <code>.image.pbcor</code>, <code>.pb</code>, timing JSON</td>
+</tr>
+<tr>
+<td><code>mosaic-cube-bounded</code></td>
+<td>small, medium, large-shared bounded subset</td>
+<td>deterministic line mosaic; large uses all fields but a bounded channel slice from the shared ALMA superset</td>
+<td>8, 32, and 32 selected channels; 512 to 4096 pixel images</td>
+<td>dirty-only plus short clean probe</td>
+<td>cube products, PB products where supported, timing JSON</td>
+</tr>
+<tr>
+<td><code>mtmfs-wideband-sentinel</code></td>
+<td>medium, large-shared sentinel</td>
+<td>wideband continuum simulation; large selects from the shared ALMA superset</td>
+<td>2048 to 4096 pixel image; <code>nterms=2</code> initially</td>
+<td>MT-MFS bounded clean; multiscale sentinel if already supported by path</td>
+<td>Taylor-term products, alpha products, timing JSON</td>
+</tr>
+</tbody>
+</table>
+<h2 id="target-style">Target Style<a class="headerlink" href="#target-style" title="Permanent link">&para;</a></h2>
+<p>Wave 1 should not fail because <code>casa-rs</code> has not yet reached 10x CASA C++
+wallclock. It should fail if it cannot produce trustworthy evidence.</p>
+<table>
+<thead>
+<tr>
+<th>Mode ID</th>
+<th>Wave 1 target style</th>
+<th>Long-term target direction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>standard-mfs-dirty-control</code></td>
+<td>median wallclock ratio, stage budget, correctness delta</td>
+<td>10x CASA C++ stretch target after backend/workspace work.</td>
+</tr>
+<tr>
+<td><code>standard-mfs-clean-current</code></td>
+<td>median wallclock ratio, major/minor-cycle budget, correctness delta</td>
+<td>10x target for practical single-field continuum workflows.</td>
+</tr>
+<tr>
+<td><code>standard-cube-line</code></td>
+<td>dirty and bounded-clean per-channel scaling, wallclock ratio, correctness delta</td>
+<td>10x target after cube dataflow and backend work; #56 owns user-visible chunk/parallel controls.</td>
+</tr>
+<tr>
+<td><code>mosaic-mfs-clean-primary</code></td>
+<td>primary bottleneck ledger plus CASA C++ ratio</td>
+<td>First follow-on optimization target because previous evidence showed mosaic/CLEAN slower than CASA and the mode is current practice.</td>
+</tr>
+<tr>
+<td><code>mosaic-cube-bounded</code></td>
+<td>bounded scaling and PB/product cost ledger</td>
+<td>Decide whether the next ticket is mosaic gridding, PB/product writeback, or cube runtime controls.</td>
+</tr>
+<tr>
+<td><code>mtmfs-wideband-sentinel</code></td>
+<td>baseline-only unless unexpectedly dominant</td>
+<td>Keep wideband continuum visible before backend structure hardens.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="first-follow-on-optimization-target">First Follow-On Optimization Target<a class="headerlink" href="#first-follow-on-optimization-target" title="Permanent link">&para;</a></h2>
+<p>The first optimization ticket after Wave 1 should target
+<code>mosaic-mfs-clean-primary</code> unless #251 produces contrary evidence.</p>
+<p>Rationale:</p>
+<ul>
+<li>Current-practice sources make mosaic imaging a normal <code>tclean</code> workload, not
+  a niche path.</li>
+<li>Existing Wave 7 evidence already showed mosaic/CLEAN workloads slower than
+  CASA C++ while standard MFS dirty imaging was close to CASA.</li>
+<li>The path is likely to exercise the same structural seams needed for later
+  cube, PB, workspace residency, backend, and GPU work.</li>
+</ul>
+<p>The target is workload-level. The implementation path may be CPU dataflow
+repair, GPU/backend preparation, or both, depending on #251 stage evidence. Do
+not assume that CPU-only work can reach the long-term 10x target.</p>
+<p>If #251 shows that the dominant cost is MS/table preparation, image writing, or
+preview generation instead of imaging proper, split the follow-on target before
+optimizing.</p>
+<h2 id="issue-247-acceptance-mapping">Issue #247 Acceptance Mapping<a class="headerlink" href="#issue-247-acceptance-mapping" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Selected modes, excluded modes, and rationale: this document, sections
+  "Selected Wave 1 Modes" and "Deferred Or Blocked Modes".</li>
+<li>Workload shapes: section "Workload Shapes".</li>
+<li>Target styles: section "Target Style".</li>
+<li>Blocked/deferred cases: section "Deferred Or Blocked Modes".</li>
+<li>Existing surface mapping: the selected modes map to existing
+  <code>casars-imager</code> / <code>casa-imaging</code> surfaces except where marked as sentinel or
+  deferred.</li>
+<li>First follow-on optimization target: section "First Follow-On Optimization
+  Target".</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
