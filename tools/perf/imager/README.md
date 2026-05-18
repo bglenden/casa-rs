@@ -184,6 +184,7 @@ their benchmark support is added or delegated to the owning follow-up.
 
 `run_workload.py` writes one JSON file per run with:
 
+- `schema_version: 1`
 - `run_id`, manifest path, git branch/commit, CASA Python path, benchmark script
   hash, and the exact delegated command/env
 - dataset key/path, selected mode, image shape, channel count, weighting,
@@ -198,6 +199,22 @@ their benchmark support is added or delegated to the owning follow-up.
 - preserved product prefixes when a real run is executed
 - CASA-backed product-comparison metrics for configured product suffixes
 - a clear `dry_run`, `completed`, or `failed` status
+
+### Failure semantics
+
+Unsupported modes, missing dataset roots or paths, missing CASA Python, invalid
+CASA Python paths, and invalid repeat counts fail during preflight before the
+benchmark script is invoked. Those failures exit without writing partial timing
+claims.
+
+If the delegated benchmark command exits non-zero, the result JSON is written
+with top-level `status: failed`, the benchmark log path, the command exit code,
+Rust timing status `not_run`, CASA timing status `blocked`, and the shared block
+reason. Product comparison is skipped.
+
+If a completed benchmark log omits one timing section, the corresponding side is
+reported as `status: missing` with an explanatory reason instead of `ran`; only a
+side with a median wallclock is reported as `ran`.
 
 The active Wave 8 clean cube gate can now be reproduced directly through the
 same harness by setting, for example:

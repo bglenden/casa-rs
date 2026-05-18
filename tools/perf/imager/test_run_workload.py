@@ -6,6 +6,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 from pathlib import Path
+import tempfile
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -13,6 +14,126 @@ import run_workload
 
 
 class StageBreakdownTests(unittest.TestCase):
+    def test_parse_log_marks_missing_timing_sections_without_claiming_runs(self) -> None:
+        parsed = run_workload.parse_benchmark_log(
+            """Rust release CLI timings (seconds):
+  run=1 real=1.500
+  median=1.500
+
+CASA PySynthesisImager stage medians (milliseconds):
+  total=42.000
+"""
+        )
+
+        self.assertEqual("ran", parsed["rust"]["status"])
+        self.assertIsNone(parsed["rust"]["reason"])
+        self.assertEqual(1.5, parsed["rust"]["timings_seconds"]["median"])
+        self.assertEqual("missing", parsed["casa"]["status"])
+        self.assertIn("not reported", parsed["casa"]["reason"])
+        self.assertIsNone(parsed["casa"]["timings_seconds"]["median"])
+
+    def test_empty_results_include_reasons_for_both_sides(self) -> None:
+        results = run_workload.empty_results(
+            casa_status="blocked",
+            reason="benchmark command exited 2",
+        )
+
+        self.assertEqual("not_run", results["rust"]["status"])
+        self.assertEqual("benchmark command exited 2", results["rust"]["reason"])
+        self.assertEqual("blocked", results["casa"]["status"])
+        self.assertEqual("benchmark command exited 2", results["casa"]["reason"])
+
+    def test_unsupported_wterm_fails_in_preflight(self) -> None:
+        manifest = {
+            "id": "unsupported-wterm",
+            "mode_id": "standard-mfs-dirty-wterm",
+            "dataset": {
+                "key": "fake.ms",
+                "path": "/tmp/fake.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+                "wterm": "direct",
+            },
+        }
+
+        with self.assertRaisesRegex(run_workload.HarnessError, "wterm='direct'"):
+            run_workload.build_plan(
+                manifest_path=Path("manifest.json"),
+                manifest=manifest,
+                repeats_override=1,
+                run_label_override=None,
+                storage_label_override=None,
+                dry_run=True,
+            )
+
+    def test_missing_casa_python_fails_before_running_benchmark(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            dataset = Path(tempdir) / "input.ms"
+            dataset.mkdir()
+            manifest = {
+                "id": "requires-casa",
+                "mode_id": "standard-mfs-dirty-control",
+                "dataset": {
+                    "key": "input.ms",
+                    "path": str(dataset),
+                },
+                "imaging": {
+                    "mode": "dirty",
+                    "specmode": "mfs",
+                    "gridder": "standard",
+                },
+            }
+
+            with mock.patch.dict("os.environ", {}, clear=True):
+                with self.assertRaisesRegex(
+                    run_workload.HarnessError,
+                    "CASA_RS_CASA_PYTHON is required",
+                ):
+                    run_workload.build_plan(
+                        manifest_path=Path("manifest.json"),
+                        manifest=manifest,
+                        repeats_override=1,
+                        run_label_override=None,
+                        storage_label_override=None,
+                        dry_run=False,
+                    )
+
+    def test_missing_dataset_fails_before_running_benchmark(self) -> None:
+        manifest = {
+            "id": "missing-dataset",
+            "mode_id": "standard-mfs-dirty-control",
+            "dataset": {
+                "key": "missing.ms",
+                "path": "/definitely/not/a/dataset.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+            },
+        }
+
+        with mock.patch.dict(
+            "os.environ",
+            {"CASA_RS_CASA_PYTHON": sys.executable},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(
+                run_workload.HarnessError,
+                "dataset path does not exist",
+            ):
+                run_workload.build_plan(
+                    manifest_path=Path("manifest.json"),
+                    manifest=manifest,
+                    repeats_override=1,
+                    run_label_override=None,
+                    storage_label_override=None,
+                    dry_run=False,
+                )
+
     def test_dirty_workload_marks_clean_only_categories_skipped(self) -> None:
         plan = {
             "mode": {

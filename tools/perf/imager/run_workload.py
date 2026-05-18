@@ -321,7 +321,11 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
 
 def empty_results(*, casa_status: str, reason: str) -> dict[str, Any]:
     return {
-        "rust": {"status": "not_run", "timings_seconds": {"runs": [], "median": None}},
+        "rust": {
+            "status": "not_run",
+            "reason": reason,
+            "timings_seconds": {"runs": [], "median": None},
+        },
         "casa": {
             "status": casa_status,
             "reason": reason,
@@ -340,17 +344,29 @@ def parse_benchmark_log(text: str) -> dict[str, Any]:
     rust_stages = parse_stage_section(text, "Rust stage medians")
     casa_stages = parse_stage_section(text, "CASA PySynthesisImager stage medians")
     return {
-        "rust": {
-            "status": "ran",
-            "timings_seconds": {"runs": rust_runs, "median": rust_median},
-        },
-        "casa": {
-            "status": "ran",
-            "reason": None,
-            "timings_seconds": {"runs": casa_runs, "median": casa_median},
-        },
+        "rust": timing_result(
+            rust_runs,
+            rust_median,
+            missing_reason="Rust release CLI timing section was not reported",
+        ),
+        "casa": timing_result(
+            casa_runs,
+            casa_median,
+            missing_reason="CASA tclean timing section was not reported",
+        ),
         "stage_medians_ms": {"rust": rust_stages, "casa": casa_stages},
         "product_paths": parse_product_paths(text),
+    }
+
+
+def timing_result(
+    runs: list[float], median: float | None, *, missing_reason: str
+) -> dict[str, Any]:
+    status = "ran" if median is not None else "missing"
+    return {
+        "status": status,
+        "reason": None if status == "ran" else missing_reason,
+        "timings_seconds": {"runs": runs, "median": median},
     }
 
 
