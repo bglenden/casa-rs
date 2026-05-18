@@ -58,15 +58,15 @@ retained as the parity oracle.
 
 | Instrument | Single-field datasets | Mosaic datasets | Native `casa-rs` simulation status |
 |---|---:|---:|---|
-| VLA | small, medium | small | VLA single-field generation is supported by the existing native `simobserve` path; true mosaic generation is backlog |
-| ALMA | small, medium | small, plus one large mosaic/cube superset | ALMA single-field generation has strict small-tier parity evidence; true mosaic generation is backlog |
+| VLA | small, medium | small | VLA single-field and selected mosaic-capable request generation are supported by the native `simobserve` path; strict parity evidence currently covers VLA single small |
+| ALMA | small, medium | small, plus one large mosaic/cube superset | ALMA single-field and selected mosaic-capable request generation are supported; strict parity evidence currently covers ALMA single small |
 
 The registry also includes both single-field and mosaic families:
 
 | Family | Wave 1 modes | Status |
 |---|---|---|
 | single | standard MFS dirty, standard MFS clean, standard cube, MT-MFS sentinel | Native and CASA C++ small single-field ALMA parity is checked; cube spectral structure remains backlog #255 |
-| mosaic | mosaic MFS clean, mosaic cube bounded | CASA C++ generated datasets are usable now; native multi-field mosaic generation is backlog #254 |
+| mosaic | mosaic MFS clean, mosaic cube bounded | Native request generation covers the selected Wave 1 mosaic-capable shapes; broader native mosaic parity remains backlog #254 |
 | mosaic-large | all selected Wave 1 modes | one ALMA large-tier superset backs all logical large workloads |
 
 The native blocked/request-plan statuses are intentional for unsupported
@@ -198,7 +198,7 @@ materializing the 100 GiB MeasurementSet:
 ```sh
 tools/perf/imager/stage_wave1_datasets.py \
   --data-root "$CASA_RS_IMPERF_DATA_ROOT" \
-  --dataset wave1-alma-shared-large \
+  --dataset wave1-alma-mosaic-large \
   --materialize-workloads
 ```
 
@@ -207,7 +207,7 @@ tools/perf/imager/stage_wave1_datasets.py \
 - Deterministic generation path or registry entry for selected mode/tier
   combinations: `wave1_dataset_registry.json` plus CASA C++ simulation plans;
   the large tier intentionally maps all selected modes to
-  `wave1-alma-shared-large`.
+  `wave1-alma-mosaic-large`.
 - Metadata needed to reproduce benchmark workloads: generated dataset plan,
   source model files, spectral profile, and simulation request plans.
 - Provenance, size, checksum, path, and tier policy: this document plus the

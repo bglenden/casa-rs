@@ -37,7 +37,7 @@
       "display_name": "ALMA",
       "array_configuration": "synthetic compact 12m-like",
       "dish_diameter_m": 12.0,
-      "native_casars_status": "supported for single-field generation after strict small-tier parity; mosaic generation remains request-plan-only"
+      "native_casars_status": "supported for selected Wave 1 single-field and mosaic-capable generation; strict CASA parity currently covers the ALMA single small case"
     }
   },
   "families": {
