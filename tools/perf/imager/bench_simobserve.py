@@ -150,6 +150,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             request,
             casa["last_ms"],
         )
+        request["request"]["allow_below_elevation_limit"] = True
+        request["request"]["elevation_limit_rad"] = 8.0 * 3.141592653589793 / 180.0
 
     native_parallel = run_native_repeats(
         args.casars_binary,
@@ -718,6 +720,28 @@ def read_keys(path):
         tb.close()
     return rows, keys
 
+def flag_counts(path, chunk_rows=8192):
+    tb = open_table(path)
+    try:
+        rows = int(tb.nrows())
+        flag_true = 0
+        flag_row_true = 0
+        effective_true = 0
+        for start in range(0, rows, chunk_rows):
+            count = min(chunk_rows, rows - start)
+            flag = np.asarray(tb.getcol("FLAG", startrow=start, nrow=count), dtype=bool)
+            flag_row = np.asarray(tb.getcol("FLAG_ROW", startrow=start, nrow=count), dtype=bool)
+            flag_true += int(np.count_nonzero(flag))
+            flag_row_true += int(np.count_nonzero(flag_row))
+            effective_true += int(np.count_nonzero(flag | flag_row.reshape(1, 1, -1)))
+    finally:
+        tb.close()
+    return {
+        "flag_true_cells": flag_true,
+        "flag_row_true_rows": flag_row_true,
+        "effective_flag_true_cells": effective_true,
+    }
+
 native_rows, native_keys = read_keys(native_path)
 casa_rows, casa_keys = read_keys(casa_path)
 result = {
@@ -725,12 +749,19 @@ result = {
     "reasons": [],
     "sampled": True,
     "row_count": {"native": native_rows, "casa": casa_rows},
+    "flag_counts": {
+        "native": flag_counts(native_path),
+        "casa": flag_counts(casa_path),
+    },
     "thresholds": {
         "uvw_atol": uvw_atol,
         "data_atol": data_atol,
         "data_rtol": data_rtol,
     },
 }
+if result["flag_counts"]["native"] != result["flag_counts"]["casa"]:
+    result["status"] = "failed"
+    result["reasons"].append("strict total FLAG/FLAG_ROW counts differ")
 if native_rows != casa_rows:
     result["status"] = "failed"
     result["reasons"].append("strict row count mismatch")
@@ -1046,6 +1077,21 @@ native_flag = native["flag"][:, :, native_order]
 casa_flag = casa["flag"][:, :, casa_order]
 native_effective_flag = native_flag | native["flag_row"][native_order].reshape(1, 1, -1)
 casa_effective_flag = casa_flag | casa["flag_row"][casa_order].reshape(1, 1, -1)
+result["flag_counts"] = {
+    "native": {
+        "flag_true_cells": int(np.count_nonzero(native_flag)),
+        "flag_row_true_rows": int(np.count_nonzero(native["flag_row"][native_order])),
+        "effective_flag_true_cells": int(np.count_nonzero(native_effective_flag)),
+    },
+    "casa": {
+        "flag_true_cells": int(np.count_nonzero(casa_flag)),
+        "flag_row_true_rows": int(np.count_nonzero(casa["flag_row"][casa_order])),
+        "effective_flag_true_cells": int(np.count_nonzero(casa_effective_flag)),
+    },
+}
+if result["flag_counts"]["native"] != result["flag_counts"]["casa"]:
+    result["status"] = "failed"
+    result["reasons"].append("strict total FLAG/FLAG_ROW counts differ")
 data_abs_all = np.abs(native_data - casa_data)
 casa_amp_all = np.abs(casa_data)
 comparison_mask = ~(native_effective_flag | casa_effective_flag)

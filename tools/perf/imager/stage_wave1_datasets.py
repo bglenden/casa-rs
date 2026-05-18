@@ -24,8 +24,12 @@ TOOL_DIR = pathlib.Path(__file__).resolve().parent
 REGISTRY_PATH = TOOL_DIR / "wave1_dataset_registry.json"
 DEFAULT_OUTPUT_DIR = pathlib.Path("target/imperformance-wave1/datasets")
 EXTERNAL_PREFIX = pathlib.Path("/Volumes/GLENDENNING")
-MODEL_PHASE_CENTER_RA_DEG = 270.000129
-MODEL_PHASE_CENTER_DEC_DEG = -22.999889
+MODEL_PHASE_CENTER_RA_DEG = 180.0
+DEFAULT_ELEVATION_LIMIT_DEG = 20.0
+OBSERVATORY_ZENITH_DEC_DEG = {
+    "alma": -23.029,
+    "vla": 34.07875,
+}
 
 
 class DatasetError(Exception):
@@ -392,10 +396,12 @@ def build_casars_simobserve_request(dataset: dict[str, Any]) -> dict[str, Any]:
             "overwrite": True,
             "telescope_name": dataset["instrument"].upper(),
             "field_name": dataset["id"],
-            "phase_center_rad": phase_center_rad(0.0, 0.0),
+            "phase_center_rad": phase_center_rad(dataset["instrument"], 0.0, 0.0),
             "fields": fields,
             "duration_seconds": dataset["shape"]["duration_seconds"],
             "integration_seconds": dataset["shape"]["integration_seconds"],
+            "elevation_limit_rad": math.radians(DEFAULT_ELEVATION_LIMIT_DEG),
+            "allow_below_elevation_limit": False,
             "spectral_setup": {
                 "name": "wave1",
                 "start_frequency_hz": start_frequency_hz(dataset["instrument"]),
@@ -419,13 +425,25 @@ def build_casars_simobserve_request(dataset: dict[str, Any]) -> dict[str, Any]:
     return request
 
 
-def phase_center_rad(dra_arcsec: float, ddec_arcsec: float) -> list[float]:
-    ra_rad = math.radians(MODEL_PHASE_CENTER_RA_DEG + dra_arcsec / 3600.0)
+def phase_center_deg(instrument: str, dra_arcsec: float, ddec_arcsec: float) -> tuple[float, float]:
+    try:
+        dec_deg = OBSERVATORY_ZENITH_DEC_DEG[instrument]
+    except KeyError as exc:
+        raise DatasetError(f"no zenith-transit default phase center for {instrument}") from exc
+    return (
+        MODEL_PHASE_CENTER_RA_DEG + dra_arcsec / 3600.0,
+        dec_deg + ddec_arcsec / 3600.0,
+    )
+
+
+def phase_center_rad(instrument: str, dra_arcsec: float, ddec_arcsec: float) -> list[float]:
+    ra_deg, dec_deg = phase_center_deg(instrument, dra_arcsec, ddec_arcsec)
+    ra_rad = math.radians(ra_deg)
     if ra_rad > math.pi:
         ra_rad -= math.tau
     return [
         ra_rad,
-        math.radians(MODEL_PHASE_CENTER_DEC_DEG + ddec_arcsec / 3600.0),
+        math.radians(dec_deg),
     ]
 
 
@@ -443,7 +461,7 @@ def build_casars_fields(dataset: dict[str, Any]) -> list[dict[str, Any]]:
         fields.append(
             {
                 "name": f"{dataset['id']}_field_{index}",
-                "phase_center_rad": phase_center_rad(dra_arcsec, ddec_arcsec),
+                "phase_center_rad": phase_center_rad(dataset["instrument"], dra_arcsec, ddec_arcsec),
             }
         )
     return fields
@@ -478,6 +496,7 @@ def write_structured_fits(
         raise DatasetError("model FITS must be at least 8x8 pixels")
     if channels < 1:
         raise DatasetError("model FITS must have at least one channel")
+    ra_deg, dec_deg = phase_center_deg(instrument, 0.0, 0.0)
     cards = [
         ("SIMPLE", "T"),
         ("BITPIX", "-32"),
@@ -502,8 +521,8 @@ def write_structured_fits(
             ("EQUINOX", "2000.0"),
             ("CRPIX1", f"{pixels / 2 + 0.5:.6f}"),
             ("CRPIX2", f"{pixels / 2 + 0.5:.6f}"),
-            ("CRVAL1", "270.000129"),
-            ("CRVAL2", "-22.999889"),
+            ("CRVAL1", f"{ra_deg:.9f}"),
+            ("CRVAL2", f"{dec_deg:.9f}"),
             ("CDELT1", f"{-cell_deg(instrument):.12g}"),
             ("CDELT2", f"{cell_deg(instrument):.12g}"),
         ]

@@ -438,6 +438,15 @@ fn write_tile_storage(dst: &mut [u8], dt: CasacoreDataType, unpacked: &[u8], nrp
     }
 }
 
+fn write_bool_bits_fill(dst: &mut [u8], nrpixels: usize) {
+    let full_bytes = nrpixels / 8;
+    let remaining_bits = nrpixels % 8;
+    dst[..full_bytes].fill(0xff);
+    if remaining_bits > 0 {
+        dst[full_bytes] = (1u8 << remaining_bits) - 1;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Header read
 // ---------------------------------------------------------------------------
@@ -3477,6 +3486,29 @@ impl StreamingTiledPrimitiveWriter {
         self.push_encoded_row(&encoded)
     }
 
+    /// Append one bool row with every logical value set to `value`.
+    pub fn push_bool_fill_row(&mut self, value: bool) -> Result<(), StorageError> {
+        if self.primitive_type != StreamedTiledPrimitiveType::Bool {
+            return Err(StorageError::FormatMismatch(
+                "streamed primitive writer was not configured for bool rows".to_string(),
+            ));
+        }
+        if !value {
+            return self.push_zero_row();
+        }
+        if self.rows_written >= self.row_count {
+            return Err(StorageError::FormatMismatch(format!(
+                "streamed primitive writer received too many rows: expected {}",
+                self.row_count
+            )));
+        }
+        let assemble_started = Instant::now();
+        let row_in_tile = self.rows_written % self.rows_per_tile;
+        self.fill_row_into_tile_buffers(row_in_tile, 1);
+        self.assemble_seconds += assemble_started.elapsed().as_secs_f64();
+        self.advance_row_after_copy()
+    }
+
     /// Append one float row.
     pub fn push_f32_row(&mut self, values: &[f32]) -> Result<(), StorageError> {
         if self.primitive_type != StreamedTiledPrimitiveType::Float32 {
@@ -3574,6 +3606,27 @@ impl StreamingTiledPrimitiveWriter {
         }
     }
 
+    fn fill_row_into_tile_buffers(&mut self, row_in_tile: usize, value: u8) {
+        let cell_rank = self.cell_shape.len();
+        let tile_cell_shape = &self.tile_shape[..cell_rank];
+        let tile_cell_nelem: usize = tile_cell_shape.iter().product();
+        let elem_size = self.primitive_type.elem_size();
+        let row_block_bytes = tile_cell_nelem * elem_size;
+
+        for (tile_index, plan) in self.tile_plans.iter().enumerate() {
+            let row_slice_start = row_in_tile * row_block_bytes;
+            let row_slice_end = row_slice_start + row_block_bytes;
+            let row_tile = &mut self.tile_buffers[tile_index][row_slice_start..row_slice_end];
+            fill_cube_tile_region(
+                row_tile,
+                tile_cell_shape,
+                &plan.actual_extent,
+                elem_size,
+                value,
+            );
+        }
+    }
+
     /// Finish writing and return an installable streamed-column payload.
     pub fn finish(mut self) -> Result<StreamedTiledPrimitiveColumn, StorageError> {
         if self.rows_written != self.row_count {
@@ -3613,12 +3666,18 @@ impl StreamingTiledPrimitiveWriter {
             let mut bucket = vec![0u8; self.bucket_size];
             for tile in &self.tile_buffers {
                 bucket.fill(0);
-                write_tile_storage(
-                    &mut bucket,
-                    self.primitive_type.casacore_type(),
-                    tile,
-                    self.tile_nelem,
-                );
+                if tile.iter().all(|&value| value == 0) {
+                    // Already zero-filled.
+                } else if tile.iter().all(|&value| value != 0) {
+                    write_bool_bits_fill(&mut bucket, self.tile_nelem);
+                } else {
+                    write_tile_storage(
+                        &mut bucket,
+                        self.primitive_type.casacore_type(),
+                        tile,
+                        self.tile_nelem,
+                    );
+                }
                 self.writer.write_all(&bucket)?;
                 self.logical_write_calls += 1;
                 self.max_logical_write_bytes = self.max_logical_write_bytes.max(bucket.len());
@@ -5684,6 +5743,44 @@ fn copy_cube_to_tile(
         let dst_start = tile_off * elem_size;
         tile_data[dst_start..dst_start + inner_bytes]
             .copy_from_slice(&cube_data[src_start..src_start + inner_bytes]);
+
+        increment_position(&mut outer_pos, outer_dims);
+    }
+}
+
+fn fill_cube_tile_region(
+    tile_data: &mut [u8],
+    tile_shape: &[usize],
+    actual_extent: &[usize],
+    elem_size: usize,
+    value: u8,
+) {
+    let ndim = tile_shape.len();
+    if ndim == 0 {
+        return;
+    }
+
+    let inner_bytes = actual_extent[0] * elem_size;
+
+    if ndim == 1 {
+        tile_data[..inner_bytes].fill(value);
+        return;
+    }
+
+    let outer_dims = &actual_extent[1..];
+    let outer_total: usize = outer_dims.iter().product();
+    let mut outer_pos = vec![0usize; outer_dims.len()];
+
+    for _ in 0..outer_total {
+        let mut tile_off = 0;
+        let mut stride = tile_shape[0];
+        for (d, &p) in outer_pos.iter().enumerate() {
+            tile_off += p * stride;
+            stride *= tile_shape[d + 1];
+        }
+
+        let dst_start = tile_off * elem_size;
+        tile_data[dst_start..dst_start + inner_bytes].fill(value);
 
         increment_position(&mut outer_pos, outer_dims);
     }

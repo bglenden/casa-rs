@@ -10,6 +10,7 @@ use casa_ms::{
     tutorial_vla_a_antennas,
 };
 use casa_test_support::{discover_casa_python, tutorial_dataset_path};
+use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, ScalarValue, Value};
 use std::process::Command;
 
@@ -107,6 +108,43 @@ fn generates_vla_ppdisk_synthetic_ms_skeleton() {
         }
         other => panic!("expected Float64 UVW array, got {other:?}"),
     }
+}
+
+#[test]
+fn zenith_transit_schedule_writes_unflagged_vla_track() {
+    let temp = tempfile::tempdir().unwrap();
+    let model = temp.path().join("ppdisk672_GHz_50pc.fits");
+    write_test_fits_model(&model, 16, 16);
+    let vla = MPosition::from_observatory_name("VLA").expect("VLA position");
+    let mut request = SyntheticObservationRequest::vla_ppdisk(
+        &model,
+        temp.path().join("zenith.synthetic.ms"),
+        tutorial_vla_a_antennas(),
+    );
+    request.phase_center_rad = [0.0, vla.latitude_rad()];
+    request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
+    request.duration_seconds = 2.0 * 3_600.0;
+    request.integration_seconds = 600.0;
+    request.predict_model = false;
+    request.corruption = None;
+
+    let report = generate_synthetic_observation_ms(&request).unwrap();
+    let ms = MeasurementSet::open(&request.output_ms).unwrap();
+    let flag_rows = ms.flag_row_column();
+    let flags = ms.flag_column();
+    let mut true_flag_rows = 0usize;
+    let mut true_flags = 0usize;
+    for row in 0..ms.row_count() {
+        true_flag_rows += usize::from(flag_rows.get(row).unwrap());
+        let ArrayValue::Bool(row_flags) = flags.get(row).unwrap() else {
+            panic!("expected Bool FLAG row");
+        };
+        true_flags += row_flags.iter().filter(|flag| **flag).count();
+    }
+
+    assert_eq!(report.main_row_count, ms.row_count());
+    assert_eq!(true_flag_rows, 0);
+    assert_eq!(true_flags, 0);
 }
 
 #[test]

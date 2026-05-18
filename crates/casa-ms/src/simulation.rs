@@ -44,7 +44,13 @@ use crate::flagging::shadowed_antennas_from_projected_baselines;
 use crate::schema::{self, SubtableId};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
 
-const CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD: f64 = 8.0_f64.to_radians();
+const DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD: f64 = 20.0_f64.to_radians();
+const DEFAULT_SIMOBSERVE_IO_QUEUE_DEPTH: usize = 16;
+const SIDEREAL_DAY_SECONDS: f64 = 86_164.090_5;
+
+fn default_simobserve_elevation_limit_rad() -> f64 {
+    DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD
+}
 
 /// Antenna configuration row for a synthetic observation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -334,6 +340,15 @@ pub struct SyntheticObservationRequest {
     pub duration_seconds: f64,
     /// Integration time in seconds.
     pub integration_seconds: f64,
+    /// Minimum antenna elevation in radians for scheduled samples and flags.
+    #[serde(default = "default_simobserve_elevation_limit_rad")]
+    pub elevation_limit_rad: f64,
+    /// Permit continuous tracks that include samples below the elevation limit.
+    ///
+    /// When false, the simulator schedules as many above-elevation transit
+    /// sessions as needed to accumulate the requested on-source duration.
+    #[serde(default)]
+    pub allow_below_elevation_limit: bool,
     /// Antenna configuration.
     pub antennas: Vec<SyntheticAntenna>,
     /// Spectral-window setup.
@@ -366,6 +381,8 @@ impl SyntheticObservationRequest {
             start_time_mjd_seconds: 4_895_229_577.784_943,
             duration_seconds: 3_600.0,
             integration_seconds: 2.0,
+            elevation_limit_rad: default_simobserve_elevation_limit_rad(),
+            allow_below_elevation_limit: false,
             antennas,
             spectral_setup: SyntheticSpectralSetup {
                 name: "Qband".to_string(),
@@ -527,6 +544,16 @@ pub struct SyntheticObservationReport {
     pub channel_count: usize,
     /// Number of complex visibility cells with non-zero predicted model values.
     pub nonzero_visibility_count: usize,
+    /// Number of MAIN rows whose `FLAG_ROW` is true.
+    #[serde(default)]
+    pub flagged_row_count: usize,
+    /// Number of MAIN rows flagged because one or both antennas were below the
+    /// elevation limit.
+    #[serde(default)]
+    pub elevation_flagged_row_count: usize,
+    /// Number of MAIN rows flagged because one or both antennas were shadowed.
+    #[serde(default)]
+    pub shadow_flagged_row_count: usize,
     /// Names of corruption effects applied to `MAIN.DATA`.
     pub applied_corruptions: Vec<String>,
     /// Wall-clock timing breakdown for the native generator.
@@ -561,6 +588,12 @@ pub struct SyntheticMainRowTimingReport {
     pub uvw_and_row_setup_millis: u128,
     /// Time spent predicting model visibilities across channels.
     pub prediction_millis: u128,
+    /// Wall-clock time spent inside prediction worker scopes.
+    #[serde(default)]
+    pub prediction_worker_wall_millis: u128,
+    /// Time spent gathering channel-worker chunks into full row arrays.
+    #[serde(default)]
+    pub prediction_gather_millis: u128,
     /// Time spent applying deterministic corruption/noise.
     pub corruption_millis: u128,
     /// Time spent waiting to enqueue DATA row batches to the background writer.
@@ -578,8 +611,30 @@ pub struct SyntheticMainRowTimingReport {
     /// Bytes written through the streamed tiled MAIN column writers.
     #[serde(default)]
     pub data_io_bytes: u64,
+    /// Per-column timing for the streamed tiled MAIN column writers.
+    #[serde(default)]
+    pub data_io_columns: Vec<SyntheticMainColumnIoTimingReport>,
     /// Time spent constructing MAIN rows and appending them to the table.
     pub main_write_millis: u128,
+    /// Time spent building scalar-column override vectors.
+    #[serde(default)]
+    pub scalar_column_millis: u128,
+    /// Time spent appending placeholder MAIN rows.
+    #[serde(default)]
+    pub main_row_add_millis: u128,
+}
+
+/// Per-column streamed MAIN table I/O timing.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticMainColumnIoTimingReport {
+    /// MAIN table column name.
+    pub column: String,
+    /// Time spent packing rows into tiled storage buffers.
+    pub assemble_millis: u128,
+    /// Time spent writing tile buffers to disk.
+    pub write_millis: u128,
+    /// Bytes written for this streamed column.
+    pub bytes_written: u64,
 }
 
 /// Generate an uncorrupted CASA-compatible synthetic MeasurementSet.
@@ -623,6 +678,10 @@ pub fn generate_synthetic_observation_ms(
     })?;
     let setup_millis = elapsed_millis(setup_started.elapsed());
 
+    let time_sample_count =
+        time_sample_count(request.duration_seconds, request.integration_seconds);
+    let sample_times = observation_sample_times(request, time_sample_count)?;
+
     let metadata_started = Instant::now();
     populate_antennas(&mut ms, &request.antennas)?;
     populate_field(&mut ms, request)?;
@@ -633,12 +692,10 @@ pub fn generate_synthetic_observation_ms(
     populate_state(&mut ms)?;
     populate_processor(&mut ms)?;
     populate_feed(&mut ms, request)?;
-    populate_observation(&mut ms, request)?;
+    populate_observation(&mut ms, request, &sample_times)?;
     populate_history(&mut ms, request)?;
     let metadata_millis = elapsed_millis(metadata_started.elapsed());
 
-    let time_sample_count =
-        time_sample_count(request.duration_seconds, request.integration_seconds);
     let baseline_count = request.antennas.len() * (request.antennas.len() - 1) / 2;
     let model_started = Instant::now();
     let model = if request.predict_model {
@@ -661,7 +718,7 @@ pub fn generate_synthetic_observation_ms(
     let mut main_rows = populate_main_rows(
         &mut ms,
         request,
-        time_sample_count,
+        &sample_times,
         model.as_ref(),
         &mut main_column_writer,
     )?;
@@ -673,6 +730,7 @@ pub fn generate_synthetic_observation_ms(
     main_rows.timing.data_io_write_millis =
         elapsed_seconds_to_millis(streamed_main_columns.write_seconds());
     main_rows.timing.data_io_bytes = streamed_main_columns.bytes_written() as u64;
+    main_rows.timing.data_io_columns = streamed_main_columns.column_timing_reports();
 
     let save_started = Instant::now();
     ms.save_assuming_valid_with_main_column_overrides(&main_rows.scalar_column_overrides)?;
@@ -688,6 +746,9 @@ pub fn generate_synthetic_observation_ms(
         main_row_count: baseline_count * time_sample_count,
         channel_count: request.spectral_setup.channel_count,
         nonzero_visibility_count: main_rows.nonzero_visibility_count,
+        flagged_row_count: main_rows.flagged_row_count,
+        elevation_flagged_row_count: main_rows.elevation_flagged_row_count,
+        shadow_flagged_row_count: main_rows.shadow_flagged_row_count,
         applied_corruptions: applied_corruption_names(request.corruption.as_ref()),
         timing: SyntheticObservationTimingReport {
             validate_millis,
@@ -765,6 +826,14 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
     if request.integration_seconds <= 0.0 || !request.integration_seconds.is_finite() {
         return Err(MsError::SyntheticObservation(
             "integration time must be positive".to_string(),
+        ));
+    }
+    if !request.elevation_limit_rad.is_finite()
+        || request.elevation_limit_rad <= -std::f64::consts::FRAC_PI_2
+        || request.elevation_limit_rad >= std::f64::consts::FRAC_PI_2
+    {
+        return Err(MsError::SyntheticObservation(
+            "elevation limit must be finite and between -90 and +90 degrees".to_string(),
         ));
     }
     if request
@@ -1154,8 +1223,18 @@ fn populate_feed(ms: &mut MeasurementSet, request: &SyntheticObservationRequest)
 fn populate_observation(
     ms: &mut MeasurementSet,
     request: &SyntheticObservationRequest,
+    sample_times: &[f64],
 ) -> MsResult<()> {
-    let end_time = request.start_time_mjd_seconds + request.duration_seconds;
+    let first_time = sample_times
+        .first()
+        .copied()
+        .unwrap_or(request.start_time_mjd_seconds);
+    let last_time = sample_times
+        .last()
+        .copied()
+        .unwrap_or(request.start_time_mjd_seconds);
+    let start_time = first_time - 0.5 * request.integration_seconds;
+    let end_time = last_time + 0.5 * request.integration_seconds;
     let row = row_from_defs(
         schema::observation::REQUIRED_COLUMNS,
         &[
@@ -1170,10 +1249,7 @@ fn populate_observation(
             ("SCHEDULE", string_array(&["synthetic"], vec![1])),
             ("SCHEDULE_TYPE", s("synthetic")),
             ("TELESCOPE_NAME", s(&request.telescope_name)),
-            (
-                "TIME_RANGE",
-                f64_array(&[request.start_time_mjd_seconds, end_time], vec![2]),
-            ),
+            ("TIME_RANGE", f64_array(&[start_time, end_time], vec![2])),
         ],
     );
     subtable_mut(ms, SubtableId::Observation)?.add_row(row)?;
@@ -1209,10 +1285,11 @@ fn populate_history(
 fn populate_main_rows(
     ms: &mut MeasurementSet,
     request: &SyntheticObservationRequest,
-    samples: usize,
+    sample_times: &[f64],
     model: Option<&FitsModelImage>,
     main_column_writer: &mut SimobserveMainColumnWriter,
 ) -> MsResult<MainRowsReport> {
+    let samples = sample_times.len();
     let num_corr = 2usize;
     let num_chan = request.spectral_setup.channel_count;
     let channel_prediction_workers = simobserve_channel_worker_count(num_chan);
@@ -1247,13 +1324,14 @@ fn populate_main_rows(
     let observatory = simulation_observatory_position(&request.telescope_name, &request.antennas);
     let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
     let uvw_production_trace = SimobserveUvwProductionTrace::from_env();
+    let mut flagged_row_count = 0usize;
+    let mut elevation_flagged_row_count = 0usize;
+    let mut shadow_flagged_row_count = 0usize;
 
-    for sample in 0..samples {
+    for (sample, time) in sample_times.iter().copied().enumerate() {
         let uvw_started = Instant::now();
         let field_id = sample % field_plans.len();
         let field_plan = &field_plans[field_id];
-        let time =
-            request.start_time_mjd_seconds + (sample as f64 + 0.5) * request.integration_seconds;
         let antenna_uvws = antenna_uvw_positions(
             &request.antennas,
             field_plan.phase_center_rad,
@@ -1303,17 +1381,21 @@ fn populate_main_rows(
             &request.antennas,
             &observatory,
             elevation_margin_rad,
+            request.elevation_limit_rad,
         )?;
         timing.uvw_and_row_setup += uvw_started.elapsed();
 
         let prediction_started = Instant::now();
-        let mut data_rows = predicted_data_values_for_rows_with_workers(
+        let prediction = predicted_data_values_for_rows_with_workers_timed(
             field_plan.predictors.as_deref(),
             &request.spectral_setup,
             &row_uvws,
             num_corr,
             channel_prediction_workers,
         );
+        let mut data_rows = prediction.rows;
+        timing.prediction_worker_wall += prediction.worker_wall;
+        timing.prediction_gather += prediction.gather;
         timing.prediction += prediction_started.elapsed();
         let corruption_started = Instant::now();
         nonzero_visibility_count += apply_corruption_and_count_rows_with_workers(
@@ -1324,15 +1406,17 @@ fn populate_main_rows(
             sample,
         );
         timing.corruption += corruption_started.elapsed();
-        let flag_rows = row_specs
-            .iter()
-            .map(|spec| {
-                low_elevation_antennas[spec.antenna1]
-                    || low_elevation_antennas[spec.antenna2]
-                    || shadowed_antennas[spec.antenna1]
-                    || shadowed_antennas[spec.antenna2]
-            })
-            .collect::<Vec<_>>();
+        let mut flag_rows = Vec::with_capacity(row_specs.len());
+        for spec in &row_specs {
+            let elevation_flagged =
+                low_elevation_antennas[spec.antenna1] || low_elevation_antennas[spec.antenna2];
+            let shadow_flagged =
+                shadowed_antennas[spec.antenna1] || shadowed_antennas[spec.antenna2];
+            elevation_flagged_row_count += usize::from(elevation_flagged);
+            shadow_flagged_row_count += usize::from(shadow_flagged);
+            flagged_row_count += usize::from(elevation_flagged || shadow_flagged);
+            flag_rows.push(elevation_flagged || shadow_flagged);
+        }
         let uvw_rows = row_specs.iter().map(|spec| spec.uvw).collect::<Vec<_>>();
         let data_io_started = Instant::now();
         main_column_writer.send_batch(SimobserveMainColumnBatch {
@@ -1343,17 +1427,24 @@ fn populate_main_rows(
         timing.data_io_enqueue += data_io_started.elapsed();
         for (spec, shadowed_row) in row_specs.into_iter().zip(flag_rows) {
             let write_started = Instant::now();
+            let scalar_started = Instant::now();
             scalar_column_overrides.push(&spec, request.integration_seconds, shadowed_row);
+            timing.scalar_column += scalar_started.elapsed();
             let row = RecordValue::new(vec![RecordField::new(
                 "FLAG_CATEGORY",
                 template.flag_category.clone(),
             )]);
+            let row_add_started = Instant::now();
             ms.main_table_mut().add_row_assuming_valid(row)?;
+            timing.main_row_add += row_add_started.elapsed();
             timing.main_write += write_started.elapsed();
         }
     }
     Ok(MainRowsReport {
         nonzero_visibility_count,
+        flagged_row_count,
+        elevation_flagged_row_count,
+        shadow_flagged_row_count,
         timing: timing.into_report(),
         scalar_column_overrides: scalar_column_overrides.into_column_overrides(),
     })
@@ -1383,13 +1474,14 @@ fn antennas_below_elevation_limit(
     antennas: &[SyntheticAntenna],
     observatory: &MPosition,
     elevation_margin_rad: f64,
+    elevation_limit_rad: f64,
 ) -> MsResult<Vec<bool>> {
     let observatory_elevation_rad =
         field_elevation_rad(phase_center_rad, time_mjd_seconds, observatory)?;
-    if observatory_elevation_rad + elevation_margin_rad < CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD {
+    if observatory_elevation_rad + elevation_margin_rad < elevation_limit_rad {
         return Ok(vec![true; antennas.len()]);
     }
-    if observatory_elevation_rad - elevation_margin_rad > CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD {
+    if observatory_elevation_rad - elevation_margin_rad > elevation_limit_rad {
         return Ok(vec![false; antennas.len()]);
     }
 
@@ -1403,7 +1495,7 @@ fn antennas_below_elevation_limit(
             );
             Ok(
                 field_elevation_rad(phase_center_rad, time_mjd_seconds, &position)?
-                    < CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD,
+                    < elevation_limit_rad,
             )
         })
         .collect()
@@ -1533,6 +1625,9 @@ fn count_nonzero_complex(values: &[Complex32]) -> usize {
 
 struct MainRowsReport {
     nonzero_visibility_count: usize,
+    flagged_row_count: usize,
+    elevation_flagged_row_count: usize,
+    shadow_flagged_row_count: usize,
     timing: SyntheticMainRowTimingReport,
     scalar_column_overrides: HashMap<String, Vec<Option<Value>>>,
 }
@@ -1552,6 +1647,56 @@ struct StreamedSimobserveMainColumns {
 }
 
 impl StreamedSimobserveMainColumns {
+    fn column_timing_reports(&self) -> Vec<SyntheticMainColumnIoTimingReport> {
+        vec![
+            self.column_timing_report(
+                "DATA",
+                self.data.assemble_seconds(),
+                self.data.write_seconds(),
+                self.data.bytes_written(),
+            ),
+            self.column_timing_report(
+                "FLAG",
+                self.flag.assemble_seconds(),
+                self.flag.write_seconds(),
+                self.flag.bytes_written(),
+            ),
+            self.column_timing_report(
+                "UVW",
+                self.uvw.assemble_seconds(),
+                self.uvw.write_seconds(),
+                self.uvw.bytes_written(),
+            ),
+            self.column_timing_report(
+                "WEIGHT",
+                self.weight.assemble_seconds(),
+                self.weight.write_seconds(),
+                self.weight.bytes_written(),
+            ),
+            self.column_timing_report(
+                "SIGMA",
+                self.sigma.assemble_seconds(),
+                self.sigma.write_seconds(),
+                self.sigma.bytes_written(),
+            ),
+        ]
+    }
+
+    fn column_timing_report(
+        &self,
+        column: &str,
+        assemble_seconds: f64,
+        write_seconds: f64,
+        bytes_written: usize,
+    ) -> SyntheticMainColumnIoTimingReport {
+        SyntheticMainColumnIoTimingReport {
+            column: column.to_string(),
+            assemble_millis: elapsed_seconds_to_millis(assemble_seconds),
+            write_millis: elapsed_seconds_to_millis(write_seconds),
+            bytes_written: bytes_written as u64,
+        }
+    }
+
     fn assemble_seconds(&self) -> f64 {
         self.data.assemble_seconds()
             + self.flag.assemble_seconds()
@@ -1664,7 +1809,6 @@ impl SimobserveMainColumnWriter {
             let mut sigma_writer = sigma_writer;
             let weight_row = vec![1.0f32; num_corr];
             let sigma_row = vec![1.0f32; num_corr];
-            let flag_true_row = vec![true; num_corr * num_chan];
 
             for batch in receiver {
                 if batch.data_rows.len() != batch.flag_rows.len()
@@ -1689,7 +1833,7 @@ impl SimobserveMainColumnWriter {
                         ))
                     })?;
                     if flag_row {
-                        flag_writer.push_bool_row(&flag_true_row).map_err(|error| {
+                        flag_writer.push_bool_fill_row(true).map_err(|error| {
                             MsError::SyntheticObservation(format!(
                                 "failed to stream FLAG row into tiled storage: {error}"
                             ))
@@ -1824,7 +1968,7 @@ fn simobserve_io_queue_depth() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(2)
+        .unwrap_or(DEFAULT_SIMOBSERVE_IO_QUEUE_DEPTH)
 }
 
 struct MainScalarColumnOverrides {
@@ -1914,9 +2058,13 @@ struct MainRowTimingDurations {
     channel_prediction_workers: usize,
     uvw_and_row_setup: Duration,
     prediction: Duration,
+    prediction_worker_wall: Duration,
+    prediction_gather: Duration,
     corruption: Duration,
     data_io_enqueue: Duration,
     main_write: Duration,
+    scalar_column: Duration,
+    main_row_add: Duration,
 }
 
 impl MainRowTimingDurations {
@@ -1925,13 +2073,18 @@ impl MainRowTimingDurations {
             channel_prediction_workers: self.channel_prediction_workers,
             uvw_and_row_setup_millis: elapsed_millis(self.uvw_and_row_setup),
             prediction_millis: elapsed_millis(self.prediction),
+            prediction_worker_wall_millis: elapsed_millis(self.prediction_worker_wall),
+            prediction_gather_millis: elapsed_millis(self.prediction_gather),
             corruption_millis: elapsed_millis(self.corruption),
             data_io_enqueue_millis: elapsed_millis(self.data_io_enqueue),
             data_io_finalize_millis: 0,
             data_io_assemble_millis: 0,
             data_io_write_millis: 0,
             data_io_bytes: 0,
+            data_io_columns: Vec::new(),
             main_write_millis: elapsed_millis(self.main_write),
+            scalar_column_millis: elapsed_millis(self.scalar_column),
+            main_row_add_millis: elapsed_millis(self.main_row_add),
         }
     }
 }
@@ -1994,6 +2147,12 @@ struct ModelPhaseOffset {
     l_rad: f64,
     m_rad: f64,
     n_minus_one: f64,
+}
+
+impl ModelPhaseOffset {
+    fn is_negligible(self) -> bool {
+        self.l_rad.abs() < 1.0e-15 && self.m_rad.abs() < 1.0e-15 && self.n_minus_one.abs() < 1.0e-15
+    }
 }
 
 struct SyntheticFieldPlan {
@@ -2406,30 +2565,14 @@ fn predicted_data_values(
 ) -> Vec<Complex32> {
     let mut values = vec![Complex32::new(0.0, 0.0); num_corr * spectral_setup.channel_count];
     if let Some(predictors) = predictors {
+        let prediction_uvw_m = prediction_uvw_for_row(predictors, uvw_m);
         for (channel, predictor) in predictors.iter().enumerate() {
-            let frequency_hz = spectral_setup.start_frequency_hz
-                + channel as f64 * spectral_setup.channel_width_hz;
-            let wavelength_m = 299_792_458.0 / frequency_hz;
-            let prediction_uvw_m = if let Some(model_reference_direction_rad) =
-                predictor.model_reference_direction_rad
-            {
-                rotate_uvw_between_directions(
-                    uvw_m,
-                    predictor.phase_center_rad,
-                    model_reference_direction_rad,
-                )
-            } else {
-                uvw_m
-            };
-            let u_lambda = prediction_uvw_m[0] / wavelength_m;
-            let v_lambda = prediction_uvw_m[1] / wavelength_m;
-            let w_lambda = prediction_uvw_m[2] / wavelength_m;
-            let phase = std::f64::consts::TAU
-                * (u_lambda * predictor.phase_offset.l_rad
-                    + v_lambda * predictor.phase_offset.m_rad
-                    - w_lambda * predictor.phase_offset.n_minus_one);
-            let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
-            let visibility = predictor.predictor.predict(u_lambda, v_lambda) * phase_shift;
+            let visibility = predict_channel_visibility_preprojected(
+                predictor,
+                spectral_setup,
+                prediction_uvw_m,
+                channel,
+            );
             for corr in 0..num_corr {
                 let index = ms_data_index(corr, channel, num_corr);
                 values[index] = visibility;
@@ -2439,11 +2582,18 @@ fn predicted_data_values(
     values
 }
 
+struct TimedPredictionRows {
+    rows: Vec<Vec<Complex32>>,
+    worker_wall: Duration,
+    gather: Duration,
+}
+
 struct ChannelPredictionChunk {
     start_channel: usize,
     values_by_row: Vec<Vec<Complex32>>,
 }
 
+#[cfg(test)]
 fn predicted_data_values_for_rows_with_workers(
     predictors: Option<&[SyntheticChannelPredictor]>,
     spectral_setup: &SyntheticSpectralSetup,
@@ -2451,21 +2601,49 @@ fn predicted_data_values_for_rows_with_workers(
     num_corr: usize,
     worker_count: usize,
 ) -> Vec<Vec<Complex32>> {
+    predicted_data_values_for_rows_with_workers_timed(
+        predictors,
+        spectral_setup,
+        row_uvws,
+        num_corr,
+        worker_count,
+    )
+    .rows
+}
+
+fn predicted_data_values_for_rows_with_workers_timed(
+    predictors: Option<&[SyntheticChannelPredictor]>,
+    spectral_setup: &SyntheticSpectralSetup,
+    row_uvws: &[[f64; 3]],
+    num_corr: usize,
+    worker_count: usize,
+) -> TimedPredictionRows {
     let Some(predictors) = predictors else {
-        return vec![
-            vec![Complex32::new(0.0, 0.0); num_corr * spectral_setup.channel_count];
-            row_uvws.len()
-        ];
+        return TimedPredictionRows {
+            rows: vec![
+                vec![Complex32::new(0.0, 0.0); num_corr * spectral_setup.channel_count];
+                row_uvws.len()
+            ],
+            worker_wall: Duration::ZERO,
+            gather: Duration::ZERO,
+        };
     };
     if worker_count <= 1 {
-        return row_uvws
+        let worker_started = Instant::now();
+        let rows = row_uvws
             .iter()
             .map(|uvw| predicted_data_values(Some(predictors), spectral_setup, *uvw, num_corr))
             .collect();
+        return TimedPredictionRows {
+            rows,
+            worker_wall: worker_started.elapsed(),
+            gather: Duration::ZERO,
+        };
     }
 
     let channel_count = spectral_setup.channel_count;
     let chunk_size = channel_count.div_ceil(worker_count);
+    let worker_started = Instant::now();
     let chunks = thread::scope(|scope| {
         let mut handles = Vec::new();
         for start_channel in (0..channel_count).step_by(chunk_size) {
@@ -2491,7 +2669,9 @@ fn predicted_data_values_for_rows_with_workers(
             })
             .collect::<Vec<_>>()
     });
+    let worker_wall = worker_started.elapsed();
 
+    let gather_started = Instant::now();
     let mut values_by_row =
         vec![vec![Complex32::new(0.0, 0.0); num_corr * channel_count]; row_uvws.len()];
     for chunk in chunks {
@@ -2504,7 +2684,13 @@ fn predicted_data_values_for_rows_with_workers(
             values_by_row[row_index][dst_start..dst_end].copy_from_slice(&row_chunk);
         }
     }
-    values_by_row
+    let gather = gather_started.elapsed();
+
+    TimedPredictionRows {
+        rows: values_by_row,
+        worker_wall,
+        gather,
+    }
 }
 
 fn predict_channel_chunk(
@@ -2518,10 +2704,16 @@ fn predict_channel_chunk(
     let chunk_len = end_channel - start_channel;
     let mut values_by_row = Vec::with_capacity(row_uvws.len());
     for uvw_m in row_uvws {
+        let prediction_uvw_m = prediction_uvw_for_row(predictors, *uvw_m);
         let mut row_values = vec![Complex32::new(0.0, 0.0); num_corr * chunk_len];
         for (offset, channel) in (start_channel..end_channel).enumerate() {
             let predictor = &predictors[channel];
-            let visibility = predict_channel_visibility(predictor, spectral_setup, *uvw_m, channel);
+            let visibility = predict_channel_visibility_preprojected(
+                predictor,
+                spectral_setup,
+                prediction_uvw_m,
+                channel,
+            );
             for corr in 0..num_corr {
                 row_values[ms_data_index(corr, offset, num_corr)] = visibility;
             }
@@ -2534,27 +2726,34 @@ fn predict_channel_chunk(
     }
 }
 
-fn predict_channel_visibility(
+fn prediction_uvw_for_row(predictors: &[SyntheticChannelPredictor], uvw_m: [f64; 3]) -> [f64; 3] {
+    let Some(first) = predictors.first() else {
+        return uvw_m;
+    };
+    let Some(model_reference_direction_rad) = first.model_reference_direction_rad else {
+        return uvw_m;
+    };
+    debug_assert!(predictors.iter().all(|predictor| {
+        predictor.model_reference_direction_rad == first.model_reference_direction_rad
+            && predictor.phase_center_rad == first.phase_center_rad
+    }));
+    rotate_uvw_between_directions(uvw_m, first.phase_center_rad, model_reference_direction_rad)
+}
+
+fn predict_channel_visibility_preprojected(
     predictor: &SyntheticChannelPredictor,
     spectral_setup: &SyntheticSpectralSetup,
-    uvw_m: [f64; 3],
+    prediction_uvw_m: [f64; 3],
     channel: usize,
 ) -> Complex32 {
     let frequency_hz =
         spectral_setup.start_frequency_hz + channel as f64 * spectral_setup.channel_width_hz;
     let wavelength_m = 299_792_458.0 / frequency_hz;
-    let prediction_uvw_m =
-        if let Some(model_reference_direction_rad) = predictor.model_reference_direction_rad {
-            rotate_uvw_between_directions(
-                uvw_m,
-                predictor.phase_center_rad,
-                model_reference_direction_rad,
-            )
-        } else {
-            uvw_m
-        };
     let u_lambda = prediction_uvw_m[0] / wavelength_m;
     let v_lambda = prediction_uvw_m[1] / wavelength_m;
+    if predictor.phase_offset.is_negligible() {
+        return predictor.predictor.predict(u_lambda, v_lambda);
+    }
     let w_lambda = prediction_uvw_m[2] / wavelength_m;
     let phase = std::f64::consts::TAU
         * (u_lambda * predictor.phase_offset.l_rad + v_lambda * predictor.phase_offset.m_rad
@@ -3363,6 +3562,133 @@ fn subtable_mut(ms: &mut MeasurementSet, id: SubtableId) -> MsResult<&mut casa_t
 
 fn time_sample_count(duration_seconds: f64, integration_seconds: f64) -> usize {
     (duration_seconds / integration_seconds).ceil().max(1.0) as usize
+}
+
+fn observation_sample_times(
+    request: &SyntheticObservationRequest,
+    sample_count: usize,
+) -> MsResult<Vec<f64>> {
+    if request.allow_below_elevation_limit {
+        return Ok((0..sample_count)
+            .map(|sample| {
+                request.start_time_mjd_seconds + (sample as f64 + 0.5) * request.integration_seconds
+            })
+            .collect());
+    }
+
+    let observatory = simulation_observatory_position(&request.telescope_name, &request.antennas);
+    let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
+    let phase_center_rad = effective_fields(request)
+        .first()
+        .map(|field| field.phase_center_rad)
+        .unwrap_or(request.phase_center_rad);
+    let first_transit = next_transit_time_mjd_seconds(
+        phase_center_rad,
+        request.start_time_mjd_seconds,
+        &observatory,
+    )?;
+    let mut sample_times = Vec::with_capacity(sample_count);
+    let mut transit = first_transit;
+
+    while sample_times.len() < sample_count {
+        let remaining = sample_count - sample_times.len();
+        let mut offsets = above_elevation_offsets_for_transit(
+            request,
+            phase_center_rad,
+            transit,
+            &observatory,
+            elevation_margin_rad,
+        )?;
+        if offsets.is_empty() {
+            return Err(MsError::SyntheticObservation(format!(
+                "target never reaches the {:.1} deg elevation limit for telescope {}; set allow_below_elevation_limit=true to generate a below-limit track",
+                request.elevation_limit_rad.to_degrees(),
+                request.telescope_name
+            )));
+        }
+        if remaining < offsets.len() {
+            offsets.sort_by(|left, right| {
+                left.abs()
+                    .partial_cmp(&right.abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+            });
+            offsets.truncate(remaining);
+        }
+        offsets.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+        sample_times.extend(offsets.into_iter().map(|offset| transit + offset));
+        transit += SIDEREAL_DAY_SECONDS;
+    }
+
+    Ok(sample_times)
+}
+
+fn next_transit_time_mjd_seconds(
+    phase_center_rad: [f64; 2],
+    reference_time_mjd_seconds: f64,
+    observatory: &MPosition,
+) -> MsResult<f64> {
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd(
+            reference_time_mjd_seconds / 86_400.0,
+            EpochRef::UT1,
+        ))
+        .with_position(observatory.clone())
+        .with_direction(MDirection::from_angles(
+            phase_center_rad[0],
+            phase_center_rad[1],
+            DirectionRef::J2000,
+        ))
+        .with_bundled_eop();
+    let last = local_apparent_sidereal_time(&frame)?;
+    let mut delta = circular_angle_delta_rad(phase_center_rad[0] - last);
+    if delta < -1.0e-12 {
+        delta += std::f64::consts::TAU;
+    }
+    Ok(reference_time_mjd_seconds + delta / std::f64::consts::TAU * SIDEREAL_DAY_SECONDS)
+}
+
+fn above_elevation_offsets_for_transit(
+    request: &SyntheticObservationRequest,
+    phase_center_rad: [f64; 2],
+    transit_time_mjd_seconds: f64,
+    observatory: &MPosition,
+    elevation_margin_rad: f64,
+) -> MsResult<Vec<f64>> {
+    let slots_per_sidereal_day = (SIDEREAL_DAY_SECONDS / request.integration_seconds)
+        .floor()
+        .max(1.0) as usize;
+    let day_duration = slots_per_sidereal_day as f64 * request.integration_seconds;
+    let first_offset = -0.5 * day_duration + 0.5 * request.integration_seconds;
+    let mut offsets = Vec::new();
+    for slot in 0..slots_per_sidereal_day {
+        let offset = first_offset + slot as f64 * request.integration_seconds;
+        let time = transit_time_mjd_seconds + offset;
+        let elevation = field_elevation_rad(phase_center_rad, time, observatory)?;
+        if elevation - elevation_margin_rad >= request.elevation_limit_rad {
+            offsets.push(offset);
+        }
+    }
+    Ok(offsets)
+}
+
+pub(crate) fn zenith_transit_phase_center_rad(
+    telescope_name: &str,
+    antennas: &[SyntheticAntenna],
+    transit_time_mjd_seconds: f64,
+) -> MsResult<[f64; 2]> {
+    let observatory = simulation_observatory_position(telescope_name, antennas);
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd(
+            transit_time_mjd_seconds / 86_400.0,
+            EpochRef::UT1,
+        ))
+        .with_position(observatory.clone())
+        .with_bundled_eop();
+    Ok([
+        local_apparent_sidereal_time(&frame)?.rem_euclid(std::f64::consts::TAU),
+        observatory.latitude_rad(),
+    ])
 }
 
 fn elapsed_millis(duration: Duration) -> u128 {
@@ -4767,11 +5093,85 @@ mod tests {
 
         assert!(
             field_elevation_rad(phase_center, first_sample, &observatory).unwrap()
-                < CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD
+                < DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD
         );
         assert!(
             field_elevation_rad(phase_center, transit_sample, &observatory).unwrap()
-                > CASA_SIMOBSERVE_ELEVATION_LIMIT_RAD
+                > DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD
+        );
+    }
+
+    #[test]
+    fn default_sample_scheduler_splits_long_tracks_into_above_limit_sessions() {
+        let antennas = tutorial_vla_a_antennas();
+        let start_time_mjd_seconds = 59_000.25 * 86_400.0;
+        let phase_center =
+            zenith_transit_phase_center_rad("VLA", &antennas, start_time_mjd_seconds).unwrap();
+        let mut request = SyntheticObservationRequest::vla_ppdisk("model.fits", "out.ms", antennas);
+        request.telescope_name = "VLA".to_string();
+        request.phase_center_rad = phase_center;
+        request.start_time_mjd_seconds = start_time_mjd_seconds;
+        request.duration_seconds = 20.0 * 3_600.0;
+        request.integration_seconds = 600.0;
+
+        let samples = time_sample_count(request.duration_seconds, request.integration_seconds);
+        let times = observation_sample_times(&request, samples).unwrap();
+        let observatory =
+            simulation_observatory_position(&request.telescope_name, &request.antennas);
+        let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
+
+        assert_eq!(times.len(), samples);
+        assert!(times.windows(2).any(|pair| pair[1] - pair[0] > 3_600.0));
+        for time in &times {
+            let elevation = field_elevation_rad(phase_center, *time, &observatory).unwrap();
+            assert!(
+                elevation - elevation_margin_rad >= request.elevation_limit_rad,
+                "scheduled sample below elevation limit: {} deg",
+                elevation.to_degrees()
+            );
+        }
+
+        let mut sessions = Vec::new();
+        let mut start = 0usize;
+        for index in 1..times.len() {
+            if times[index] - times[index - 1] > 3_600.0 {
+                sessions.push(&times[start..index]);
+                start = index;
+            }
+        }
+        sessions.push(&times[start..]);
+        let final_session = sessions.last().expect("final session");
+        let final_center = 0.5 * (final_session[0] + final_session[final_session.len() - 1]);
+        let final_transit = next_transit_time_mjd_seconds(
+            phase_center,
+            request.start_time_mjd_seconds,
+            &observatory,
+        )
+        .unwrap()
+            + (sessions.len() - 1) as f64 * SIDEREAL_DAY_SECONDS;
+        assert!(
+            (final_center - final_transit).abs() <= request.integration_seconds,
+            "final short session is not centered on transit"
+        );
+    }
+
+    #[test]
+    fn below_elevation_override_preserves_continuous_sample_times() {
+        let antennas = tutorial_vla_a_antennas();
+        let mut request = SyntheticObservationRequest::vla_ppdisk("model.fits", "out.ms", antennas);
+        request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
+        request.duration_seconds = 1_200.0;
+        request.integration_seconds = 300.0;
+        request.allow_below_elevation_limit = true;
+
+        assert_eq!(
+            observation_sample_times(&request, 4).unwrap(),
+            vec![
+                request.start_time_mjd_seconds + 150.0,
+                request.start_time_mjd_seconds + 450.0,
+                request.start_time_mjd_seconds + 750.0,
+                request.start_time_mjd_seconds + 1_050.0,
+            ]
         );
     }
 }

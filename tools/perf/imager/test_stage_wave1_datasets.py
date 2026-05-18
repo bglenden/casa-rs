@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import pathlib
 import sys
 import unittest
@@ -106,7 +107,7 @@ class StageWave1DatasetsTest(unittest.TestCase):
         self.assertAlmostEqual(position[1], -5_440_045.71553472, places=7)
         self.assertAlmostEqual(position[2], -2_481_673.80672726, places=7)
 
-    def test_single_field_request_uses_casa_pointing_phase_center(self) -> None:
+    def test_single_field_request_uses_zenith_transit_phase_center(self) -> None:
         spec = stage.select_datasets(
             self.registry,
             dataset_ids=["wave1-alma-single-small"],
@@ -122,8 +123,8 @@ class StageWave1DatasetsTest(unittest.TestCase):
 
         request = stage.build_casars_simobserve_request(dataset)["request"]
 
-        self.assertAlmostEqual(request["phase_center_rad"][0], -1.5707940753201612)
-        self.assertAlmostEqual(request["phase_center_rad"][1], -0.4014237906432261)
+        self.assertAlmostEqual(request["phase_center_rad"][0], math.radians(180.0))
+        self.assertAlmostEqual(request["phase_center_rad"][1], math.radians(-23.029))
 
     def test_fits_string_cards_start_in_standard_value_field(self) -> None:
         card = stage.format_card("CTYPE1", "'RA---SIN'")
