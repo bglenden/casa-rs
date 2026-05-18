@@ -174,6 +174,7 @@ def build_plan(
         "IMAGER_BENCH_WEIGHTING": str_value(imaging, "weighting", "natural"),
         "IMAGER_BENCH_ROBUST": str(float_value(imaging, "robust", 0.5)),
         "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
+        "IMAGER_BENCH_NTERMS": str(int_value(imaging, "nterms", 1)),
         "IMAGER_BENCH_SCALES": scales_value(imaging),
         "IMAGER_BENCH_WTERM": wterm,
         "IMAGER_BENCH_NITER": str(int_value(imaging, "niter", 4)),
@@ -217,6 +218,7 @@ def build_plan(
             "channel_count": int_value(imaging, "channel_count", 1),
             "weighting": str_value(imaging, "weighting", "natural"),
             "deconvolver": str_value(imaging, "deconvolver", "hogbom"),
+            "nterms": int_value(imaging, "nterms", 1),
             "niter": int_value(imaging, "niter", 4),
         },
         "run": {

@@ -80,6 +80,26 @@ class StageWave1DatasetsTest(unittest.TestCase):
         self.assertEqual(0, mosaic["imaging"]["phasecenter_field"])
         self.assertEqual(32, mosaic["imaging"]["channel_count"])
 
+    def test_mtmfs_workload_uses_mtmfs_deconvolver_and_taylor_products(self) -> None:
+        spec = stage.select_datasets(
+            self.registry,
+            dataset_ids=["wave1-alma-single-small"],
+            tiers=None,
+            instruments=None,
+        )
+        dataset = stage.build_plan(
+            self.registry,
+            spec,
+            self.data_root,
+            allow_non_external_large_root=False,
+        )["datasets"][0]
+
+        workload = stage.build_workload_manifest(dataset, "mtmfs-wideband-sentinel")
+
+        self.assertEqual("mtmfs", workload["imaging"]["deconvolver"])
+        self.assertEqual(2, workload["imaging"]["nterms"])
+        self.assertEqual([".image.tt0", ".residual.tt0", ".psf.tt0"], workload["comparison"]["products"])
+
     def test_large_tier_policy_rejects_multiple_large_datasets(self) -> None:
         registry = copy.deepcopy(self.registry)
         duplicate = copy.deepcopy(registry["datasets"][-1])

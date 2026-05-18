@@ -99,6 +99,8 @@ class StageBreakdownTests(unittest.TestCase):
                 "field": "",
                 "phasecenter_field": 0,
                 "spw": "0",
+                "deconvolver": "mtmfs",
+                "nterms": 2,
             },
         }
 
@@ -117,6 +119,8 @@ class StageBreakdownTests(unittest.TestCase):
             )
 
         self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASECENTER_FIELD"])
+        self.assertEqual("2", plan["command"]["env"]["IMAGER_BENCH_NTERMS"])
+        self.assertEqual(2, plan["mode"]["nterms"])
 
     def test_attach_stage_breakdown_does_not_require_casa_stage_data(self) -> None:
         plan = {
