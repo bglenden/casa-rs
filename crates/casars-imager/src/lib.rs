@@ -5703,6 +5703,15 @@ impl PreparedGeometryRow {
     }
 }
 
+#[derive(Debug, Clone)]
+struct StandardMfsProcessingBuffer {
+    geometry_rows: Vec<PreparedGeometryRow>,
+    data_column: SelectedMainDataSource,
+    flag_column: SelectedMainArrayColumn,
+    weight_column: SelectedMainArrayColumn,
+    weight_spectrum: Option<SelectedMainArrayColumn>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ResolvedPointingDirection {
     source_row_index: Option<usize>,
@@ -6369,6 +6378,114 @@ fn build_prepared_geometry_rows(
     Ok(rows)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn get_ms_values_into_processing_buffer(
+    ms: &MeasurementSet,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    row_chunk: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    use_pointing: bool,
+    reprojection_mode: UvwReprojectionMode,
+    prepare_started_at: Instant,
+) -> Result<StandardMfsProcessingBuffer, String> {
+    let selected_row_indices = row_chunk
+        .iter()
+        .map(|selected_row| selected_row.row_index)
+        .collect::<Vec<_>>();
+    let stage_started_at = Instant::now();
+    let data_column =
+        SelectedMainDataSource::load_uncached(ms, data_column_kind, &selected_row_indices)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_data_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
+    let flag_column = SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_flag_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
+    let weight_column =
+        SelectedMainArrayColumn::load_uncached(ms, "WEIGHT", &selected_row_indices)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_weight_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
+    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
+        .ok()
+        .map(|_| {
+            SelectedMainArrayColumn::load_uncached(ms, "WEIGHT_SPECTRUM", &selected_row_indices)
+        })
+        .transpose()?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_weight_spectrum_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
+    let geometry_rows = build_prepared_geometry_rows(
+        ms,
+        row_chunk,
+        &selection.phase_center,
+        derived_engine,
+        use_pointing,
+        reprojection_mode,
+    )?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_prepared_geometry_rows",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+
+    Ok(StandardMfsProcessingBuffer {
+        geometry_rows,
+        data_column,
+        flag_column,
+        weight_column,
+        weight_spectrum,
+    })
+}
+
+fn prepare_processing_buffer(
+    config: &CliConfig,
+    table_values: &PreparedSelectionTableValues,
+    phase_center: &PhaseCenter,
+    flag_row: &[bool],
+    buffer: StandardMfsProcessingBuffer,
+    derived_engine: Option<&MsCalEngine>,
+    accumulate_timings: &mut AccumulateRowTimings,
+) -> Result<PlaneInput, String> {
+    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+        config,
+        table_values,
+        phase_center.clone(),
+        false,
+    )?;
+    for (row_slot, row) in buffer.geometry_rows.iter().enumerate() {
+        prepared.accumulate_row(
+            row,
+            &buffer.data_column,
+            &buffer.flag_column,
+            flag_row,
+            &buffer.weight_column,
+            buffer.weight_spectrum.as_ref(),
+            derived_engine,
+            row_slot,
+            accumulate_timings,
+        )?;
+    }
+    let PreparedInput::Mfs(plane) = prepared.finish_standard_mfs_without_trace()? else {
+        return Err("internal error: standard MFS row block produced non-MFS input".to_string());
+    };
+    Ok(plane)
+}
+
 fn prepare_plane_input(
     ms: &MeasurementSet,
     config: &CliConfig,
@@ -6440,19 +6557,14 @@ fn prepare_standard_mfs_input_in_row_blocks(
     derived_engine: Option<&MsCalEngine>,
     prepare_started_at: Instant,
 ) -> Result<PreparedInput, String> {
-    let selected_spw_id = ddid_info
-        .get(selection.selected_ddid)
-        .copied()
-        .flatten()
-        .map(|(spw_id, _)| spw_id)
-        .ok_or_else(|| {
-            format!(
-                "map selected DDID {} to SPW/POLARIZATION",
-                selection.selected_ddid
-            )
-        })?;
+    let table_values = load_prepared_selection_table_values(
+        selection.selected_ddid,
+        ddid_info,
+        spectral_window,
+        polarization,
+    )?;
     let selected_channel_count =
-        selected_channel_count_estimate(config, spectral_window, selected_spw_id)?;
+        selected_channel_count_estimate_from_table_values(config, &table_values);
     let strategy = standard_mfs_prepare_buffer_strategy(config, selected_channel_count);
     if frontend_progress_enabled() {
         eprintln!(
@@ -6476,92 +6588,26 @@ fn prepare_standard_mfs_input_in_row_blocks(
         ..Default::default()
     };
     for row_chunk in active_selected_rows.chunks(strategy.row_block_rows) {
-        let selected_row_indices = row_chunk
-            .iter()
-            .map(|selected_row| selected_row.row_index)
-            .collect::<Vec<_>>();
-        let stage_started_at = Instant::now();
-        let data_column =
-            SelectedMainDataSource::load_uncached(ms, data_column_kind, &selected_row_indices)?;
-        maybe_log_frontend_progress(
-            "prepare_plane_input/load_data_column",
-            stage_started_at.elapsed(),
-            prepare_started_at.elapsed(),
-        );
-        let stage_started_at = Instant::now();
-        let flag_column =
-            SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?;
-        maybe_log_frontend_progress(
-            "prepare_plane_input/load_flag_column",
-            stage_started_at.elapsed(),
-            prepare_started_at.elapsed(),
-        );
-        let stage_started_at = Instant::now();
-        let weight_column =
-            SelectedMainArrayColumn::load_uncached(ms, "WEIGHT", &selected_row_indices)?;
-        maybe_log_frontend_progress(
-            "prepare_plane_input/load_weight_column",
-            stage_started_at.elapsed(),
-            prepare_started_at.elapsed(),
-        );
-        let stage_started_at = Instant::now();
-        let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
-            .ok()
-            .map(|_| {
-                SelectedMainArrayColumn::load_uncached(ms, "WEIGHT_SPECTRUM", &selected_row_indices)
-            })
-            .transpose()?;
-        maybe_log_frontend_progress(
-            "prepare_plane_input/load_weight_spectrum_column",
-            stage_started_at.elapsed(),
-            prepare_started_at.elapsed(),
-        );
-        let stage_started_at = Instant::now();
-        let geometry_rows = build_prepared_geometry_rows(
+        let processing_buffer = get_ms_values_into_processing_buffer(
             ms,
+            data_column_kind,
+            selection,
             row_chunk,
-            &selection.phase_center,
             derived_engine,
             config.use_pointing,
             uvw_reprojection_mode_for_selection(config, selection),
+            prepare_started_at,
         )?;
-        maybe_log_frontend_progress(
-            "prepare_plane_input/build_prepared_geometry_rows",
-            stage_started_at.elapsed(),
-            prepare_started_at.elapsed(),
-        );
 
-        let mut prepared = PreparedSelection::new(
+        let plane = prepare_processing_buffer(
             config,
-            selection.selected_ddid,
-            ddid_info,
-            spectral_window,
-            polarization,
-            selection.phase_center.clone(),
-            None,
-            false,
-        );
-        if let Some(init_error) = prepared.initialization_error.take() {
-            return Err(init_error);
-        }
-        for (row_slot, row) in geometry_rows.iter().enumerate() {
-            prepared.accumulate_row(
-                row,
-                &data_column,
-                &flag_column,
-                flag_row,
-                &weight_column,
-                weight_spectrum.as_ref(),
-                derived_engine,
-                row_slot,
-                &mut accumulate_timings,
-            )?;
-        }
-        let PreparedInput::Mfs(plane) = prepared.finish_standard_mfs_without_trace()? else {
-            return Err(
-                "internal error: standard MFS row block produced non-MFS input".to_string(),
-            );
-        };
+            &table_values,
+            &selection.phase_center,
+            flag_row,
+            processing_buffer,
+            derived_engine,
+            &mut accumulate_timings,
+        )?;
         prepared_batch_count += plane.batches.len();
         prepared_blocks.push(PreparedInput::Mfs(plane));
         if frontend_progress_enabled() {
@@ -7012,20 +7058,49 @@ fn estimated_image_working_set_bytes(config: &CliConfig) -> usize {
     pixels.saturating_mul(plane_count).saturating_mul(4)
 }
 
-fn selected_channel_count_estimate(
-    config: &CliConfig,
+fn load_prepared_selection_table_values(
+    ddid: usize,
+    ddid_info: &[Option<(usize, usize)>],
     spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
-    selected_spw_id: usize,
-) -> Result<usize, String> {
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+) -> Result<PreparedSelectionTableValues, String> {
+    let (spw_id, polarization_id) = ddid_info
+        .get(ddid)
+        .copied()
+        .flatten()
+        .ok_or_else(|| format!("map DDID {ddid} to SPW/POLARIZATION"))?;
+    let spw_freqs_hz = spectral_window
+        .chan_freq(spw_id)
+        .map_err(|error| format!("read CHAN_FREQ: {error}"))?;
+    let spw_widths_hz = spectral_window
+        .chan_width(spw_id)
+        .map_err(|error| format!("read CHAN_WIDTH: {error}"))?;
+    let freq_ref = FrequencyRef::from_casacore_code(
+        spectral_window
+            .meas_freq_ref(spw_id)
+            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+    )
+    .unwrap_or(FrequencyRef::TOPO);
+    let corr_types = polarization
+        .corr_type(polarization_id)
+        .map_err(|error| format!("read CORR_TYPE: {error}"))?;
+    Ok(PreparedSelectionTableValues {
+        spw_id,
+        spw_freqs_hz,
+        spw_widths_hz,
+        freq_ref,
+        corr_types,
+    })
+}
+
+fn selected_channel_count_estimate_from_table_values(
+    config: &CliConfig,
+    table_values: &PreparedSelectionTableValues,
+) -> usize {
     if let Some(channel_count) = config.channel_count {
-        return Ok(channel_count.max(1));
+        return channel_count.max(1);
     }
-    let num_chan = spectral_window
-        .num_chan(selected_spw_id)
-        .map_err(|error| format!("read NUM_CHAN: {error}"))?;
-    usize::try_from(num_chan)
-        .map(|value| value.max(1))
-        .map_err(|_| format!("SPECTRAL_WINDOW {selected_spw_id} has negative NUM_CHAN {num_chan}"))
+    table_values.spw_freqs_hz.len().max(1)
 }
 
 fn uvw_reprojection_mode_for_selection(
@@ -7400,6 +7475,15 @@ fn parse_rest_frequency_hz(text: &str) -> Result<f64, String> {
     parse_ms_rest_frequency_hz(text).map_err(|error| error.to_string())
 }
 
+#[derive(Debug, Clone)]
+struct PreparedSelectionTableValues {
+    spw_id: usize,
+    spw_freqs_hz: Vec<f64>,
+    spw_widths_hz: Vec<f64>,
+    freq_ref: FrequencyRef,
+    corr_types: Vec<i32>,
+}
+
 struct PreparedSelection {
     initialization_error: Option<String>,
     source_channel_indices: Vec<usize>,
@@ -7756,6 +7840,145 @@ fn mfs_imaging_frequency_scale(
 }
 
 impl PreparedSelection {
+    fn new_standard_mfs_from_table_values(
+        config: &CliConfig,
+        table_values: &PreparedSelectionTableValues,
+        phase_center: PhaseCenter,
+        trace_enabled: bool,
+    ) -> Result<Self, String> {
+        if !matches!(config.spectral_mode, SpectralMode::Mfs) {
+            return Err("internal error: standard MFS setup used for non-MFS imaging".to_string());
+        }
+        let spw_id = table_values.spw_id;
+        let spw_freqs = &table_values.spw_freqs_hz;
+        let spw_widths = &table_values.spw_widths_hz;
+        let freq_ref = table_values.freq_ref;
+        let explicit_channel_selector =
+            selected_spw_channel_selector(config, spw_id).map_err(|error| error.to_string())?;
+        let source_channel_selection = match explicit_channel_selector.as_ref() {
+            Some(selector) => resolve_channel_selector_selection(spw_freqs, selector)
+                .map_err(|error| error.to_string())?,
+            None => resolve_contiguous_channel_selection(
+                spw_freqs,
+                config.channel_start,
+                config.channel_count,
+            )
+            .map_err(|error| error.to_string())?,
+        };
+        let source_channel_frequencies_hz = source_channel_selection.frequencies_hz.clone();
+        let source_channel_widths_hz = source_channel_selection
+            .indices
+            .iter()
+            .map(|&index| {
+                spw_widths.get(index).copied().ok_or_else(|| {
+                    format!(
+                        "channel width selection index {index} is outside SPW width array with {} channels",
+                        spw_widths.len()
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let selected_frequency_range_hz = frequency_range_hz(&source_channel_frequencies_hz)?;
+        let selected_frequency_edge_range_hz =
+            frequency_edge_range_hz(&source_channel_frequencies_hz, &source_channel_widths_hz)?;
+        let reffreq_hz = 0.5 * (selected_frequency_range_hz[0] + selected_frequency_range_hz[1]);
+        let use_density_batches = config.weighting != WeightingMode::Natural;
+        let use_model_interpolation_batches = !(config.dirty_only || config.niter == 0);
+        let max_samples = source_channel_frequencies_hz.len();
+        let explicit_plane = config
+            .correlation
+            .as_deref()
+            .map(parse_plane_stokes)
+            .transpose()?;
+        let use_explicit_corr = explicit_plane.and_then(plane_to_corr_code).is_some();
+        let corr_types = &table_values.corr_types;
+        let state = if let Some(plane_stokes) = explicit_plane {
+            if let Some(corr_code) = plane_to_corr_code(plane_stokes) {
+                let corr_index = corr_types
+                    .iter()
+                    .position(|code| *code == corr_code)
+                    .ok_or_else(|| {
+                        format!(
+                            "requested raw correlation plane {} is not present",
+                            plane_stokes.as_str()
+                        )
+                    })?;
+                PreparedState::ExplicitMfs {
+                    plane_stokes,
+                    corr_index,
+                    batch: empty_visibility_batch(max_samples),
+                }
+            } else {
+                let (pair, transform) = derive_stokes_pair_selection(plane_stokes, corr_types)?;
+                if trace_enabled {
+                    PreparedState::PairedMfs {
+                        plane_stokes,
+                        transform,
+                        pair,
+                        paired: empty_parallel_hand_batch(max_samples),
+                    }
+                } else {
+                    PreparedState::CollapsedMfs {
+                        plane_stokes,
+                        transform,
+                        pair,
+                        batch: empty_visibility_batch(max_samples),
+                    }
+                }
+            }
+        } else {
+            let (pair, transform) = derive_stokes_pair_selection(PlaneStokes::I, corr_types)?;
+            if trace_enabled {
+                PreparedState::PairedMfs {
+                    plane_stokes: PlaneStokes::I,
+                    transform,
+                    pair,
+                    paired: empty_parallel_hand_batch(max_samples),
+                }
+            } else {
+                PreparedState::CollapsedMfs {
+                    plane_stokes: PlaneStokes::I,
+                    transform,
+                    pair,
+                    batch: empty_visibility_batch(max_samples),
+                }
+            }
+        };
+        let trace_state = if use_explicit_corr {
+            PreparedTraceState::ExplicitMfs {
+                samples: Vec::new(),
+            }
+        } else {
+            PreparedTraceState::PairedMfs {
+                samples: Vec::new(),
+            }
+        };
+        Ok(Self {
+            initialization_error: None,
+            source_channel_indices: source_channel_selection.indices,
+            source_channel_frequencies_hz,
+            source_channel_widths_hz,
+            selected_frequency_range_hz,
+            selected_frequency_edge_range_hz,
+            reffreq_hz,
+            freq_ref,
+            cube_spectral_setup: None,
+            cube_row_spectral_cache: HashMap::new(),
+            cube_row_source_frequency_cache: HashMap::new(),
+            mfs_frequency_scale_cache: HashMap::new(),
+            mfs_output_frequency_edge_range_hz: None,
+            casa_cube_grid_interpolation: config.per_channel_weight_density,
+            casa_cube_briggs_preweighting: None,
+            use_density_batches,
+            use_model_interpolation_batches,
+            mosaic_pb_limit: config.mosaic_pb_limit,
+            phase_center,
+            state,
+            trace_state,
+            trace_enabled,
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new(
         config: &CliConfig,
