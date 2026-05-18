@@ -23,6 +23,7 @@ SUPPORTED_GRIDDER_VALUES = {"mosaic", "standard"}
 SUPPORTED_SPEC_MODES = {"mfs", "cube"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
 SUPPORTED_INTERPOLATION = {"nearest", "linear"}
+SUPPORTED_MS_STAGING = {"copy", "direct"}
 DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
 RUST_STAGE_FIELDS = {
     "open_measurement_set",
@@ -174,6 +175,11 @@ def build_plan(
     repeats = repeats_override if repeats_override is not None else int_value(run, "repeats", 5)
     if repeats < 1:
         raise HarnessError("repeats must be >= 1")
+    ms_staging = os.environ.get("CASA_RS_BENCH_MS_STAGING") or str_value(
+        run, "ms_staging", "copy"
+    )
+    if ms_staging not in SUPPORTED_MS_STAGING:
+        raise HarnessError("run.ms_staging must be copy or direct")
 
     dataset_path = resolve_dataset_path(dataset, dry_run=dry_run)
     casa_python = os.environ.get("CASA_RS_CASA_PYTHON")
@@ -216,6 +222,7 @@ def build_plan(
         "IMAGER_BENCH_MAX_PSFFRACTION": str(
             float_value(imaging, "max_psf_fraction", 0.8)
         ),
+        "IMAGER_BENCH_MS_STAGING": ms_staging,
     }
 
     command = [str(BENCH_SCRIPT), str(dataset_path)]
@@ -250,6 +257,7 @@ def build_plan(
             "run_label": run_label_override or str_value(run, "run_label", "warm"),
             "storage_label": storage_label_override
             or str_value(run, "storage_label", "script-staged-tempdir"),
+            "ms_staging": ms_staging,
         },
         "comparison": {
             "products": product_suffixes_value(comparison),

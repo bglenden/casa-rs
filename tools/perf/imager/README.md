@@ -155,6 +155,18 @@ It does not add personal workstation data fallbacks.
 - `IMAGER_BENCH_MINOR_CYCLE_LENGTH`
 - `IMAGER_BENCH_WTERM`
   - currently only `none` is supported in the Rust-vs-CASA benchmark script because the Rust-only `direct` mode has no matching `tclean` configuration in this harness
+- `IMAGER_BENCH_MS_STAGING`
+  - `copy` copies the MeasurementSet into the script temp directory before
+    timing; this is the default for small workloads
+  - `direct` benchmarks the manifest MeasurementSet path in place and is the
+    required mode for about-memory or larger-than-memory datasets
+- `IMAGER_BENCH_TMP_ROOT`
+  - parent directory for script scratch space; defaults to `${TMPDIR:-/tmp}`
+
+The manifest runner also honors `CASA_RS_BENCH_MS_STAGING=direct` and records
+the resulting `run.ms_staging` value in the result JSON. Use this for medium
+and large Wave 1 manifests so the benchmark does not first copy a 32 GiB or
+100 GiB MeasurementSet into local `/var/folders` scratch.
 
 ## Manifest fields
 

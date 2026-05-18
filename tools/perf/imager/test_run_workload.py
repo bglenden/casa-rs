@@ -243,6 +243,64 @@ CASA PySynthesisImager stage medians (milliseconds):
         self.assertEqual("2", plan["command"]["env"]["IMAGER_BENCH_NTERMS"])
         self.assertEqual(2, plan["mode"]["nterms"])
 
+    def test_ms_staging_can_be_set_for_direct_medium_runs(self) -> None:
+        manifest = {
+            "id": "medium-direct",
+            "mode_id": "standard-mfs-dirty-control",
+            "dataset": {
+                "key": "medium.ms",
+                "path": "/tmp/medium.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+            },
+            "run": {
+                "ms_staging": "direct",
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("direct", plan["run"]["ms_staging"])
+        self.assertEqual("direct", plan["command"]["env"]["IMAGER_BENCH_MS_STAGING"])
+
+    def test_invalid_ms_staging_fails_before_running_benchmark(self) -> None:
+        manifest = {
+            "id": "bad-staging",
+            "mode_id": "standard-mfs-dirty-control",
+            "dataset": {
+                "key": "input.ms",
+                "path": "/tmp/input.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+            },
+            "run": {
+                "ms_staging": "mirror",
+            },
+        }
+
+        with self.assertRaisesRegex(run_workload.HarnessError, "ms_staging"):
+            run_workload.build_plan(
+                manifest_path=Path("manifest.json"),
+                manifest=manifest,
+                repeats_override=1,
+                run_label_override=None,
+                storage_label_override=None,
+                dry_run=True,
+            )
+
     def test_attach_stage_breakdown_does_not_require_casa_stage_data(self) -> None:
         plan = {
             "mode": {

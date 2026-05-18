@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-18
-Verification: `python3 -m unittest tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `bash -n scripts/bench-imager-vs-casa.sh`; `tools/perf/imager/stage_wave1_datasets.py --data-root /Volumes/GLENDENNING/casa-rs-imperformance --materialize-workloads --output-dir target/imperformance-wave1/issue251-plan`; selected `tools/perf/imager/run_workload.py` runs listed below; `just docs-check`; `just quick`
+Verification: `python3 -m unittest tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `bash -n scripts/bench-imager-vs-casa.sh`; `tools/perf/imager/stage_wave1_datasets.py --data-root /Volumes/GLENDENNING/casa-rs-imperformance --materialize-workloads --output-dir target/imperformance-wave1/issue251-plan`; `tools/perf/imager/stage_wave1_datasets.py --data-root /Volumes/GLENDENNING/casa-rs-imperformance --materialize-workloads --output-dir target/imperformance-wave1/issue251-medium-large-plan`; selected `tools/perf/imager/run_workload.py` runs listed below; `CASA_RS_BENCH_MS_STAGING=direct CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --repeats 1 --run-label warm-medium-direct-probe --storage-label external-ssd-wave1-medium-direct --output-dir target/imperformance-wave1/issue251-medium-large-runs target/imperformance-wave1/issue251-medium-large-plan/workloads/wave1-vla-single-medium-standard-mfs-dirty-control.json`; `just docs-check`; `just quick`
 
 Wave issue: #246
 Child issue: #251
@@ -16,10 +16,11 @@ MeasurementSets staged under:
 /Volumes/GLENDENNING/casa-rs-imperformance
 ```
 
-The matrix below is a first small-tier baseline. The medium and large staged
-datasets are present on the external volume and are listed in this note, but
-they were not benchmarked in this pass because the 32 GiB and 100 GiB runs are
-capacity/runtime evidence, not normal iteration-loop checks.
+The matrix below is a first small-tier baseline plus the first about-memory
+medium probe. The medium and large staged datasets are present on the external
+volume and are listed in this note. The first medium probe did not produce a
+wallclock comparison: copy staging was unsafe for local disk space, and direct
+staging showed the current Rust path being killed before completing the run.
 
 ## Staged Dataset Status
 
@@ -59,9 +60,20 @@ and the storage label `external-ssd-wave1`.
 
 ## Blocked Or Skipped Evidence
 
-- Medium and large datasets are staged but not benchmarked in this pass. They
-  should be used for explicit capacity/runtime runs after the small matrix
-  settles the correctness and ownership shape.
+- Medium and large datasets are staged. GLENDENNING had about `41 GiB` free
+  during the 2026-05-18 probe, enough to read the existing staged datasets but
+  not enough to generate another large dataset or preserve many large product
+  trees on that volume.
+- The default copied-staging path is not suitable for about-memory or
+  larger-than-memory rows. It copied the 34.82 GiB VLA medium MS into the local
+  macOS temp directory and drove the local APFS volume to about `1.1 GiB` free
+  before the run was interrupted.
+- Direct MS staging avoids that copy. The direct probe result is
+  `target/imperformance-wave1/issue251-medium-large-runs/20260518T192503Z-wave1-vla-single-medium-standard-mfs-dirty-control-de16b84e.json`.
+  It failed before timing claims were written: Rust `casars-imager` was killed
+  with signal 9 after `599.263 s` while reading/imaging
+  `wave1-vla-single-medium` as a 2048-pixel, 512-channel standard MFS dirty
+  workload. CASA did not run because the Rust side failed first.
 - MT-MFS with the standard gridder now runs as the Wave 1 wideband sentinel.
   MT-MFS with `gridder='mosaic'` is intentionally out of this ticket and is
   tracked by #262.
@@ -79,6 +91,7 @@ and the storage label `external-ssd-wave1`.
 | Workload family | Evidence | Current bottleneck owner | Follow-up direction |
 |---|---|---|---|
 | Standard MFS dirty | Correctness-green, Rust `2.37x` CASA | frontend/MS preparation dominates (`2331 ms` of `2676 ms` frontend total) | Optimize row selection/adaptation and prepared-batch construction before changing gridding algorithms for this control case. |
+| Standard MFS dirty medium | About-memory direct probe failed before timing: Rust child killed after `599.263 s` on `wave1-vla-single-medium` | prepared-batch/dataflow scaling or memory residency is the immediate blocker | Treat medium MFS survival as the next optimization gate before running the full medium/large matrix. |
 | Standard MFS clean | Correctness-green, Rust `0.56x` CASA | imaging core dominates, especially gridding/degridding and model refresh | Keep as green baseline; later 10x work needs grid/degrid and residual-refresh backend structure, not urgent correctness repair. |
 | Standard cube dirty | Correctness-green, Rust `2.00x` CASA | frontend/MS preparation dominates (`3264 ms`) | Cube follow-up should start with per-channel preparation/dataflow and only then look at core cube gridding. |
 | Mosaic MFS clean | Timing runs and is faster than CASA, but correctness-red | product/correctness parity is the blocker; timing stage owner is model refresh plus mosaic gridding/PB work | Fix generated-mosaic CASA/Rust comparability before using timing as optimization evidence. If parity turns green, this remains a high-leverage optimization path. |
@@ -87,18 +100,23 @@ and the storage label `external-ssd-wave1`.
 
 ## Follow-On Ranking
 
-1. Fix mosaic generated-data comparability before treating mosaic MFS as the
+1. Fix standard MFS about-memory survival before running the full
+   medium/large matrix. The first medium direct probe was killed before Rust
+   timing completed, so the next implementation target should reduce
+   prepared-data residency or stream/bucket work instead of adding more
+   benchmark rows.
+2. Fix mosaic generated-data comparability before treating mosaic MFS as the
    first 10x optimization target. The mode still matters, but #251 evidence
    shows the current generated ALMA mosaic rows are correctness-red, so timing
    claims would be misleading.
-2. Open or use a narrow follow-up for frontend/MS preparation throughput on
+3. Open or use a narrow follow-up for frontend/MS preparation throughput on
    correctness-green standard MFS dirty and standard cube dirty. Those rows are
    slower than CASA and dominated by `prepare_plane_input`.
-3. Keep standard MFS clean as a green benchmark sentinel. It is already faster
+4. Keep standard MFS clean as a green benchmark sentinel. It is already faster
    than CASA on the small generated workload, but the dominant measured stages
    are exactly the future backend/resource boundaries from the dataflow note:
    grid/degrid and model refresh.
-4. Keep MT-MFS standard-gridder coverage as a green sentinel. Mosaic/PB-aware
+5. Keep MT-MFS standard-gridder coverage as a green sentinel. Mosaic/PB-aware
    MT-MFS is backlog #262 and should not be hidden inside #251.
 
 ## Harness Fixes Made During This Pass
@@ -114,6 +132,9 @@ and the storage label `external-ssd-wave1`.
 - Explicit CLI `--gridder standard` now forces the standard prepared-gridder
   path for `casars-imager` and the profiler helper, so the standard-gridder
   MT-MFS sentinel is not accidentally routed through mosaic/PB preparation.
+- The benchmark harness now supports `run.ms_staging="direct"` or
+  `CASA_RS_BENCH_MS_STAGING=direct` so medium/large runs can read the staged
+  MS in place instead of copying it into local temp space before timing.
 
 ## Reproduction
 

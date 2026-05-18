@@ -64,6 +64,8 @@ threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
 nsigma="${IMAGER_BENCH_NSIGMA:-0}"
 psfcutoff="${IMAGER_BENCH_PSFCUTOFF:-0.35}"
 keep_output_root="${IMAGER_BENCH_KEEP_OUTPUT_ROOT:-}"
+ms_staging="${IMAGER_BENCH_MS_STAGING:-copy}"
+tmp_root="${IMAGER_BENCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
 
 if [[ "$wterm" != "none" ]]; then
   echo "error: scripts/bench-imager-vs-casa.sh only supports IMAGER_BENCH_WTERM=none for Rust-vs-CASA comparisons" >&2
@@ -82,6 +84,16 @@ fi
 
 if [[ "$interpolation" != "nearest" && "$interpolation" != "linear" ]]; then
   echo "error: IMAGER_BENCH_INTERPOLATION must be nearest or linear" >&2
+  exit 2
+fi
+
+if [[ "$ms_staging" != "copy" && "$ms_staging" != "direct" ]]; then
+  echo "error: IMAGER_BENCH_MS_STAGING must be copy or direct" >&2
+  exit 2
+fi
+
+if [[ ! -d "$tmp_root" ]]; then
+  echo "error: IMAGER_BENCH_TMP_ROOT does not exist: $tmp_root" >&2
   exit 2
 fi
 
@@ -133,16 +145,18 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction"
+echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction ms_staging=$ms_staging"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
 
-tmpdir="$(mktemp -d)"
+tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
-staged_ms_path="$tmpdir/benchmark.ms"
-cp -R "$ms_path" "$staged_ms_path"
-ms_path="$staged_ms_path"
+if [[ "$ms_staging" == "copy" ]]; then
+  staged_ms_path="$tmpdir/benchmark.ms"
+  cp -R "$ms_path" "$staged_ms_path"
+  ms_path="$staged_ms_path"
+fi
 if [[ -n "$keep_output_root" ]]; then
   mkdir -p "$keep_output_root/rust" "$keep_output_root/casa"
   rust_keep_prefix="$keep_output_root/rust/rust"
