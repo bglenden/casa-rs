@@ -262,6 +262,8 @@ The Rust profiler reports medians for:
 
 - `open_measurement_set`
 - `prepare_plane_input`
+- `get_ms_values_into_processing_buffer`
+- `prepare_processing_buffer`
 - `extract_phase_center`
 - `run_imaging`
 - `build_coordinate_system`

@@ -38,6 +38,8 @@ The normalized Rust timing categories are:
 |---|---|---|
 | `frontend_ms_preparation` | `open_measurement_set`, `prepare_plane_input`, `extract_phase_center` | MS open, selection, row adaptation, and phase-center resolution. |
 | `visibility_adaptation_and_chunking` | `prepare_plane_input` | Visibility adaptation before pure imaging. |
+| `standard_mfs_buffer_load` | `get_ms_values_into_processing_buffer` | Standard-gridder MFS owned-buffer loading from MAIN data, flag, weight, optional weight-spectrum, and geometry inputs. |
+| `standard_mfs_buffer_prepare` | `prepare_processing_buffer` | Standard-gridder MFS owned-buffer adaptation into imaging visibility batches. |
 | `weighting_density_setup` | `weighting` | Imaging weights, density grids, and taper setup. |
 | `projection_pb_cf_preparation` | none yet | Explicit non-zero-free placeholder; projection/PB setup currently lives inside lower-level selected-mode paths. |
 | `gridding_degridding` | `psf_grid`, `residual_degrid_grid` | PSF gridding plus residual degrid/grid work. |
@@ -106,8 +108,8 @@ outside the measured imaging commands.
 
 - Structured `casa-rs` timing data: `results.stage_breakdown.rust`.
 - Frontend/MS preparation versus pure imaging core: separate frontend,
-  visibility-adaptation, and core categories plus `frontend_total` /
-  `core_total`.
+  visibility-adaptation, standard-MFS buffer load/prepare drill-downs, and
+  core categories plus `frontend_total` / `core_total`.
 - Grid/degrid, FFT, normalization/PB correction, deconvolution, and writeback:
   normalized Rust categories listed above.
 - Disabled/skipped paths: dirty-only clean stages and preview generation are

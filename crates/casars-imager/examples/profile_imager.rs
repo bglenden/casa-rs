@@ -83,11 +83,17 @@ fn run() -> Result<(), String> {
         let prefix = temp.join(format!("run-{run_index}"));
         let summary = run_from_config(&build_cli_config(&options, prefix))?;
         println!(
-            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} major_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} residual_normalize_ms={:.3} minor_ms={:.3} minor_solve_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3}",
+            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} get_ms_values_ms={:.3} prepare_buffer_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} major_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} residual_normalize_ms={:.3} minor_ms={:.3} minor_solve_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3}",
             run_index + 1,
             millis(summary.frontend_timings.total),
             millis(summary.frontend_timings.open_measurement_set),
             millis(summary.frontend_timings.prepare_plane_input),
+            millis(
+                summary
+                    .frontend_timings
+                    .get_ms_values_into_processing_buffer,
+            ),
+            millis(summary.frontend_timings.prepare_processing_buffer),
             millis(summary.frontend_timings.extract_phase_center),
             millis(summary.frontend_timings.run_imaging),
             millis(summary.frontend_timings.build_coordinate_system),
@@ -145,6 +151,16 @@ fn run() -> Result<(), String> {
     print_stage(
         "prepare_plane_input",
         median_duration(&runs, |run| run.frontend_timings.prepare_plane_input),
+    );
+    print_stage(
+        "get_ms_values_into_processing_buffer",
+        median_duration(&runs, |run| {
+            run.frontend_timings.get_ms_values_into_processing_buffer
+        }),
+    );
+    print_stage(
+        "prepare_processing_buffer",
+        median_duration(&runs, |run| run.frontend_timings.prepare_processing_buffer),
     );
     print_stage(
         "run_imaging",

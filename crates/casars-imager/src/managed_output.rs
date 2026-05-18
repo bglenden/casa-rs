@@ -705,6 +705,8 @@ mod tests {
             frontend_timings: FrontendStageTimings {
                 open_measurement_set: Duration::from_nanos(31),
                 prepare_plane_input: Duration::from_nanos(32),
+                get_ms_values_into_processing_buffer: Duration::from_nanos(38),
+                prepare_processing_buffer: Duration::from_nanos(39),
                 extract_phase_center: Duration::from_nanos(33),
                 run_imaging: Duration::from_nanos(34),
                 build_coordinate_system: Duration::from_nanos(35),

@@ -1359,21 +1359,27 @@ fn run_single_image_from_config_with_gridder_override(
     );
     let stage_start = Instant::now();
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
+    let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     let (prepared, model_trace) = if config.save_model == SaveModelMode::ModelColumn {
         let (prepared, trace) =
             prepare_inputs_for_measurement_set_with_trace(&ms, config, data_column)?;
         (prepared, Some(trace))
     } else {
-        let mut prepared_inputs = vec![merge_prepared_inputs_for_same_measurement_set(
-            prepare_inputs_for_measurement_set(&ms, config, data_column)?,
-        )?];
+        let (inputs, timings) =
+            prepare_inputs_for_measurement_set_with_stage_timings(&ms, config, data_column)?;
+        prepare_stage_timings.add(timings);
+        let mut prepared_inputs = vec![merge_prepared_inputs_for_same_measurement_set(inputs)?];
         for (path, extra) in ms_paths.iter().skip(1).zip(extra_ms.iter()) {
             let mut extra_config = config.clone();
             extra_config.ms = path.clone();
             let extra_data_column = resolve_data_column(extra, config.datacolumn.as_deref())?;
-            prepared_inputs.push(merge_prepared_inputs_for_same_measurement_set(
-                prepare_inputs_for_measurement_set(extra, &extra_config, extra_data_column)?,
-            )?);
+            let (inputs, timings) = prepare_inputs_for_measurement_set_with_stage_timings(
+                extra,
+                &extra_config,
+                extra_data_column,
+            )?;
+            prepare_stage_timings.add(timings);
+            prepared_inputs.push(merge_prepared_inputs_for_same_measurement_set(inputs)?);
         }
         (merge_prepared_inputs(prepared_inputs)?, None)
     };
@@ -1677,6 +1683,9 @@ fn run_single_image_from_config_with_gridder_override(
         frontend_timings: FrontendStageTimings {
             open_measurement_set,
             prepare_plane_input: prepare_plane_time,
+            get_ms_values_into_processing_buffer: prepare_stage_timings
+                .get_ms_values_into_processing_buffer,
+            prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
             extract_phase_center,
             run_imaging: run_imaging_time,
             build_coordinate_system,
@@ -1902,6 +1911,8 @@ fn run_joint_outlier_clean_from_configs(
                 } else {
                     Duration::ZERO
                 },
+                get_ms_values_into_processing_buffer: Duration::ZERO,
+                prepare_processing_buffer: Duration::ZERO,
                 extract_phase_center: Duration::ZERO,
                 run_imaging: if index == 0 {
                     run_imaging_time
@@ -2510,6 +2521,8 @@ fn add_stage_timings(target: &mut ImagingStageTimings, extra: ImagingStageTiming
 fn add_frontend_timings(target: &mut FrontendStageTimings, extra: FrontendStageTimings) {
     target.open_measurement_set += extra.open_measurement_set;
     target.prepare_plane_input += extra.prepare_plane_input;
+    target.get_ms_values_into_processing_buffer += extra.get_ms_values_into_processing_buffer;
+    target.prepare_processing_buffer += extra.prepare_processing_buffer;
     target.extract_phase_center += extra.extract_phase_center;
     target.run_imaging += extra.run_imaging;
     target.build_coordinate_system += extra.build_coordinate_system;
@@ -4151,6 +4164,10 @@ pub struct FrontendStageTimings {
     pub open_measurement_set: Duration,
     /// Time spent resolving selection identity, spectral setup, and adapting MAIN rows into `VisibilityBatch` values.
     pub prepare_plane_input: Duration,
+    /// Time spent loading owned MS/table values into standard-MFS processing buffers.
+    pub get_ms_values_into_processing_buffer: Duration,
+    /// Time spent adapting standard-MFS processing buffers into imaging batches.
+    pub prepare_processing_buffer: Duration,
     /// Time spent extracting and validating the phase center.
     pub extract_phase_center: Duration,
     /// Time spent inside the pure `casa-imaging` core.
@@ -4161,6 +4178,19 @@ pub struct FrontendStageTimings {
     pub write_products: Duration,
     /// Total elapsed time for `run_from_config()`.
     pub total: Duration,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PreparePlaneInputStageTimings {
+    get_ms_values_into_processing_buffer: Duration,
+    prepare_processing_buffer: Duration,
+}
+
+impl PreparePlaneInputStageTimings {
+    fn add(&mut self, extra: Self) {
+        self.get_ms_values_into_processing_buffer += extra.get_ms_values_into_processing_buffer;
+        self.prepare_processing_buffer += extra.prepare_processing_buffer;
+    }
 }
 
 struct PlaneInput {
@@ -6491,7 +6521,16 @@ fn prepare_plane_input(
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
 ) -> Result<PreparedInput, String> {
-    prepare_plane_input_inner(ms, config, data_column_kind, false).map(|(prepared, _)| prepared)
+    prepare_plane_input_inner(ms, config, data_column_kind, false).map(|(prepared, _, _)| prepared)
+}
+
+fn prepare_plane_input_with_stage_timings(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+) -> Result<(PreparedInput, PreparePlaneInputStageTimings), String> {
+    prepare_plane_input_inner(ms, config, data_column_kind, false)
+        .map(|(prepared, _, timings)| (prepared, timings))
 }
 
 fn prepare_plane_input_with_trace(
@@ -6499,28 +6538,33 @@ fn prepare_plane_input_with_trace(
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
 ) -> Result<(PreparedInput, PreparedVisibilityTraceBundle), String> {
-    let (prepared, trace) = prepare_plane_input_inner(ms, config, data_column_kind, true)?;
+    let (prepared, trace, _) = prepare_plane_input_inner(ms, config, data_column_kind, true)?;
     trace
         .map(|trace| (prepared, trace))
         .ok_or_else(|| "internal error: requested prepare trace was not built".to_string())
 }
 
-fn prepare_inputs_for_measurement_set(
+fn prepare_inputs_for_measurement_set_with_stage_timings(
     ms: &MeasurementSet,
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
-) -> Result<Vec<PreparedInput>, String> {
+) -> Result<(Vec<PreparedInput>, PreparePlaneInputStageTimings), String> {
     if has_explicit_spectral_selection(config) {
-        return Ok(vec![prepare_plane_input(ms, config, data_column_kind)?]);
+        let (prepared, timings) =
+            prepare_plane_input_with_stage_timings(ms, config, data_column_kind)?;
+        return Ok((vec![prepared], timings));
     }
-    selected_data_desc_ids_for_unrestricted_spectral_selection(ms, config)?
-        .into_iter()
-        .map(|ddid| {
-            let mut ddid_config = config.clone();
-            ddid_config.ddid = Some(ddid);
-            prepare_plane_input(ms, &ddid_config, data_column_kind)
-        })
-        .collect()
+    let mut inputs = Vec::new();
+    let mut timings = PreparePlaneInputStageTimings::default();
+    for ddid in selected_data_desc_ids_for_unrestricted_spectral_selection(ms, config)? {
+        let mut ddid_config = config.clone();
+        ddid_config.ddid = Some(ddid);
+        let (prepared, ddid_timings) =
+            prepare_plane_input_with_stage_timings(ms, &ddid_config, data_column_kind)?;
+        inputs.push(prepared);
+        timings.add(ddid_timings);
+    }
+    Ok((inputs, timings))
 }
 
 fn prepare_inputs_for_measurement_set_with_trace(
@@ -6556,7 +6600,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
     active_selected_rows: &[SelectedMainRow],
     derived_engine: Option<&MsCalEngine>,
     prepare_started_at: Instant,
-) -> Result<PreparedInput, String> {
+) -> Result<(PreparedInput, PreparePlaneInputStageTimings), String> {
     let table_values = load_prepared_selection_table_values(
         selection.selected_ddid,
         ddid_info,
@@ -6583,11 +6627,13 @@ fn prepare_standard_mfs_input_in_row_blocks(
 
     let mut prepared_blocks = Vec::<PreparedInput>::new();
     let mut prepared_batch_count = 0usize;
+    let mut stage_timings = PreparePlaneInputStageTimings::default();
     let mut accumulate_timings = AccumulateRowTimings {
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
         ..Default::default()
     };
     for row_chunk in active_selected_rows.chunks(strategy.row_block_rows) {
+        let stage_started_at = Instant::now();
         let processing_buffer = get_ms_values_into_processing_buffer(
             ms,
             data_column_kind,
@@ -6598,7 +6644,9 @@ fn prepare_standard_mfs_input_in_row_blocks(
             uvw_reprojection_mode_for_selection(config, selection),
             prepare_started_at,
         )?;
+        stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
 
+        let stage_started_at = Instant::now();
         let plane = prepare_processing_buffer(
             config,
             &table_values,
@@ -6608,6 +6656,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
             derived_engine,
             &mut accumulate_timings,
         )?;
+        stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
         prepared_batch_count += plane.batches.len();
         prepared_blocks.push(PreparedInput::Mfs(plane));
         if frontend_progress_enabled() {
@@ -6622,6 +6671,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
     }
     accumulate_timings.log(prepare_started_at.elapsed());
     merge_prepared_inputs_for_same_measurement_set(prepared_blocks)
+        .map(|prepared| (prepared, stage_timings))
 }
 
 fn merge_prepared_inputs_with_trace(
@@ -6705,7 +6755,14 @@ fn prepare_plane_input_inner(
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
     force_trace: bool,
-) -> Result<(PreparedInput, Option<PreparedVisibilityTraceBundle>), String> {
+) -> Result<
+    (
+        PreparedInput,
+        Option<PreparedVisibilityTraceBundle>,
+        PreparePlaneInputStageTimings,
+    ),
+    String,
+> {
     let prepare_started_at = Instant::now();
     let data_description = ms
         .data_description()
@@ -6787,7 +6844,7 @@ fn prepare_plane_input_inner(
         !force_trace && can_prepare_standard_mfs_without_trace(config, &selection);
     if fast_standard_mfs {
         let stage_started_at = Instant::now();
-        let prepared_input = prepare_standard_mfs_input_in_row_blocks(
+        let (prepared_input, stage_timings) = prepare_standard_mfs_input_in_row_blocks(
             ms,
             config,
             data_column_kind,
@@ -6805,7 +6862,7 @@ fn prepare_plane_input_inner(
             stage_started_at.elapsed(),
             prepare_started_at.elapsed(),
         );
-        return Ok((prepared_input, None));
+        return Ok((prepared_input, None, stage_timings));
     }
 
     let selected_row_indices = active_selected_rows
@@ -6948,7 +7005,11 @@ fn prepare_plane_input_inner(
             stage_started_at.elapsed(),
             prepare_started_at.elapsed(),
         );
-        return Ok((prepared_input, None));
+        return Ok((
+            prepared_input,
+            None,
+            PreparePlaneInputStageTimings::default(),
+        ));
     }
     if trace_free_cube {
         let stage_started_at = Instant::now();
@@ -6958,7 +7019,11 @@ fn prepare_plane_input_inner(
             stage_started_at.elapsed(),
             prepare_started_at.elapsed(),
         );
-        return Ok((prepared_input, None));
+        return Ok((
+            prepared_input,
+            None,
+            PreparePlaneInputStageTimings::default(),
+        ));
     }
     let selected_row_traces = selection
         .selected_rows
@@ -6978,7 +7043,13 @@ fn prepare_plane_input_inner(
             },
             selected_row_traces,
         )
-        .map(|(prepared, trace)| (prepared, Some(trace)))
+        .map(|(prepared, trace)| {
+            (
+                prepared,
+                Some(trace),
+                PreparePlaneInputStageTimings::default(),
+            )
+        })
 }
 
 fn can_prepare_standard_mfs_without_trace(

@@ -28,6 +28,8 @@ DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
 RUST_STAGE_FIELDS = {
     "open_measurement_set",
     "prepare_plane_input",
+    "get_ms_values_into_processing_buffer",
+    "prepare_processing_buffer",
     "extract_phase_center",
     "run_imaging",
     "build_coordinate_system",
@@ -416,6 +418,20 @@ def build_rust_stage_breakdown(plan: dict[str, Any], stages: dict[str, float]) -
             ["prepare_plane_input"],
             "Visibility adaptation before entering the imaging core.",
         ),
+        "standard_mfs_buffer_load": stage_category(
+            stages,
+            ["get_ms_values_into_processing_buffer"],
+            "Owned standard-MFS processing-buffer loads from MS and table columns.",
+            skipped="get_ms_values_into_processing_buffer" not in stages,
+            skip_reason="not reported for this preparation path",
+        ),
+        "standard_mfs_buffer_prepare": stage_category(
+            stages,
+            ["prepare_processing_buffer"],
+            "Standard-MFS processing-buffer adaptation into imaging batches.",
+            skipped="prepare_processing_buffer" not in stages,
+            skip_reason="not reported for this preparation path",
+        ),
         "weighting_density_setup": stage_category(
             stages,
             ["weighting"],
@@ -659,7 +675,7 @@ def compare_products(
 
 
 def parse_timing_section(text: str, heading: str) -> tuple[list[float], float | None]:
-    lines = section_lines(text, f"{heading} ")
+    lines = timing_section_lines(text, f"{heading} ")
     runs = []
     median_value = None
     for line in lines:
@@ -672,6 +688,32 @@ def parse_timing_section(text: str, heading: str) -> tuple[list[float], float | 
     if median_value is None and runs:
         median_value = statistics.median(runs)
     return runs, median_value
+
+
+def timing_section_lines(text: str, heading_prefix: str) -> list[str]:
+    boundaries = (
+        "Rust release CLI timings ",
+        "Rust stage medians ",
+        "CASA tclean timings ",
+        "Kept benchmark products:",
+        "CASA PySynthesisImager stage medians ",
+    )
+    lines = text.splitlines()
+    result = []
+    collecting = False
+    for line in lines:
+        if line.startswith(heading_prefix):
+            collecting = True
+            continue
+        if collecting and any(
+            line.startswith(boundary)
+            for boundary in boundaries
+            if boundary != heading_prefix
+        ):
+            break
+        if collecting:
+            result.append(line.strip())
+    return result
 
 
 def parse_stage_section(text: str, heading: str) -> dict[str, float]:

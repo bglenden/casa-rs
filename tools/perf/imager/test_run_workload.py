@@ -32,6 +32,26 @@ CASA PySynthesisImager stage medians (milliseconds):
         self.assertIn("not reported", parsed["casa"]["reason"])
         self.assertIsNone(parsed["casa"]["timings_seconds"]["median"])
 
+    def test_parse_casa_timing_section_tolerates_casa_warning_noise(self) -> None:
+        parsed = run_workload.parse_benchmark_log(
+            """CASA tclean timings (seconds):
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+2026-05-18 22:58:25 SEVERE ::casa
+
+0%....10....100%
+  run=1 real=56.589418
+  median=56.589418
+  kept_casa_prefix=/tmp/casa
+
+Kept benchmark products:
+  product_root=/tmp/products
+"""
+        )
+
+        self.assertEqual("ran", parsed["casa"]["status"])
+        self.assertEqual([56.589418], parsed["casa"]["timings_seconds"]["runs"])
+        self.assertEqual(56.589418, parsed["casa"]["timings_seconds"]["median"])
+
     def test_empty_results_include_reasons_for_both_sides(self) -> None:
         results = run_workload.empty_results(
             casa_status="blocked",
@@ -144,6 +164,8 @@ CASA PySynthesisImager stage medians (milliseconds):
         stages = {
             "open_measurement_set": 1.0,
             "prepare_plane_input": 2.0,
+            "get_ms_values_into_processing_buffer": 2.5,
+            "prepare_processing_buffer": 3.5,
             "extract_phase_center": 3.0,
             "weighting": 4.0,
             "psf_grid": 5.0,
@@ -169,6 +191,8 @@ CASA PySynthesisImager stage medians (milliseconds):
             categories["frontend_ms_preparation"]["total_ms"],
             6.0,
         )
+        self.assertEqual(categories["standard_mfs_buffer_load"]["total_ms"], 2.5)
+        self.assertEqual(categories["standard_mfs_buffer_prepare"]["total_ms"], 3.5)
         self.assertEqual(categories["gridding_degridding"]["total_ms"], 13.0)
         self.assertEqual(categories["fft"]["total_ms"], 15.0)
         self.assertEqual(categories["normalization_pb_correction"]["total_ms"], 17.0)
@@ -327,6 +351,8 @@ CASA PySynthesisImager stage medians (milliseconds):
   frontend:
   open_measurement_set=1.000
   prepare_plane_input=2.000
+  get_ms_values_into_processing_buffer=2.500
+  prepare_processing_buffer=3.500
   extract_phase_center=3.000
   run_imaging=4.000
   build_coordinate_system=5.000
@@ -367,6 +393,8 @@ CASA tclean timings (seconds):
             self.assertIn(name, stages)
         self.assertEqual(stages["psf_normalize"], 12.0)
         self.assertEqual(stages["model_fft"], 13.0)
+        self.assertEqual(stages["get_ms_values_into_processing_buffer"], 2.5)
+        self.assertEqual(stages["prepare_processing_buffer"], 3.5)
         self.assertEqual(stages["restore"], 20.0)
         self.assertNotIn("niter", stages)
         self.assertNotIn("imsize", stages)
