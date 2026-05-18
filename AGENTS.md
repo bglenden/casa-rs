@@ -108,6 +108,11 @@ Use `Closes #N` only for issues that should auto-close on merge.
 - When investigating parity or correctness differences against CASA/casacore
   C++, favor targeted instrumentation of both implementations over blind
   parameter experiments or speculative fixes.
+- Before adding new library functionality, search the existing Rust library
+  surface for reusable or composable behavior; there is now a meaningful chance
+  the needed functionality already exists. Unless the current agent is already
+  doing that repository-search work as its normal role, run the search in a
+  sub-agent so the main implementation context stays focused.
 - Use the shared least-squares helper and its well-exercised linear algebra
   backend for polynomial or linear least-squares solves; do not add ad hoc
   normal-equation or Gaussian-elimination solvers.
