@@ -2087,10 +2087,10 @@ fn airy_voltage_pattern(
     {
         return 0.0;
     }
-    let radius_arcmin_ghz = radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9);
-    let support_arcsec_at_100ghz =
-        airy_max_radius_arcsec_at_100ghz(dish_diameter_m, blockage_diameter_m);
-    let maximum_radius_arcmin_ghz = support_arcsec_at_100ghz / 60.0 * 100.0;
+    // CASA PBMath1D stores per-pixel radius terms as Float before looking up
+    // the tabulated voltage pattern.
+    let radius_arcmin_ghz = (radius_rad.to_degrees() * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
+    let maximum_radius_arcmin_ghz = casa_airy_max_radius_arcmin_ghz();
     if radius_arcmin_ghz > maximum_radius_arcmin_ghz {
         return 0.0;
     }
@@ -2128,11 +2128,12 @@ fn primary_beam_max_radius_arcsec_at_100ghz(primary_beam_model: PrimaryBeamModel
 }
 
 fn airy_max_radius_arcsec_at_100ghz(dish_diameter_m: f64, blockage_diameter_m: f64) -> f64 {
-    if dish_diameter_m <= 7.0 && blockage_diameter_m > 0.0 {
-        300.0
-    } else {
-        150.0
-    }
+    let _ = (dish_diameter_m, blockage_diameter_m);
+    casa_airy_max_radius_arcmin_ghz() * 60.0 / 100.0
+}
+
+fn casa_airy_max_radius_arcmin_ghz() -> f64 {
+    1.784 * 60.0
 }
 
 fn evla_common_voltage_pattern(radius_rad: f64, frequency_hz: f64) -> f32 {
@@ -2379,7 +2380,13 @@ fn run_mosaic_image_domain_controller(
     }
     let mut multiscale_state = (request.deconvolver == Deconvolver::Multiscale).then(|| {
         let scales = effective_multiscale_scales(request);
-        build_multiscale_state(&residual, &psf_state.psf, &scales, request.small_scale_bias)
+        build_multiscale_state(
+            &residual,
+            &psf_state.psf,
+            &scales,
+            request.small_scale_bias,
+            request.clean_mask.as_ref(),
+        )
     });
     let clark_psf_patch = (request.deconvolver == Deconvolver::Clark).then(|| {
         build_clark_psf_patch(
@@ -2955,7 +2962,7 @@ fn run_multiscale_minor_cycle(
     nsigma_threshold_jy_per_beam: f32,
     stage_timings: &mut ImagingStageTimings,
 ) -> HogbomMinorCycleOutcome {
-    let Some(_cycle_candidate) =
+    let Some(cycle_candidate) =
         select_multiscale_candidate(multiscale_state, request.clean_mask.as_ref())
     else {
         return HogbomMinorCycleOutcome {
@@ -2971,7 +2978,7 @@ fn run_multiscale_minor_cycle(
         &multiscale_state.dirty_conv_scales[0],
         request.clean_mask.as_ref(),
     );
-    let initial_cycle_peak = cycle_peak;
+    let initial_cycle_component = cycle_candidate.strength.abs();
     if let Some(reason) = minor_cycle_stop_reason(
         cycle_peak,
         request.clean.threshold_jy_per_beam,
@@ -3000,12 +3007,9 @@ fn run_multiscale_minor_cycle(
             stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
-        let peak_abs = peak_abs_value_masked(
-            &multiscale_state.dirty_conv_scales[0],
-            request.clean_mask.as_ref(),
-        );
+        let component_abs = candidate.strength.abs();
         if let Some(reason) = minor_cycle_stop_reason(
-            peak_abs,
+            component_abs,
             request.clean.threshold_jy_per_beam,
             cycle_threshold_jy_per_beam,
             nsigma_threshold_jy_per_beam,
@@ -3013,7 +3017,7 @@ fn run_multiscale_minor_cycle(
             stop_reason = Some(reason);
             break;
         }
-        if cycle_component_updates > 0 && peak_abs > initial_cycle_peak * 1.5 {
+        if cycle_component_updates > 0 && component_abs > initial_cycle_component * 1.5 {
             stop_reason = Some(CleanStopReason::DivergenceDetected);
             break;
         }
@@ -3076,6 +3080,7 @@ struct MultiscaleState {
     psf_conv_scales: Vec<Vec<Array2<f32>>>,
     peak_psf_conv_scales: Vec<f32>,
     scale_bias: Vec<f32>,
+    scale_masks: Option<Vec<Array2<bool>>>,
 }
 
 fn refresh_multiscale_dirty_conv_scales(state: &mut MultiscaleState, residual: &Array2<f32>) {
@@ -3256,8 +3261,13 @@ fn run_multiscale_cotton_schwab(
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
     let scales = effective_multiscale_scales(request);
-    let mut multiscale_state =
-        build_multiscale_state(&residual, &psf_state.psf, &scales, request.small_scale_bias);
+    let mut multiscale_state = build_multiscale_state(
+        &residual,
+        &psf_state.psf,
+        &scales,
+        request.small_scale_bias,
+        request.clean_mask.as_ref(),
+    );
     let mut minor_iterations = 0usize;
     let mut reported_minor_iterations = 0usize;
     let mut major_cycles = 0usize;
@@ -3287,7 +3297,6 @@ fn run_multiscale_cotton_schwab(
             &multiscale_state.dirty_conv_scales[0],
             request.clean_mask.as_ref(),
         );
-        let initial_cycle_peak = cycle_peak;
         let cycle_nsigma_threshold_jy_per_beam =
             nsigma_threshold_jy_per_beam(&residual, request.clean_mask.as_ref(), request.clean);
         if let Some(stop_reason) = tolerant_clean_stop_reason(
@@ -3309,8 +3318,10 @@ fn run_multiscale_cotton_schwab(
                 cycle_candidate.position.1,
             ]),
         };
+        let initial_cycle_component = cycle_candidate.strength.abs();
         let mut cycle_component_updates = 0usize;
         let mut updated_model = false;
+        let mut cycle_stop_reason = None::<CleanStopReason>;
         final_cycle_threshold_jy_per_beam =
             compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
         let minor_started = Instant::now();
@@ -3318,24 +3329,21 @@ fn run_multiscale_cotton_schwab(
             let Some(candidate) =
                 select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
             else {
-                clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
+                cycle_stop_reason = Some(CleanStopReason::NoCleanablePixels);
                 break;
             };
-            let peak_abs = peak_abs_value_masked(
-                &multiscale_state.dirty_conv_scales[0],
-                request.clean_mask.as_ref(),
-            );
+            let component_abs = candidate.strength.abs();
             if let Some(stop_reason) = minor_cycle_stop_reason(
-                peak_abs,
+                component_abs,
                 request.clean.threshold_jy_per_beam,
                 final_cycle_threshold_jy_per_beam,
                 cycle_nsigma_threshold_jy_per_beam,
             ) {
-                clean_stop_reason = Some(stop_reason);
+                cycle_stop_reason = Some(stop_reason);
                 break;
             }
-            if cycle_component_updates > 0 && peak_abs > initial_cycle_peak * 1.5 {
-                clean_stop_reason = Some(CleanStopReason::DivergenceDetected);
+            if cycle_component_updates > 0 && component_abs > initial_cycle_component * 1.5 {
+                cycle_stop_reason = Some(CleanStopReason::DivergenceDetected);
                 break;
             }
 
@@ -3362,7 +3370,7 @@ fn run_multiscale_cotton_schwab(
         let reported_updates = casa_multiscale_reported_updates(
             cycle_component_updates,
             cycle_reported_niter,
-            clean_stop_reason,
+            cycle_stop_reason,
             updated_model,
         );
         minor_cycle_traces.push(make_minor_cycle_trace(
@@ -3372,7 +3380,7 @@ fn run_multiscale_cotton_schwab(
                 updated_model,
                 actual_updates: cycle_component_updates,
                 reported_updates,
-                stop_reason: clean_stop_reason,
+                stop_reason: cycle_stop_reason,
                 final_cycle_threshold_jy_per_beam,
                 final_nsigma_threshold_jy_per_beam: cycle_nsigma_threshold_jy_per_beam,
             },
@@ -3383,6 +3391,7 @@ fn run_multiscale_cotton_schwab(
         ));
         reported_minor_iterations += reported_updates;
         if !updated_model {
+            clean_stop_reason = cycle_stop_reason;
             break;
         }
         residual = multiscale_state.dirty_conv_scales[0].clone();
@@ -3408,8 +3417,13 @@ fn run_multiscale_cotton_schwab(
             stage_timings,
         )?;
         stage_timings.major_cycle_refresh += refresh_started.elapsed();
-        multiscale_state =
-            build_multiscale_state(&residual, &psf_state.psf, &scales, request.small_scale_bias);
+        multiscale_state = build_multiscale_state(
+            &residual,
+            &psf_state.psf,
+            &scales,
+            request.small_scale_bias,
+            request.clean_mask.as_ref(),
+        );
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
@@ -3471,6 +3485,7 @@ fn build_multiscale_state(
     psf: &Array2<f32>,
     scales: &[f32],
     small_scale_bias: f32,
+    mask: Option<&Array2<bool>>,
 ) -> MultiscaleState {
     let scale_images = scales
         .iter()
@@ -3504,6 +3519,8 @@ fn build_multiscale_state(
     } else {
         vec![1.0; scales.len()]
     };
+    let scale_masks =
+        mask.map(|clean_mask| build_multiscale_scale_masks(clean_mask, &scale_images, scales));
 
     MultiscaleState {
         scales: scale_images,
@@ -3511,6 +3528,41 @@ fn build_multiscale_state(
         psf_conv_scales,
         peak_psf_conv_scales,
         scale_bias,
+        scale_masks,
+    }
+}
+
+fn build_multiscale_scale_masks(
+    mask: &Array2<bool>,
+    scale_images: &[Array2<f32>],
+    scale_sizes: &[f32],
+) -> Vec<Array2<bool>> {
+    let mask_values = mask.mapv(|cleanable| if cleanable { 1.0 } else { 0.0 });
+    scale_images
+        .iter()
+        .zip(scale_sizes.iter().copied())
+        .map(|(scale_image, scale_size)| {
+            let convolved = fft_convolve_real(&mask_values, scale_image);
+            let mut scale_mask = convolved.mapv(|value| value > 0.9);
+            apply_casa_multiscale_edge_mask(&mut scale_mask, scale_size);
+            scale_mask
+        })
+        .collect()
+}
+
+fn apply_casa_multiscale_edge_mask(mask: &mut Array2<bool>, scale_size: f32) {
+    let (nx, ny) = mask.dim();
+    let border = (scale_size * 1.5) as usize;
+    for x in 0..nx {
+        for y in 0..ny {
+            if x <= border
+                || y <= border
+                || x >= nx.saturating_sub(border + 1)
+                || y >= ny.saturating_sub(border + 1)
+            {
+                mask[(x, y)] = false;
+            }
+        }
     }
 }
 
@@ -3520,8 +3572,13 @@ fn select_multiscale_candidate(
 ) -> Option<MultiscaleCandidate> {
     let mut best = None::<(MultiscaleCandidate, f32)>;
     for scale_index in 0..state.dirty_conv_scales.len() {
+        let search_mask = state
+            .scale_masks
+            .as_ref()
+            .map(|scale_masks| &scale_masks[scale_index])
+            .or(mask);
         let Some((position, value)) =
-            peak_location_masked(&state.dirty_conv_scales[scale_index], mask)
+            peak_location_masked(&state.dirty_conv_scales[scale_index], search_mask)
         else {
             continue;
         };
@@ -4546,6 +4603,7 @@ fn run_mtmfs_multiscale_minor_cycle(
         &psf_terms[0],
         &scales,
         request.small_scale_bias,
+        request.clean_mask.as_ref(),
     );
     let Some(first_candidate) =
         select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
@@ -6450,7 +6508,7 @@ mod tests {
         PsfState, RestoringBeamMode, StandardGridder, StandardMfsModelPredictor, VisibilityBatch,
         VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
-        build_direct_pixel_coordinates, compute_cycle_threshold,
+        build_direct_pixel_coordinates, build_multiscale_scale_masks, compute_cycle_threshold,
         compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
         make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
@@ -6485,16 +6543,17 @@ mod tests {
     }
 
     #[test]
-    fn alma_aca_airy_voltage_uses_wide_casa_support() {
-        let radius_between_12m_and_7m_support = (220.0_f64 / 3600.0).to_radians();
+    fn alma_aca_airy_voltage_uses_casa_common_pb_radius() {
+        let inside_casa_support = (60.0_f64 / 3600.0).to_radians();
+        let outside_casa_support = (70.0_f64 / 3600.0).to_radians();
 
-        assert_eq!(
+        assert_ne!(
             super::primary_beam_voltage_pattern(
                 PrimaryBeamModel::Airy {
                     dish_diameter_m: 10.7,
                     blockage_diameter_m: 0.75,
                 },
-                radius_between_12m_and_7m_support,
+                inside_casa_support,
                 100.0e9,
             ),
             0.0
@@ -6505,7 +6564,29 @@ mod tests {
                     dish_diameter_m: 6.25,
                     blockage_diameter_m: 0.75,
                 },
-                radius_between_12m_and_7m_support,
+                inside_casa_support,
+                100.0e9,
+            ),
+            0.0
+        );
+        assert_eq!(
+            super::primary_beam_voltage_pattern(
+                PrimaryBeamModel::Airy {
+                    dish_diameter_m: 10.7,
+                    blockage_diameter_m: 0.75,
+                },
+                outside_casa_support,
+                100.0e9,
+            ),
+            0.0
+        );
+        assert_eq!(
+            super::primary_beam_voltage_pattern(
+                PrimaryBeamModel::Airy {
+                    dish_diameter_m: 6.25,
+                    blockage_diameter_m: 0.75,
+                },
+                outside_casa_support,
                 100.0e9,
             ),
             0.0
@@ -9095,6 +9176,27 @@ mod tests {
             .filter(|value| value.abs() > 0.0)
             .count();
         assert_eq!(nonzero, 1);
+    }
+
+    #[test]
+    fn multiscale_clean_mask_uses_casa_scale_dependent_edges() {
+        let shape = (32, 32);
+        let mask = Array2::<bool>::from_elem(shape, true);
+        let scales = vec![0.0, 8.0];
+        let scale_images = scales
+            .iter()
+            .copied()
+            .map(|scale| make_multiscale_kernel(shape, scale))
+            .collect::<Vec<_>>();
+
+        let scale_masks = build_multiscale_scale_masks(&mask, &scale_images, &scales);
+
+        assert!(!scale_masks[0][(0, 16)]);
+        assert!(scale_masks[0][(1, 16)]);
+        assert!(!scale_masks[1][(12, 16)]);
+        assert!(scale_masks[1][(13, 16)]);
+        assert!(scale_masks[1][(18, 16)]);
+        assert!(!scale_masks[1][(19, 16)]);
     }
 
     #[test]

@@ -35,6 +35,14 @@ This directory holds stable project documentation.
   [`casa-vla-importvla-parity.md`](casa-vla-importvla-parity.md)
 - tutorial learning packs:
   [`tutorial-parity/tutorial-learning-packs.md`](tutorial-parity/tutorial-learning-packs.md)
+- ImPerformance Wave 1 mode selection:
+  [`tutorial-parity/imperformance-wave-1-mode-selection.md`](tutorial-parity/imperformance-wave-1-mode-selection.md)
+- ImPerformance Wave 1 simulated dataset plan:
+  [`tutorial-parity/imperformance-wave-1-datasets.md`](tutorial-parity/imperformance-wave-1-datasets.md)
+- ImPerformance Wave 1 benchmark harness:
+  [`tutorial-parity/imperformance-wave-1-benchmark-harness.md`](tutorial-parity/imperformance-wave-1-benchmark-harness.md)
+- ImPerformance Wave 1 stage instrumentation:
+  [`tutorial-parity/imperformance-wave-1-stage-instrumentation.md`](tutorial-parity/imperformance-wave-1-stage-instrumentation.md)
 
 ## Planning And Program Reference
 

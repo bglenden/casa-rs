@@ -3,13 +3,14 @@
 
 use casa_ms::{
     MeasurementSet, SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
-    SyntheticCorruptionConfig, SyntheticGainCorruption, SyntheticGainMode,
+    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
     SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationRequest,
     SyntheticPointingCorruption, SyntheticPolarizationLeakageCorruption,
     SyntheticPolarizationLeakageMode, SyntheticSpectralSetup, generate_synthetic_observation_ms,
     tutorial_vla_a_antennas,
 };
 use casa_test_support::{discover_casa_python, tutorial_dataset_path};
+use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, ScalarValue, Value};
 use std::process::Command;
 
@@ -107,6 +108,79 @@ fn generates_vla_ppdisk_synthetic_ms_skeleton() {
         }
         other => panic!("expected Float64 UVW array, got {other:?}"),
     }
+}
+
+#[test]
+fn zenith_transit_schedule_writes_unflagged_vla_track() {
+    let temp = tempfile::tempdir().unwrap();
+    let model = temp.path().join("ppdisk672_GHz_50pc.fits");
+    write_test_fits_model(&model, 16, 16);
+    let vla = MPosition::from_observatory_name("VLA").expect("VLA position");
+    let mut request = SyntheticObservationRequest::vla_ppdisk(
+        &model,
+        temp.path().join("zenith.synthetic.ms"),
+        tutorial_vla_a_antennas(),
+    );
+    request.phase_center_rad = [0.0, vla.latitude_rad()];
+    request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
+    request.duration_seconds = 2.0 * 3_600.0;
+    request.integration_seconds = 600.0;
+    request.predict_model = false;
+    request.corruption = None;
+
+    let report = generate_synthetic_observation_ms(&request).unwrap();
+    let ms = MeasurementSet::open(&request.output_ms).unwrap();
+    let flag_rows = ms.flag_row_column();
+    let flags = ms.flag_column();
+    let mut true_flag_rows = 0usize;
+    let mut true_flags = 0usize;
+    for row in 0..ms.row_count() {
+        true_flag_rows += usize::from(flag_rows.get(row).unwrap());
+        let ArrayValue::Bool(row_flags) = flags.get(row).unwrap() else {
+            panic!("expected Bool FLAG row");
+        };
+        true_flags += row_flags.iter().filter(|flag| **flag).count();
+    }
+
+    assert_eq!(report.main_row_count, ms.row_count());
+    assert_eq!(true_flag_rows, 0);
+    assert_eq!(true_flags, 0);
+}
+
+#[test]
+fn multi_field_synthetic_ms_cycles_field_ids_and_writes_pointings() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = request(temp.path());
+    request.duration_seconds = 40.0;
+    request.integration_seconds = 10.0;
+    request.fields = vec![
+        SyntheticField {
+            name: "mosaic_0".to_string(),
+            phase_center_rad: request.phase_center_rad,
+        },
+        SyntheticField {
+            name: "mosaic_1".to_string(),
+            phase_center_rad: [
+                request.phase_center_rad[0] + 10.0_f64.to_radians() / 3600.0,
+                request.phase_center_rad[1],
+            ],
+        },
+    ];
+
+    let report = generate_synthetic_observation_ms(&request).unwrap();
+    assert_eq!(report.main_row_count, 12);
+
+    let ms = MeasurementSet::open(&request.output_ms).unwrap();
+    assert!(ms.validate().unwrap().is_empty());
+    assert_eq!(ms.field().unwrap().row_count(), 2);
+    assert_eq!(ms.field().unwrap().name(0).unwrap(), "mosaic_0");
+    assert_eq!(ms.field().unwrap().name(1).unwrap(), "mosaic_1");
+    assert_eq!(ms.pointing().unwrap().row_count(), 6);
+
+    assert_eq!(main_i32_cell(&ms, 0, "FIELD_ID"), 0);
+    assert_eq!(main_i32_cell(&ms, 3, "FIELD_ID"), 1);
+    assert_eq!(main_i32_cell(&ms, 6, "FIELD_ID"), 0);
+    assert_eq!(main_i32_cell(&ms, 9, "FIELD_ID"), 1);
 }
 
 #[test]
@@ -524,6 +598,19 @@ fn row_data(path: &std::path::Path, row: usize) -> Vec<(f32, f32)> {
             .map(|value| (value.re, value.im))
             .collect::<Vec<_>>(),
         other => panic!("expected Complex32 DATA array, got {other:?}"),
+    }
+}
+
+fn main_i32_cell(ms: &MeasurementSet, row: usize, column: &str) -> i32 {
+    let value = ms
+        .main_table()
+        .cell_accessor(row, column)
+        .unwrap()
+        .value()
+        .unwrap();
+    match value {
+        Some(Value::Scalar(ScalarValue::Int32(value))) => *value,
+        other => panic!("expected Int32 {column} cell, got {other:?}"),
     }
 }
 

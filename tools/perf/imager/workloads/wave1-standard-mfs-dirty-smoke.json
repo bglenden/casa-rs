@@ -1,0 +1,31 @@
+{
+  "id": "wave1-standard-mfs-dirty-smoke",
+  "mode_id": "standard-mfs-dirty-control",
+  "description": "Small standard-gridder MFS dirty control workload for ImPerformance Wave 1 harness validation.",
+  "dataset": {
+    "key": "ngc5921-testdata",
+    "root_env": "CASA_RS_TESTDATA_ROOT",
+    "relative_path": "measurementset/vla/ngc5921.ms"
+  },
+  "imaging": {
+    "mode": "dirty",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "field": "0",
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 1,
+    "imsize": 128,
+    "cell_arcsec": 30.0,
+    "weighting": "natural",
+    "robust": 0.5,
+    "deconvolver": "hogbom",
+    "niter": 0,
+    "wterm": "none"
+  },
+  "run": {
+    "repeats": 3,
+    "run_label": "warm",
+    "storage_label": "script-staged-tempdir"
+  }
+}

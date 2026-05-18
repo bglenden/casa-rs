@@ -794,6 +794,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                                 &psf_state.psf,
                                 &scales,
                                 plane_request.small_scale_bias,
+                                plane_request.clean_mask.as_ref(),
                             )
                         });
                     let initial_peak =
@@ -1143,6 +1144,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                     &plane.psf_state.psf,
                     &scales,
                     plane.request.small_scale_bias,
+                    plane.request.clean_mask.as_ref(),
                 ));
             }
             if plane.request.deconvolver == Deconvolver::Clark {

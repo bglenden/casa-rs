@@ -17,11 +17,12 @@ use serde_json::Value as JsonValue;
 
 use crate::simulation::{
     SyntheticAntenna, SyntheticBandpassCorruption, SyntheticBandpassMode,
-    SyntheticCorruptionConfig, SyntheticGainCorruption, SyntheticGainMode,
+    SyntheticCorruptionConfig, SyntheticField, SyntheticGainCorruption, SyntheticGainMode,
     SyntheticNoiseCorruption, SyntheticNoiseMode, SyntheticObservationReport,
     SyntheticObservationRequest, SyntheticPointingCorruption,
     SyntheticPolarizationLeakageCorruption, SyntheticPolarizationLeakageMode,
     SyntheticSpectralSetup, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+    zenith_transit_phase_center_rad,
 };
 use crate::ui_schema::{
     UiActionKind, UiArgumentParser, UiArgumentSchema, UiCommandSchema, UiValueKind,
@@ -70,12 +71,21 @@ pub struct SimobserveRunTaskRequest {
     /// Replace an existing output MeasurementSet directory.
     #[serde(default)]
     pub overwrite: bool,
+    /// Telescope name written to `OBSERVATION`.
+    #[serde(default)]
+    pub telescope_name: Option<String>,
+    /// Single-field name used when `fields` is empty.
+    #[serde(default)]
+    pub field_name: Option<String>,
     /// Antenna configuration. Defaults to the CASA Guide VLA A configuration.
     #[serde(default)]
     pub antennas: Vec<SyntheticAntenna>,
     /// J2000 phase center `[right_ascension, declination]` in radians.
     #[serde(default)]
     pub phase_center_rad: Option<[f64; 2]>,
+    /// Optional multi-field target list. When empty, use the single phase center.
+    #[serde(default)]
+    pub fields: Vec<SyntheticField>,
     /// Observation start time in MJD seconds UTC.
     #[serde(default)]
     pub start_time_mjd_seconds: Option<f64>,
@@ -85,6 +95,12 @@ pub struct SimobserveRunTaskRequest {
     /// Integration time in seconds.
     #[serde(default)]
     pub integration_seconds: Option<f64>,
+    /// Minimum antenna elevation in radians for scheduled samples and flags.
+    #[serde(default)]
+    pub elevation_limit_rad: Option<f64>,
+    /// Permit continuous tracks that include samples below the elevation limit.
+    #[serde(default)]
+    pub allow_below_elevation_limit: bool,
     /// Spectral-window setup. Defaults to the VLA ppdisk tutorial frequency.
     #[serde(default)]
     pub spectral_setup: Option<SyntheticSpectralSetup>,
@@ -108,9 +124,13 @@ impl SimobserveRunTaskRequest {
             SyntheticObservationRequest::vla_ppdisk(&self.model_image, &self.output_ms, antennas);
         request.model_peak_jy_per_pixel = self.model_peak_jy_per_pixel;
         request.overwrite = self.overwrite;
-        if let Some(phase_center_rad) = self.phase_center_rad {
-            request.phase_center_rad = phase_center_rad;
+        if let Some(telescope_name) = &self.telescope_name {
+            request.telescope_name = telescope_name.clone();
         }
+        if let Some(field_name) = &self.field_name {
+            request.field_name = field_name.clone();
+        }
+        request.fields = self.fields.clone();
         if let Some(start_time_mjd_seconds) = self.start_time_mjd_seconds {
             request.start_time_mjd_seconds = start_time_mjd_seconds;
         }
@@ -119,6 +139,20 @@ impl SimobserveRunTaskRequest {
         }
         if let Some(integration_seconds) = self.integration_seconds {
             request.integration_seconds = integration_seconds;
+        }
+        if let Some(elevation_limit_rad) = self.elevation_limit_rad {
+            request.elevation_limit_rad = elevation_limit_rad;
+        }
+        request.allow_below_elevation_limit = self.allow_below_elevation_limit;
+        if let Some(phase_center_rad) = self.phase_center_rad {
+            request.phase_center_rad = phase_center_rad;
+        } else if request.fields.is_empty() {
+            request.phase_center_rad = zenith_transit_phase_center_rad(
+                &request.telescope_name,
+                &request.antennas,
+                request.start_time_mjd_seconds,
+            )
+            .unwrap_or(request.phase_center_rad);
         }
         if let Some(spectral_setup) = &self.spectral_setup {
             request.spectral_setup = spectral_setup.clone();
@@ -592,6 +626,7 @@ fn request_from_cli_args(args: &[std::ffi::OsString]) -> Result<SimobserveRunTas
     let model_peak_jy_per_pixel = optional_f32(args, "--inbright-jy-per-pixel")?.or(Some(3.0e-5));
     let duration_seconds = optional_f64(args, "--duration")?;
     let integration_seconds = optional_f64(args, "--integration")?;
+    let elevation_limit_rad = optional_f64(args, "--elevation-limit-deg")?.map(f64::to_radians);
     let start_frequency_hz = optional_f64(args, "--start-frequency-hz")?.unwrap_or(44.0e9);
     let channel_width_hz = optional_f64(args, "--channel-width-hz")?.unwrap_or(128.0e6);
     let channel_count = optional_usize(args, "--channels")?.unwrap_or(1);
@@ -601,11 +636,16 @@ fn request_from_cli_args(args: &[std::ffi::OsString]) -> Result<SimobserveRunTas
         model_peak_jy_per_pixel,
         output_ms,
         overwrite: has_flag(args, "--overwrite"),
+        telescope_name: optional_string(args, "--telescope"),
+        field_name: optional_string(args, "--field-name"),
         antennas: Vec::new(),
         phase_center_rad: None,
+        fields: Vec::new(),
         start_time_mjd_seconds: None,
         duration_seconds,
         integration_seconds,
+        elevation_limit_rad,
+        allow_below_elevation_limit: has_flag(args, "--allow-below-elevation-limit"),
         spectral_setup: Some(SyntheticSpectralSetup {
             name: "band1".to_string(),
             start_frequency_hz,
@@ -992,6 +1032,8 @@ mod tests {
                 "2.5",
                 "--pointing-offset-dec-arcsec",
                 "-1.5",
+                "--elevation-limit-deg",
+                "25",
             ]
             .iter()
             .map(std::ffi::OsString::from)
@@ -1020,5 +1062,25 @@ mod tests {
         assert!(pointing.apply_pointing_offsets);
         assert!(pointing.offset_rad[0] > 0.0);
         assert!(pointing.offset_rad[1] < 0.0);
+        assert!((request.elevation_limit_rad.unwrap().to_degrees() - 25.0).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn cli_parses_below_elevation_override() {
+        let request = request_from_cli_args(
+            &[
+                "--model",
+                "model.fits",
+                "--out",
+                "out.ms",
+                "--allow-below-elevation-limit",
+            ]
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>(),
+        )
+        .expect("parse simobserve cli request");
+
+        assert!(request.allow_below_elevation_limit);
     }
 }

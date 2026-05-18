@@ -457,6 +457,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
                 mask_image = Some(PathBuf::from(next_value(&mut args, "--mask-image")?))
             }
             "--wterm" => w_term_mode = parse_w_term_mode(&next_value(&mut args, "--wterm")?)?,
+            "--gridder" => {
+                w_term_mode = parse_gridder_w_term_mode(&next_value(&mut args, "--gridder")?)?
+            }
             "--wprojplanes" => w_project_planes = Some(parse_next(&mut args, "--wprojplanes")?),
             "--dirty-only" => dirty_only = true,
             "--repeats" => repeats = parse_next(&mut args, "--repeats")?,
@@ -560,6 +563,20 @@ fn parse_w_term_mode(text: &str) -> Result<WTermMode, String> {
         "wproject" => Ok(WTermMode::WProject),
         _ => Err(format!(
             "unsupported --wterm value {text:?}; expected none, direct, or wproject"
+        )),
+    }
+}
+
+fn parse_gridder_w_term_mode(text: &str) -> Result<WTermMode, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "standard" | "gridft" | "ft" | "mosaic" => Ok(WTermMode::None),
+        "wproject" => Ok(WTermMode::WProject),
+        "widefield" | "awproject" | "awp2" | "awphpg" => Err(format!(
+            "gridder={text:?} is not implemented by casa-rs imager yet; \
+             supported gridder values are standard, wproject, and mosaic"
+        )),
+        _ => Err(format!(
+            "unsupported --gridder value {text:?}; expected standard, wproject, widefield, mosaic, awproject, awp2, or awphpg"
         )),
     }
 }
@@ -670,6 +687,7 @@ Options:
   --mask-box X0,Y0,X1,Y1
   --mask-image PATH
   --wterm none|direct|wproject
+  --gridder standard|mosaic|wproject
   --wprojplanes N
   --dirty-only
   --repeats N

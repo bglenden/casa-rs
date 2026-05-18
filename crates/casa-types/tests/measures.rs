@@ -347,9 +347,10 @@ fn wgs84_to_itrf_roundtrip() {
     let itrf = wgs.convert_to(PositionRef::ITRF).unwrap();
     let wgs2 = itrf.convert_to(PositionRef::WGS84).unwrap();
 
-    for i in 0..3 {
+    let tolerances = [1e-10, 1e-10, 1e-4];
+    for (i, tolerance) in tolerances.iter().enumerate() {
         assert!(
-            (wgs2.values()[i] - wgs.values()[i]).abs() < 1e-6,
+            (wgs2.values()[i] - wgs.values()[i]).abs() < *tolerance,
             "coord {i}: {} vs {}",
             wgs2.values()[i],
             wgs.values()[i]

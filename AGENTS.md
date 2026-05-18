@@ -105,6 +105,9 @@ Use `Closes #N` only for issues that should auto-close on merge.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task/tool/library path first and preserve its semantics
   unless there is an explicit reason to diverge.
+- When investigating parity or correctness differences against CASA/casacore
+  C++, favor targeted instrumentation of both implementations over blind
+  parameter experiments or speculative fixes.
 - Use the shared least-squares helper and its well-exercised linear algebra
   backend for polynomial or linear least-squares solves; do not add ad hoc
   normal-equation or Gaussian-elimination solvers.

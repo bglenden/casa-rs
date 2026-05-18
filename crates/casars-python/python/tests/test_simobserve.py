@@ -63,6 +63,12 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
         "ppdisk.fits",
         "ppdisk.ms",
         overwrite=True,
+        telescope_name="ALMA",
+        field_name="science",
+        fields=[
+            {"name": "mosaic_0", "phase_center_rad": [1.0, -0.5]},
+            {"name": "mosaic_1", "phase_center_rad": [1.0001, -0.5]},
+        ],
         model_peak_jy_per_pixel=3.0e-5,
         phase_center_rad=(1.0, -0.5),
         duration_seconds=30.0,
@@ -94,6 +100,10 @@ def test_wrapper_encodes_pythonic_arguments(tmp_path: Path) -> None:
     assert request["model_peak_jy_per_pixel"] == 3.0e-5
     assert request["output_ms"] == "ppdisk.ms"
     assert request["overwrite"] is True
+    assert request["telescope_name"] == "ALMA"
+    assert request["field_name"] == "science"
+    assert request["fields"][1]["name"] == "mosaic_1"
+    assert request["fields"][1]["phase_center_rad"] == [1.0001, -0.5]
     assert request["phase_center_rad"] == [1.0, -0.5]
     assert request["duration_seconds"] == 30.0
     assert request["integration_seconds"] == 10.0

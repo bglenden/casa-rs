@@ -36,8 +36,75 @@ const FLAG_COLUMN: &str = "FLAG";
 const FLAG_ROW_COLUMN: &str = "FLAG_ROW";
 const FLAG_VERSION_LIST: &str = "FLAG_VERSION_LIST";
 const CLIP_SCAN_CHUNK_ROWS: usize = 4096;
+const CASA_SIMOBSERVE_SHADOW_FRACTION_LIMIT: f64 = 1.0e-6;
 type FlagSampleKey = (usize, usize, usize);
 type FlagSampleSet = HashSet<FlagSampleKey>;
+
+pub(crate) fn shadowed_antennas_from_projected_baselines<I>(
+    antenna_count: usize,
+    baselines: I,
+) -> Vec<bool>
+where
+    I: IntoIterator<Item = (usize, usize, [f64; 3], f64, f64)>,
+{
+    let mut shadowed = vec![false; antenna_count];
+    for (antenna1, antenna2, uvw_m, diameter1_m, diameter2_m) in baselines {
+        if antenna1 == antenna2 || antenna1 >= antenna_count || antenna2 >= antenna_count {
+            continue;
+        }
+        let (fraction1, fraction2) =
+            casa_projected_blockage_fractions(uvw_m, diameter1_m, diameter2_m);
+        if fraction1 > CASA_SIMOBSERVE_SHADOW_FRACTION_LIMIT {
+            shadowed[antenna1] = true;
+        }
+        if fraction2 > CASA_SIMOBSERVE_SHADOW_FRACTION_LIMIT {
+            shadowed[antenna2] = true;
+        }
+    }
+    shadowed
+}
+
+fn casa_projected_blockage_fractions(
+    uvw_m: [f64; 3],
+    diameter1_m: f64,
+    diameter2_m: f64,
+) -> (f64, f64) {
+    let separation = (uvw_m[0] * uvw_m[0] + uvw_m[1] * uvw_m[1]).sqrt();
+    let diameter1 = diameter1_m.abs();
+    let diameter2 = diameter2_m.abs();
+    let rmin = 0.5 * diameter1.min(diameter2);
+    let rmax = 0.5 * diameter1.max(diameter2);
+    let (mut fraction1, mut fraction2) = if separation >= rmin + rmax {
+        (0.0, 0.0)
+    } else if separation + rmin <= rmax {
+        (
+            1.0_f64.min((diameter2 / diameter1).powi(2)),
+            1.0_f64.min((diameter1 / diameter2).powi(2)),
+        )
+    } else {
+        let c = separation / (0.5 * diameter1);
+        let s = diameter2 / diameter1;
+        let sinb = (2.0 * ((c * s).powi(2) + c.powi(2) + s.powi(2)) - c.powi(4) - s.powi(4) - 1.0)
+            .sqrt()
+            / (2.0 * c);
+        let sinb = sinb.min(1.0);
+        let sina = (sinb / s).min(1.0);
+        let b = sinb.asin();
+        let a = sina.asin();
+        let area = (s.powi(2) * a + b) - (s.powi(2) * sina * a.cos() + sinb * b.cos());
+        let fraction1 = area / std::f64::consts::PI;
+        let fraction2 = fraction1 / s.powi(2);
+        (fraction1, fraction2)
+    };
+
+    if uvw_m[2] > 0.0 {
+        fraction2 = 0.0;
+    }
+    if uvw_m[2] < 0.0 {
+        fraction1 = 0.0;
+    }
+    (fraction1, fraction2)
+}
 
 /// Input visibility column used by automatic flagging modes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -3017,6 +3084,34 @@ mod tests {
             ant1: 0,
             ant2: 1,
         }
+    }
+
+    #[test]
+    fn shadowed_antennas_follow_casa_projected_baseline_rule() {
+        let shadowed = shadowed_antennas_from_projected_baselines(
+            3,
+            [
+                (0, 1, [10.0, 0.0, 1.0], 25.0, 25.0),
+                (0, 2, [100.0, 0.0, -1.0], 25.0, 25.0),
+                (1, 2, [10.0, 0.0, -1.0], 25.0, 25.0),
+            ],
+        );
+
+        assert_eq!(shadowed, vec![true, false, true]);
+    }
+
+    #[test]
+    fn shadowed_antennas_respect_casa_fractional_blockage_limit() {
+        let (fraction1, fraction2) =
+            casa_projected_blockage_fractions([24.999, 0.0, 1.0], 25.0, 25.0);
+        assert!(fraction1 > 0.0);
+        assert!(fraction1 < CASA_SIMOBSERVE_SHADOW_FRACTION_LIMIT);
+        assert_eq!(fraction2, 0.0);
+
+        let shadowed =
+            shadowed_antennas_from_projected_baselines(2, [(0, 1, [24.999, 0.0, 1.0], 25.0, 25.0)]);
+
+        assert_eq!(shadowed, vec![false, false]);
     }
 
     #[test]

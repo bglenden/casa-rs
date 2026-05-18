@@ -59,7 +59,7 @@ pub(crate) struct StandardGridder {
 
 impl StandardGridder {
     pub(crate) fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
-        Self::new_with_padding(geometry, padded_len)
+        Self::new_with_padding(geometry, casa_composite_padded_len)
     }
 
     pub(crate) fn new_unpadded(geometry: ImageGeometry) -> Result<Self, ImagingError> {
@@ -2282,6 +2282,16 @@ mod tests {
                 cpp_value.im
             );
         }
+    }
+
+    #[test]
+    fn standard_gridder_uses_casa_composite_grid_padding() {
+        let geometry = ImageGeometry {
+            image_shape: [512, 512],
+            cell_size_rad: [0.08 / 206_264.806_247, 0.08 / 206_264.806_247],
+        };
+        let gridder = StandardGridder::new(geometry).unwrap();
+        assert_eq!(gridder.grid_shape(), [640, 640]);
     }
 
     #[test]

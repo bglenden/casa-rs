@@ -7,28 +7,50 @@
 //! spectral window and field, sample the requested observing time range, and
 //! write CASA-compatible MS subtables plus uncorrupted visibility rows.
 
-use std::fs;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-
-use casa_coordinates::{Coordinate, DirectionCoordinate, Projection, ProjectionType};
+use casa_coordinates::fits::{FitsHeader, from_fits_header};
+use casa_coordinates::{
+    Coordinate, CoordinateSystem, CoordinateType, DirectionCoordinate, Projection, ProjectionType,
+};
 use casa_imaging::{
     ImageGeometry, PrimaryBeamModel, StandardMfsModelPredictor, primary_beam_voltage_pattern,
+};
+use casa_tables::{
+    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column,
+    StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer,
+    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_complex32_column,
+    install_streamed_tiled_shape_primitive_column,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
+use libm::j1;
 use ndarray::{Array2, ArrayD};
 use num_complex::Complex32;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::column_def::{ColumnDef, ColumnKind};
 use crate::error::{MsError, MsResult};
+use crate::flagging::shadowed_antennas_from_projected_baselines;
 use crate::schema::{self, SubtableId};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
+
+const DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD: f64 = 20.0_f64.to_radians();
+const DEFAULT_SIMOBSERVE_IO_QUEUE_DEPTH: usize = 16;
+const SIDEREAL_DAY_SECONDS: f64 = 86_164.090_5;
+
+fn default_simobserve_elevation_limit_rad() -> f64 {
+    DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD
+}
 
 /// Antenna configuration row for a synthetic observation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -53,6 +75,15 @@ impl SyntheticAntenna {
             dish_diameter_m: 25.0,
         }
     }
+}
+
+/// One synthetic target field or mosaic pointing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticField {
+    /// Field/source name.
+    pub name: String,
+    /// J2000 phase center `[right_ascension, declination]` in radians.
+    pub phase_center_rad: [f64; 2],
 }
 
 /// Return the CASA Guide VLA A-configuration antenna list used by the
@@ -270,6 +301,10 @@ impl SyntheticSpectralSetup {
     fn total_bandwidth_hz(&self) -> f64 {
         self.channel_width_hz.abs() * self.channel_count as f64
     }
+
+    fn reference_frequency_hz(&self) -> f64 {
+        self.start_frequency_hz + (self.channel_count / 2) as f64 * self.channel_width_hz
+    }
 }
 
 /// Request for generating a synthetic MeasurementSet.
@@ -295,12 +330,25 @@ pub struct SyntheticObservationRequest {
     pub field_name: String,
     /// J2000 phase center `[right_ascension, declination]` in radians.
     pub phase_center_rad: [f64; 2],
+    /// Optional multi-field target list. When empty, `field_name` and
+    /// `phase_center_rad` define a single-field observation.
+    #[serde(default)]
+    pub fields: Vec<SyntheticField>,
     /// Observation start time in MJD seconds UTC.
     pub start_time_mjd_seconds: f64,
     /// Requested on-source duration in seconds.
     pub duration_seconds: f64,
     /// Integration time in seconds.
     pub integration_seconds: f64,
+    /// Minimum antenna elevation in radians for scheduled samples and flags.
+    #[serde(default = "default_simobserve_elevation_limit_rad")]
+    pub elevation_limit_rad: f64,
+    /// Permit continuous tracks that include samples below the elevation limit.
+    ///
+    /// When false, the simulator schedules as many above-elevation transit
+    /// sessions as needed to accumulate the requested on-source duration.
+    #[serde(default)]
+    pub allow_below_elevation_limit: bool,
     /// Antenna configuration.
     pub antennas: Vec<SyntheticAntenna>,
     /// Spectral-window setup.
@@ -329,9 +377,12 @@ impl SyntheticObservationRequest {
             observer: "casa-rs".to_string(),
             field_name: "ppdisk".to_string(),
             phase_center_rad: [4.712_391_234_768_306, -0.401_423_788_703_971_4],
+            fields: Vec::new(),
             start_time_mjd_seconds: 4_895_229_577.784_943,
             duration_seconds: 3_600.0,
             integration_seconds: 2.0,
+            elevation_limit_rad: default_simobserve_elevation_limit_rad(),
+            allow_below_elevation_limit: false,
             antennas,
             spectral_setup: SyntheticSpectralSetup {
                 name: "Qband".to_string(),
@@ -493,19 +544,112 @@ pub struct SyntheticObservationReport {
     pub channel_count: usize,
     /// Number of complex visibility cells with non-zero predicted model values.
     pub nonzero_visibility_count: usize,
+    /// Number of MAIN rows whose `FLAG_ROW` is true.
+    #[serde(default)]
+    pub flagged_row_count: usize,
+    /// Number of MAIN rows flagged because one or both antennas were below the
+    /// elevation limit.
+    #[serde(default)]
+    pub elevation_flagged_row_count: usize,
+    /// Number of MAIN rows flagged because one or both antennas were shadowed.
+    #[serde(default)]
+    pub shadow_flagged_row_count: usize,
     /// Names of corruption effects applied to `MAIN.DATA`.
     pub applied_corruptions: Vec<String>,
+    /// Wall-clock timing breakdown for the native generator.
+    pub timing: SyntheticObservationTimingReport,
+}
+
+/// Wall-clock timing breakdown for one synthetic observation generation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticObservationTimingReport {
+    /// Request validation time.
+    pub validate_millis: u128,
+    /// Existing-output removal and MeasurementSet creation time.
+    pub setup_millis: u128,
+    /// Static metadata subtable write time before MAIN rows.
+    pub metadata_millis: u128,
+    /// FITS model read and predictor preparation time.
+    pub model_prepare_millis: u128,
+    /// MAIN-row generation and writeback timing.
+    pub main_rows: SyntheticMainRowTimingReport,
+    /// MeasurementSet save time.
+    pub save_millis: u128,
+    /// End-to-end generation time inside the native library call.
+    pub total_millis: u128,
+}
+
+/// MAIN table timing breakdown for one synthetic observation generation.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticMainRowTimingReport {
+    /// Number of channel prediction workers selected for each time sample.
+    pub channel_prediction_workers: usize,
+    /// Time spent computing UVW coordinates and row identities.
+    pub uvw_and_row_setup_millis: u128,
+    /// Time spent predicting model visibilities across channels.
+    pub prediction_millis: u128,
+    /// Wall-clock time spent inside prediction worker scopes.
+    #[serde(default)]
+    pub prediction_worker_wall_millis: u128,
+    /// Time spent gathering channel-worker chunks into full row arrays.
+    #[serde(default)]
+    pub prediction_gather_millis: u128,
+    /// Time spent applying deterministic corruption/noise.
+    pub corruption_millis: u128,
+    /// Time spent waiting to enqueue DATA row batches to the background writer.
+    #[serde(default)]
+    pub data_io_enqueue_millis: u128,
+    /// Time spent joining and finalizing the background DATA writer.
+    #[serde(default)]
+    pub data_io_finalize_millis: u128,
+    /// Time spent packing DATA rows into tiled storage buffers.
+    #[serde(default)]
+    pub data_io_assemble_millis: u128,
+    /// Time spent writing DATA tile buffers to disk.
+    #[serde(default)]
+    pub data_io_write_millis: u128,
+    /// Bytes written through the streamed tiled MAIN column writers.
+    #[serde(default)]
+    pub data_io_bytes: u64,
+    /// Per-column timing for the streamed tiled MAIN column writers.
+    #[serde(default)]
+    pub data_io_columns: Vec<SyntheticMainColumnIoTimingReport>,
+    /// Time spent constructing MAIN rows and appending them to the table.
+    pub main_write_millis: u128,
+    /// Time spent building scalar-column override vectors.
+    #[serde(default)]
+    pub scalar_column_millis: u128,
+    /// Time spent appending placeholder MAIN rows.
+    #[serde(default)]
+    pub main_row_add_millis: u128,
+}
+
+/// Per-column streamed MAIN table I/O timing.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SyntheticMainColumnIoTimingReport {
+    /// MAIN table column name.
+    pub column: String,
+    /// Time spent packing rows into tiled storage buffers.
+    pub assemble_millis: u128,
+    /// Time spent writing tile buffers to disk.
+    pub write_millis: u128,
+    /// Bytes written for this streamed column.
+    pub bytes_written: u64,
 }
 
 /// Generate an uncorrupted CASA-compatible synthetic MeasurementSet.
 ///
 /// The current implementation writes structurally complete MS metadata and can
-/// predict uncorrupted visibility samples from a single-plane FITS model image.
+/// predict uncorrupted visibility samples from a FITS model image.
 pub fn generate_synthetic_observation_ms(
     request: &SyntheticObservationRequest,
 ) -> MsResult<SyntheticObservationReport> {
+    let total_started = Instant::now();
+    let validate_started = Instant::now();
     validate_request(request)?;
+    let validate_millis = elapsed_millis(validate_started.elapsed());
 
+    let setup_started = Instant::now();
     if request.output_ms.exists() {
         if request.overwrite {
             fs::remove_dir_all(&request.output_ms).map_err(|error| {
@@ -526,33 +670,72 @@ pub fn generate_synthetic_observation_ms(
         &request.output_ms,
         MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
     )?;
+    fs::create_dir_all(&request.output_ms).map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to create output MeasurementSet directory {}: {error}",
+            request.output_ms.display()
+        ))
+    })?;
+    let setup_millis = elapsed_millis(setup_started.elapsed());
 
+    let time_sample_count =
+        time_sample_count(request.duration_seconds, request.integration_seconds);
+    let sample_times = observation_sample_times(request, time_sample_count)?;
+
+    let metadata_started = Instant::now();
     populate_antennas(&mut ms, &request.antennas)?;
     populate_field(&mut ms, request)?;
+    populate_pointing(&mut ms, request)?;
     populate_spectral_window(&mut ms, &request.spectral_setup)?;
     populate_polarization(&mut ms)?;
     populate_data_description(&mut ms)?;
     populate_state(&mut ms)?;
     populate_processor(&mut ms)?;
     populate_feed(&mut ms, request)?;
-    populate_observation(&mut ms, request)?;
+    populate_observation(&mut ms, request, &sample_times)?;
     populate_history(&mut ms, request)?;
+    let metadata_millis = elapsed_millis(metadata_started.elapsed());
 
-    let time_sample_count =
-        time_sample_count(request.duration_seconds, request.integration_seconds);
     let baseline_count = request.antennas.len() * (request.antennas.len() - 1) / 2;
+    let model_started = Instant::now();
     let model = if request.predict_model {
         Some(read_fits_model_image(
             &request.model_image,
             request.model_peak_jy_per_pixel,
+            request.spectral_setup.channel_count,
         )?)
     } else {
         None
     };
-    let nonzero_visibility_count =
-        populate_main_rows(&mut ms, request, time_sample_count, model.as_ref())?;
+    let model_prepare_millis = elapsed_millis(model_started.elapsed());
+    let mut main_column_writer = SimobserveMainColumnWriter::start(
+        &request.output_ms,
+        baseline_count * time_sample_count,
+        2,
+        request.spectral_setup.channel_count,
+        &request.telescope_name,
+    )?;
+    let mut main_rows = populate_main_rows(
+        &mut ms,
+        request,
+        &sample_times,
+        model.as_ref(),
+        &mut main_column_writer,
+    )?;
+    let data_io_finalize_started = Instant::now();
+    let streamed_main_columns = main_column_writer.finish()?;
+    main_rows.timing.data_io_finalize_millis = elapsed_millis(data_io_finalize_started.elapsed());
+    main_rows.timing.data_io_assemble_millis =
+        elapsed_seconds_to_millis(streamed_main_columns.assemble_seconds());
+    main_rows.timing.data_io_write_millis =
+        elapsed_seconds_to_millis(streamed_main_columns.write_seconds());
+    main_rows.timing.data_io_bytes = streamed_main_columns.bytes_written() as u64;
+    main_rows.timing.data_io_columns = streamed_main_columns.column_timing_reports();
 
-    ms.save()?;
+    let save_started = Instant::now();
+    ms.save_assuming_valid_with_main_column_overrides(&main_rows.scalar_column_overrides)?;
+    install_streamed_main_columns(ms.main_table(), &request.output_ms, streamed_main_columns)?;
+    let save_millis = elapsed_millis(save_started.elapsed());
 
     Ok(SyntheticObservationReport {
         output_ms: request.output_ms.clone(),
@@ -562,8 +745,20 @@ pub fn generate_synthetic_observation_ms(
         time_sample_count,
         main_row_count: baseline_count * time_sample_count,
         channel_count: request.spectral_setup.channel_count,
-        nonzero_visibility_count,
+        nonzero_visibility_count: main_rows.nonzero_visibility_count,
+        flagged_row_count: main_rows.flagged_row_count,
+        elevation_flagged_row_count: main_rows.elevation_flagged_row_count,
+        shadow_flagged_row_count: main_rows.shadow_flagged_row_count,
         applied_corruptions: applied_corruption_names(request.corruption.as_ref()),
+        timing: SyntheticObservationTimingReport {
+            validate_millis,
+            setup_millis,
+            metadata_millis,
+            model_prepare_millis,
+            main_rows: main_rows.timing,
+            save_millis,
+            total_millis: elapsed_millis(total_started.elapsed()),
+        },
     })
 }
 
@@ -633,6 +828,14 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
             "integration time must be positive".to_string(),
         ));
     }
+    if !request.elevation_limit_rad.is_finite()
+        || request.elevation_limit_rad <= -std::f64::consts::FRAC_PI_2
+        || request.elevation_limit_rad >= std::f64::consts::FRAC_PI_2
+    {
+        return Err(MsError::SyntheticObservation(
+            "elevation limit must be finite and between -90 and +90 degrees".to_string(),
+        ));
+    }
     if request
         .phase_center_rad
         .iter()
@@ -641,6 +844,28 @@ fn validate_request(request: &SyntheticObservationRequest) -> MsResult<()> {
         return Err(MsError::SyntheticObservation(
             "phase center coordinates must be finite".to_string(),
         ));
+    }
+    if request.field_name.trim().is_empty() && request.fields.is_empty() {
+        return Err(MsError::SyntheticObservation(
+            "field name must not be empty".to_string(),
+        ));
+    }
+    for field in &request.fields {
+        if field.name.trim().is_empty() {
+            return Err(MsError::SyntheticObservation(
+                "field names must not be empty".to_string(),
+            ));
+        }
+        if field
+            .phase_center_rad
+            .iter()
+            .any(|value| !value.is_finite())
+        {
+            return Err(MsError::SyntheticObservation(format!(
+                "field {} phase center coordinates must be finite",
+                field.name
+            )));
+        }
     }
     if let Some(corruption) = &request.corruption {
         validate_corruption(corruption)?;
@@ -797,25 +1022,69 @@ fn populate_antennas(ms: &mut MeasurementSet, antennas: &[SyntheticAntenna]) -> 
 }
 
 fn populate_field(ms: &mut MeasurementSet, request: &SyntheticObservationRequest) -> MsResult<()> {
-    let direction = Value::Array(ArrayValue::Float64(
-        ArrayD::from_shape_vec(vec![2, 1], request.phase_center_rad.to_vec()).unwrap(),
-    ));
-    let row = row_from_defs(
-        schema::field::REQUIRED_COLUMNS,
-        &[
-            ("NAME", s(&request.field_name)),
-            ("CODE", s("")),
-            ("NUM_POLY", i(0)),
-            ("DELAY_DIR", direction.clone()),
-            ("PHASE_DIR", direction.clone()),
-            ("REFERENCE_DIR", direction),
-            ("SOURCE_ID", i(-1)),
-            ("TIME", f(request.start_time_mjd_seconds)),
-            ("FLAG_ROW", b(false)),
-        ],
-    );
-    subtable_mut(ms, SubtableId::Field)?.add_row(row)?;
+    for field in effective_fields(request) {
+        let direction = direction_poly_array(field.phase_center_rad);
+        let row = row_from_defs(
+            schema::field::REQUIRED_COLUMNS,
+            &[
+                ("NAME", s(&field.name)),
+                ("CODE", s("")),
+                ("NUM_POLY", i(0)),
+                ("DELAY_DIR", direction.clone()),
+                ("PHASE_DIR", direction.clone()),
+                ("REFERENCE_DIR", direction),
+                ("SOURCE_ID", i(-1)),
+                ("TIME", f(request.start_time_mjd_seconds)),
+                ("FLAG_ROW", b(false)),
+            ],
+        );
+        subtable_mut(ms, SubtableId::Field)?.add_row(row)?;
+    }
     Ok(())
+}
+
+fn populate_pointing(
+    ms: &mut MeasurementSet,
+    request: &SyntheticObservationRequest,
+) -> MsResult<()> {
+    let time = request.start_time_mjd_seconds + 0.5 * request.duration_seconds;
+    for field in effective_fields(request) {
+        let direction = direction_poly_array(field.phase_center_rad);
+        for antenna_id in 0..request.antennas.len() {
+            let row = row_from_defs(
+                schema::pointing::REQUIRED_COLUMNS,
+                &[
+                    ("ANTENNA_ID", i(antenna_id as i32)),
+                    ("DIRECTION", direction.clone()),
+                    ("INTERVAL", f(request.duration_seconds)),
+                    ("NAME", s(&field.name)),
+                    ("NUM_POLY", i(0)),
+                    ("TARGET", direction.clone()),
+                    ("TIME", f(time)),
+                    ("TIME_ORIGIN", f(request.start_time_mjd_seconds)),
+                    ("TRACKING", b(true)),
+                ],
+            );
+            subtable_mut(ms, SubtableId::Pointing)?.add_row(row)?;
+        }
+    }
+    Ok(())
+}
+
+fn effective_fields(request: &SyntheticObservationRequest) -> Vec<SyntheticField> {
+    if request.fields.is_empty() {
+        return vec![SyntheticField {
+            name: request.field_name.clone(),
+            phase_center_rad: request.phase_center_rad,
+        }];
+    }
+    request.fields.clone()
+}
+
+fn direction_poly_array(direction_rad: [f64; 2]) -> Value {
+    Value::Array(ArrayValue::Float64(
+        ArrayD::from_shape_vec(vec![2, 1], direction_rad.to_vec()).unwrap(),
+    ))
 }
 
 fn populate_spectral_window(
@@ -829,7 +1098,7 @@ fn populate_spectral_window(
         &[
             ("NUM_CHAN", i(spectral_setup.channel_count as i32)),
             ("NAME", s(&spectral_setup.name)),
-            ("REF_FREQUENCY", f(spectral_setup.start_frequency_hz)),
+            ("REF_FREQUENCY", f(spectral_setup.reference_frequency_hz())),
             ("TOTAL_BANDWIDTH", f(spectral_setup.total_bandwidth_hz())),
             (
                 "CHAN_FREQ",
@@ -954,8 +1223,18 @@ fn populate_feed(ms: &mut MeasurementSet, request: &SyntheticObservationRequest)
 fn populate_observation(
     ms: &mut MeasurementSet,
     request: &SyntheticObservationRequest,
+    sample_times: &[f64],
 ) -> MsResult<()> {
-    let end_time = request.start_time_mjd_seconds + request.duration_seconds;
+    let first_time = sample_times
+        .first()
+        .copied()
+        .unwrap_or(request.start_time_mjd_seconds);
+    let last_time = sample_times
+        .last()
+        .copied()
+        .unwrap_or(request.start_time_mjd_seconds);
+    let start_time = first_time - 0.5 * request.integration_seconds;
+    let end_time = last_time + 0.5 * request.integration_seconds;
     let row = row_from_defs(
         schema::observation::REQUIRED_COLUMNS,
         &[
@@ -970,10 +1249,7 @@ fn populate_observation(
             ("SCHEDULE", string_array(&["synthetic"], vec![1])),
             ("SCHEDULE_TYPE", s("synthetic")),
             ("TELESCOPE_NAME", s(&request.telescope_name)),
-            (
-                "TIME_RANGE",
-                f64_array(&[request.start_time_mjd_seconds, end_time], vec![2]),
-            ),
+            ("TIME_RANGE", f64_array(&[start_time, end_time], vec![2])),
         ],
     );
     subtable_mut(ms, SubtableId::Observation)?.add_row(row)?;
@@ -1009,36 +1285,27 @@ fn populate_history(
 fn populate_main_rows(
     ms: &mut MeasurementSet,
     request: &SyntheticObservationRequest,
-    samples: usize,
+    sample_times: &[f64],
     model: Option<&FitsModelImage>,
-) -> MsResult<usize> {
+    main_column_writer: &mut SimobserveMainColumnWriter,
+) -> MsResult<MainRowsReport> {
+    let samples = sample_times.len();
     let num_corr = 2usize;
     let num_chan = request.spectral_setup.channel_count;
-    let flag = bool_array(&vec![false; num_corr * num_chan], vec![num_corr, num_chan]);
-    let flag_category = bool_array(
-        &vec![false; num_corr * num_chan],
-        vec![1, num_corr, num_chan],
-    );
-    let weight = f32_array(&vec![1.0; num_corr], vec![num_corr]);
-    let sigma = f32_array(&vec![1.0; num_corr], vec![num_corr]);
-    let main_defs = ms_main_defs(ms);
-    let predictors = model
-        .map(|model| {
-            build_channel_predictors(
-                model,
-                &request.spectral_setup,
-                request.phase_center_rad,
-                request
-                    .corruption
-                    .as_ref()
-                    .and_then(|corruption| corruption.pointing.as_ref())
-                    .filter(|pointing| pointing.apply_pointing_offsets)
-                    .map(|pointing| pointing.offset_rad)
-                    .unwrap_or([0.0, 0.0]),
-            )
-        })
-        .transpose()?;
-    let mut corruption = request.corruption.as_ref().map(|config| {
+    let channel_prediction_workers = simobserve_channel_worker_count(num_chan);
+    let template = MainRowTemplate {
+        flag_category: bool_array(&[], vec![0, num_corr, num_chan]),
+    };
+    let field_plan_started = Instant::now();
+    let field_plans = build_field_plans(request, model)?;
+    if trace_simobserve_setup() {
+        eprintln!(
+            "simobserve_setup_trace stage=field_plans fields={} total_millis={}",
+            field_plans.len(),
+            elapsed_millis(field_plan_started.elapsed())
+        );
+    }
+    let corruption = request.corruption.as_ref().map(|config| {
         SyntheticCorruptionState::new(
             config,
             request.antennas.len(),
@@ -1047,12 +1314,31 @@ fn populate_main_rows(
         )
     });
     let mut nonzero_visibility_count = 0usize;
+    let mut timing = MainRowTimingDurations {
+        channel_prediction_workers,
+        ..MainRowTimingDurations::default()
+    };
+    let baseline_count = request.antennas.len() * (request.antennas.len() - 1) / 2;
+    let mut scalar_column_overrides =
+        MainScalarColumnOverrides::with_capacity(samples * baseline_count);
+    let observatory = simulation_observatory_position(&request.telescope_name, &request.antennas);
+    let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
+    let uvw_production_trace = SimobserveUvwProductionTrace::from_env();
+    let mut flagged_row_count = 0usize;
+    let mut elevation_flagged_row_count = 0usize;
+    let mut shadow_flagged_row_count = 0usize;
 
-    for sample in 0..samples {
-        let time =
-            request.start_time_mjd_seconds + (sample as f64 + 0.5) * request.integration_seconds;
-        let antenna_uvws =
-            antenna_uvw_positions(&request.antennas, request.phase_center_rad, time)?;
+    for (sample, time) in sample_times.iter().copied().enumerate() {
+        let uvw_started = Instant::now();
+        let field_id = sample % field_plans.len();
+        let field_plan = &field_plans[field_id];
+        let antenna_uvws = antenna_uvw_positions(
+            &request.antennas,
+            field_plan.phase_center_rad,
+            time,
+            &observatory,
+        )?;
+        let mut row_specs = Vec::with_capacity(request.antennas.len() * request.antennas.len());
         for antenna1 in 0..request.antennas.len() {
             for antenna2 in (antenna1 + 1)..request.antennas.len() {
                 let uvw = [
@@ -1060,147 +1346,1156 @@ fn populate_main_rows(
                     antenna_uvws[antenna2][1] - antenna_uvws[antenna1][1],
                     antenna_uvws[antenna2][2] - antenna_uvws[antenna1][2],
                 ];
-                let mut data_values = predicted_data_values(
-                    predictors.as_ref(),
-                    &request.spectral_setup,
-                    uvw,
-                    num_corr,
-                );
-                if let Some(corruption) = corruption.as_mut() {
-                    corruption.apply(&mut data_values, antenna1, antenna2, num_chan, sample);
+                let row_number = sample * baseline_count + row_specs.len();
+                if uvw_production_trace
+                    .as_ref()
+                    .is_some_and(|trace| trace.matches(antenna1, antenna2, time))
+                {
+                    trace_simobserve_production_uvw(
+                        row_number,
+                        sample,
+                        antenna1,
+                        antenna2,
+                        time,
+                        field_plan.phase_center_rad,
+                        &observatory,
+                        &request.antennas,
+                        &antenna_uvws,
+                        uvw,
+                    );
                 }
-                nonzero_visibility_count += data_values
-                    .iter()
-                    .filter(|value| value.re != 0.0 || value.im != 0.0)
-                    .count();
-                let data = complex_array(&data_values, vec![num_corr, num_chan]);
-                let row = row_from_defs(
-                    &main_defs,
-                    &[
-                        ("ANTENNA1", i(antenna1 as i32)),
-                        ("ANTENNA2", i(antenna2 as i32)),
-                        ("ARRAY_ID", i(0)),
-                        ("DATA_DESC_ID", i(0)),
-                        ("EXPOSURE", f(request.integration_seconds)),
-                        ("FEED1", i(0)),
-                        ("FEED2", i(0)),
-                        ("FIELD_ID", i(0)),
-                        ("FLAG", flag.clone()),
-                        ("FLAG_CATEGORY", flag_category.clone()),
-                        ("FLAG_ROW", b(false)),
-                        ("INTERVAL", f(request.integration_seconds)),
-                        ("OBSERVATION_ID", i(0)),
-                        ("PROCESSOR_ID", i(0)),
-                        ("SCAN_NUMBER", i(1)),
-                        ("SIGMA", sigma.clone()),
-                        ("STATE_ID", i(0)),
-                        ("TIME", f(time)),
-                        ("TIME_CENTROID", f(time)),
-                        ("UVW", f64_array(&uvw, vec![3])),
-                        ("WEIGHT", weight.clone()),
-                        ("DATA", data.clone()),
-                    ],
-                );
-                ms.main_table_mut().add_row(row)?;
+                row_specs.push(MainRowVisibilitySpec {
+                    antenna1,
+                    antenna2,
+                    field_id,
+                    time,
+                    uvw,
+                });
             }
         }
+        let row_uvws = row_specs.iter().map(|spec| spec.uvw).collect::<Vec<_>>();
+        let shadowed_antennas = shadowed_antennas_for_rows(&row_specs, &request.antennas);
+        let low_elevation_antennas = antennas_below_elevation_limit(
+            field_plan.phase_center_rad,
+            time,
+            &request.antennas,
+            &observatory,
+            elevation_margin_rad,
+            request.elevation_limit_rad,
+        )?;
+        timing.uvw_and_row_setup += uvw_started.elapsed();
+
+        let prediction_started = Instant::now();
+        let prediction = predicted_data_values_for_rows_with_workers_timed(
+            field_plan.predictors.as_deref(),
+            &request.spectral_setup,
+            &row_uvws,
+            num_corr,
+            channel_prediction_workers,
+        );
+        let mut data_rows = prediction.rows;
+        timing.prediction_worker_wall += prediction.worker_wall;
+        timing.prediction_gather += prediction.gather;
+        timing.prediction += prediction_started.elapsed();
+        let corruption_started = Instant::now();
+        nonzero_visibility_count += apply_corruption_and_count_rows_with_workers(
+            corruption.as_ref(),
+            &row_specs,
+            &mut data_rows,
+            num_chan,
+            sample,
+        );
+        timing.corruption += corruption_started.elapsed();
+        let mut flag_rows = Vec::with_capacity(row_specs.len());
+        for spec in &row_specs {
+            let elevation_flagged =
+                low_elevation_antennas[spec.antenna1] || low_elevation_antennas[spec.antenna2];
+            let shadow_flagged =
+                shadowed_antennas[spec.antenna1] || shadowed_antennas[spec.antenna2];
+            elevation_flagged_row_count += usize::from(elevation_flagged);
+            shadow_flagged_row_count += usize::from(shadow_flagged);
+            flagged_row_count += usize::from(elevation_flagged || shadow_flagged);
+            flag_rows.push(elevation_flagged || shadow_flagged);
+        }
+        let uvw_rows = row_specs.iter().map(|spec| spec.uvw).collect::<Vec<_>>();
+        let data_io_started = Instant::now();
+        main_column_writer.send_batch(SimobserveMainColumnBatch {
+            data_rows,
+            flag_rows: flag_rows.clone(),
+            uvw_rows,
+        })?;
+        timing.data_io_enqueue += data_io_started.elapsed();
+        for (spec, shadowed_row) in row_specs.into_iter().zip(flag_rows) {
+            let write_started = Instant::now();
+            let scalar_started = Instant::now();
+            scalar_column_overrides.push(&spec, request.integration_seconds, shadowed_row);
+            timing.scalar_column += scalar_started.elapsed();
+            let row = RecordValue::new(vec![RecordField::new(
+                "FLAG_CATEGORY",
+                template.flag_category.clone(),
+            )]);
+            let row_add_started = Instant::now();
+            ms.main_table_mut().add_row_assuming_valid(row)?;
+            timing.main_row_add += row_add_started.elapsed();
+            timing.main_write += write_started.elapsed();
+        }
     }
-    Ok(nonzero_visibility_count)
+    Ok(MainRowsReport {
+        nonzero_visibility_count,
+        flagged_row_count,
+        elevation_flagged_row_count,
+        shadow_flagged_row_count,
+        timing: timing.into_report(),
+        scalar_column_overrides: scalar_column_overrides.into_column_overrides(),
+    })
+}
+
+fn shadowed_antennas_for_rows(
+    rows: &[MainRowVisibilitySpec],
+    antennas: &[SyntheticAntenna],
+) -> Vec<bool> {
+    shadowed_antennas_from_projected_baselines(
+        antennas.len(),
+        rows.iter().map(|spec| {
+            (
+                spec.antenna1,
+                spec.antenna2,
+                spec.uvw,
+                antennas[spec.antenna1].dish_diameter_m,
+                antennas[spec.antenna2].dish_diameter_m,
+            )
+        }),
+    )
+}
+
+fn antennas_below_elevation_limit(
+    phase_center_rad: [f64; 2],
+    time_mjd_seconds: f64,
+    antennas: &[SyntheticAntenna],
+    observatory: &MPosition,
+    elevation_margin_rad: f64,
+    elevation_limit_rad: f64,
+) -> MsResult<Vec<bool>> {
+    let observatory_elevation_rad =
+        field_elevation_rad(phase_center_rad, time_mjd_seconds, observatory)?;
+    if observatory_elevation_rad + elevation_margin_rad < elevation_limit_rad {
+        return Ok(vec![true; antennas.len()]);
+    }
+    if observatory_elevation_rad - elevation_margin_rad > elevation_limit_rad {
+        return Ok(vec![false; antennas.len()]);
+    }
+
+    antennas
+        .iter()
+        .map(|antenna| {
+            let position = MPosition::new_itrf(
+                antenna.position_m[0],
+                antenna.position_m[1],
+                antenna.position_m[2],
+            );
+            Ok(
+                field_elevation_rad(phase_center_rad, time_mjd_seconds, &position)?
+                    < elevation_limit_rad,
+            )
+        })
+        .collect()
+}
+
+fn antenna_elevation_margin_rad(antennas: &[SyntheticAntenna], observatory: &MPosition) -> f64 {
+    let observatory_itrf = observatory.as_itrf();
+    let observatory_radius_m = vector_norm(observatory_itrf);
+    if observatory_radius_m == 0.0 {
+        return 0.0;
+    }
+
+    antennas
+        .iter()
+        .map(|antenna| {
+            let offset = [
+                antenna.position_m[0] - observatory_itrf[0],
+                antenna.position_m[1] - observatory_itrf[1],
+                antenna.position_m[2] - observatory_itrf[2],
+            ];
+            vector_norm(offset) / observatory_radius_m
+        })
+        .fold(0.0_f64, f64::max)
+        + 1.0e-9
+}
+
+fn field_elevation_rad(
+    phase_center_rad: [f64; 2],
+    time_mjd_seconds: f64,
+    observatory: &MPosition,
+) -> MsResult<f64> {
+    let phase_center = MDirection::from_angles(
+        phase_center_rad[0],
+        phase_center_rad[1],
+        DirectionRef::J2000,
+    );
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd(time_mjd_seconds / 86_400.0, EpochRef::UT1))
+        .with_position(observatory.clone())
+        .with_direction(phase_center.clone())
+        .with_bundled_eop();
+    let azel = phase_center
+        .convert_to(DirectionRef::AZEL, &frame)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "simobserve elevation-limit direction conversion failed: {error}"
+            ))
+        })?;
+    Ok(azel.latitude_rad())
+}
+
+fn apply_corruption_and_count_rows_with_workers(
+    corruption: Option<&SyntheticCorruptionState>,
+    row_specs: &[MainRowVisibilitySpec],
+    data_rows: &mut [Vec<Complex32>],
+    channel_count: usize,
+    sample_index: usize,
+) -> usize {
+    let worker_count = simobserve_row_worker_count(data_rows.len(), channel_count);
+    if worker_count <= 1 {
+        return apply_corruption_and_count_rows(
+            corruption,
+            row_specs,
+            data_rows,
+            channel_count,
+            sample_index,
+        );
+    }
+
+    let chunk_size = data_rows.len().div_ceil(worker_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for (spec_chunk, data_chunk) in row_specs
+            .chunks(chunk_size)
+            .zip(data_rows.chunks_mut(chunk_size))
+        {
+            handles.push(scope.spawn(move || {
+                apply_corruption_and_count_rows(
+                    corruption,
+                    spec_chunk,
+                    data_chunk,
+                    channel_count,
+                    sample_index,
+                )
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("synthetic observation row worker should not panic")
+            })
+            .sum()
+    })
+}
+
+fn apply_corruption_and_count_rows(
+    corruption: Option<&SyntheticCorruptionState>,
+    row_specs: &[MainRowVisibilitySpec],
+    data_rows: &mut [Vec<Complex32>],
+    channel_count: usize,
+    sample_index: usize,
+) -> usize {
+    let mut nonzero_visibility_count = 0usize;
+    for (spec, data_values) in row_specs.iter().zip(data_rows.iter_mut()) {
+        if let Some(corruption) = corruption {
+            corruption.apply(
+                data_values,
+                spec.antenna1,
+                spec.antenna2,
+                channel_count,
+                sample_index,
+            );
+        }
+        nonzero_visibility_count += count_nonzero_complex(data_values);
+    }
+    nonzero_visibility_count
+}
+
+fn count_nonzero_complex(values: &[Complex32]) -> usize {
+    values
+        .iter()
+        .filter(|value| value.re != 0.0 || value.im != 0.0)
+        .count()
+}
+
+struct MainRowsReport {
+    nonzero_visibility_count: usize,
+    flagged_row_count: usize,
+    elevation_flagged_row_count: usize,
+    shadow_flagged_row_count: usize,
+    timing: SyntheticMainRowTimingReport,
+    scalar_column_overrides: HashMap<String, Vec<Option<Value>>>,
+}
+
+struct SimobserveMainColumnBatch {
+    data_rows: Vec<Vec<Complex32>>,
+    flag_rows: Vec<bool>,
+    uvw_rows: Vec<[f64; 3]>,
+}
+
+struct StreamedSimobserveMainColumns {
+    data: StreamedTiledShapeComplex32Column,
+    flag: StreamedTiledPrimitiveColumn,
+    uvw: StreamedTiledPrimitiveColumn,
+    weight: StreamedTiledPrimitiveColumn,
+    sigma: StreamedTiledPrimitiveColumn,
+}
+
+impl StreamedSimobserveMainColumns {
+    fn column_timing_reports(&self) -> Vec<SyntheticMainColumnIoTimingReport> {
+        vec![
+            self.column_timing_report(
+                "DATA",
+                self.data.assemble_seconds(),
+                self.data.write_seconds(),
+                self.data.bytes_written(),
+            ),
+            self.column_timing_report(
+                "FLAG",
+                self.flag.assemble_seconds(),
+                self.flag.write_seconds(),
+                self.flag.bytes_written(),
+            ),
+            self.column_timing_report(
+                "UVW",
+                self.uvw.assemble_seconds(),
+                self.uvw.write_seconds(),
+                self.uvw.bytes_written(),
+            ),
+            self.column_timing_report(
+                "WEIGHT",
+                self.weight.assemble_seconds(),
+                self.weight.write_seconds(),
+                self.weight.bytes_written(),
+            ),
+            self.column_timing_report(
+                "SIGMA",
+                self.sigma.assemble_seconds(),
+                self.sigma.write_seconds(),
+                self.sigma.bytes_written(),
+            ),
+        ]
+    }
+
+    fn column_timing_report(
+        &self,
+        column: &str,
+        assemble_seconds: f64,
+        write_seconds: f64,
+        bytes_written: usize,
+    ) -> SyntheticMainColumnIoTimingReport {
+        SyntheticMainColumnIoTimingReport {
+            column: column.to_string(),
+            assemble_millis: elapsed_seconds_to_millis(assemble_seconds),
+            write_millis: elapsed_seconds_to_millis(write_seconds),
+            bytes_written: bytes_written as u64,
+        }
+    }
+
+    fn assemble_seconds(&self) -> f64 {
+        self.data.assemble_seconds()
+            + self.flag.assemble_seconds()
+            + self.uvw.assemble_seconds()
+            + self.weight.assemble_seconds()
+            + self.sigma.assemble_seconds()
+    }
+
+    fn write_seconds(&self) -> f64 {
+        self.data.write_seconds()
+            + self.flag.write_seconds()
+            + self.uvw.write_seconds()
+            + self.weight.write_seconds()
+            + self.sigma.write_seconds()
+    }
+
+    fn bytes_written(&self) -> usize {
+        self.data.bytes_written()
+            + self.flag.bytes_written()
+            + self.uvw.bytes_written()
+            + self.weight.bytes_written()
+            + self.sigma.bytes_written()
+    }
+}
+
+struct SimobserveMainColumnWriter {
+    sender: mpsc::SyncSender<SimobserveMainColumnBatch>,
+    handle: thread::JoinHandle<MsResult<StreamedSimobserveMainColumns>>,
+}
+
+impl SimobserveMainColumnWriter {
+    fn start(
+        output_ms: &Path,
+        row_count: usize,
+        num_corr: usize,
+        num_chan: usize,
+        telescope_name: &str,
+    ) -> MsResult<Self> {
+        let visibility_tile_shape =
+            crate::ms::casa_visibility_tile_shape(num_corr, num_chan, telescope_name);
+        let weight_tile_shape = crate::ms::casa_weight_tile_shape(&visibility_tile_shape);
+        let uvw_tile_shape = crate::ms::casa_uvw_tile_shape(&visibility_tile_shape);
+
+        let data_writer = StreamingTiledShapeComplex32Writer::create(
+            output_ms.join(".casa-rs.DATA.table.f.tmp"),
+            row_count,
+            vec![num_corr, num_chan],
+            visibility_tile_shape.clone(),
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!("failed to create streamed DATA writer: {error}"))
+        })?;
+        let flag_writer = StreamingTiledPrimitiveWriter::create_shape(
+            output_ms.join(".casa-rs.FLAG.table.f.tmp"),
+            row_count,
+            vec![num_corr, num_chan],
+            visibility_tile_shape,
+            StreamedTiledPrimitiveType::Bool,
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!("failed to create streamed FLAG writer: {error}"))
+        })?;
+        let uvw_writer = StreamingTiledPrimitiveWriter::create_column(
+            output_ms.join(".casa-rs.UVW.table.f.tmp"),
+            row_count,
+            vec![3],
+            uvw_tile_shape,
+            StreamedTiledPrimitiveType::Float64,
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!("failed to create streamed UVW writer: {error}"))
+        })?;
+        let weight_writer = StreamingTiledPrimitiveWriter::create_shape(
+            output_ms.join(".casa-rs.WEIGHT.table.f.tmp"),
+            row_count,
+            vec![num_corr],
+            weight_tile_shape.clone(),
+            StreamedTiledPrimitiveType::Float32,
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to create streamed WEIGHT writer: {error}"
+            ))
+        })?;
+        let sigma_writer = StreamingTiledPrimitiveWriter::create_shape(
+            output_ms.join(".casa-rs.SIGMA.table.f.tmp"),
+            row_count,
+            vec![num_corr],
+            weight_tile_shape,
+            StreamedTiledPrimitiveType::Float32,
+            false,
+        )
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to create streamed SIGMA writer: {error}"
+            ))
+        })?;
+
+        let (sender, receiver) =
+            mpsc::sync_channel::<SimobserveMainColumnBatch>(simobserve_io_queue_depth());
+        let handle = thread::spawn(move || {
+            let mut data_writer = data_writer;
+            let mut flag_writer = flag_writer;
+            let mut uvw_writer = uvw_writer;
+            let mut weight_writer = weight_writer;
+            let mut sigma_writer = sigma_writer;
+            let weight_row = vec![1.0f32; num_corr];
+            let sigma_row = vec![1.0f32; num_corr];
+
+            for batch in receiver {
+                if batch.data_rows.len() != batch.flag_rows.len()
+                    || batch.data_rows.len() != batch.uvw_rows.len()
+                {
+                    return Err(MsError::SyntheticObservation(format!(
+                        "background MAIN column writer received inconsistent batch sizes: DATA={} FLAG={} UVW={}",
+                        batch.data_rows.len(),
+                        batch.flag_rows.len(),
+                        batch.uvw_rows.len()
+                    )));
+                }
+                for ((data_row, flag_row), uvw_row) in batch
+                    .data_rows
+                    .into_iter()
+                    .zip(batch.flag_rows)
+                    .zip(batch.uvw_rows)
+                {
+                    data_writer.push_row(&data_row).map_err(|error| {
+                        MsError::SyntheticObservation(format!(
+                            "failed to stream DATA row into tiled storage: {error}"
+                        ))
+                    })?;
+                    if flag_row {
+                        flag_writer.push_bool_fill_row(true).map_err(|error| {
+                            MsError::SyntheticObservation(format!(
+                                "failed to stream FLAG row into tiled storage: {error}"
+                            ))
+                        })?;
+                    } else {
+                        flag_writer.push_zero_row().map_err(|error| {
+                            MsError::SyntheticObservation(format!(
+                                "failed to stream empty FLAG row into tiled storage: {error}"
+                            ))
+                        })?;
+                    }
+                    uvw_writer.push_f64_row(&uvw_row).map_err(|error| {
+                        MsError::SyntheticObservation(format!(
+                            "failed to stream UVW row into tiled storage: {error}"
+                        ))
+                    })?;
+                    weight_writer.push_f32_row(&weight_row).map_err(|error| {
+                        MsError::SyntheticObservation(format!(
+                            "failed to stream WEIGHT row into tiled storage: {error}"
+                        ))
+                    })?;
+                    sigma_writer.push_f32_row(&sigma_row).map_err(|error| {
+                        MsError::SyntheticObservation(format!(
+                            "failed to stream SIGMA row into tiled storage: {error}"
+                        ))
+                    })?;
+                }
+            }
+            Ok(StreamedSimobserveMainColumns {
+                data: data_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed DATA writer: {error}"
+                    ))
+                })?,
+                flag: flag_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed FLAG writer: {error}"
+                    ))
+                })?,
+                uvw: uvw_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed UVW writer: {error}"
+                    ))
+                })?,
+                weight: weight_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed WEIGHT writer: {error}"
+                    ))
+                })?,
+                sigma: sigma_writer.finish().map_err(|error| {
+                    MsError::SyntheticObservation(format!(
+                        "failed to finalize streamed SIGMA writer: {error}"
+                    ))
+                })?,
+            })
+        });
+        Ok(Self { sender, handle })
+    }
+
+    fn send_batch(&self, batch: SimobserveMainColumnBatch) -> MsResult<()> {
+        self.sender.send(batch).map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "background MAIN column writer stopped before accepting rows: {error}"
+            ))
+        })
+    }
+
+    fn finish(self) -> MsResult<StreamedSimobserveMainColumns> {
+        drop(self.sender);
+        self.handle.join().map_err(|_| {
+            MsError::SyntheticObservation("background MAIN column writer panicked".to_string())
+        })?
+    }
+}
+
+fn install_streamed_main_columns(
+    main: &casa_tables::Table,
+    output_ms: &Path,
+    streamed: StreamedSimobserveMainColumns,
+) -> MsResult<()> {
+    let data_seq = data_manager_sequence(main, "DATA")?;
+    install_streamed_tiled_shape_complex32_column(output_ms, data_seq, "DATA", streamed.data)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to install streamed DATA column: {error}"
+            ))
+        })?;
+
+    let flag_seq = data_manager_sequence(main, "FLAG")?;
+    install_streamed_tiled_shape_primitive_column(output_ms, flag_seq, "FLAG", streamed.flag)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to install streamed FLAG column: {error}"
+            ))
+        })?;
+
+    let uvw_seq = data_manager_sequence(main, "UVW")?;
+    install_streamed_tiled_column_primitive_column(output_ms, uvw_seq, "UVW", streamed.uvw)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!("failed to install streamed UVW column: {error}"))
+        })?;
+
+    let weight_seq = data_manager_sequence(main, "WEIGHT")?;
+    install_streamed_tiled_shape_primitive_column(output_ms, weight_seq, "WEIGHT", streamed.weight)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to install streamed WEIGHT column: {error}"
+            ))
+        })?;
+
+    let sigma_seq = data_manager_sequence(main, "SIGMA")?;
+    install_streamed_tiled_shape_primitive_column(output_ms, sigma_seq, "SIGMA", streamed.sigma)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to install streamed SIGMA column: {error}"
+            ))
+        })?;
+
+    Ok(())
+}
+
+fn data_manager_sequence(main: &casa_tables::Table, column: &str) -> MsResult<u32> {
+    crate::ms::measurement_set_main_data_manager_sequence(main, column).ok_or_else(|| {
+        MsError::SyntheticObservation(format!(
+            "could not resolve {column} data-manager sequence for streamed install"
+        ))
+    })
+}
+
+fn simobserve_io_queue_depth() -> usize {
+    std::env::var("CASA_RS_SIMOBSERVE_IO_QUEUE_DEPTH")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SIMOBSERVE_IO_QUEUE_DEPTH)
+}
+
+struct MainScalarColumnOverrides {
+    antenna1: Vec<Option<Value>>,
+    antenna2: Vec<Option<Value>>,
+    array_id: Vec<Option<Value>>,
+    data_desc_id: Vec<Option<Value>>,
+    exposure: Vec<Option<Value>>,
+    feed1: Vec<Option<Value>>,
+    feed2: Vec<Option<Value>>,
+    field_id: Vec<Option<Value>>,
+    flag_row: Vec<Option<Value>>,
+    interval: Vec<Option<Value>>,
+    observation_id: Vec<Option<Value>>,
+    processor_id: Vec<Option<Value>>,
+    scan_number: Vec<Option<Value>>,
+    state_id: Vec<Option<Value>>,
+    time: Vec<Option<Value>>,
+    time_centroid: Vec<Option<Value>>,
+}
+
+impl MainScalarColumnOverrides {
+    fn with_capacity(row_count: usize) -> Self {
+        Self {
+            antenna1: Vec::with_capacity(row_count),
+            antenna2: Vec::with_capacity(row_count),
+            array_id: Vec::with_capacity(row_count),
+            data_desc_id: Vec::with_capacity(row_count),
+            exposure: Vec::with_capacity(row_count),
+            feed1: Vec::with_capacity(row_count),
+            feed2: Vec::with_capacity(row_count),
+            field_id: Vec::with_capacity(row_count),
+            flag_row: Vec::with_capacity(row_count),
+            interval: Vec::with_capacity(row_count),
+            observation_id: Vec::with_capacity(row_count),
+            processor_id: Vec::with_capacity(row_count),
+            scan_number: Vec::with_capacity(row_count),
+            state_id: Vec::with_capacity(row_count),
+            time: Vec::with_capacity(row_count),
+            time_centroid: Vec::with_capacity(row_count),
+        }
+    }
+
+    fn push(&mut self, spec: &MainRowVisibilitySpec, integration_seconds: f64, flag_row: bool) {
+        self.antenna1.push(Some(i(spec.antenna1 as i32)));
+        self.antenna2.push(Some(i(spec.antenna2 as i32)));
+        self.array_id.push(Some(i(0)));
+        self.data_desc_id.push(Some(i(0)));
+        self.exposure.push(Some(f(integration_seconds)));
+        self.feed1.push(Some(i(0)));
+        self.feed2.push(Some(i(0)));
+        self.field_id.push(Some(i(spec.field_id as i32)));
+        self.flag_row.push(Some(b(flag_row)));
+        self.interval.push(Some(f(integration_seconds)));
+        self.observation_id.push(Some(i(0)));
+        self.processor_id.push(Some(i(0)));
+        self.scan_number.push(Some(i(1)));
+        self.state_id.push(Some(i(0)));
+        self.time.push(Some(f(spec.time)));
+        self.time_centroid.push(Some(f(spec.time)));
+    }
+
+    fn into_column_overrides(self) -> HashMap<String, Vec<Option<Value>>> {
+        HashMap::from([
+            ("ANTENNA1".to_string(), self.antenna1),
+            ("ANTENNA2".to_string(), self.antenna2),
+            ("ARRAY_ID".to_string(), self.array_id),
+            ("DATA_DESC_ID".to_string(), self.data_desc_id),
+            ("EXPOSURE".to_string(), self.exposure),
+            ("FEED1".to_string(), self.feed1),
+            ("FEED2".to_string(), self.feed2),
+            ("FIELD_ID".to_string(), self.field_id),
+            ("FLAG_ROW".to_string(), self.flag_row),
+            ("INTERVAL".to_string(), self.interval),
+            ("OBSERVATION_ID".to_string(), self.observation_id),
+            ("PROCESSOR_ID".to_string(), self.processor_id),
+            ("SCAN_NUMBER".to_string(), self.scan_number),
+            ("STATE_ID".to_string(), self.state_id),
+            ("TIME".to_string(), self.time),
+            ("TIME_CENTROID".to_string(), self.time_centroid),
+        ])
+    }
+}
+
+#[derive(Default)]
+struct MainRowTimingDurations {
+    channel_prediction_workers: usize,
+    uvw_and_row_setup: Duration,
+    prediction: Duration,
+    prediction_worker_wall: Duration,
+    prediction_gather: Duration,
+    corruption: Duration,
+    data_io_enqueue: Duration,
+    main_write: Duration,
+    scalar_column: Duration,
+    main_row_add: Duration,
+}
+
+impl MainRowTimingDurations {
+    fn into_report(self) -> SyntheticMainRowTimingReport {
+        SyntheticMainRowTimingReport {
+            channel_prediction_workers: self.channel_prediction_workers,
+            uvw_and_row_setup_millis: elapsed_millis(self.uvw_and_row_setup),
+            prediction_millis: elapsed_millis(self.prediction),
+            prediction_worker_wall_millis: elapsed_millis(self.prediction_worker_wall),
+            prediction_gather_millis: elapsed_millis(self.prediction_gather),
+            corruption_millis: elapsed_millis(self.corruption),
+            data_io_enqueue_millis: elapsed_millis(self.data_io_enqueue),
+            data_io_finalize_millis: 0,
+            data_io_assemble_millis: 0,
+            data_io_write_millis: 0,
+            data_io_bytes: 0,
+            data_io_columns: Vec::new(),
+            main_write_millis: elapsed_millis(self.main_write),
+            scalar_column_millis: elapsed_millis(self.scalar_column),
+            main_row_add_millis: elapsed_millis(self.main_row_add),
+        }
+    }
+}
+
+fn elapsed_seconds_to_millis(seconds: f64) -> u128 {
+    (seconds * 1000.0).round() as u128
+}
+
+#[derive(Clone)]
+struct MainRowTemplate {
+    flag_category: Value,
+}
+
+#[derive(Clone, Copy)]
+struct MainRowVisibilitySpec {
+    antenna1: usize,
+    antenna2: usize,
+    field_id: usize,
+    time: f64,
+    uvw: [f64; 3],
 }
 
 #[derive(Debug, Clone)]
 struct FitsModelImage {
     pixels: Array2<f32>,
+    channel_planes: Vec<Array2<f32>>,
     cell_size_rad: [f64; 2],
+    direction_wcs: Option<FitsModelDirectionWcs>,
+    ra_axis_increases_with_x: bool,
     reference_direction_rad: Option<[f64; 2]>,
+}
+
+impl FitsModelImage {
+    fn pixels_for_channel(&self, channel: usize) -> &Array2<f32> {
+        self.channel_planes.get(channel).unwrap_or(&self.pixels)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FitsModelDirectionWcs {
+    coordinate_system: CoordinateSystem,
+    coordinate_index: usize,
+}
+
+impl FitsModelDirectionWcs {
+    fn coordinate(&self) -> &dyn Coordinate {
+        self.coordinate_system.coordinate(self.coordinate_index)
+    }
 }
 
 struct SyntheticChannelPredictor {
     predictor: StandardMfsModelPredictor,
-    phase_offset_rad: [f64; 2],
+    phase_offset: ModelPhaseOffset,
     phase_center_rad: [f64; 2],
     model_reference_direction_rad: Option<[f64; 2]>,
 }
 
-// CASA GridFT negates u/v to compensate for an image-inversion convention in
-// the degridding path. After matching that handedness and the FITS center-pixel
-// offset, the tutorial model needs this residual image-x phase alignment to
-// match CASA's GridFT prediction at numerical-noise scale.
-const CASA_GRIDFT_IMAGE_INVERSION_PHASE_PIXELS: f64 = 0.015_122_8;
+#[derive(Debug, Clone, Copy)]
+struct ModelPhaseOffset {
+    l_rad: f64,
+    m_rad: f64,
+    n_minus_one: f64,
+}
+
+impl ModelPhaseOffset {
+    fn is_negligible(self) -> bool {
+        self.l_rad.abs() < 1.0e-15 && self.m_rad.abs() < 1.0e-15 && self.n_minus_one.abs() < 1.0e-15
+    }
+}
+
+struct SyntheticFieldPlan {
+    phase_center_rad: [f64; 2],
+    predictors: Option<Vec<SyntheticChannelPredictor>>,
+}
+
+fn build_field_plans(
+    request: &SyntheticObservationRequest,
+    model: Option<&FitsModelImage>,
+) -> MsResult<Vec<SyntheticFieldPlan>> {
+    let primary_beam = synthetic_primary_beam(request);
+    let pointing_offset_rad = request
+        .corruption
+        .as_ref()
+        .and_then(|corruption| corruption.pointing.as_ref())
+        .filter(|pointing| pointing.apply_pointing_offsets)
+        .map(|pointing| pointing.offset_rad)
+        .unwrap_or([0.0, 0.0]);
+
+    effective_fields(request)
+        .into_iter()
+        .map(|field| {
+            let predictors = model
+                .map(|model| {
+                    build_channel_predictors(
+                        model,
+                        &request.spectral_setup,
+                        field.phase_center_rad,
+                        pointing_offset_rad,
+                        primary_beam,
+                    )
+                })
+                .transpose()?;
+            Ok(SyntheticFieldPlan {
+                phase_center_rad: field.phase_center_rad,
+                predictors,
+            })
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy)]
+struct SyntheticPrimaryBeam {
+    use_casa_vla_q_table: bool,
+    dish_diameter_m: f64,
+    blockage_diameter_m: f64,
+}
+
+fn synthetic_primary_beam(request: &SyntheticObservationRequest) -> SyntheticPrimaryBeam {
+    let dish_diameter_m = request
+        .antennas
+        .iter()
+        .map(|antenna| antenna.dish_diameter_m)
+        .sum::<f64>()
+        / request.antennas.len().max(1) as f64;
+    let telescope_is_vla = request.telescope_name.eq_ignore_ascii_case("VLA");
+    let telescope_is_alma_family = request.telescope_name.eq_ignore_ascii_case("ALMA")
+        || request.telescope_name.eq_ignore_ascii_case("ACA");
+    let (beam_dish_diameter_m, blockage_diameter_m) =
+        if telescope_is_alma_family && (dish_diameter_m - 12.0).abs() < 0.5 {
+            (10.7, 0.75)
+        } else if telescope_is_alma_family && (dish_diameter_m - 7.0).abs() < 0.5 {
+            (6.25, 0.75)
+        } else {
+            (dish_diameter_m, if telescope_is_vla { 2.36 } else { 0.0 })
+        };
+    SyntheticPrimaryBeam {
+        use_casa_vla_q_table: telescope_is_vla && (dish_diameter_m - 25.0).abs() < 1.0e-6,
+        dish_diameter_m: beam_dish_diameter_m,
+        blockage_diameter_m,
+    }
+}
 
 fn build_channel_predictors(
     model: &FitsModelImage,
     spectral_setup: &SyntheticSpectralSetup,
     phase_center_rad: [f64; 2],
     pointing_offset_rad: [f64; 2],
+    primary_beam: SyntheticPrimaryBeam,
 ) -> MsResult<Vec<SyntheticChannelPredictor>> {
     let geometry = ImageGeometry {
         image_shape: [model.pixels.shape()[0], model.pixels.shape()[1]],
         cell_size_rad: model.cell_size_rad,
     };
-    let phase_offset_rad = casa_model_phase_offset(model, phase_center_rad);
-    (0..spectral_setup.channel_count)
-        .map(|channel| {
-            let frequency_hz = spectral_setup.start_frequency_hz
-                + channel as f64 * spectral_setup.channel_width_hz;
-            let beam_corrected_pixels = apply_simulator_primary_beam(
-                model,
-                phase_center_rad,
-                frequency_hz,
-                pointing_offset_rad,
+    let phase_offset = casa_model_phase_offset(model, phase_center_rad);
+    let context = ChannelPredictorContext {
+        model,
+        spectral_setup,
+        geometry,
+        phase_center_rad,
+        phase_offset,
+        pointing_offset_rad,
+        primary_beam,
+    };
+    let worker_count = simobserve_channel_worker_count(spectral_setup.channel_count);
+    if worker_count <= 1 || spectral_setup.channel_count <= 1 {
+        return build_channel_predictor_range(&context, 0, spectral_setup.channel_count);
+    }
+
+    let chunk_size = spectral_setup.channel_count.div_ceil(worker_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for start_channel in (0..spectral_setup.channel_count).step_by(chunk_size) {
+            let end_channel = (start_channel + chunk_size).min(spectral_setup.channel_count);
+            let worker_context = context;
+            handles.push(scope.spawn(move || {
+                build_channel_predictor_range(&worker_context, start_channel, end_channel)
+            }));
+        }
+
+        let mut predictors = Vec::with_capacity(spectral_setup.channel_count);
+        for handle in handles {
+            predictors.extend(
+                handle
+                    .join()
+                    .expect("synthetic observation predictor setup worker should not panic")?,
             );
-            let mut casa_oriented_pixels = Array2::<f32>::zeros(model.pixels.raw_dim());
-            for x in 0..model.pixels.shape()[0] {
-                for y in 0..model.pixels.shape()[1] {
-                    // CASA's simulator image prediction treats positive RA
-                    // offsets with the opposite image-x handedness from this
-                    // crate's pure imaging gridder.
-                    casa_oriented_pixels[(model.pixels.shape()[0] - 1 - x, y)] =
-                        beam_corrected_pixels[(x, y)];
-                }
+        }
+        Ok(predictors)
+    })
+}
+
+#[derive(Clone, Copy)]
+struct ChannelPredictorContext<'a> {
+    model: &'a FitsModelImage,
+    spectral_setup: &'a SyntheticSpectralSetup,
+    geometry: ImageGeometry,
+    phase_center_rad: [f64; 2],
+    phase_offset: ModelPhaseOffset,
+    pointing_offset_rad: [f64; 2],
+    primary_beam: SyntheticPrimaryBeam,
+}
+
+fn build_channel_predictor_range(
+    context: &ChannelPredictorContext<'_>,
+    start_channel: usize,
+    end_channel: usize,
+) -> MsResult<Vec<SyntheticChannelPredictor>> {
+    let range_started = Instant::now();
+    let mut timing = ChannelPredictorBuildTiming::default();
+    let mut predictors = Vec::with_capacity(end_channel - start_channel);
+    for channel in start_channel..end_channel {
+        let (predictor, channel_timing) = build_one_channel_predictor(context, channel)?;
+        timing += channel_timing;
+        predictors.push(predictor);
+    }
+    if trace_simobserve_setup() {
+        eprintln!(
+            "simobserve_setup_trace stage=channel_predictor_range start_channel={} end_channel={} channels={} total_millis={} primary_beam_millis={} orientation_millis={} fft_predictor_millis={}",
+            start_channel,
+            end_channel,
+            end_channel - start_channel,
+            elapsed_millis(range_started.elapsed()),
+            elapsed_millis(timing.primary_beam),
+            elapsed_millis(timing.orientation),
+            elapsed_millis(timing.fft_predictor),
+        );
+    }
+    Ok(predictors)
+}
+
+#[derive(Default, Clone, Copy)]
+struct ChannelPredictorBuildTiming {
+    primary_beam: Duration,
+    orientation: Duration,
+    fft_predictor: Duration,
+}
+
+impl std::ops::AddAssign for ChannelPredictorBuildTiming {
+    fn add_assign(&mut self, rhs: Self) {
+        self.primary_beam += rhs.primary_beam;
+        self.orientation += rhs.orientation;
+        self.fft_predictor += rhs.fft_predictor;
+    }
+}
+
+fn build_one_channel_predictor(
+    context: &ChannelPredictorContext<'_>,
+    channel: usize,
+) -> MsResult<(SyntheticChannelPredictor, ChannelPredictorBuildTiming)> {
+    let mut timing = ChannelPredictorBuildTiming::default();
+    let frequency_hz = context.spectral_setup.start_frequency_hz
+        + channel as f64 * context.spectral_setup.channel_width_hz;
+    let primary_beam_started = Instant::now();
+    let beam_corrected_pixels = apply_simulator_primary_beam(
+        context.model,
+        context.model.pixels_for_channel(channel),
+        context.phase_center_rad,
+        frequency_hz,
+        context.pointing_offset_rad,
+        context.primary_beam,
+    );
+    timing.primary_beam = primary_beam_started.elapsed();
+    let orientation_started = Instant::now();
+    let mut casa_oriented_pixels = Array2::<f32>::zeros(beam_corrected_pixels.raw_dim());
+    if context.model.ra_axis_increases_with_x {
+        for x in 0..beam_corrected_pixels.shape()[0] {
+            for y in 0..beam_corrected_pixels.shape()[1] {
+                // CASA's simulator image prediction treats positive RA offsets
+                // with the opposite image-x handedness from this crate's pure
+                // imaging gridder. Conventional FITS images already have
+                // CDELT1 < 0, so only positive-RA image axes need this
+                // compatibility flip.
+                casa_oriented_pixels[(beam_corrected_pixels.shape()[0] - 1 - x, y)] =
+                    beam_corrected_pixels[(x, y)];
             }
-            let predictor = StandardMfsModelPredictor::new(geometry, &casa_oriented_pixels)
-                .map_err(|error| {
-                    MsError::SyntheticObservation(format!("model prediction setup failed: {error}"))
-                })?;
-            Ok(SyntheticChannelPredictor {
-                predictor,
-                phase_offset_rad,
-                phase_center_rad,
-                model_reference_direction_rad: model.reference_direction_rad,
-            })
-        })
-        .collect()
+        }
+    } else {
+        for x in 0..beam_corrected_pixels.shape()[0] {
+            for y in 0..beam_corrected_pixels.shape()[1] {
+                casa_oriented_pixels[(x, y)] = beam_corrected_pixels[(x, y)];
+            }
+        }
+    }
+    timing.orientation = orientation_started.elapsed();
+    let fft_started = Instant::now();
+    let predictor = StandardMfsModelPredictor::new(context.geometry, &casa_oriented_pixels)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!("model prediction setup failed: {error}"))
+        })?;
+    timing.fft_predictor = fft_started.elapsed();
+    Ok((
+        SyntheticChannelPredictor {
+            predictor,
+            phase_offset: context.phase_offset,
+            phase_center_rad: context.phase_center_rad,
+            model_reference_direction_rad: context.model.reference_direction_rad,
+        },
+        timing,
+    ))
 }
 
 fn apply_simulator_primary_beam(
     model: &FitsModelImage,
+    model_pixels: &Array2<f32>,
     phase_center_rad: [f64; 2],
     frequency_hz: f64,
     pointing_offset_rad: [f64; 2],
+    primary_beam: SyntheticPrimaryBeam,
 ) -> Array2<f32> {
-    let mut pixels = model.pixels.clone();
-    let Some(reference_direction_rad) = model.reference_direction_rad else {
+    apply_simulator_primary_beam_power(
+        model,
+        model_pixels,
+        phase_center_rad,
+        frequency_hz,
+        pointing_offset_rad,
+        primary_beam,
+        2,
+    )
+}
+
+fn apply_simulator_primary_beam_power(
+    model: &FitsModelImage,
+    model_pixels: &Array2<f32>,
+    phase_center_rad: [f64; 2],
+    frequency_hz: f64,
+    pointing_offset_rad: [f64; 2],
+    primary_beam: SyntheticPrimaryBeam,
+    beam_power: u32,
+) -> Array2<f32> {
+    let mut pixels = model_pixels.clone();
+    if beam_power == 0 {
+        return pixels;
+    }
+    let Some(wcs) = model.direction_wcs.as_ref() else {
         return pixels;
     };
-    let center_ra_offset =
-        circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0])
-            * phase_center_rad[1].cos()
-            - pointing_offset_rad[0];
-    let center_dec_offset =
-        reference_direction_rad[1] - phase_center_rad[1] - pointing_offset_rad[1];
-    let x_ref = model.pixels.shape()[0] as f64 / 2.0;
-    let y_ref = model.pixels.shape()[1] as f64 / 2.0;
+    let pointing_direction_rad = [
+        phase_center_rad[0] + pointing_offset_rad[0] / phase_center_rad[1].cos(),
+        phase_center_rad[1] + pointing_offset_rad[1],
+    ];
+    let coordinate = wcs.coordinate();
+    let raw_increments = coordinate.increment();
+    if raw_increments.len() < 2 {
+        return pixels;
+    }
+    let imported_coordinate;
+    let pb_coordinate: &dyn Coordinate =
+        if let Some(reference_direction_rad) = model.reference_direction_rad {
+            // CASA simobserve imports the FITS model into a casacore image and
+            // recenters the direction coordinate on the image center before
+            // PBMath applies the primary beam.
+            imported_coordinate = DirectionCoordinate::new(
+                DirectionRef::J2000,
+                Projection::new(ProjectionType::SIN),
+                reference_direction_rad,
+                [raw_increments[0], raw_increments[1]],
+                [
+                    model_pixels.shape()[0] as f64 / 2.0,
+                    model_pixels.shape()[1] as f64 / 2.0,
+                ],
+            )
+            .with_longpole(std::f64::consts::PI)
+            .with_latpole(reference_direction_rad[1]);
+            &imported_coordinate
+        } else {
+            coordinate
+        };
+    let Ok(pointing_pixel) = pb_coordinate.to_pixel(&pointing_direction_rad) else {
+        return pixels;
+    };
+    let increments = pb_coordinate.increment();
+    if pointing_pixel.len() < 2 || increments.len() < 2 {
+        return pixels;
+    }
 
-    for x in 0..model.pixels.shape()[0] {
-        for y in 0..model.pixels.shape()[1] {
-            let l = center_ra_offset + (x as f64 - x_ref) * model.cell_size_rad[0];
-            let m = center_dec_offset + (y as f64 - y_ref) * model.cell_size_rad[1];
-            let vp = casa_vla_q_primary_beam_voltage_pattern((l * l + m * m).sqrt(), frequency_hz);
-            pixels[(x, y)] *= vp * vp;
+    for x in 0..model_pixels.shape()[0] {
+        for y in 0..model_pixels.shape()[1] {
+            let l = (x as f64 - pointing_pixel[0]) * increments[0];
+            let m = (y as f64 - pointing_pixel[1]) * increments[1];
+            let vp = synthetic_primary_beam_voltage_pattern(
+                primary_beam,
+                (l * l + m * m).sqrt(),
+                frequency_hz,
+            );
+            let taper = match beam_power {
+                1 => vp,
+                2 => vp * vp,
+                _ => vp.powi(beam_power as i32),
+            };
+            pixels[(x, y)] *= taper;
         }
     }
     pixels
+}
+
+fn synthetic_primary_beam_voltage_pattern(
+    primary_beam: SyntheticPrimaryBeam,
+    radius_rad: f64,
+    frequency_hz: f64,
+) -> f32 {
+    if primary_beam.use_casa_vla_q_table {
+        return casa_vla_q_primary_beam_voltage_pattern(radius_rad, frequency_hz);
+    }
+    primary_beam_voltage_pattern(
+        PrimaryBeamModel::Airy {
+            dish_diameter_m: primary_beam.dish_diameter_m,
+            blockage_diameter_m: primary_beam.blockage_diameter_m,
+        },
+        radius_rad,
+        frequency_hz,
+    )
 }
 
 fn casa_vla_q_primary_beam_voltage_pattern(radius_rad: f64, frequency_hz: f64) -> f32 {
@@ -1226,31 +2521,36 @@ fn casa_vla_q_primary_beam_voltage_pattern(radius_rad: f64, frequency_hz: f64) -
         return 1.0;
     }
 
-    let quantized_radius_arcmin_ghz =
-        table_index as f64 * CASA_VLA_Q_MAX_RADIUS_ARCMIN / (CASA_AIRY_SAMPLES - 1) as f64;
-    let quantized_radius_rad =
-        (quantized_radius_arcmin_ghz / (frequency_hz / 1.0e9) / 60.0).to_radians();
-    primary_beam_voltage_pattern(
-        PrimaryBeamModel::Airy {
-            dish_diameter_m: DISH_DIAMETER_M,
-            blockage_diameter_m: BLOCKAGE_DIAMETER_M,
-        },
-        quantized_radius_rad,
-        frequency_hz,
-    )
+    let dimensionless_max_radius =
+        CASA_VLA_Q_MAX_RADIUS_ARCMIN * 7.016 / (1.566 * 60.0) * DISH_DIAMETER_M / 24.5;
+    let x = table_index as f64 * dimensionless_max_radius / (CASA_AIRY_SAMPLES - 1) as f64;
+    let area_ratio = (DISH_DIAMETER_M / BLOCKAGE_DIAMETER_M).powi(2);
+    let area_norm = area_ratio - 1.0;
+    let length_ratio = DISH_DIAMETER_M / BLOCKAGE_DIAMETER_M;
+    ((area_ratio * 2.0 * j1(x) / x - 2.0 * j1(x * length_ratio) / (x * length_ratio)) / area_norm)
+        as f32
 }
 
-fn casa_model_phase_offset(model: &FitsModelImage, phase_center_rad: [f64; 2]) -> [f64; 2] {
+fn casa_model_phase_offset(model: &FitsModelImage, phase_center_rad: [f64; 2]) -> ModelPhaseOffset {
     let Some(reference_direction_rad) = model.reference_direction_rad else {
-        return [0.0, 0.0];
+        return ModelPhaseOffset {
+            l_rad: 0.0,
+            m_rad: 0.0,
+            n_minus_one: 0.0,
+        };
     };
-    let ra_offset = circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0])
-        * phase_center_rad[1].cos();
-    let dec_offset = reference_direction_rad[1] - phase_center_rad[1];
-    [
-        ra_offset - (0.5 - CASA_GRIDFT_IMAGE_INVERSION_PHASE_PIXELS) * model.cell_size_rad[0],
-        dec_offset - 0.5 * model.cell_size_rad[1],
-    ]
+    let delta_ra = circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0]);
+    let cos_delta_ra = delta_ra.cos();
+    let (sin_ref_dec, cos_ref_dec) = reference_direction_rad[1].sin_cos();
+    let (sin_phase_dec, cos_phase_dec) = phase_center_rad[1].sin_cos();
+    let direction_l = delta_ra * phase_center_rad[1].cos();
+    let direction_m = reference_direction_rad[1] - phase_center_rad[1];
+    let direction_n = sin_ref_dec * sin_phase_dec + cos_ref_dec * cos_phase_dec * cos_delta_ra;
+    ModelPhaseOffset {
+        l_rad: direction_l,
+        m_rad: direction_m,
+        n_minus_one: direction_n - 1.0,
+    }
 }
 
 fn circular_angle_delta_rad(delta: f64) -> f64 {
@@ -1258,42 +2558,269 @@ fn circular_angle_delta_rad(delta: f64) -> f64 {
 }
 
 fn predicted_data_values(
-    predictors: Option<&Vec<SyntheticChannelPredictor>>,
+    predictors: Option<&[SyntheticChannelPredictor]>,
     spectral_setup: &SyntheticSpectralSetup,
     uvw_m: [f64; 3],
     num_corr: usize,
 ) -> Vec<Complex32> {
     let mut values = vec![Complex32::new(0.0, 0.0); num_corr * spectral_setup.channel_count];
     if let Some(predictors) = predictors {
+        let prediction_uvw_m = prediction_uvw_for_row(predictors, uvw_m);
         for (channel, predictor) in predictors.iter().enumerate() {
-            let frequency_hz = spectral_setup.start_frequency_hz
-                + channel as f64 * spectral_setup.channel_width_hz;
-            let wavelength_m = 299_792_458.0 / frequency_hz;
-            let prediction_uvw_m = if let Some(model_reference_direction_rad) =
-                predictor.model_reference_direction_rad
-            {
-                rotate_uvw_between_directions(
-                    uvw_m,
-                    predictor.phase_center_rad,
-                    model_reference_direction_rad,
-                )
-            } else {
-                uvw_m
-            };
-            let u_lambda = prediction_uvw_m[0] / wavelength_m;
-            let v_lambda = prediction_uvw_m[1] / wavelength_m;
-            let phase = std::f64::consts::TAU
-                * (u_lambda * predictor.phase_offset_rad[0]
-                    + v_lambda * predictor.phase_offset_rad[1]);
-            let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
-            let visibility = predictor.predictor.predict(u_lambda, v_lambda) * phase_shift;
+            let visibility = predict_channel_visibility_preprojected(
+                predictor,
+                spectral_setup,
+                prediction_uvw_m,
+                channel,
+            );
             for corr in 0..num_corr {
-                let index = corr * spectral_setup.channel_count + channel;
+                let index = ms_data_index(corr, channel, num_corr);
                 values[index] = visibility;
             }
         }
     }
     values
+}
+
+struct TimedPredictionRows {
+    rows: Vec<Vec<Complex32>>,
+    worker_wall: Duration,
+    gather: Duration,
+}
+
+struct ChannelPredictionChunk {
+    start_channel: usize,
+    values_by_row: Vec<Vec<Complex32>>,
+}
+
+#[cfg(test)]
+fn predicted_data_values_for_rows_with_workers(
+    predictors: Option<&[SyntheticChannelPredictor]>,
+    spectral_setup: &SyntheticSpectralSetup,
+    row_uvws: &[[f64; 3]],
+    num_corr: usize,
+    worker_count: usize,
+) -> Vec<Vec<Complex32>> {
+    predicted_data_values_for_rows_with_workers_timed(
+        predictors,
+        spectral_setup,
+        row_uvws,
+        num_corr,
+        worker_count,
+    )
+    .rows
+}
+
+fn predicted_data_values_for_rows_with_workers_timed(
+    predictors: Option<&[SyntheticChannelPredictor]>,
+    spectral_setup: &SyntheticSpectralSetup,
+    row_uvws: &[[f64; 3]],
+    num_corr: usize,
+    worker_count: usize,
+) -> TimedPredictionRows {
+    let Some(predictors) = predictors else {
+        return TimedPredictionRows {
+            rows: vec![
+                vec![Complex32::new(0.0, 0.0); num_corr * spectral_setup.channel_count];
+                row_uvws.len()
+            ],
+            worker_wall: Duration::ZERO,
+            gather: Duration::ZERO,
+        };
+    };
+    if worker_count <= 1 {
+        let worker_started = Instant::now();
+        let rows = row_uvws
+            .iter()
+            .map(|uvw| predicted_data_values(Some(predictors), spectral_setup, *uvw, num_corr))
+            .collect();
+        return TimedPredictionRows {
+            rows,
+            worker_wall: worker_started.elapsed(),
+            gather: Duration::ZERO,
+        };
+    }
+
+    let channel_count = spectral_setup.channel_count;
+    let chunk_size = channel_count.div_ceil(worker_count);
+    let worker_started = Instant::now();
+    let chunks = thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for start_channel in (0..channel_count).step_by(chunk_size) {
+            let end_channel = (start_channel + chunk_size).min(channel_count);
+            handles.push(scope.spawn(move || {
+                predict_channel_chunk(
+                    predictors,
+                    spectral_setup,
+                    row_uvws,
+                    num_corr,
+                    start_channel,
+                    end_channel,
+                )
+            }));
+        }
+
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("synthetic observation prediction worker should not panic")
+            })
+            .collect::<Vec<_>>()
+    });
+    let worker_wall = worker_started.elapsed();
+
+    let gather_started = Instant::now();
+    let mut values_by_row =
+        vec![vec![Complex32::new(0.0, 0.0); num_corr * channel_count]; row_uvws.len()];
+    for chunk in chunks {
+        if chunk.values_by_row.is_empty() {
+            continue;
+        }
+        for (row_index, row_chunk) in chunk.values_by_row.into_iter().enumerate() {
+            let dst_start = chunk.start_channel * num_corr;
+            let dst_end = dst_start + row_chunk.len();
+            values_by_row[row_index][dst_start..dst_end].copy_from_slice(&row_chunk);
+        }
+    }
+    let gather = gather_started.elapsed();
+
+    TimedPredictionRows {
+        rows: values_by_row,
+        worker_wall,
+        gather,
+    }
+}
+
+fn predict_channel_chunk(
+    predictors: &[SyntheticChannelPredictor],
+    spectral_setup: &SyntheticSpectralSetup,
+    row_uvws: &[[f64; 3]],
+    num_corr: usize,
+    start_channel: usize,
+    end_channel: usize,
+) -> ChannelPredictionChunk {
+    let chunk_len = end_channel - start_channel;
+    let mut values_by_row = Vec::with_capacity(row_uvws.len());
+    for uvw_m in row_uvws {
+        let prediction_uvw_m = prediction_uvw_for_row(predictors, *uvw_m);
+        let mut row_values = vec![Complex32::new(0.0, 0.0); num_corr * chunk_len];
+        for (offset, channel) in (start_channel..end_channel).enumerate() {
+            let predictor = &predictors[channel];
+            let visibility = predict_channel_visibility_preprojected(
+                predictor,
+                spectral_setup,
+                prediction_uvw_m,
+                channel,
+            );
+            for corr in 0..num_corr {
+                row_values[ms_data_index(corr, offset, num_corr)] = visibility;
+            }
+        }
+        values_by_row.push(row_values);
+    }
+    ChannelPredictionChunk {
+        start_channel,
+        values_by_row,
+    }
+}
+
+fn prediction_uvw_for_row(predictors: &[SyntheticChannelPredictor], uvw_m: [f64; 3]) -> [f64; 3] {
+    let Some(first) = predictors.first() else {
+        return uvw_m;
+    };
+    let Some(model_reference_direction_rad) = first.model_reference_direction_rad else {
+        return uvw_m;
+    };
+    debug_assert!(predictors.iter().all(|predictor| {
+        predictor.model_reference_direction_rad == first.model_reference_direction_rad
+            && predictor.phase_center_rad == first.phase_center_rad
+    }));
+    rotate_uvw_between_directions(uvw_m, first.phase_center_rad, model_reference_direction_rad)
+}
+
+fn predict_channel_visibility_preprojected(
+    predictor: &SyntheticChannelPredictor,
+    spectral_setup: &SyntheticSpectralSetup,
+    prediction_uvw_m: [f64; 3],
+    channel: usize,
+) -> Complex32 {
+    let frequency_hz =
+        spectral_setup.start_frequency_hz + channel as f64 * spectral_setup.channel_width_hz;
+    let wavelength_m = 299_792_458.0 / frequency_hz;
+    let u_lambda = prediction_uvw_m[0] / wavelength_m;
+    let v_lambda = prediction_uvw_m[1] / wavelength_m;
+    if predictor.phase_offset.is_negligible() {
+        return predictor.predictor.predict(u_lambda, v_lambda);
+    }
+    let w_lambda = prediction_uvw_m[2] / wavelength_m;
+    let phase = std::f64::consts::TAU
+        * (u_lambda * predictor.phase_offset.l_rad + v_lambda * predictor.phase_offset.m_rad
+            - w_lambda * predictor.phase_offset.n_minus_one);
+    let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+    predictor.predictor.predict(u_lambda, v_lambda) * phase_shift
+}
+
+fn simobserve_channel_worker_count(channel_count: usize) -> usize {
+    let available = thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(1);
+    let requested = std::env::var("CASA_RS_SIMOBSERVE_CHANNEL_WORKERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(available);
+    let min_channels = std::env::var("CASA_RS_SIMOBSERVE_CHANNEL_PARALLEL_MIN_CHANNELS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(64);
+    simobserve_channel_worker_count_for(channel_count, requested, available, min_channels)
+}
+
+fn simobserve_channel_worker_count_for(
+    channel_count: usize,
+    requested: usize,
+    available: usize,
+    min_channels: usize,
+) -> usize {
+    if channel_count < min_channels {
+        return 1;
+    }
+    requested
+        .max(1)
+        .min(available.max(1))
+        .min(channel_count)
+        .max(1)
+}
+
+fn trace_simobserve_setup() -> bool {
+    std::env::var("CASA_RS_SIMOBSERVE_TRACE_SETUP").is_ok_and(|value| value != "0")
+}
+
+fn simobserve_row_worker_count(row_count: usize, channel_count: usize) -> usize {
+    let available = thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(1);
+    let requested = std::env::var("CASA_RS_SIMOBSERVE_ROW_WORKERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(available);
+    simobserve_row_worker_count_for(row_count, channel_count, requested, available, 64 * 1024)
+}
+
+fn simobserve_row_worker_count_for(
+    row_count: usize,
+    channel_count: usize,
+    requested: usize,
+    available: usize,
+    min_values: usize,
+) -> usize {
+    if row_count <= 1 || row_count * channel_count < min_values {
+        return 1;
+    }
+    requested.max(1).min(available.max(1)).min(row_count).max(1)
 }
 
 fn rotate_uvw_between_directions(
@@ -1325,11 +2852,11 @@ fn baseline_from_uvw(uvw_m: [f64; 3], direction_rad: [f64; 2]) -> [f64; 3] {
 }
 
 struct SyntheticCorruptionState {
+    seed: u64,
     simplenoise_jy: f32,
     gains_by_sample: Vec<Vec<[Complex32; 2]>>,
     bandpass_gains: Vec<Vec<Complex32>>,
     leakage_terms: Vec<[Complex32; 2]>,
-    rng: DeterministicRng,
 }
 
 impl SyntheticCorruptionState {
@@ -1371,6 +2898,7 @@ impl SyntheticCorruptionState {
             })
             .collect();
         Self {
+            seed: config.seed,
             simplenoise_jy: config
                 .noise
                 .as_ref()
@@ -1379,12 +2907,11 @@ impl SyntheticCorruptionState {
             gains_by_sample,
             bandpass_gains,
             leakage_terms,
-            rng,
         }
     }
 
     fn apply(
-        &mut self,
+        &self,
         values: &mut [Complex32],
         antenna1: usize,
         antenna2: usize,
@@ -1392,17 +2919,31 @@ impl SyntheticCorruptionState {
         sample_index: usize,
     ) {
         let gains = &self.gains_by_sample[sample_index % self.gains_by_sample.len()];
+        let Some(correlation_count) = values.len().checked_div(channel_count) else {
+            return;
+        };
+        if correlation_count == 0 {
+            return;
+        }
         for (index, value) in values.iter_mut().enumerate() {
-            let channel = index % channel_count;
-            let correlation = index / channel_count;
+            let channel = index / correlation_count;
+            let correlation = index % correlation_count;
+            let logical_index = correlation * channel_count + channel;
             let baseline_gain = gains[antenna1][correlation]
                 * gains[antenna2][correlation].conj()
                 * self.bandpass_gains[antenna1][channel]
                 * self.bandpass_gains[antenna2][channel].conj();
             *value *= baseline_gain;
             if self.simplenoise_jy > 0.0 {
-                value.re += self.rng.gaussian_f32() * self.simplenoise_jy;
-                value.im += self.rng.gaussian_f32() * self.simplenoise_jy;
+                let mut rng = DeterministicRng::new(row_noise_seed(
+                    self.seed,
+                    sample_index,
+                    antenna1,
+                    antenna2,
+                    logical_index,
+                ));
+                value.re += rng.gaussian_f32() * self.simplenoise_jy;
+                value.im += rng.gaussian_f32() * self.simplenoise_jy;
             }
         }
         if channel_count > 0 && values.len() == 2 * channel_count {
@@ -1412,8 +2953,8 @@ impl SyntheticCorruptionState {
                 self.leakage_terms[antenna1][1] * self.leakage_terms[antenna2][1].conj();
             if rr_leakage != Complex32::new(0.0, 0.0) || ll_leakage != Complex32::new(0.0, 0.0) {
                 for channel in 0..channel_count {
-                    let rr_index = channel;
-                    let ll_index = channel_count + channel;
+                    let rr_index = ms_data_index(0, channel, 2);
+                    let ll_index = ms_data_index(1, channel, 2);
                     let rr = values[rr_index];
                     let ll = values[ll_index];
                     values[rr_index] = rr + rr_leakage * ll;
@@ -1422,6 +2963,27 @@ impl SyntheticCorruptionState {
             }
         }
     }
+}
+
+fn row_noise_seed(
+    seed: u64,
+    sample_index: usize,
+    antenna1: usize,
+    antenna2: usize,
+    value_index: usize,
+) -> u64 {
+    let mut mixed = seed ^ 0x9E37_79B9_7F4A_7C15;
+    mixed = mix_u64(mixed ^ sample_index as u64);
+    mixed = mix_u64(mixed ^ ((antenna1 as u64) << 32) ^ antenna2 as u64);
+    mix_u64(mixed ^ value_index as u64)
+}
+
+fn mix_u64(mut value: u64) -> u64 {
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^ (value >> 31)
 }
 
 fn build_gain_terms(
@@ -1602,6 +3164,7 @@ impl DeterministicRng {
 fn read_fits_model_image(
     path: &PathBuf,
     model_peak_jy_per_pixel: Option<f32>,
+    spectral_channel_count: usize,
 ) -> MsResult<FitsModelImage> {
     let mut file = fs::File::open(path).map_err(|error| {
         MsError::SyntheticObservation(format!(
@@ -1627,28 +3190,43 @@ fn read_fits_model_image(
     }
     let nx = fits_i64(&cards, "NAXIS1", path)? as usize;
     let ny = fits_i64(&cards, "NAXIS2", path)? as usize;
+    let shape = (1..=naxis)
+        .map(|axis| fits_i64(&cards, &format!("NAXIS{axis}"), path).map(|value| value as usize))
+        .collect::<MsResult<Vec<_>>>()?;
     if nx < 8 || ny < 8 {
         return Err(MsError::SyntheticObservation(format!(
             "model image {} must be at least 8x8 pixels",
             path.display()
         )));
     }
-    let trailing_planes = (3..=naxis)
-        .map(|axis| fits_i64(&cards, &format!("NAXIS{axis}"), path).unwrap_or(1))
-        .product::<i64>();
-    if trailing_planes != 1 {
-        return Err(MsError::SyntheticObservation(format!(
-            "model image {} must have one Stokes/frequency plane for this Wave 5 slice",
-            path.display()
-        )));
-    }
-    let cell_size_rad = [
-        fits_axis_cell_rad(&cards, 1, path)?.abs(),
-        fits_axis_cell_rad(&cards, 2, path)?.abs(),
+    let channel_axis = fits_model_channel_axis(&cards, &shape, spectral_channel_count, path)?;
+    let axis_cell_rad = [
+        fits_axis_cell_rad(&cards, 1, path)?,
+        fits_axis_cell_rad(&cards, 2, path)?,
     ];
-    let reference_direction_rad = fits_center_direction_rad(&cards, nx, ny, path)?;
-    let pixel_count = nx
+    let direction_wcs = fits_model_direction_wcs(&cards, &shape, path)?;
+    let (cell_size_rad, ra_axis_increases_with_x, reference_direction_rad) =
+        if let Some(wcs) = direction_wcs.as_ref() {
+            (
+                fits_direction_cell_size_rad(wcs)?,
+                fits_direction_ra_axis_increases_with_x(wcs, path)?,
+                Some(fits_direction_center_rad(wcs, nx, ny, path)?),
+            )
+        } else {
+            (
+                [axis_cell_rad[0].abs(), axis_cell_rad[1].abs()],
+                axis_cell_rad[0] > 0.0,
+                None,
+            )
+        };
+    let plane_pixel_count = nx
         .checked_mul(ny)
+        .ok_or_else(|| MsError::SyntheticObservation("model image shape overflows".to_string()))?;
+    let total_pixel_count = shape
+        .iter()
+        .try_fold(1usize, |accumulator, axis_len| {
+            accumulator.checked_mul(*axis_len)
+        })
         .ok_or_else(|| MsError::SyntheticObservation("model image shape overflows".to_string()))?;
     let bytes_per_pixel = match bitpix {
         -32 => 4usize,
@@ -1660,7 +3238,7 @@ fn read_fits_model_image(
             )));
         }
     };
-    let data_len = pixel_count * bytes_per_pixel;
+    let data_len = total_pixel_count * bytes_per_pixel;
     if bytes.len() < data_offset + data_len {
         return Err(MsError::SyntheticObservation(format!(
             "model image {} is truncated before primary image data",
@@ -1670,42 +3248,27 @@ fn read_fits_model_image(
 
     let bscale = fits_optional_f64(&cards, "BSCALE").unwrap_or(1.0);
     let bzero = fits_optional_f64(&cards, "BZERO").unwrap_or(0.0);
-    let mut pixels = Array2::<f32>::zeros((nx, ny));
     let data = &bytes[data_offset..data_offset + data_len];
-    for y in 0..ny {
-        for x in 0..nx {
-            let index = y * nx + x;
-            let raw = match bitpix {
-                -32 => {
-                    let start = index * 4;
-                    f32::from_bits(u32::from_be_bytes([
-                        data[start],
-                        data[start + 1],
-                        data[start + 2],
-                        data[start + 3],
-                    ])) as f64
-                }
-                -64 => {
-                    let start = index * 8;
-                    f64::from_bits(u64::from_be_bytes([
-                        data[start],
-                        data[start + 1],
-                        data[start + 2],
-                        data[start + 3],
-                        data[start + 4],
-                        data[start + 5],
-                        data[start + 6],
-                        data[start + 7],
-                    ]))
-                }
-                _ => unreachable!(),
-            };
-            pixels[(x, y)] = (raw * bscale + bzero) as f32;
+    let channel_plane_count = channel_axis
+        .map(|axis| shape[axis])
+        .filter(|count| *count > 1)
+        .unwrap_or(1);
+    let mut channel_planes = Vec::with_capacity(channel_plane_count);
+    for channel in 0..channel_plane_count {
+        let mut plane = Array2::<f32>::zeros((nx, ny));
+        for y in 0..ny {
+            for x in 0..nx {
+                let index = fits_model_flat_index(&shape, x, y, channel_axis, channel);
+                plane[(x, y)] = fits_model_pixel_value(data, bitpix, index, bscale, bzero);
+            }
         }
+        debug_assert_eq!(plane.len(), plane_pixel_count);
+        channel_planes.push(plane);
     }
     if let Some(target_peak) = model_peak_jy_per_pixel {
-        let current_peak = pixels
+        let current_peak = channel_planes
             .iter()
+            .flat_map(|plane| plane.iter())
             .copied()
             .fold(0.0f32, |peak, value| peak.max(value.abs()));
         if current_peak <= 0.0 || !current_peak.is_finite() {
@@ -1715,22 +3278,137 @@ fn read_fits_model_image(
             )));
         }
         let scale = target_peak / current_peak;
-        pixels.mapv_inplace(|value| value * scale);
+        for plane in &mut channel_planes {
+            plane.mapv_inplace(|value| value * scale);
+        }
     }
+    let pixels = channel_planes
+        .first()
+        .cloned()
+        .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
 
     Ok(FitsModelImage {
         pixels,
+        channel_planes,
         cell_size_rad,
+        direction_wcs,
+        ra_axis_increases_with_x,
         reference_direction_rad,
     })
 }
 
-fn fits_center_direction_rad(
+fn fits_model_channel_axis(
     cards: &[String],
-    nx: usize,
-    ny: usize,
+    shape: &[usize],
+    spectral_channel_count: usize,
     path: &Path,
-) -> MsResult<Option<[f64; 2]>> {
+) -> MsResult<Option<usize>> {
+    let mut spectral_axis = None;
+    for axis in 3..=shape.len() {
+        if fits_axis_is_spectral(cards, axis) {
+            spectral_axis = Some(axis - 1);
+            break;
+        }
+    }
+    if spectral_axis.is_none() && spectral_channel_count > 1 {
+        spectral_axis = (2..shape.len()).find(|axis| shape[*axis] == spectral_channel_count);
+    }
+
+    for (axis, axis_len) in shape.iter().copied().enumerate().skip(2) {
+        if Some(axis) == spectral_axis {
+            if axis_len != 1 && axis_len != spectral_channel_count {
+                return Err(MsError::SyntheticObservation(format!(
+                    "model image {} spectral axis length {axis_len} does not match requested channel count {spectral_channel_count}",
+                    path.display()
+                )));
+            }
+        } else if axis_len != 1 && !fits_axis_is_stokes(cards, axis + 1) {
+            return Err(MsError::SyntheticObservation(format!(
+                "model image {} has unsupported non-spectral FITS axis {} with length {}; only singleton or STOKES axes are supported",
+                path.display(),
+                axis + 1,
+                axis_len
+            )));
+        }
+    }
+    Ok(spectral_axis)
+}
+
+fn fits_axis_is_spectral(cards: &[String], axis: usize) -> bool {
+    fits_string(cards, &format!("CTYPE{axis}"))
+        .map(|ctype| {
+            let upper = ctype.to_ascii_uppercase();
+            upper.starts_with("FREQ")
+                || upper.starts_with("VRAD")
+                || upper.starts_with("VOPT")
+                || upper.starts_with("VELO")
+        })
+        .unwrap_or(false)
+}
+
+fn fits_axis_is_stokes(cards: &[String], axis: usize) -> bool {
+    fits_string(cards, &format!("CTYPE{axis}"))
+        .map(|ctype| ctype.to_ascii_uppercase().starts_with("STOKES"))
+        .unwrap_or(false)
+}
+
+fn fits_model_flat_index(
+    shape: &[usize],
+    x: usize,
+    y: usize,
+    channel_axis: Option<usize>,
+    channel: usize,
+) -> usize {
+    let mut index = 0usize;
+    let mut stride = 1usize;
+    for (axis, axis_len) in shape.iter().copied().enumerate() {
+        let axis_index = match axis {
+            0 => x,
+            1 => y,
+            _ if Some(axis) == channel_axis => channel,
+            _ => 0,
+        };
+        debug_assert!(axis_index < axis_len);
+        index += axis_index * stride;
+        stride *= axis_len;
+    }
+    index
+}
+
+fn fits_model_pixel_value(data: &[u8], bitpix: i64, index: usize, bscale: f64, bzero: f64) -> f32 {
+    let raw = match bitpix {
+        -32 => {
+            let start = index * 4;
+            f32::from_bits(u32::from_be_bytes([
+                data[start],
+                data[start + 1],
+                data[start + 2],
+                data[start + 3],
+            ])) as f64
+        }
+        -64 => {
+            let start = index * 8;
+            f64::from_bits(u64::from_be_bytes([
+                data[start],
+                data[start + 1],
+                data[start + 2],
+                data[start + 3],
+                data[start + 4],
+                data[start + 5],
+                data[start + 6],
+                data[start + 7],
+            ]))
+        }
+        _ => unreachable!(),
+    };
+    (raw * bscale + bzero) as f32
+}
+
+fn fits_model_direction_wcs(
+    cards: &[String],
+    shape: &[usize],
+    path: &Path,
+) -> MsResult<Option<FitsModelDirectionWcs>> {
     if !(fits_value(cards, "CRVAL1").is_some()
         && fits_value(cards, "CRVAL2").is_some()
         && fits_value(cards, "CTYPE1").is_some()
@@ -1738,41 +3416,71 @@ fn fits_center_direction_rad(
     {
         return Ok(None);
     }
-    let projection = fits_string(cards, "CTYPE1")
-        .and_then(|ctype| {
-            ctype
-                .rsplit_once('-')
-                .map(|(_, projection)| projection.to_string())
-        })
-        .and_then(|projection| ProjectionType::from_name(&projection))
-        .unwrap_or(ProjectionType::SIN);
-    let crval = [
-        fits_axis_angle_rad(cards, "CRVAL1", path)?,
-        fits_axis_angle_rad(cards, "CRVAL2", path)?,
-    ];
-    let cdelt = [
-        fits_axis_cell_rad(cards, 1, path)?,
-        fits_axis_cell_rad(cards, 2, path)?,
-    ];
-    let crpix = [
-        fits_optional_f64(cards, "CRPIX1").unwrap_or(1.0) - 1.0,
-        fits_optional_f64(cards, "CRPIX2").unwrap_or(1.0) - 1.0,
-    ];
-    let coordinate = DirectionCoordinate::new(
-        DirectionRef::J2000,
-        Projection::new(projection),
-        crval,
-        cdelt,
-        crpix,
-    );
+    let header_cards = cards.iter().map(String::as_str).collect::<Vec<_>>();
+    let header = FitsHeader::from_cards(&header_cards);
+    let coordinate_system = from_fits_header(&header, shape).map_err(|error| {
+        MsError::SyntheticObservation(format!(
+            "failed to parse model-image FITS WCS for {}: {error}",
+            path.display()
+        ))
+    })?;
+    let Some(coordinate_index) = coordinate_system.find_coordinate(CoordinateType::Direction)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(FitsModelDirectionWcs {
+        coordinate_system,
+        coordinate_index,
+    }))
+}
+
+fn fits_direction_cell_size_rad(wcs: &FitsModelDirectionWcs) -> MsResult<[f64; 2]> {
+    let increment = wcs.coordinate().increment();
+    if increment.len() < 2 {
+        return Err(MsError::SyntheticObservation(
+            "model image direction coordinate has fewer than two increments".to_string(),
+        ));
+    }
+    Ok([increment[0].abs(), increment[1].abs()])
+}
+
+fn fits_direction_center_rad(
+    wcs: &FitsModelDirectionWcs,
+    nx: usize,
+    ny: usize,
+    path: &Path,
+) -> MsResult<[f64; 2]> {
     let center_pixel = [0.5 * nx as f64, 0.5 * ny as f64];
-    let world = coordinate.to_world(&center_pixel).map_err(|error| {
+    let world = wcs.coordinate().to_world(&center_pixel).map_err(|error| {
         MsError::SyntheticObservation(format!(
             "failed to resolve model-image center direction for {}: {error}",
             path.display()
         ))
     })?;
-    Ok(Some([world[0], world[1]]))
+    Ok([world[0], world[1]])
+}
+
+fn fits_direction_ra_axis_increases_with_x(
+    wcs: &FitsModelDirectionWcs,
+    path: &Path,
+) -> MsResult<bool> {
+    let coordinate = wcs.coordinate();
+    let reference_pixel = coordinate.reference_pixel();
+    let reference_value = coordinate.reference_value();
+    if reference_pixel.len() < 2 || reference_value.len() < 2 {
+        return Err(MsError::SyntheticObservation(
+            "model image direction coordinate has fewer than two axes".to_string(),
+        ));
+    }
+    let x_step_world = coordinate
+        .to_world(&[reference_pixel[0] + 1.0, reference_pixel[1]])
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "failed to resolve model-image RA axis handedness for {}: {error}",
+                path.display()
+            ))
+        })?;
+    Ok(circular_angle_delta_rad(x_step_world[0] - reference_value[0]) > 0.0)
 }
 
 fn parse_fits_header(bytes: &[u8], path: &Path) -> MsResult<(Vec<String>, usize)> {
@@ -1829,26 +3537,6 @@ fn fits_axis_cell_rad(cards: &[String], axis: usize, path: &Path) -> MsResult<f6
     }
 }
 
-fn fits_axis_angle_rad(cards: &[String], key: &str, path: &Path) -> MsResult<f64> {
-    let value = fits_optional_f64(cards, key).ok_or_else(|| {
-        MsError::SyntheticObservation(format!("model image {} missing FITS {key}", path.display()))
-    })?;
-    let axis = key
-        .chars()
-        .last()
-        .and_then(|ch| ch.to_digit(10))
-        .unwrap_or(1) as usize;
-    let unit = fits_string(cards, &format!("CUNIT{axis}")).unwrap_or_else(|| "deg".to_string());
-    match unit.trim().to_ascii_lowercase().as_str() {
-        "deg" | "degree" | "degrees" => Ok(value.to_radians()),
-        "rad" | "radian" | "radians" => Ok(value),
-        other => Err(MsError::SyntheticObservation(format!(
-            "model image {} uses unsupported CUNIT{axis}={other:?}; expected deg or rad",
-            path.display()
-        ))),
-    }
-}
-
 fn fits_optional_f64(cards: &[String], key: &str) -> Option<f64> {
     fits_value(cards, key).and_then(|value| value.parse::<f64>().ok())
 }
@@ -1876,18 +3564,148 @@ fn time_sample_count(duration_seconds: f64, integration_seconds: f64) -> usize {
     (duration_seconds / integration_seconds).ceil().max(1.0) as usize
 }
 
+fn observation_sample_times(
+    request: &SyntheticObservationRequest,
+    sample_count: usize,
+) -> MsResult<Vec<f64>> {
+    if request.allow_below_elevation_limit {
+        return Ok((0..sample_count)
+            .map(|sample| {
+                request.start_time_mjd_seconds + (sample as f64 + 0.5) * request.integration_seconds
+            })
+            .collect());
+    }
+
+    let observatory = simulation_observatory_position(&request.telescope_name, &request.antennas);
+    let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
+    let phase_center_rad = effective_fields(request)
+        .first()
+        .map(|field| field.phase_center_rad)
+        .unwrap_or(request.phase_center_rad);
+    let first_transit = next_transit_time_mjd_seconds(
+        phase_center_rad,
+        request.start_time_mjd_seconds,
+        &observatory,
+    )?;
+    let mut sample_times = Vec::with_capacity(sample_count);
+    let mut transit = first_transit;
+
+    while sample_times.len() < sample_count {
+        let remaining = sample_count - sample_times.len();
+        let mut offsets = above_elevation_offsets_for_transit(
+            request,
+            phase_center_rad,
+            transit,
+            &observatory,
+            elevation_margin_rad,
+        )?;
+        if offsets.is_empty() {
+            return Err(MsError::SyntheticObservation(format!(
+                "target never reaches the {:.1} deg elevation limit for telescope {}; set allow_below_elevation_limit=true to generate a below-limit track",
+                request.elevation_limit_rad.to_degrees(),
+                request.telescope_name
+            )));
+        }
+        if remaining < offsets.len() {
+            offsets.sort_by(|left, right| {
+                left.abs()
+                    .partial_cmp(&right.abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+            });
+            offsets.truncate(remaining);
+        }
+        offsets.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+        sample_times.extend(offsets.into_iter().map(|offset| transit + offset));
+        transit += SIDEREAL_DAY_SECONDS;
+    }
+
+    Ok(sample_times)
+}
+
+fn next_transit_time_mjd_seconds(
+    phase_center_rad: [f64; 2],
+    reference_time_mjd_seconds: f64,
+    observatory: &MPosition,
+) -> MsResult<f64> {
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd(
+            reference_time_mjd_seconds / 86_400.0,
+            EpochRef::UT1,
+        ))
+        .with_position(observatory.clone())
+        .with_direction(MDirection::from_angles(
+            phase_center_rad[0],
+            phase_center_rad[1],
+            DirectionRef::J2000,
+        ))
+        .with_bundled_eop();
+    let last = local_apparent_sidereal_time(&frame)?;
+    let mut delta = circular_angle_delta_rad(phase_center_rad[0] - last);
+    if delta < -1.0e-12 {
+        delta += std::f64::consts::TAU;
+    }
+    Ok(reference_time_mjd_seconds + delta / std::f64::consts::TAU * SIDEREAL_DAY_SECONDS)
+}
+
+fn above_elevation_offsets_for_transit(
+    request: &SyntheticObservationRequest,
+    phase_center_rad: [f64; 2],
+    transit_time_mjd_seconds: f64,
+    observatory: &MPosition,
+    elevation_margin_rad: f64,
+) -> MsResult<Vec<f64>> {
+    let slots_per_sidereal_day = (SIDEREAL_DAY_SECONDS / request.integration_seconds)
+        .floor()
+        .max(1.0) as usize;
+    let day_duration = slots_per_sidereal_day as f64 * request.integration_seconds;
+    let first_offset = -0.5 * day_duration + 0.5 * request.integration_seconds;
+    let mut offsets = Vec::new();
+    for slot in 0..slots_per_sidereal_day {
+        let offset = first_offset + slot as f64 * request.integration_seconds;
+        let time = transit_time_mjd_seconds + offset;
+        let elevation = field_elevation_rad(phase_center_rad, time, observatory)?;
+        if elevation - elevation_margin_rad >= request.elevation_limit_rad {
+            offsets.push(offset);
+        }
+    }
+    Ok(offsets)
+}
+
+pub(crate) fn zenith_transit_phase_center_rad(
+    telescope_name: &str,
+    antennas: &[SyntheticAntenna],
+    transit_time_mjd_seconds: f64,
+) -> MsResult<[f64; 2]> {
+    let observatory = simulation_observatory_position(telescope_name, antennas);
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd(
+            transit_time_mjd_seconds / 86_400.0,
+            EpochRef::UT1,
+        ))
+        .with_position(observatory.clone())
+        .with_bundled_eop();
+    Ok([
+        local_apparent_sidereal_time(&frame)?.rem_euclid(std::f64::consts::TAU),
+        observatory.latitude_rad(),
+    ])
+}
+
+fn elapsed_millis(duration: Duration) -> u128 {
+    duration.as_millis()
+}
+
 fn antenna_uvw_positions(
     antennas: &[SyntheticAntenna],
     phase_center_rad: [f64; 2],
     time_mjd_seconds: f64,
+    observatory: &MPosition,
 ) -> MsResult<Vec<[f64; 3]>> {
     let phase_center = MDirection::from_angles(
         phase_center_rad[0],
         phase_center_rad[1],
         DirectionRef::J2000,
     );
-    let observatory = MPosition::from_observatory_name("VLA")
-        .unwrap_or_else(|| MPosition::new_itrf(-1_601_192.0, -5_041_984.0, 3_554_876.0));
     let frame = MeasFrame::new()
         .with_epoch(MEpoch::from_mjd(time_mjd_seconds / 86_400.0, EpochRef::UT1))
         .with_position(observatory.clone())
@@ -1908,6 +3726,88 @@ fn antenna_uvw_positions(
             Ok(project_j2000_baseline_to_uvw(baseline_j2000, &phase_center))
         })
         .collect()
+}
+
+fn simulation_observatory_position(
+    telescope_name: &str,
+    antennas: &[SyntheticAntenna],
+) -> MPosition {
+    MPosition::from_observatory_name(telescope_name)
+        .unwrap_or_else(|| antenna_centroid_position(antennas))
+}
+
+fn antenna_centroid_position(antennas: &[SyntheticAntenna]) -> MPosition {
+    let count = antennas.len().max(1) as f64;
+    let [x, y, z] = antennas.iter().fold([0.0_f64; 3], |mut sum, antenna| {
+        sum[0] += antenna.position_m[0];
+        sum[1] += antenna.position_m[1];
+        sum[2] += antenna.position_m[2];
+        sum
+    });
+    MPosition::new_itrf(x / count, y / count, z / count)
+}
+
+struct SimobserveUvwProductionTrace {
+    antenna1: usize,
+    antenna2: usize,
+    time_mjd_seconds: f64,
+    time_tolerance_seconds: f64,
+}
+
+impl SimobserveUvwProductionTrace {
+    fn from_env() -> Option<Self> {
+        let antenna_text = std::env::var("CASA_RS_SIMOBSERVE_TRACE_UVW_ANTENNAS").ok()?;
+        let (antenna1_text, antenna2_text) = antenna_text.split_once(',')?;
+        let time_text = std::env::var("CASA_RS_SIMOBSERVE_TRACE_UVW_TIME_S").ok()?;
+        let time_tolerance_seconds = std::env::var("CASA_RS_SIMOBSERVE_TRACE_UVW_TIME_TOL_S")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(1.0e-6);
+        Some(Self {
+            antenna1: antenna1_text.trim().parse().ok()?,
+            antenna2: antenna2_text.trim().parse().ok()?,
+            time_mjd_seconds: time_text.trim().parse().ok()?,
+            time_tolerance_seconds,
+        })
+    }
+
+    fn matches(&self, antenna1: usize, antenna2: usize, time_mjd_seconds: f64) -> bool {
+        self.antenna1 == antenna1
+            && self.antenna2 == antenna2
+            && (self.time_mjd_seconds - time_mjd_seconds).abs() <= self.time_tolerance_seconds
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn trace_simobserve_production_uvw(
+    row_number: usize,
+    sample: usize,
+    antenna1: usize,
+    antenna2: usize,
+    time_mjd_seconds: f64,
+    phase_center_rad: [f64; 2],
+    observatory: &MPosition,
+    antennas: &[SyntheticAntenna],
+    antenna_uvws: &[[f64; 3]],
+    row_uvw: [f64; 3],
+) {
+    let obs_itrf = observatory.as_itrf();
+    let ant1_itrf = antennas[antenna1].position_m;
+    let ant2_itrf = antennas[antenna2].position_m;
+    let ant1_baseline_itrf = [
+        obs_itrf[0] - ant1_itrf[0],
+        obs_itrf[1] - ant1_itrf[1],
+        obs_itrf[2] - ant1_itrf[2],
+    ];
+    let ant2_baseline_itrf = [
+        obs_itrf[0] - ant2_itrf[0],
+        obs_itrf[1] - ant2_itrf[1],
+        obs_itrf[2] - ant2_itrf[2],
+    ];
+    eprintln!(
+        "simobserve_uvw_production_trace row={row_number} sample={sample} ant1={antenna1} ant2={antenna2} time_s={time_mjd_seconds:.15} phase_center_rad={phase_center_rad:?} obs_itrf={obs_itrf:?} ant1_itrf={ant1_itrf:?} ant2_itrf={ant2_itrf:?} ant1_obs_minus_ant_itrf={ant1_baseline_itrf:?} ant2_obs_minus_ant_itrf={ant2_baseline_itrf:?} ant1_uvw={:?} ant2_uvw={:?} row_uvw={row_uvw:?}",
+        antenna_uvws[antenna1], antenna_uvws[antenna2],
+    );
 }
 
 fn project_j2000_baseline_to_uvw(
@@ -2281,26 +4181,6 @@ fn scale_vector(vector: [f64; 3], scale: f64) -> [f64; 3] {
     [vector[0] * scale, vector[1] * scale, vector[2] * scale]
 }
 
-fn ms_main_defs(ms: &MeasurementSet) -> Vec<ColumnDef> {
-    let all_defs = schema::main_table::REQUIRED_COLUMNS
-        .iter()
-        .chain(schema::main_table::OPTIONAL_COLUMNS.iter())
-        .copied()
-        .collect::<Vec<_>>();
-    ms.main_table()
-        .schema()
-        .expect("main table schema")
-        .columns()
-        .iter()
-        .map(|column| {
-            *all_defs
-                .iter()
-                .find(|definition| definition.name == column.name())
-                .expect("known MS main column")
-        })
-        .collect()
-}
-
 fn row_from_defs(defs: &[ColumnDef], overrides: &[(&str, Value)]) -> RecordValue {
     let fields = defs
         .iter()
@@ -2401,6 +4281,24 @@ fn complex_array(values: &[Complex32], shape: Vec<usize>) -> Value {
     ))
 }
 
+#[cfg(test)]
+fn complex_array_from_ms_data_storage(
+    values: &[Complex32],
+    num_corr: usize,
+    num_chan: usize,
+) -> Value {
+    use ndarray::{IxDyn, ShapeBuilder};
+
+    let shape = IxDyn(&[num_corr, num_chan]).strides(IxDyn(&[1, num_corr]));
+    Value::Array(ArrayValue::Complex32(
+        ArrayD::from_shape_vec(shape, values.to_vec()).unwrap(),
+    ))
+}
+
+fn ms_data_index(correlation: usize, channel: usize, num_corr: usize) -> usize {
+    channel * num_corr + correlation
+}
+
 fn string_array(values: &[&str], shape: Vec<usize>) -> Value {
     Value::Array(ArrayValue::String(
         ArrayD::from_shape_vec(
@@ -2409,4 +4307,871 @@ fn string_array(values: &[&str], shape: Vec<usize>) -> Value {
         )
         .unwrap(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spectral_setup_reference_frequency_matches_casa_center_channel_convention() {
+        let setup = SyntheticSpectralSetup {
+            name: "spw".to_string(),
+            start_frequency_hz: 8.0e9,
+            channel_width_hz: 2.0e6,
+            channel_count: 512,
+        };
+
+        assert_eq!(setup.channel_frequencies_hz()[0], 8.0e9);
+        assert_eq!(setup.channel_frequencies_hz()[511], 9.022e9);
+        assert_eq!(setup.reference_frequency_hz(), 8.512e9);
+    }
+
+    #[test]
+    fn row_noise_seed_varies_by_row_coordinates() {
+        let base = row_noise_seed(42, 0, 0, 1, 0);
+        assert_ne!(base, row_noise_seed(43, 0, 0, 1, 0));
+        assert_ne!(base, row_noise_seed(42, 1, 0, 1, 0));
+        assert_ne!(base, row_noise_seed(42, 0, 1, 2, 0));
+        assert_ne!(base, row_noise_seed(42, 0, 0, 1, 1));
+        assert_eq!(base, row_noise_seed(42, 0, 0, 1, 0));
+    }
+
+    #[test]
+    fn fits_model_cube_uses_per_channel_planes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("cube.fits");
+        write_test_fits_cube(&path, 3);
+
+        let model = read_fits_model_image(&path, None, 3).expect("read model cube");
+
+        assert_eq!(model.channel_planes.len(), 3);
+        assert_eq!(model.pixels_for_channel(0)[(2, 3)], 32.0);
+        assert_eq!(model.pixels_for_channel(1)[(2, 3)], 132.0);
+        assert_eq!(model.pixels_for_channel(2)[(2, 3)], 232.0);
+    }
+
+    #[test]
+    fn fits_model_plane_repeats_for_all_requested_channels() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("plane.fits");
+        write_test_fits_plane(&path);
+
+        let model = read_fits_model_image(&path, None, 4).expect("read model plane");
+
+        assert_eq!(model.channel_planes.len(), 1);
+        assert_eq!(model.pixels_for_channel(0)[(2, 3)], 32.0);
+        assert_eq!(model.pixels_for_channel(3)[(2, 3)], 32.0);
+    }
+
+    #[test]
+    fn simobserve_channel_worker_count_is_bounded_by_frequency_work() {
+        assert_eq!(simobserve_channel_worker_count_for(8, 8, 8, 64), 1);
+        assert_eq!(simobserve_channel_worker_count_for(64, 8, 8, 64), 8);
+        assert_eq!(simobserve_channel_worker_count_for(64, 16, 4, 64), 4);
+        assert_eq!(simobserve_channel_worker_count_for(3, 16, 16, 1), 3);
+        assert_eq!(simobserve_channel_worker_count_for(64, 0, 0, 64), 1);
+    }
+
+    #[test]
+    fn simobserve_row_worker_count_is_bounded_by_row_work() {
+        assert_eq!(simobserve_row_worker_count_for(8, 16, 8, 8, 1024), 1);
+        assert_eq!(simobserve_row_worker_count_for(351, 512, 16, 10, 1024), 10);
+        assert_eq!(simobserve_row_worker_count_for(351, 512, 16, 4, 1024), 4);
+        assert_eq!(simobserve_row_worker_count_for(3, 512, 16, 16, 1024), 3);
+        assert_eq!(simobserve_row_worker_count_for(351, 512, 0, 16, 1024), 1);
+    }
+
+    #[test]
+    fn parallel_row_corruption_matches_serial_corruption() {
+        let config = SyntheticCorruptionConfig {
+            seed: 11,
+            noise: Some(SyntheticNoiseCorruption {
+                mode: SyntheticNoiseMode::SimpleNoise,
+                simplenoise_jy: 0.01,
+            }),
+            gain: Some(SyntheticGainCorruption {
+                mode: SyntheticGainMode::Fbm,
+                interval_seconds: 10.0,
+                amplitude: [0.03, 0.02],
+            }),
+            bandpass: Some(SyntheticBandpassCorruption {
+                mode: SyntheticBandpassMode::Calculate,
+                interval_seconds: 10.0,
+                amplitude: [0.02, 0.01],
+            }),
+            leakage: Some(SyntheticPolarizationLeakageCorruption {
+                mode: SyntheticPolarizationLeakageMode::Constant,
+                amplitude: [0.02, 0.01],
+                offset: [0.0, 0.0],
+            }),
+            pointing: None,
+        };
+        let corruption = SyntheticCorruptionState::new(&config, 8, 16, 5);
+        let row_specs = (0..7)
+            .flat_map(|antenna1| {
+                ((antenna1 + 1)..8).map(move |antenna2| MainRowVisibilitySpec {
+                    antenna1,
+                    antenna2,
+                    field_id: 0,
+                    time: 0.0,
+                    uvw: [antenna1 as f64, antenna2 as f64, 0.0],
+                })
+            })
+            .collect::<Vec<_>>();
+        let base_rows = row_specs
+            .iter()
+            .enumerate()
+            .map(|(row, _)| {
+                (0..32)
+                    .map(|index| Complex32::new(row as f32, index as f32 * 0.25))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut serial = base_rows.clone();
+        let mut parallel = base_rows;
+
+        let serial_nonzero =
+            apply_corruption_and_count_rows(Some(&corruption), &row_specs, &mut serial, 16, 3);
+        let parallel_nonzero = apply_corruption_and_count_rows_with_workers(
+            Some(&corruption),
+            &row_specs,
+            &mut parallel,
+            16,
+            3,
+        );
+
+        assert_eq!(serial_nonzero, parallel_nonzero);
+        assert_eq!(serial, parallel);
+    }
+
+    #[test]
+    fn parallel_channel_prediction_matches_serial_prediction() {
+        let channel_count = 96;
+        let spectral_setup = SyntheticSpectralSetup {
+            name: "test".to_string(),
+            start_frequency_hz: 1.0e9,
+            channel_width_hz: 1.0e6,
+            channel_count,
+        };
+        let geometry = ImageGeometry {
+            image_shape: [16, 16],
+            cell_size_rad: [1.0e-5, 1.0e-5],
+        };
+        let model = Array2::<f32>::from_shape_fn((16, 16), |(x, y)| {
+            let dx = x as f32 - 7.5;
+            let dy = y as f32 - 7.5;
+            (-0.03 * (dx * dx + dy * dy)).exp()
+        });
+        let predictors = (0..channel_count)
+            .map(|_| SyntheticChannelPredictor {
+                predictor: StandardMfsModelPredictor::new(geometry, &model).unwrap(),
+                phase_offset: ModelPhaseOffset {
+                    l_rad: 1.0e-6,
+                    m_rad: -2.0e-6,
+                    n_minus_one: 3.0e-12,
+                },
+                phase_center_rad: [1.0, -0.5],
+                model_reference_direction_rad: None,
+            })
+            .collect::<Vec<_>>();
+        let row_uvws = [[10.0, 20.0, 0.0], [100.0, -30.0, 5.0], [-55.0, 7.0, -3.0]];
+
+        let serial = predicted_data_values_for_rows_with_workers(
+            Some(&predictors),
+            &spectral_setup,
+            &row_uvws,
+            2,
+            1,
+        );
+        let parallel = predicted_data_values_for_rows_with_workers(
+            Some(&predictors),
+            &spectral_setup,
+            &row_uvws,
+            2,
+            4,
+        );
+
+        assert_eq!(serial, parallel);
+    }
+
+    #[test]
+    fn ms_data_array_uses_casacore_storage_order() {
+        let values = vec![
+            Complex32::new(10.0, 0.0),
+            Complex32::new(20.0, 0.0),
+            Complex32::new(11.0, 0.0),
+            Complex32::new(21.0, 0.0),
+            Complex32::new(12.0, 0.0),
+            Complex32::new(22.0, 0.0),
+        ];
+        let Value::Array(ArrayValue::Complex32(array)) =
+            complex_array_from_ms_data_storage(&values, 2, 3)
+        else {
+            panic!("expected complex DATA array");
+        };
+
+        assert_eq!(array.shape(), &[2, 3]);
+        assert_eq!(array.strides(), &[1, 2]);
+        assert_eq!(array[[0, 0]], Complex32::new(10.0, 0.0));
+        assert_eq!(array[[1, 0]], Complex32::new(20.0, 0.0));
+        assert_eq!(array[[0, 2]], Complex32::new(12.0, 0.0));
+        assert_eq!(array[[1, 2]], Complex32::new(22.0, 0.0));
+        assert_eq!(array.as_slice_memory_order().unwrap(), values.as_slice());
+    }
+
+    fn write_test_fits_plane(path: &Path) {
+        let mut cards = test_fits_cards(&[
+            ("SIMPLE", "T"),
+            ("BITPIX", "-32"),
+            ("NAXIS", "2"),
+            ("NAXIS1", "8"),
+            ("NAXIS2", "8"),
+            ("CDELT1", "-0.1"),
+            ("CUNIT1", "'deg'"),
+            ("CDELT2", "0.1"),
+            ("CUNIT2", "'deg'"),
+        ]);
+        let mut bytes = Vec::new();
+        bytes.append(&mut cards);
+        for y in 0..8 {
+            for x in 0..8 {
+                bytes.extend_from_slice(&((x + 10 * y) as f32).to_bits().to_be_bytes());
+            }
+        }
+        pad_fits_block(&mut bytes);
+        std::fs::write(path, bytes).expect("write test FITS plane");
+    }
+
+    fn write_test_fits_cube(path: &Path, channels: usize) {
+        let channels_text = channels.to_string();
+        let mut cards = test_fits_cards(&[
+            ("SIMPLE", "T"),
+            ("BITPIX", "-32"),
+            ("NAXIS", "4"),
+            ("NAXIS1", "8"),
+            ("NAXIS2", "8"),
+            ("NAXIS3", "1"),
+            ("NAXIS4", channels_text.as_str()),
+            ("CDELT1", "-0.1"),
+            ("CUNIT1", "'deg'"),
+            ("CDELT2", "0.1"),
+            ("CUNIT2", "'deg'"),
+            ("CTYPE3", "'STOKES'"),
+            ("CTYPE4", "'FREQ'"),
+        ]);
+        let mut bytes = Vec::new();
+        bytes.append(&mut cards);
+        for channel in 0..channels {
+            for y in 0..8 {
+                for x in 0..8 {
+                    let value = (100 * channel + x + 10 * y) as f32;
+                    bytes.extend_from_slice(&value.to_bits().to_be_bytes());
+                }
+            }
+        }
+        pad_fits_block(&mut bytes);
+        std::fs::write(path, bytes).expect("write test FITS cube");
+    }
+
+    fn test_fits_cards(entries: &[(&str, &str)]) -> Vec<u8> {
+        let mut text = String::new();
+        for (key, value) in entries {
+            text.push_str(
+                &format!("{key:<8}= {value:>20}")
+                    .chars()
+                    .take(80)
+                    .collect::<String>(),
+            );
+            let last_card_len = text.len() % 80;
+            if last_card_len != 0 {
+                text.push_str(&" ".repeat(80 - last_card_len));
+            }
+        }
+        text.push_str(&format!("{:<80}", "END"));
+        let mut bytes = text.into_bytes();
+        pad_fits_block(&mut bytes);
+        bytes
+    }
+
+    fn pad_fits_block(bytes: &mut Vec<u8>) {
+        let pad = (2880 - bytes.len() % 2880) % 2880;
+        bytes.extend(std::iter::repeat_n(b' ', pad));
+    }
+
+    #[test]
+    fn simulator_primary_beam_is_centered_on_fits_reference_pixel() {
+        let mut pixels = Array2::<f32>::zeros((6, 6));
+        pixels[(3, 3)] = 1.0;
+        pixels[(4, 3)] = 1.0;
+        let mut coordinate_system = CoordinateSystem::new();
+        coordinate_system.add_coordinate(Box::new(casa_coordinates::DirectionCoordinate::new(
+            DirectionRef::J2000,
+            casa_coordinates::Projection::new(casa_coordinates::ProjectionType::SIN),
+            [1.25, -0.3],
+            [-1.0e-3, 1.0e-3],
+            [1.0, 1.0],
+        )));
+        let model = FitsModelImage {
+            pixels,
+            channel_planes: Vec::new(),
+            cell_size_rad: [1.0e-3, 1.0e-3],
+            direction_wcs: Some(FitsModelDirectionWcs {
+                coordinate_system,
+                coordinate_index: 0,
+            }),
+            ra_axis_increases_with_x: false,
+            reference_direction_rad: Some([1.25, -0.3]),
+        };
+        let corrected = apply_simulator_primary_beam(
+            &model,
+            &model.pixels,
+            [1.25, -0.3],
+            43.0e9,
+            [0.0, 0.0],
+            SyntheticPrimaryBeam {
+                use_casa_vla_q_table: true,
+                dish_diameter_m: 25.0,
+                blockage_diameter_m: 2.36,
+            },
+        );
+
+        assert_eq!(corrected[(3, 3)], 1.0);
+        assert!(
+            corrected[(4, 3)] < 1.0,
+            "adjacent pixels should be attenuated away from the FITS reference pixel"
+        );
+    }
+
+    #[test]
+    fn casa_vla_q_primary_beam_uses_common_pb_table_support() {
+        let at_half_max_radius =
+            casa_vla_q_primary_beam_voltage_pattern((0.5 * 0.8564_f64).to_radians(), 1.0e9);
+        let at_support = casa_vla_q_primary_beam_voltage_pattern(0.8564_f64.to_radians(), 1.0e9);
+
+        assert!((at_half_max_radius - 0.596_901_4).abs() < 1.0e-7);
+        assert!((at_support - -0.017_125_657).abs() < 1.0e-8);
+    }
+
+    #[test]
+    fn alma_primary_beam_uses_casa_effective_diameter_for_model_prediction() {
+        let mut request = SyntheticObservationRequest::vla_ppdisk(
+            PathBuf::from("model.fits"),
+            PathBuf::from("out.ms"),
+            vec![SyntheticAntenna {
+                name: "A000".to_string(),
+                station: "A000".to_string(),
+                position_m: [0.0, 0.0, 0.0],
+                dish_diameter_m: 12.0,
+            }],
+        );
+        request.telescope_name = "ALMA".to_string();
+
+        let primary_beam = synthetic_primary_beam(&request);
+
+        assert_eq!(primary_beam.dish_diameter_m, 10.7);
+        assert_eq!(primary_beam.blockage_diameter_m, 0.75);
+        assert!(!primary_beam.use_casa_vla_q_table);
+    }
+
+    #[test]
+    fn simobserve_uvw_trace_when_requested() {
+        let Ok(a1_text) = std::env::var("CASA_RS_SIMOBSERVE_UVW_TRACE_A1_ITRF") else {
+            return;
+        };
+        let Ok(a2_text) = std::env::var("CASA_RS_SIMOBSERVE_UVW_TRACE_A2_ITRF") else {
+            return;
+        };
+        let Ok(time_text) = std::env::var("CASA_RS_SIMOBSERVE_UVW_TRACE_TIME_S") else {
+            return;
+        };
+        let a1 = parse_trace_triplet(&a1_text);
+        let a2 = parse_trace_triplet(&a2_text);
+        let time_s = time_text.parse::<f64>().expect("trace time seconds");
+        let phase_center = MDirection::from_angles(
+            -1.570_794_075_320_161_2,
+            -0.401_423_790_643_226_1,
+            DirectionRef::J2000,
+        );
+        let observatory = std::env::var("CASA_RS_SIMOBSERVE_UVW_TRACE_OBSERVATORY")
+            .ok()
+            .and_then(|name| MPosition::from_observatory_name(&name))
+            .unwrap_or_else(|| {
+                MPosition::new_itrf(
+                    2_225_052.376_592_874_5,
+                    -5_440_045.715_534_717,
+                    -2_481_673.806_727_262_7,
+                )
+            });
+        let frame = MeasFrame::new()
+            .with_epoch(MEpoch::from_mjd(time_s / 86_400.0, EpochRef::UT1))
+            .with_position(observatory)
+            .with_direction(phase_center.clone())
+            .with_bundled_eop();
+        let a1_j2000 = baseline_itrf_to_j2000(a1, &phase_center, &frame).unwrap();
+        let a2_j2000 = baseline_itrf_to_j2000(a2, &phase_center, &frame).unwrap();
+        let a1_uvw = project_j2000_baseline_to_uvw(a1_j2000, &phase_center);
+        let a2_uvw = project_j2000_baseline_to_uvw(a2_j2000, &phase_center);
+        eprintln!("TRACE_A1_J2000={a1_j2000:?}");
+        eprintln!("TRACE_A2_J2000={a2_j2000:?}");
+        eprintln!("TRACE_A1_UVW={a1_uvw:?}");
+        eprintln!("TRACE_A2_UVW={a2_uvw:?}");
+        eprintln!(
+            "TRACE_A2_MINUS_A1_UVW={:?}",
+            [
+                a2_uvw[0] - a1_uvw[0],
+                a2_uvw[1] - a1_uvw[1],
+                a2_uvw[2] - a1_uvw[2],
+            ]
+        );
+    }
+
+    #[test]
+    fn simobserve_model_predictor_trace_matches_casacore_gridder_when_requested() {
+        let Ok(model_path) = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_FITS") else {
+            return;
+        };
+        let Ok(uvw_text) = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_UVW_M") else {
+            return;
+        };
+        let uvw_m = parse_trace_triplet(&uvw_text);
+        let channel = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_CHANNEL")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let channel_count = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_CHANNEL_COUNT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(channel + 1);
+        let start_frequency_hz = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_START_HZ")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(230.0e9);
+        let channel_width_hz = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_WIDTH_HZ")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(2.0e6);
+        let frequency_hz = start_frequency_hz + channel as f64 * channel_width_hz;
+        let model_path = PathBuf::from(model_path);
+        let model =
+            read_fits_model_image(&model_path, None, channel_count).expect("read trace FITS model");
+        let phase_center_rad = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_PHASE_CENTER_RAD")
+            .ok()
+            .map(|value| parse_trace_triplet(&value)[0..2].try_into().unwrap())
+            .unwrap_or([4.712_391_234_768_306, -0.401_423_788_703_971_4]);
+        if let Some(wcs) = model.direction_wcs.as_ref() {
+            let coordinate = wcs.coordinate();
+            let pointing_pixel = coordinate
+                .to_pixel(&phase_center_rad)
+                .expect("trace phase center pixel");
+            eprintln!(
+                "simobserve_model_predictor_trace_wcs reference_pixel={:?} reference_value={:?} increment={:?} phase_center_rad={phase_center_rad:?} pointing_pixel={pointing_pixel:?} reference_direction_rad={:?} ra_axis_increases_with_x={}",
+                coordinate.reference_pixel(),
+                coordinate.reference_value(),
+                coordinate.increment(),
+                model.reference_direction_rad,
+                model.ra_axis_increases_with_x,
+            );
+        }
+        let primary_beam = SyntheticPrimaryBeam {
+            use_casa_vla_q_table: false,
+            dish_diameter_m: std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_DISH_M")
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(10.7),
+            blockage_diameter_m: std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_BLOCKAGE_M")
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(0.75),
+        };
+        let source_pixels = model.pixels_for_channel(channel);
+        let casa_oriented_pixels = trace_oriented_pixels_for_beam_power(
+            &model,
+            source_pixels,
+            phase_center_rad,
+            frequency_hz,
+            primary_beam,
+            2,
+        );
+        let casa_oriented_moments = trace_pixels_moments(&casa_oriented_pixels);
+        eprintln!(
+            "simobserve_model_predictor_trace_pixels sum={:.9e} peak={:.9e} x_mean={:.9e} y_mean={:.9e} x_rms={:.9e} y_rms={:.9e}",
+            casa_oriented_moments.sum,
+            casa_oriented_moments.peak,
+            casa_oriented_moments.x_mean(),
+            casa_oriented_moments.y_mean(),
+            casa_oriented_moments.x_rms(),
+            casa_oriented_moments.y_rms(),
+        );
+        if let Ok(path) = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_DUMP_PIXELS") {
+            trace_dump_pixels(&casa_oriented_pixels, &path);
+        }
+        let geometry = ImageGeometry {
+            image_shape: [
+                casa_oriented_pixels.shape()[0],
+                casa_oriented_pixels.shape()[1],
+            ],
+            cell_size_rad: model.cell_size_rad,
+        };
+        let predictor = StandardMfsModelPredictor::new(geometry, &casa_oriented_pixels)
+            .expect("build native predictor");
+        let phase_offset = casa_model_phase_offset(&model, phase_center_rad);
+        let casa_small_shift_disabled = model
+            .reference_direction_rad
+            .map(|reference_direction_rad| {
+                let delta_ra =
+                    circular_angle_delta_rad(reference_direction_rad[0] - phase_center_rad[0]);
+                delta_ra.abs() < model.cell_size_rad[0].abs()
+                    && (reference_direction_rad[1] - phase_center_rad[1]).abs()
+                        < model.cell_size_rad[1].abs()
+            })
+            .unwrap_or(false);
+        let prediction_uvw_m = if let Some(model_reference_direction_rad) =
+            model.reference_direction_rad
+        {
+            rotate_uvw_between_directions(uvw_m, phase_center_rad, model_reference_direction_rad)
+        } else {
+            uvw_m
+        };
+        let wavelength_m = 299_792_458.0 / frequency_hz;
+        let u_lambda = prediction_uvw_m[0] / wavelength_m;
+        let v_lambda = prediction_uvw_m[1] / wavelength_m;
+        let w_lambda = prediction_uvw_m[2] / wavelength_m;
+        let phase = std::f64::consts::TAU
+            * (u_lambda * phase_offset.l_rad + v_lambda * phase_offset.m_rad
+                - w_lambda * phase_offset.n_minus_one);
+        let phase_shift = Complex32::new(phase.cos() as f32, phase.sin() as f32);
+        let native_gridder = predictor.predict(u_lambda, v_lambda);
+        let native = native_gridder * phase_shift;
+        let grid_shape = [
+            trace_casa_composite_padded_len(geometry.image_shape[0], 1.3),
+            trace_casa_composite_padded_len(geometry.image_shape[1], 1.3),
+        ];
+        let cpp = casa_test_support::gridder_interop::cpp_convolve_gridder_predict_visibility_2d(
+            grid_shape,
+            geometry.image_shape,
+            [
+                grid_shape[0] as f64 * geometry.cell_size_rad[0],
+                grid_shape[1] as f64 * geometry.cell_size_rad[1],
+            ],
+            [grid_shape[0] as f64 / 2.0, grid_shape[1] as f64 / 2.0],
+            [u_lambda, -v_lambda],
+            casa_oriented_pixels
+                .as_slice()
+                .expect("contiguous oriented model"),
+        )
+        .expect("casacore gridder predictor");
+        let cpp_gridder = Complex32::new(cpp.re, cpp.im);
+        let cpp_value = cpp_gridder * phase_shift;
+        let casa_data = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_CASA_DATA")
+            .ok()
+            .map(|value| parse_trace_complex(&value));
+        for beam_power in [0, 1, 2] {
+            let pixels = trace_oriented_pixels_for_beam_power(
+                &model,
+                source_pixels,
+                phase_center_rad,
+                frequency_hz,
+                primary_beam,
+                beam_power,
+            );
+            if let Ok(prefix) = std::env::var("CASA_RS_SIMOBSERVE_MODEL_TRACE_DUMP_VARIANT_PREFIX")
+            {
+                trace_dump_pixels(&pixels, &format!("{prefix}-beam{beam_power}.bin"));
+            }
+            let trace_predictor =
+                StandardMfsModelPredictor::new(geometry, &pixels).expect("build trace predictor");
+            let trace_gridder = trace_predictor.predict(u_lambda, v_lambda);
+            let trace_native = trace_gridder * phase_shift;
+            let casa_delta = casa_data
+                .map(|casa_data| (trace_native - casa_data).norm())
+                .unwrap_or(f32::NAN);
+            let moments = trace_pixels_moments(&pixels);
+            eprintln!(
+                "simobserve_model_predictor_trace_variant beam_power={beam_power} model_sum={:.9e} model_peak={:.9e} x_mean={:.9e} y_mean={:.9e} x_rms={:.9e} y_rms={:.9e} native={trace_native:?} casa_delta_abs={casa_delta:.9e}",
+                moments.sum,
+                moments.peak,
+                moments.x_mean(),
+                moments.y_mean(),
+                moments.x_rms(),
+                moments.y_rms(),
+            );
+        }
+        if casa_small_shift_disabled {
+            let no_shift_gridder =
+                predictor.predict(uvw_m[0] / wavelength_m, uvw_m[1] / wavelength_m);
+            let casa_delta = casa_data
+                .map(|casa_data| (no_shift_gridder - casa_data).norm())
+                .unwrap_or(f32::NAN);
+            eprintln!(
+                "simobserve_model_predictor_trace_casa_small_shift_disabled native_no_rotation_no_phase={no_shift_gridder:?} casa_delta_abs={casa_delta:.9e}"
+            );
+        }
+        eprintln!(
+            "simobserve_model_predictor_trace channel={channel} frequency_hz={frequency_hz:.9e} uvw_m={uvw_m:?} prediction_uvw_m={prediction_uvw_m:?} u_lambda={u_lambda:.9e} v_lambda={v_lambda:.9e} w_lambda={w_lambda:.9e} native_gridder={native_gridder:?} cpp_gridder={cpp_gridder:?} gridder_delta_abs={:.9e} phase_offset=({:.9e},{:.9e},{:.9e}) phase_rad={phase:.9e} native={native:?} cpp={cpp_value:?} final_delta_abs={:.9e}",
+            (native_gridder - cpp_gridder).norm(),
+            phase_offset.l_rad,
+            phase_offset.m_rad,
+            phase_offset.n_minus_one,
+            (native - cpp_value).norm(),
+        );
+        assert!((native_gridder - cpp_gridder).norm() < 1.0e-3);
+    }
+
+    fn trace_oriented_pixels_for_beam_power(
+        model: &FitsModelImage,
+        source_pixels: &Array2<f32>,
+        phase_center_rad: [f64; 2],
+        frequency_hz: f64,
+        primary_beam: SyntheticPrimaryBeam,
+        beam_power: u32,
+    ) -> Array2<f32> {
+        let beam_corrected_pixels = apply_simulator_primary_beam_power(
+            model,
+            source_pixels,
+            phase_center_rad,
+            frequency_hz,
+            [0.0, 0.0],
+            primary_beam,
+            beam_power,
+        );
+        let mut casa_oriented_pixels = Array2::<f32>::zeros(beam_corrected_pixels.raw_dim());
+        if model.ra_axis_increases_with_x {
+            for x in 0..beam_corrected_pixels.shape()[0] {
+                for y in 0..beam_corrected_pixels.shape()[1] {
+                    casa_oriented_pixels[(beam_corrected_pixels.shape()[0] - 1 - x, y)] =
+                        beam_corrected_pixels[(x, y)];
+                }
+            }
+        } else {
+            casa_oriented_pixels.assign(&beam_corrected_pixels);
+        }
+        casa_oriented_pixels
+    }
+
+    struct TracePixelMoments {
+        sum: f64,
+        peak: f64,
+        x_sum: f64,
+        y_sum: f64,
+        xx_sum: f64,
+        yy_sum: f64,
+    }
+
+    impl TracePixelMoments {
+        fn x_mean(&self) -> f64 {
+            self.x_sum / self.sum
+        }
+
+        fn y_mean(&self) -> f64 {
+            self.y_sum / self.sum
+        }
+
+        fn x_rms(&self) -> f64 {
+            (self.xx_sum / self.sum).sqrt()
+        }
+
+        fn y_rms(&self) -> f64 {
+            (self.yy_sum / self.sum).sqrt()
+        }
+    }
+
+    fn trace_pixels_moments(pixels: &Array2<f32>) -> TracePixelMoments {
+        let mut moments = TracePixelMoments {
+            sum: 0.0,
+            peak: 0.0,
+            x_sum: 0.0,
+            y_sum: 0.0,
+            xx_sum: 0.0,
+            yy_sum: 0.0,
+        };
+        for ((x, y), value) in pixels.indexed_iter() {
+            let value = f64::from(*value);
+            let x = x as f64;
+            let y = y as f64;
+            moments.sum += value;
+            moments.peak = moments.peak.max(value.abs());
+            moments.x_sum += value * x;
+            moments.y_sum += value * y;
+            moments.xx_sum += value * x * x;
+            moments.yy_sum += value * y * y;
+        }
+        moments
+    }
+
+    fn trace_dump_pixels(pixels: &Array2<f32>, path: &str) {
+        let mut bytes = Vec::with_capacity(pixels.len() * std::mem::size_of::<f32>());
+        for value in pixels.iter() {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        std::fs::write(path, bytes).expect("write trace pixel dump");
+    }
+
+    fn parse_trace_triplet(text: &str) -> [f64; 3] {
+        let values = text
+            .split(',')
+            .map(|part| part.trim().parse::<f64>().expect("trace triplet value"))
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), 3);
+        [values[0], values[1], values[2]]
+    }
+
+    fn parse_trace_complex(text: &str) -> Complex32 {
+        let values = text
+            .split(',')
+            .map(|part| part.trim().parse::<f32>().expect("trace complex value"))
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), 2);
+        Complex32::new(values[0], values[1])
+    }
+
+    fn trace_casa_composite_padded_len(image_len: usize, padding_factor: f64) -> usize {
+        let padded = (padding_factor * image_len as f64 - 0.5).floor() as usize;
+        let mut padded = padded.max(image_len);
+        if padded % 2 != 0 {
+            padded += 1;
+        }
+        while !trace_is_casa_composite_len(padded) {
+            padded += 2;
+        }
+        padded
+    }
+
+    fn trace_is_casa_composite_len(mut value: usize) -> bool {
+        for factor in [2, 3, 5] {
+            while value > 1 && value % factor == 0 {
+                value /= factor;
+            }
+        }
+        value == 1
+    }
+
+    #[test]
+    fn shadowing_marks_nearer_antenna_and_flags_rows_involving_it() {
+        let antennas = vec![
+            SyntheticAntenna::vla("A0", "A0", [0.0, 0.0, 0.0]),
+            SyntheticAntenna::vla("A1", "A1", [0.0, 0.0, 0.0]),
+            SyntheticAntenna::vla("A2", "A2", [0.0, 0.0, 0.0]),
+        ];
+        let rows = vec![
+            MainRowVisibilitySpec {
+                antenna1: 0,
+                antenna2: 1,
+                field_id: 0,
+                time: 0.0,
+                uvw: [10.0, 0.0, 1.0],
+            },
+            MainRowVisibilitySpec {
+                antenna1: 0,
+                antenna2: 2,
+                field_id: 0,
+                time: 0.0,
+                uvw: [100.0, 0.0, -1.0],
+            },
+            MainRowVisibilitySpec {
+                antenna1: 1,
+                antenna2: 2,
+                field_id: 0,
+                time: 0.0,
+                uvw: [10.0, 0.0, -1.0],
+            },
+        ];
+
+        assert_eq!(
+            shadowed_antennas_for_rows(&rows, &antennas),
+            vec![true, false, true]
+        );
+    }
+
+    #[test]
+    fn elevation_limit_identifies_below_limit_full_track_samples() {
+        let observatory = MPosition::from_observatory_name("ALMA").expect("ALMA position");
+        let phase_center = [-1.570_794_075_320_161, -0.401_423_790_643_226_1];
+        let start_time_mjd_seconds = 4_895_178_609.486_364;
+        let first_sample = start_time_mjd_seconds + 5.0;
+        let transit_sample = start_time_mjd_seconds + 43_200.0;
+
+        assert!(
+            field_elevation_rad(phase_center, first_sample, &observatory).unwrap()
+                < DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD
+        );
+        assert!(
+            field_elevation_rad(phase_center, transit_sample, &observatory).unwrap()
+                > DEFAULT_SIMOBSERVE_ELEVATION_LIMIT_RAD
+        );
+    }
+
+    #[test]
+    fn default_sample_scheduler_splits_long_tracks_into_above_limit_sessions() {
+        let antennas = tutorial_vla_a_antennas();
+        let start_time_mjd_seconds = 59_000.25 * 86_400.0;
+        let phase_center =
+            zenith_transit_phase_center_rad("VLA", &antennas, start_time_mjd_seconds).unwrap();
+        let mut request = SyntheticObservationRequest::vla_ppdisk("model.fits", "out.ms", antennas);
+        request.telescope_name = "VLA".to_string();
+        request.phase_center_rad = phase_center;
+        request.start_time_mjd_seconds = start_time_mjd_seconds;
+        request.duration_seconds = 20.0 * 3_600.0;
+        request.integration_seconds = 600.0;
+
+        let samples = time_sample_count(request.duration_seconds, request.integration_seconds);
+        let times = observation_sample_times(&request, samples).unwrap();
+        let observatory =
+            simulation_observatory_position(&request.telescope_name, &request.antennas);
+        let elevation_margin_rad = antenna_elevation_margin_rad(&request.antennas, &observatory);
+
+        assert_eq!(times.len(), samples);
+        assert!(times.windows(2).any(|pair| pair[1] - pair[0] > 3_600.0));
+        for time in &times {
+            let elevation = field_elevation_rad(phase_center, *time, &observatory).unwrap();
+            assert!(
+                elevation - elevation_margin_rad >= request.elevation_limit_rad,
+                "scheduled sample below elevation limit: {} deg",
+                elevation.to_degrees()
+            );
+        }
+
+        let mut sessions = Vec::new();
+        let mut start = 0usize;
+        for index in 1..times.len() {
+            if times[index] - times[index - 1] > 3_600.0 {
+                sessions.push(&times[start..index]);
+                start = index;
+            }
+        }
+        sessions.push(&times[start..]);
+        let final_session = sessions.last().expect("final session");
+        let final_center = 0.5 * (final_session[0] + final_session[final_session.len() - 1]);
+        let final_transit = next_transit_time_mjd_seconds(
+            phase_center,
+            request.start_time_mjd_seconds,
+            &observatory,
+        )
+        .unwrap()
+            + (sessions.len() - 1) as f64 * SIDEREAL_DAY_SECONDS;
+        assert!(
+            (final_center - final_transit).abs() <= request.integration_seconds,
+            "final short session is not centered on transit"
+        );
+    }
+
+    #[test]
+    fn below_elevation_override_preserves_continuous_sample_times() {
+        let antennas = tutorial_vla_a_antennas();
+        let mut request = SyntheticObservationRequest::vla_ppdisk("model.fits", "out.ms", antennas);
+        request.start_time_mjd_seconds = 59_000.25 * 86_400.0;
+        request.duration_seconds = 1_200.0;
+        request.integration_seconds = 300.0;
+        request.allow_below_elevation_limit = true;
+
+        assert_eq!(
+            observation_sample_times(&request, 4).unwrap(),
+            vec![
+                request.start_time_mjd_seconds + 150.0,
+                request.start_time_mjd_seconds + 450.0,
+                request.start_time_mjd_seconds + 750.0,
+                request.start_time_mjd_seconds + 1_050.0,
+            ]
+        );
+    }
 }

@@ -52,6 +52,7 @@ def main() -> None:
     chan_start = env_int("CASA_RS_BENCH_CHANNEL_START")
     chan_count = env_int("CASA_RS_BENCH_CHANNEL_COUNT")
     specmode = env_str("CASA_RS_BENCH_SPECMODE")
+    gridder = env_str("CASA_RS_BENCH_GRIDDER")
     imsize = env_int("CASA_RS_BENCH_IMSIZE")
     cell_arcsec = env_str("CASA_RS_BENCH_CELL_ARCSEC")
     weighting = env_str("CASA_RS_BENCH_WEIGHTING")
@@ -124,7 +125,7 @@ def main() -> None:
                     projection="SIN",
                     specmode=specmode,
                     interpolation="nearest",
-                    gridder="standard",
+                    gridder=gridder,
                     restart=True,
                     weighting=weighting,
                     robust=robust,

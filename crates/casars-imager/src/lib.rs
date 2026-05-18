@@ -1050,6 +1050,7 @@ pub fn build_w_project_trace_from_config(
             config.imsize,
             &config.mask_boxes,
             config.mask_image.as_deref(),
+            config.use_mask == CleanMaskMode::User,
         )?,
         initial_model: None,
         w_term_mode: config.w_term_mode,
@@ -1115,6 +1116,7 @@ pub fn build_cube_channel_w_project_trace_from_config(
             config.imsize,
             &config.mask_boxes,
             config.mask_image.as_deref(),
+            config.use_mask == CleanMaskMode::User,
         )?,
         channel_clean_mask: None,
         auto_mask: None,
@@ -1434,6 +1436,7 @@ fn run_single_image_from_config_with_gridder_override(
                 config.imsize,
                 &config.mask_boxes,
                 config.mask_image.as_deref(),
+                config.use_mask == CleanMaskMode::User,
             )?;
             if config.deconvolver == Deconvolver::Mtmfs {
                 if config.use_mask == CleanMaskMode::AutoMultiThreshold {
@@ -1549,6 +1552,7 @@ fn run_single_image_from_config_with_gridder_override(
                 config.imsize,
                 &config.mask_boxes,
                 config.mask_image.as_deref(),
+                config.use_mask == CleanMaskMode::User,
             )?;
             let mut channel_clean_mask = None::<Array4<bool>>;
             let mut dirty_seed = None;
@@ -2782,6 +2786,7 @@ fn build_joint_outlier_clean_mask(
         config.imsize,
         &config.mask_boxes,
         config.mask_image.as_deref(),
+        config.use_mask == CleanMaskMode::User,
     )?;
     let Some(mask_text) = definition
         .and_then(|definition| definition.mask.as_deref())
@@ -3286,6 +3291,7 @@ pub fn trace_cube_channel_residual_refresh_from_config(
             config.imsize,
             &config.mask_boxes,
             config.mask_image.as_deref(),
+            config.use_mask == CleanMaskMode::User,
         )?,
         channel_clean_mask: None,
         auto_mask: None,
@@ -3350,6 +3356,7 @@ pub fn trace_cube_channel_residual_refresh_from_config_with_model_cube(
             config.imsize,
             &config.mask_boxes,
             config.mask_image.as_deref(),
+            config.use_mask == CleanMaskMode::User,
         )?,
         channel_clean_mask: None,
         auto_mask: None,
@@ -3417,6 +3424,7 @@ pub fn trace_cube_channel_residual_refresh_from_config_with_model_cube_model_cha
             config.imsize,
             &config.mask_boxes,
             config.mask_image.as_deref(),
+            config.use_mask == CleanMaskMode::User,
         )?,
         channel_clean_mask: None,
         auto_mask: None,
@@ -11800,9 +11808,10 @@ fn build_clean_mask(
     imsize: usize,
     mask_boxes: &[[usize; 4]],
     mask_image: Option<&Path>,
+    full_image_if_empty: bool,
 ) -> Result<Option<Array2<bool>>, String> {
     if mask_boxes.is_empty() && mask_image.is_none() {
-        return Ok(None);
+        return Ok(full_image_if_empty.then(|| Array2::<bool>::from_elem((imsize, imsize), true)));
     }
     let mut mask = Array2::<bool>::from_elem((imsize, imsize), false);
     for [x0, y0, x1, y1] in mask_boxes {
@@ -16164,23 +16173,25 @@ mod tests {
         assert_eq!(parse_mask_box("1, 2, 3, 4").unwrap(), [1, 2, 3, 4]);
         assert!(parse_mask_box("1,2,3").unwrap_err().contains("expects"));
 
-        let mask = build_clean_mask(6, &[[1, 2, 3, 4]], None)
+        let mask = build_clean_mask(6, &[[1, 2, 3, 4]], None, false)
             .unwrap()
             .expect("mask");
         assert!(mask[(1, 2)]);
         assert!(mask[(3, 4)]);
         assert!(!mask[(0, 0)]);
         assert!(
-            build_clean_mask(6, &[[4, 1, 3, 2]], None)
+            build_clean_mask(6, &[[4, 1, 3, 2]], None, false)
                 .unwrap_err()
                 .contains("x0 <= x1")
         );
         assert!(
-            build_clean_mask(6, &[[0, 0, 6, 1]], None)
+            build_clean_mask(6, &[[0, 0, 6, 1]], None, false)
                 .unwrap_err()
                 .contains("exceeds image bounds")
         );
-        assert!(build_clean_mask(6, &[], None).unwrap().is_none());
+        assert!(build_clean_mask(6, &[], None, false).unwrap().is_none());
+        let full_mask = build_clean_mask(6, &[], None, true).unwrap().expect("mask");
+        assert!(full_mask.iter().all(|cleanable| *cleanable));
     }
 
     #[test]
@@ -17577,8 +17588,8 @@ mod tests {
 
     #[test]
     fn clean_mask_rejects_invalid_boxes_and_mask_images() {
-        assert!(build_clean_mask(4, &[[2, 1, 1, 0]], None).is_err());
-        assert!(build_clean_mask(4, &[[0, 0, 4, 0]], None).is_err());
+        assert!(build_clean_mask(4, &[[2, 1, 1, 0]], None, false).is_err());
+        assert!(build_clean_mask(4, &[[0, 0, 4, 0]], None, false).is_err());
 
         let tmp = tempdir().unwrap();
         let path = tmp.path().join("mask.im");
@@ -17586,7 +17597,7 @@ mod tests {
         let mut image = PagedImage::<f32>::create(vec![2, 3, 1, 1], coords, &path).unwrap();
         image.save().unwrap();
 
-        let error = build_clean_mask(4, &[], Some(&path)).unwrap_err();
+        let error = build_clean_mask(4, &[], Some(&path), false).unwrap_err();
         assert!(error.contains("expected [4, 4]") || error.contains("expected [4, 4, 1, 1]"));
     }
 
@@ -17601,7 +17612,7 @@ mod tests {
         image.put_slice(&data.into_dyn(), &[0, 0, 0, 0]).unwrap();
         image.save().unwrap();
 
-        let mask = build_clean_mask(8, &[[1, 2, 2, 3], [4, 4, 4, 4]], Some(&path))
+        let mask = build_clean_mask(8, &[[1, 2, 2, 3], [4, 4, 4, 4]], Some(&path), false)
             .unwrap()
             .unwrap();
         assert!(mask[(1, 2)]);
