@@ -859,6 +859,38 @@ impl Table {
             .collect()
     }
 
+    pub(crate) fn get_array_cells_owned_uncached(
+        &self,
+        column: &str,
+        row_indices: &[usize],
+    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
+        self.require_column(column)?;
+        for &row_index in row_indices {
+            if row_index >= self.row_count() {
+                return Err(TableError::RowOutOfBounds {
+                    row_index,
+                    row_count: self.row_count(),
+                });
+            }
+        }
+        if let Some(values) = self.inner.array_cells_owned_uncached(row_indices, column)? {
+            return Ok(values);
+        }
+        row_indices
+            .iter()
+            .map(|&row_index| match self.cell(row_index, column)? {
+                Some(Value::Array(array)) => Ok(Some(array.clone())),
+                Some(value) => Err(TableError::ColumnTypeMismatch {
+                    row_index,
+                    column: column.to_string(),
+                    expected: "array",
+                    found: value.kind(),
+                }),
+                None => Ok(None),
+            })
+            .collect()
+    }
+
     /// Returns owned scalar values for every row in `column`.
     ///
     /// Missing cells are returned as `None`.
@@ -1588,6 +1620,20 @@ impl<'a> TableColumn<'a> {
         row_indices: &[usize],
     ) -> Result<Vec<Option<ArrayValue>>, TableError> {
         self.table.get_array_cells_owned(&self.column, row_indices)
+    }
+
+    /// Returns owned array values for selected rows without populating the
+    /// table-level row cache.
+    ///
+    /// This is intended for bounded streaming scans where retaining each row
+    /// defeats the caller's memory budget. The output preserves the order of
+    /// `row_indices`. Missing cells are returned as `None`.
+    pub fn array_cells_owned_uncached(
+        &self,
+        row_indices: &[usize],
+    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
+        self.table
+            .get_array_cells_owned_uncached(&self.column, row_indices)
     }
 }
 

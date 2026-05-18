@@ -90,6 +90,10 @@ pub use task_contract::{
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const DEFAULT_BATCH_SIZE: usize = 65_536;
+const DEFAULT_PREPARE_BUFFER_TOTAL_BYTES: usize = 512 * 1024 * 1024;
+const MIN_PREPARE_ROW_BLOCK_ROWS: usize = 128;
+const MAX_PREPARE_ROW_BLOCK_ROWS: usize = 8_192;
+const ESTIMATED_STANDARD_MFS_SAMPLE_BYTES: usize = 64;
 const JOINT_HOGBOM_PEAK_RELATIVE_TOLERANCE: f32 = 1.0e-3;
 const OUTLIER_IMAGE_FIELDS: &[&str] = &[
     "imagename",
@@ -5539,6 +5543,22 @@ impl SelectedMainArrayColumn {
         })
     }
 
+    fn load_uncached(
+        ms: &MeasurementSet,
+        column_name: &'static str,
+        row_indices: &[usize],
+    ) -> Result<Self, String> {
+        let values = ms
+            .main_table()
+            .column_accessor(column_name)
+            .and_then(|column| column.array_cells_owned_uncached(row_indices))
+            .map_err(|error| format!("load selected {column_name} rows: {error}"))?;
+        Ok(Self {
+            column_name,
+            values,
+        })
+    }
+
     fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
         self.values
             .get(row_slot)
@@ -5581,6 +5601,23 @@ impl SelectedMainDataSource {
             VisibilityDataColumn::ModelData => "MODEL_DATA",
         };
         Ok(Self::Single(SelectedMainArrayColumn::load(
+            ms,
+            column_name,
+            row_indices,
+        )?))
+    }
+
+    fn load_uncached(
+        ms: &MeasurementSet,
+        column: VisibilityDataColumn,
+        row_indices: &[usize],
+    ) -> Result<Self, String> {
+        let column_name = match column {
+            VisibilityDataColumn::Data => "DATA",
+            VisibilityDataColumn::CorrectedData => "CORRECTED_DATA",
+            VisibilityDataColumn::ModelData => "MODEL_DATA",
+        };
+        Ok(Self::Single(SelectedMainArrayColumn::load_uncached(
             ms,
             column_name,
             row_indices,
@@ -6389,6 +6426,158 @@ fn prepare_inputs_for_measurement_set_with_trace(
     merge_prepared_inputs_with_trace(prepared_with_traces)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn prepare_standard_mfs_input_in_row_blocks(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    ddid_info: &[Option<(usize, usize)>],
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    polarization: &casa_ms::subtables::polarization::MsPolarization<'_>,
+    flag_row: &[bool],
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    prepare_started_at: Instant,
+) -> Result<PreparedInput, String> {
+    let selected_spw_id = ddid_info
+        .get(selection.selected_ddid)
+        .copied()
+        .flatten()
+        .map(|(spw_id, _)| spw_id)
+        .ok_or_else(|| {
+            format!(
+                "map selected DDID {} to SPW/POLARIZATION",
+                selection.selected_ddid
+            )
+        })?;
+    let selected_channel_count =
+        selected_channel_count_estimate(config, spectral_window, selected_spw_id)?;
+    let strategy = standard_mfs_prepare_buffer_strategy(config, selected_channel_count);
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/buffer_strategy rows_total={} row_block_rows={} selected_channels={} worker_buffers={} per_worker_buffer_mib={:.1}",
+            active_selected_rows.len(),
+            strategy.row_block_rows,
+            strategy.selected_channel_count,
+            strategy.worker_buffers,
+            strategy.per_worker_buffer_bytes as f64 / (1024.0 * 1024.0),
+        );
+    }
+
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active rows".to_string());
+    }
+
+    let mut prepared_blocks = Vec::<PreparedInput>::new();
+    let mut prepared_batch_count = 0usize;
+    let mut accumulate_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
+        ..Default::default()
+    };
+    for row_chunk in active_selected_rows.chunks(strategy.row_block_rows) {
+        let selected_row_indices = row_chunk
+            .iter()
+            .map(|selected_row| selected_row.row_index)
+            .collect::<Vec<_>>();
+        let stage_started_at = Instant::now();
+        let data_column =
+            SelectedMainDataSource::load_uncached(ms, data_column_kind, &selected_row_indices)?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/load_data_column",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+        let stage_started_at = Instant::now();
+        let flag_column =
+            SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/load_flag_column",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+        let stage_started_at = Instant::now();
+        let weight_column =
+            SelectedMainArrayColumn::load_uncached(ms, "WEIGHT", &selected_row_indices)?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/load_weight_column",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+        let stage_started_at = Instant::now();
+        let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
+            .ok()
+            .map(|_| {
+                SelectedMainArrayColumn::load_uncached(ms, "WEIGHT_SPECTRUM", &selected_row_indices)
+            })
+            .transpose()?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/load_weight_spectrum_column",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+        let stage_started_at = Instant::now();
+        let geometry_rows = build_prepared_geometry_rows(
+            ms,
+            row_chunk,
+            &selection.phase_center,
+            derived_engine,
+            config.use_pointing,
+            uvw_reprojection_mode_for_selection(config, selection),
+        )?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/build_prepared_geometry_rows",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+
+        let mut prepared = PreparedSelection::new(
+            config,
+            selection.selected_ddid,
+            ddid_info,
+            spectral_window,
+            polarization,
+            selection.phase_center.clone(),
+            None,
+            false,
+        );
+        if let Some(init_error) = prepared.initialization_error.take() {
+            return Err(init_error);
+        }
+        for (row_slot, row) in geometry_rows.iter().enumerate() {
+            prepared.accumulate_row(
+                row,
+                &data_column,
+                &flag_column,
+                flag_row,
+                &weight_column,
+                weight_spectrum.as_ref(),
+                derived_engine,
+                row_slot,
+                &mut accumulate_timings,
+            )?;
+        }
+        let PreparedInput::Mfs(plane) = prepared.finish_standard_mfs_without_trace()? else {
+            return Err(
+                "internal error: standard MFS row block produced non-MFS input".to_string(),
+            );
+        };
+        prepared_batch_count += plane.batches.len();
+        prepared_blocks.push(PreparedInput::Mfs(plane));
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/row_block rows_done={} rows_total={} batches={} total_elapsed_s={:.3}",
+                accumulate_timings.rows_seen,
+                active_selected_rows.len(),
+                prepared_batch_count,
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    accumulate_timings.log(prepare_started_at.elapsed());
+    merge_prepared_inputs_for_same_measurement_set(prepared_blocks)
+}
+
 fn merge_prepared_inputs_with_trace(
     prepared_with_traces: Vec<(PreparedInput, PreparedVisibilityTraceBundle)>,
 ) -> Result<(PreparedInput, PreparedVisibilityTraceBundle), String> {
@@ -6517,6 +6706,62 @@ fn prepare_plane_input_inner(
         })
         .cloned()
         .collect::<Vec<_>>();
+    let stage_started_at = Instant::now();
+    let selected_spw_id = ddid_info
+        .get(selection.selected_ddid)
+        .copied()
+        .flatten()
+        .map(|(spw_id, _)| spw_id)
+        .ok_or_else(|| {
+            format!(
+                "map selected DDID {} to SPW/POLARIZATION",
+                selection.selected_ddid
+            )
+        })?;
+    let selected_freq_ref = FrequencyRef::from_casacore_code(
+        spectral_window
+            .meas_freq_ref(selected_spw_id)
+            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+    )
+    .unwrap_or(FrequencyRef::TOPO);
+    let mfs_needs_frequency_conversion = matches!(config.spectral_mode, SpectralMode::Mfs)
+        && selected_freq_ref != FrequencyRef::LSRK;
+    let derived_engine = if selection.needs_geometry_engine || mfs_needs_frequency_conversion {
+        Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
+    } else {
+        None
+    };
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_derived_engine",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+
+    let fast_standard_mfs =
+        !force_trace && can_prepare_standard_mfs_without_trace(config, &selection);
+    if fast_standard_mfs {
+        let stage_started_at = Instant::now();
+        let prepared_input = prepare_standard_mfs_input_in_row_blocks(
+            ms,
+            config,
+            data_column_kind,
+            &selection,
+            &ddid_info,
+            &spectral_window,
+            &polarization,
+            &flag_row,
+            &active_selected_rows,
+            derived_engine.as_ref(),
+            prepare_started_at,
+        )?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/finish_standard_mfs_row_blocks",
+            stage_started_at.elapsed(),
+            prepare_started_at.elapsed(),
+        );
+        return Ok((prepared_input, None));
+    }
+
     let selected_row_indices = active_selected_rows
         .iter()
         .map(|selected_row| selected_row.row_index)
@@ -6552,36 +6797,7 @@ fn prepare_plane_input_inner(
         stage_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
-    let stage_started_at = Instant::now();
-    let selected_spw_id = ddid_info
-        .get(selection.selected_ddid)
-        .copied()
-        .flatten()
-        .map(|(spw_id, _)| spw_id)
-        .ok_or_else(|| {
-            format!(
-                "map selected DDID {} to SPW/POLARIZATION",
-                selection.selected_ddid
-            )
-        })?;
-    let selected_freq_ref = FrequencyRef::from_casacore_code(
-        spectral_window
-            .meas_freq_ref(selected_spw_id)
-            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
-    )
-    .unwrap_or(FrequencyRef::TOPO);
-    let mfs_needs_frequency_conversion = matches!(config.spectral_mode, SpectralMode::Mfs)
-        && selected_freq_ref != FrequencyRef::LSRK;
-    let derived_engine = if selection.needs_geometry_engine || mfs_needs_frequency_conversion {
-        Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
-    } else {
-        None
-    };
-    maybe_log_frontend_progress(
-        "prepare_plane_input/build_derived_engine",
-        stage_started_at.elapsed(),
-        prepare_started_at.elapsed(),
-    );
+
     let stage_started_at = Instant::now();
     let geometry_rows = build_prepared_geometry_rows(
         ms,
@@ -6623,8 +6839,6 @@ fn prepare_plane_input_inner(
     } else {
         None
     };
-    let fast_standard_mfs =
-        !force_trace && can_prepare_standard_mfs_without_trace(config, &selection);
     let trace_free_cube = !force_trace
         && config.spectral_mode.is_cube_like()
         && !config.use_pointing
@@ -6733,6 +6947,85 @@ fn can_prepare_standard_mfs_without_trace(
             .selected_rows
             .iter()
             .all(|row| Some(row.field_id) == selection.phase_center.field_id)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PrepareBufferStrategy {
+    row_block_rows: usize,
+    worker_buffers: usize,
+    per_worker_buffer_bytes: usize,
+    selected_channel_count: usize,
+}
+
+fn standard_mfs_prepare_buffer_strategy(
+    config: &CliConfig,
+    selected_channel_count: usize,
+) -> PrepareBufferStrategy {
+    let selected_channel_count = selected_channel_count.max(1);
+    let worker_buffers = env_usize("CASA_RS_IMAGING_PREPARE_WORKERS")
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|value| value.get())
+                .unwrap_or(1)
+                .clamp(1, 4)
+        });
+    let total_buffer_bytes = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
+        .filter(|value| *value > 0)
+        .map(|value| value.saturating_mul(1024 * 1024))
+        .unwrap_or_else(|| {
+            let image_reserve = estimated_image_working_set_bytes(config);
+            DEFAULT_PREPARE_BUFFER_TOTAL_BYTES
+                .saturating_sub(image_reserve)
+                .max(64 * 1024 * 1024)
+        });
+    let per_worker_buffer_bytes = (total_buffer_bytes / worker_buffers).max(1024 * 1024);
+    let samples_per_worker =
+        (per_worker_buffer_bytes / ESTIMATED_STANDARD_MFS_SAMPLE_BYTES).max(selected_channel_count);
+    let heuristic_rows = (samples_per_worker / selected_channel_count)
+        .clamp(MIN_PREPARE_ROW_BLOCK_ROWS, MAX_PREPARE_ROW_BLOCK_ROWS);
+    let row_block_rows = env_usize("CASA_RS_IMAGING_PREPARE_ROW_BLOCK")
+        .filter(|value| *value > 0)
+        .unwrap_or(heuristic_rows);
+
+    PrepareBufferStrategy {
+        row_block_rows,
+        worker_buffers,
+        per_worker_buffer_bytes,
+        selected_channel_count,
+    }
+}
+
+fn env_usize(name: &str) -> Option<usize> {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+}
+
+fn estimated_image_working_set_bytes(config: &CliConfig) -> usize {
+    let pixels = config.imsize.saturating_mul(config.imsize);
+    let plane_count = if config.dirty_only || config.niter == 0 {
+        8usize
+    } else {
+        16usize
+    };
+    pixels.saturating_mul(plane_count).saturating_mul(4)
+}
+
+fn selected_channel_count_estimate(
+    config: &CliConfig,
+    spectral_window: &casa_ms::subtables::spectral_window::MsSpectralWindow<'_>,
+    selected_spw_id: usize,
+) -> Result<usize, String> {
+    if let Some(channel_count) = config.channel_count {
+        return Ok(channel_count.max(1));
+    }
+    let num_chan = spectral_window
+        .num_chan(selected_spw_id)
+        .map_err(|error| format!("read NUM_CHAN: {error}"))?;
+    usize::try_from(num_chan)
+        .map(|value| value.max(1))
+        .map_err(|_| format!("SPECTRAL_WINDOW {selected_spw_id} has negative NUM_CHAN {num_chan}"))
 }
 
 fn uvw_reprojection_mode_for_selection(
@@ -19873,6 +20166,55 @@ deconvolver=mtmfs
             &[2.0, 4.0, 1.0, 1.0],
         );
         ms.save().unwrap();
+    }
+
+    #[test]
+    fn standard_mfs_trace_free_prepare_matches_forced_trace_path() {
+        let tmp = tempdir().unwrap();
+        let ms_path = tmp.path().join("standard_mfs_prepare.ms");
+        write_synthetic_cube_trace_ms(&ms_path);
+
+        let mut config = synthetic_cube_trace_config(ms_path.clone());
+        config.spectral_mode = SpectralMode::Mfs;
+        config.cube_axis = CubeAxisConfig::default();
+
+        let ms = MeasurementSet::open(&ms_path).unwrap();
+        let fast = prepare_plane_input(&ms, &config, VisibilityDataColumn::Data).unwrap();
+        let (traced, trace) =
+            prepare_plane_input_with_trace(&ms, &config, VisibilityDataColumn::Data).unwrap();
+        let PreparedInput::Mfs(fast_plane) = fast else {
+            panic!("expected fast standard-MFS prepared input");
+        };
+        let PreparedInput::Mfs(traced_plane) = traced else {
+            panic!("expected traced standard-MFS prepared input");
+        };
+
+        let fast_visibilities = fast_plane
+            .batches
+            .iter()
+            .flat_map(|batch| batch.visibility.iter().copied())
+            .collect::<Vec<_>>();
+        let traced_visibilities = traced_plane
+            .batches
+            .iter()
+            .flat_map(|batch| batch.visibility.iter().copied())
+            .collect::<Vec<_>>();
+        let fast_weights = fast_plane
+            .batches
+            .iter()
+            .flat_map(|batch| batch.weight.iter().copied())
+            .collect::<Vec<_>>();
+        let traced_weights = traced_plane
+            .batches
+            .iter()
+            .flat_map(|batch| batch.weight.iter().copied())
+            .collect::<Vec<_>>();
+
+        assert_eq!(fast_visibilities, traced_visibilities);
+        assert_eq!(fast_weights, traced_weights);
+        assert_eq!(trace.samples.len(), fast_visibilities.len());
+        assert!(fast_plane.spectral_frequency_edge_range_hz.is_some());
+        assert_eq!(fast_plane.plane_stokes, traced_plane.plane_stokes);
     }
 
     #[test]

@@ -911,6 +911,43 @@ impl TableImpl {
         Ok(Some(values))
     }
 
+    pub(crate) fn array_cells_owned_uncached(
+        &self,
+        row_indices: &[usize],
+        column: &str,
+    ) -> Result<Option<Vec<Option<ArrayValue>>>, TableError> {
+        if let Some(loaded) = self.loaded_rows.get() {
+            let values = row_indices
+                .iter()
+                .map(|&row_index| {
+                    loaded
+                        .rows
+                        .get(row_index)
+                        .and_then(|row| match row.get(column) {
+                            Some(Value::Array(array)) => Some(array.clone()),
+                            _ => None,
+                        })
+                })
+                .collect();
+            return Ok(Some(values));
+        }
+
+        let Some(source) = &self.lazy_rows else {
+            return Ok(None);
+        };
+
+        let mut values = Self::load_array_column_rows_now(source, column, row_indices)?;
+        if let Some(overrides) = self.pending_array_cells.by_column.get(column) {
+            for (out_idx, &row_index) in row_indices.iter().enumerate() {
+                if let Some(value) = overrides.get(row_index) {
+                    values[out_idx] = Some(value.clone());
+                }
+            }
+        }
+
+        Ok(Some(values))
+    }
+
     pub(crate) fn row_mut(
         &mut self,
         row_index: usize,

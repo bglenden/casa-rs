@@ -72,6 +72,7 @@ enum CubePredictionLambdaMode {
 
 type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
 type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
+const DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES: usize = 8_000_000;
 
 pub(crate) use cube::{HogbomMinorCycleOutcome, MinorCycleProbe};
 pub use cube::{run_cube, run_dirty_cube};
@@ -207,7 +208,7 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     let weighting_started = Instant::now();
     let weighted_batches = apply_weighting(request, &gridder)?;
     stage_timings.weighting += weighting_started.elapsed();
-    let mut standard_executor = matches!(request.w_term_mode, WTermMode::None)
+    let mut standard_executor = should_use_standard_mfs_executor(request, &weighted_batches)
         .then(|| StandardMfsCpuExecutor::new(&gridder, &weighted_batches))
         .transpose()?;
     let [nx, ny] = request.geometry.image_shape;
@@ -220,15 +221,20 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
         && !has_initial_model
         && matches!(request.w_term_mode, WTermMode::None)
     {
-        let executor = standard_executor
-            .as_mut()
-            .expect("standard executor is prepared for WTermMode::None");
-        compute_dirty_psf_and_residual_standard_with_executor(executor, &mut stage_timings)?
+        if let Some(executor) = standard_executor.as_mut() {
+            compute_dirty_psf_and_residual_standard_with_executor(executor, &mut stage_timings)?
+        } else {
+            compute_dirty_psf_and_residual_standard_streaming(
+                &weighted_batches,
+                &gridder,
+                &mut stage_timings,
+            )?
+        }
     } else {
         let psf_state = if let Some(executor) = standard_executor.as_mut() {
             compute_psf_standard(executor, &mut stage_timings)?
         } else {
-            compute_psf(request, &weighted_batches, &gridder, &mut stage_timings)?
+            compute_psf_standard_streaming(&weighted_batches, &gridder, &mut stage_timings)?
         };
         let residual = if let Some(executor) = standard_executor.as_mut() {
             compute_residual_standard_with_executor(
@@ -238,12 +244,13 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
                 &mut stage_timings,
             )?
         } else {
-            compute_residual(
-                request,
+            compute_residual_standard_streaming(
+                request.geometry,
                 &weighted_batches,
                 &gridder,
                 &model,
                 &psf_state,
+                false,
                 &mut stage_timings,
             )?
         };
@@ -371,6 +378,27 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
             image_units: "Jy/beam".to_string(),
         },
     })
+}
+
+fn should_use_standard_mfs_executor(
+    request: &ImagingRequest,
+    weighted_batches: &[VisibilityBatch],
+) -> bool {
+    if !matches!(request.w_term_mode, WTermMode::None) {
+        return false;
+    }
+    standard_mfs_sample_count(weighted_batches) <= standard_mfs_executor_max_samples()
+}
+
+fn standard_mfs_executor_max_samples() -> usize {
+    env::var("CASA_RS_STANDARD_MFS_EXECUTOR_MAX_SAMPLES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES)
+}
+
+fn standard_mfs_sample_count(batches: &[VisibilityBatch]) -> usize {
+    batches.iter().map(VisibilityBatch::len).sum()
 }
 
 /// Run CASA-style MTMFS imaging on already-prepared MFS visibilities.
@@ -4878,6 +4906,9 @@ fn compute_psf(
         }
         WTermMode::None => {}
     }
+    if standard_mfs_sample_count(batches) > standard_mfs_executor_max_samples() {
+        return compute_psf_standard_streaming(batches, gridder, stage_timings);
+    }
     let mut executor = StandardMfsCpuExecutor::new(gridder, batches)?;
     compute_psf_standard(&mut executor, stage_timings)
 }
@@ -4928,6 +4959,87 @@ fn compute_psf_standard(
         psf_peak,
         gridded_samples: plan.gridded_samples(),
         skipped_samples: plan.skipped_samples(),
+    })
+}
+
+fn compute_psf_standard_streaming(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    let mut timings = PsfComputationTimings::default();
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+
+    let grid_started = Instant::now();
+    for batch in batches {
+        for sample_index in 0..batch.len() {
+            if !batch.gridable[sample_index] {
+                skipped_samples += 1;
+                continue;
+            }
+            let weight = batch.weight[sample_index];
+            let sumwt_factor = batch.sumwt_factor[sample_index];
+            if !(weight.is_finite()
+                && weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0)
+            {
+                skipped_samples += 1;
+                continue;
+            }
+            let Some(plan) =
+                gridder.plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+            else {
+                skipped_samples += 1;
+                continue;
+            };
+            let grid_weight = f64::from(weight * sumwt_factor);
+            normalization_sumwt += grid_weight;
+            reported_sumwt += grid_weight;
+            gridded_samples += 1;
+            gridder.grid_sample_product_planned_f64(
+                &mut psf_grid,
+                &plan.positive,
+                Complex64::new(grid_weight, 0.0),
+            );
+        }
+    }
+    timings.grid = grid_started.elapsed();
+
+    if normalization_sumwt <= 0.0 || reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let fft_started = Instant::now();
+    let raw_psf = centered_ifft2_f64(&psf_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+    psf.mapv_inplace(|value| value / normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+
+    Ok(PsfState {
+        psf,
+        normalization_sumwt: normalization_sumwt as f32,
+        reported_sumwt: reported_sumwt as f32,
+        psf_peak,
+        gridded_samples,
+        skipped_samples,
     })
 }
 
@@ -5006,6 +5118,111 @@ fn compute_dirty_psf_and_residual_standard_with_executor(
             psf_peak,
             gridded_samples: plan.gridded_samples(),
             skipped_samples: plan.skipped_samples(),
+        },
+        residual,
+    ))
+}
+
+fn compute_dirty_psf_and_residual_standard_streaming(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
+    let mut normalization_sumwt = 0.0f64;
+    let mut reported_sumwt = 0.0f64;
+    let mut gridded_samples = 0usize;
+    let mut skipped_samples = 0usize;
+
+    let grid_started = Instant::now();
+    for batch in batches {
+        for sample_index in 0..batch.len() {
+            if !batch.gridable[sample_index] {
+                skipped_samples += 1;
+                continue;
+            }
+            let weight = batch.weight[sample_index];
+            let sumwt_factor = batch.sumwt_factor[sample_index];
+            if !(weight.is_finite()
+                && weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0)
+            {
+                skipped_samples += 1;
+                continue;
+            }
+            let Some(plan) =
+                gridder.plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+            else {
+                skipped_samples += 1;
+                continue;
+            };
+            let grid_weight = f64::from(weight * sumwt_factor);
+            normalization_sumwt += grid_weight;
+            reported_sumwt += grid_weight;
+            gridded_samples += 1;
+            gridder.grid_sample_product_planned_f64(
+                &mut psf_grid,
+                &plan.positive,
+                Complex64::new(grid_weight, 0.0),
+            );
+
+            let observed_visibility = batch.visibility[sample_index];
+            if finite_visibility(observed_visibility) {
+                let residual = Complex64::new(
+                    f64::from(observed_visibility.re) * grid_weight,
+                    f64::from(observed_visibility.im) * grid_weight,
+                );
+                gridder.grid_sample_product_planned_f64(
+                    &mut residual_grid,
+                    &plan.positive,
+                    residual,
+                );
+            }
+        }
+    }
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    stage_timings.psf_grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    if normalization_sumwt <= 0.0 || reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let psf_fft_started = Instant::now();
+    let raw_psf = centered_ifft2_f64(&psf_grid);
+    stage_timings.psf_fft += psf_fft_started.elapsed();
+    let psf_normalize_started = Instant::now();
+    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+    psf.mapv_inplace(|value| value / normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    stage_timings.psf_normalize += psf_normalize_started.elapsed();
+
+    let residual_fft_started = Instant::now();
+    let raw_residual = centered_ifft2_f64(&residual_grid);
+    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let residual_normalize_started = Instant::now();
+    let mut residual = gridder.corrected_image_from_grid_f64(&raw_residual);
+    residual.mapv_inplace(|value| value / normalization_sumwt as f32 / psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    Ok((
+        PsfState {
+            psf,
+            normalization_sumwt: normalization_sumwt as f32,
+            reported_sumwt: reported_sumwt as f32,
+            psf_peak,
+            gridded_samples,
+            skipped_samples,
         },
         residual,
     ))
@@ -5095,7 +5312,9 @@ fn compute_residual_standard(
     use_direct_point_predict: bool,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
-    if !use_direct_point_predict {
+    if !use_direct_point_predict
+        && standard_mfs_sample_count(batches) <= standard_mfs_executor_max_samples()
+    {
         let mut executor = StandardMfsCpuExecutor::new(gridder, batches)?;
         return compute_residual_standard_with_executor(
             &mut executor,
@@ -5104,6 +5323,26 @@ fn compute_residual_standard(
             stage_timings,
         );
     }
+    compute_residual_standard_streaming(
+        geometry,
+        batches,
+        gridder,
+        model,
+        psf_state,
+        use_direct_point_predict,
+        stage_timings,
+    )
+}
+
+fn compute_residual_standard_streaming(
+    geometry: ImageGeometry,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    use_direct_point_predict: bool,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
     Ok(compute_residual_standard_internal(
         geometry,
         batches,
@@ -7144,6 +7383,37 @@ mod tests {
         assert!(
             rms_difference(&combined_residual, &separate_residual) < 1.0e-6,
             "combined residual should match separate residual pass"
+        );
+
+        let mut streaming_timings = ImagingStageTimings::default();
+        let (streaming_psf, streaming_residual) =
+            super::compute_dirty_psf_and_residual_standard_streaming(
+                &weighted_batches,
+                &gridder,
+                &mut streaming_timings,
+            )
+            .unwrap();
+
+        assert_close_f32(
+            streaming_psf.normalization_sumwt,
+            combined_psf.normalization_sumwt,
+            1.0e-6,
+        );
+        assert_close_f32(
+            streaming_psf.reported_sumwt,
+            combined_psf.reported_sumwt,
+            1.0e-6,
+        );
+        assert_close_f32(streaming_psf.psf_peak, combined_psf.psf_peak, 1.0e-6);
+        assert_eq!(streaming_psf.gridded_samples, combined_psf.gridded_samples);
+        assert_eq!(streaming_psf.skipped_samples, combined_psf.skipped_samples);
+        assert!(
+            rms_difference(&streaming_psf.psf, &combined_psf.psf) < 1.0e-6,
+            "streaming PSF should match planned combined PSF pass"
+        );
+        assert!(
+            rms_difference(&streaming_residual, &combined_residual) < 1.0e-6,
+            "streaming residual should match planned combined residual pass"
         );
     }
 
