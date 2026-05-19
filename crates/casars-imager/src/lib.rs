@@ -5554,6 +5554,7 @@ fn blank_frontend_cube_channel_diagnostics(
 struct SelectedMainArrayColumn {
     column_name: &'static str,
     values: Vec<Option<ArrayValue>>,
+    channel_origin: usize,
 }
 
 impl SelectedMainArrayColumn {
@@ -5570,6 +5571,7 @@ impl SelectedMainArrayColumn {
         Ok(Self {
             column_name,
             values,
+            channel_origin: 0,
         })
     }
 
@@ -5586,7 +5588,42 @@ impl SelectedMainArrayColumn {
         Ok(Self {
             column_name,
             values,
+            channel_origin: 0,
         })
+    }
+
+    fn load_2d_channel_range_uncached(
+        ms: &MeasurementSet,
+        column_name: &'static str,
+        row_indices: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Self, String> {
+        let values = ms
+            .main_table()
+            .column_accessor(column_name)
+            .and_then(|column| {
+                column.array_cells_2d_channel_range_owned_uncached(
+                    row_indices,
+                    channel_start,
+                    channel_count,
+                )
+            })
+            .map_err(|error| {
+                format!(
+                    "load selected {column_name} rows channel range {channel_start}..{}: {error}",
+                    channel_start + channel_count
+                )
+            })?;
+        Ok(Self {
+            column_name,
+            values,
+            channel_origin: channel_start,
+        })
+    }
+
+    fn channel_origin(&self) -> usize {
+        self.channel_origin
     }
 
     fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
@@ -5654,9 +5691,38 @@ impl SelectedMainDataSource {
         )?))
     }
 
+    fn load_2d_channel_range_uncached(
+        ms: &MeasurementSet,
+        column: VisibilityDataColumn,
+        row_indices: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Self, String> {
+        let column_name = match column {
+            VisibilityDataColumn::Data => "DATA",
+            VisibilityDataColumn::CorrectedData => "CORRECTED_DATA",
+            VisibilityDataColumn::ModelData => "MODEL_DATA",
+        };
+        Ok(Self::Single(
+            SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                ms,
+                column_name,
+                row_indices,
+                channel_start,
+                channel_count,
+            )?,
+        ))
+    }
+
     fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
         match self {
             Self::Single(column) => column.get(row_slot),
+        }
+    }
+
+    fn channel_origin(&self) -> usize {
+        match self {
+            Self::Single(column) => column.channel_origin(),
         }
     }
 }
@@ -6417,6 +6483,7 @@ fn get_ms_values_into_processing_buffer(
     derived_engine: Option<&MsCalEngine>,
     use_pointing: bool,
     reprojection_mode: UvwReprojectionMode,
+    channel_read_range: Option<SelectedChannelReadRange>,
     prepare_started_at: Instant,
 ) -> Result<StandardMfsProcessingBuffer, String> {
     let selected_row_indices = row_chunk
@@ -6424,15 +6491,32 @@ fn get_ms_values_into_processing_buffer(
         .map(|selected_row| selected_row.row_index)
         .collect::<Vec<_>>();
     let stage_started_at = Instant::now();
-    let data_column =
-        SelectedMainDataSource::load_uncached(ms, data_column_kind, &selected_row_indices)?;
+    let data_column = match channel_read_range {
+        Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
+            ms,
+            data_column_kind,
+            &selected_row_indices,
+            range.start,
+            range.count,
+        )?,
+        None => SelectedMainDataSource::load_uncached(ms, data_column_kind, &selected_row_indices)?,
+    };
     maybe_log_frontend_progress(
         "prepare_plane_input/load_data_column",
         stage_started_at.elapsed(),
         prepare_started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    let flag_column = SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?;
+    let flag_column = match channel_read_range {
+        Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+            ms,
+            "FLAG",
+            &selected_row_indices,
+            range.start,
+            range.count,
+        )?,
+        None => SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?,
+    };
     maybe_log_frontend_progress(
         "prepare_plane_input/load_flag_column",
         stage_started_at.elapsed(),
@@ -6449,8 +6533,17 @@ fn get_ms_values_into_processing_buffer(
     let stage_started_at = Instant::now();
     let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
         .ok()
-        .map(|_| {
-            SelectedMainArrayColumn::load_uncached(ms, "WEIGHT_SPECTRUM", &selected_row_indices)
+        .map(|_| match channel_read_range {
+            Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                ms,
+                "WEIGHT_SPECTRUM",
+                &selected_row_indices,
+                range.start,
+                range.count,
+            ),
+            None => {
+                SelectedMainArrayColumn::load_uncached(ms, "WEIGHT_SPECTRUM", &selected_row_indices)
+            }
         })
         .transpose()?;
     maybe_log_frontend_progress(
@@ -6609,6 +6702,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
     )?;
     let selected_channel_count =
         selected_channel_count_estimate_from_table_values(config, &table_values);
+    let channel_read_range = selected_channel_read_range_for_standard_mfs(config, &table_values)?;
     let strategy = standard_mfs_prepare_buffer_strategy(config, selected_channel_count);
     if frontend_progress_enabled() {
         eprintln!(
@@ -6642,6 +6736,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
             derived_engine,
             config.use_pointing,
             uvw_reprojection_mode_for_selection(config, selection),
+            channel_read_range,
             prepare_started_at,
         )?;
         stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
@@ -7172,6 +7267,45 @@ fn selected_channel_count_estimate_from_table_values(
         return channel_count.max(1);
     }
     table_values.spw_freqs_hz.len().max(1)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SelectedChannelReadRange {
+    start: usize,
+    count: usize,
+}
+
+fn selected_channel_read_range_for_standard_mfs(
+    config: &CliConfig,
+    table_values: &PreparedSelectionTableValues,
+) -> Result<Option<SelectedChannelReadRange>, String> {
+    let explicit_channel_selector = selected_spw_channel_selector(config, table_values.spw_id)?;
+    let source_channel_selection = match explicit_channel_selector.as_ref() {
+        Some(selector) => resolve_channel_selector_selection(&table_values.spw_freqs_hz, selector)
+            .map_err(|error| error.to_string())?,
+        None => resolve_contiguous_channel_selection(
+            &table_values.spw_freqs_hz,
+            config.channel_start,
+            config.channel_count,
+        )
+        .map_err(|error| error.to_string())?,
+    };
+    let Some(&start) = source_channel_selection.indices.first() else {
+        return Ok(None);
+    };
+    if source_channel_selection
+        .indices
+        .iter()
+        .enumerate()
+        .all(|(offset, &channel)| channel == start + offset)
+    {
+        Ok(Some(SelectedChannelReadRange {
+            start,
+            count: source_channel_selection.indices.len(),
+        }))
+    } else {
+        Ok(None)
+    }
 }
 
 fn uvw_reprojection_mode_for_selection(
@@ -8498,9 +8632,13 @@ impl PreparedSelection {
             .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
         timings.weight_spectrum += stage_started_at.elapsed();
         let adapt_started_at = Instant::now();
-        let data_2d = ComplexRow2d::new(data)?;
-        let flags_2d = BoolRow2d::new(flags)?;
-        let weights = WeightRow::new(row_weights, weight_spectrum_row)?;
+        let data_2d = ComplexRow2d::new_with_channel_origin(data, data_column.channel_origin())?;
+        let flags_2d = BoolRow2d::new_with_channel_origin(flags, flag_column.channel_origin())?;
+        let weights = WeightRow::new(
+            row_weights,
+            weight_spectrum_row,
+            weight_spectrum.map_or(0, |column| column.channel_origin()),
+        )?;
         let antenna1_id = geometry_row.antenna1_id;
         let antenna2_id = geometry_row.antenna2_id;
         let is_cross = geometry_row.is_cross;
@@ -13648,28 +13786,60 @@ fn chunk_model_interpolation_batches_if_needed(
     }
 }
 
+fn local_channel_index(
+    source_channel: usize,
+    channel_origin: usize,
+    local_channel_count: usize,
+) -> Result<usize, String> {
+    let local_channel = source_channel.checked_sub(channel_origin).ok_or_else(|| {
+        format!("source channel {source_channel} precedes loaded channel origin {channel_origin}")
+    })?;
+    if local_channel >= local_channel_count {
+        return Err(format!(
+            "source channel {source_channel} is outside loaded channel range {channel_origin}..{}",
+            channel_origin + local_channel_count
+        ));
+    }
+    Ok(local_channel)
+}
+
 enum ComplexRow2d<'a> {
     Complex32Slice {
         values: &'a [Complex32],
         channels: usize,
+        channel_origin: usize,
     },
     Complex64Slice {
         values: &'a [Complex64],
         channels: usize,
+        channel_origin: usize,
     },
-    Complex32Array(&'a ArrayD<Complex32>),
-    Complex64Array(&'a ArrayD<Complex64>),
+    Complex32Array {
+        values: &'a ArrayD<Complex32>,
+        channel_origin: usize,
+    },
+    Complex64Array {
+        values: &'a ArrayD<Complex64>,
+        channel_origin: usize,
+    },
 }
 
 impl<'a> ComplexRow2d<'a> {
-    fn new(data: &'a ArrayValue) -> Result<Self, String> {
+    fn new_with_channel_origin(
+        data: &'a ArrayValue,
+        channel_origin: usize,
+    ) -> Result<Self, String> {
         match data {
             ArrayValue::Complex32(values) => match (values.shape(), values.as_slice()) {
                 ([_, channels], Some(slice)) => Ok(Self::Complex32Slice {
                     values: slice,
                     channels: *channels,
+                    channel_origin,
                 }),
-                ([_, _], None) => Ok(Self::Complex32Array(values)),
+                ([_, _], None) => Ok(Self::Complex32Array {
+                    values,
+                    channel_origin,
+                }),
                 (shape, _) => Err(format!(
                     "visibility data must be 2-D Complex32/Complex64, found shape {shape:?}"
                 )),
@@ -13678,8 +13848,12 @@ impl<'a> ComplexRow2d<'a> {
                 ([_, channels], Some(slice)) => Ok(Self::Complex64Slice {
                     values: slice,
                     channels: *channels,
+                    channel_origin,
                 }),
-                ([_, _], None) => Ok(Self::Complex64Array(values)),
+                ([_, _], None) => Ok(Self::Complex64Array {
+                    values,
+                    channel_origin,
+                }),
                 (shape, _) => Err(format!(
                     "visibility data must be 2-D Complex32/Complex64, found shape {shape:?}"
                 )),
@@ -13693,46 +13867,88 @@ impl<'a> ComplexRow2d<'a> {
 
     fn get(&self, corr: usize, chan: usize) -> Result<Complex32, String> {
         match self {
-            Self::Complex32Slice { values, channels } => {
-                values.get(corr * *channels + chan).copied().ok_or_else(|| {
-                    format!("complex32 visibility index [{corr}, {chan}] out of bounds")
-                })
+            Self::Complex32Slice {
+                values,
+                channels,
+                channel_origin,
+            } => {
+                let local_chan = local_channel_index(chan, *channel_origin, *channels)?;
+                values
+                    .get(corr * *channels + local_chan)
+                    .copied()
+                    .ok_or_else(|| {
+                        format!("complex32 visibility index [{corr}, {chan}] out of bounds")
+                    })
             }
-            Self::Complex64Slice { values, channels } => values
-                .get(corr * *channels + chan)
-                .map(|value| Complex32::new(value.re as f32, value.im as f32))
-                .ok_or_else(|| {
-                    format!("complex64 visibility index [{corr}, {chan}] out of bounds")
-                }),
-            Self::Complex32Array(values) => {
-                values.get(IxDyn(&[corr, chan])).copied().ok_or_else(|| {
-                    format!("complex32 visibility index [{corr}, {chan}] out of bounds")
-                })
+            Self::Complex64Slice {
+                values,
+                channels,
+                channel_origin,
+            } => {
+                let local_chan = local_channel_index(chan, *channel_origin, *channels)?;
+                values
+                    .get(corr * *channels + local_chan)
+                    .map(|value| Complex32::new(value.re as f32, value.im as f32))
+                    .ok_or_else(|| {
+                        format!("complex64 visibility index [{corr}, {chan}] out of bounds")
+                    })
             }
-            Self::Complex64Array(values) => values
-                .get(IxDyn(&[corr, chan]))
-                .map(|value| Complex32::new(value.re as f32, value.im as f32))
-                .ok_or_else(|| {
-                    format!("complex64 visibility index [{corr}, {chan}] out of bounds")
-                }),
+            Self::Complex32Array {
+                values,
+                channel_origin,
+            } => {
+                let local_chan = local_channel_index(chan, *channel_origin, values.shape()[1])?;
+                values
+                    .get(IxDyn(&[corr, local_chan]))
+                    .copied()
+                    .ok_or_else(|| {
+                        format!("complex32 visibility index [{corr}, {chan}] out of bounds")
+                    })
+            }
+            Self::Complex64Array {
+                values,
+                channel_origin,
+            } => {
+                let local_chan = local_channel_index(chan, *channel_origin, values.shape()[1])?;
+                values
+                    .get(IxDyn(&[corr, local_chan]))
+                    .map(|value| Complex32::new(value.re as f32, value.im as f32))
+                    .ok_or_else(|| {
+                        format!("complex64 visibility index [{corr}, {chan}] out of bounds")
+                    })
+            }
         }
     }
 }
 
 enum BoolRow2d<'a> {
-    Slice { values: &'a [bool], channels: usize },
-    Array(&'a ArrayD<bool>),
+    Slice {
+        values: &'a [bool],
+        channels: usize,
+        channel_origin: usize,
+    },
+    Array {
+        values: &'a ArrayD<bool>,
+        channel_origin: usize,
+    },
 }
 
 impl<'a> BoolRow2d<'a> {
-    fn new(data: &'a ArrayValue) -> Result<Self, String> {
+    fn new_with_channel_origin(
+        data: &'a ArrayValue,
+        channel_origin: usize,
+    ) -> Result<Self, String> {
         match data {
             ArrayValue::Bool(values) => match (values.shape(), values.as_slice()) {
                 ([_, channels], Some(slice)) => Ok(Self::Slice {
                     values: slice,
                     channels: *channels,
+                    channel_origin,
                 }),
-                ([_, _], None) => Ok(Self::Array(values)),
+                ([_, _], None) => Ok(Self::Array {
+                    values,
+                    channel_origin,
+                }),
                 (shape, _) => Err(format!("FLAG must be 2-D Bool, found shape {shape:?}")),
             },
             other => Err(format!(
@@ -13744,14 +13960,27 @@ impl<'a> BoolRow2d<'a> {
 
     fn get(&self, corr: usize, chan: usize) -> Result<bool, String> {
         match self {
-            Self::Slice { values, channels } => values
-                .get(corr * *channels + chan)
-                .copied()
-                .ok_or_else(|| format!("flag index [{corr}, {chan}] out of bounds")),
-            Self::Array(values) => values
-                .get(IxDyn(&[corr, chan]))
-                .copied()
-                .ok_or_else(|| format!("flag index [{corr}, {chan}] out of bounds")),
+            Self::Slice {
+                values,
+                channels,
+                channel_origin,
+            } => {
+                let local_chan = local_channel_index(chan, *channel_origin, *channels)?;
+                values
+                    .get(corr * *channels + local_chan)
+                    .copied()
+                    .ok_or_else(|| format!("flag index [{corr}, {chan}] out of bounds"))
+            }
+            Self::Array {
+                values,
+                channel_origin,
+            } => {
+                let local_chan = local_channel_index(chan, *channel_origin, values.shape()[1])?;
+                values
+                    .get(IxDyn(&[corr, local_chan]))
+                    .copied()
+                    .ok_or_else(|| format!("flag index [{corr}, {chan}] out of bounds"))
+            }
         }
     }
 }
@@ -13810,21 +14039,43 @@ impl<'a> FloatRow1d<'a> {
 }
 
 enum FloatRow2d<'a> {
-    Float32Slice { values: &'a [f32], channels: usize },
-    Float64Slice { values: &'a [f64], channels: usize },
-    Float32Array(&'a ArrayD<f32>),
-    Float64Array(&'a ArrayD<f64>),
+    Float32Slice {
+        values: &'a [f32],
+        channels: usize,
+        channel_origin: usize,
+    },
+    Float64Slice {
+        values: &'a [f64],
+        channels: usize,
+        channel_origin: usize,
+    },
+    Float32Array {
+        values: &'a ArrayD<f32>,
+        channel_origin: usize,
+    },
+    Float64Array {
+        values: &'a ArrayD<f64>,
+        channel_origin: usize,
+    },
 }
 
 impl<'a> FloatRow2d<'a> {
-    fn new(data: &'a ArrayValue, label: &str) -> Result<Self, String> {
+    fn new_with_channel_origin(
+        data: &'a ArrayValue,
+        label: &str,
+        channel_origin: usize,
+    ) -> Result<Self, String> {
         match data {
             ArrayValue::Float32(values) => match (values.shape(), values.as_slice()) {
                 ([_, channels], Some(slice)) => Ok(Self::Float32Slice {
                     values: slice,
                     channels: *channels,
+                    channel_origin,
                 }),
-                ([_, _], None) => Ok(Self::Float32Array(values)),
+                ([_, _], None) => Ok(Self::Float32Array {
+                    values,
+                    channel_origin,
+                }),
                 (shape, _) => Err(format!(
                     "{label} must be 2-D Float32/Float64, found shape {shape:?}"
                 )),
@@ -13833,8 +14084,12 @@ impl<'a> FloatRow2d<'a> {
                 ([_, channels], Some(slice)) => Ok(Self::Float64Slice {
                     values: slice,
                     channels: *channels,
+                    channel_origin,
                 }),
-                ([_, _], None) => Ok(Self::Float64Array(values)),
+                ([_, _], None) => Ok(Self::Float64Array {
+                    values,
+                    channel_origin,
+                }),
                 (shape, _) => Err(format!(
                     "{label} must be 2-D Float32/Float64, found shape {shape:?}"
                 )),
@@ -13848,13 +14103,51 @@ impl<'a> FloatRow2d<'a> {
 
     fn get(&self, corr: usize, chan: usize, _label: &str) -> Option<f32> {
         match self {
-            Self::Float32Slice { values, channels } => values.get(corr * *channels + chan).copied(),
-            Self::Float64Slice { values, channels } => values
-                .get(corr * *channels + chan)
-                .map(|value| *value as f32),
-            Self::Float32Array(values) => values.get(IxDyn(&[corr, chan])).copied(),
-            Self::Float64Array(values) => {
-                values.get(IxDyn(&[corr, chan])).map(|value| *value as f32)
+            Self::Float32Slice {
+                values,
+                channels,
+                channel_origin,
+            } => {
+                let local_chan = chan.checked_sub(*channel_origin)?;
+                if local_chan >= *channels {
+                    return None;
+                }
+                values.get(corr * *channels + local_chan).copied()
+            }
+            Self::Float64Slice {
+                values,
+                channels,
+                channel_origin,
+            } => {
+                let local_chan = chan.checked_sub(*channel_origin)?;
+                if local_chan >= *channels {
+                    return None;
+                }
+                values
+                    .get(corr * *channels + local_chan)
+                    .map(|value| *value as f32)
+            }
+            Self::Float32Array {
+                values,
+                channel_origin,
+            } => {
+                let local_chan = chan.checked_sub(*channel_origin)?;
+                if local_chan >= values.shape()[1] {
+                    return None;
+                }
+                values.get(IxDyn(&[corr, local_chan])).copied()
+            }
+            Self::Float64Array {
+                values,
+                channel_origin,
+            } => {
+                let local_chan = chan.checked_sub(*channel_origin)?;
+                if local_chan >= values.shape()[1] {
+                    return None;
+                }
+                values
+                    .get(IxDyn(&[corr, local_chan]))
+                    .map(|value| *value as f32)
             }
         }
     }
@@ -13869,11 +14162,18 @@ impl<'a> WeightRow<'a> {
     fn new(
         weight_row: &'a ArrayValue,
         weight_spectrum_row: Option<&'a ArrayValue>,
+        weight_spectrum_channel_origin: usize,
     ) -> Result<Self, String> {
         Ok(Self {
             weights: FloatRow1d::new(weight_row, "WEIGHT")?,
             spectrum: weight_spectrum_row
-                .map(|row| FloatRow2d::new(row, "WEIGHT_SPECTRUM"))
+                .map(|row| {
+                    FloatRow2d::new_with_channel_origin(
+                        row,
+                        "WEIGHT_SPECTRUM",
+                        weight_spectrum_channel_origin,
+                    )
+                })
                 .transpose()?,
         })
     }
@@ -18519,6 +18819,7 @@ deconvolver=mtmfs
         let column = SelectedMainArrayColumn {
             column_name: "WEIGHT_SPECTRUM",
             values: vec![None],
+            channel_origin: 0,
         };
         assert_eq!(column.get_optional(0).unwrap(), None);
         assert!(
