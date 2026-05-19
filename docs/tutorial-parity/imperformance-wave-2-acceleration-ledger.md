@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-19
-Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below
+Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just docs-check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -202,12 +202,43 @@ changes carry to the full-medium shape:
 | weighting workers | `4` | `125.454 s` | `387.984 s` | `590.097 s` | `202.655 s` | `1238.520 s` | `1406.923 s` |
 | weighting plus combined dirty-grid workers | `4` | `119.135 s` | `195.249 s` | `455.601 s` | `260.904 s` | `917.914 s` | `1088.750 s` |
 
+A paired Rust-vs-CASA run of the full 2048-pixel, 512-channel, `niter=2`
+diagnostic then completed with product comparison:
+
+| Workload | Result JSON | Rust median | CASA median | Ratio | Correctness |
+|---|---|---:|---:|---:|---|
+| `wave1-vla-single-medium-standard-mfs-clean-niter2` | `target/imperformance-wave2/threaded-clean-niter2-casa/20260519T190828Z-wave1-vla-single-medium-standard-mfs-clean-niter2-58852a06.json` | `1214.646 s` | `2138.483 s` | `0.57x` | GREEN: `.image`, `.residual`, `.psf`, and `.model` compared |
+
+This is the first full-shape clean timing comparison where the Wave 2 Rust path
+is materially faster than CASA on the same diagnostic, about `1.76x` faster by
+wall time. It is still a shallow clean diagnostic: `niter=2` produced two Rust
+minor iterations and should not be read as a science-depth deconvolution run.
+
+The sampled product deltas were:
+
+| Product | `diff_abs_max` | `diff_rms` | `diff_abs_max_over_casa_peak` | `diff_rms_over_casa_rms` |
+|---|---:|---:|---:|---:|
+| `.image` | `9.822845e-4` | `1.382698e-5` | `5.107993e-5` | `8.955059e-5` |
+| `.residual` | `8.716583e-4` | `1.365339e-5` | `5.741499e-5` | `9.506270e-5` |
+| `.psf` | `8.133054e-5` | `1.299795e-6` | `1.991039e-4` | `2.559283e-3` |
+| `.model` | `2.980232e-7` | `9.741179e-10` | `2.496955e-7` | `1.929741e-7` |
+
+The paired harness run reported slower Rust stage timings than the immediately
+preceding standalone profile, so the conservative evidence to compare against
+CASA is the paired wall-clock result above, not the standalone `1088.750 s`
+frontend profile. In that paired run the Rust core remained CPU dominated:
+`weighting=166.740 s`, `psf_grid=281.194 s`, `residual_degrid_grid=583.911 s`,
+`major_cycle_refresh=303.179 s`, and `prepare_plane_input=205.438 s`. CASA's
+measured PySynthesisImager stages were dominated by `make_psf=522.414 s`,
+`calcres_major_cycle=576.322 s`, and `clean_major_cycle=720.812 s`, with
+`set_weighting=44.151 s`.
+
 The next Wave 2 optimization target is therefore the remaining standard-MFS
-grid/degrid traversal inside the full-shape clean path and then deterministic
-product comparison against the single-thread/default path, not minor-cycle
+grid/degrid traversal inside the full-shape clean path and the GPU feasibility
+prototype/ruling for a regular high-arithmetic kernel, not minor-cycle
 execution.
 
-The stopped clean attempts wrote failed result records only:
+Earlier stopped clean attempts wrote failed result records only:
 
 | Attempt | Result JSON | Status | Note |
 |---|---|---|---|
@@ -216,9 +247,10 @@ The stopped clean attempts wrote failed result records only:
 | owned-Briggs diagnostic clean benchmark | `target/imperformance-wave2/full-medium-clean-owned-briggs-diagnostics/20260519T144727Z-wave1-vla-single-medium-standard-mfs-clean-current-ab62a9d0.json` | failed | interrupted after memory stayed stable but the clean run remained in expensive full standard-MFS gridding work |
 | expanded-stage clean benchmark | `target/imperformance-wave2/full-medium-clean-stage-diagnostics/20260519T153033Z-wave1-vla-single-medium-standard-mfs-clean-current-15dac89b.json` | failed | interrupted after the full-medium frontend completed, before Rust stage medians were available |
 
-The clean benchmark should not be recorded as performance-green until the
-remaining full-gridding clean-loop cost is reduced and a complete clean
-comparison passes.
+The completed `niter=2` clean diagnostic is performance-green against CASA, but
+the full Wave 2 acceleration ladder remains open until the remaining CPU
+grid/degrid work is reduced further, GPU feasibility is settled, and broader
+clean validation is recorded.
 
 ## Reproduction
 
@@ -244,4 +276,19 @@ tools/perf/imager/run_workload.py \
   --storage-label external-ssd-wave2-medium-direct \
   --output-dir target/imperformance-wave2/after-direct-plan-dirty \
   target/imperformance-wave2/medium-plan-current/workloads/wave1-vla-single-medium-standard-mfs-dirty-control.json
+```
+
+Run the completed full-shape `niter=2` clean comparison:
+
+```sh
+CASA_RS_STANDARD_MFS_GRID_THREADS=4 \
+CASA_RS_BENCH_MS_STAGING=direct \
+CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance \
+CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python \
+tools/perf/imager/run_workload.py \
+  --repeats 1 \
+  --run-label wave2-threaded-clean-niter2 \
+  --storage-label external-ssd-wave2-medium-direct \
+  --output-dir target/imperformance-wave2/threaded-clean-niter2-casa \
+  target/imperformance-wave2/medium-plan-current/workloads/wave1-vla-single-medium-standard-mfs-clean-niter2.json
 ```
