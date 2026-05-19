@@ -53,7 +53,7 @@ use beam::{
     BeamFitOutcome, beamfit_to_gaussian, estimate_psf_sidelobe_level, fit_beam_from_psf,
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
-use execution::{StandardMfsCpuExecutor, finite_visibility};
+use execution::{StandardMfsCpuExecutor, StandardMfsDirtyCpuExecutor, finite_visibility};
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{
     PlannedSample, ScreenProjector, StandardGridder, WProjectSamplePlan, WProjector,
@@ -139,14 +139,7 @@ pub struct StandardMfsDirtyAccumulatorRequest {
 /// non-natural weighting, W-term handling, or mosaic/PB semantics.
 pub struct StandardMfsDirtyAccumulator {
     request: StandardMfsDirtyAccumulatorRequest,
-    gridder: StandardGridder,
-    psf_grid: Array2<Complex64>,
-    residual_grid: Array2<Complex64>,
-    normalization_sumwt: f64,
-    reported_sumwt: f64,
-    gridded_samples: usize,
-    skipped_samples: usize,
-    max_abs_w_lambda: f64,
+    executor: StandardMfsDirtyCpuExecutor,
     stage_timings: ImagingStageTimings,
     total_started: Instant,
 }
@@ -184,18 +177,10 @@ impl StandardMfsDirtyAccumulator {
                 )));
             }
         }
-        let gridder = StandardGridder::new(request.geometry)?;
-        let [nx, ny] = gridder.grid_shape();
+        let executor = StandardMfsDirtyCpuExecutor::new(request.geometry)?;
         Ok(Self {
             request,
-            gridder,
-            psf_grid: Array2::<Complex64>::zeros((nx, ny)),
-            residual_grid: Array2::<Complex64>::zeros((nx, ny)),
-            normalization_sumwt: 0.0,
-            reported_sumwt: 0.0,
-            gridded_samples: 0,
-            skipped_samples: 0,
-            max_abs_w_lambda: 0.0,
+            executor,
             stage_timings: ImagingStageTimings::default(),
             total_started: Instant::now(),
         })
@@ -204,57 +189,7 @@ impl StandardMfsDirtyAccumulator {
     /// Accumulate one or more already-natural-weighted visibility batches.
     pub fn accumulate_batches(&mut self, batches: &[VisibilityBatch]) -> Result<(), ImagingError> {
         let grid_started = Instant::now();
-        for batch in batches {
-            batch.validate()?;
-            for sample_index in 0..batch.len() {
-                self.max_abs_w_lambda = self
-                    .max_abs_w_lambda
-                    .max(batch.w_lambda[sample_index].abs());
-                if !batch.gridable[sample_index] {
-                    self.skipped_samples += 1;
-                    continue;
-                }
-                let weight = batch.weight[sample_index];
-                let sumwt_factor = batch.sumwt_factor[sample_index];
-                if !(weight.is_finite()
-                    && weight > 0.0
-                    && sumwt_factor.is_finite()
-                    && sumwt_factor > 0.0)
-                {
-                    self.skipped_samples += 1;
-                    continue;
-                }
-                let Some(plan) = self
-                    .gridder
-                    .plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-                else {
-                    self.skipped_samples += 1;
-                    continue;
-                };
-                let grid_weight = f64::from(weight * sumwt_factor);
-                self.normalization_sumwt += grid_weight;
-                self.reported_sumwt += grid_weight;
-                self.gridded_samples += 1;
-                self.gridder.grid_sample_product_planned_f64(
-                    &mut self.psf_grid,
-                    &plan.positive,
-                    Complex64::new(grid_weight, 0.0),
-                );
-
-                let observed_visibility = batch.visibility[sample_index];
-                if finite_visibility(observed_visibility) {
-                    let residual = Complex64::new(
-                        f64::from(observed_visibility.re) * grid_weight,
-                        f64::from(observed_visibility.im) * grid_weight,
-                    );
-                    self.gridder.grid_sample_product_planned_f64(
-                        &mut self.residual_grid,
-                        &plan.positive,
-                        residual,
-                    );
-                }
-            }
-        }
+        self.executor.accumulate_batches(batches)?;
         let grid_elapsed = grid_started.elapsed();
         let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
         self.stage_timings.psf_grid += split_grid_elapsed;
@@ -264,15 +199,20 @@ impl StandardMfsDirtyAccumulator {
 
     /// Finish accumulation and return CASA-style dirty products and diagnostics.
     pub fn finish(mut self) -> Result<ImagingResult, ImagingError> {
-        if self.normalization_sumwt <= 0.0 || self.reported_sumwt <= 0.0 {
+        let accumulation = self.executor.accumulation();
+        if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
             return Err(ImagingError::NoUsableSamples);
         }
+        let (psf_grid, residual_grid) = self.executor.dirty_grids();
         let psf_fft_started = Instant::now();
-        let raw_psf = centered_ifft2_f64(&self.psf_grid);
+        let raw_psf = centered_ifft2_f64(psf_grid);
         self.stage_timings.psf_fft += psf_fft_started.elapsed();
         let psf_normalize_started = Instant::now();
-        let mut psf = self.gridder.corrected_image_from_grid_f64(&raw_psf);
-        psf.mapv_inplace(|value| value / self.normalization_sumwt as f32);
+        let mut psf = self
+            .executor
+            .gridder()
+            .corrected_image_from_grid_f64(&raw_psf);
+        psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
         let psf_peak = peak_abs_value(&psf);
         if !(psf_peak.is_finite() && psf_peak > 0.0) {
             return Err(ImagingError::Normalization(
@@ -283,11 +223,14 @@ impl StandardMfsDirtyAccumulator {
         self.stage_timings.psf_normalize += psf_normalize_started.elapsed();
 
         let residual_fft_started = Instant::now();
-        let raw_residual = centered_ifft2_f64(&self.residual_grid);
+        let raw_residual = centered_ifft2_f64(residual_grid);
         self.stage_timings.residual_fft += residual_fft_started.elapsed();
         let residual_normalize_started = Instant::now();
-        let mut residual = self.gridder.corrected_image_from_grid_f64(&raw_residual);
-        residual.mapv_inplace(|value| value / self.normalization_sumwt as f32 / psf_peak);
+        let mut residual = self
+            .executor
+            .gridder()
+            .corrected_image_from_grid_f64(&raw_residual);
+        residual.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32 / psf_peak);
         self.stage_timings.residual_normalize += residual_normalize_started.elapsed();
 
         let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
@@ -315,7 +258,7 @@ impl StandardMfsDirtyAccumulator {
             ));
         }
         let w_phase_metric =
-            self.max_abs_w_lambda * self.request.geometry.field_of_view_rad().powi(2);
+            accumulation.max_abs_w_lambda * self.request.geometry.field_of_view_rad().powi(2);
         if w_phase_metric > 0.1 {
             warnings.push(format!(
                 "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
@@ -349,19 +292,19 @@ impl StandardMfsDirtyAccumulator {
             residual: expand_plane(&residual),
             model: expand_plane(&model),
             image: expand_plane(&restored_image),
-            sumwt: expand_scalar(self.reported_sumwt as f32),
+            sumwt: expand_scalar(accumulation.reported_sumwt as f32),
             beam,
             diagnostics: ImagingDiagnostics {
                 warnings,
-                gridded_samples: self.gridded_samples,
-                skipped_samples: self.skipped_samples,
+                gridded_samples: accumulation.gridded_samples,
+                skipped_samples: accumulation.skipped_samples,
                 major_cycles: 0,
                 minor_iterations: 0,
                 clean_stop_reason: None,
                 minor_cycle_traces: Vec::new(),
                 initial_residual_peak_jy_per_beam: initial_peak,
                 final_residual_peak_jy_per_beam: initial_peak,
-                max_abs_w_lambda: self.max_abs_w_lambda,
+                max_abs_w_lambda: accumulation.max_abs_w_lambda,
                 fractional_bandwidth,
                 max_psf_sidelobe_level,
                 final_cycle_threshold_jy_per_beam: self.request.clean.threshold_jy_per_beam,

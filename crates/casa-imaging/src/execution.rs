@@ -5,7 +5,7 @@ use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
 use crate::{
-    ImagingError, VisibilityBatch,
+    ImageGeometry, ImagingError, VisibilityBatch,
     gridder::{PlannedSample, StandardGridder},
 };
 
@@ -24,6 +24,36 @@ pub(crate) struct StandardMfsCpuExecutor<'a> {
     gridder: &'a StandardGridder,
     plan: StandardMfsVisibilityPlan<'a>,
     workspace: StandardMfsWorkspace,
+}
+
+/// CPU executor for streaming standard MFS dirty accumulation.
+///
+/// This owns the standard gridder and reusable grids while each call to
+/// `accumulate_batches` builds only a borrowed plan for the current frontend
+/// row block.
+pub(crate) struct StandardMfsDirtyCpuExecutor {
+    gridder: StandardGridder,
+    workspace: StandardMfsWorkspace,
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+    max_abs_w_lambda: f64,
+}
+
+/// Immutable summary of accumulated streaming standard MFS dirty samples.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct StandardMfsDirtyAccumulation {
+    /// PSF and residual normalization sum from accepted samples.
+    pub(crate) normalization_sumwt: f64,
+    /// CASA-style reported sumwt from accepted samples.
+    pub(crate) reported_sumwt: f64,
+    /// Number of samples accepted by the standard gridder.
+    pub(crate) gridded_samples: usize,
+    /// Number of samples rejected by flags, weights, or gridder bounds.
+    pub(crate) skipped_samples: usize,
+    /// Maximum absolute `w` coordinate seen in wavelengths.
+    pub(crate) max_abs_w_lambda: f64,
 }
 
 impl<'a> StandardMfsCpuExecutor<'a> {
@@ -68,6 +98,106 @@ impl<'a> StandardMfsCpuExecutor<'a> {
     #[cfg(test)]
     pub(crate) fn plan(&self) -> &StandardMfsVisibilityPlan<'a> {
         &self.plan
+    }
+}
+
+impl StandardMfsDirtyCpuExecutor {
+    /// Build a dirty accumulator executor for the requested internal backend.
+    pub(crate) fn for_backend(
+        backend: StandardMfsBackend,
+        geometry: ImageGeometry,
+    ) -> Result<Self, ImagingError> {
+        match backend {
+            StandardMfsBackend::Cpu => {
+                let gridder = StandardGridder::new(geometry)?;
+                let workspace = StandardMfsWorkspace::new(&gridder);
+                Ok(Self {
+                    gridder,
+                    workspace,
+                    normalization_sumwt: 0.0,
+                    reported_sumwt: 0.0,
+                    gridded_samples: 0,
+                    skipped_samples: 0,
+                    max_abs_w_lambda: 0.0,
+                })
+            }
+            StandardMfsBackend::Reserved(name) => Err(ImagingError::Unsupported(format!(
+                "standard MFS backend '{name}' is not implemented"
+            ))),
+        }
+    }
+
+    /// Build the current CPU dirty executor.
+    pub(crate) fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
+        Self::for_backend(StandardMfsBackend::Cpu, geometry)
+    }
+
+    /// Accumulate a borrowed row-block plan into the reusable dirty grids.
+    pub(crate) fn accumulate_batches(
+        &mut self,
+        batches: &[VisibilityBatch],
+    ) -> Result<(), ImagingError> {
+        for batch in batches {
+            batch.validate()?;
+            self.max_abs_w_lambda = batch
+                .w_lambda
+                .iter()
+                .fold(self.max_abs_w_lambda, |max_abs_w_lambda, &w_lambda| {
+                    max_abs_w_lambda.max(w_lambda.abs())
+                });
+        }
+
+        let plan = StandardMfsVisibilityPlan::new(&self.gridder, batches);
+        let (psf_grid, residual_grid) = self.workspace.dirty_grids_mut();
+        for sample in plan.samples() {
+            let grid_weight = sample.grid_weight_f64();
+            self.gridder.grid_sample_product_planned_f64(
+                psf_grid,
+                &sample.plan.positive,
+                Complex64::new(grid_weight, 0.0),
+            );
+
+            let batch = plan.batch(sample);
+            let observed_visibility = batch.visibility[sample.sample_index];
+            if finite_visibility(observed_visibility) {
+                let residual = Complex64::new(
+                    f64::from(observed_visibility.re) * grid_weight,
+                    f64::from(observed_visibility.im) * grid_weight,
+                );
+                self.gridder.grid_sample_product_planned_f64(
+                    residual_grid,
+                    &sample.plan.positive,
+                    residual,
+                );
+            }
+        }
+
+        self.normalization_sumwt += plan.normalization_sumwt();
+        self.reported_sumwt += plan.reported_sumwt();
+        self.gridded_samples += plan.gridded_samples();
+        self.skipped_samples += plan.skipped_samples();
+        Ok(())
+    }
+
+    /// Return the reusable standard gridder.
+    pub(crate) fn gridder(&self) -> &StandardGridder {
+        &self.gridder
+    }
+
+    /// Return the accumulated dirty PSF and residual grids.
+    pub(crate) fn dirty_grids(&self) -> (&Array2<Complex64>, &Array2<Complex64>) {
+        self.workspace.dirty_grids()
+    }
+
+    /// Return the accumulated sample summary.
+    pub(crate) fn accumulation(&self) -> StandardMfsDirtyAccumulation {
+        StandardMfsDirtyAccumulation {
+            normalization_sumwt: self.normalization_sumwt,
+            reported_sumwt: self.reported_sumwt,
+            gridded_samples: self.gridded_samples,
+            skipped_samples: self.skipped_samples,
+            max_abs_w_lambda: self.max_abs_w_lambda,
+        }
     }
 }
 
@@ -215,6 +345,16 @@ impl StandardMfsWorkspace {
         self.residual_grid.fill(Complex64::new(0.0, 0.0));
         (&mut self.psf_grid, &mut self.residual_grid)
     }
+
+    /// Borrow the PSF and residual grids without clearing them.
+    pub(crate) fn dirty_grids_mut(&mut self) -> (&mut Array2<Complex64>, &mut Array2<Complex64>) {
+        (&mut self.psf_grid, &mut self.residual_grid)
+    }
+
+    /// Borrow the PSF and residual grids without clearing them.
+    pub(crate) fn dirty_grids(&self) -> (&Array2<Complex64>, &Array2<Complex64>) {
+        (&self.psf_grid, &self.residual_grid)
+    }
 }
 
 /// Return true when a scalar visibility can contribute to a residual grid.
@@ -224,7 +364,7 @@ pub(crate) fn finite_visibility(visibility: Complex32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{StandardMfsBackend, StandardMfsCpuExecutor};
+    use super::{StandardMfsBackend, StandardMfsCpuExecutor, StandardMfsDirtyCpuExecutor};
     use crate::{ImageGeometry, VisibilityBatch, gridder::StandardGridder};
     use num_complex::Complex32;
 
@@ -270,6 +410,65 @@ mod tests {
             &batches,
         ) {
             Ok(_) => panic!("reserved backend unexpectedly built an executor"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("standard MFS backend 'gpu' is not implemented"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn streaming_dirty_executor_accumulates_borrowed_row_blocks() {
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let left = VisibilityBatch {
+            u_lambda: vec![0.0, 4.0],
+            v_lambda: vec![0.0, 1.0],
+            w_lambda: vec![3.0, -5.0],
+            weight: vec![1.0, 2.0],
+            sumwt_factor: vec![1.0, 2.0],
+            gridable: vec![true, true],
+            visibility: vec![Complex32::new(1.0, 0.0); 2],
+        };
+        let right = VisibilityBatch {
+            u_lambda: vec![8.0, 12.0],
+            v_lambda: vec![2.0, 3.0],
+            w_lambda: vec![7.0, 11.0],
+            weight: vec![0.0, 3.0],
+            sumwt_factor: vec![1.0, f32::NAN],
+            gridable: vec![true, true],
+            visibility: vec![Complex32::new(1.0, 0.0); 2],
+        };
+        let mut executor = StandardMfsDirtyCpuExecutor::new(geometry).unwrap();
+
+        executor.accumulate_batches(&[left]).unwrap();
+        executor.accumulate_batches(&[right]).unwrap();
+        let accumulation = executor.accumulation();
+
+        assert_eq!(accumulation.gridded_samples, 2);
+        assert_eq!(accumulation.skipped_samples, 2);
+        assert!((accumulation.normalization_sumwt - 5.0).abs() < 1.0e-6);
+        assert!((accumulation.reported_sumwt - 5.0).abs() < 1.0e-6);
+        assert!((accumulation.max_abs_w_lambda - 11.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn reserved_streaming_dirty_backend_fails_before_workspace_creation() {
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let error = match StandardMfsDirtyCpuExecutor::for_backend(
+            StandardMfsBackend::Reserved("gpu"),
+            geometry,
+        ) {
+            Ok(_) => panic!("reserved backend unexpectedly built a dirty executor"),
             Err(error) => error,
         };
 
