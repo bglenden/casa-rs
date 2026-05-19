@@ -424,6 +424,49 @@ impl TableImpl {
         Ok(values)
     }
 
+    fn load_array_column_rows_2d_channel_range_now(
+        source: &LazyRowsSource,
+        column: &str,
+        row_indices: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Vec<Option<ArrayValue>>, TableError> {
+        let mut profiler = StorageProfiler::start(format!(
+            "table_impl::load_array_column_rows_2d_channel_range_now path={} column={column}",
+            source.path.display()
+        ));
+        let storage = CompositeStorage;
+        let values = storage
+            .load_array_column_rows_2d_channel_range_with_row_hint(
+                &source.path,
+                column,
+                row_indices,
+                channel_start,
+                channel_count,
+                Some(source.row_count_hint as u64),
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to load selected channel range for array column '{column}' from table {}: {err}",
+                    source.path.display()
+                ))
+            })?;
+        if let Some(profiler) = profiler.as_mut() {
+            profiler.mark_with_detail(
+                "storage_load_complete",
+                Some(format!(
+                    "row_count_hint={} requested_rows={} channel_start={} channel_count={} values={}",
+                    source.row_count_hint,
+                    row_indices.len(),
+                    channel_start,
+                    channel_count,
+                    values.len()
+                )),
+            );
+        }
+        Ok(values)
+    }
+
     fn load_scalar_column_rows_now(
         source: &LazyRowsSource,
         column: &str,
@@ -904,6 +947,104 @@ impl TableImpl {
             for (out_idx, &row_index) in row_indices.iter().enumerate() {
                 if let Some(value) = overrides.get(row_index) {
                     values[out_idx] = Some(value.clone());
+                }
+            }
+        }
+
+        Ok(Some(values))
+    }
+
+    pub(crate) fn array_cells_owned_uncached(
+        &self,
+        row_indices: &[usize],
+        column: &str,
+    ) -> Result<Option<Vec<Option<ArrayValue>>>, TableError> {
+        if let Some(loaded) = self.loaded_rows.get() {
+            let values = row_indices
+                .iter()
+                .map(|&row_index| {
+                    loaded
+                        .rows
+                        .get(row_index)
+                        .and_then(|row| match row.get(column) {
+                            Some(Value::Array(array)) => Some(array.clone()),
+                            _ => None,
+                        })
+                })
+                .collect();
+            return Ok(Some(values));
+        }
+
+        let Some(source) = &self.lazy_rows else {
+            return Ok(None);
+        };
+
+        let mut values = Self::load_array_column_rows_now(source, column, row_indices)?;
+        if let Some(overrides) = self.pending_array_cells.by_column.get(column) {
+            for (out_idx, &row_index) in row_indices.iter().enumerate() {
+                if let Some(value) = overrides.get(row_index) {
+                    values[out_idx] = Some(value.clone());
+                }
+            }
+        }
+
+        Ok(Some(values))
+    }
+
+    pub(crate) fn array_cells_2d_channel_range_owned_uncached(
+        &self,
+        row_indices: &[usize],
+        column: &str,
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Option<Vec<Option<ArrayValue>>>, TableError> {
+        if let Some(loaded) = self.loaded_rows.get() {
+            let values = row_indices
+                .iter()
+                .map(|&row_index| {
+                    loaded
+                        .rows
+                        .get(row_index)
+                        .and_then(|row| match row.get(column) {
+                            Some(Value::Array(array)) => Some(array.clone()),
+                            _ => None,
+                        })
+                        .map(|array| {
+                            crate::storage::slice_array_value_2d_channel_range(
+                                array,
+                                channel_start,
+                                channel_count,
+                            )
+                        })
+                        .transpose()
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| TableError::Storage(error.to_string()))?;
+            return Ok(Some(values));
+        }
+
+        let Some(source) = &self.lazy_rows else {
+            return Ok(None);
+        };
+
+        let mut values = Self::load_array_column_rows_2d_channel_range_now(
+            source,
+            column,
+            row_indices,
+            channel_start,
+            channel_count,
+        )?;
+        if let Some(overrides) = self.pending_array_cells.by_column.get(column) {
+            for (out_idx, &row_index) in row_indices.iter().enumerate() {
+                if let Some(value) = overrides.get(row_index) {
+                    values[out_idx] = Some(
+                        crate::storage::slice_array_value_2d_channel_range(
+                            value.clone(),
+                            channel_start,
+                            channel_count,
+                        )
+                        .map_err(|error| TableError::Storage(error.to_string()))?,
+                    );
                 }
             }
         }

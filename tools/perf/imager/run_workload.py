@@ -23,7 +23,34 @@ SUPPORTED_GRIDDER_VALUES = {"mosaic", "standard"}
 SUPPORTED_SPEC_MODES = {"mfs", "cube"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
 SUPPORTED_INTERPOLATION = {"nearest", "linear"}
+SUPPORTED_MS_STAGING = {"copy", "direct"}
 DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
+RUST_STAGE_FIELDS = {
+    "open_measurement_set",
+    "prepare_plane_input",
+    "get_ms_values_into_processing_buffer",
+    "prepare_processing_buffer",
+    "extract_phase_center",
+    "run_imaging",
+    "build_coordinate_system",
+    "write_products",
+    "frontend_total",
+    "controller_overhead",
+    "weighting",
+    "psf_grid",
+    "psf_fft",
+    "psf_normalize",
+    "model_fft",
+    "residual_degrid_grid",
+    "residual_fft",
+    "residual_normalize",
+    "major_cycle_refresh",
+    "minor_cycle",
+    "minor_cycle_solve",
+    "beam_fit",
+    "restore",
+    "total",
+}
 
 
 class HarnessError(Exception):
@@ -150,6 +177,11 @@ def build_plan(
     repeats = repeats_override if repeats_override is not None else int_value(run, "repeats", 5)
     if repeats < 1:
         raise HarnessError("repeats must be >= 1")
+    ms_staging = os.environ.get("CASA_RS_BENCH_MS_STAGING") or str_value(
+        run, "ms_staging", "copy"
+    )
+    if ms_staging not in SUPPORTED_MS_STAGING:
+        raise HarnessError("run.ms_staging must be copy or direct")
 
     dataset_path = resolve_dataset_path(dataset, dry_run=dry_run)
     casa_python = os.environ.get("CASA_RS_CASA_PYTHON")
@@ -174,6 +206,7 @@ def build_plan(
         "IMAGER_BENCH_WEIGHTING": str_value(imaging, "weighting", "natural"),
         "IMAGER_BENCH_ROBUST": str(float_value(imaging, "robust", 0.5)),
         "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
+        "IMAGER_BENCH_NTERMS": str(int_value(imaging, "nterms", 1)),
         "IMAGER_BENCH_SCALES": scales_value(imaging),
         "IMAGER_BENCH_WTERM": wterm,
         "IMAGER_BENCH_NITER": str(int_value(imaging, "niter", 4)),
@@ -191,6 +224,7 @@ def build_plan(
         "IMAGER_BENCH_MAX_PSFFRACTION": str(
             float_value(imaging, "max_psf_fraction", 0.8)
         ),
+        "IMAGER_BENCH_MS_STAGING": ms_staging,
     }
 
     command = [str(BENCH_SCRIPT), str(dataset_path)]
@@ -217,6 +251,7 @@ def build_plan(
             "channel_count": int_value(imaging, "channel_count", 1),
             "weighting": str_value(imaging, "weighting", "natural"),
             "deconvolver": str_value(imaging, "deconvolver", "hogbom"),
+            "nterms": int_value(imaging, "nterms", 1),
             "niter": int_value(imaging, "niter", 4),
         },
         "run": {
@@ -224,6 +259,7 @@ def build_plan(
             "run_label": run_label_override or str_value(run, "run_label", "warm"),
             "storage_label": storage_label_override
             or str_value(run, "storage_label", "script-staged-tempdir"),
+            "ms_staging": ms_staging,
         },
         "comparison": {
             "products": product_suffixes_value(comparison),
@@ -295,7 +331,11 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
 
 def empty_results(*, casa_status: str, reason: str) -> dict[str, Any]:
     return {
-        "rust": {"status": "not_run", "timings_seconds": {"runs": [], "median": None}},
+        "rust": {
+            "status": "not_run",
+            "reason": reason,
+            "timings_seconds": {"runs": [], "median": None},
+        },
         "casa": {
             "status": casa_status,
             "reason": reason,
@@ -314,17 +354,29 @@ def parse_benchmark_log(text: str) -> dict[str, Any]:
     rust_stages = parse_stage_section(text, "Rust stage medians")
     casa_stages = parse_stage_section(text, "CASA PySynthesisImager stage medians")
     return {
-        "rust": {
-            "status": "ran",
-            "timings_seconds": {"runs": rust_runs, "median": rust_median},
-        },
-        "casa": {
-            "status": "ran",
-            "reason": None,
-            "timings_seconds": {"runs": casa_runs, "median": casa_median},
-        },
+        "rust": timing_result(
+            rust_runs,
+            rust_median,
+            missing_reason="Rust release CLI timing section was not reported",
+        ),
+        "casa": timing_result(
+            casa_runs,
+            casa_median,
+            missing_reason="CASA tclean timing section was not reported",
+        ),
         "stage_medians_ms": {"rust": rust_stages, "casa": casa_stages},
         "product_paths": parse_product_paths(text),
+    }
+
+
+def timing_result(
+    runs: list[float], median: float | None, *, missing_reason: str
+) -> dict[str, Any]:
+    status = "ran" if median is not None else "missing"
+    return {
+        "status": status,
+        "reason": None if status == "ran" else missing_reason,
+        "timings_seconds": {"runs": runs, "median": median},
     }
 
 
@@ -365,6 +417,20 @@ def build_rust_stage_breakdown(plan: dict[str, Any], stages: dict[str, float]) -
             stages,
             ["prepare_plane_input"],
             "Visibility adaptation before entering the imaging core.",
+        ),
+        "standard_mfs_buffer_load": stage_category(
+            stages,
+            ["get_ms_values_into_processing_buffer"],
+            "Owned standard-MFS processing-buffer loads from MS and table columns.",
+            skipped="get_ms_values_into_processing_buffer" not in stages,
+            skip_reason="not reported for this preparation path",
+        ),
+        "standard_mfs_buffer_prepare": stage_category(
+            stages,
+            ["prepare_processing_buffer"],
+            "Standard-MFS processing-buffer adaptation into imaging batches.",
+            skipped="prepare_processing_buffer" not in stages,
+            skip_reason="not reported for this preparation path",
         ),
         "weighting_density_setup": stage_category(
             stages,
@@ -609,7 +675,7 @@ def compare_products(
 
 
 def parse_timing_section(text: str, heading: str) -> tuple[list[float], float | None]:
-    lines = section_lines(text, f"{heading} ")
+    lines = timing_section_lines(text, f"{heading} ")
     runs = []
     median_value = None
     for line in lines:
@@ -624,11 +690,39 @@ def parse_timing_section(text: str, heading: str) -> tuple[list[float], float | 
     return runs, median_value
 
 
+def timing_section_lines(text: str, heading_prefix: str) -> list[str]:
+    boundaries = (
+        "Rust release CLI timings ",
+        "Rust stage medians ",
+        "CASA tclean timings ",
+        "Kept benchmark products:",
+        "CASA PySynthesisImager stage medians ",
+    )
+    lines = text.splitlines()
+    result = []
+    collecting = False
+    for line in lines:
+        if line.startswith(heading_prefix):
+            collecting = True
+            continue
+        if collecting and any(
+            line.startswith(boundary)
+            for boundary in boundaries
+            if boundary != heading_prefix
+        ):
+            break
+        if collecting:
+            result.append(line.strip())
+    return result
+
+
 def parse_stage_section(text: str, heading: str) -> dict[str, float]:
-    lines = section_lines(text, f"{heading} ")
+    lines = timing_section_lines(text, f"{heading} ")
     stages: dict[str, float] = {}
     for line in lines:
         for name, value in re.findall(r"([A-Za-z0-9_]+)=([0-9.]+)", line):
+            if heading == "Rust stage medians" and name not in RUST_STAGE_FIELDS:
+                continue
             if name != "run":
                 stages[name] = float(value)
     return stages

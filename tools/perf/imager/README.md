@@ -155,6 +155,18 @@ It does not add personal workstation data fallbacks.
 - `IMAGER_BENCH_MINOR_CYCLE_LENGTH`
 - `IMAGER_BENCH_WTERM`
   - currently only `none` is supported in the Rust-vs-CASA benchmark script because the Rust-only `direct` mode has no matching `tclean` configuration in this harness
+- `IMAGER_BENCH_MS_STAGING`
+  - `copy` copies the MeasurementSet into the script temp directory before
+    timing; this is the default for small workloads
+  - `direct` benchmarks the manifest MeasurementSet path in place and is the
+    required mode for about-memory or larger-than-memory datasets
+- `IMAGER_BENCH_TMP_ROOT`
+  - parent directory for script scratch space; defaults to `${TMPDIR:-/tmp}`
+
+The manifest runner also honors `CASA_RS_BENCH_MS_STAGING=direct` and records
+the resulting `run.ms_staging` value in the result JSON. Use this for medium
+and large Wave 1 manifests so the benchmark does not first copy a 32 GiB or
+100 GiB MeasurementSet into local `/var/folders` scratch.
 
 ## Manifest fields
 
@@ -184,6 +196,7 @@ their benchmark support is added or delegated to the owning follow-up.
 
 `run_workload.py` writes one JSON file per run with:
 
+- `schema_version: 1`
 - `run_id`, manifest path, git branch/commit, CASA Python path, benchmark script
   hash, and the exact delegated command/env
 - dataset key/path, selected mode, image shape, channel count, weighting,
@@ -198,6 +211,22 @@ their benchmark support is added or delegated to the owning follow-up.
 - preserved product prefixes when a real run is executed
 - CASA-backed product-comparison metrics for configured product suffixes
 - a clear `dry_run`, `completed`, or `failed` status
+
+### Failure semantics
+
+Unsupported modes, missing dataset roots or paths, missing CASA Python, invalid
+CASA Python paths, and invalid repeat counts fail during preflight before the
+benchmark script is invoked. Those failures exit without writing partial timing
+claims.
+
+If the delegated benchmark command exits non-zero, the result JSON is written
+with top-level `status: failed`, the benchmark log path, the command exit code,
+Rust timing status `not_run`, CASA timing status `blocked`, and the shared block
+reason. Product comparison is skipped.
+
+If a completed benchmark log omits one timing section, the corresponding side is
+reported as `status: missing` with an explanatory reason instead of `ran`; only a
+side with a median wallclock is reported as `ran`.
 
 The active Wave 8 clean cube gate can now be reproduced directly through the
 same harness by setting, for example:
@@ -231,6 +260,16 @@ scripts/bench-imager-vs-casa.sh /Volumes/home/casatestdata/measurementset/vla/re
 
 The Rust profiler reports medians for:
 
+- `open_measurement_set`
+- `prepare_plane_input`
+- `get_ms_values_into_processing_buffer`
+- `prepare_processing_buffer`
+- `extract_phase_center`
+- `run_imaging`
+- `build_coordinate_system`
+- `write_products`
+- `frontend_total`
+- `controller_overhead`
 - `weighting`
 - `psf_grid`
 - `psf_fft`
@@ -239,7 +278,9 @@ The Rust profiler reports medians for:
 - `residual_degrid_grid`
 - `residual_fft`
 - `residual_normalize`
+- `major_cycle_refresh`
 - `minor_cycle`
+- `minor_cycle_solve`
 - `beam_fit`
 - `restore`
 - `total`

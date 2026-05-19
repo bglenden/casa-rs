@@ -7,6 +7,7 @@ use std::thread;
 use casa_types::{
     Array2, ArrayD, ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
+use ndarray::ShapeBuilder;
 
 use crate::schema::{ColumnSchema, TableSchema};
 
@@ -167,6 +168,18 @@ fn table_array_cells_owned(
     table
         .column_accessor(column)?
         .array_cells_owned(row_indices)
+}
+
+fn table_array_cells_2d_channel_range_owned_uncached(
+    table: &Table,
+    column: &str,
+    row_indices: &[usize],
+    channel_start: usize,
+    channel_count: usize,
+) -> Result<Vec<Option<ArrayValue>>, TableError> {
+    table
+        .column_accessor(column)?
+        .array_cells_2d_channel_range_owned_uncached(row_indices, channel_start, channel_count)
 }
 
 #[test]
@@ -2117,6 +2130,78 @@ fn lazy_disk_open_reads_selected_array_cells_without_loading_full_tiled_column()
     assert!(
         !reopened.inner.has_loaded_array_column("data"),
         "selected array reads should not populate the full array-column cache"
+    );
+
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
+fn lazy_disk_open_reads_selected_tiled_array_channel_ranges_without_full_column() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float32,
+        vec![2, 6],
+    )])
+    .expect("schema");
+
+    let mut table = Table::with_schema(schema);
+    for row_idx in 0..8 {
+        let mut values = Vec::new();
+        for channel in 0..6 {
+            for corr in 0..2 {
+                values.push(row_idx as f32 * 100.0 + channel as f32 * 10.0 + corr as f32);
+            }
+        }
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(ndarray::IxDyn(&[2, 6]).f(), values)
+                        .expect("shape data"),
+                )),
+            )]))
+            .expect("push row");
+    }
+
+    let root = unique_test_dir("lazy_selected_tiled_channel_ranges");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::TiledShapeStMan))
+        .expect("save tiled-shape table");
+
+    let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+    assert!(!reopened.inner.has_loaded_rows());
+    assert!(!reopened.inner.has_loaded_array_column("data"));
+
+    let selected =
+        table_array_cells_2d_channel_range_owned_uncached(&reopened, "data", &[7, 2], 1, 3)
+            .expect("read selected channel ranges");
+    assert_eq!(
+        selected,
+        vec![
+            Some(ArrayValue::Float32(
+                ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[2, 3]).f(),
+                    vec![710.0, 711.0, 720.0, 721.0, 730.0, 731.0]
+                )
+                .unwrap()
+            )),
+            Some(ArrayValue::Float32(
+                ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[2, 3]).f(),
+                    vec![210.0, 211.0, 220.0, 221.0, 230.0, 231.0]
+                )
+                .unwrap()
+            )),
+        ]
+    );
+    assert!(
+        !reopened.inner.has_loaded_rows(),
+        "selected channel-range reads should not force row materialization"
+    );
+    assert!(
+        !reopened.inner.has_loaded_array_column("data"),
+        "selected channel-range reads should not populate the full array-column cache"
     );
 
     std::fs::remove_dir_all(&root).expect("cleanup test dir");

@@ -37,6 +37,7 @@ if [[ -z "${CASA_RS_CASA_PYTHON:-}" ]]; then
 fi
 
 repeats="${BENCH_REPEATS:-5}"
+profile_warmups="${BENCH_PROFILE_WARMUPS:-0}"
 field="${IMAGER_BENCH_FIELD:-0}"
 phasecenter_field="${IMAGER_BENCH_PHASECENTER_FIELD:-}"
 spw="${IMAGER_BENCH_SPW:-0}"
@@ -54,6 +55,7 @@ max_psf_fraction="${IMAGER_BENCH_MAX_PSFFRACTION:-0.8}"
 weighting="${IMAGER_BENCH_WEIGHTING:-natural}"
 robust="${IMAGER_BENCH_ROBUST:-0.5}"
 deconvolver="${IMAGER_BENCH_DECONVOLVER:-hogbom}"
+nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
 wterm="${IMAGER_BENCH_WTERM:-none}"
 mode="${IMAGER_BENCH_MODE:-dirty}"
@@ -63,6 +65,8 @@ threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
 nsigma="${IMAGER_BENCH_NSIGMA:-0}"
 psfcutoff="${IMAGER_BENCH_PSFCUTOFF:-0.35}"
 keep_output_root="${IMAGER_BENCH_KEEP_OUTPUT_ROOT:-}"
+ms_staging="${IMAGER_BENCH_MS_STAGING:-copy}"
+tmp_root="${IMAGER_BENCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
 
 if [[ "$wterm" != "none" ]]; then
   echo "error: scripts/bench-imager-vs-casa.sh only supports IMAGER_BENCH_WTERM=none for Rust-vs-CASA comparisons" >&2
@@ -81,6 +85,16 @@ fi
 
 if [[ "$interpolation" != "nearest" && "$interpolation" != "linear" ]]; then
   echo "error: IMAGER_BENCH_INTERPOLATION must be nearest or linear" >&2
+  exit 2
+fi
+
+if [[ "$ms_staging" != "copy" && "$ms_staging" != "direct" ]]; then
+  echo "error: IMAGER_BENCH_MS_STAGING must be copy or direct" >&2
+  exit 2
+fi
+
+if [[ ! -d "$tmp_root" ]]; then
+  echo "error: IMAGER_BENCH_TMP_ROOT does not exist: $tmp_root" >&2
   exit 2
 fi
 
@@ -132,16 +146,18 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction"
+echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction ms_staging=$ms_staging"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
 
-tmpdir="$(mktemp -d)"
+tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
-staged_ms_path="$tmpdir/benchmark.ms"
-cp -R "$ms_path" "$staged_ms_path"
-ms_path="$staged_ms_path"
+if [[ "$ms_staging" == "copy" ]]; then
+  staged_ms_path="$tmpdir/benchmark.ms"
+  cp -R "$ms_path" "$staged_ms_path"
+  ms_path="$staged_ms_path"
+fi
 if [[ -n "$keep_output_root" ]]; then
   mkdir -p "$keep_output_root/rust" "$keep_output_root/casa"
   rust_keep_prefix="$keep_output_root/rust/rust"
@@ -153,10 +169,13 @@ fi
 
 echo "Rust release CLI timings (seconds):"
 rust_cli_file="$tmpdir/rust-cli.txt"
-phasecenter_args=()
-if [[ -n "$phasecenter_field" ]]; then
-  phasecenter_args=(--phasecenter-field "$phasecenter_field")
-fi
+run_with_optional_phasecenter() {
+  if [[ -n "$phasecenter_field" ]]; then
+    "$@" --phasecenter-field "$phasecenter_field"
+  else
+    "$@"
+  fi
+}
 for run in $(seq 1 "$repeats"); do
   if [[ -n "$rust_keep_prefix" && "$run" == "$repeats" ]]; then
     prefix="$rust_keep_prefix"
@@ -165,13 +184,12 @@ for run in $(seq 1 "$repeats"); do
   fi
   rust_stderr="$tmpdir/rust-$run.stderr"
   if [[ -n "$scales" ]]; then
-    if ! run_timed_command "$rust_stderr" target/release/casars-imager \
+    if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
       --ms "$ms_path" \
       --imagename "$prefix" \
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
       --field "$field" \
-      "${phasecenter_args[@]}" \
       --spw "$spw" \
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
@@ -182,6 +200,7 @@ for run in $(seq 1 "$repeats"); do
       --weighting "$weighting" \
       --robust "$robust" \
       --deconvolver "$deconvolver" \
+      --nterms "$nterms" \
       --scales "$scales" \
       --niter "$niter" \
       --gain "$gain" \
@@ -200,13 +219,12 @@ for run in $(seq 1 "$repeats"); do
       exit 1
     fi
   else
-    if ! run_timed_command "$rust_stderr" target/release/casars-imager \
+    if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
       --ms "$ms_path" \
       --imagename "$prefix" \
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
       --field "$field" \
-      "${phasecenter_args[@]}" \
       --spw "$spw" \
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
@@ -217,6 +235,7 @@ for run in $(seq 1 "$repeats"); do
       --weighting "$weighting" \
       --robust "$robust" \
       --deconvolver "$deconvolver" \
+      --nterms "$nterms" \
       --niter "$niter" \
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
@@ -246,10 +265,9 @@ echo
 
 echo "Rust stage medians (milliseconds):"
 if [[ -n "$scales" ]]; then
-  target/release/examples/profile_imager \
+  run_with_optional_phasecenter target/release/examples/profile_imager \
     "$ms_path" \
     --field "$field" \
-    "${phasecenter_args[@]}" \
     --spw "$spw" \
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
@@ -260,6 +278,7 @@ if [[ -n "$scales" ]]; then
     --weighting "$weighting" \
     --robust "$robust" \
     --deconvolver "$deconvolver" \
+    --nterms "$nterms" \
     --scales "$scales" \
     --imsize "$imsize" \
     --cell-arcsec "$cell_arcsec" \
@@ -275,13 +294,12 @@ if [[ -n "$scales" ]]; then
     --wterm "$wterm" \
     $dirty_flag \
     --repeats "$repeats" \
-    --warmups 1 \
+    --warmups "$profile_warmups" \
     | sed 's/^/  /'
 else
-  target/release/examples/profile_imager \
+  run_with_optional_phasecenter target/release/examples/profile_imager \
     "$ms_path" \
     --field "$field" \
-    "${phasecenter_args[@]}" \
     --spw "$spw" \
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
@@ -292,6 +310,7 @@ else
     --weighting "$weighting" \
     --robust "$robust" \
     --deconvolver "$deconvolver" \
+    --nterms "$nterms" \
     --imsize "$imsize" \
     --cell-arcsec "$cell_arcsec" \
     --niter "$niter" \
@@ -306,7 +325,7 @@ else
     --wterm "$wterm" \
     $dirty_flag \
     --repeats "$repeats" \
-    --warmups 1 \
+    --warmups "$profile_warmups" \
     | sed 's/^/  /'
 fi
 echo
@@ -339,6 +358,7 @@ maxpsffraction = float(os.environ["CASA_RS_BENCH_MAX_PSFFRACTION"])
 weighting = os.environ["CASA_RS_BENCH_WEIGHTING"]
 robust = float(os.environ["CASA_RS_BENCH_ROBUST"])
 deconvolver = os.environ["CASA_RS_BENCH_DECONVOLVER"]
+nterms = int(os.environ["CASA_RS_BENCH_NTERMS"])
 gridder = os.environ["CASA_RS_BENCH_GRIDDER"]
 scales = [] if os.environ["CASA_RS_BENCH_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_RS_BENCH_SCALES"].split(",")]
 specmode = os.environ["CASA_RS_BENCH_SPECMODE"]
@@ -366,6 +386,7 @@ with tempfile.TemporaryDirectory() as td:
             gridder=gridder,
             weighting=weighting,
             deconvolver=deconvolver,
+            nterms=nterms,
             scales=scales,
             imsize=imsize,
             cell=f"{cell_arcsec}arcsec",
@@ -401,7 +422,7 @@ with tempfile.TemporaryDirectory() as td:
         else:
             kwargs.update(spw=spw_selector)
         if phasecenter_field:
-            kwargs["phasecenter"] = f"FIELD_ID {phasecenter_field}"
+            kwargs["phasecenter"] = int(phasecenter_field)
         tclean(**kwargs)
         elapsed = time.perf_counter() - start
         times.append(elapsed)
@@ -427,6 +448,7 @@ CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
 CASA_RS_BENCH_WEIGHTING="$weighting" \
 CASA_RS_BENCH_ROBUST="$robust" \
 CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
+CASA_RS_BENCH_NTERMS="$nterms" \
 CASA_RS_BENCH_SCALES="$scales" \
 CASA_RS_BENCH_NITER="$casa_niter" \
 CASA_RS_BENCH_GAIN="$gain" \
@@ -465,6 +487,7 @@ CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
 CASA_RS_BENCH_WEIGHTING="$weighting" \
 CASA_RS_BENCH_ROBUST="$robust" \
 CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
+CASA_RS_BENCH_NTERMS="$nterms" \
 CASA_RS_BENCH_SCALES="$scales" \
 CASA_RS_BENCH_NITER="$casa_niter" \
 CASA_RS_BENCH_GAIN="$gain" \

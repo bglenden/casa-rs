@@ -1,17 +1,18 @@
 # ImPerformance Wave 1 Stage Instrumentation
 
 Truth class: current descriptive
-Last reality check: 2026-05-15
-Verification: `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/stage-instrumentation-dry-run wave1-standard-mfs-dirty-smoke`; `CASA_RS_TESTDATA_ROOT=/Users/brianglendenning/SoftwareProjects/casatestdata CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --repeats 1 --output-dir target/imperformance-wave1/stage-instrumentation-smoke wave1-standard-mfs-dirty-smoke`
+Last reality check: 2026-05-18
+Verification: `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `cargo test -p casars-imager --lib managed_output -- --nocapture`; `cargo check -p casars-imager --example profile_imager`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/stage-instrumentation-dry-run wave1-standard-mfs-dirty-smoke`; `CASA_RS_TESTDATA_ROOT=/Users/brianglendenning/SoftwareProjects/casatestdata CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --repeats 1 --output-dir target/imperformance-wave1/stage-instrumentation-smoke wave1-standard-mfs-dirty-smoke`
 
 Wave issue: #246
 Child issue: #249
 
 This note records the Wave 1 stage-level timing surface used by the benchmark
-harness. The implementation does not add public task-protocol fields or managed
-output schema fields. It normalizes the existing Rust profiler and CASA phase
-probe output into the local benchmark result JSON under
-`results.stage_breakdown`.
+harness. The implementation does not add public task-protocol fields or change
+managed-output schema shape. It normalizes the existing Rust profiler and CASA
+phase probe output into the local benchmark result JSON under
+`results.stage_breakdown`, and keeps the managed-output timing value list aligned
+with the same complete core timing names.
 
 ## Contract Review
 
@@ -21,7 +22,9 @@ The structured timing object is local benchmark evidence:
 - consumer: Wave 1 benchmark summaries and the #251 bottleneck ledger
 - persisted public format: none
 - provider protocol change: none
-- managed-output contract change: none
+- managed-output contract change: additive timing names inside the existing
+  `values_ns` list only; no new schema field, version bump, or consumer-visible
+  structural contract change
 
 If these fields are later promoted into `casars-imager` JSON task output,
 managed output, or provider contracts, that will need a separate contract
@@ -35,12 +38,14 @@ The normalized Rust timing categories are:
 |---|---|---|
 | `frontend_ms_preparation` | `open_measurement_set`, `prepare_plane_input`, `extract_phase_center` | MS open, selection, row adaptation, and phase-center resolution. |
 | `visibility_adaptation_and_chunking` | `prepare_plane_input` | Visibility adaptation before pure imaging. |
+| `standard_mfs_buffer_load` | `get_ms_values_into_processing_buffer` | Standard-gridder MFS owned-buffer loading from MAIN data, flag, weight, optional weight-spectrum, and geometry inputs. |
+| `standard_mfs_buffer_prepare` | `prepare_processing_buffer` | Standard-gridder MFS owned-buffer adaptation into imaging visibility batches. |
 | `weighting_density_setup` | `weighting` | Imaging weights, density grids, and taper setup. |
 | `projection_pb_cf_preparation` | none yet | Explicit non-zero-free placeholder; projection/PB setup currently lives inside lower-level selected-mode paths. |
 | `gridding_degridding` | `psf_grid`, `residual_degrid_grid` | PSF gridding plus residual degrid/grid work. |
 | `fft` | `psf_fft`, `model_fft`, `residual_fft` | PSF, model, and residual FFT work. |
 | `normalization_pb_correction` | `psf_normalize`, `residual_normalize` | PSF and residual normalization; PB correction is included when the selected mode produces PB products. |
-| `deconvolution_minor_cycle` | `minor_cycle_solve` | Minor-cycle component selection and subtraction. |
+| `deconvolution_minor_cycle` | `minor_cycle_solve` | Solver-only minor-cycle component selection and subtraction. |
 | `model_prediction_and_residual_refresh` | `major_cycle_refresh` | Major-cycle model prediction and residual refresh aggregate. |
 | `restore_and_beam_fit` | `beam_fit`, `restore` | Restoring-beam fit and restored-image generation. |
 | `coordinate_and_product_writeback` | `build_coordinate_system`, `write_products` | Output coordinate construction and image product writeback. |
@@ -103,13 +108,14 @@ outside the measured imaging commands.
 
 - Structured `casa-rs` timing data: `results.stage_breakdown.rust`.
 - Frontend/MS preparation versus pure imaging core: separate frontend,
-  visibility-adaptation, and core categories plus `frontend_total` /
-  `core_total`.
+  visibility-adaptation, standard-MFS buffer load/prepare drill-downs, and
+  core categories plus `frontend_total` / `core_total`.
 - Grid/degrid, FFT, normalization/PB correction, deconvolution, and writeback:
   normalized Rust categories listed above.
 - Disabled/skipped paths: dirty-only clean stages and preview generation are
   explicit `skipped` categories with reasons.
-- Contract impact: local benchmark JSON only; no provider protocol or
-  managed-output schema change.
+- Contract impact: local benchmark JSON plus additive managed-output timing
+  names inside the existing `values_ns` list; no provider protocol or
+  managed-output schema shape change.
 - Overhead: no new hot-loop timers; normalization happens after each benchmark
   process completes.

@@ -868,6 +868,7 @@ pub(crate) fn read_ssm_file(
                 column_offset,
                 CasacoreDataType::TpInt,
                 3,
+                0,
                 nrrow,
             )?;
 
@@ -921,6 +922,7 @@ pub(crate) fn read_ssm_file(
                 column_offset,
                 CasacoreDataType::TpInt64,
                 1,
+                0,
                 nrrow,
             )?;
 
@@ -1004,6 +1006,7 @@ pub(crate) fn read_ssm_file(
                 column_offset,
                 col_desc.data_type,
                 nrelem,
+                0,
                 nrrow,
             )?;
 
@@ -1175,11 +1178,12 @@ pub(crate) fn read_ssm_array_column_rows(
         )));
     }
     let index = &indices[index_nr];
+    let first_row = selected_rows.iter().copied().min().unwrap_or(0);
     let rows_to_read = selected_rows
         .iter()
         .copied()
         .max()
-        .map(|row| row + 1)
+        .map(|row| row - first_row + 1)
         .unwrap_or(0);
 
     if is_ssm_array_file_indirect(col_desc) {
@@ -1190,6 +1194,7 @@ pub(crate) fn read_ssm_array_column_rows(
             column_offset,
             CasacoreDataType::TpInt64,
             1,
+            first_row,
             rows_to_read,
         )?;
         let offset_values = match offsets {
@@ -1208,7 +1213,7 @@ pub(crate) fn read_ssm_array_column_rows(
         if !array_path.exists() {
             if selected_rows
                 .iter()
-                .all(|&row| offset_values.get(row).copied().unwrap_or(0) == 0)
+                .all(|&row| offset_values.get(row - first_row).copied().unwrap_or(0) == 0)
             {
                 return Ok(Some(vec![None; selected_rows.len()]));
             }
@@ -1220,7 +1225,7 @@ pub(crate) fn read_ssm_array_column_rows(
         let mut reader = StManArrayFileReader::open(&array_path, header.big_endian)?;
         let mut values = Vec::with_capacity(selected_rows.len());
         for &row in selected_rows {
-            let offset = *offset_values.get(row).ok_or_else(|| {
+            let offset = *offset_values.get(row - first_row).ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
                     "SSM indirect array column '{}' missing offset for row {row}",
                     col_desc.col_name
@@ -1259,11 +1264,12 @@ pub(crate) fn read_ssm_array_column_rows(
         column_offset,
         col_desc.data_type,
         nrelem,
+        first_row,
         rows_to_read,
     )?;
     let mut values = Vec::with_capacity(selected_rows.len());
     for &row in selected_rows {
-        let value = extract_row_value(&raw, col_desc, row, rows_to_read)?;
+        let value = extract_row_value(&raw, col_desc, row - first_row, rows_to_read)?;
         values.push(match value {
             Value::Array(array) => Some(array),
             other => {
@@ -1278,6 +1284,7 @@ pub(crate) fn read_ssm_array_column_rows(
     Ok(Some(values))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_column_from_buckets(
     file: &mut File,
     header: &SsmHeader,
@@ -1285,6 +1292,7 @@ fn read_column_from_buckets(
     column_offset: usize,
     data_type: CasacoreDataType,
     nrelem: usize,
+    first_row: usize,
     nrrow: usize,
 ) -> Result<ColumnRawData, StorageError> {
     let (elem_bytes, _) = canonical_element_size(data_type);
@@ -1293,8 +1301,9 @@ fn read_column_from_buckets(
     match data_type {
         CasacoreDataType::TpBool => {
             let mut values = Vec::with_capacity(nrrow * nrelem);
-            let mut row = 0usize;
-            while row < nrrow {
+            let mut row = first_row;
+            let end_exclusive = first_row + nrrow;
+            while row < end_exclusive {
                 let (bucket_nr, start_row, end_row) =
                     index.find_bucket(row as u64).ok_or_else(|| {
                         StorageError::FormatMismatch(format!(
@@ -1304,7 +1313,7 @@ fn read_column_from_buckets(
                 let bucket = read_bucket(file, header, bucket_nr)?;
                 let row_in_bucket = (row as u64 - start_row) as usize;
                 let rows_in_chunk =
-                    ((end_row - start_row + 1) as usize - row_in_bucket).min(nrrow - row);
+                    ((end_row - start_row + 1) as usize - row_in_bucket).min(end_exclusive - row);
                 let bit_offset = row_in_bucket * nrelem;
                 let byte_offset = column_offset + bit_offset / 8;
                 let sub_bit = bit_offset % 8;
@@ -1321,6 +1330,7 @@ fn read_column_from_buckets(
                 header,
                 index,
                 column_offset,
+                first_row,
                 nrrow,
                 nrelem,
                 elem_bytes,
@@ -1338,6 +1348,7 @@ fn read_column_from_buckets(
                 header,
                 index,
                 column_offset,
+                first_row,
                 nrrow,
                 nrelem,
                 elem_bytes,
@@ -1359,6 +1370,7 @@ fn read_column_from_buckets(
                 header,
                 index,
                 column_offset,
+                first_row,
                 nrrow,
                 nrelem,
                 elem_bytes,
@@ -1380,6 +1392,7 @@ fn read_column_from_buckets(
                 header,
                 index,
                 column_offset,
+                first_row,
                 nrrow,
                 nrelem,
                 elem_bytes,
@@ -1401,6 +1414,7 @@ fn read_column_from_buckets(
                 header,
                 index,
                 column_offset,
+                first_row,
                 nrrow,
                 nrelem,
                 elem_bytes,
@@ -1422,6 +1436,7 @@ fn read_column_from_buckets(
                 header,
                 index,
                 column_offset,
+                first_row,
                 nrrow,
                 nrelem,
                 elem_bytes,
@@ -1443,6 +1458,7 @@ fn read_column_from_buckets(
                 header,
                 index,
                 column_offset,
+                first_row,
                 nrrow,
                 nrelem,
                 elem_bytes,
@@ -1464,6 +1480,7 @@ fn read_column_from_buckets(
                 header,
                 index,
                 column_offset,
+                first_row,
                 nrrow,
                 nrelem,
                 elem_bytes,
@@ -1485,6 +1502,7 @@ fn read_column_from_buckets(
                 header,
                 index,
                 column_offset,
+                first_row,
                 nrrow,
                 nrelem,
                 elem_bytes,
@@ -1509,6 +1527,7 @@ fn read_column_from_buckets(
                 header,
                 index,
                 column_offset,
+                first_row,
                 nrrow,
                 nrelem,
                 elem_bytes,
@@ -1538,7 +1557,7 @@ fn read_column_from_buckets(
             // Arrays (nrelem>1): all elements serialized as [BE_i32_len][data]
             // pairs in a string bucket, one reference per row.
             let mut values = Vec::with_capacity(nrrow * nrelem);
-            for row in 0..nrrow {
+            for row in first_row..first_row + nrrow {
                 let (bucket_nr, start_row, _end_row) =
                     index.find_bucket(row as u64).ok_or_else(|| {
                         StorageError::FormatMismatch(format!(
@@ -1612,6 +1631,7 @@ fn read_typed_column<F>(
     header: &SsmHeader,
     index: &SsmIndex,
     column_offset: usize,
+    first_row: usize,
     nrrow: usize,
     nrelem: usize,
     elem_bytes: usize,
@@ -1621,15 +1641,17 @@ where
     F: FnMut(&[u8], usize) -> Result<(), StorageError>,
 {
     let bytes_per_row = elem_bytes * nrelem;
-    let mut row = 0usize;
+    let mut row = first_row;
+    let end_exclusive = first_row + nrrow;
 
-    while row < nrrow {
+    while row < end_exclusive {
         let (bucket_nr, start_row, end_row) = index.find_bucket(row as u64).ok_or_else(|| {
             StorageError::FormatMismatch(format!("SSM index has no bucket for row {row}"))
         })?;
         let bucket = read_bucket(file, header, bucket_nr)?;
         let row_in_bucket = (row as u64 - start_row) as usize;
-        let rows_in_chunk = ((end_row - start_row + 1) as usize - row_in_bucket).min(nrrow - row);
+        let rows_in_chunk =
+            ((end_row - start_row + 1) as usize - row_in_bucket).min(end_exclusive - row);
         let data_start = column_offset + row_in_bucket * bytes_per_row;
         process(&bucket[data_start..], rows_in_chunk * nrelem)?;
         row += rows_in_chunk;

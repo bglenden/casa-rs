@@ -1118,6 +1118,7 @@ impl ImagerRunTaskRequest {
             mask_boxes: self.mask_boxes.clone(),
             mask_image: self.mask_image.clone(),
             w_term_mode: self.w_term_mode.into(),
+            force_standard_gridder: false,
             w_project_planes: self.w_project_planes,
             dirty_only: self.dirty_only,
             write_preview_pngs: self.write_preview_pngs,

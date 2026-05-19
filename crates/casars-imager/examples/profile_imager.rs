@@ -51,6 +51,7 @@ struct Options {
     mask_boxes: Vec<[usize; 4]>,
     mask_image: Option<PathBuf>,
     w_term_mode: WTermMode,
+    force_standard_gridder: bool,
     w_project_planes: Option<usize>,
     dirty_only: bool,
     repeats: usize,
@@ -82,11 +83,17 @@ fn run() -> Result<(), String> {
         let prefix = temp.join(format!("run-{run_index}"));
         let summary = run_from_config(&build_cli_config(&options, prefix))?;
         println!(
-            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} major_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} minor_ms={:.3}",
+            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} get_ms_values_ms={:.3} prepare_buffer_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} major_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} residual_normalize_ms={:.3} minor_ms={:.3} minor_solve_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3}",
             run_index + 1,
             millis(summary.frontend_timings.total),
             millis(summary.frontend_timings.open_measurement_set),
             millis(summary.frontend_timings.prepare_plane_input),
+            millis(
+                summary
+                    .frontend_timings
+                    .get_ms_values_into_processing_buffer,
+            ),
+            millis(summary.frontend_timings.prepare_processing_buffer),
             millis(summary.frontend_timings.extract_phase_center),
             millis(summary.frontend_timings.run_imaging),
             millis(summary.frontend_timings.build_coordinate_system),
@@ -97,9 +104,15 @@ fn run() -> Result<(), String> {
             millis(summary.stage_timings.major_cycle_refresh),
             millis(summary.stage_timings.psf_grid),
             millis(summary.stage_timings.psf_fft),
+            millis(summary.stage_timings.psf_normalize),
+            millis(summary.stage_timings.model_fft),
             millis(summary.stage_timings.residual_degrid_grid),
             millis(summary.stage_timings.residual_fft),
+            millis(summary.stage_timings.residual_normalize),
+            millis(summary.stage_timings.minor_cycle),
             millis(summary.stage_timings.minor_cycle_solve),
+            millis(summary.stage_timings.beam_fit),
+            millis(summary.stage_timings.restore),
         );
         runs.push(summary);
     }
@@ -138,6 +151,16 @@ fn run() -> Result<(), String> {
     print_stage(
         "prepare_plane_input",
         median_duration(&runs, |run| run.frontend_timings.prepare_plane_input),
+    );
+    print_stage(
+        "get_ms_values_into_processing_buffer",
+        median_duration(&runs, |run| {
+            run.frontend_timings.get_ms_values_into_processing_buffer
+        }),
+    );
+    print_stage(
+        "prepare_processing_buffer",
+        median_duration(&runs, |run| run.frontend_timings.prepare_processing_buffer),
     );
     print_stage(
         "run_imaging",
@@ -199,6 +222,10 @@ fn run() -> Result<(), String> {
     print_stage(
         "major_cycle_refresh",
         median_duration(&runs, |run| run.stage_timings.major_cycle_refresh),
+    );
+    print_stage(
+        "minor_cycle",
+        median_duration(&runs, |run| run.stage_timings.minor_cycle),
     );
     print_stage(
         "minor_cycle_solve",
@@ -329,6 +356,7 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         mask_boxes: options.mask_boxes.clone(),
         mask_image: options.mask_image.clone(),
         w_term_mode: options.w_term_mode,
+        force_standard_gridder: options.force_standard_gridder,
         w_project_planes: options.w_project_planes,
         dirty_only: options.dirty_only,
         write_preview_pngs: false,
@@ -389,6 +417,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut mask_boxes = Vec::<[usize; 4]>::new();
     let mut mask_image = None::<PathBuf>;
     let mut w_term_mode = WTermMode::None;
+    let mut force_standard_gridder = false;
     let mut w_project_planes = None::<usize>;
     let mut dirty_only = false;
     let mut repeats = 5usize;
@@ -458,7 +487,10 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             }
             "--wterm" => w_term_mode = parse_w_term_mode(&next_value(&mut args, "--wterm")?)?,
             "--gridder" => {
-                w_term_mode = parse_gridder_w_term_mode(&next_value(&mut args, "--gridder")?)?
+                let (mode, force_standard) =
+                    parse_gridder_request(&next_value(&mut args, "--gridder")?)?;
+                w_term_mode = mode;
+                force_standard_gridder = force_standard;
             }
             "--wprojplanes" => w_project_planes = Some(parse_next(&mut args, "--wprojplanes")?),
             "--dirty-only" => dirty_only = true,
@@ -514,6 +546,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         mask_boxes,
         mask_image,
         w_term_mode,
+        force_standard_gridder,
         w_project_planes,
         dirty_only,
         repeats,
@@ -567,10 +600,11 @@ fn parse_w_term_mode(text: &str) -> Result<WTermMode, String> {
     }
 }
 
-fn parse_gridder_w_term_mode(text: &str) -> Result<WTermMode, String> {
+fn parse_gridder_request(text: &str) -> Result<(WTermMode, bool), String> {
     match text.to_ascii_lowercase().as_str() {
-        "standard" | "gridft" | "ft" | "mosaic" => Ok(WTermMode::None),
-        "wproject" => Ok(WTermMode::WProject),
+        "standard" | "gridft" | "ft" => Ok((WTermMode::None, true)),
+        "mosaic" => Ok((WTermMode::None, false)),
+        "wproject" => Ok((WTermMode::WProject, false)),
         "widefield" | "awproject" | "awp2" | "awphpg" => Err(format!(
             "gridder={text:?} is not implemented by casa-rs imager yet; \
              supported gridder values are standard, wproject, and mosaic"
@@ -597,8 +631,9 @@ fn parse_deconvolver(text: &str) -> Result<Deconvolver, String> {
         "hogbom" => Ok(Deconvolver::Hogbom),
         "clark" => Ok(Deconvolver::Clark),
         "multiscale" => Ok(Deconvolver::Multiscale),
+        "mtmfs" => Ok(Deconvolver::Mtmfs),
         _ => Err(format!(
-            "unsupported --deconvolver value {text:?}; expected hogbom, clark, or multiscale"
+            "unsupported --deconvolver value {text:?}; expected hogbom, clark, multiscale, or mtmfs"
         )),
     }
 }

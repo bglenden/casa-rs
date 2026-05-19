@@ -6,6 +6,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 from pathlib import Path
+import tempfile
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -13,6 +14,172 @@ import run_workload
 
 
 class StageBreakdownTests(unittest.TestCase):
+    def test_parse_log_marks_missing_timing_sections_without_claiming_runs(self) -> None:
+        parsed = run_workload.parse_benchmark_log(
+            """Rust release CLI timings (seconds):
+  run=1 real=1.500
+  median=1.500
+
+CASA PySynthesisImager stage medians (milliseconds):
+  total=42.000
+"""
+        )
+
+        self.assertEqual("ran", parsed["rust"]["status"])
+        self.assertIsNone(parsed["rust"]["reason"])
+        self.assertEqual(1.5, parsed["rust"]["timings_seconds"]["median"])
+        self.assertEqual("missing", parsed["casa"]["status"])
+        self.assertIn("not reported", parsed["casa"]["reason"])
+        self.assertIsNone(parsed["casa"]["timings_seconds"]["median"])
+
+    def test_parse_casa_timing_section_tolerates_casa_warning_noise(self) -> None:
+        parsed = run_workload.parse_benchmark_log(
+            """CASA tclean timings (seconds):
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+2026-05-18 22:58:25 SEVERE ::casa
+
+0%....10....100%
+  run=1 real=56.589418
+  median=56.589418
+  kept_casa_prefix=/tmp/casa
+
+Kept benchmark products:
+  product_root=/tmp/products
+"""
+        )
+
+        self.assertEqual("ran", parsed["casa"]["status"])
+        self.assertEqual([56.589418], parsed["casa"]["timings_seconds"]["runs"])
+        self.assertEqual(56.589418, parsed["casa"]["timings_seconds"]["median"])
+
+    def test_parse_casa_stage_section_tolerates_warning_noise(self) -> None:
+        parsed = run_workload.parse_benchmark_log(
+            """CASA PySynthesisImager stage medians (milliseconds):
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+2026-05-19 01:55:09 SEVERE ::casa
+
+0%....10....100%
+  run=1 total_ms=530361.545 param_setup_ms=0.277 construct_imager_ms=0.007 make_psf_ms=220368.238 calcres_major_ms=305834.961 restore_ms=38.185
+  stage medians (ms):
+    parameter_setup=0.277
+    construct_imager=0.007
+    make_psf=220368.238
+    calcres_major_cycle=305834.961
+    restore_images=38.185
+    total=530361.545
+  result medians: clean_major_cycles=0 minor_cycles=0
+"""
+        )
+
+        stages = parsed["stage_medians_ms"]["casa"]
+
+        self.assertEqual(0.277, stages["parameter_setup"])
+        self.assertEqual(220368.238, stages["make_psf"])
+        self.assertEqual(305834.961, stages["calcres_major_cycle"])
+        self.assertEqual(530361.545, stages["total"])
+
+    def test_empty_results_include_reasons_for_both_sides(self) -> None:
+        results = run_workload.empty_results(
+            casa_status="blocked",
+            reason="benchmark command exited 2",
+        )
+
+        self.assertEqual("not_run", results["rust"]["status"])
+        self.assertEqual("benchmark command exited 2", results["rust"]["reason"])
+        self.assertEqual("blocked", results["casa"]["status"])
+        self.assertEqual("benchmark command exited 2", results["casa"]["reason"])
+
+    def test_unsupported_wterm_fails_in_preflight(self) -> None:
+        manifest = {
+            "id": "unsupported-wterm",
+            "mode_id": "standard-mfs-dirty-wterm",
+            "dataset": {
+                "key": "fake.ms",
+                "path": "/tmp/fake.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+                "wterm": "direct",
+            },
+        }
+
+        with self.assertRaisesRegex(run_workload.HarnessError, "wterm='direct'"):
+            run_workload.build_plan(
+                manifest_path=Path("manifest.json"),
+                manifest=manifest,
+                repeats_override=1,
+                run_label_override=None,
+                storage_label_override=None,
+                dry_run=True,
+            )
+
+    def test_missing_casa_python_fails_before_running_benchmark(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            dataset = Path(tempdir) / "input.ms"
+            dataset.mkdir()
+            manifest = {
+                "id": "requires-casa",
+                "mode_id": "standard-mfs-dirty-control",
+                "dataset": {
+                    "key": "input.ms",
+                    "path": str(dataset),
+                },
+                "imaging": {
+                    "mode": "dirty",
+                    "specmode": "mfs",
+                    "gridder": "standard",
+                },
+            }
+
+            with mock.patch.dict("os.environ", {}, clear=True):
+                with self.assertRaisesRegex(
+                    run_workload.HarnessError,
+                    "CASA_RS_CASA_PYTHON is required",
+                ):
+                    run_workload.build_plan(
+                        manifest_path=Path("manifest.json"),
+                        manifest=manifest,
+                        repeats_override=1,
+                        run_label_override=None,
+                        storage_label_override=None,
+                        dry_run=False,
+                    )
+
+    def test_missing_dataset_fails_before_running_benchmark(self) -> None:
+        manifest = {
+            "id": "missing-dataset",
+            "mode_id": "standard-mfs-dirty-control",
+            "dataset": {
+                "key": "missing.ms",
+                "path": "/definitely/not/a/dataset.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+            },
+        }
+
+        with mock.patch.dict(
+            "os.environ",
+            {"CASA_RS_CASA_PYTHON": sys.executable},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(
+                run_workload.HarnessError,
+                "dataset path does not exist",
+            ):
+                run_workload.build_plan(
+                    manifest_path=Path("manifest.json"),
+                    manifest=manifest,
+                    repeats_override=1,
+                    run_label_override=None,
+                    storage_label_override=None,
+                    dry_run=False,
+                )
+
     def test_dirty_workload_marks_clean_only_categories_skipped(self) -> None:
         plan = {
             "mode": {
@@ -23,6 +190,8 @@ class StageBreakdownTests(unittest.TestCase):
         stages = {
             "open_measurement_set": 1.0,
             "prepare_plane_input": 2.0,
+            "get_ms_values_into_processing_buffer": 2.5,
+            "prepare_processing_buffer": 3.5,
             "extract_phase_center": 3.0,
             "weighting": 4.0,
             "psf_grid": 5.0,
@@ -48,6 +217,8 @@ class StageBreakdownTests(unittest.TestCase):
             categories["frontend_ms_preparation"]["total_ms"],
             6.0,
         )
+        self.assertEqual(categories["standard_mfs_buffer_load"]["total_ms"], 2.5)
+        self.assertEqual(categories["standard_mfs_buffer_prepare"]["total_ms"], 3.5)
         self.assertEqual(categories["gridding_degridding"]["total_ms"], 13.0)
         self.assertEqual(categories["fft"]["total_ms"], 15.0)
         self.assertEqual(categories["normalization_pb_correction"]["total_ms"], 17.0)
@@ -99,6 +270,8 @@ class StageBreakdownTests(unittest.TestCase):
                 "field": "",
                 "phasecenter_field": 0,
                 "spw": "0",
+                "deconvolver": "mtmfs",
+                "nterms": 2,
             },
         }
 
@@ -117,6 +290,66 @@ class StageBreakdownTests(unittest.TestCase):
             )
 
         self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASECENTER_FIELD"])
+        self.assertEqual("2", plan["command"]["env"]["IMAGER_BENCH_NTERMS"])
+        self.assertEqual(2, plan["mode"]["nterms"])
+
+    def test_ms_staging_can_be_set_for_direct_medium_runs(self) -> None:
+        manifest = {
+            "id": "medium-direct",
+            "mode_id": "standard-mfs-dirty-control",
+            "dataset": {
+                "key": "medium.ms",
+                "path": "/tmp/medium.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+            },
+            "run": {
+                "ms_staging": "direct",
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("direct", plan["run"]["ms_staging"])
+        self.assertEqual("direct", plan["command"]["env"]["IMAGER_BENCH_MS_STAGING"])
+
+    def test_invalid_ms_staging_fails_before_running_benchmark(self) -> None:
+        manifest = {
+            "id": "bad-staging",
+            "mode_id": "standard-mfs-dirty-control",
+            "dataset": {
+                "key": "input.ms",
+                "path": "/tmp/input.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+            },
+            "run": {
+                "ms_staging": "mirror",
+            },
+        }
+
+        with self.assertRaisesRegex(run_workload.HarnessError, "ms_staging"):
+            run_workload.build_plan(
+                manifest_path=Path("manifest.json"),
+                manifest=manifest,
+                repeats_override=1,
+                run_label_override=None,
+                storage_label_override=None,
+                dry_run=True,
+            )
 
     def test_attach_stage_breakdown_does_not_require_casa_stage_data(self) -> None:
         plan = {
@@ -137,6 +370,61 @@ class StageBreakdownTests(unittest.TestCase):
         self.assertEqual(parsed["stage_breakdown"]["schema_version"], 1)
         self.assertEqual(parsed["stage_breakdown"]["rust"]["status"], "reported")
         self.assertEqual(parsed["stage_breakdown"]["casa"]["status"], "missing")
+
+    def test_parse_rust_stage_section_keeps_full_core_timing_set(self) -> None:
+        log = """Rust stage medians (milliseconds):
+  run=1 frontend_total_ms=100.000 open_ms=1.000 prepare_ms=2.000 phase_center_ms=3.000 imaging_ms=4.000 coords_ms=5.000 write_ms=6.000 core_total_ms=40.000 controller_ms=7.000 weighting_ms=8.000 major_refresh_ms=9.000 psf_grid_ms=10.000 psf_fft_ms=11.000 psf_normalize_ms=12.000 model_fft_ms=13.000 residual_grid_ms=14.000 residual_fft_ms=15.000 residual_normalize_ms=16.000 minor_ms=17.000 minor_solve_ms=18.000 beam_fit_ms=19.000 restore_ms=20.000
+  frontend:
+  open_measurement_set=1.000
+  prepare_plane_input=2.000
+  get_ms_values_into_processing_buffer=2.500
+  prepare_processing_buffer=3.500
+  extract_phase_center=3.000
+  run_imaging=4.000
+  build_coordinate_system=5.000
+  write_products=6.000
+  frontend_total=100.000
+  core:
+  controller_overhead=7.000
+  weighting=8.000
+  psf_grid=10.000
+  psf_fft=11.000
+  psf_normalize=12.000
+  model_fft=13.000
+  residual_degrid_grid=14.000
+  residual_fft=15.000
+  residual_normalize=16.000
+  major_cycle_refresh=9.000
+  minor_cycle=17.000
+  minor_cycle_solve=18.000
+  beam_fit=19.000
+  restore=20.000
+  total=40.000
+
+CASA tclean timings (seconds):
+"""
+
+        stages = run_workload.parse_stage_section(log, "Rust stage medians")
+
+        for name in [
+            "psf_normalize",
+            "model_fft",
+            "residual_normalize",
+            "major_cycle_refresh",
+            "minor_cycle",
+            "minor_cycle_solve",
+            "beam_fit",
+            "restore",
+        ]:
+            self.assertIn(name, stages)
+        self.assertEqual(stages["psf_normalize"], 12.0)
+        self.assertEqual(stages["model_fft"], 13.0)
+        self.assertEqual(stages["get_ms_values_into_processing_buffer"], 2.5)
+        self.assertEqual(stages["prepare_processing_buffer"], 3.5)
+        self.assertEqual(stages["restore"], 20.0)
+        self.assertNotIn("niter", stages)
+        self.assertNotIn("imsize", stages)
+        self.assertNotIn("psf_grid_ms", stages)
 
 
 if __name__ == "__main__":

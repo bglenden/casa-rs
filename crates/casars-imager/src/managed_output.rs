@@ -276,6 +276,14 @@ impl ManagedImagingOutput {
                         ("psf_grid".to_string(), result.run.stage_timings.psf_grid_ns),
                         ("psf_fft".to_string(), result.run.stage_timings.psf_fft_ns),
                         (
+                            "psf_normalize".to_string(),
+                            result.run.stage_timings.psf_normalize_ns,
+                        ),
+                        (
+                            "model_fft".to_string(),
+                            result.run.stage_timings.model_fft_ns,
+                        ),
+                        (
                             "residual_degrid_grid".to_string(),
                             result.run.stage_timings.residual_degrid_grid_ns,
                         ),
@@ -295,6 +303,8 @@ impl ManagedImagingOutput {
                             "minor_cycle_solve".to_string(),
                             result.run.stage_timings.minor_cycle_solve_ns,
                         ),
+                        ("beam_fit".to_string(), result.run.stage_timings.beam_fit_ns),
+                        ("restore".to_string(), result.run.stage_timings.restore_ns),
                     ],
                 },
                 frontend_timings: ManagedImagingStageTimings {
@@ -400,6 +410,14 @@ fn stage_timings_from_core(summary: &RunSummary) -> ManagedImagingStageTimings {
                 summary.stage_timings.psf_fft.as_nanos() as u64,
             ),
             (
+                "psf_normalize".to_string(),
+                summary.stage_timings.psf_normalize.as_nanos() as u64,
+            ),
+            (
+                "model_fft".to_string(),
+                summary.stage_timings.model_fft.as_nanos() as u64,
+            ),
+            (
                 "residual_degrid_grid".to_string(),
                 summary.stage_timings.residual_degrid_grid.as_nanos() as u64,
             ),
@@ -418,6 +436,14 @@ fn stage_timings_from_core(summary: &RunSummary) -> ManagedImagingStageTimings {
             (
                 "minor_cycle_solve".to_string(),
                 summary.stage_timings.minor_cycle_solve.as_nanos() as u64,
+            ),
+            (
+                "beam_fit".to_string(),
+                summary.stage_timings.beam_fit.as_nanos() as u64,
+            ),
+            (
+                "restore".to_string(),
+                summary.stage_timings.restore.as_nanos() as u64,
             ),
         ],
     }
@@ -631,6 +657,7 @@ mod tests {
             mask_boxes: Vec::new(),
             mask_image: None,
             w_term_mode: WTermMode::Direct,
+            force_standard_gridder: false,
             w_project_planes: None,
             dirty_only: false,
             write_preview_pngs: true,
@@ -643,16 +670,16 @@ mod tests {
             weighting: Duration::from_nanos(12),
             psf_grid: Duration::from_nanos(13),
             psf_fft: Duration::from_nanos(14),
-            psf_normalize: Duration::ZERO,
-            model_fft: Duration::ZERO,
+            psf_normalize: Duration::from_nanos(15),
+            model_fft: Duration::from_nanos(16),
             residual_degrid_grid: Duration::from_nanos(15),
             residual_fft: Duration::from_nanos(16),
             residual_normalize: Duration::from_nanos(17),
             minor_cycle: Duration::from_nanos(18),
             minor_cycle_solve: Duration::from_nanos(19),
             major_cycle_refresh: Duration::from_nanos(20),
-            beam_fit: Duration::ZERO,
-            restore: Duration::ZERO,
+            beam_fit: Duration::from_nanos(22),
+            restore: Duration::from_nanos(23),
             total: Duration::from_nanos(21),
         };
 
@@ -678,6 +705,8 @@ mod tests {
             frontend_timings: FrontendStageTimings {
                 open_measurement_set: Duration::from_nanos(31),
                 prepare_plane_input: Duration::from_nanos(32),
+                get_ms_values_into_processing_buffer: Duration::from_nanos(38),
+                prepare_processing_buffer: Duration::from_nanos(39),
                 extract_phase_center: Duration::from_nanos(33),
                 run_imaging: Duration::from_nanos(34),
                 build_coordinate_system: Duration::from_nanos(35),
@@ -715,6 +744,20 @@ mod tests {
             output.run.stage_timings.values_ns[0],
             ("controller_total".to_string(), 21)
         );
+        let stage_timings = output
+            .run
+            .stage_timings
+            .values_ns
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(stage_timings["psf_normalize"], 15);
+        assert_eq!(stage_timings["model_fft"], 16);
+        assert_eq!(stage_timings["minor_cycle"], 18);
+        assert_eq!(stage_timings["minor_cycle_solve"], 19);
+        assert_eq!(stage_timings["major_cycle_refresh"], 20);
+        assert_eq!(stage_timings["beam_fit"], 22);
+        assert_eq!(stage_timings["restore"], 23);
         assert_eq!(
             output.run.frontend_timings.values_ns[0],
             ("open_measurement_set".to_string(), 31)
@@ -880,6 +923,20 @@ mod tests {
             output.run.stage_timings.values_ns[0],
             ("controller_total".to_string(), 15)
         );
+        let stage_timings = output
+            .run
+            .stage_timings
+            .values_ns
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(stage_timings["psf_normalize"], 5);
+        assert_eq!(stage_timings["model_fft"], 6);
+        assert_eq!(stage_timings["minor_cycle"], 10);
+        assert_eq!(stage_timings["minor_cycle_solve"], 11);
+        assert_eq!(stage_timings["major_cycle_refresh"], 12);
+        assert_eq!(stage_timings["beam_fit"], 13);
+        assert_eq!(stage_timings["restore"], 14);
         assert_eq!(
             output.run.frontend_timings.values_ns[6],
             ("total".to_string(), 22)

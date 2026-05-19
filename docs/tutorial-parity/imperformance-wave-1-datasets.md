@@ -1,8 +1,8 @@
 # ImPerformance Wave 1 Simulated Dataset Plan
 
 Truth class: current descriptive
-Last reality check: 2026-05-17
-Verification: `python3 -m py_compile tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/bench_simobserve.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_bench_simobserve.py`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/dataset-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/dataset-small-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --materialize-models --materialize-workloads --output-dir target/imperformance-wave1/dataset-small-materialized`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-alma-mosaic-large --allow-non-external-large-root --materialize-workloads --output-dir target/imperformance-wave1/dataset-large-workloads`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/generated-workload-dry-run target/imperformance-wave1/dataset-small-materialized/workloads/wave1-vla-single-small-standard-mfs-dirty-control.json`; `python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/fixed-axis-vla-small-bench-v2 --disable-noise --strict-values`; `python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-alma-single-small --output-dir target/imperformance-wave1/fixed-axis-alma-small-bench-v2 --disable-noise --strict-values`; `cargo test -p casa-ms`; `just docs-check`; `just quick`
+Last reality check: 2026-05-19
+Verification: `python3 -m py_compile tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/bench_simobserve.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_bench_simobserve.py`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/dataset-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/dataset-small-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --materialize-models --materialize-workloads --output-dir target/imperformance-wave1/dataset-small-materialized`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-alma-mosaic-large --allow-non-external-large-root --materialize-workloads --output-dir target/imperformance-wave1/dataset-large-workloads`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/generated-workload-dry-run target/imperformance-wave1/dataset-small-materialized/workloads/wave1-vla-single-small-standard-mfs-dirty-control.json`; `python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/fixed-axis-vla-small-bench-v2 --disable-noise --strict-values`; `python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-alma-single-small --output-dir target/imperformance-wave1/fixed-axis-alma-small-bench-v2 --disable-noise --strict-values`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/issue248-closeout-dry-run`; `du -sh /Volumes/GLENDENNING/casa-rs-imperformance/wave1/.../*.ms`; `cargo test -p casa-ms`; `just docs-check`; `just quick`
 
 Wave issue: #246
 Child issue: #248
@@ -50,6 +50,25 @@ the registry and staging tool:
 The staging root is always explicit. Set `CASA_RS_IMPERF_DATA_ROOT` or pass
 `--data-root`. The tool does not add a personal workstation fallback.
 
+## Staged Dataset Inventory
+
+A closeout dry-run on 2026-05-19 wrote
+`target/imperformance-wave1/issue248-closeout-dry-run/wave1-dataset-plan.json`.
+It resolves all seven registry datasets under the explicit external root
+`/Volumes/GLENDENNING/casa-rs-imperformance`.
+
+The currently staged MeasurementSet sizes are:
+
+| Dataset | Tier | Staged size |
+|---|---|---:|
+| `wave1-vla-single-small` | small | `1.0G` |
+| `wave1-vla-single-medium` | medium | `32G` |
+| `wave1-vla-mosaic-small` | small | `1.0G` |
+| `wave1-alma-single-small` | small | `1.1G` |
+| `wave1-alma-single-medium` | medium | `36G` |
+| `wave1-alma-mosaic-small` | small | `1.1G` |
+| `wave1-alma-mosaic-large` | large | `107G` |
+
 ## Instruments And Families
 
 The registry includes both VLA and ALMA simulated datasets. Native generation
@@ -67,7 +86,7 @@ The registry also includes both single-field and mosaic families:
 |---|---|---|
 | single | standard MFS dirty, standard MFS clean, standard cube, MT-MFS sentinel | Native and CASA C++ small single-field ALMA parity is checked; cube spectral structure remains backlog #255 |
 | mosaic | mosaic MFS clean, mosaic cube bounded | Native request generation covers the selected Wave 1 mosaic-capable shapes; broader native mosaic parity remains backlog #254 |
-| mosaic-large | all selected Wave 1 modes | one ALMA large-tier superset backs all logical large workloads |
+| mosaic-large | standard MFS dirty, standard MFS clean, standard cube, mosaic MFS clean, mosaic cube bounded | one ALMA large-tier superset backs the large logical workloads; MT-MFS stays on standard-gridder single-field datasets and mosaic MT-MFS is backlog #262 |
 
 The native blocked/request-plan statuses are intentional for unsupported
 families. They prevent the benchmark program from claiming native simulation

@@ -1,8 +1,8 @@
 # ImPerformance Wave 1 Benchmark Harness
 
 Truth class: current descriptive
-Last reality check: 2026-05-15
-Verification: `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py`; `bash -n scripts/bench-imager-vs-casa.sh`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/harness-dry-run wave1-standard-mfs-dirty-smoke`; `CASA_RS_TESTDATA_ROOT=/Users/brianglendenning/SoftwareProjects/casatestdata CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --repeats 1 --output-dir target/imperformance-wave1/harness-smoke wave1-standard-mfs-dirty-smoke`
+Last reality check: 2026-05-18
+Verification: `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `bash -n scripts/bench-imager-vs-casa.sh`; `CASA_RS_BENCH_MS_STAGING=direct CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --dry-run --repeats 1 --run-label warm-medium-direct-probe --storage-label external-ssd-wave1-medium-direct --output-dir target/imperformance-wave1/issue251-medium-large-dry-run target/imperformance-wave1/issue251-medium-large-plan/workloads/wave1-vla-single-medium-standard-mfs-dirty-control.json`
 
 Wave issue: #246
 Child issue: #252
@@ -55,6 +55,20 @@ The delegated shell script remains the only place that knows how to invoke the
 current `casars-imager` CLI and CASA `tclean` parameter sets. That keeps the
 manifest runner stable while the lower-level commands evolve.
 
+## MeasurementSet Staging
+
+The benchmark script supports two MeasurementSet staging modes:
+
+- `copy`: copy the input MS into the script temp directory before timing. This
+  is the default and is appropriate for small smoke workloads.
+- `direct`: read the manifest MS path in place. Set this through
+  `CASA_RS_BENCH_MS_STAGING=direct` when invoking `run_workload.py`, or through
+  `run.ms_staging: "direct"` in a generated/ad hoc manifest.
+
+Medium and large Wave 1 datasets must use `direct`. Copy staging consumed a
+32 GiB local `/var/folders` temp copy for the VLA medium MS before timing and
+left too little headroom for reliable benchmark execution.
+
 ## Supported Slice
 
 The #252 harness slice supports:
@@ -75,7 +89,7 @@ are written. Those modes remain deferred to their owning tickets.
 Each completed run records:
 
 - run identity, manifest path, selected workload, dataset path, storage label,
-  repeat count, and mode parameters;
+  repeat count, MS staging mode, and mode parameters;
 - exact delegated command and environment variables;
 - Rust CLI per-run wallclock and median;
 - CASA `tclean` per-run wallclock and median;

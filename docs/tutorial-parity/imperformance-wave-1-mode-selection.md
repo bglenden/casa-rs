@@ -1,8 +1,8 @@
 # ImPerformance Wave 1 Mode Selection
 
 Truth class: current descriptive
-Last reality check: 2026-05-14
-Verification: just docs-check; just quick
+Last reality check: 2026-05-19
+Verification: `just docs-check`; `just quick`; #251 baseline evidence in `docs/tutorial-parity/imperformance-wave-1-baseline-matrix.md`
 
 Wave issue: #246
 Child issue: #247
@@ -56,9 +56,10 @@ Interpretation:
   clean workloads, not optional embellishments.
 - Mosaic imaging is common enough, and expensive enough in current `casa-rs`
   evidence, to be a primary performance target.
-- MT-MFS is important for wideband continuum, but should be a Wave 1 sentinel
-  workload rather than the first optimization target unless baseline evidence
-  makes it dominant.
+- MT-MFS is important for wideband continuum, but should be a Wave 1
+  standard-gridder sentinel workload rather than the first optimization target
+  unless baseline evidence makes it dominant. Mosaic/PB-aware MT-MFS is tracked
+  separately in #262.
 - W-projection and AW/widefield imaging matter, but the existing #52 surface is
   the right owner for AW/widefield capability. Wave 1 should avoid making #52 a
   hidden prerequisite.
@@ -70,9 +71,9 @@ Interpretation:
 | `standard-mfs-dirty-control` | `specmode='mfs'`, `gridder='standard'`, dirty-only | Fast control case for harness overhead, gridding, FFT, normalization, and product write cost. | Benchmark and keep near or faster than CASA C++. |
 | `standard-mfs-clean-current` | `specmode='mfs'`, `gridder='standard'`, `deconvolver='multiscale'`, optional `auto-multithresh` | Current single-field continuum practice; covers major/minor-cycle overhead without PB/mosaic cost. | Benchmark, correctness check, and stage budget. |
 | `standard-cube-line` | `specmode='cube'`, `gridder='standard'`, dirty and bounded clean variants | Current spectral-line practice; includes deconvolution coverage while separating per-channel scaling from mosaic/PB overhead. | Benchmark dirty and bounded-clean variants; identify cube scaling budget without using #56 runtime controls. |
-| `mosaic-mfs-clean-primary` | `specmode='mfs'`, `gridder='mosaic'`, multiscale clean, PB products | Common ALMA/VLA tutorial mode and current high-leverage slow area in `casa-rs`. | Primary follow-on optimization target. |
+| `mosaic-mfs-clean-primary` | `specmode='mfs'`, `gridder='mosaic'`, multiscale clean, PB products | Common ALMA/VLA tutorial mode and historically high-leverage slow area in `casa-rs`. | Keep in the matrix, but fix generated-data comparability before using timing as optimization evidence. |
 | `mosaic-cube-bounded` | `specmode='cube'`, `gridder='mosaic'`, small channel count first | Exercises the expensive interaction between cube scaling, mosaic/PB work, and product generation. | Bounded benchmark and bottleneck ledger; large-cube controls stay with #56. |
-| `mtmfs-wideband-sentinel` | `specmode='mfs'`, `deconvolver='mtmfs'`, `nterms > 1` | Current wideband continuum algorithm family; useful to keep in view before backend planning hardens. | Baseline-only sentinel unless it becomes the dominant bottleneck. |
+| `mtmfs-wideband-sentinel` | `specmode='mfs'`, `gridder='standard'`, `deconvolver='mtmfs'`, `nterms > 1` | Current wideband continuum algorithm family; useful to keep in view before backend planning hardens. | Baseline-only sentinel unless it becomes the dominant bottleneck; mosaic MT-MFS is backlog #262. |
 
 ## Deferred Or Blocked Modes
 
@@ -99,7 +100,7 @@ single-field and mosaic MeasurementSets.
 | `standard-cube-line` | small, medium, large-shared | deterministic spectral-line cube with known line structure; large selects field `0` from the shared ALMA superset | 16, 64, and 256 channels; 512 to 4096 pixel images | dirty-only plus bounded multiscale/auto-multithresh clean | cube `.psf`, `.residual`, `.image`, `.model` for clean variants, timing JSON |
 | `mosaic-mfs-clean-primary` | small, medium, large-shared | deterministic mosaic with overlapping pointings; large uses all fields from the shared ALMA superset | 512, 2048, and 4096 pixel images | multiscale clean; PB products enabled; Briggs weighting | `.psf`, `.residual`, `.model`, `.image`, `.image.pbcor`, `.pb`, timing JSON |
 | `mosaic-cube-bounded` | small, medium, large-shared bounded subset | deterministic line mosaic; large uses all fields but a bounded channel slice from the shared ALMA superset | 8, 32, and 32 selected channels; 512 to 4096 pixel images | dirty-only plus short clean probe | cube products, PB products where supported, timing JSON |
-| `mtmfs-wideband-sentinel` | medium, large-shared sentinel | wideband continuum simulation; large selects from the shared ALMA superset | 2048 to 4096 pixel image; `nterms=2` initially | MT-MFS bounded clean; multiscale sentinel if already supported by path | Taylor-term products, alpha products, timing JSON |
+| `mtmfs-wideband-sentinel` | small, medium | standard-gridder single-field wideband continuum simulation | 512 to 2048 pixel image; `nterms=2` initially | MT-MFS bounded clean | Taylor-term products, alpha products, timing JSON |
 
 ## Target Style
 
@@ -108,34 +109,49 @@ wallclock. It should fail if it cannot produce trustworthy evidence.
 
 | Mode ID | Wave 1 target style | Long-term target direction |
 |---|---|---|
-| `standard-mfs-dirty-control` | median wallclock ratio, stage budget, correctness delta | 10x CASA C++ stretch target after backend/workspace work. |
+| `standard-mfs-dirty-control` | median wallclock ratio, stage budget, correctness delta | First follow-on optimization target: correctness-green, full medium evidence has the most compute-heavy measured path relative to I/O/preparation. |
 | `standard-mfs-clean-current` | median wallclock ratio, major/minor-cycle budget, correctness delta | 10x target for practical single-field continuum workflows. |
 | `standard-cube-line` | dirty and bounded-clean per-channel scaling, wallclock ratio, correctness delta | 10x target after cube dataflow and backend work; #56 owns user-visible chunk/parallel controls. |
-| `mosaic-mfs-clean-primary` | primary bottleneck ledger plus CASA C++ ratio | First follow-on optimization target because previous evidence showed mosaic/CLEAN slower than CASA and the mode is current practice. |
+| `mosaic-mfs-clean-primary` | bottleneck ledger plus CASA C++ ratio when products are correctness-comparable | High-value follow-on after generated-data comparability is repaired. |
 | `mosaic-cube-bounded` | bounded scaling and PB/product cost ledger | Decide whether the next ticket is mosaic gridding, PB/product writeback, or cube runtime controls. |
-| `mtmfs-wideband-sentinel` | baseline-only unless unexpectedly dominant | Keep wideband continuum visible before backend structure hardens. |
+| `mtmfs-wideband-sentinel` | baseline-only unless unexpectedly dominant | Keep standard-gridder wideband continuum visible before backend structure hardens; mosaic MT-MFS is #262. |
 
 ## First Follow-On Optimization Target
 
-The first optimization ticket after Wave 1 should target
-`mosaic-mfs-clean-primary` unless #251 produces contrary evidence.
+The first optimization ticket after Wave 1 should target the full-shape medium
+`standard-mfs-dirty-control` workload.
 
 Rationale:
 
-- Current-practice sources make mosaic imaging a normal `tclean` workload, not
-  a niche path.
-- Existing Wave 7 evidence already showed mosaic/CLEAN workloads slower than
-  CASA C++ while standard MFS dirty imaging was close to CASA.
-- The path is likely to exercise the same structural seams needed for later
-  cube, PB, workspace residency, backend, and GPU work.
+- #251 produced contrary evidence to the initial mosaic-first guess:
+  generated mosaic MFS and mosaic cube timings exist, but their products are
+  correctness-red against CASA on the current generated ALMA mosaic-small data.
+  Those timings are not a sound optimization target yet.
+- The full medium `standard-mfs-dirty-control` result is correctness-green and
+  directly comparable: Rust `500.239 s`, CASA `503.295 s`, ratio `0.99x`.
+- Its measured `casa-rs` work is compute-heavy enough to give a realistic
+  optimization runway: gridding/degridding accounts for `310184 ms`, while
+  standard-MFS preparation accounts for `207834 ms`
+  (`get_ms_values_into_processing_buffer=141913 ms`,
+  `prepare_processing_buffer=61297 ms`).
+- The mode is structurally simple: single-field, standard gridder, dirty-only,
+  no PB/mosaic correctness ambiguity, no user-visible `parallel` or
+  `chanchunks`, and no AW/widefield dependency. That gives the best chance of
+  proving a high-leverage backend/workspace optimization before widening to
+  harder modes.
 
-The target is workload-level. The implementation path may be CPU dataflow
-repair, GPU/backend preparation, or both, depending on #251 stage evidence. Do
-not assume that CPU-only work can reach the long-term 10x target.
+The target is workload-level. The first implementation path should split the
+work into measured subtargets rather than hiding I/O under compute:
 
-If #251 shows that the dominant cost is MS/table preparation, image writing, or
-preview generation instead of imaging proper, split the follow-on target before
-optimizing.
+1. Standard-gridder/degridder backend and workspace optimization for the
+   `310184 ms` compute owner.
+2. MS/table buffer loading and processing-buffer preparation throughput for the
+   `207834 ms` preparation owner.
+3. Re-run the same full medium workload before claiming any speedup.
+
+If later reruns show that image writing, preview generation, or another
+non-imaging-core subsystem dominates this workload, split that owner before
+claiming the backend optimization path.
 
 ## Issue #247 Acceptance Mapping
 

@@ -66,8 +66,7 @@
         "standard-mfs-clean-current",
         "standard-cube-line",
         "mosaic-mfs-clean-primary",
-        "mosaic-cube-bounded",
-        "mtmfs-wideband-sentinel"
+        "mosaic-cube-bounded"
       ],
       "pointing_count": 7
     }

@@ -45,6 +45,9 @@ functionality.
 
 - [Wave 1 mode selection and target styles](imperformance-wave-1-mode-selection.md)
 - [Wave 1 simulated dataset plan](imperformance-wave-1-datasets.md)
+- [Wave 1 benchmark harness](imperformance-wave-1-benchmark-harness.md)
+- [Wave 1 stage instrumentation](imperformance-wave-1-stage-instrumentation.md)
+- [Wave 1 baseline matrix and bottleneck ledger](imperformance-wave-1-baseline-matrix.md)
 
 ## Source Pages
 
