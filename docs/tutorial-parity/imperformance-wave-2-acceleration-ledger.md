@@ -210,6 +210,15 @@ changes carry to the full-medium shape:
 | residual-grid workers only | `4` | `440.781 s` | `343.492 s` | `634.129 s` | `291.282 s` | `1546.453 s` | `1725.802 s` |
 | weighting workers | `4` | `125.454 s` | `387.984 s` | `590.097 s` | `202.655 s` | `1238.520 s` | `1406.923 s` |
 | weighting plus combined dirty-grid workers | `4` | `119.135 s` | `195.249 s` | `455.601 s` | `260.904 s` | `917.914 s` | `1088.750 s` |
+| auto worker count | `auto` | `160.042 s` | `139.826 s` | `351.524 s` | `211.994 s` | `827.926 s` | `1004.912 s` |
+
+The full-shape `auto` run was Rust-only, not paired with CASA, but it confirms
+that increasing worker count still helps at the real shape. Compared with the
+previous `4`-worker standalone profile, `run_imaging` improved by `89.988 s`
+and frontend total improved by `83.838 s`. The benefit came from PSF and
+residual grid/degrid traversal; weighting moved the other way in this
+one-repeat run and still needs repeated measurement before changing the
+recommended full-run setting.
 
 A paired Rust-vs-CASA run of the full 2048-pixel, 512-channel, `niter=2`
 diagnostic then completed with product comparison:
