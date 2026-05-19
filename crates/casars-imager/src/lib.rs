@@ -93,7 +93,7 @@ const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const DEFAULT_BATCH_SIZE: usize = 65_536;
 const DEFAULT_PREPARE_BUFFER_TOTAL_BYTES: usize = 512 * 1024 * 1024;
 const MIN_PREPARE_ROW_BLOCK_ROWS: usize = 128;
-const MAX_PREPARE_ROW_BLOCK_ROWS: usize = 8_192;
+const MAX_PREPARE_ROW_BLOCK_ROWS: usize = 32_768;
 const ESTIMATED_STANDARD_MFS_SAMPLE_BYTES: usize = 64;
 const JOINT_HOGBOM_PEAK_RELATIVE_TOLERANCE: f32 = 1.0e-3;
 const OUTLIER_IMAGE_FIELDS: &[&str] = &[
@@ -7572,12 +7572,7 @@ fn standard_mfs_memory_plan(
     let selected_channel_count = selected_channel_count.max(1);
     let worker_buffers = env_usize("CASA_RS_IMAGING_PREPARE_WORKERS")
         .filter(|value| *value > 0)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|value| value.get())
-                .unwrap_or(1)
-                .clamp(1, 4)
-        });
+        .unwrap_or(1);
     let total_budget_bytes = DEFAULT_PREPARE_BUFFER_TOTAL_BYTES;
     let image_working_set_bytes = estimated_image_working_set_bytes(config);
     let weighting_density_bytes = estimated_weighting_density_working_set_bytes(config);

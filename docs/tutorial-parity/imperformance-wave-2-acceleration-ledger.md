@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-19
-Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; selected `tools/perf/imager/run_workload.py` runs listed below
+Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -112,7 +112,10 @@ Briggs/Uniform density grid. The planner also names future reserve classes for
 gridded visibilities, output images, worker staging, and GPU staging so those
 buffers have a central accounting point when later Wave 2 stages introduce
 them. `CASA_RS_IMAGING_GPU_STAGING_MB` can reserve GPU staging memory without
-changing row-buffer code.
+changing row-buffer code. Because the standard-MFS prepare path is still
+sequential, the planner now defaults to one prepare buffer instead of splitting
+the budget across not-yet-scheduled worker buffers; `CASA_RS_IMAGING_PREPARE_WORKERS`
+remains an override for explicit experiments.
 
 The Rust stage profile now separates clean-loop work beyond the previous
 aggregate `major_cycle_refresh` bucket. New stage medians include
@@ -141,6 +144,44 @@ gridded-visibility, output-image, worker-staging, and GPU-staging reserves.
 The interrupted Rust child was around `7.5 GiB` RSS. This confirms the clone
 fix but does not make the full clean workload performance-green.
 
+A follow-up full-medium clean diagnostic with the expanded clean-loop stage
+fields was interrupted before Rust medians were available:
+
+```text
+target/imperformance-wave2/full-medium-clean-stage-diagnostics/20260519T153033Z-wave1-vla-single-medium-standard-mfs-clean-current-15dac89b.json
+```
+
+Its log reached frontend row preparation at `176.500 s`; the memory plan
+reported a `512.0 MiB` total budget, `272.0 MiB` reserved, and `240.0 MiB`
+prepare-buffer budget for the 2048-pixel, 512-channel clean workload.
+
+To make the next optimization decision without waiting for a full clean run,
+the same algorithmic path was profiled on a bounded 64-channel, 1024-pixel,
+`niter=2` slice. The diagnostic isolates setup and the first major-cycle
+refresh while still exercising Briggs weighting, multiscale deconvolution, and
+standard-MFS residual refresh.
+
+| Diagnostic | Row block rows | Prepare plane input | Get MS values | Run imaging | Core total |
+|---|---:|---:|---:|---:|---:|
+| pre-planner CPU fix | `8,192` | `40.164 s` | `27.394 s` | `69.837 s` | `69.781 s` |
+| planner one-buffer default | `32,768` | `25.808 s` | `12.920 s` | `69.673 s` | `69.629 s` |
+
+The one-buffer planner default reduced this diagnostic's prepare phase by
+`14.356 s` (`35.7%`) and total frontend runtime by `14.616 s` (`13.3%`). The
+clean-loop medians after the planner fix still show that grid/degrid traversal
+dominates:
+
+| Core stage | Median |
+|---|---:|
+| `psf_grid` | `18.325 s` |
+| `residual_degrid_grid` | `47.824 s` |
+| `major_cycle_refresh` | `29.552 s` |
+| `multiscale_scale_refresh` | `0.667 s` |
+| `minor_cycle_solve` | `0.011 s` |
+
+The next Wave 2 optimization target is therefore the standard-MFS grid/degrid
+passes and their data layout, not minor-cycle execution.
+
 The stopped clean attempts wrote failed result records only:
 
 | Attempt | Result JSON | Status | Note |
@@ -148,6 +189,7 @@ The stopped clean attempts wrote failed result records only:
 | initial clean benchmark | `target/imperformance-wave2/full-medium-clean/20260519T055802Z-wave1-vla-single-medium-standard-mfs-clean-current-e78b0202.json` | failed | interrupted after a sample showed trace/env overhead plus full-batch clone pressure |
 | trace-fixed clean benchmark | `target/imperformance-wave2/full-medium-clean-tracefix/20260519T061626Z-wave1-vla-single-medium-standard-mfs-clean-current-dbf36763.json` | failed | interrupted after a sample showed the remaining full-batch clone ownership bottleneck |
 | owned-Briggs diagnostic clean benchmark | `target/imperformance-wave2/full-medium-clean-owned-briggs-diagnostics/20260519T144727Z-wave1-vla-single-medium-standard-mfs-clean-current-ab62a9d0.json` | failed | interrupted after memory stayed stable but the clean run remained in expensive full standard-MFS gridding work |
+| expanded-stage clean benchmark | `target/imperformance-wave2/full-medium-clean-stage-diagnostics/20260519T153033Z-wave1-vla-single-medium-standard-mfs-clean-current-15dac89b.json` | failed | interrupted after the full-medium frontend completed, before Rust stage medians were available |
 
 The clean benchmark should not be recorded as performance-green until the
 remaining full-gridding clean-loop cost is reduced and a complete clean
