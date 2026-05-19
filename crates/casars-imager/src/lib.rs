@@ -29,12 +29,12 @@ use casa_imaging::{
     ImageGeometry, ImagingDiagnostics, ImagingError, ImagingRequest, ImagingResult,
     ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch,
     PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
-    StandardMfsModelPredictor, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
-    estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern, restore_standard_mfs_model,
-    run_cube, run_imaging, run_mtmfs, trace_cube_channel_residual_refresh,
-    trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
-    trace_w_project_plan, trace_weighting,
+    StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsModelPredictor,
+    UvTaperSize, VisibilityBatch, VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason,
+    WTermMode, WeightDensityMode, WeightingMode, estimate_psf_sidelobe_from_psf,
+    primary_beam_voltage_pattern, restore_standard_mfs_model, run_cube, run_imaging, run_mtmfs,
+    trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
+    trace_cube_channel_w_project_plan, trace_w_project_plan, trace_weighting,
 };
 use casa_ms::MeasurementSet;
 #[cfg(test)]
@@ -1359,6 +1359,15 @@ fn run_single_image_from_config_with_gridder_override(
     );
     let stage_start = Instant::now();
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
+    if can_run_standard_mfs_dirty_streaming(config, force_standard_gridder, ms_paths.len()) {
+        return run_standard_mfs_dirty_streaming_from_open_ms(
+            &ms,
+            config,
+            data_column,
+            open_measurement_set,
+            total_start,
+        );
+    }
     let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
     let (prepared, model_trace) = if config.save_model == SaveModelMode::ModelColumn {
         let (prepared, trace) =
@@ -1687,6 +1696,310 @@ fn run_single_image_from_config_with_gridder_override(
                 .get_ms_values_into_processing_buffer,
             prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
             extract_phase_center,
+            run_imaging: run_imaging_time,
+            build_coordinate_system,
+            write_products: write_products_time,
+            total: total_start.elapsed(),
+        },
+    })
+}
+
+fn can_run_standard_mfs_dirty_streaming(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+) -> bool {
+    ms_count == 1
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && (force_standard_gridder || config.force_standard_gridder)
+        && !config.use_pointing
+        && config.deconvolver != Deconvolver::Mtmfs
+        && config.save_model == SaveModelMode::None
+        && config.start_model.is_none()
+        && config.outlier_file.is_none()
+        && config.use_mask == CleanMaskMode::User
+        && config.uv_taper.is_none()
+        && matches!(config.weighting, WeightingMode::Natural)
+        && matches!(config.w_term_mode, WTermMode::None)
+        && !needs_single_field_primary_beam_products(config)
+        && (config.dirty_only || config.niter == 0)
+}
+
+fn run_standard_mfs_dirty_streaming_from_open_ms(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    open_measurement_set: Duration,
+    total_start: Instant,
+) -> Result<RunSummary, String> {
+    let geometry = ImageGeometry {
+        image_shape: [config.imsize, config.imsize],
+        cell_size_rad: [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let clean = CleanConfig {
+        niter: 0,
+        major_cycle_limit: config.nmajor,
+        gain: config.gain,
+        threshold_jy_per_beam: config.threshold_jy,
+        nsigma: config.nsigma,
+        psf_cutoff: config.psf_cutoff,
+        minor_cycle_length: config.minor_cycle_length,
+        cyclefactor: config.cyclefactor,
+        min_psf_fraction: config.min_psf_fraction,
+        max_psf_fraction: config.max_psf_fraction,
+        hogbom_iteration_mode: config.hogbom_iteration_mode,
+    };
+    let clean_mask = build_clean_mask(
+        config.imsize,
+        &config.mask_boxes,
+        config.mask_image.as_deref(),
+        true,
+    )?;
+
+    let prepare_started_at = Instant::now();
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let ddid_info = data_description_index(&data_description)?;
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let polarization = ms
+        .polarization()
+        .map_err(|error| format!("open POLARIZATION: {error}"))?;
+    let selection = select_main_rows(ms, config, &ddid_info)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/select_main_rows",
+        prepare_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    if !can_prepare_standard_mfs_without_trace(config, &selection) {
+        return Err(
+            "internal error: streaming standard MFS dirty path was selected for an ineligible row selection"
+                .to_string(),
+        );
+    }
+
+    let stage_started_at = Instant::now();
+    let flag_row = load_bool_main_column_owned(ms, "FLAG_ROW")?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_flag_row_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .map(|flagged| !flagged)
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active rows".to_string());
+    }
+
+    let stage_started_at = Instant::now();
+    let selected_spw_id = ddid_info
+        .get(selection.selected_ddid)
+        .copied()
+        .flatten()
+        .map(|(spw_id, _)| spw_id)
+        .ok_or_else(|| {
+            format!(
+                "map selected DDID {} to SPW/POLARIZATION",
+                selection.selected_ddid
+            )
+        })?;
+    let selected_freq_ref = FrequencyRef::from_casacore_code(
+        spectral_window
+            .meas_freq_ref(selected_spw_id)
+            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+    )
+    .unwrap_or(FrequencyRef::TOPO);
+    let derived_engine =
+        if selection.needs_geometry_engine || selected_freq_ref != FrequencyRef::LSRK {
+            Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
+        } else {
+            None
+        };
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_derived_engine",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+
+    let table_values = load_prepared_selection_table_values(
+        selection.selected_ddid,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+    )?;
+    let selected_channel_count =
+        selected_channel_count_estimate_from_table_values(config, &table_values);
+    let channel_read_range = selected_channel_read_range_for_standard_mfs(config, &table_values)?;
+    let strategy = standard_mfs_prepare_buffer_strategy(config, selected_channel_count);
+    if frontend_progress_enabled() {
+        eprintln!(
+            "frontend stage=prepare_plane_input/buffer_strategy rows_total={} row_block_rows={} selected_channels={} worker_buffers={} per_worker_buffer_mib={:.1}",
+            active_selected_rows.len(),
+            strategy.row_block_rows,
+            strategy.selected_channel_count,
+            strategy.worker_buffers,
+            strategy.per_worker_buffer_bytes as f64 / (1024.0 * 1024.0),
+        );
+    }
+
+    let mut accumulator = None::<StandardMfsDirtyAccumulator>;
+    let mut phase_center = None::<PhaseCenter>;
+    let mut prepared_freq_ref = None::<FrequencyRef>;
+    let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
+    let mut run_imaging_time = Duration::ZERO;
+    let mut accumulate_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
+        ..Default::default()
+    };
+    let mut prepared_batch_count = 0usize;
+
+    for row_chunk in active_selected_rows.chunks(strategy.row_block_rows) {
+        let stage_started_at = Instant::now();
+        let processing_buffer = get_ms_values_into_processing_buffer(
+            ms,
+            data_column,
+            &selection,
+            row_chunk,
+            derived_engine.as_ref(),
+            config.use_pointing,
+            uvw_reprojection_mode_for_selection(config, &selection),
+            channel_read_range,
+            prepare_started_at,
+        )?;
+        prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+
+        let stage_started_at = Instant::now();
+        let plane = prepare_processing_buffer(
+            config,
+            &table_values,
+            &selection.phase_center,
+            &flag_row,
+            processing_buffer,
+            derived_engine.as_ref(),
+            &mut accumulate_timings,
+        )?;
+        prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
+        prepared_batch_count += plane.batches.len();
+
+        if accumulator.is_none() {
+            phase_center = Some(plane.phase_center.clone());
+            prepared_freq_ref = Some(plane.freq_ref);
+            accumulator = Some(
+                StandardMfsDirtyAccumulator::new(StandardMfsDirtyAccumulatorRequest {
+                    geometry,
+                    plane_stokes: plane.plane_stokes,
+                    reffreq_hz: plane.reffreq_hz,
+                    selected_frequency_range_hz: plane.selected_frequency_range_hz,
+                    clean,
+                    clean_mask: clean_mask.clone(),
+                })
+                .map_err(|error| error.to_string())?,
+            );
+        }
+
+        let stage_started_at = Instant::now();
+        accumulator
+            .as_mut()
+            .expect("standard MFS dirty accumulator initialized")
+            .accumulate_batches(&plane.batches)
+            .map_err(|error| error.to_string())?;
+        run_imaging_time += stage_started_at.elapsed();
+
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/row_block rows_done={} rows_total={} batches={} total_elapsed_s={:.3}",
+                accumulate_timings.rows_seen,
+                active_selected_rows.len(),
+                prepared_batch_count,
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    accumulate_timings.log(prepare_started_at.elapsed());
+
+    let phase_center =
+        phase_center.ok_or_else(|| "selection resolved to no prepared row blocks".to_string())?;
+    let prepared_freq_ref = prepared_freq_ref
+        .ok_or_else(|| "selection resolved to no prepared frequency frame".to_string())?;
+    let stage_started_at = Instant::now();
+    let result = accumulator
+        .ok_or_else(|| "selection resolved to no accumulated dirty image".to_string())?
+        .finish()
+        .map_err(|error| error.to_string())?;
+    run_imaging_time += stage_started_at.elapsed();
+    let prepare_plane_time = prepare_started_at
+        .elapsed()
+        .saturating_sub(run_imaging_time);
+    maybe_log_frontend_progress(
+        "prepare_plane_input",
+        prepare_plane_time,
+        total_start.elapsed(),
+    );
+    maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
+
+    let stage_start = Instant::now();
+    let run_result = RunProducts::Mfs(result);
+    let coords = build_coordinate_system(CoordinateSystemBuild {
+        imsize: config.imsize,
+        phase_center: phase_center.angles_rad,
+        cell_arcsec: config.cell_arcsec,
+        freq_ref: prepared_freq_ref,
+        direction_ref: phase_center.reference,
+        plane_stokes: run_result.plane_stokes(),
+        channel_frequencies_hz: run_result.channel_frequencies_hz(),
+        spectral_delta_hz: run_result.spectral_delta_hz(),
+        requested_rest_frequency_hz: config.cube_axis.rest_frequency_hz,
+    });
+    let build_coordinate_system = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "build_coordinate_system",
+        build_coordinate_system,
+        total_start.elapsed(),
+    );
+
+    let stage_start = Instant::now();
+    let effective_clean_mask = clean_mask.clone().map(EffectiveCleanMask::Plane);
+    write_products(
+        config,
+        &coords,
+        &run_result,
+        effective_clean_mask.as_ref(),
+        None,
+    )?;
+    let write_products_time = stage_start.elapsed();
+    maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
+
+    Ok(RunSummary {
+        warnings: run_result.warnings(),
+        gridded_samples: run_result.gridded_samples(),
+        major_cycles: run_result.major_cycles(),
+        minor_iterations: run_result.minor_iterations(),
+        clean_stop_reason: run_result.clean_stop_reason(),
+        minor_cycle_traces: run_result.minor_cycle_traces(),
+        channel_summaries: run_result.channel_summaries(),
+        stage_timings: run_result.stage_timings(),
+        frontend_timings: FrontendStageTimings {
+            open_measurement_set,
+            prepare_plane_input: prepare_plane_time,
+            get_ms_values_into_processing_buffer: prepare_stage_timings
+                .get_ms_values_into_processing_buffer,
+            prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
+            extract_phase_center: Duration::ZERO,
             run_imaging: run_imaging_time,
             build_coordinate_system,
             write_products: write_products_time,

@@ -37,6 +37,7 @@ if [[ -z "${CASA_RS_CASA_PYTHON:-}" ]]; then
 fi
 
 repeats="${BENCH_REPEATS:-5}"
+profile_warmups="${BENCH_PROFILE_WARMUPS:-0}"
 field="${IMAGER_BENCH_FIELD:-0}"
 phasecenter_field="${IMAGER_BENCH_PHASECENTER_FIELD:-}"
 spw="${IMAGER_BENCH_SPW:-0}"
@@ -145,7 +146,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction ms_staging=$ms_staging"
+echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction ms_staging=$ms_staging"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -293,7 +294,7 @@ if [[ -n "$scales" ]]; then
     --wterm "$wterm" \
     $dirty_flag \
     --repeats "$repeats" \
-    --warmups 1 \
+    --warmups "$profile_warmups" \
     | sed 's/^/  /'
 else
   run_with_optional_phasecenter target/release/examples/profile_imager \
@@ -324,7 +325,7 @@ else
     --wterm "$wterm" \
     $dirty_flag \
     --repeats "$repeats" \
-    --warmups 1 \
+    --warmups "$profile_warmups" \
     | sed 's/^/  /'
 fi
 echo

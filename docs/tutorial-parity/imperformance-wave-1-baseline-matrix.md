@@ -19,12 +19,11 @@ MeasurementSets staged under:
 The matrix below is a first small-tier baseline plus the first about-memory
 medium probes. The medium and large staged datasets are present on the external
 volume and are listed in this note. Copy staging was unsafe for local disk
-space, but direct staging now produces a correctness-green reduced medium
-row-scaling probe after the standard-MFS preparation path was row-blocked and
-channel-range MS loading was pushed down into table/tile reads. The full
-2048-pixel / 512-channel medium dirty-control workload still fails with signal
-9 on the bounded and channel-sliced path, so it needs a more granular full-shape
-memory strategy before it can produce timing claims.
+space, but direct staging now produces correctness-green reduced and full-shape
+medium standard-MFS dirty-control results after the standard-MFS preparation path
+was row-blocked, channel-range MS loading was pushed down into table/tile reads,
+and dirty standard-MFS gridding was changed to accumulate row blocks directly
+instead of retaining the full prepared batch set.
 
 ## Staged Dataset Status
 
@@ -58,6 +57,7 @@ warm repeat because they are about-memory pathfinding evidence.
 |---|---|---|---|---|---:|---:|---:|---|---|
 | `standard-mfs-dirty-control` | `wave1-vla-single-small` | MFS, standard, dirty, `512x512`, 24 channels, natural, `niter=0` | `.image`, `.residual`, `.psf` | `target/imperformance-wave1/issue251-final-runs/20260518T143929Z-wave1-vla-single-small-standard-mfs-dirty-control-b6da5434.json` | `2.824 s` | `1.192 s` | `2.37x` | GREEN: product deltas near floating noise (`image diff_rms_over_casa_rms=7.33e-7`) | frontend/MS preparation (`2331 ms`), then gridding/degridding (`318 ms`) |
 | `standard-mfs-dirty-row-scaling-probe` | `wave1-vla-single-medium` | MFS, standard, dirty, `512x512`, 24 channels, natural, `niter=0` | `.image`, `.residual`, `.psf` | `target/imperformance-wave1/issue251-medium-subset-runs/20260519T001809Z-wave1-vla-single-medium-standard-mfs-dirty-row-scaling-probe-927a1ef1.json` | `48.499 s` | `34.369 s` | `1.41x` | GREEN: product deltas near floating noise (`image diff_rms_over_casa_rms=6.32e-7`) | profiler preparation is dominated by MS/table buffer loading (`27500 ms`), then buffer adaptation (`4438 ms`) and gridding/degridding (`10472 ms`) |
+| `standard-mfs-dirty-control` | `wave1-vla-single-medium` | MFS, standard, dirty, `2048x2048`, 512 channels, natural, `niter=0` | `.image`, `.residual`, `.psf` | `target/imperformance-wave1/issue251-medium-large-runs/20260519T012933Z-wave1-vla-single-medium-standard-mfs-dirty-control-cf33b8e5.json` | `500.239 s` | `503.295 s` | `0.99x` | GREEN: sampled product deltas remain small (`image diff_rms_over_casa_rms=2.85e-5`, `psf diff_rms_over_casa_rms=5.62e-4`) | gridding/degridding (`310184 ms`), then MS/table buffer loading (`141913 ms`) and buffer adaptation (`61297 ms`) |
 | `standard-mfs-clean-current` | `wave1-vla-single-small` | MFS, standard, multiscale clean, `512x512`, 24 channels, Briggs, `niter=25` | `.image`, `.residual`, `.psf` | `target/imperformance-wave1/issue251-final-runs/20260518T144020Z-wave1-vla-single-small-standard-mfs-clean-current-d03f4bef.json` | `9.672 s` | `17.240 s` | `0.56x` | GREEN: small product deltas (`image diff_rms_over_casa_rms=7.22e-5`) | gridding/degridding (`4898 ms`) and model refresh (`4457 ms`) |
 | `standard-cube-line` | `wave1-alma-single-small` | cube, standard, dirty, `512x512`, 8 channels, natural, `niter=0` | `.image`, `.residual`, `.psf` | `target/imperformance-wave1/issue251-final-runs/20260518T144336Z-wave1-alma-single-small-standard-cube-line-8b4690e9.json` | `3.901 s` | `1.949 s` | `2.00x` | GREEN: product deltas near floating noise (`image diff_rms_over_casa_rms=7.25e-7`) | frontend/MS preparation (`3264 ms`), then gridding/degridding (`300 ms`) |
 | `mosaic-mfs-clean-primary` | `wave1-alma-mosaic-small` | MFS, mosaic, multiscale clean, `512x512`, 8 channels, Briggs, `niter=25` | `.image`, `.residual`, `.psf` | `target/imperformance-wave1/issue251-final-runs/20260518T144439Z-wave1-alma-mosaic-small-mosaic-mfs-clean-primary-868672a0.json` | `3.784 s` | `5.481 s` | `0.69x` | RED: products are not correctness-comparable (`image diff_rms_over_casa_rms=0.741`) | model refresh (`695 ms`), gridding/degridding/PB work, and frontend preparation (`866 ms`) |
@@ -85,6 +85,15 @@ warm repeat because they are about-memory pathfinding evidence.
   `target/imperformance-wave1/issue251-medium-large-runs/20260519T003642Z-wave1-vla-single-medium-standard-mfs-dirty-control-75b7cdad.json`.
   Rust `casars-imager` was killed with signal 9 after `594.060 s`; CASA did not
   run because the Rust side failed first.
+- After adding direct dirty standard-MFS row-block accumulation, the full medium
+  dirty-control rerun completed:
+  `target/imperformance-wave1/issue251-medium-large-runs/20260519T012933Z-wave1-vla-single-medium-standard-mfs-dirty-control-cf33b8e5.json`.
+  It used direct MS staging, reported Rust `500.239 s` versus CASA `503.295 s`,
+  and stayed correctness-green on sampled products. Its profiler split reports
+  `prepare_plane_input=207834 ms`, of which
+  `get_ms_values_into_processing_buffer=141913 ms` and
+  `prepare_processing_buffer=61297 ms`; the remaining dominant Rust owner is
+  gridding/degridding at `310184 ms`.
 - Before row-blocked standard-MFS preparation, a smaller direct row-scaling
   probe against the same medium MS failed before timing claims were written:
   `target/imperformance-wave1/issue251-medium-subset-runs/20260518T195209Z-wave1-vla-single-medium-standard-mfs-dirty-row-scaling-probe-ebd41f0d.json`.
@@ -116,7 +125,7 @@ warm repeat because they are about-memory pathfinding evidence.
 | Workload family | Evidence | Current bottleneck owner | Follow-up direction |
 |---|---|---|---|
 | Standard MFS dirty | Correctness-green, Rust `2.37x` CASA | frontend/MS preparation dominates (`2331 ms` of `2676 ms` frontend total) | Optimize row selection/adaptation and prepared-batch construction before changing gridding algorithms for this control case. |
-| Standard MFS dirty medium | The bounded and channel-sliced 512-pixel/24-channel direct row-scaling probe completed and is correctness-green, Rust `1.41x` CASA. The earlier unbounded reduced probe died at `596.205 s`; the full 2048-pixel/512-channel direct probe still dies on the Rust side after about `594-599 s` both before and after the channel-range loading fix. | medium-row survival is no longer the blocker for the reduced shape; full-shape survival is blocked before profiler timing claims, likely in the remaining full-channel/full-image preparation or allocation path | Add a more granular full-shape memory strategy before treating gridding/backend structure as the next optimization for this family. |
+| Standard MFS dirty medium | The bounded and channel-sliced 512-pixel/24-channel direct row-scaling probe completed and is correctness-green, Rust `1.41x` CASA. The full 2048-pixel/512-channel direct probe now also completes after row-blocked dirty accumulation, Rust `0.99x` CASA, with sampled product deltas still small. | full-shape survival is no longer blocked; Rust time is split between gridding/degridding (`310184 ms`) and standard-MFS preparation (`207834 ms`) | Next optimization can target gridding/backend structure and MS preparation throughput separately instead of treating memory survival as the blocker. |
 | Standard MFS clean | Correctness-green, Rust `0.56x` CASA | imaging core dominates, especially gridding/degridding and model refresh | Keep as green baseline; later 10x work needs grid/degrid and residual-refresh backend structure, not urgent correctness repair. |
 | Standard cube dirty | Correctness-green, Rust `2.00x` CASA | frontend/MS preparation dominates (`3264 ms`) | Cube follow-up should start with per-channel preparation/dataflow and only then look at core cube gridding. |
 | Mosaic MFS clean | Timing runs and is faster than CASA, but correctness-red | product/correctness parity is the blocker; timing stage owner is model refresh plus mosaic gridding/PB work | Fix generated-mosaic CASA/Rust comparability before using timing as optimization evidence. If parity turns green, this remains a high-leverage optimization path. |
@@ -125,17 +134,18 @@ warm repeat because they are about-memory pathfinding evidence.
 
 ## Follow-On Ranking
 
-1. Add a more granular full-shape memory strategy for standard MFS dirty. The
-   reduced medium row-scaling probe now survives with much less over-read, but
-   the full 2048-pixel / 512-channel shape still dies with signal 9 before Rust
-   timing claims are emitted.
+1. Optimize correctness-green standard MFS dirty along two measured boundaries:
+   gridding/degridding is now the largest full-shape medium owner, while
+   `get_ms_values_into_processing_buffer` and `prepare_processing_buffer`
+   separately account for most frontend preparation time.
 2. Fix mosaic generated-data comparability before treating mosaic MFS as the
    first 10x optimization target. The mode still matters, but #251 evidence
    shows the current generated ALMA mosaic rows are correctness-red, so timing
    claims would be misleading.
 3. Open or use a narrow follow-up for frontend/MS preparation throughput on
-   correctness-green standard MFS dirty and standard cube dirty. Those rows are
-   slower than CASA and dominated by `prepare_plane_input`.
+   correctness-green standard MFS dirty and standard cube dirty. The standard
+   MFS split now gives separate evidence for table-buffer loading versus buffer
+   adaptation.
 4. Keep standard MFS clean as a green benchmark sentinel. It is already faster
    than CASA on the small generated workload, but the dominant measured stages
    are exactly the future backend/resource boundaries from the dataflow note:
@@ -159,6 +169,9 @@ warm repeat because they are about-memory pathfinding evidence.
 - The benchmark harness now supports `run.ms_staging="direct"` or
   `CASA_RS_BENCH_MS_STAGING=direct` so medium/large runs can read the staged
   MS in place instead of copying it into local temp space before timing.
+- The benchmark harness no longer forces an unconditional Rust profiler warmup;
+  `BENCH_PROFILE_WARMUPS` can request one explicitly, but the default avoids
+  duplicating long medium/large Rust passes before collecting stage medians.
 
 ## Reproduction
 
@@ -190,6 +203,20 @@ for workload in \
     --output-dir target/imperformance-wave1/issue251-final-runs \
     "$workload" || true
 done
+```
+
+Run the direct full-shape medium standard-MFS dirty-control probe:
+
+```sh
+CASA_RS_BENCH_MS_STAGING=direct \
+CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance \
+CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python \
+tools/perf/imager/run_workload.py \
+  --repeats 1 \
+  --run-label warm-medium-direct-streaming-dirty \
+  --storage-label external-ssd-wave1-medium-direct \
+  --output-dir target/imperformance-wave1/issue251-medium-large-runs \
+  target/imperformance-wave1/issue251-medium-large-plan/workloads/wave1-vla-single-medium-standard-mfs-dirty-control.json
 ```
 
 ## Issue #251 Acceptance Mapping

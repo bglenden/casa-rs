@@ -108,6 +108,289 @@ pub struct StandardMfsModelPredictor {
     model_grid: Option<Array2<Complex32>>,
 }
 
+/// Metadata for streaming natural-weighted standard MFS dirty accumulation.
+///
+/// This request mirrors the dirty-only subset of [`ImagingRequest`] but leaves
+/// visibility ownership with the caller. Frontends can therefore load one MS
+/// chunk, feed its already-natural-weighted [`VisibilityBatch`] values into
+/// [`StandardMfsDirtyAccumulator`], and release the chunk before reading the
+/// next one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StandardMfsDirtyAccumulatorRequest {
+    /// Requested image geometry for the MFS image plane.
+    pub geometry: ImageGeometry,
+    /// Scalar imaging plane to produce.
+    pub plane_stokes: PlaneStokes,
+    /// Reference frequency in Hz for metadata and diagnostics.
+    pub reffreq_hz: f64,
+    /// Inclusive selected frequency range in Hz.
+    pub selected_frequency_range_hz: [f64; 2],
+    /// Dirty-run clean controls, used for PSF fitting diagnostics and thresholds.
+    pub clean: CleanConfig,
+    /// Optional image-plane clean mask. `true` pixels are eligible for diagnostics.
+    pub clean_mask: Option<Array2<bool>>,
+}
+
+/// Streaming standard-gridder MFS dirty accumulator for natural-weighted batches.
+///
+/// The accumulator preserves the dirty `run_imaging()` math for the supported
+/// subset while avoiding a single in-memory `Vec<VisibilityBatch>` for large
+/// MeasurementSets. It intentionally does not implement CLEAN, MT-MFS,
+/// non-natural weighting, W-term handling, or mosaic/PB semantics.
+pub struct StandardMfsDirtyAccumulator {
+    request: StandardMfsDirtyAccumulatorRequest,
+    gridder: StandardGridder,
+    psf_grid: Array2<Complex64>,
+    residual_grid: Array2<Complex64>,
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+    max_abs_w_lambda: f64,
+    stage_timings: ImagingStageTimings,
+    total_started: Instant,
+}
+
+impl StandardMfsDirtyAccumulator {
+    /// Create an empty accumulator for one standard MFS dirty image.
+    pub fn new(request: StandardMfsDirtyAccumulatorRequest) -> Result<Self, ImagingError> {
+        request.geometry.validate()?;
+        request.clean.validate()?;
+        if request.clean.niter != 0 {
+            return Err(ImagingError::Unsupported(
+                "standard MFS dirty accumulator requires clean.niter=0".to_string(),
+            ));
+        }
+        if !(request.reffreq_hz.is_finite() && request.reffreq_hz > 0.0) {
+            return Err(ImagingError::InvalidRequest(
+                "reffreq_hz must be a finite positive frequency".to_string(),
+            ));
+        }
+        if !(request.selected_frequency_range_hz[0].is_finite()
+            && request.selected_frequency_range_hz[1].is_finite()
+            && request.selected_frequency_range_hz[0] > 0.0
+            && request.selected_frequency_range_hz[1] >= request.selected_frequency_range_hz[0])
+        {
+            return Err(ImagingError::InvalidRequest(
+                "selected_frequency_range_hz must be a finite ordered positive range".to_string(),
+            ));
+        }
+        if let Some(mask) = &request.clean_mask {
+            if mask.dim() != (request.geometry.nx(), request.geometry.ny()) {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "clean mask shape {:?} does not match image shape {:?}",
+                    mask.dim(),
+                    (request.geometry.nx(), request.geometry.ny())
+                )));
+            }
+        }
+        let gridder = StandardGridder::new(request.geometry)?;
+        let [nx, ny] = gridder.grid_shape();
+        Ok(Self {
+            request,
+            gridder,
+            psf_grid: Array2::<Complex64>::zeros((nx, ny)),
+            residual_grid: Array2::<Complex64>::zeros((nx, ny)),
+            normalization_sumwt: 0.0,
+            reported_sumwt: 0.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+            max_abs_w_lambda: 0.0,
+            stage_timings: ImagingStageTimings::default(),
+            total_started: Instant::now(),
+        })
+    }
+
+    /// Accumulate one or more already-natural-weighted visibility batches.
+    pub fn accumulate_batches(&mut self, batches: &[VisibilityBatch]) -> Result<(), ImagingError> {
+        let grid_started = Instant::now();
+        for batch in batches {
+            batch.validate()?;
+            for sample_index in 0..batch.len() {
+                self.max_abs_w_lambda = self
+                    .max_abs_w_lambda
+                    .max(batch.w_lambda[sample_index].abs());
+                if !batch.gridable[sample_index] {
+                    self.skipped_samples += 1;
+                    continue;
+                }
+                let weight = batch.weight[sample_index];
+                let sumwt_factor = batch.sumwt_factor[sample_index];
+                if !(weight.is_finite()
+                    && weight > 0.0
+                    && sumwt_factor.is_finite()
+                    && sumwt_factor > 0.0)
+                {
+                    self.skipped_samples += 1;
+                    continue;
+                }
+                let Some(plan) = self
+                    .gridder
+                    .plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+                else {
+                    self.skipped_samples += 1;
+                    continue;
+                };
+                let grid_weight = f64::from(weight * sumwt_factor);
+                self.normalization_sumwt += grid_weight;
+                self.reported_sumwt += grid_weight;
+                self.gridded_samples += 1;
+                self.gridder.grid_sample_product_planned_f64(
+                    &mut self.psf_grid,
+                    &plan.positive,
+                    Complex64::new(grid_weight, 0.0),
+                );
+
+                let observed_visibility = batch.visibility[sample_index];
+                if finite_visibility(observed_visibility) {
+                    let residual = Complex64::new(
+                        f64::from(observed_visibility.re) * grid_weight,
+                        f64::from(observed_visibility.im) * grid_weight,
+                    );
+                    self.gridder.grid_sample_product_planned_f64(
+                        &mut self.residual_grid,
+                        &plan.positive,
+                        residual,
+                    );
+                }
+            }
+        }
+        let grid_elapsed = grid_started.elapsed();
+        let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+        self.stage_timings.psf_grid += split_grid_elapsed;
+        self.stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+        Ok(())
+    }
+
+    /// Finish accumulation and return CASA-style dirty products and diagnostics.
+    pub fn finish(mut self) -> Result<ImagingResult, ImagingError> {
+        if self.normalization_sumwt <= 0.0 || self.reported_sumwt <= 0.0 {
+            return Err(ImagingError::NoUsableSamples);
+        }
+        let psf_fft_started = Instant::now();
+        let raw_psf = centered_ifft2_f64(&self.psf_grid);
+        self.stage_timings.psf_fft += psf_fft_started.elapsed();
+        let psf_normalize_started = Instant::now();
+        let mut psf = self.gridder.corrected_image_from_grid_f64(&raw_psf);
+        psf.mapv_inplace(|value| value / self.normalization_sumwt as f32);
+        let psf_peak = peak_abs_value(&psf);
+        if !(psf_peak.is_finite() && psf_peak > 0.0) {
+            return Err(ImagingError::Normalization(
+                "PSF peak is non-finite or zero".to_string(),
+            ));
+        }
+        psf.mapv_inplace(|value| value / psf_peak);
+        self.stage_timings.psf_normalize += psf_normalize_started.elapsed();
+
+        let residual_fft_started = Instant::now();
+        let raw_residual = centered_ifft2_f64(&self.residual_grid);
+        self.stage_timings.residual_fft += residual_fft_started.elapsed();
+        let residual_normalize_started = Instant::now();
+        let mut residual = self.gridder.corrected_image_from_grid_f64(&raw_residual);
+        residual.mapv_inplace(|value| value / self.normalization_sumwt as f32 / psf_peak);
+        self.stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+        let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+            &psf,
+            self.request.geometry.cell_size_rad,
+            self.request.clean.psf_cutoff,
+        );
+        let [nx, ny] = self.request.geometry.image_shape;
+        let model = Array2::<f32>::zeros((nx, ny));
+        let clean_mask_pixels = self
+            .request
+            .clean_mask
+            .as_ref()
+            .map(|mask| mask.iter().filter(|value| **value).count())
+            .unwrap_or(nx * ny);
+        let initial_peak = peak_abs_value_masked(&residual, self.request.clean_mask.as_ref());
+        let mut warnings = Vec::new();
+        let fractional_bandwidth = (self.request.selected_frequency_range_hz[1]
+            - self.request.selected_frequency_range_hz[0])
+            / self.request.reffreq_hz;
+        if fractional_bandwidth > 0.1 {
+            warnings.push(format!(
+                "fractional bandwidth {:.3} exceeds the narrow-band nterms=1 comfort zone",
+                fractional_bandwidth
+            ));
+        }
+        let w_phase_metric =
+            self.max_abs_w_lambda * self.request.geometry.field_of_view_rad().powi(2);
+        if w_phase_metric > 0.1 {
+            warnings.push(format!(
+                "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
+                w_phase_metric
+            ));
+        }
+
+        let beam_fit_started = Instant::now();
+        let BeamFitOutcome {
+            beam,
+            warnings: beam_warnings,
+            attempts: beam_fit_attempts,
+            cutoff_used: beam_fit_cutoff_used,
+            debug: beam_fit_debug,
+        } = fit_beam_from_psf(
+            &psf,
+            self.request.geometry.cell_size_rad,
+            self.request.clean.psf_cutoff,
+        );
+        self.stage_timings.beam_fit += beam_fit_started.elapsed();
+        let restore_started = Instant::now();
+        let restored_model = restore_model(&model, self.request.geometry.cell_size_rad, beam);
+        self.stage_timings.restore += restore_started.elapsed();
+        let restored_image = &restored_model + &residual;
+
+        warnings.extend(beam_warnings);
+        self.stage_timings.total = self.total_started.elapsed();
+
+        Ok(ImagingResult {
+            psf: expand_plane(&psf),
+            residual: expand_plane(&residual),
+            model: expand_plane(&model),
+            image: expand_plane(&restored_image),
+            sumwt: expand_scalar(self.reported_sumwt as f32),
+            beam,
+            diagnostics: ImagingDiagnostics {
+                warnings,
+                gridded_samples: self.gridded_samples,
+                skipped_samples: self.skipped_samples,
+                major_cycles: 0,
+                minor_iterations: 0,
+                clean_stop_reason: None,
+                minor_cycle_traces: Vec::new(),
+                initial_residual_peak_jy_per_beam: initial_peak,
+                final_residual_peak_jy_per_beam: initial_peak,
+                max_abs_w_lambda: self.max_abs_w_lambda,
+                fractional_bandwidth,
+                max_psf_sidelobe_level,
+                final_cycle_threshold_jy_per_beam: self.request.clean.threshold_jy_per_beam,
+                clean_mask_pixels,
+                beam_fit_attempts,
+                beam_fit_cutoff_used,
+                beam_fit_debug,
+                mosaic_weight_image: None,
+                stage_timings: self.stage_timings,
+            },
+            compatibility: CompatibilityMetadata {
+                axis_order: [
+                    AxisKind::RightAscension,
+                    AxisKind::Declination,
+                    AxisKind::Stokes,
+                    AxisKind::Frequency,
+                ],
+                plane_stokes: self.request.plane_stokes,
+                reffreq_hz: self.request.reffreq_hz,
+                channel_frequencies_hz: vec![self.request.reffreq_hz],
+                psf_units: String::new(),
+                residual_units: "Jy/beam".to_string(),
+                model_units: "Jy/pixel".to_string(),
+                image_units: "Jy/beam".to_string(),
+            },
+        })
+    }
+}
+
 impl StandardMfsModelPredictor {
     /// Build a predictor for one image geometry and final model plane.
     pub fn new(geometry: ImageGeometry, model: &Array2<f32>) -> Result<Self, ImagingError> {
@@ -6785,7 +7068,8 @@ mod tests {
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
         HogbomIterationMode, ImageGeometry, ImagingRequest, ImagingStageTimings,
         MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
-        PsfState, RestoringBeamMode, StandardGridder, StandardMfsModelPredictor, VisibilityBatch,
+        PsfState, RestoringBeamMode, StandardGridder, StandardMfsDirtyAccumulator,
+        StandardMfsDirtyAccumulatorRequest, StandardMfsModelPredictor, VisibilityBatch,
         VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
         build_direct_pixel_coordinates, build_multiscale_scale_masks, compute_cycle_threshold,
@@ -8566,6 +8850,87 @@ mod tests {
         .unwrap();
 
         for (a, b) in full.residual.iter().zip(split.residual.iter()) {
+            assert!((a - b).abs() < 1.0e-5);
+        }
+    }
+
+    #[test]
+    fn standard_mfs_dirty_accumulator_matches_split_run_imaging() {
+        let samples = vec![
+            (-150.0, -120.0, 0.0),
+            (-90.0, 75.0, 0.0),
+            (60.0, -90.0, 0.0),
+            (130.0, 85.0, 0.0),
+            (20.0, 15.0, 0.0),
+            (-45.0, 40.0, 0.0),
+        ];
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let all = point_source_visibilities(&samples, 1.0e-4, [64, 64], (32.0, 32.0), 1.0);
+        let split_left = VisibilityBatch {
+            u_lambda: all.u_lambda[..3].to_vec(),
+            v_lambda: all.v_lambda[..3].to_vec(),
+            w_lambda: all.w_lambda[..3].to_vec(),
+            weight: all.weight[..3].to_vec(),
+            sumwt_factor: all.sumwt_factor[..3].to_vec(),
+            gridable: all.gridable[..3].to_vec(),
+            visibility: all.visibility[..3].to_vec(),
+        };
+        let split_right = VisibilityBatch {
+            u_lambda: all.u_lambda[3..].to_vec(),
+            v_lambda: all.v_lambda[3..].to_vec(),
+            w_lambda: all.w_lambda[3..].to_vec(),
+            weight: all.weight[3..].to_vec(),
+            sumwt_factor: all.sumwt_factor[3..].to_vec(),
+            gridable: all.gridable[3..].to_vec(),
+            visibility: all.visibility[3..].to_vec(),
+        };
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![all],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig::default(),
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let full = run_imaging(&request).unwrap();
+        let mut accumulator =
+            StandardMfsDirtyAccumulator::new(StandardMfsDirtyAccumulatorRequest {
+                geometry,
+                plane_stokes: PlaneStokes::I,
+                reffreq_hz: 1.4e9,
+                selected_frequency_range_hz: [1.399e9, 1.401e9],
+                clean: CleanConfig::default(),
+                clean_mask: None,
+            })
+            .unwrap();
+        accumulator.accumulate_batches(&[split_left]).unwrap();
+        accumulator.accumulate_batches(&[split_right]).unwrap();
+        let streamed = accumulator.finish().unwrap();
+
+        assert_eq!(
+            streamed.diagnostics.gridded_samples,
+            full.diagnostics.gridded_samples
+        );
+        for (a, b) in full.psf.iter().zip(streamed.psf.iter()) {
+            assert!((a - b).abs() < 1.0e-5);
+        }
+        for (a, b) in full.residual.iter().zip(streamed.residual.iter()) {
+            assert!((a - b).abs() < 1.0e-5);
+        }
+        for (a, b) in full.image.iter().zip(streamed.image.iter()) {
             assert!((a - b).abs() < 1.0e-5);
         }
     }

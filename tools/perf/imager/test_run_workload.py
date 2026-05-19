@@ -52,6 +52,32 @@ Kept benchmark products:
         self.assertEqual([56.589418], parsed["casa"]["timings_seconds"]["runs"])
         self.assertEqual(56.589418, parsed["casa"]["timings_seconds"]["median"])
 
+    def test_parse_casa_stage_section_tolerates_warning_noise(self) -> None:
+        parsed = run_workload.parse_benchmark_log(
+            """CASA PySynthesisImager stage medians (milliseconds):
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+2026-05-19 01:55:09 SEVERE ::casa
+
+0%....10....100%
+  run=1 total_ms=530361.545 param_setup_ms=0.277 construct_imager_ms=0.007 make_psf_ms=220368.238 calcres_major_ms=305834.961 restore_ms=38.185
+  stage medians (ms):
+    parameter_setup=0.277
+    construct_imager=0.007
+    make_psf=220368.238
+    calcres_major_cycle=305834.961
+    restore_images=38.185
+    total=530361.545
+  result medians: clean_major_cycles=0 minor_cycles=0
+"""
+        )
+
+        stages = parsed["stage_medians_ms"]["casa"]
+
+        self.assertEqual(0.277, stages["parameter_setup"])
+        self.assertEqual(220368.238, stages["make_psf"])
+        self.assertEqual(305834.961, stages["calcres_major_cycle"])
+        self.assertEqual(530361.545, stages["total"])
+
     def test_empty_results_include_reasons_for_both_sides(self) -> None:
         results = run_workload.empty_results(
             casa_status="blocked",

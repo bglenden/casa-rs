@@ -717,7 +717,7 @@ def timing_section_lines(text: str, heading_prefix: str) -> list[str]:
 
 
 def parse_stage_section(text: str, heading: str) -> dict[str, float]:
-    lines = section_lines(text, f"{heading} ")
+    lines = timing_section_lines(text, f"{heading} ")
     stages: dict[str, float] = {}
     for line in lines:
         for name, value in re.findall(r"([A-Za-z0-9_]+)=([0-9.]+)", line):
