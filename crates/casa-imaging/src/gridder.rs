@@ -341,26 +341,8 @@ impl StandardGridder {
         grid: &Array2<Complex32>,
         taps: &ProductTapSet,
     ) -> Complex32 {
-        let mut value = Complex32::new(0.0, 0.0);
-        let mut norm = 0.0f32;
-        if let Some(storage) = grid.as_slice_memory_order() {
-            for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
-                let weight = taps.weights[tap];
-                value += storage[taps.flat_indices[tap]] * weight;
-                norm += weight;
-            }
-        } else {
-            for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
-                let weight = taps.weights[tap];
-                value += grid[(taps.x_indices[tap], taps.y_indices[tap])] * weight;
-                norm += weight;
-            }
-        }
-        if norm > 0.0 && norm.is_finite() {
-            value / norm
-        } else {
-            Complex32::new(0.0, 0.0)
-        }
+        debug_assert!((taps.weights.iter().sum::<f32>() - 1.0).abs() <= 1.0e-5);
+        self.degrid_sample_product_planned(grid, taps)
     }
 
     #[cfg(test)]

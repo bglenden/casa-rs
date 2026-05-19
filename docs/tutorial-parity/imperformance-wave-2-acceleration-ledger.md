@@ -115,7 +115,11 @@ them. `CASA_RS_IMAGING_GPU_STAGING_MB` can reserve GPU staging memory without
 changing row-buffer code. Because the standard-MFS prepare path is still
 sequential, the planner now defaults to one prepare buffer instead of splitting
 the budget across not-yet-scheduled worker buffers; `CASA_RS_IMAGING_PREPARE_WORKERS`
-remains an override for explicit experiments.
+remains an override for explicit experiments. The experimental streaming
+standard-MFS residual-grid workers are also represented in the same planner:
+when `CASA_RS_STANDARD_MFS_GRID_THREADS` is greater than one, the worker staging
+reserve accounts for thread-local residual grids before assigning prepare-row
+buffers.
 
 The Rust stage profile now separates clean-loop work beyond the previous
 aggregate `major_cycle_refresh` bucket. New stage medians include
@@ -161,26 +165,32 @@ the same algorithmic path was profiled on a bounded 64-channel, 1024-pixel,
 refresh while still exercising Briggs weighting, multiscale deconvolution, and
 standard-MFS residual refresh.
 
-| Diagnostic | Row block rows | Prepare plane input | Get MS values | Run imaging | Core total |
-|---|---:|---:|---:|---:|---:|
-| pre-planner CPU fix | `8,192` | `40.164 s` | `27.394 s` | `69.837 s` | `69.781 s` |
-| planner one-buffer default | `32,768` | `25.808 s` | `12.920 s` | `69.673 s` | `69.629 s` |
+| Diagnostic | Row block rows | Grid threads | Prepare plane input | Get MS values | Run imaging | Core total |
+|---|---:|---:|---:|---:|---:|---:|
+| pre-planner CPU fix | `8,192` | `1` | `40.164 s` | `27.394 s` | `69.837 s` | `69.781 s` |
+| planner one-buffer default | `32,768` | `1` | `25.808 s` | `12.920 s` | `69.673 s` | `69.629 s` |
+| streaming residual-grid worker prototype | `32,768` | `4` | `27.587 s` | `14.369 s` | `49.416 s` | `49.364 s` |
 
 The one-buffer planner default reduced this diagnostic's prepare phase by
 `14.356 s` (`35.7%`) and total frontend runtime by `14.616 s` (`13.3%`). The
-clean-loop medians after the planner fix still show that grid/degrid traversal
-dominates:
+streaming residual-grid worker prototype then cut the residual refresh from
+`29.552 s` to `9.206 s`, reducing total frontend runtime from `95.506 s` to
+`77.028 s` on the same bounded workload. It remains env-gated while the larger
+full-medium run and deterministic product comparisons are still outstanding.
+The latest clean-loop medians show that the remaining grid/degrid work is split
+between the initial PSF/dirty pass and the now-threaded residual refresh:
 
 | Core stage | Median |
 |---|---:|
 | `psf_grid` | `18.325 s` |
-| `residual_degrid_grid` | `47.824 s` |
-| `major_cycle_refresh` | `29.552 s` |
+| `residual_degrid_grid` | `27.476 s` |
+| `major_cycle_refresh` | `9.206 s` |
 | `multiscale_scale_refresh` | `0.667 s` |
 | `minor_cycle_solve` | `0.011 s` |
 
-The next Wave 2 optimization target is therefore the standard-MFS grid/degrid
-passes and their data layout, not minor-cycle execution.
+The next Wave 2 optimization target is therefore the remaining initial
+standard-MFS PSF/dirty gridding pass and then full-medium validation of the
+worker prototype, not minor-cycle execution.
 
 The stopped clean attempts wrote failed result records only:
 

@@ -40,6 +40,7 @@ use std::{
     env,
     fs::OpenOptions,
     io::Write,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -53,7 +54,10 @@ use beam::{
     BeamFitOutcome, beamfit_to_gaussian, estimate_psf_sidelobe_level, fit_beam_from_psf,
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
-use execution::{StandardMfsCpuExecutor, StandardMfsDirtyCpuExecutor, finite_visibility};
+use execution::{
+    StandardMfsCpuExecutor, StandardMfsDirtyCpuExecutor, StandardMfsPlannedSample,
+    StandardMfsVisibilityPlan, finite_visibility,
+};
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{
     PlannedSample, ScreenProjector, StandardGridder, WProjectSamplePlan, WProjector,
@@ -673,6 +677,14 @@ fn standard_mfs_executor_max_samples() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES)
+}
+
+fn standard_mfs_grid_threads() -> usize {
+    env::var("CASA_RS_STANDARD_MFS_GRID_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1)
 }
 
 fn standard_mfs_sample_count(batches: &[VisibilityBatch]) -> usize {
@@ -5722,24 +5734,7 @@ fn compute_residual_standard_with_executor(
     };
 
     let degrid_grid_started = Instant::now();
-    for sample in plan.samples() {
-        let batch = plan.batch(sample);
-        let observed_visibility = batch.visibility[sample.sample_index];
-        if !finite_visibility(observed_visibility) {
-            continue;
-        }
-        let predicted_visibility = model_grid.as_ref().map_or_else(
-            || Complex32::new(0.0, 0.0),
-            |grid| gridder.degrid_sample_product_planned_normalized(grid, &sample.plan.positive),
-        );
-        let residual_visibility = observed_visibility - predicted_visibility;
-        let residual_weight = sample.grid_weight_f64();
-        let residual = Complex64::new(
-            f64::from(residual_visibility.re) * residual_weight,
-            f64::from(residual_visibility.im) * residual_weight,
-        );
-        gridder.grid_sample_product_planned_f64(residual_grid, &sample.plan.positive, residual);
-    }
+    accumulate_standard_mfs_residual_grid(gridder, plan, model_grid.as_ref(), residual_grid)?;
     timings.degrid_grid = degrid_grid_started.elapsed();
 
     let fft_started = Instant::now();
@@ -5754,6 +5749,293 @@ fn compute_residual_standard_with_executor(
     stage_timings.residual_fft += timings.fft;
     stage_timings.residual_normalize += timings.normalize;
     Ok(image)
+}
+
+fn accumulate_standard_mfs_residual_grid(
+    gridder: &StandardGridder,
+    plan: &StandardMfsVisibilityPlan<'_>,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex64>,
+) -> Result<(), ImagingError> {
+    let requested_threads = standard_mfs_grid_threads();
+    let thread_count = requested_threads
+        .min(plan.samples().len())
+        .min(thread::available_parallelism().map_or(1, |value| value.get()))
+        .max(1);
+    if thread_count <= 1 || plan.samples().len() < 100_000 {
+        for sample in plan.samples() {
+            accumulate_standard_mfs_residual_sample(
+                gridder,
+                plan,
+                model_grid,
+                sample,
+                residual_grid,
+            );
+        }
+        return Ok(());
+    }
+
+    let [nx, ny] = gridder.grid_shape();
+    let chunk_len = plan.samples().len().div_ceil(thread_count);
+    let mut local_grids = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for samples in plan.samples().chunks(chunk_len) {
+            handles.push(scope.spawn(move || {
+                let mut local_grid = Array2::<Complex64>::zeros((nx, ny));
+                for sample in samples {
+                    accumulate_standard_mfs_residual_sample(
+                        gridder,
+                        plan,
+                        model_grid,
+                        sample,
+                        &mut local_grid,
+                    );
+                }
+                local_grid
+            }));
+        }
+        for handle in handles {
+            local_grids.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("standard MFS grid worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+
+    for local_grid in &local_grids {
+        add_complex64_grid(residual_grid, local_grid);
+    }
+    Ok(())
+}
+
+fn accumulate_standard_mfs_residual_sample(
+    gridder: &StandardGridder,
+    plan: &StandardMfsVisibilityPlan<'_>,
+    model_grid: Option<&Array2<Complex32>>,
+    sample: &StandardMfsPlannedSample,
+    residual_grid: &mut Array2<Complex64>,
+) {
+    let batch = plan.batch(sample);
+    let observed_visibility = batch.visibility[sample.sample_index];
+    if !finite_visibility(observed_visibility) {
+        return;
+    }
+    let predicted_visibility = model_grid.as_ref().map_or_else(
+        || Complex32::new(0.0, 0.0),
+        |grid| gridder.degrid_sample_product_planned_normalized(grid, &sample.plan.positive),
+    );
+    let residual_visibility = observed_visibility - predicted_visibility;
+    let residual_weight = sample.grid_weight_f64();
+    let residual = Complex64::new(
+        f64::from(residual_visibility.re) * residual_weight,
+        f64::from(residual_visibility.im) * residual_weight,
+    );
+    gridder.grid_sample_product_planned_f64(residual_grid, &sample.plan.positive, residual);
+}
+
+fn add_complex64_grid(target: &mut Array2<Complex64>, source: &Array2<Complex64>) {
+    if let (Some(target), Some(source)) = (
+        target.as_slice_memory_order_mut(),
+        source.as_slice_memory_order(),
+    ) {
+        for (target, source) in target.iter_mut().zip(source.iter()) {
+            *target += *source;
+        }
+        return;
+    }
+    Zip::from(target).and(source).for_each(|target, source| {
+        *target += *source;
+    });
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ResidualGridAccumulation {
+    valid_samples: usize,
+    planned_samples: usize,
+    gridded_residual_samples: usize,
+}
+
+impl ResidualGridAccumulation {
+    fn add(&mut self, other: Self) {
+        self.valid_samples += other.valid_samples;
+        self.planned_samples += other.planned_samples;
+        self.gridded_residual_samples += other.gridded_residual_samples;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_streaming_standard_mfs_residual_grid_serial(
+    gridder: &StandardGridder,
+    batches: &[VisibilityBatch],
+    model_grid: Option<&Array2<Complex32>>,
+    direct_components: Option<&Vec<DirectComponent>>,
+    use_direct_point_predict: bool,
+    mut samples: Option<&mut Vec<ResidualSampleTraceInternal>>,
+    residual_grid: &mut Array2<Complex64>,
+) -> ResidualGridAccumulation {
+    let mut counts = ResidualGridAccumulation::default();
+    for (batch_index, batch) in batches.iter().enumerate() {
+        for index in 0..batch.len() {
+            accumulate_streaming_standard_mfs_residual_sample(
+                gridder,
+                batch,
+                batch_index,
+                index,
+                model_grid,
+                direct_components,
+                use_direct_point_predict,
+                samples.as_deref_mut(),
+                residual_grid,
+                &mut counts,
+            );
+        }
+    }
+    counts
+}
+
+fn accumulate_streaming_standard_mfs_residual_grid_parallel(
+    gridder: &StandardGridder,
+    batches: &[VisibilityBatch],
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex64>,
+    requested_threads: usize,
+) -> Result<ResidualGridAccumulation, ImagingError> {
+    let thread_count = requested_threads
+        .min(batches.len())
+        .min(thread::available_parallelism().map_or(1, |value| value.get()))
+        .max(1);
+    if thread_count <= 1 || batches.len() < 2 {
+        return Ok(accumulate_streaming_standard_mfs_residual_grid_serial(
+            gridder,
+            batches,
+            model_grid,
+            None,
+            false,
+            None,
+            residual_grid,
+        ));
+    }
+
+    let [nx, ny] = gridder.grid_shape();
+    let chunk_len = batches.len().div_ceil(thread_count);
+    let mut local_results = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for (chunk_index, chunk) in batches.chunks(chunk_len).enumerate() {
+            let batch_offset = chunk_index * chunk_len;
+            handles.push(scope.spawn(move || {
+                let mut local_grid = Array2::<Complex64>::zeros((nx, ny));
+                let counts = accumulate_streaming_standard_mfs_residual_grid_serial(
+                    gridder,
+                    chunk,
+                    model_grid,
+                    None,
+                    false,
+                    None,
+                    &mut local_grid,
+                );
+                (batch_offset, local_grid, counts)
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("standard MFS streaming grid worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+
+    local_results.sort_by_key(|(batch_offset, _, _)| *batch_offset);
+    let mut counts = ResidualGridAccumulation::default();
+    for (_, local_grid, local_counts) in &local_results {
+        add_complex64_grid(residual_grid, local_grid);
+        counts.add(*local_counts);
+    }
+    Ok(counts)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_streaming_standard_mfs_residual_sample(
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    index: usize,
+    model_grid: Option<&Array2<Complex32>>,
+    direct_components: Option<&Vec<DirectComponent>>,
+    use_direct_point_predict: bool,
+    samples: Option<&mut Vec<ResidualSampleTraceInternal>>,
+    residual_grid: &mut Array2<Complex64>,
+    counts: &mut ResidualGridAccumulation,
+) {
+    let weight = batch.weight[index];
+    let observed_visibility = batch.visibility[index];
+    let gridable = batch.gridable[index];
+    let valid_sample = gridable
+        && weight.is_finite()
+        && weight > 0.0
+        && observed_visibility.re.is_finite()
+        && observed_visibility.im.is_finite();
+    let planned_sample = if valid_sample {
+        counts.valid_samples += 1;
+        gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+    } else {
+        None
+    };
+    if planned_sample.is_some() {
+        counts.planned_samples += 1;
+    }
+    let predicted_visibility = if let Some(plan) = planned_sample.as_ref() {
+        if use_direct_point_predict {
+            direct_components.map_or_else(
+                || Complex32::new(0.0, 0.0),
+                |components| {
+                    direct_predict_visibility(
+                        components,
+                        batch.u_lambda[index],
+                        batch.v_lambda[index],
+                        0.0,
+                    )
+                },
+            )
+        } else {
+            model_grid.as_ref().map_or_else(
+                || Complex32::new(0.0, 0.0),
+                |grid| gridder.degrid_sample_product_planned_normalized(grid, &plan.positive),
+            )
+        }
+    } else {
+        Complex32::new(0.0, 0.0)
+    };
+    let residual_visibility = observed_visibility - predicted_visibility;
+    if let Some(samples) = samples {
+        samples.push(ResidualSampleTraceInternal {
+            batch_index,
+            sample_index: index,
+            u_lambda: batch.u_lambda[index],
+            v_lambda: batch.v_lambda[index],
+            w_lambda: batch.w_lambda[index],
+            observed_visibility,
+            predicted_visibility,
+            residual_visibility,
+            weight,
+            gridable,
+        });
+    }
+    let Some(plan) = planned_sample.as_ref() else {
+        return;
+    };
+    let sumwt_factor = batch.sumwt_factor[index];
+    if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
+        return;
+    }
+    counts.gridded_residual_samples += 1;
+    let residual_weight = f64::from(weight * sumwt_factor);
+    let residual = Complex64::new(
+        f64::from(residual_visibility.re) * residual_weight,
+        f64::from(residual_visibility.im) * residual_weight,
+    );
+    gridder.grid_sample_product_planned_f64(residual_grid, &plan.positive, residual);
 }
 
 fn compute_residual_trace_standard(
@@ -5815,83 +6097,34 @@ fn compute_residual_standard_internal(
     };
 
     let degrid_grid_started = Instant::now();
-    let mut valid_samples = 0usize;
-    let mut planned_samples = 0usize;
-    let mut gridded_residual_samples = 0usize;
-    for (batch_index, batch) in batches.iter().enumerate() {
-        for index in 0..batch.len() {
-            let weight = batch.weight[index];
-            let observed_visibility = batch.visibility[index];
-            let gridable = batch.gridable[index];
-            let valid_sample = gridable
-                && weight.is_finite()
-                && weight > 0.0
-                && observed_visibility.re.is_finite()
-                && observed_visibility.im.is_finite();
-            let planned_sample = if valid_sample {
-                valid_samples += 1;
-                gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
-            } else {
-                None
-            };
-            if planned_sample.is_some() {
-                planned_samples += 1;
-            }
-            let predicted_visibility = if let Some(plan) = planned_sample.as_ref() {
-                if use_direct_point_predict {
-                    direct_components.as_ref().map_or_else(
-                        || Complex32::new(0.0, 0.0),
-                        |components| {
-                            direct_predict_visibility(
-                                components,
-                                batch.u_lambda[index],
-                                batch.v_lambda[index],
-                                0.0,
-                            )
-                        },
-                    )
-                } else {
-                    model_grid.as_ref().map_or_else(
-                        || Complex32::new(0.0, 0.0),
-                        |grid| {
-                            gridder.degrid_sample_product_planned_normalized(grid, &plan.positive)
-                        },
-                    )
-                }
-            } else {
-                Complex32::new(0.0, 0.0)
-            };
-            let residual_visibility = observed_visibility - predicted_visibility;
-            if capture_samples {
-                samples.push(ResidualSampleTraceInternal {
-                    batch_index,
-                    sample_index: index,
-                    u_lambda: batch.u_lambda[index],
-                    v_lambda: batch.v_lambda[index],
-                    w_lambda: batch.w_lambda[index],
-                    observed_visibility,
-                    predicted_visibility,
-                    residual_visibility,
-                    weight,
-                    gridable,
-                });
-            }
-            let Some(plan) = planned_sample.as_ref() else {
-                continue;
-            };
-            let sumwt_factor = batch.sumwt_factor[index];
-            if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
-                continue;
-            }
-            gridded_residual_samples += 1;
-            let residual_weight = f64::from(weight * sumwt_factor);
-            let residual = Complex64::new(
-                f64::from(residual_visibility.re) * residual_weight,
-                f64::from(residual_visibility.im) * residual_weight,
-            );
-            gridder.grid_sample_product_planned_f64(&mut residual_grid, &plan.positive, residual);
-        }
-    }
+    let grid_threads = if capture_samples || use_direct_point_predict {
+        1
+    } else {
+        standard_mfs_grid_threads()
+    };
+    let ResidualGridAccumulation {
+        valid_samples,
+        planned_samples,
+        gridded_residual_samples,
+    } = if grid_threads > 1 {
+        accumulate_streaming_standard_mfs_residual_grid_parallel(
+            gridder,
+            batches,
+            model_grid.as_ref(),
+            &mut residual_grid,
+            grid_threads,
+        )?
+    } else {
+        accumulate_streaming_standard_mfs_residual_grid_serial(
+            gridder,
+            batches,
+            model_grid.as_ref(),
+            direct_components.as_ref(),
+            use_direct_point_predict,
+            capture_samples.then_some(&mut samples),
+            &mut residual_grid,
+        )
+    };
     timings.degrid_grid = degrid_grid_started.elapsed();
 
     let fft_started = Instant::now();
@@ -5907,12 +6140,13 @@ fn compute_residual_standard_internal(
     stage_timings.residual_normalize += timings.normalize;
     if trace_timing {
         eprintln!(
-            "CASA_RS_TRACE_RESIDUAL_TIMING residual_refresh mode={} batches={} input_samples={} valid_samples={} planned_samples={} gridded_residual_samples={} model_nonzero={} direct_components={} direct_setup_ms={:.3} model_fft_ms={:.3} degrid_grid_ms={:.3} residual_fft_ms={:.3} normalize_ms={:.3} total_ms={:.3}",
+            "CASA_RS_TRACE_RESIDUAL_TIMING residual_refresh mode={} grid_threads={} batches={} input_samples={} valid_samples={} planned_samples={} gridded_residual_samples={} model_nonzero={} direct_components={} direct_setup_ms={:.3} model_fft_ms={:.3} degrid_grid_ms={:.3} residual_fft_ms={:.3} normalize_ms={:.3} total_ms={:.3}",
             if use_direct_point_predict {
                 "direct"
             } else {
                 "fft_grid"
             },
+            grid_threads,
             batches.len(),
             batches.iter().map(VisibilityBatch::len).sum::<usize>(),
             valid_samples,

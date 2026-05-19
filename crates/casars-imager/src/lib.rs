@@ -7656,8 +7656,18 @@ fn estimated_output_image_working_set_bytes(_config: &CliConfig) -> usize {
     0
 }
 
-fn estimated_worker_staging_bytes(_config: &CliConfig) -> usize {
-    0
+fn estimated_worker_staging_bytes(config: &CliConfig) -> usize {
+    let worker_grids = env_usize("CASA_RS_STANDARD_MFS_GRID_THREADS")
+        .filter(|value| *value > 1)
+        .unwrap_or(1);
+    if worker_grids <= 1 {
+        return 0;
+    }
+    let conservative_padded_side = config.imsize.saturating_mul(13).div_ceil(10);
+    conservative_padded_side
+        .saturating_mul(conservative_padded_side)
+        .saturating_mul(worker_grids)
+        .saturating_mul(std::mem::size_of::<Complex64>())
 }
 
 fn estimated_gpu_staging_bytes() -> usize {
