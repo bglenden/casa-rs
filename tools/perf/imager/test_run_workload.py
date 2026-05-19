@@ -395,6 +395,10 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
   residual_fft=15.000
   residual_normalize=16.000
   major_cycle_refresh=9.000
+  residual_refresh_overhead=9.500
+  clean_cycle_setup=9.250
+  deconvolver_setup=9.750
+  multiscale_scale_refresh=9.125
   minor_cycle=17.000
   minor_cycle_solve=18.000
   beam_fit=19.000
@@ -411,6 +415,10 @@ CASA tclean timings (seconds):
             "model_fft",
             "residual_normalize",
             "major_cycle_refresh",
+            "residual_refresh_overhead",
+            "clean_cycle_setup",
+            "deconvolver_setup",
+            "multiscale_scale_refresh",
             "minor_cycle",
             "minor_cycle_solve",
             "beam_fit",
@@ -419,6 +427,10 @@ CASA tclean timings (seconds):
             self.assertIn(name, stages)
         self.assertEqual(stages["psf_normalize"], 12.0)
         self.assertEqual(stages["model_fft"], 13.0)
+        self.assertEqual(stages["residual_refresh_overhead"], 9.5)
+        self.assertEqual(stages["clean_cycle_setup"], 9.25)
+        self.assertEqual(stages["deconvolver_setup"], 9.75)
+        self.assertEqual(stages["multiscale_scale_refresh"], 9.125)
         self.assertEqual(stages["get_ms_values_into_processing_buffer"], 2.5)
         self.assertEqual(stages["prepare_processing_buffer"], 3.5)
         self.assertEqual(stages["restore"], 20.0)

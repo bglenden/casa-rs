@@ -1861,10 +1861,15 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
             strategy.per_worker_buffer_bytes as f64 / (1024.0 * 1024.0),
         );
         eprintln!(
-            "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} prepare_buffer_mib={:.1}",
+            "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} reserved_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} gridded_visibility_reserve_mib={:.1} output_image_reserve_mib={:.1} worker_staging_reserve_mib={:.1} gpu_staging_reserve_mib={:.1} prepare_buffer_mib={:.1}",
             strategy.total_budget_bytes as f64 / (1024.0 * 1024.0),
+            strategy.reserved_buffer_bytes as f64 / (1024.0 * 1024.0),
             strategy.image_working_set_bytes as f64 / (1024.0 * 1024.0),
             strategy.weighting_density_bytes as f64 / (1024.0 * 1024.0),
+            strategy.gridded_visibility_bytes as f64 / (1024.0 * 1024.0),
+            strategy.output_image_bytes as f64 / (1024.0 * 1024.0),
+            strategy.worker_staging_bytes as f64 / (1024.0 * 1024.0),
+            strategy.gpu_staging_bytes as f64 / (1024.0 * 1024.0),
             strategy.prepare_buffer_bytes as f64 / (1024.0 * 1024.0),
         );
     }
@@ -2838,9 +2843,13 @@ fn add_stage_timings(target: &mut ImagingStageTimings, extra: ImagingStageTiming
     target.residual_degrid_grid += extra.residual_degrid_grid;
     target.residual_fft += extra.residual_fft;
     target.residual_normalize += extra.residual_normalize;
+    target.clean_cycle_setup += extra.clean_cycle_setup;
+    target.deconvolver_setup += extra.deconvolver_setup;
     target.minor_cycle += extra.minor_cycle;
     target.minor_cycle_solve += extra.minor_cycle_solve;
     target.major_cycle_refresh += extra.major_cycle_refresh;
+    target.residual_refresh_overhead += extra.residual_refresh_overhead;
+    target.multiscale_scale_refresh += extra.multiscale_scale_refresh;
     target.beam_fit += extra.beam_fit;
     target.restore += extra.restore;
     target.total += extra.total;
@@ -5131,9 +5140,13 @@ fn add_imaging_stage_timings(total: &mut ImagingStageTimings, next: ImagingStage
     total.residual_degrid_grid += next.residual_degrid_grid;
     total.residual_fft += next.residual_fft;
     total.residual_normalize += next.residual_normalize;
+    total.clean_cycle_setup += next.clean_cycle_setup;
+    total.deconvolver_setup += next.deconvolver_setup;
     total.minor_cycle += next.minor_cycle;
     total.minor_cycle_solve += next.minor_cycle_solve;
     total.major_cycle_refresh += next.major_cycle_refresh;
+    total.residual_refresh_overhead += next.residual_refresh_overhead;
+    total.multiscale_scale_refresh += next.multiscale_scale_refresh;
     total.beam_fit += next.beam_fit;
     total.restore += next.restore;
     total.total += next.total;
@@ -7072,10 +7085,15 @@ fn prepare_standard_mfs_input_in_row_blocks(
             strategy.per_worker_buffer_bytes as f64 / (1024.0 * 1024.0),
         );
         eprintln!(
-            "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} prepare_buffer_mib={:.1}",
+            "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} reserved_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} gridded_visibility_reserve_mib={:.1} output_image_reserve_mib={:.1} worker_staging_reserve_mib={:.1} gpu_staging_reserve_mib={:.1} prepare_buffer_mib={:.1}",
             strategy.total_budget_bytes as f64 / (1024.0 * 1024.0),
+            strategy.reserved_buffer_bytes as f64 / (1024.0 * 1024.0),
             strategy.image_working_set_bytes as f64 / (1024.0 * 1024.0),
             strategy.weighting_density_bytes as f64 / (1024.0 * 1024.0),
+            strategy.gridded_visibility_bytes as f64 / (1024.0 * 1024.0),
+            strategy.output_image_bytes as f64 / (1024.0 * 1024.0),
+            strategy.worker_staging_bytes as f64 / (1024.0 * 1024.0),
+            strategy.gpu_staging_bytes as f64 / (1024.0 * 1024.0),
             strategy.prepare_buffer_bytes as f64 / (1024.0 * 1024.0),
         );
     }
@@ -7537,8 +7555,13 @@ struct StandardMfsMemoryPlan {
     per_worker_buffer_bytes: usize,
     prepare_buffer_bytes: usize,
     total_budget_bytes: usize,
+    reserved_buffer_bytes: usize,
     image_working_set_bytes: usize,
     weighting_density_bytes: usize,
+    gridded_visibility_bytes: usize,
+    output_image_bytes: usize,
+    worker_staging_bytes: usize,
+    gpu_staging_bytes: usize,
     selected_channel_count: usize,
 }
 
@@ -7558,13 +7581,22 @@ fn standard_mfs_memory_plan(
     let total_budget_bytes = DEFAULT_PREPARE_BUFFER_TOTAL_BYTES;
     let image_working_set_bytes = estimated_image_working_set_bytes(config);
     let weighting_density_bytes = estimated_weighting_density_working_set_bytes(config);
-    let reserved_bytes = image_working_set_bytes.saturating_add(weighting_density_bytes);
+    let gridded_visibility_bytes = estimated_gridded_visibility_working_set_bytes(config);
+    let output_image_bytes = estimated_output_image_working_set_bytes(config);
+    let worker_staging_bytes = estimated_worker_staging_bytes(config);
+    let gpu_staging_bytes = estimated_gpu_staging_bytes();
+    let reserved_buffer_bytes = image_working_set_bytes
+        .saturating_add(weighting_density_bytes)
+        .saturating_add(gridded_visibility_bytes)
+        .saturating_add(output_image_bytes)
+        .saturating_add(worker_staging_bytes)
+        .saturating_add(gpu_staging_bytes);
     let prepare_buffer_bytes = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
         .filter(|value| *value > 0)
         .map(|value| value.saturating_mul(1024 * 1024))
         .unwrap_or_else(|| {
             total_budget_bytes
-                .saturating_sub(reserved_bytes)
+                .saturating_sub(reserved_buffer_bytes)
                 .max(64 * 1024 * 1024)
         });
     let per_worker_buffer_bytes = (prepare_buffer_bytes / worker_buffers).max(1024 * 1024);
@@ -7582,8 +7614,13 @@ fn standard_mfs_memory_plan(
         per_worker_buffer_bytes,
         prepare_buffer_bytes,
         total_budget_bytes,
+        reserved_buffer_bytes,
         image_working_set_bytes,
         weighting_density_bytes,
+        gridded_visibility_bytes,
+        output_image_bytes,
+        worker_staging_bytes,
+        gpu_staging_bytes,
         selected_channel_count,
     }
 }
@@ -7614,6 +7651,25 @@ fn estimated_weighting_density_working_set_bytes(config: &CliConfig) -> usize {
             .saturating_mul(4),
         WeightingMode::Natural => 0,
     }
+}
+
+fn estimated_gridded_visibility_working_set_bytes(_config: &CliConfig) -> usize {
+    0
+}
+
+fn estimated_output_image_working_set_bytes(_config: &CliConfig) -> usize {
+    0
+}
+
+fn estimated_worker_staging_bytes(_config: &CliConfig) -> usize {
+    0
+}
+
+fn estimated_gpu_staging_bytes() -> usize {
+    env_usize("CASA_RS_IMAGING_GPU_STAGING_MB")
+        .filter(|value| *value > 0)
+        .map(|value| value.saturating_mul(1024 * 1024))
+        .unwrap_or(0)
 }
 
 fn load_prepared_selection_table_values(

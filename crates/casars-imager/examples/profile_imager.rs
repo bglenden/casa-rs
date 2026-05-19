@@ -83,7 +83,7 @@ fn run() -> Result<(), String> {
         let prefix = temp.join(format!("run-{run_index}"));
         let summary = run_from_config(&build_cli_config(&options, prefix))?;
         println!(
-            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} get_ms_values_ms={:.3} prepare_buffer_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} major_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} residual_normalize_ms={:.3} minor_ms={:.3} minor_solve_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3}",
+            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} get_ms_values_ms={:.3} prepare_buffer_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} major_refresh_ms={:.3} residual_refresh_overhead_ms={:.3} clean_cycle_setup_ms={:.3} deconvolver_setup_ms={:.3} multiscale_scale_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} residual_normalize_ms={:.3} minor_ms={:.3} minor_solve_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3}",
             run_index + 1,
             millis(summary.frontend_timings.total),
             millis(summary.frontend_timings.open_measurement_set),
@@ -102,6 +102,10 @@ fn run() -> Result<(), String> {
             millis(summary.stage_timings.controller_overhead),
             millis(summary.stage_timings.weighting),
             millis(summary.stage_timings.major_cycle_refresh),
+            millis(summary.stage_timings.residual_refresh_overhead),
+            millis(summary.stage_timings.clean_cycle_setup),
+            millis(summary.stage_timings.deconvolver_setup),
+            millis(summary.stage_timings.multiscale_scale_refresh),
             millis(summary.stage_timings.psf_grid),
             millis(summary.stage_timings.psf_fft),
             millis(summary.stage_timings.psf_normalize),
@@ -222,6 +226,22 @@ fn run() -> Result<(), String> {
     print_stage(
         "major_cycle_refresh",
         median_duration(&runs, |run| run.stage_timings.major_cycle_refresh),
+    );
+    print_stage(
+        "residual_refresh_overhead",
+        median_duration(&runs, |run| run.stage_timings.residual_refresh_overhead),
+    );
+    print_stage(
+        "clean_cycle_setup",
+        median_duration(&runs, |run| run.stage_timings.clean_cycle_setup),
+    );
+    print_stage(
+        "deconvolver_setup",
+        median_duration(&runs, |run| run.stage_timings.deconvolver_setup),
+    );
+    print_stage(
+        "multiscale_scale_refresh",
+        median_duration(&runs, |run| run.stage_timings.multiscale_scale_refresh),
     );
     print_stage(
         "minor_cycle",

@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-19
-Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; selected `tools/perf/imager/run_workload.py` runs listed below
+Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; selected `tools/perf/imager/run_workload.py` runs listed below
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -106,11 +106,23 @@ avoiding a separate full PSF gridding pass before the first minor cycle.
 
 The frontend row-block sizing heuristic is now represented as a standard-MFS
 memory plan. The same plan that sizes multi-row prepare buffers now records the
-total budget, image working-set reserve, and Briggs/Uniform density-grid
-reserve before assigning the remaining bytes to row-block buffers. This is only
-the first centralization step; future pools still need to account for output
-images, gridded visibility workspaces, and other imaging buffers in the same
-planner.
+total budget, all named reserves, and the row-buffer budget before assigning
+rows to prepare blocks. Known reserves include image working set and
+Briggs/Uniform density grid. The planner also names future reserve classes for
+gridded visibilities, output images, worker staging, and GPU staging so those
+buffers have a central accounting point when later Wave 2 stages introduce
+them. `CASA_RS_IMAGING_GPU_STAGING_MB` can reserve GPU staging memory without
+changing row-buffer code.
+
+The Rust stage profile now separates clean-loop work beyond the previous
+aggregate `major_cycle_refresh` bucket. New stage medians include
+`clean_cycle_setup`, `deconvolver_setup`, `residual_refresh_overhead`, and
+`multiscale_scale_refresh` alongside the existing `model_fft`,
+`residual_degrid_grid`, `residual_fft`, `residual_normalize`, and
+`minor_cycle_solve` fields. These fields are intended to identify whether the
+next clean bottleneck is pure gridding/degridding, deconvolver setup,
+controller overhead, or multiscale state rebuild before choosing CPU,
+threading, or GPU work.
 
 A diagnostic run after the owned-Briggs change stayed memory-stable instead of
 repeating the `81 GiB` clone spike. It was interrupted before completion because
@@ -124,9 +136,10 @@ target/imperformance-wave2/full-medium-clean-owned-briggs-diagnostics/20260519T1
 The captured log reached the end of frontend row preparation at
 `169.595 s`, with the centralized memory plan reporting a `512.0 MiB` total
 budget, `256.0 MiB` image reserve, `16.0 MiB` Briggs density reserve, and
-`240.0 MiB` prepare-buffer budget. The interrupted Rust child was around
-`7.5 GiB` RSS. This confirms the clone fix but does not make the full clean
-workload performance-green.
+`240.0 MiB` prepare-buffer budget. New runs will also report the named
+gridded-visibility, output-image, worker-staging, and GPU-staging reserves.
+The interrupted Rust child was around `7.5 GiB` RSS. This confirms the clone
+fix but does not make the full clean workload performance-green.
 
 The stopped clean attempts wrote failed result records only:
 

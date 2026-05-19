@@ -1337,6 +1337,10 @@ pub struct ImagingStageTimings {
     pub residual_fft: Duration,
     /// Time spent applying residual correction and normalization.
     pub residual_normalize: Duration,
+    /// Time spent preparing CLEAN cycle thresholds, peaks, and candidates.
+    pub clean_cycle_setup: Duration,
+    /// Time spent preparing deconvolver-specific reusable state.
+    pub deconvolver_setup: Duration,
     /// Time spent in minor-cycle PSF subtraction/component updates.
     pub minor_cycle: Duration,
     /// Time spent inside the solver-specific minor-cycle loop.
@@ -1347,6 +1351,12 @@ pub struct ImagingStageTimings {
     /// includes the lower-level `model_fft`, `residual_degrid_grid`,
     /// `residual_fft`, and `residual_normalize` subtotals.
     pub major_cycle_refresh: Duration,
+    /// Major-cycle refresh time not accounted for by model FFT, residual
+    /// degrid/grid, residual FFT, or residual normalization.
+    pub residual_refresh_overhead: Duration,
+    /// Time spent rebuilding multiscale residual convolution state after an
+    /// exact residual refresh.
+    pub multiscale_scale_refresh: Duration,
     /// Time spent fitting the restoring beam from the PSF.
     pub beam_fit: Duration,
     /// Time spent restoring the component model with the fitted beam.
@@ -1367,9 +1377,13 @@ impl Default for ImagingStageTimings {
             residual_degrid_grid: Duration::ZERO,
             residual_fft: Duration::ZERO,
             residual_normalize: Duration::ZERO,
+            clean_cycle_setup: Duration::ZERO,
+            deconvolver_setup: Duration::ZERO,
             minor_cycle: Duration::ZERO,
             minor_cycle_solve: Duration::ZERO,
             major_cycle_refresh: Duration::ZERO,
+            residual_refresh_overhead: Duration::ZERO,
+            multiscale_scale_refresh: Duration::ZERO,
             beam_fit: Duration::ZERO,
             restore: Duration::ZERO,
             total: Duration::ZERO,

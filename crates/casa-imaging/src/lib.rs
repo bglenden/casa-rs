@@ -2967,9 +2967,11 @@ fn run_hogbom_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
             break;
         }
+        let cycle_setup_started = Instant::now();
         let Some((_, cycle_peak_value)) =
             peak_location_masked(&residual, request.clean_mask.as_ref())
         else {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
@@ -2981,6 +2983,7 @@ fn run_hogbom_cotton_schwab(
             request.clean.threshold_jy_per_beam,
             cycle_nsigma_threshold_jy_per_beam,
         ) {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(stop_reason);
             break;
         }
@@ -2989,6 +2992,7 @@ fn run_hogbom_cotton_schwab(
         let start_reported_iteration = reported_minor_iterations;
         let cycle_threshold_jy_per_beam =
             compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+        stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let outcome = run_hogbom_minor_cycle(
             request,
             psf_state,
@@ -3039,8 +3043,7 @@ fn run_hogbom_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
-        let refresh_started = Instant::now();
-        residual = compute_residual(
+        residual = refresh_standard_mfs_residual(
             request,
             weighted_batches,
             gridder,
@@ -3048,7 +3051,6 @@ fn run_hogbom_cotton_schwab(
             psf_state,
             stage_timings,
         )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
@@ -3070,8 +3072,7 @@ fn run_hogbom_cotton_schwab(
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
     }
     if residual_needs_refresh {
-        let refresh_started = Instant::now();
-        residual = compute_residual(
+        residual = refresh_standard_mfs_residual(
             request,
             weighted_batches,
             gridder,
@@ -3079,7 +3080,6 @@ fn run_hogbom_cotton_schwab(
             psf_state,
             stage_timings,
         )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
     }
 
     Ok(CottonSchwabState {
@@ -3438,11 +3438,13 @@ fn run_clark_cotton_schwab(
     initial_peak: f32,
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
+    let deconvolver_setup_started = Instant::now();
     let psf_patch = build_clark_psf_patch(
         &psf_state.psf,
         request.geometry.cell_size_rad,
         request.clean.psf_cutoff,
     );
+    stage_timings.deconvolver_setup += deconvolver_setup_started.elapsed();
     let mut minor_iterations = 0usize;
     let mut reported_minor_iterations = 0usize;
     let mut major_cycles = 0usize;
@@ -3462,9 +3464,11 @@ fn run_clark_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
             break;
         }
+        let cycle_setup_started = Instant::now();
         let Some((_, cycle_peak_value)) =
             peak_location_masked(&residual, request.clean_mask.as_ref())
         else {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
@@ -3476,6 +3480,7 @@ fn run_clark_cotton_schwab(
             request.clean.threshold_jy_per_beam,
             cycle_nsigma_threshold_jy_per_beam,
         ) {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(stop_reason);
             break;
         }
@@ -3484,6 +3489,7 @@ fn run_clark_cotton_schwab(
         let start_reported_iteration = reported_minor_iterations;
         final_cycle_threshold_jy_per_beam =
             compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+        stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let outcome = run_clark_minor_cycle(
             request,
             &psf_state.psf,
@@ -3524,8 +3530,7 @@ fn run_clark_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
-        let refresh_started = Instant::now();
-        residual = compute_residual(
+        residual = refresh_standard_mfs_residual(
             request,
             weighted_batches,
             gridder,
@@ -3533,7 +3538,6 @@ fn run_clark_cotton_schwab(
             psf_state,
             stage_timings,
         )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
@@ -3552,8 +3556,7 @@ fn run_clark_cotton_schwab(
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
     }
     if residual_needs_refresh {
-        let refresh_started = Instant::now();
-        residual = compute_residual(
+        residual = refresh_standard_mfs_residual(
             request,
             weighted_batches,
             gridder,
@@ -3561,7 +3564,6 @@ fn run_clark_cotton_schwab(
             psf_state,
             stage_timings,
         )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
     }
 
     Ok(CottonSchwabState {
@@ -3587,6 +3589,7 @@ fn run_multiscale_cotton_schwab(
     initial_peak: f32,
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
+    let deconvolver_setup_started = Instant::now();
     let scales = effective_multiscale_scales(request);
     let mut multiscale_state = build_multiscale_state(
         &residual,
@@ -3595,6 +3598,7 @@ fn run_multiscale_cotton_schwab(
         request.small_scale_bias,
         request.clean_mask.as_ref(),
     );
+    stage_timings.deconvolver_setup += deconvolver_setup_started.elapsed();
     let mut minor_iterations = 0usize;
     let mut reported_minor_iterations = 0usize;
     let mut major_cycles = 0usize;
@@ -3614,9 +3618,11 @@ fn run_multiscale_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
             break;
         }
+        let cycle_setup_started = Instant::now();
         let Some(cycle_candidate) =
             select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
         else {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
@@ -3631,6 +3637,7 @@ fn run_multiscale_cotton_schwab(
             request.clean.threshold_jy_per_beam,
             cycle_nsigma_threshold_jy_per_beam,
         ) {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(stop_reason);
             break;
         }
@@ -3651,6 +3658,7 @@ fn run_multiscale_cotton_schwab(
         let mut cycle_stop_reason = None::<CleanStopReason>;
         final_cycle_threshold_jy_per_beam =
             compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+        stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let minor_started = Instant::now();
         while cycle_component_updates < cycle_reported_niter {
             let Some(candidate) =
@@ -3734,8 +3742,7 @@ fn run_multiscale_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
-        let refresh_started = Instant::now();
-        residual = compute_residual(
+        residual = refresh_standard_mfs_residual(
             request,
             weighted_batches,
             gridder,
@@ -3743,7 +3750,7 @@ fn run_multiscale_cotton_schwab(
             psf_state,
             stage_timings,
         )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        let multiscale_refresh_started = Instant::now();
         multiscale_state = build_multiscale_state(
             &residual,
             &psf_state.psf,
@@ -3751,6 +3758,7 @@ fn run_multiscale_cotton_schwab(
             request.small_scale_bias,
             request.clean_mask.as_ref(),
         );
+        stage_timings.multiscale_scale_refresh += multiscale_refresh_started.elapsed();
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
@@ -3769,8 +3777,7 @@ fn run_multiscale_cotton_schwab(
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
     }
     if residual_needs_refresh {
-        let refresh_started = Instant::now();
-        residual = compute_residual(
+        residual = refresh_standard_mfs_residual(
             request,
             weighted_batches,
             gridder,
@@ -3778,7 +3785,15 @@ fn run_multiscale_cotton_schwab(
             psf_state,
             stage_timings,
         )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        let multiscale_refresh_started = Instant::now();
+        let _refreshed_multiscale_state = build_multiscale_state(
+            &residual,
+            &psf_state.psf,
+            &scales,
+            request.small_scale_bias,
+            request.clean_mask.as_ref(),
+        );
+        stage_timings.multiscale_scale_refresh += multiscale_refresh_started.elapsed();
         major_cycles += 1;
     }
 
@@ -5546,6 +5561,60 @@ fn compute_residual(
         false,
         stage_timings,
     )
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResidualRefreshTimingSnapshot {
+    model_fft: Duration,
+    residual_degrid_grid: Duration,
+    residual_fft: Duration,
+    residual_normalize: Duration,
+}
+
+impl ResidualRefreshTimingSnapshot {
+    fn capture(timings: &ImagingStageTimings) -> Self {
+        Self {
+            model_fft: timings.model_fft,
+            residual_degrid_grid: timings.residual_degrid_grid,
+            residual_fft: timings.residual_fft,
+            residual_normalize: timings.residual_normalize,
+        }
+    }
+
+    fn accounted_delta(self, timings: &ImagingStageTimings) -> Duration {
+        timings
+            .model_fft
+            .saturating_sub(self.model_fft)
+            .saturating_add(
+                timings
+                    .residual_degrid_grid
+                    .saturating_sub(self.residual_degrid_grid),
+            )
+            .saturating_add(timings.residual_fft.saturating_sub(self.residual_fft))
+            .saturating_add(
+                timings
+                    .residual_normalize
+                    .saturating_sub(self.residual_normalize),
+            )
+    }
+}
+
+fn refresh_standard_mfs_residual(
+    request: &ImagingRequest,
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
+    let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
+    let refresh_started = Instant::now();
+    let residual = compute_residual(request, batches, gridder, model, psf_state, stage_timings)?;
+    let refresh_elapsed = refresh_started.elapsed();
+    let accounted = before.accounted_delta(stage_timings);
+    stage_timings.major_cycle_refresh += refresh_elapsed;
+    stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
+    Ok(residual)
 }
 
 fn build_standard_residual_sample_plans(

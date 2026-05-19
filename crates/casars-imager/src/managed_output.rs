@@ -402,6 +402,22 @@ fn stage_timings_from_core(summary: &RunSummary) -> ManagedImagingStageTimings {
                 summary.stage_timings.major_cycle_refresh.as_nanos() as u64,
             ),
             (
+                "residual_refresh_overhead".to_string(),
+                summary.stage_timings.residual_refresh_overhead.as_nanos() as u64,
+            ),
+            (
+                "clean_cycle_setup".to_string(),
+                summary.stage_timings.clean_cycle_setup.as_nanos() as u64,
+            ),
+            (
+                "deconvolver_setup".to_string(),
+                summary.stage_timings.deconvolver_setup.as_nanos() as u64,
+            ),
+            (
+                "multiscale_scale_refresh".to_string(),
+                summary.stage_timings.multiscale_scale_refresh.as_nanos() as u64,
+            ),
+            (
                 "psf_grid".to_string(),
                 summary.stage_timings.psf_grid.as_nanos() as u64,
             ),
@@ -675,9 +691,13 @@ mod tests {
             residual_degrid_grid: Duration::from_nanos(15),
             residual_fft: Duration::from_nanos(16),
             residual_normalize: Duration::from_nanos(17),
+            clean_cycle_setup: Duration::from_nanos(24),
+            deconvolver_setup: Duration::from_nanos(25),
             minor_cycle: Duration::from_nanos(18),
             minor_cycle_solve: Duration::from_nanos(19),
             major_cycle_refresh: Duration::from_nanos(20),
+            residual_refresh_overhead: Duration::from_nanos(26),
+            multiscale_scale_refresh: Duration::from_nanos(27),
             beam_fit: Duration::from_nanos(22),
             restore: Duration::from_nanos(23),
             total: Duration::from_nanos(21),
