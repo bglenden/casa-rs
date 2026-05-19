@@ -48,6 +48,7 @@ functionality.
 - [Wave 1 benchmark harness](imperformance-wave-1-benchmark-harness.md)
 - [Wave 1 stage instrumentation](imperformance-wave-1-stage-instrumentation.md)
 - [Wave 1 baseline matrix and bottleneck ledger](imperformance-wave-1-baseline-matrix.md)
+- [Wave 2 acceleration ledger](imperformance-wave-2-acceleration-ledger.md)
 
 ## Source Pages
 

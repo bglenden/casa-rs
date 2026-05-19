@@ -369,12 +369,17 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
             "run_label": "warm",
             "storage_label": dataset["storage_label"],
         },
-        "comparison": {
-            "products": [".image.tt0", ".residual.tt0", ".psf.tt0"]
-            if is_mtmfs
-            else [".image", ".residual", ".psf"]
-        },
+        "comparison": {"products": comparison_products_for_mode(is_clean, is_mtmfs)},
     }
+
+
+def comparison_products_for_mode(is_clean: bool, is_mtmfs: bool) -> list[str]:
+    if is_mtmfs:
+        return [".image.tt0", ".residual.tt0", ".psf.tt0"]
+    products = [".image", ".residual", ".psf"]
+    if is_clean:
+        products.append(".model")
+    return products
 
 
 def workload_channel_count(dataset: dict[str, Any], mode_id: str, specmode: str) -> int:

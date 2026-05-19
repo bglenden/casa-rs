@@ -909,12 +909,13 @@ pub fn build_prepare_geometry_trace_from_config(
         .needs_geometry_engine
         .then(|| MsCalEngine::new(&ms).map_err(|error| format!("build derived engine: {error}")))
         .transpose()?;
+    let geometry_columns = PreparedGeometryColumnCache::load(&ms, config.use_pointing)?;
     let rows = build_prepared_geometry_rows(
         &ms,
         &selection.selected_rows,
         &selection.phase_center,
+        &geometry_columns,
         derived_engine.as_ref(),
-        config.use_pointing,
         uvw_reprojection_mode_for_selection(config, &selection),
     )?;
     Ok(PreparedGeometryTraceBundle {
@@ -1867,6 +1868,9 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
         ..Default::default()
     };
     let mut prepared_batch_count = 0usize;
+    let stage_started_at = Instant::now();
+    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
 
     for row_chunk in active_selected_rows.chunks(strategy.row_block_rows) {
         let stage_started_at = Instant::now();
@@ -1876,9 +1880,9 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
             &selection,
             row_chunk,
             derived_engine.as_ref(),
-            config.use_pointing,
             uvw_reprojection_mode_for_selection(config, &selection),
             channel_read_range,
+            &geometry_columns,
             prepare_started_at,
         )?;
         prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
@@ -6274,6 +6278,52 @@ impl PointingDirectionResolver {
     }
 }
 
+struct PreparedGeometryColumnCache {
+    antenna1: Vec<i32>,
+    antenna2: Vec<i32>,
+    pointing_ids: Option<Vec<Option<i32>>>,
+    pointing_resolver: Option<PointingDirectionResolver>,
+}
+
+impl PreparedGeometryColumnCache {
+    fn load(ms: &MeasurementSet, use_pointing: bool) -> Result<Self, String> {
+        let geometry_started_at = Instant::now();
+        let antenna1 = load_i32_main_column_owned(ms, "ANTENNA1")?;
+        let antenna2 = load_i32_main_column_owned(ms, "ANTENNA2")?;
+        maybe_log_frontend_progress(
+            "prepare_plane_input/build_prepared_geometry_rows/load_antenna_ids",
+            geometry_started_at.elapsed(),
+            geometry_started_at.elapsed(),
+        );
+        let pointing_ids = if use_pointing {
+            load_optional_i32_main_column(ms, "POINTING_ID")?
+        } else {
+            None
+        };
+        maybe_log_frontend_progress(
+            "prepare_plane_input/build_prepared_geometry_rows/load_pointing_ids",
+            geometry_started_at.elapsed(),
+            geometry_started_at.elapsed(),
+        );
+        let pointing_resolver = if use_pointing {
+            PointingDirectionResolver::new(ms)?
+        } else {
+            None
+        };
+        maybe_log_frontend_progress(
+            "prepare_plane_input/build_prepared_geometry_rows/build_pointing_resolver",
+            geometry_started_at.elapsed(),
+            geometry_started_at.elapsed(),
+        );
+        Ok(Self {
+            antenna1,
+            antenna2,
+            pointing_ids,
+            pointing_resolver,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SelectedRowsContext {
     selected_rows: Vec<SelectedMainRow>,
@@ -6639,18 +6689,11 @@ fn build_prepared_geometry_rows(
     ms: &MeasurementSet,
     selected_rows: &[SelectedMainRow],
     phase_center: &PhaseCenter,
+    columns: &PreparedGeometryColumnCache,
     derived_engine: Option<&MsCalEngine>,
-    use_pointing: bool,
     reprojection_mode: UvwReprojectionMode,
 ) -> Result<Vec<PreparedGeometryRow>, String> {
     let geometry_started_at = Instant::now();
-    let antenna1 = load_i32_main_column_owned(ms, "ANTENNA1")?;
-    let antenna2 = load_i32_main_column_owned(ms, "ANTENNA2")?;
-    maybe_log_frontend_progress(
-        "prepare_plane_input/build_prepared_geometry_rows/load_antenna_ids",
-        geometry_started_at.elapsed(),
-        geometry_started_at.elapsed(),
-    );
     let selected_row_indices = selected_rows
         .iter()
         .map(|selected_row| selected_row.row_index)
@@ -6661,34 +6704,16 @@ fn build_prepared_geometry_rows(
         geometry_started_at.elapsed(),
         geometry_started_at.elapsed(),
     );
-    let pointing_ids = if use_pointing {
-        load_optional_i32_main_column(ms, "POINTING_ID")?
-    } else {
-        None
-    };
-    maybe_log_frontend_progress(
-        "prepare_plane_input/build_prepared_geometry_rows/load_pointing_ids",
-        geometry_started_at.elapsed(),
-        geometry_started_at.elapsed(),
-    );
-    let pointing_resolver = if use_pointing {
-        PointingDirectionResolver::new(ms)?
-    } else {
-        None
-    };
-    maybe_log_frontend_progress(
-        "prepare_plane_input/build_prepared_geometry_rows/build_pointing_resolver",
-        geometry_started_at.elapsed(),
-        geometry_started_at.elapsed(),
-    );
     let mut field_phase_centers = BTreeMap::<usize, [f64; 2]>::new();
     let mut rows = Vec::with_capacity(selected_rows.len());
     for (row_slot, selected_row) in selected_rows.iter().enumerate() {
         let row = selected_row.row_index;
-        let antenna1_id = *antenna1
+        let antenna1_id = *columns
+            .antenna1
             .get(row)
             .ok_or_else(|| format!("read ANTENNA1 row {row}: row is out of bounds"))?;
-        let antenna2_id = *antenna2
+        let antenna2_id = *columns
+            .antenna2
             .get(row)
             .ok_or_else(|| format!("read ANTENNA2 row {row}: row is out of bounds"))?;
         let is_cross = antenna1_id != antenna2_id;
@@ -6717,9 +6742,13 @@ fn build_prepared_geometry_rows(
                 field_phase_centers.insert(selected_row.field_id, angles_rad);
                 angles_rad
             };
-        let antenna1_pointing = match (pointing_resolver.as_ref(), selected_row.time_mjd_seconds) {
+        let antenna1_pointing = match (
+            columns.pointing_resolver.as_ref(),
+            selected_row.time_mjd_seconds,
+        ) {
             (Some(resolver), Some(time_mjd_seconds)) => resolver.resolve(
-                pointing_ids
+                columns
+                    .pointing_ids
                     .as_ref()
                     .and_then(|values| values.get(row))
                     .copied()
@@ -6739,9 +6768,13 @@ fn build_prepared_geometry_rows(
                 angles_rad: row_phase_center,
             },
         };
-        let antenna2_pointing = match (pointing_resolver.as_ref(), selected_row.time_mjd_seconds) {
+        let antenna2_pointing = match (
+            columns.pointing_resolver.as_ref(),
+            selected_row.time_mjd_seconds,
+        ) {
             (Some(resolver), Some(time_mjd_seconds)) => resolver.resolve(
-                pointing_ids
+                columns
+                    .pointing_ids
                     .as_ref()
                     .and_then(|values| values.get(row))
                     .copied()
@@ -6764,7 +6797,8 @@ fn build_prepared_geometry_rows(
         rows.push(PreparedGeometryRow {
             selected_row: selected_row.clone(),
             phase_center_field_id: phase_center.field_id,
-            pointing_id: pointing_ids
+            pointing_id: columns
+                .pointing_ids
                 .as_ref()
                 .and_then(|values| values.get(row))
                 .copied()
@@ -6794,9 +6828,9 @@ fn get_ms_values_into_processing_buffer(
     selection: &SelectedRowsContext,
     row_chunk: &[SelectedMainRow],
     derived_engine: Option<&MsCalEngine>,
-    use_pointing: bool,
     reprojection_mode: UvwReprojectionMode,
     channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
     prepare_started_at: Instant,
 ) -> Result<StandardMfsProcessingBuffer, String> {
     let selected_row_indices = row_chunk
@@ -6869,8 +6903,8 @@ fn get_ms_values_into_processing_buffer(
         ms,
         row_chunk,
         &selection.phase_center,
+        geometry_columns,
         derived_engine,
-        use_pointing,
         reprojection_mode,
     )?;
     maybe_log_frontend_progress(
@@ -7035,6 +7069,9 @@ fn prepare_standard_mfs_input_in_row_blocks(
     let mut prepared_blocks = Vec::<PreparedInput>::new();
     let mut prepared_batch_count = 0usize;
     let mut stage_timings = PreparePlaneInputStageTimings::default();
+    let stage_started_at = Instant::now();
+    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
     let mut accumulate_timings = AccumulateRowTimings {
         rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
         ..Default::default()
@@ -7047,9 +7084,9 @@ fn prepare_standard_mfs_input_in_row_blocks(
             selection,
             row_chunk,
             derived_engine,
-            config.use_pointing,
             uvw_reprojection_mode_for_selection(config, selection),
             channel_read_range,
+            &geometry_columns,
             prepare_started_at,
         )?;
         stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
@@ -7310,12 +7347,13 @@ fn prepare_plane_input_inner(
     );
 
     let stage_started_at = Instant::now();
+    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
     let geometry_rows = build_prepared_geometry_rows(
         ms,
         &active_selected_rows,
         &selection.phase_center,
+        &geometry_columns,
         derived_engine.as_ref(),
-        config.use_pointing,
         uvw_reprojection_mode_for_selection(config, &selection),
     )?;
     maybe_log_frontend_progress(

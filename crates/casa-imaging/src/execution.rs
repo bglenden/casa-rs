@@ -147,35 +147,58 @@ impl StandardMfsDirtyCpuExecutor {
                 });
         }
 
-        let plan = StandardMfsVisibilityPlan::new(&self.gridder, batches);
+        let gridder = &self.gridder;
         let (psf_grid, residual_grid) = self.workspace.dirty_grids_mut();
-        for sample in plan.samples() {
-            let grid_weight = sample.grid_weight_f64();
-            self.gridder.grid_sample_product_planned_f64(
-                psf_grid,
-                &sample.plan.positive,
-                Complex64::new(grid_weight, 0.0),
-            );
+        for batch in batches {
+            for sample_index in 0..batch.len() {
+                if !batch.gridable[sample_index] {
+                    self.skipped_samples += 1;
+                    continue;
+                }
+                let weight = batch.weight[sample_index];
+                let sumwt_factor = batch.sumwt_factor[sample_index];
+                if !(weight.is_finite()
+                    && weight > 0.0
+                    && sumwt_factor.is_finite()
+                    && sumwt_factor > 0.0)
+                {
+                    self.skipped_samples += 1;
+                    continue;
+                }
+                let Some(plan) =
+                    gridder.plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+                else {
+                    self.skipped_samples += 1;
+                    continue;
+                };
+                let grid_weight = weight * sumwt_factor;
+                let sumwt = f64::from(grid_weight);
+                self.normalization_sumwt += sumwt;
+                self.reported_sumwt += sumwt;
+                self.gridded_samples += 1;
 
-            let batch = plan.batch(sample);
-            let observed_visibility = batch.visibility[sample.sample_index];
-            if finite_visibility(observed_visibility) {
-                let residual = Complex64::new(
-                    f64::from(observed_visibility.re) * grid_weight,
-                    f64::from(observed_visibility.im) * grid_weight,
-                );
-                self.gridder.grid_sample_product_planned_f64(
-                    residual_grid,
-                    &sample.plan.positive,
-                    residual,
-                );
+                let observed_visibility = batch.visibility[sample_index];
+                if finite_visibility(observed_visibility) {
+                    let residual = Complex64::new(
+                        f64::from(observed_visibility.re) * sumwt,
+                        f64::from(observed_visibility.im) * sumwt,
+                    );
+                    gridder.grid_sample_product_pair_planned_f64(
+                        psf_grid,
+                        Complex64::new(sumwt, 0.0),
+                        residual_grid,
+                        residual,
+                        &plan.positive,
+                    );
+                } else {
+                    gridder.grid_sample_product_planned_f64(
+                        psf_grid,
+                        &plan.positive,
+                        Complex64::new(sumwt, 0.0),
+                    );
+                }
             }
         }
-
-        self.normalization_sumwt += plan.normalization_sumwt();
-        self.reported_sumwt += plan.reported_sumwt();
-        self.gridded_samples += plan.gridded_samples();
-        self.skipped_samples += plan.skipped_samples();
         Ok(())
     }
 

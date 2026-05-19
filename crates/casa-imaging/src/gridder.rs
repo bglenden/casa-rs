@@ -228,6 +228,34 @@ impl StandardGridder {
         }
     }
 
+    pub(crate) fn grid_sample_product_pair_planned_f64(
+        &self,
+        first_grid: &mut Array2<Complex64>,
+        first_value: Complex64,
+        second_grid: &mut Array2<Complex64>,
+        second_value: Complex64,
+        taps: &ProductTapSet,
+    ) {
+        if let (Some(first_storage), Some(second_storage)) = (
+            first_grid.as_slice_memory_order_mut(),
+            second_grid.as_slice_memory_order_mut(),
+        ) {
+            for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
+                let weight = f64::from(taps.weights[tap]);
+                let index = taps.flat_indices[tap];
+                first_storage[index] += first_value * weight;
+                second_storage[index] += second_value * weight;
+            }
+            return;
+        }
+        for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
+            let weight = f64::from(taps.weights[tap]);
+            let index = (taps.x_indices[tap], taps.y_indices[tap]);
+            first_grid[index] += first_value * weight;
+            second_grid[index] += second_value * weight;
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn degrid_sample_planned(
         &self,
@@ -1824,7 +1852,7 @@ mod tests {
         cpp_convolve_gridder_predict_visibility_2d,
     };
     use ndarray::Array2;
-    use num_complex::Complex32;
+    use num_complex::{Complex32, Complex64};
     use serial_test::serial;
 
     use super::{DensityCellConvention, ScreenProjector, StandardGridder};
@@ -2087,6 +2115,39 @@ mod tests {
         assert!(gridder.grid_sample(&mut grid, u_lambda, v_lambda, Complex32::new(1.0, 0.0)));
         assert!(grid.iter().any(|value| value.norm() > 0.0));
         assert!(gridder.degrid_sample(&grid, u_lambda, v_lambda).is_some());
+    }
+
+    #[test]
+    fn paired_f64_product_grid_matches_separate_updates() {
+        let gridder = StandardGridder::new(ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        })
+        .unwrap();
+        let plan = gridder
+            .plan_sample(42.25, -17.5)
+            .expect("sample should lie on grid");
+        let shape = (gridder.grid_shape()[0], gridder.grid_shape()[1]);
+        let first_value = Complex64::new(1.5, -0.25);
+        let second_value = Complex64::new(-2.0, 0.75);
+
+        let mut separate_first = Array2::<Complex64>::zeros(shape);
+        let mut separate_second = Array2::<Complex64>::zeros(shape);
+        gridder.grid_sample_product_planned_f64(&mut separate_first, &plan.positive, first_value);
+        gridder.grid_sample_product_planned_f64(&mut separate_second, &plan.positive, second_value);
+
+        let mut paired_first = Array2::<Complex64>::zeros(shape);
+        let mut paired_second = Array2::<Complex64>::zeros(shape);
+        gridder.grid_sample_product_pair_planned_f64(
+            &mut paired_first,
+            first_value,
+            &mut paired_second,
+            second_value,
+            &plan.positive,
+        );
+
+        assert_eq!(paired_first, separate_first);
+        assert_eq!(paired_second, separate_second);
     }
 
     #[test]

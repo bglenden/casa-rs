@@ -61,6 +61,7 @@ pub(crate) fn apply_weighting_with_density_source(
 ) -> Result<Vec<VisibilityBatch>, crate::ImagingError> {
     let density_convention = density_cell_convention(weighting, weight_density_mode);
     let density_build_convention = density_build_cell_convention(weighting, weight_density_mode);
+    let trace_weighting = trace_weighting_enabled();
     let aligned_lookup =
         aligned_density_lookup_batches(weight_density_mode, target_batches, density_batches);
     let density_build_batches = if aligned_lookup.is_some() {
@@ -93,6 +94,7 @@ pub(crate) fn apply_weighting_with_density_source(
                             gridder,
                             &density,
                             density_convention,
+                            trace_weighting,
                             |weight, density, _, _| weight / density,
                         )
                     })
@@ -150,6 +152,7 @@ pub(crate) fn apply_weighting_with_density_source(
                             gridder,
                             &density,
                             density_convention,
+                            trace_weighting,
                             |weight, density, u_lambda, v_lambda| {
                                 let taper_factor = match weighting {
                                     WeightingMode::BriggsBwTaper { .. } => {
@@ -422,6 +425,7 @@ fn reweight_batch(
     gridder: &StandardGridder,
     density: &Array2<f32>,
     convention: DensityCellConvention,
+    trace_weighting: bool,
     transform: impl Fn(f32, f32, f64, f64) -> f32,
 ) -> VisibilityBatch {
     let mut reweighted = batch.clone();
@@ -438,19 +442,21 @@ fn reweight_batch(
         };
         if !(weight.is_finite() && weight > 0.0 && cell_density.is_finite() && cell_density > 0.0) {
             reweighted.weight[index] = 0.0;
-            trace_weighting_sample(
-                index,
-                batch.u_lambda[index],
-                batch.v_lambda[index],
-                weight,
-                cell_density,
-                0.0,
-                gridder.density_cell_index_with_convention(
-                    lookup_batch.u_lambda[index],
-                    lookup_batch.v_lambda[index],
-                    convention,
-                ),
-            );
+            if trace_weighting {
+                trace_weighting_sample(
+                    index,
+                    batch.u_lambda[index],
+                    batch.v_lambda[index],
+                    weight,
+                    cell_density,
+                    0.0,
+                    gridder.density_cell_index_with_convention(
+                        lookup_batch.u_lambda[index],
+                        lookup_batch.v_lambda[index],
+                        convention,
+                    ),
+                );
+            }
             continue;
         }
         let output_weight = transform(
@@ -459,22 +465,28 @@ fn reweight_batch(
             lookup_batch.u_lambda[index],
             lookup_batch.v_lambda[index],
         );
-        trace_weighting_sample(
-            index,
-            batch.u_lambda[index],
-            batch.v_lambda[index],
-            weight,
-            cell_density,
-            output_weight,
-            gridder.density_cell_index_with_convention(
-                lookup_batch.u_lambda[index],
-                lookup_batch.v_lambda[index],
-                convention,
-            ),
-        );
+        if trace_weighting {
+            trace_weighting_sample(
+                index,
+                batch.u_lambda[index],
+                batch.v_lambda[index],
+                weight,
+                cell_density,
+                output_weight,
+                gridder.density_cell_index_with_convention(
+                    lookup_batch.u_lambda[index],
+                    lookup_batch.v_lambda[index],
+                    convention,
+                ),
+            );
+        }
         reweighted.weight[index] = output_weight;
     }
     reweighted
+}
+
+fn trace_weighting_enabled() -> bool {
+    std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING").is_some()
 }
 
 fn trace_weighting_sample(
@@ -486,9 +498,6 @@ fn trace_weighting_sample(
     output_weight: f32,
     cell: Option<(usize, usize)>,
 ) {
-    if std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING").is_none() {
-        return;
-    }
     let should_trace = index < 16 || (90..=240).contains(&index);
     if !should_trace {
         return;
