@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-19
-Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just docs-check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below
+Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just docs-check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -120,6 +120,9 @@ standard-MFS residual-grid workers are also represented in the same planner:
 when `CASA_RS_STANDARD_MFS_GRID_THREADS` is greater than one, the worker staging
 reserve accounts for thread-local density grids and the two local complex grids
 needed by the combined PSF/dirty workers before assigning prepare-row buffers.
+The core and planner now also accept `CASA_RS_STANDARD_MFS_GRID_THREADS=auto`,
+which expands to the process available-parallelism count in both places so
+worker staging and actual worker allocation remain aligned.
 
 The Rust stage profile now separates clean-loop work beyond the previous
 aggregate `major_cycle_refresh` bucket. New stage medians include
@@ -171,6 +174,9 @@ standard-MFS residual refresh.
 | planner one-buffer default | `32,768` | `1` | `25.808 s` | `12.920 s` | `69.673 s` | `69.629 s` |
 | streaming residual-grid worker prototype | `32,768` | `4` | `27.587 s` | `14.369 s` | `49.416 s` | `49.364 s` |
 | weighting plus combined dirty-grid workers | `32,768` | `4` | `37.234 s` | `24.275 s` | `22.014 s` | `21.973 s` |
+| bounded thread scaling | `32,768` | `8` | `36.280 s` | `21.451 s` | `18.526 s` | `18.477 s` |
+| bounded thread scaling | `32,768` | `10` | `28.253 s` | `15.239 s` | `16.426 s` | `16.388 s` |
+| bounded thread scaling | `32,768` | `auto` | `28.481 s` | `15.290 s` | `18.959 s` | `18.916 s` |
 
 The one-buffer planner default reduced this diagnostic's prepare phase by
 `14.356 s` (`35.7%`) and total frontend runtime by `14.616 s` (`13.3%`). The
@@ -182,7 +188,10 @@ The latest clean-loop medians show that the remaining grid/degrid work is split
 between the initial PSF/dirty pass and the now-threaded residual refresh. After
 threading the owned Briggs density/reweighting path and the initial combined
 PSF/dirty grid, the same bounded workload moved most remaining time back to
-frontend row preparation:
+frontend row preparation. Raising the worker count above the first `4`-worker
+checkpoint still helps, but not linearly; on the local 10-logical-CPU machine
+the bounded `10`-worker run reduced `run_imaging` to `16.426 s`, while
+`auto` landed at `18.959 s` in a later one-repeat run.
 
 | Core stage | Median |
 |---|---:|

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA-style imaging-weight preparation for the pure imaging core.
 
-use std::{env, thread};
+use std::thread;
 
 use ndarray::{Array2, Zip};
 
@@ -48,11 +48,7 @@ enum DensityReweightMode {
 }
 
 fn standard_mfs_worker_threads() -> usize {
-    env::var("CASA_RS_STANDARD_MFS_GRID_THREADS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(1)
+    crate::standard_mfs_thread_count_from_env()
 }
 
 pub(crate) fn apply_weighting(

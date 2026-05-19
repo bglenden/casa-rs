@@ -7626,6 +7626,20 @@ fn env_usize(name: &str) -> Option<usize> {
         .and_then(|value| value.parse::<usize>().ok())
 }
 
+fn env_standard_mfs_grid_threads() -> Option<usize> {
+    env::var("CASA_RS_STANDARD_MFS_GRID_THREADS")
+        .ok()
+        .and_then(|value| parse_standard_mfs_grid_threads(&value))
+}
+
+fn parse_standard_mfs_grid_threads(value: &str) -> Option<usize> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("auto") {
+        return Some(std::thread::available_parallelism().map_or(1, |value| value.get()));
+    }
+    value.parse::<usize>().ok().filter(|value| *value > 0)
+}
+
 fn estimated_image_working_set_bytes(config: &CliConfig) -> usize {
     let pixels = config.imsize.saturating_mul(config.imsize);
     let plane_count = if config.dirty_only || config.niter == 0 {
@@ -7657,7 +7671,7 @@ fn estimated_output_image_working_set_bytes(_config: &CliConfig) -> usize {
 }
 
 fn estimated_worker_staging_bytes(config: &CliConfig) -> usize {
-    let worker_grids = env_usize("CASA_RS_STANDARD_MFS_GRID_THREADS")
+    let worker_grids = env_standard_mfs_grid_threads()
         .filter(|value| *value > 1)
         .unwrap_or(1);
     if worker_grids <= 1 {
@@ -15706,6 +15720,17 @@ mod tests {
         let padded = (padding_factor * image_len as f64 - 0.5).floor() as usize;
         let padded = padded.max(image_len);
         if padded % 2 == 0 { padded } else { padded + 1 }
+    }
+
+    #[test]
+    fn standard_mfs_memory_planner_thread_parser_matches_core_spelling() {
+        assert_eq!(parse_standard_mfs_grid_threads("1"), Some(1));
+        assert_eq!(parse_standard_mfs_grid_threads("10"), Some(10));
+        assert_eq!(parse_standard_mfs_grid_threads(" 8 "), Some(8));
+        assert_eq!(parse_standard_mfs_grid_threads("0"), None);
+        assert_eq!(parse_standard_mfs_grid_threads("many"), None);
+        assert!(parse_standard_mfs_grid_threads("auto").is_some_and(|value| value >= 1));
+        assert!(parse_standard_mfs_grid_threads("AUTO").is_some_and(|value| value >= 1));
     }
 
     fn test_phase_center() -> PhaseCenter {

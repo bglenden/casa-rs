@@ -77,6 +77,7 @@ enum CubePredictionLambdaMode {
 type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
 type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
 const DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES: usize = 8_000_000;
+const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
 
 pub(crate) use cube::{HogbomMinorCycleOutcome, MinorCycleProbe};
 pub use cube::{run_cube, run_dirty_cube};
@@ -680,11 +681,22 @@ fn standard_mfs_executor_max_samples() -> usize {
 }
 
 fn standard_mfs_grid_threads() -> usize {
-    env::var("CASA_RS_STANDARD_MFS_GRID_THREADS")
+    standard_mfs_thread_count_from_env()
+}
+
+fn standard_mfs_thread_count_from_env() -> usize {
+    env::var(STANDARD_MFS_GRID_THREADS_ENV)
         .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
+        .and_then(|value| parse_standard_mfs_thread_count(&value))
         .unwrap_or(1)
+}
+
+fn parse_standard_mfs_thread_count(value: &str) -> Option<usize> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("auto") {
+        return Some(thread::available_parallelism().map_or(1, |value| value.get()));
+    }
+    value.parse::<usize>().ok().filter(|value| *value > 0)
 }
 
 fn standard_mfs_sample_count(batches: &[VisibilityBatch]) -> usize {
@@ -7464,13 +7476,25 @@ mod tests {
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
         make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
         mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
-        mosaic_projector_sampling, peak_abs_value, peak_location_masked, run_cube, run_dirty_cube,
-        run_hogbom_minor_cycle, run_imaging, run_imaging_owned, run_mtmfs,
-        tolerant_clean_stop_reason, trace_cube_channel_residual_refresh,
+        mosaic_projector_sampling, parse_standard_mfs_thread_count, peak_abs_value,
+        peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle, run_imaging,
+        run_imaging_owned, run_mtmfs, tolerant_clean_stop_reason,
+        trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda,
         trace_cube_channel_w_project_plan, trace_cube_weighting, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
+
+    #[test]
+    fn standard_mfs_thread_count_parser_accepts_numeric_and_auto_values() {
+        assert_eq!(parse_standard_mfs_thread_count("1"), Some(1));
+        assert_eq!(parse_standard_mfs_thread_count("10"), Some(10));
+        assert_eq!(parse_standard_mfs_thread_count(" 4 "), Some(4));
+        assert_eq!(parse_standard_mfs_thread_count("0"), None);
+        assert_eq!(parse_standard_mfs_thread_count("not-a-count"), None);
+        assert!(parse_standard_mfs_thread_count("auto").is_some_and(|value| value >= 1));
+        assert!(parse_standard_mfs_thread_count("AUTO").is_some_and(|value| value >= 1));
+    }
 
     #[test]
     fn mosaic_projector_sampling_matches_casa_hetarray_default() {
