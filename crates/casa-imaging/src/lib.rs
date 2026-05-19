@@ -60,7 +60,7 @@ use gridder::{
     hetarray_screen_conv_size_for_support,
 };
 use weighting::{
-    apply_weighting, apply_weighting_with_density_source,
+    apply_weighting, apply_weighting_to_owned_batches, apply_weighting_with_density_source,
     fractional_bandwidth_from_frequency_range, trace_weighting_with_density_source,
 };
 
@@ -434,8 +434,62 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     let weighting_started = Instant::now();
     let weighted_batches = apply_weighting(request, &gridder)?;
     stage_timings.weighting += weighting_started.elapsed();
-    let mut standard_executor = should_use_standard_mfs_executor(request, &weighted_batches)
-        .then(|| StandardMfsCpuExecutor::new(&gridder, &weighted_batches))
+    run_standard_mfs_imaging_with_weighted_batches(
+        request,
+        &weighted_batches,
+        &gridder,
+        stage_timings,
+        total_started,
+    )
+}
+
+/// Run CASA-style standard MFS imaging while consuming the request's visibility batches.
+///
+/// This preserves the borrowed [`run_imaging`] API for general callers, but
+/// lets frontend owners pass prepared batches through weighting without
+/// cloning the full visibility payload.
+pub fn run_imaging_owned(mut request: ImagingRequest) -> Result<ImagingResult, ImagingError> {
+    let total_started = Instant::now();
+    request.validate()?;
+    if request.compatibility != CompatibilityMode::CasaStandardMfs {
+        return Err(ImagingError::Unsupported(
+            "only CASA standard MFS compatibility mode is implemented".to_string(),
+        ));
+    }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "deconvolver='mtmfs' requires the dedicated run_mtmfs() entrypoint".to_string(),
+        ));
+    }
+    if let GridderMode::Mosaic(config) = &request.gridder_mode {
+        return run_mosaic_dirty_imaging(&request, config, total_started);
+    }
+
+    let gridder = StandardGridder::new(request.geometry)?;
+    let mut stage_timings = ImagingStageTimings::default();
+    let weighting_started = Instant::now();
+    let source_batches = std::mem::take(&mut request.visibility_batches);
+    let weighted_batches = apply_weighting_to_owned_batches(&request, &gridder, source_batches)?;
+    stage_timings.weighting += weighting_started.elapsed();
+    request.visibility_batches = weighted_batches;
+    run_standard_mfs_imaging_with_weighted_batches(
+        &request,
+        &request.visibility_batches,
+        &gridder,
+        stage_timings,
+        total_started,
+    )
+}
+
+fn run_standard_mfs_imaging_with_weighted_batches(
+    request: &ImagingRequest,
+    weighted_batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    mut stage_timings: ImagingStageTimings,
+    total_started: Instant,
+) -> Result<ImagingResult, ImagingError> {
+    let mut standard_executor = should_use_standard_mfs_executor(request, weighted_batches)
+        .then(|| StandardMfsCpuExecutor::new(gridder, weighted_batches))
         .transpose()?;
     let [nx, ny] = request.geometry.image_shape;
     let mut model = request
@@ -443,16 +497,15 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
         .clone()
         .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
     let has_initial_model = request.initial_model.is_some();
-    let (psf_state, mut residual) = if request.clean.niter == 0
-        && !has_initial_model
-        && matches!(request.w_term_mode, WTermMode::None)
-    {
+    let can_start_from_combined_dirty_pass =
+        !has_initial_model && matches!(request.w_term_mode, WTermMode::None);
+    let (psf_state, mut residual) = if can_start_from_combined_dirty_pass {
         if let Some(executor) = standard_executor.as_mut() {
             compute_dirty_psf_and_residual_standard_with_executor(executor, &mut stage_timings)?
         } else {
             compute_dirty_psf_and_residual_standard_streaming(
-                &weighted_batches,
-                &gridder,
+                weighted_batches,
+                gridder,
                 &mut stage_timings,
             )?
         }
@@ -460,7 +513,7 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
         let psf_state = if let Some(executor) = standard_executor.as_mut() {
             compute_psf_standard(executor, &mut stage_timings)?
         } else {
-            compute_psf_standard_streaming(&weighted_batches, &gridder, &mut stage_timings)?
+            compute_psf_standard_streaming(weighted_batches, gridder, &mut stage_timings)?
         };
         let residual = if let Some(executor) = standard_executor.as_mut() {
             compute_residual_standard_with_executor(
@@ -472,8 +525,8 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
         } else {
             compute_residual_standard_streaming(
                 request.geometry,
-                &weighted_batches,
-                &gridder,
+                weighted_batches,
+                gridder,
                 &model,
                 &psf_state,
                 false,
@@ -498,8 +551,8 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     let controller_started = Instant::now();
     let clean_state = run_cotton_schwab_controller(
         request,
-        &weighted_batches,
-        &gridder,
+        weighted_batches,
+        gridder,
         &psf_state,
         &mut stage_timings,
         &mut model,
@@ -533,8 +586,7 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     stage_timings.restore += restore_started.elapsed();
     let restored_image = &restored_model + &residual;
 
-    let max_abs_w_lambda = request
-        .visibility_batches
+    let max_abs_w_lambda = weighted_batches
         .iter()
         .flat_map(|batch| batch.w_lambda.iter())
         .fold(0.0f64, |max_value, value| max_value.max(value.abs()));
@@ -7021,8 +7073,8 @@ mod tests {
         make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
         mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
         mosaic_projector_sampling, peak_abs_value, peak_location_masked, run_cube, run_dirty_cube,
-        run_hogbom_minor_cycle, run_imaging, run_mtmfs, tolerant_clean_stop_reason,
-        trace_cube_channel_residual_refresh,
+        run_hogbom_minor_cycle, run_imaging, run_imaging_owned, run_mtmfs,
+        tolerant_clean_stop_reason, trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda,
         trace_cube_channel_w_project_plan, trace_cube_weighting, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
@@ -7357,6 +7409,68 @@ mod tests {
             },
             pointing_direction_rad: vec![[0.0, 0.0]; batch.len()],
         }
+    }
+
+    #[test]
+    fn owned_standard_mfs_briggs_clean_matches_borrowed_run() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [
+            (-95.0, -35.0, 0.0),
+            (-70.0, 40.0, 0.0),
+            (-35.0, -80.0, 0.0),
+            (22.0, 75.0, 0.0),
+            (55.0, -25.0, 0.0),
+            (105.0, 50.0, 0.0),
+        ];
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![point_source_visibilities(
+                &samples,
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (34.0, 30.0),
+                1.0,
+            )],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Briggs { robust: 0.5 },
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 4,
+                gain: 0.2,
+                minor_cycle_length: 2,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+
+        let borrowed = run_imaging(&request).unwrap();
+        let owned = run_imaging_owned(request).unwrap();
+
+        assert_eq!(owned.psf, borrowed.psf);
+        assert_eq!(owned.residual, borrowed.residual);
+        assert_eq!(owned.model, borrowed.model);
+        assert_eq!(owned.image, borrowed.image);
+        assert_eq!(owned.sumwt, borrowed.sumwt);
+        assert_eq!(
+            owned.diagnostics.minor_iterations,
+            borrowed.diagnostics.minor_iterations
+        );
+        assert_eq!(
+            owned.diagnostics.clean_stop_reason,
+            borrowed.diagnostics.clean_stop_reason
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-19
-Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; selected `tools/perf/imager/run_workload.py` runs listed below
+Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; selected `tools/perf/imager/run_workload.py` runs listed below
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -83,8 +83,8 @@ set:
 target/imperformance-wave2/medium-plan-current/workloads/wave1-vla-single-medium-standard-mfs-clean-current.json
 ```
 
-The clean run was intentionally stopped before accepting timing claims because
-the sampled Rust process exposed a separate ownership bottleneck in the
+The first clean run was intentionally stopped before accepting timing claims
+because the sampled Rust process exposed a separate ownership bottleneck in the
 non-streaming clean path:
 
 ```text
@@ -93,11 +93,40 @@ target/imperformance-wave2/full-medium-clean-tracefix/casars-imager-clean-tracef
 
 The sample showed `apply_weighting_with_density_source` cloning full
 `VisibilityBatch` values for Briggs weighting, with the process footprint at
-about `81 GiB`. A smaller sampled issue was fixed in this pass:
-weighting trace now checks `CASA_RS_TRACE_RUST_WEIGHTING` once per weighting
-operation and only computes trace-only density-cell fields when tracing is
-enabled. The full clone-heavy clean path remains a data-ownership decision
-rather than a narrow bug fix.
+about `81 GiB`.
+
+The ownership fix now gives the frontend an owned standard-MFS entrypoint:
+`run_imaging_owned()` moves prepared `VisibilityBatch` values into the imaging
+core and applies Briggs/Uniform weighting by mutating only the weight vectors in
+place after the shared density grid has been built. This preserves the borrowed
+`run_imaging()` API for general callers while avoiding a full visibility-payload
+clone in the high-volume frontend path. Standard MFS clean runs with no initial
+model also start from the existing combined PSF+dirty-residual accumulator,
+avoiding a separate full PSF gridding pass before the first minor cycle.
+
+The frontend row-block sizing heuristic is now represented as a standard-MFS
+memory plan. The same plan that sizes multi-row prepare buffers now records the
+total budget, image working-set reserve, and Briggs/Uniform density-grid
+reserve before assigning the remaining bytes to row-block buffers. This is only
+the first centralization step; future pools still need to account for output
+images, gridded visibility workspaces, and other imaging buffers in the same
+planner.
+
+A diagnostic run after the owned-Briggs change stayed memory-stable instead of
+repeating the `81 GiB` clone spike. It was interrupted before completion because
+the remaining clean runtime is still dominated by full standard-MFS gridding
+passes:
+
+```text
+target/imperformance-wave2/full-medium-clean-owned-briggs-diagnostics/20260519T144727Z-wave1-vla-single-medium-standard-mfs-clean-current-ab62a9d0.json
+```
+
+The captured log reached the end of frontend row preparation at
+`169.595 s`, with the centralized memory plan reporting a `512.0 MiB` total
+budget, `256.0 MiB` image reserve, `16.0 MiB` Briggs density reserve, and
+`240.0 MiB` prepare-buffer budget. The interrupted Rust child was around
+`7.5 GiB` RSS. This confirms the clone fix but does not make the full clean
+workload performance-green.
 
 The stopped clean attempts wrote failed result records only:
 
@@ -105,10 +134,11 @@ The stopped clean attempts wrote failed result records only:
 |---|---|---|---|
 | initial clean benchmark | `target/imperformance-wave2/full-medium-clean/20260519T055802Z-wave1-vla-single-medium-standard-mfs-clean-current-e78b0202.json` | failed | interrupted after a sample showed trace/env overhead plus full-batch clone pressure |
 | trace-fixed clean benchmark | `target/imperformance-wave2/full-medium-clean-tracefix/20260519T061626Z-wave1-vla-single-medium-standard-mfs-clean-current-dbf36763.json` | failed | interrupted after a sample showed the remaining full-batch clone ownership bottleneck |
+| owned-Briggs diagnostic clean benchmark | `target/imperformance-wave2/full-medium-clean-owned-briggs-diagnostics/20260519T144727Z-wave1-vla-single-medium-standard-mfs-clean-current-ab62a9d0.json` | failed | interrupted after memory stayed stable but the clean run remained in expensive full standard-MFS gridding work |
 
-The clean benchmark should not be recorded as performance-green until the core
-clean path can avoid cloning full visibility payloads for reweighting, or until
-that larger ownership/API change is explicitly approved for the wave.
+The clean benchmark should not be recorded as performance-green until the
+remaining full-gridding clean-loop cost is reduced and a complete clean
+comparison passes.
 
 ## Reproduction
 

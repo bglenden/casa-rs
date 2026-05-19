@@ -32,9 +32,10 @@ use casa_imaging::{
     StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsModelPredictor,
     UvTaperSize, VisibilityBatch, VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason,
     WTermMode, WeightDensityMode, WeightingMode, estimate_psf_sidelobe_from_psf,
-    primary_beam_voltage_pattern, restore_standard_mfs_model, run_cube, run_imaging, run_mtmfs,
-    trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
-    trace_cube_channel_w_project_plan, trace_w_project_plan, trace_weighting,
+    primary_beam_voltage_pattern, restore_standard_mfs_model, run_cube, run_imaging,
+    run_imaging_owned, run_mtmfs, trace_cube_channel_residual_refresh,
+    trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
+    trace_w_project_plan, trace_weighting,
 };
 use casa_ms::MeasurementSet;
 #[cfg(test)]
@@ -1525,7 +1526,8 @@ fn run_single_image_from_config_with_gridder_override(
                     let mut dirty_request = common_request.clone();
                     dirty_request.clean = frontend_dirty_clean_config(clean.psf_cutoff);
                     dirty_request.clean_mask = clean_mask.clone();
-                    let dirty = run_imaging(&dirty_request).map_err(|error| error.to_string())?;
+                    let dirty =
+                        run_imaging_owned(dirty_request).map_err(|error| error.to_string())?;
                     clean_mask = Some(build_auto_multithresh_clean_mask(
                         geometry,
                         &dirty.residual,
@@ -1540,7 +1542,7 @@ fn run_single_image_from_config_with_gridder_override(
                     let result = if let Some(dirty) = dirty_seed {
                         dirty
                     } else {
-                        run_imaging(&common_request).map_err(|error| error.to_string())?
+                        run_imaging_owned(common_request).map_err(|error| error.to_string())?
                     };
                     (
                         RunProducts::Mfs(result),
@@ -1550,7 +1552,9 @@ fn run_single_image_from_config_with_gridder_override(
                     let mut request = common_request;
                     request.clean_mask = clean_mask.clone();
                     (
-                        RunProducts::Mfs(run_imaging(&request).map_err(|error| error.to_string())?),
+                        RunProducts::Mfs(
+                            run_imaging_owned(request).map_err(|error| error.to_string())?,
+                        ),
                         clean_mask.map(EffectiveCleanMask::Plane),
                     )
                 }
@@ -1846,7 +1850,7 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
     let selected_channel_count =
         selected_channel_count_estimate_from_table_values(config, &table_values);
     let channel_read_range = selected_channel_read_range_for_standard_mfs(config, &table_values)?;
-    let strategy = standard_mfs_prepare_buffer_strategy(config, selected_channel_count);
+    let strategy = standard_mfs_memory_plan(config, selected_channel_count);
     if frontend_progress_enabled() {
         eprintln!(
             "frontend stage=prepare_plane_input/buffer_strategy rows_total={} row_block_rows={} selected_channels={} worker_buffers={} per_worker_buffer_mib={:.1}",
@@ -1855,6 +1859,13 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
             strategy.selected_channel_count,
             strategy.worker_buffers,
             strategy.per_worker_buffer_bytes as f64 / (1024.0 * 1024.0),
+        );
+        eprintln!(
+            "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} prepare_buffer_mib={:.1}",
+            strategy.total_budget_bytes as f64 / (1024.0 * 1024.0),
+            strategy.image_working_set_bytes as f64 / (1024.0 * 1024.0),
+            strategy.weighting_density_bytes as f64 / (1024.0 * 1024.0),
+            strategy.prepare_buffer_bytes as f64 / (1024.0 * 1024.0),
         );
     }
 
@@ -7050,7 +7061,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
     let selected_channel_count =
         selected_channel_count_estimate_from_table_values(config, &table_values);
     let channel_read_range = selected_channel_read_range_for_standard_mfs(config, &table_values)?;
-    let strategy = standard_mfs_prepare_buffer_strategy(config, selected_channel_count);
+    let strategy = standard_mfs_memory_plan(config, selected_channel_count);
     if frontend_progress_enabled() {
         eprintln!(
             "frontend stage=prepare_plane_input/buffer_strategy rows_total={} row_block_rows={} selected_channels={} worker_buffers={} per_worker_buffer_mib={:.1}",
@@ -7059,6 +7070,13 @@ fn prepare_standard_mfs_input_in_row_blocks(
             strategy.selected_channel_count,
             strategy.worker_buffers,
             strategy.per_worker_buffer_bytes as f64 / (1024.0 * 1024.0),
+        );
+        eprintln!(
+            "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} prepare_buffer_mib={:.1}",
+            strategy.total_budget_bytes as f64 / (1024.0 * 1024.0),
+            strategy.image_working_set_bytes as f64 / (1024.0 * 1024.0),
+            strategy.weighting_density_bytes as f64 / (1024.0 * 1024.0),
+            strategy.prepare_buffer_bytes as f64 / (1024.0 * 1024.0),
         );
     }
 
@@ -7513,17 +7531,21 @@ fn can_prepare_standard_mfs_without_trace(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PrepareBufferStrategy {
+struct StandardMfsMemoryPlan {
     row_block_rows: usize,
     worker_buffers: usize,
     per_worker_buffer_bytes: usize,
+    prepare_buffer_bytes: usize,
+    total_budget_bytes: usize,
+    image_working_set_bytes: usize,
+    weighting_density_bytes: usize,
     selected_channel_count: usize,
 }
 
-fn standard_mfs_prepare_buffer_strategy(
+fn standard_mfs_memory_plan(
     config: &CliConfig,
     selected_channel_count: usize,
-) -> PrepareBufferStrategy {
+) -> StandardMfsMemoryPlan {
     let selected_channel_count = selected_channel_count.max(1);
     let worker_buffers = env_usize("CASA_RS_IMAGING_PREPARE_WORKERS")
         .filter(|value| *value > 0)
@@ -7533,16 +7555,19 @@ fn standard_mfs_prepare_buffer_strategy(
                 .unwrap_or(1)
                 .clamp(1, 4)
         });
-    let total_buffer_bytes = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
+    let total_budget_bytes = DEFAULT_PREPARE_BUFFER_TOTAL_BYTES;
+    let image_working_set_bytes = estimated_image_working_set_bytes(config);
+    let weighting_density_bytes = estimated_weighting_density_working_set_bytes(config);
+    let reserved_bytes = image_working_set_bytes.saturating_add(weighting_density_bytes);
+    let prepare_buffer_bytes = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
         .filter(|value| *value > 0)
         .map(|value| value.saturating_mul(1024 * 1024))
         .unwrap_or_else(|| {
-            let image_reserve = estimated_image_working_set_bytes(config);
-            DEFAULT_PREPARE_BUFFER_TOTAL_BYTES
-                .saturating_sub(image_reserve)
+            total_budget_bytes
+                .saturating_sub(reserved_bytes)
                 .max(64 * 1024 * 1024)
         });
-    let per_worker_buffer_bytes = (total_buffer_bytes / worker_buffers).max(1024 * 1024);
+    let per_worker_buffer_bytes = (prepare_buffer_bytes / worker_buffers).max(1024 * 1024);
     let samples_per_worker =
         (per_worker_buffer_bytes / ESTIMATED_STANDARD_MFS_SAMPLE_BYTES).max(selected_channel_count);
     let heuristic_rows = (samples_per_worker / selected_channel_count)
@@ -7551,10 +7576,14 @@ fn standard_mfs_prepare_buffer_strategy(
         .filter(|value| *value > 0)
         .unwrap_or(heuristic_rows);
 
-    PrepareBufferStrategy {
+    StandardMfsMemoryPlan {
         row_block_rows,
         worker_buffers,
         per_worker_buffer_bytes,
+        prepare_buffer_bytes,
+        total_budget_bytes,
+        image_working_set_bytes,
+        weighting_density_bytes,
         selected_channel_count,
     }
 }
@@ -7573,6 +7602,18 @@ fn estimated_image_working_set_bytes(config: &CliConfig) -> usize {
         16usize
     };
     pixels.saturating_mul(plane_count).saturating_mul(4)
+}
+
+fn estimated_weighting_density_working_set_bytes(config: &CliConfig) -> usize {
+    match config.weighting {
+        WeightingMode::Uniform
+        | WeightingMode::Briggs { .. }
+        | WeightingMode::BriggsBwTaper { .. } => config
+            .imsize
+            .saturating_mul(config.imsize)
+            .saturating_mul(4),
+        WeightingMode::Natural => 0,
+    }
 }
 
 fn load_prepared_selection_table_values(
