@@ -5436,58 +5436,19 @@ fn compute_dirty_psf_and_residual_standard_streaming(
     let [nx, ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
     let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
-    let mut normalization_sumwt = 0.0f64;
-    let mut reported_sumwt = 0.0f64;
-    let mut gridded_samples = 0usize;
-    let mut skipped_samples = 0usize;
 
     let grid_started = Instant::now();
-    for batch in batches {
-        for sample_index in 0..batch.len() {
-            if !batch.gridable[sample_index] {
-                skipped_samples += 1;
-                continue;
-            }
-            let weight = batch.weight[sample_index];
-            let sumwt_factor = batch.sumwt_factor[sample_index];
-            if !(weight.is_finite()
-                && weight > 0.0
-                && sumwt_factor.is_finite()
-                && sumwt_factor > 0.0)
-            {
-                skipped_samples += 1;
-                continue;
-            }
-            let Some(plan) =
-                gridder.plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-            else {
-                skipped_samples += 1;
-                continue;
-            };
-            let grid_weight = f64::from(weight * sumwt_factor);
-            normalization_sumwt += grid_weight;
-            reported_sumwt += grid_weight;
-            gridded_samples += 1;
-            gridder.grid_sample_product_planned_f64(
-                &mut psf_grid,
-                &plan.positive,
-                Complex64::new(grid_weight, 0.0),
-            );
-
-            let observed_visibility = batch.visibility[sample_index];
-            if finite_visibility(observed_visibility) {
-                let residual = Complex64::new(
-                    f64::from(observed_visibility.re) * grid_weight,
-                    f64::from(observed_visibility.im) * grid_weight,
-                );
-                gridder.grid_sample_product_planned_f64(
-                    &mut residual_grid,
-                    &plan.positive,
-                    residual,
-                );
-            }
-        }
-    }
+    let DirtyGridAccumulation {
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+        skipped_samples,
+    } = accumulate_dirty_psf_and_residual_standard_streaming_grid(
+        batches,
+        gridder,
+        &mut psf_grid,
+        &mut residual_grid,
+    )?;
     let grid_elapsed = grid_started.elapsed();
     let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
     stage_timings.psf_grid += split_grid_elapsed;
@@ -5531,6 +5492,134 @@ fn compute_dirty_psf_and_residual_standard_streaming(
         },
         residual,
     ))
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DirtyGridAccumulation {
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+}
+
+impl DirtyGridAccumulation {
+    fn add(&mut self, other: Self) {
+        self.normalization_sumwt += other.normalization_sumwt;
+        self.reported_sumwt += other.reported_sumwt;
+        self.gridded_samples += other.gridded_samples;
+        self.skipped_samples += other.skipped_samples;
+    }
+}
+
+fn accumulate_dirty_psf_and_residual_standard_streaming_grid(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    psf_grid: &mut Array2<Complex64>,
+    residual_grid: &mut Array2<Complex64>,
+) -> Result<DirtyGridAccumulation, ImagingError> {
+    let requested_threads = standard_mfs_grid_threads();
+    let thread_count = requested_threads
+        .min(batches.len())
+        .min(thread::available_parallelism().map_or(1, |value| value.get()))
+        .max(1);
+    if thread_count <= 1 || batches.len() < 2 {
+        return Ok(
+            accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
+                batches,
+                gridder,
+                psf_grid,
+                residual_grid,
+            ),
+        );
+    }
+
+    let [nx, ny] = gridder.grid_shape();
+    let chunk_len = batches.len().div_ceil(thread_count);
+    let mut local_results = Vec::with_capacity(thread_count);
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for (chunk_index, chunk) in batches.chunks(chunk_len).enumerate() {
+            let batch_offset = chunk_index * chunk_len;
+            handles.push(scope.spawn(move || {
+                let mut local_psf_grid = Array2::<Complex64>::zeros((nx, ny));
+                let mut local_residual_grid = Array2::<Complex64>::zeros((nx, ny));
+                let counts = accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
+                    chunk,
+                    gridder,
+                    &mut local_psf_grid,
+                    &mut local_residual_grid,
+                );
+                (batch_offset, local_psf_grid, local_residual_grid, counts)
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("standard MFS dirty grid worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+
+    local_results.sort_by_key(|(batch_offset, _, _, _)| *batch_offset);
+    let mut counts = DirtyGridAccumulation::default();
+    for (_, local_psf_grid, local_residual_grid, local_counts) in &local_results {
+        add_complex64_grid(psf_grid, local_psf_grid);
+        add_complex64_grid(residual_grid, local_residual_grid);
+        counts.add(*local_counts);
+    }
+    Ok(counts)
+}
+
+fn accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    psf_grid: &mut Array2<Complex64>,
+    residual_grid: &mut Array2<Complex64>,
+) -> DirtyGridAccumulation {
+    let mut counts = DirtyGridAccumulation::default();
+    for batch in batches {
+        for sample_index in 0..batch.len() {
+            if !batch.gridable[sample_index] {
+                counts.skipped_samples += 1;
+                continue;
+            }
+            let weight = batch.weight[sample_index];
+            let sumwt_factor = batch.sumwt_factor[sample_index];
+            if !(weight.is_finite()
+                && weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0)
+            {
+                counts.skipped_samples += 1;
+                continue;
+            }
+            let Some(plan) =
+                gridder.plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+            else {
+                counts.skipped_samples += 1;
+                continue;
+            };
+            let grid_weight = f64::from(weight * sumwt_factor);
+            counts.normalization_sumwt += grid_weight;
+            counts.reported_sumwt += grid_weight;
+            counts.gridded_samples += 1;
+            gridder.grid_sample_product_planned_f64(
+                psf_grid,
+                &plan.positive,
+                Complex64::new(grid_weight, 0.0),
+            );
+
+            let observed_visibility = batch.visibility[sample_index];
+            if finite_visibility(observed_visibility) {
+                let residual = Complex64::new(
+                    f64::from(observed_visibility.re) * grid_weight,
+                    f64::from(observed_visibility.im) * grid_weight,
+                );
+                gridder.grid_sample_product_planned_f64(residual_grid, &plan.positive, residual);
+            }
+        }
+    }
+    counts
 }
 
 fn compute_residual(

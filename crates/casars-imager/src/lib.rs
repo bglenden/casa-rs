@@ -7663,11 +7663,18 @@ fn estimated_worker_staging_bytes(config: &CliConfig) -> usize {
     if worker_grids <= 1 {
         return 0;
     }
+    let density_worker_staging = config
+        .imsize
+        .saturating_mul(config.imsize)
+        .saturating_mul(worker_grids)
+        .saturating_mul(std::mem::size_of::<f32>());
     let conservative_padded_side = config.imsize.saturating_mul(13).div_ceil(10);
-    conservative_padded_side
+    let residual_worker_staging = conservative_padded_side
         .saturating_mul(conservative_padded_side)
         .saturating_mul(worker_grids)
         .saturating_mul(std::mem::size_of::<Complex64>())
+        .saturating_mul(2);
+    density_worker_staging.saturating_add(residual_worker_staging)
 }
 
 fn estimated_gpu_staging_bytes() -> usize {

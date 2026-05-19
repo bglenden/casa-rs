@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-19
-Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below
+Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -118,8 +118,8 @@ the budget across not-yet-scheduled worker buffers; `CASA_RS_IMAGING_PREPARE_WOR
 remains an override for explicit experiments. The experimental streaming
 standard-MFS residual-grid workers are also represented in the same planner:
 when `CASA_RS_STANDARD_MFS_GRID_THREADS` is greater than one, the worker staging
-reserve accounts for thread-local residual grids before assigning prepare-row
-buffers.
+reserve accounts for thread-local density grids and the two local complex grids
+needed by the combined PSF/dirty workers before assigning prepare-row buffers.
 
 The Rust stage profile now separates clean-loop work beyond the previous
 aggregate `major_cycle_refresh` bucket. New stage medians include
@@ -170,6 +170,7 @@ standard-MFS residual refresh.
 | pre-planner CPU fix | `8,192` | `1` | `40.164 s` | `27.394 s` | `69.837 s` | `69.781 s` |
 | planner one-buffer default | `32,768` | `1` | `25.808 s` | `12.920 s` | `69.673 s` | `69.629 s` |
 | streaming residual-grid worker prototype | `32,768` | `4` | `27.587 s` | `14.369 s` | `49.416 s` | `49.364 s` |
+| weighting plus combined dirty-grid workers | `32,768` | `4` | `37.234 s` | `24.275 s` | `22.014 s` | `21.973 s` |
 
 The one-buffer planner default reduced this diagnostic's prepare phase by
 `14.356 s` (`35.7%`) and total frontend runtime by `14.616 s` (`13.3%`). The
@@ -178,19 +179,33 @@ streaming residual-grid worker prototype then cut the residual refresh from
 `77.028 s` on the same bounded workload. It remains env-gated while the larger
 full-medium run and deterministic product comparisons are still outstanding.
 The latest clean-loop medians show that the remaining grid/degrid work is split
-between the initial PSF/dirty pass and the now-threaded residual refresh:
+between the initial PSF/dirty pass and the now-threaded residual refresh. After
+threading the owned Briggs density/reweighting path and the initial combined
+PSF/dirty grid, the same bounded workload moved most remaining time back to
+frontend row preparation:
 
 | Core stage | Median |
 |---|---:|
-| `psf_grid` | `18.325 s` |
-| `residual_degrid_grid` | `27.476 s` |
-| `major_cycle_refresh` | `9.206 s` |
+| `weighting` | `0.574 s` |
+| `psf_grid` | `5.148 s` |
+| `residual_degrid_grid` | `14.742 s` |
+| `major_cycle_refresh` | `9.649 s` |
 | `multiscale_scale_refresh` | `0.667 s` |
 | `minor_cycle_solve` | `0.011 s` |
 
-The next Wave 2 optimization target is therefore the remaining initial
-standard-MFS PSF/dirty gridding pass and then full-medium validation of the
-worker prototype, not minor-cycle execution.
+The full 2048-pixel, 512-channel, `niter=2` profile shows the same worker
+changes carry to the full-medium shape:
+
+| Full-shape diagnostic | Grid threads | Weighting | PSF grid | Residual grid total | Major refresh | Run imaging | Frontend total |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| residual-grid workers only | `4` | `440.781 s` | `343.492 s` | `634.129 s` | `291.282 s` | `1546.453 s` | `1725.802 s` |
+| weighting workers | `4` | `125.454 s` | `387.984 s` | `590.097 s` | `202.655 s` | `1238.520 s` | `1406.923 s` |
+| weighting plus combined dirty-grid workers | `4` | `119.135 s` | `195.249 s` | `455.601 s` | `260.904 s` | `917.914 s` | `1088.750 s` |
+
+The next Wave 2 optimization target is therefore the remaining standard-MFS
+grid/degrid traversal inside the full-shape clean path and then deterministic
+product comparison against the single-thread/default path, not minor-cycle
+execution.
 
 The stopped clean attempts wrote failed result records only:
 
