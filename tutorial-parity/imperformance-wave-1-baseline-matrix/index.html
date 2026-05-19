@@ -1,0 +1,1059 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>ImPerformance Wave 1 Baseline Matrix - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imperformance-wave-1-baseline-matrix" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              ImPerformance Wave 1 Baseline Matrix
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#staged-dataset-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Staged Dataset Status
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#blocked-or-skipped-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Blocked Or Skipped Evidence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bottleneck-ledger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bottleneck Ledger
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#follow-on-ranking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Follow-On Ranking
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#harness-fixes-made-during-this-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Harness Fixes Made During This Pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reproduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reproduction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#issue-251-acceptance-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Issue #251 Acceptance Mapping
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imperformance-wave-1-baseline-matrix">ImPerformance Wave 1 Baseline Matrix<a class="headerlink" href="#imperformance-wave-1-baseline-matrix" title="Permanent link">&para;</a></h1>
+<p>Truth class: current descriptive
+Last reality check: 2026-05-19
+Verification: <code>python3 -m unittest tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py</code>; <code>bash -n scripts/bench-imager-vs-casa.sh</code>; <code>tools/perf/imager/stage_wave1_datasets.py --data-root /Volumes/GLENDENNING/casa-rs-imperformance --materialize-workloads --output-dir target/imperformance-wave1/issue251-plan</code>; <code>tools/perf/imager/stage_wave1_datasets.py --data-root /Volumes/GLENDENNING/casa-rs-imperformance --materialize-workloads --output-dir target/imperformance-wave1/issue251-medium-large-plan</code>; selected <code>tools/perf/imager/run_workload.py</code> runs listed below; <code>just docs-check</code>; <code>just quick</code></p>
+<p>Wave issue: #246
+Child issue: #251</p>
+<p>This note records the first <code>casa-rs</code> versus CASA C++ baseline matrix for
+ImPerformance Wave 1. The benchmark runs are manifest-driven through
+<code>tools/perf/imager/run_workload.py</code> and use the deterministic Wave 1
+MeasurementSets staged under:</p>
+<div class="codehilite"><pre><span></span><code>/Volumes/GLENDENNING/casa-rs-imperformance
+</code></pre></div>
+
+<p>The matrix below is a first small-tier baseline plus the first about-memory
+medium probes. The medium and large staged datasets are present on the external
+volume and are listed in this note. Copy staging was unsafe for local disk
+space, but direct staging now produces correctness-green reduced and full-shape
+medium standard-MFS dirty-control results after the standard-MFS preparation path
+was row-blocked, channel-range MS loading was pushed down into table/tile reads,
+and dirty standard-MFS gridding was changed to accumulate row blocks directly
+instead of retaining the full prepared batch set.</p>
+<h2 id="staged-dataset-status">Staged Dataset Status<a class="headerlink" href="#staged-dataset-status" title="Permanent link">&para;</a></h2>
+<p>The following generated MeasurementSets were present under
+<code>/Volumes/GLENDENNING/casa-rs-imperformance/wave1</code> during this pass:</p>
+<table>
+<thead>
+<tr>
+<th>Dataset</th>
+<th>Tier</th>
+<th>Path</th>
+<th>Generation status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wave1-vla-single-small</code></td>
+<td>small</td>
+<td><code>wave1/vla/single/small/ms/wave1-vla-single-small.ms</code></td>
+<td>present</td>
+</tr>
+<tr>
+<td><code>wave1-vla-single-medium</code></td>
+<td>medium</td>
+<td><code>wave1/vla/single/medium/ms/wave1-vla-single-medium.ms</code></td>
+<td>present</td>
+</tr>
+<tr>
+<td><code>wave1-vla-mosaic-small</code></td>
+<td>small</td>
+<td><code>wave1/vla/mosaic/small/ms/wave1-vla-mosaic-small.ms</code></td>
+<td>present</td>
+</tr>
+<tr>
+<td><code>wave1-alma-single-small</code></td>
+<td>small</td>
+<td><code>wave1/alma/single/small/ms/wave1-alma-single-small.ms</code></td>
+<td>present</td>
+</tr>
+<tr>
+<td><code>wave1-alma-single-medium</code></td>
+<td>medium</td>
+<td><code>wave1/alma/single/medium/ms/wave1-alma-single-medium.ms</code></td>
+<td>present</td>
+</tr>
+<tr>
+<td><code>wave1-alma-mosaic-small</code></td>
+<td>small</td>
+<td><code>wave1/alma/mosaic/small/ms/wave1-alma-mosaic-small.ms</code></td>
+<td>present</td>
+</tr>
+<tr>
+<td><code>wave1-alma-mosaic-large</code></td>
+<td>large</td>
+<td><code>wave1/alma/mosaic-large/large/ms/wave1-alma-mosaic-large.ms</code></td>
+<td>present</td>
+</tr>
+</tbody>
+</table>
+<p>The generated workload manifests for this pass were materialized under:</p>
+<div class="codehilite"><pre><span></span><code>target/imperformance-wave1/issue251-plan/workloads/
+</code></pre></div>
+
+<h2 id="matrix">Matrix<a class="headerlink" href="#matrix" title="Permanent link">&para;</a></h2>
+<p>Ratios are <code>casa-rs median / CASA median</code>; values below <code>1.0x</code> mean <code>casa-rs</code>
+was faster for the measured workload. Final small-tier rows use three warm
+repeats and the storage label <code>external-ssd-wave1</code>; direct medium probes use one
+warm repeat because they are about-memory pathfinding evidence.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Dataset</th>
+<th>Shape</th>
+<th>Products</th>
+<th>Result JSON</th>
+<th style="text-align: right;">Rust median</th>
+<th style="text-align: right;">CASA median</th>
+<th style="text-align: right;">Ratio</th>
+<th>Correctness status</th>
+<th>Dominant <code>casa-rs</code> stage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>standard-mfs-dirty-control</code></td>
+<td><code>wave1-vla-single-small</code></td>
+<td>MFS, standard, dirty, <code>512x512</code>, 24 channels, natural, <code>niter=0</code></td>
+<td><code>.image</code>, <code>.residual</code>, <code>.psf</code></td>
+<td><code>target/imperformance-wave1/issue251-final-runs/20260518T143929Z-wave1-vla-single-small-standard-mfs-dirty-control-b6da5434.json</code></td>
+<td style="text-align: right;"><code>2.824 s</code></td>
+<td style="text-align: right;"><code>1.192 s</code></td>
+<td style="text-align: right;"><code>2.37x</code></td>
+<td>GREEN: product deltas near floating noise (<code>image diff_rms_over_casa_rms=7.33e-7</code>)</td>
+<td>frontend/MS preparation (<code>2331 ms</code>), then gridding/degridding (<code>318 ms</code>)</td>
+</tr>
+<tr>
+<td><code>standard-mfs-dirty-row-scaling-probe</code></td>
+<td><code>wave1-vla-single-medium</code></td>
+<td>MFS, standard, dirty, <code>512x512</code>, 24 channels, natural, <code>niter=0</code></td>
+<td><code>.image</code>, <code>.residual</code>, <code>.psf</code></td>
+<td><code>target/imperformance-wave1/issue251-medium-subset-runs/20260519T001809Z-wave1-vla-single-medium-standard-mfs-dirty-row-scaling-probe-927a1ef1.json</code></td>
+<td style="text-align: right;"><code>48.499 s</code></td>
+<td style="text-align: right;"><code>34.369 s</code></td>
+<td style="text-align: right;"><code>1.41x</code></td>
+<td>GREEN: product deltas near floating noise (<code>image diff_rms_over_casa_rms=6.32e-7</code>)</td>
+<td>profiler preparation is dominated by MS/table buffer loading (<code>27500 ms</code>), then buffer adaptation (<code>4438 ms</code>) and gridding/degridding (<code>10472 ms</code>)</td>
+</tr>
+<tr>
+<td><code>standard-mfs-dirty-control</code></td>
+<td><code>wave1-vla-single-medium</code></td>
+<td>MFS, standard, dirty, <code>2048x2048</code>, 512 channels, natural, <code>niter=0</code></td>
+<td><code>.image</code>, <code>.residual</code>, <code>.psf</code></td>
+<td><code>target/imperformance-wave1/issue251-medium-large-runs/20260519T012933Z-wave1-vla-single-medium-standard-mfs-dirty-control-cf33b8e5.json</code></td>
+<td style="text-align: right;"><code>500.239 s</code></td>
+<td style="text-align: right;"><code>503.295 s</code></td>
+<td style="text-align: right;"><code>0.99x</code></td>
+<td>GREEN: sampled product deltas remain small (<code>image diff_rms_over_casa_rms=2.85e-5</code>, <code>psf diff_rms_over_casa_rms=5.62e-4</code>)</td>
+<td>gridding/degridding (<code>310184 ms</code>), then MS/table buffer loading (<code>141913 ms</code>) and buffer adaptation (<code>61297 ms</code>)</td>
+</tr>
+<tr>
+<td><code>standard-mfs-clean-current</code></td>
+<td><code>wave1-vla-single-small</code></td>
+<td>MFS, standard, multiscale clean, <code>512x512</code>, 24 channels, Briggs, <code>niter=25</code></td>
+<td><code>.image</code>, <code>.residual</code>, <code>.psf</code></td>
+<td><code>target/imperformance-wave1/issue251-final-runs/20260518T144020Z-wave1-vla-single-small-standard-mfs-clean-current-d03f4bef.json</code></td>
+<td style="text-align: right;"><code>9.672 s</code></td>
+<td style="text-align: right;"><code>17.240 s</code></td>
+<td style="text-align: right;"><code>0.56x</code></td>
+<td>GREEN: small product deltas (<code>image diff_rms_over_casa_rms=7.22e-5</code>)</td>
+<td>gridding/degridding (<code>4898 ms</code>) and model refresh (<code>4457 ms</code>)</td>
+</tr>
+<tr>
+<td><code>standard-cube-line</code></td>
+<td><code>wave1-alma-single-small</code></td>
+<td>cube, standard, dirty, <code>512x512</code>, 8 channels, natural, <code>niter=0</code></td>
+<td><code>.image</code>, <code>.residual</code>, <code>.psf</code></td>
+<td><code>target/imperformance-wave1/issue251-final-runs/20260518T144336Z-wave1-alma-single-small-standard-cube-line-8b4690e9.json</code></td>
+<td style="text-align: right;"><code>3.901 s</code></td>
+<td style="text-align: right;"><code>1.949 s</code></td>
+<td style="text-align: right;"><code>2.00x</code></td>
+<td>GREEN: product deltas near floating noise (<code>image diff_rms_over_casa_rms=7.25e-7</code>)</td>
+<td>frontend/MS preparation (<code>3264 ms</code>), then gridding/degridding (<code>300 ms</code>)</td>
+</tr>
+<tr>
+<td><code>mosaic-mfs-clean-primary</code></td>
+<td><code>wave1-alma-mosaic-small</code></td>
+<td>MFS, mosaic, multiscale clean, <code>512x512</code>, 8 channels, Briggs, <code>niter=25</code></td>
+<td><code>.image</code>, <code>.residual</code>, <code>.psf</code></td>
+<td><code>target/imperformance-wave1/issue251-final-runs/20260518T144439Z-wave1-alma-mosaic-small-mosaic-mfs-clean-primary-868672a0.json</code></td>
+<td style="text-align: right;"><code>3.784 s</code></td>
+<td style="text-align: right;"><code>5.481 s</code></td>
+<td style="text-align: right;"><code>0.69x</code></td>
+<td>RED: products are not correctness-comparable (<code>image diff_rms_over_casa_rms=0.741</code>)</td>
+<td>model refresh (<code>695 ms</code>), gridding/degridding/PB work, and frontend preparation (<code>866 ms</code>)</td>
+</tr>
+<tr>
+<td><code>mosaic-cube-bounded</code></td>
+<td><code>wave1-alma-mosaic-small</code></td>
+<td>cube, mosaic, dirty, <code>512x512</code>, 8 channels, natural, <code>niter=0</code></td>
+<td><code>.image</code>, <code>.residual</code>, <code>.psf</code></td>
+<td><code>target/imperformance-wave1/issue251-final-runs/20260518T144602Z-wave1-alma-mosaic-small-mosaic-cube-bounded-f6d83157.json</code></td>
+<td style="text-align: right;"><code>1.247 s</code></td>
+<td style="text-align: right;"><code>1.112 s</code></td>
+<td style="text-align: right;"><code>1.12x</code></td>
+<td>RED: products are not correctness-comparable (<code>image diff_rms_over_casa_rms=0.960</code>)</td>
+<td>frontend/MS preparation (<code>961 ms</code>), then FFT/gridding/writeback</td>
+</tr>
+<tr>
+<td><code>mtmfs-wideband-sentinel</code></td>
+<td><code>wave1-alma-single-small</code></td>
+<td>MFS, standard, MT-MFS, <code>512x512</code>, 8 channels, Briggs, <code>nterms=2</code>, <code>niter=25</code></td>
+<td><code>.image.tt0</code>, <code>.residual.tt0</code>, <code>.psf.tt0</code></td>
+<td><code>target/imperformance-wave1/issue251-final-runs/20260518T151913Z-wave1-alma-single-small-mtmfs-wideband-sentinel-869a0934.json</code></td>
+<td style="text-align: right;"><code>12.242 s</code></td>
+<td style="text-align: right;"><code>26.858 s</code></td>
+<td style="text-align: right;"><code>0.46x</code></td>
+<td>GREEN: small Taylor-term product deltas (<code>image.tt0 diff_rms_over_casa_rms=1.97e-4</code>, <code>residual.tt0 diff_rms_over_casa_rms=1.99e-4</code>)</td>
+<td>gridding/degridding (<code>7943 ms</code>), especially major-cycle residual refresh (<code>7146 ms</code>)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="blocked-or-skipped-evidence">Blocked Or Skipped Evidence<a class="headerlink" href="#blocked-or-skipped-evidence" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Medium and large datasets are staged. GLENDENNING had about <code>41 GiB</code> free
+  during the 2026-05-18 probe, enough to read the existing staged datasets but
+  not enough to generate another large dataset or preserve many large product
+  trees on that volume.</li>
+<li>The default copied-staging path is not suitable for about-memory or
+  larger-than-memory rows. It copied the 34.82 GiB VLA medium MS into the local
+  macOS temp directory and drove the local APFS volume to about <code>1.1 GiB</code> free
+  before the run was interrupted.</li>
+<li>Direct MS staging avoids that copy. The direct probe result is
+  <code>target/imperformance-wave1/issue251-medium-large-runs/20260518T192503Z-wave1-vla-single-medium-standard-mfs-dirty-control-de16b84e.json</code>.
+  It failed before timing claims were written: Rust <code>casars-imager</code> was killed
+  with signal 9 after <code>599.263 s</code> while reading/imaging
+  <code>wave1-vla-single-medium</code> as a 2048-pixel, 512-channel standard MFS dirty
+  workload. CASA did not run because the Rust side failed first.</li>
+<li>After row-blocking and channel-range table/tile loading, the full medium
+  dirty-control rerun still failed before timing claims were written:
+  <code>target/imperformance-wave1/issue251-medium-large-runs/20260519T003642Z-wave1-vla-single-medium-standard-mfs-dirty-control-75b7cdad.json</code>.
+  Rust <code>casars-imager</code> was killed with signal 9 after <code>594.060 s</code>; CASA did not
+  run because the Rust side failed first.</li>
+<li>After adding direct dirty standard-MFS row-block accumulation, the full medium
+  dirty-control rerun completed:
+  <code>target/imperformance-wave1/issue251-medium-large-runs/20260519T012933Z-wave1-vla-single-medium-standard-mfs-dirty-control-cf33b8e5.json</code>.
+  It used direct MS staging, reported Rust <code>500.239 s</code> versus CASA <code>503.295 s</code>,
+  and stayed correctness-green on sampled products. Its profiler split reports
+  <code>prepare_plane_input=207834 ms</code>, of which
+  <code>get_ms_values_into_processing_buffer=141913 ms</code> and
+  <code>prepare_processing_buffer=61297 ms</code>; the remaining dominant Rust owner is
+  gridding/degridding at <code>310184 ms</code>.</li>
+<li>Before row-blocked standard-MFS preparation, a smaller direct row-scaling
+  probe against the same medium MS failed before timing claims were written:
+  <code>target/imperformance-wave1/issue251-medium-subset-runs/20260518T195209Z-wave1-vla-single-medium-standard-mfs-dirty-row-scaling-probe-ebd41f0d.json</code>.
+  The first bounded path rerun completed but over-read full tiled visibility
+  cells:
+  <code>target/imperformance-wave1/issue251-medium-subset-runs/20260518T224744Z-wave1-vla-single-medium-standard-mfs-dirty-row-scaling-probe-baabefd0.json</code>.
+  After channel-range loading was pushed down into the selected-row table path,
+  the current completed probe is
+  <code>target/imperformance-wave1/issue251-medium-subset-runs/20260519T001809Z-wave1-vla-single-medium-standard-mfs-dirty-row-scaling-probe-927a1ef1.json</code>.
+  It used a 512-pixel image and 24 channels, reported Rust <code>48.499 s</code> versus
+  CASA <code>34.369 s</code>, and remained correctness-green. Its profiler split shows
+  <code>prepare_plane_input=36084 ms</code>, of which
+  <code>get_ms_values_into_processing_buffer=27500 ms</code> and
+  <code>prepare_processing_buffer=4438 ms</code>.</li>
+<li>MT-MFS with the standard gridder now runs as the Wave 1 wideband sentinel.
+  MT-MFS with <code>gridder='mosaic'</code> is intentionally out of this ticket and is
+  tracked by #262.</li>
+<li>Mosaic MFS and mosaic cube produce timings, but their products are
+  correctness-red against CASA on the generated ALMA mosaic-small dataset.
+  These timings are useful for stage ownership only; they must not be used as
+  correctness-comparable performance claims.</li>
+<li>W-projection and AW/widefield work remain outside this Wave 1 baseline per
+  the mode-selection note and the existing #52 ownership.</li>
+<li>CASA-like <code>parallel</code> and <code>chanchunks</code> remain outside this Wave 1 baseline per
+  #56.</li>
+</ul>
+<h2 id="bottleneck-ledger">Bottleneck Ledger<a class="headerlink" href="#bottleneck-ledger" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Workload family</th>
+<th>Evidence</th>
+<th>Current bottleneck owner</th>
+<th>Follow-up direction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Standard MFS dirty</td>
+<td>Correctness-green, Rust <code>2.37x</code> CASA</td>
+<td>frontend/MS preparation dominates (<code>2331 ms</code> of <code>2676 ms</code> frontend total)</td>
+<td>Optimize row selection/adaptation and prepared-batch construction before changing gridding algorithms for this control case.</td>
+</tr>
+<tr>
+<td>Standard MFS dirty medium</td>
+<td>The bounded and channel-sliced 512-pixel/24-channel direct row-scaling probe completed and is correctness-green, Rust <code>1.41x</code> CASA. The full 2048-pixel/512-channel direct probe now also completes after row-blocked dirty accumulation, Rust <code>0.99x</code> CASA, with sampled product deltas still small.</td>
+<td>full-shape survival is no longer blocked; Rust time is split between gridding/degridding (<code>310184 ms</code>) and standard-MFS preparation (<code>207834 ms</code>)</td>
+<td>Next optimization can target gridding/backend structure and MS preparation throughput separately instead of treating memory survival as the blocker.</td>
+</tr>
+<tr>
+<td>Standard MFS clean</td>
+<td>Correctness-green, Rust <code>0.56x</code> CASA</td>
+<td>imaging core dominates, especially gridding/degridding and model refresh</td>
+<td>Keep as green baseline; later 10x work needs grid/degrid and residual-refresh backend structure, not urgent correctness repair.</td>
+</tr>
+<tr>
+<td>Standard cube dirty</td>
+<td>Correctness-green, Rust <code>2.00x</code> CASA</td>
+<td>frontend/MS preparation dominates (<code>3264 ms</code>)</td>
+<td>Cube follow-up should start with per-channel preparation/dataflow and only then look at core cube gridding.</td>
+</tr>
+<tr>
+<td>Mosaic MFS clean</td>
+<td>Timing runs and is faster than CASA, but correctness-red</td>
+<td>product/correctness parity is the blocker; timing stage owner is model refresh plus mosaic gridding/PB work</td>
+<td>Fix generated-mosaic CASA/Rust comparability before using timing as optimization evidence. If parity turns green, this remains a high-leverage optimization path.</td>
+</tr>
+<tr>
+<td>Mosaic cube bounded</td>
+<td>Timing runs and is close to CASA, but correctness-red</td>
+<td>product/correctness parity is the blocker; frontend dominates the small dirty path</td>
+<td>Treat as a parity/comparability issue before optimizing cube/PB performance.</td>
+</tr>
+<tr>
+<td>MT-MFS sentinel</td>
+<td>Correctness-green, Rust <code>0.46x</code> CASA</td>
+<td>imaging core dominates, especially gridding/degridding and major-cycle residual refresh</td>
+<td>Keep as a green standard-gridder wideband sentinel. Track mosaic/PB-aware MT-MFS separately in #262.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="follow-on-ranking">Follow-On Ranking<a class="headerlink" href="#follow-on-ranking" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Optimize correctness-green standard MFS dirty along two measured boundaries:
+   gridding/degridding is now the largest full-shape medium owner, while
+   <code>get_ms_values_into_processing_buffer</code> and <code>prepare_processing_buffer</code>
+   separately account for most frontend preparation time.</li>
+<li>Fix mosaic generated-data comparability before treating mosaic MFS as the
+   first 10x optimization target. The mode still matters, but #251 evidence
+   shows the current generated ALMA mosaic rows are correctness-red, so timing
+   claims would be misleading.</li>
+<li>Open or use a narrow follow-up for frontend/MS preparation throughput on
+   correctness-green standard MFS dirty and standard cube dirty. The standard
+   MFS split now gives separate evidence for table-buffer loading versus buffer
+   adaptation.</li>
+<li>Keep standard MFS clean as a green benchmark sentinel. It is already faster
+   than CASA on the small generated workload, but the dominant measured stages
+   are exactly the future backend/resource boundaries from the dataflow note:
+   grid/degrid and model refresh.</li>
+<li>Keep MT-MFS standard-gridder coverage as a green sentinel. Mosaic/PB-aware
+   MT-MFS is backlog #262 and should not be hidden inside #251.</li>
+</ol>
+<h2 id="harness-fixes-made-during-this-pass">Harness Fixes Made During This Pass<a class="headerlink" href="#harness-fixes-made-during-this-pass" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>scripts/bench-imager-vs-casa.sh</code> no longer expands an empty
+  <code>phasecenter_args</code> array under <code>set -u</code>; it appends Rust
+  <code>--phasecenter-field</code> only when the manifest sets one.</li>
+<li>The CASA side now passes numeric <code>phasecenter</code> field ids instead of the
+  string <code>FIELD_ID &lt;n&gt;</code>, which CASA rejected for mosaic <code>tclean</code>.</li>
+<li>Generated MT-MFS workload manifests now use <code>deconvolver='mtmfs'</code>,
+  <code>nterms=2</code>, and Taylor-term product suffixes instead of silently measuring a
+  multiscale workload under the MT-MFS mode id.</li>
+<li>Explicit CLI <code>--gridder standard</code> now forces the standard prepared-gridder
+  path for <code>casars-imager</code> and the profiler helper, so the standard-gridder
+  MT-MFS sentinel is not accidentally routed through mosaic/PB preparation.</li>
+<li>The benchmark harness now supports <code>run.ms_staging="direct"</code> or
+  <code>CASA_RS_BENCH_MS_STAGING=direct</code> so medium/large runs can read the staged
+  MS in place instead of copying it into local temp space before timing.</li>
+<li>The benchmark harness no longer forces an unconditional Rust profiler warmup;
+  <code>BENCH_PROFILE_WARMUPS</code> can request one explicitly, but the default avoids
+  duplicating long medium/large Rust passes before collecting stage medians.</li>
+</ul>
+<h2 id="reproduction">Reproduction<a class="headerlink" href="#reproduction" title="Permanent link">&para;</a></h2>
+<p>Regenerate the manifest set:</p>
+<div class="codehilite"><pre><span></span><code>tools/perf/imager/stage_wave1_datasets.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data-root<span class="w"> </span>/Volumes/GLENDENNING/casa-rs-imperformance<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--materialize-workloads<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output-dir<span class="w"> </span>target/imperformance-wave1/issue251-plan
+</code></pre></div>
+
+<p>Run the final small representative matrix:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">for</span><span class="w"> </span>workload<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>target/imperformance-wave1/issue251-plan/workloads/wave1-vla-single-small-standard-mfs-dirty-control.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>target/imperformance-wave1/issue251-plan/workloads/wave1-vla-single-small-standard-mfs-clean-current.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>target/imperformance-wave1/issue251-plan/workloads/wave1-alma-single-small-standard-cube-line.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>target/imperformance-wave1/issue251-plan/workloads/wave1-alma-mosaic-small-mosaic-mfs-clean-primary.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>target/imperformance-wave1/issue251-plan/workloads/wave1-alma-mosaic-small-mosaic-cube-bounded.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>target/imperformance-wave1/issue251-plan/workloads/wave1-alma-single-small-mtmfs-wideband-sentinel.json<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span><span class="nv">CASA_RS_IMPERF_DATA_ROOT</span><span class="o">=</span>/Volumes/GLENDENNING/casa-rs-imperformance<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="nv">CASA_RS_CASA_PYTHON</span><span class="o">=</span>/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>tools/perf/imager/run_workload.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--repeats<span class="w"> </span><span class="m">3</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--run-label<span class="w"> </span>warm-final<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--storage-label<span class="w"> </span>external-ssd-wave1<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--output-dir<span class="w"> </span>target/imperformance-wave1/issue251-final-runs<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="s2">&quot;</span><span class="nv">$workload</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">true</span>
+<span class="k">done</span>
+</code></pre></div>
+
+<p>Run the direct full-shape medium standard-MFS dirty-control probe:</p>
+<div class="codehilite"><pre><span></span><code><span class="nv">CASA_RS_BENCH_MS_STAGING</span><span class="o">=</span>direct<span class="w"> </span><span class="se">\</span>
+<span class="nv">CASA_RS_IMPERF_DATA_ROOT</span><span class="o">=</span>/Volumes/GLENDENNING/casa-rs-imperformance<span class="w"> </span><span class="se">\</span>
+<span class="nv">CASA_RS_CASA_PYTHON</span><span class="o">=</span>/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python<span class="w"> </span><span class="se">\</span>
+tools/perf/imager/run_workload.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--repeats<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--run-label<span class="w"> </span>warm-medium-direct-streaming-dirty<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--storage-label<span class="w"> </span>external-ssd-wave1-medium-direct<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output-dir<span class="w"> </span>target/imperformance-wave1/issue251-medium-large-runs<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>target/imperformance-wave1/issue251-medium-large-plan/workloads/wave1-vla-single-medium-standard-mfs-dirty-control.json
+</code></pre></div>
+
+<h2 id="issue-251-acceptance-mapping">Issue #251 Acceptance Mapping<a class="headerlink" href="#issue-251-acceptance-mapping" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Baseline matrix with dataset, mode, manifest, image shape, channel count,
+  weighting, deconvolver, <code>niter</code>, products, wallclock medians, run count, and
+  storage label: sections "Matrix" and "Reproduction".</li>
+<li>Correctness evidence or blocked reason: sections "Matrix" and "Blocked Or
+  Skipped Evidence".</li>
+<li>Stage timings and dominant subsystems: sections "Matrix" and "Bottleneck
+  Ledger".</li>
+<li>Generated JSON artifacts and reproduction commands: sections "Matrix" and
+  "Reproduction".</li>
+<li>Follow-on optimization ranking: section "Follow-On Ranking".</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -556,17 +556,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#issue-247-acceptance-mapping" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Issue #247 Acceptance Mapping
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -586,8 +575,8 @@
 
 <h1 id="imperformance-wave-1-mode-selection">ImPerformance Wave 1 Mode Selection<a class="headerlink" href="#imperformance-wave-1-mode-selection" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-05-14
-Verification: just docs-check; just quick</p>
+Last reality check: 2026-05-19
+Verification: <code>just docs-check</code>; <code>just quick</code>; #251 baseline evidence in <code>docs/tutorial-parity/imperformance-wave-1-baseline-matrix.md</code></p>
 <p>Wave issue: #246
 Child issue: #247</p>
 <p>This note fixes the first benchmark targets for ImPerformance Wave 1. The goal
@@ -637,9 +626,10 @@ Imaging Workshop signals about common practice:</p>
   clean workloads, not optional embellishments.</li>
 <li>Mosaic imaging is common enough, and expensive enough in current <code>casa-rs</code>
   evidence, to be a primary performance target.</li>
-<li>MT-MFS is important for wideband continuum, but should be a Wave 1 sentinel
-  workload rather than the first optimization target unless baseline evidence
-  makes it dominant.</li>
+<li>MT-MFS is important for wideband continuum, but should be a Wave 1
+  standard-gridder sentinel workload rather than the first optimization target
+  unless baseline evidence makes it dominant. Mosaic/PB-aware MT-MFS is tracked
+  separately in #262.</li>
 <li>W-projection and AW/widefield imaging matter, but the existing #52 surface is
   the right owner for AW/widefield capability. Wave 1 should avoid making #52 a
   hidden prerequisite.</li>
@@ -676,8 +666,8 @@ Imaging Workshop signals about common practice:</p>
 <tr>
 <td><code>mosaic-mfs-clean-primary</code></td>
 <td><code>specmode='mfs'</code>, <code>gridder='mosaic'</code>, multiscale clean, PB products</td>
-<td>Common ALMA/VLA tutorial mode and current high-leverage slow area in <code>casa-rs</code>.</td>
-<td>Primary follow-on optimization target.</td>
+<td>Common ALMA/VLA tutorial mode and historically high-leverage slow area in <code>casa-rs</code>.</td>
+<td>Keep in the matrix, but fix generated-data comparability before using timing as optimization evidence.</td>
 </tr>
 <tr>
 <td><code>mosaic-cube-bounded</code></td>
@@ -687,9 +677,9 @@ Imaging Workshop signals about common practice:</p>
 </tr>
 <tr>
 <td><code>mtmfs-wideband-sentinel</code></td>
-<td><code>specmode='mfs'</code>, <code>deconvolver='mtmfs'</code>, <code>nterms &gt; 1</code></td>
+<td><code>specmode='mfs'</code>, <code>gridder='standard'</code>, <code>deconvolver='mtmfs'</code>, <code>nterms &gt; 1</code></td>
 <td>Current wideband continuum algorithm family; useful to keep in view before backend planning hardens.</td>
-<td>Baseline-only sentinel unless it becomes the dominant bottleneck.</td>
+<td>Baseline-only sentinel unless it becomes the dominant bottleneck; mosaic MT-MFS is backlog #262.</td>
 </tr>
 </tbody>
 </table>
@@ -790,10 +780,10 @@ single-field and mosaic MeasurementSets.</p>
 </tr>
 <tr>
 <td><code>mtmfs-wideband-sentinel</code></td>
-<td>medium, large-shared sentinel</td>
-<td>wideband continuum simulation; large selects from the shared ALMA superset</td>
-<td>2048 to 4096 pixel image; <code>nterms=2</code> initially</td>
-<td>MT-MFS bounded clean; multiscale sentinel if already supported by path</td>
+<td>small, medium</td>
+<td>standard-gridder single-field wideband continuum simulation</td>
+<td>512 to 2048 pixel image; <code>nterms=2</code> initially</td>
+<td>MT-MFS bounded clean</td>
 <td>Taylor-term products, alpha products, timing JSON</td>
 </tr>
 </tbody>
@@ -813,7 +803,7 @@ wallclock. It should fail if it cannot produce trustworthy evidence.</p>
 <tr>
 <td><code>standard-mfs-dirty-control</code></td>
 <td>median wallclock ratio, stage budget, correctness delta</td>
-<td>10x CASA C++ stretch target after backend/workspace work.</td>
+<td>First follow-on optimization target: correctness-green, full medium evidence has the most compute-heavy measured path relative to I/O/preparation.</td>
 </tr>
 <tr>
 <td><code>standard-mfs-clean-current</code></td>
@@ -827,8 +817,8 @@ wallclock. It should fail if it cannot produce trustworthy evidence.</p>
 </tr>
 <tr>
 <td><code>mosaic-mfs-clean-primary</code></td>
-<td>primary bottleneck ledger plus CASA C++ ratio</td>
-<td>First follow-on optimization target because previous evidence showed mosaic/CLEAN slower than CASA and the mode is current practice.</td>
+<td>bottleneck ledger plus CASA C++ ratio when products are correctness-comparable</td>
+<td>High-value follow-on after generated-data comparability is repaired.</td>
 </tr>
 <tr>
 <td><code>mosaic-cube-bounded</code></td>
@@ -838,28 +828,45 @@ wallclock. It should fail if it cannot produce trustworthy evidence.</p>
 <tr>
 <td><code>mtmfs-wideband-sentinel</code></td>
 <td>baseline-only unless unexpectedly dominant</td>
-<td>Keep wideband continuum visible before backend structure hardens.</td>
+<td>Keep standard-gridder wideband continuum visible before backend structure hardens; mosaic MT-MFS is #262.</td>
 </tr>
 </tbody>
 </table>
 <h2 id="first-follow-on-optimization-target">First Follow-On Optimization Target<a class="headerlink" href="#first-follow-on-optimization-target" title="Permanent link">&para;</a></h2>
-<p>The first optimization ticket after Wave 1 should target
-<code>mosaic-mfs-clean-primary</code> unless #251 produces contrary evidence.</p>
+<p>The first optimization ticket after Wave 1 should target the full-shape medium
+<code>standard-mfs-dirty-control</code> workload.</p>
 <p>Rationale:</p>
 <ul>
-<li>Current-practice sources make mosaic imaging a normal <code>tclean</code> workload, not
-  a niche path.</li>
-<li>Existing Wave 7 evidence already showed mosaic/CLEAN workloads slower than
-  CASA C++ while standard MFS dirty imaging was close to CASA.</li>
-<li>The path is likely to exercise the same structural seams needed for later
-  cube, PB, workspace residency, backend, and GPU work.</li>
+<li>
+<h1 id="251-produced-contrary-evidence-to-the-initial-mosaic-first-guess">251 produced contrary evidence to the initial mosaic-first guess:<a class="headerlink" href="#251-produced-contrary-evidence-to-the-initial-mosaic-first-guess" title="Permanent link">&para;</a></h1>
+  generated mosaic MFS and mosaic cube timings exist, but their products are
+  correctness-red against CASA on the current generated ALMA mosaic-small data.
+  Those timings are not a sound optimization target yet.</li>
+<li>The full medium <code>standard-mfs-dirty-control</code> result is correctness-green and
+  directly comparable: Rust <code>500.239 s</code>, CASA <code>503.295 s</code>, ratio <code>0.99x</code>.</li>
+<li>Its measured <code>casa-rs</code> work is compute-heavy enough to give a realistic
+  optimization runway: gridding/degridding accounts for <code>310184 ms</code>, while
+  standard-MFS preparation accounts for <code>207834 ms</code>
+  (<code>get_ms_values_into_processing_buffer=141913 ms</code>,
+  <code>prepare_processing_buffer=61297 ms</code>).</li>
+<li>The mode is structurally simple: single-field, standard gridder, dirty-only,
+  no PB/mosaic correctness ambiguity, no user-visible <code>parallel</code> or
+  <code>chanchunks</code>, and no AW/widefield dependency. That gives the best chance of
+  proving a high-leverage backend/workspace optimization before widening to
+  harder modes.</li>
 </ul>
-<p>The target is workload-level. The implementation path may be CPU dataflow
-repair, GPU/backend preparation, or both, depending on #251 stage evidence. Do
-not assume that CPU-only work can reach the long-term 10x target.</p>
-<p>If #251 shows that the dominant cost is MS/table preparation, image writing, or
-preview generation instead of imaging proper, split the follow-on target before
-optimizing.</p>
+<p>The target is workload-level. The first implementation path should split the
+work into measured subtargets rather than hiding I/O under compute:</p>
+<ol>
+<li>Standard-gridder/degridder backend and workspace optimization for the
+   <code>310184 ms</code> compute owner.</li>
+<li>MS/table buffer loading and processing-buffer preparation throughput for the
+   <code>207834 ms</code> preparation owner.</li>
+<li>Re-run the same full medium workload before claiming any speedup.</li>
+</ol>
+<p>If later reruns show that image writing, preview generation, or another
+non-imaging-core subsystem dominates this workload, split that owner before
+claiming the backend optimization path.</p>
 <h2 id="issue-247-acceptance-mapping">Issue #247 Acceptance Mapping<a class="headerlink" href="#issue-247-acceptance-mapping" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Selected modes, excluded modes, and rationale: this document, sections

@@ -1,0 +1,1120 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Imaging Dataflow Comparison - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#imaging-dataflow-comparison" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Imaging Dataflow Comparison
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#diagram-legend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diagram Legend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conceptual-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conceptual Pipeline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casa-rs-overlay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        casa-rs Overlay
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casa-c-overlay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA C++ Overlay
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#libra-overlay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LibRA Overlay
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stage-comparison" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage Comparison
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-read-split-pressure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How To Read Split Pressure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optimization-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optimization Map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-context-for-circulation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source Context For Circulation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-paths-inspected" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source Paths Inspected
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="imaging-dataflow-comparison">Imaging Dataflow Comparison<a class="headerlink" href="#imaging-dataflow-comparison" title="Permanent link">&para;</a></h1>
+<p>Truth class: exploratory descriptive
+Last reality check: 2026-05-14
+Verification:
+- source inspection only for external CASA C++ and LibRA trees
+- <code>just docs-check</code></p>
+<h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
+<p>This note sketches a diagram family for comparing imaging and gridding dataflow
+across <code>casa-rs</code>, CASA C++, and LibRA. The goal is not only to show where
+visibilities, images, PSFs, models, and products move. It is also to show which
+functions, classes, crates, scripts, and job wrappers own each stage, so the
+diagram can expose refactoring pressure before optimization work starts.</p>
+<p>A plain dataflow diagram is insufficient for that question. The useful diagram
+is a dataflow plus ownership overlay:</p>
+<ul>
+<li>every node names the data transformation and its current owner</li>
+<li>mode splits are explicit: MFS, cube, MTMFS, mosaic, W-projection, and
+  AW-style paths</li>
+<li>resource boundaries are distinct from code organization boundaries</li>
+<li>hot loops and I/O boundaries are tagged for later GPU, thread, and overlap
+  work</li>
+</ul>
+<h2 id="diagram-legend">Diagram Legend<a class="headerlink" href="#diagram-legend" title="Permanent link">&para;</a></h2>
+<p>Colors are defined before the diagrams so that each package overlay can be read
+as both a processing pipeline and an ownership map:</p>
+<ul>
+<li>blue: task, I/O, persistence, or external resource boundary</li>
+<li>green: processing operation or core implementation owner</li>
+<li>purple: mode, projection, gridder, or deconvolution option family</li>
+<li>amber: likely hot path for later profiling and optimization</li>
+<li>rose: refactoring pressure, especially control-flow-only splits</li>
+</ul>
+<h2 id="conceptual-pipeline">Conceptual Pipeline<a class="headerlink" href="#conceptual-pipeline" title="Permanent link">&para;</a></h2>
+<p>This is the common imaging pipeline that the three implementations can be
+projected onto.</p>
+<div class="codehilite"><pre><span></span><code><span class="nx">flowchart</span><span class="w"> </span><span class="nx">LR</span>
+<span class="w">    </span><span class="nx">request</span><span class="p">[</span><span class="s">&quot;Task setup&lt;br/&gt;mode, gridder, deconvolver, products&quot;</span><span class="p">]</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">select</span><span class="p">[</span><span class="s">&quot;MS read and selection&lt;br/&gt;field, SPW, rows, data column&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">select</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">prep</span><span class="p">[</span><span class="s">&quot;Flagging and sample preparation&lt;br/&gt;uvw, frequency, Stokes, weights&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">prep</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">density</span><span class="p">[</span><span class="s">&quot;Weighting&lt;br/&gt;natural, uniform, Briggs, taper&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">prep</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">projection</span><span class="p">[</span><span class="s">&quot;Projection kernel choice&lt;br/&gt;standard, W, mosaic/A, AW&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">density</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">gridloop</span><span class="p">[</span><span class="s">&quot;Gridding and degridding&lt;br/&gt;put/get visibility samples&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">projection</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">gridloop</span>
+<span class="w">    </span><span class="nx">gridloop</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">fft</span><span class="p">[</span><span class="s">&quot;FFT and inverse FFT&lt;br/&gt;grid/image-domain transform&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">fft</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">normalize</span><span class="p">[</span><span class="s">&quot;Image normalization&lt;br/&gt;sumwt, flat-noise, PB weight&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">normalize</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">dirty</span><span class="p">[</span><span class="s">&quot;Dirty, PSF, residual images&lt;br/&gt;beam fit and diagnostics&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">dirty</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">minor</span><span class="p">[</span><span class="s">&quot;Deconvolution&lt;br/&gt;Hogbom, Clark, multiscale, MTMFS&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">minor</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">refresh</span><span class="p">[</span><span class="s">&quot;Major-cycle refresh&lt;br/&gt;model prediction, residual gridding&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">refresh</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">minor</span>
+<span class="w">    </span><span class="nx">minor</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">restore</span><span class="p">[</span><span class="s">&quot;Restoration and PB correction&lt;br/&gt;restoring beam, pbcor, masks&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">restore</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">products</span><span class="p">[</span><span class="s">&quot;Product persistence&lt;br/&gt;image tables, previews, MODEL_DATA&quot;</span><span class="p">]</span>
+
+<span class="w">    </span><span class="nx">classDef</span><span class="w"> </span><span class="nx">hot</span><span class="w"> </span><span class="nx">fill</span><span class="p">:</span><span class="err">#</span><span class="nx">ffe8cc</span><span class="p">,</span><span class="nx">stroke</span><span class="p">:</span><span class="err">#</span><span class="mi">9</span><span class="nx">a5b00</span><span class="p">,</span><span class="nx">color</span><span class="p">:</span><span class="err">#</span><span class="mi">1</span><span class="nx">f1f1f</span><span class="p">;</span>
+<span class="w">    </span><span class="nx">classDef</span><span class="w"> </span><span class="nx">io</span><span class="w"> </span><span class="nx">fill</span><span class="p">:</span><span class="err">#</span><span class="nx">e7f0ff</span><span class="p">,</span><span class="nx">stroke</span><span class="p">:</span><span class="err">#</span><span class="mi">315</span><span class="nx">f9b</span><span class="p">,</span><span class="nx">color</span><span class="p">:</span><span class="err">#</span><span class="mi">1</span><span class="nx">f1f1f</span><span class="p">;</span>
+<span class="w">    </span><span class="nx">classDef</span><span class="w"> </span><span class="nx">op</span><span class="w"> </span><span class="nx">fill</span><span class="p">:</span><span class="err">#</span><span class="nx">e9f8e5</span><span class="p">,</span><span class="nx">stroke</span><span class="p">:</span><span class="err">#</span><span class="mi">3</span><span class="nx">c7a36</span><span class="p">,</span><span class="nx">color</span><span class="p">:</span><span class="err">#</span><span class="mi">1</span><span class="nx">f1f1f</span><span class="p">;</span>
+<span class="w">    </span><span class="nx">classDef</span><span class="w"> </span><span class="nx">mode</span><span class="w"> </span><span class="nx">fill</span><span class="p">:</span><span class="err">#</span><span class="nx">f0e7ff</span><span class="p">,</span><span class="nx">stroke</span><span class="p">:</span><span class="err">#</span><span class="mi">6846</span><span class="nx">a3</span><span class="p">,</span><span class="nx">color</span><span class="p">:</span><span class="err">#</span><span class="mi">1</span><span class="nx">f1f1f</span><span class="p">;</span>
+<span class="w">    </span><span class="kd">class</span><span class="w"> </span><span class="nx">request</span><span class="p">,</span><span class="nx">select</span><span class="p">,</span><span class="nx">products</span><span class="w"> </span><span class="nx">io</span><span class="p">;</span>
+<span class="w">    </span><span class="kd">class</span><span class="w"> </span><span class="nx">prep</span><span class="p">,</span><span class="nx">dirty</span><span class="p">,</span><span class="nx">restore</span><span class="w"> </span><span class="nx">op</span><span class="p">;</span>
+<span class="w">    </span><span class="kd">class</span><span class="w"> </span><span class="nx">projection</span><span class="p">,</span><span class="nx">minor</span><span class="w"> </span><span class="nx">mode</span><span class="p">;</span>
+<span class="w">    </span><span class="kd">class</span><span class="w"> </span><span class="nx">density</span><span class="p">,</span><span class="nx">gridloop</span><span class="p">,</span><span class="nx">fft</span><span class="p">,</span><span class="nx">normalize</span><span class="p">,</span><span class="nx">refresh</span><span class="w"> </span><span class="nx">hot</span><span class="p">;</span>
+</code></pre></div>
+
+<h2 id="casa-rs-overlay"><code>casa-rs</code> Overlay<a class="headerlink" href="#casa-rs-overlay" title="Permanent link">&para;</a></h2>
+<p>The current Rust structure has a useful hard boundary: <code>casa-imaging</code> is a pure
+core that consumes prepared batches and emits products, while <code>casars-imager</code>
+owns MeasurementSet I/O, mode routing, coordinates, masks, and product writing.
+Most near-term collapse pressure is therefore in the adapter/orchestration
+layer, not in the pure core boundary.</p>
+<div class="codehilite"><pre><span></span><code><span class="nt">flowchart</span><span class="w"> </span><span class="nt">TB</span>
+<span class="w">    </span><span class="nt">surface</span><span class="cp">[</span><span class="s2">&quot;Task/API surfaces&lt;br/&gt;Python mfs(), CLI/JSON, GUI task tab&quot;</span><span class="cp">]</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">runconfig</span><span class="cp">[</span><span class="s2">&quot;Request validation and mode dispatch&lt;br/&gt;casars-imager::run_from_config()&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">runconfig</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">readms</span><span class="cp">[</span><span class="s2">&quot;MS read, row/channel selection, flagging&lt;br/&gt;prepare_plane_input_inner()&lt;br/&gt;DATA, FLAG, WEIGHT, WEIGHT_SPECTRUM&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">readms</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">prep</span><span class="cp">[</span><span class="s2">&quot;Prepared visibility samples&lt;br/&gt;MFS or cube batches&lt;br/&gt;uvw, frequency, Stokes, PB metadata&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">prep</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">dispatch</span><span class="cp">[</span><span class="s2">&quot;Processing-mode dispatch&lt;br/&gt;adapter-owned control-flow split&quot;</span><span class="cp">]</span>
+
+<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mfs</span><span class="cp">[</span><span class="s2">&quot;MFS imaging operations&lt;br/&gt;run_imaging()&lt;br/&gt;standard/W-term path and mosaic branch&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mtmfs</span><span class="cp">[</span><span class="s2">&quot;MTMFS Taylor-term operations&lt;br/&gt;run_mtmfs()&lt;br/&gt;separate core entrypoint, standard gridder only&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">cube</span><span class="cp">[</span><span class="s2">&quot;Standard cube plane loop&lt;br/&gt;run_cube()&lt;br/&gt;per-channel calls into run_imaging()&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">dispatch</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mcube</span><span class="cp">[</span><span class="s2">&quot;Mosaic cube plane loop&lt;br/&gt;run_frontend_cube()&lt;br/&gt;frontend-owned per-channel calls into run_imaging()&quot;</span><span class="cp">]</span>
+
+<span class="w">    </span><span class="nt">cube</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mfs</span>
+<span class="w">    </span><span class="nt">mcube</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mfs</span>
+<span class="w">    </span><span class="nt">mfs</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">weighting</span><span class="cp">[</span><span class="s2">&quot;Weighting&lt;br/&gt;apply_weighting*()&lt;br/&gt;natural, uniform, Briggs, uv taper&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">mtmfs</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">weighting</span>
+<span class="w">    </span><span class="nt">weighting</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">stdproj</span><span class="cp">[</span><span class="s2">&quot;Standard/W projection gridding&lt;br/&gt;StandardGridder + WTermMode&lt;br/&gt;none, direct, wproject&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">weighting</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">mosaicproj</span><span class="cp">[</span><span class="s2">&quot;Mosaic PB projection gridding&lt;br/&gt;MosaicGridderConfig + ScreenProjector&lt;br/&gt;homogeneous PB, beam buckets, pblimit&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">stdproj</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">fft</span><span class="cp">[</span><span class="s2">&quot;FFT and gridded image transforms&lt;br/&gt;centered_fft2 / centered_ifft2&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">mosaicproj</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">fft</span>
+<span class="w">    </span><span class="nt">fft</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">normalize</span><span class="cp">[</span><span class="s2">&quot;Normalization and image products&lt;br/&gt;sumwt, PSF, residual, model, restored image&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">normalize</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">deconv</span><span class="cp">[</span><span class="s2">&quot;Deconvolution controller&lt;br/&gt;Cotton-Schwab major/minor loop&lt;br/&gt;Hogbom, Clark, Multiscale&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">deconv</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">refresh</span><span class="cp">[</span><span class="s2">&quot;Residual refresh and model prediction&lt;br/&gt;degrid model, grid residual&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">refresh</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">deconv</span>
+<span class="w">    </span><span class="nt">deconv</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">result</span><span class="cp">[</span><span class="s2">&quot;Result objects&lt;br/&gt;ImagingResult, MtmfsResult, CubeImagingResult&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">result</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">write</span><span class="cp">[</span><span class="s2">&quot;Product emission&lt;br/&gt;write_products()&lt;br/&gt;image/model/residual/PSF/sumwt/PB/pbcor/mask/previews&quot;</span><span class="cp">]</span>
+<span class="w">    </span><span class="nt">result</span><span class="w"> </span><span class="nt">--</span><span class="o">&gt;</span><span class="w"> </span><span class="nt">modelcol</span><span class="cp">[</span><span class="s2">&quot;MODEL_DATA writeback&lt;br/&gt;write_model_column()&quot;</span><span class="cp">]</span>
+
+<span class="w">    </span><span class="nt">classDef</span><span class="w"> </span><span class="nt">io</span><span class="w"> </span><span class="nt">fill</span><span class="o">:</span><span class="p">#</span><span class="nn">e7f0ff</span><span class="o">,</span><span class="nt">stroke</span><span class="o">:</span><span class="p">#</span><span class="nn">315f9b</span><span class="o">,</span><span class="nt">color</span><span class="o">:</span><span class="p">#</span><span class="nn">1f1f1f</span><span class="o">;</span>
+<span class="w">    </span><span class="nt">classDef</span><span class="w"> </span><span class="nt">op</span><span class="w"> </span><span class="nt">fill</span><span class="o">:</span><span class="p">#</span><span class="nn">e9f8e5</span><span class="o">,</span><span class="nt">stroke</span><span class="o">:</span><span class="p">#</span><span class="nn">3c7a36</span><span class="o">,</span><span class="nt">color</span><span class="o">:</span><span class="p">#</span><span class="nn">1f1f1f</span><span class="o">;</span>
+<span class="w">    </span><span class="nt">classDef</span><span class="w"> </span><span class="nt">mode</span><span class="w"> </span><span class="nt">fill</span><span class="o">:</span><span class="p">#</span><span class="nn">f0e7ff</span><span class="o">,</span><span class="nt">stroke</span><span class="o">:</span><span class="p">#</span><span class="nn">6846a3</span><span class="o">,</span><span class="nt">color</span><span class="o">:</span><span class="p">#</span><span class="nn">1f1f1f</span><span class="o">;</span>
+<span class="w">    </span><span class="nt">classDef</span><span class="w"> </span><span class="nt">hot</span><span class="w"> </span><span class="nt">fill</span><span class="o">:</span><span class="p">#</span><span class="nn">ffe8cc</span><span class="o">,</span><span class="nt">stroke</span><span class="o">:</span><span class="p">#</span><span class="nn">9a5b00</span><span class="o">,</span><span class="nt">color</span><span class="o">:</span><span class="p">#</span><span class="nn">1f1f1f</span><span class="o">;</span>
+<span class="w">    </span><span class="nt">classDef</span><span class="w"> </span><span class="nt">pressure</span><span class="w"> </span><span class="nt">fill</span><span class="o">:</span><span class="p">#</span><span class="nn">fdebed</span><span class="o">,</span><span class="nt">stroke</span><span class="o">:</span><span class="p">#</span><span class="nn">bd6370</span><span class="o">,</span><span class="nt">color</span><span class="o">:</span><span class="p">#</span><span class="nn">1f1f1f</span><span class="o">;</span>
+<span class="w">    </span><span class="nt">class</span><span class="w"> </span><span class="nt">surface</span><span class="o">,</span><span class="nt">readms</span><span class="o">,</span><span class="nt">write</span><span class="o">,</span><span class="nt">modelcol</span><span class="w"> </span><span class="nt">io</span><span class="o">;</span>
+<span class="w">    </span><span class="nt">class</span><span class="w"> </span><span class="nt">runconfig</span><span class="o">,</span><span class="nt">prep</span><span class="o">,</span><span class="nt">result</span><span class="w"> </span><span class="nt">op</span><span class="o">;</span>
+<span class="w">    </span><span class="nt">class</span><span class="w"> </span><span class="nt">mfs</span><span class="o">,</span><span class="nt">mtmfs</span><span class="o">,</span><span class="nt">cube</span><span class="o">,</span><span class="nt">mcube</span><span class="o">,</span><span class="nt">stdproj</span><span class="o">,</span><span class="nt">mosaicproj</span><span class="o">,</span><span class="nt">deconv</span><span class="w"> </span><span class="nt">mode</span><span class="o">;</span>
+<span class="w">    </span><span class="nt">class</span><span class="w"> </span><span class="nt">weighting</span><span class="o">,</span><span class="nt">fft</span><span class="o">,</span><span class="nt">normalize</span><span class="o">,</span><span class="nt">refresh</span><span class="w"> </span><span class="nt">hot</span><span class="o">;</span>
+<span class="w">    </span><span class="nt">class</span><span class="w"> </span><span class="nt">dispatch</span><span class="o">,</span><span class="nt">mcube</span><span class="o">,</span><span class="nt">write</span><span class="w"> </span><span class="nt">pressure</span><span class="o">;</span>
+</code></pre></div>
+
+<p>Refactoring signals visible here:</p>
+<ul>
+<li><code>casars-imager</code> owns preparation, mode dispatch, cube orchestration,
+  coordinate construction, masks, product writing, and model-column writing.
+  That is a large adapter surface even though the pure core boundary is clean.</li>
+<li>The cube split is meaningful for standard cube imaging, but the mosaic cube
+  path loops in the frontend and repeatedly calls MFS <code>run_imaging()</code>. That is a
+  likely future target for a shared <code>PlaneRunPlan</code> or <code>CubeModeRunner</code>.</li>
+<li>Gridder terminology is split across Python task input (<code>standard</code>,
+  <code>wproject</code>, <code>mosaic</code>, <code>awproject</code>, <code>awp2</code>, <code>awphpg</code>) and the Rust core
+  (<code>GridderMode::Standard</code>, <code>GridderMode::Mosaic</code>, plus <code>WTermMode</code>). That split
+  is currently manageable because unsupported modes fail clearly, but it is a
+  place where mode semantics can drift.</li>
+<li>Product writing is branch-heavy because MFS, MTMFS, cube, PB, PB-corrected,
+  preview, and mask products are all assembled in one output path.</li>
+</ul>
+<h2 id="casa-c-overlay">CASA C++ Overlay<a class="headerlink" href="#casa-c-overlay" title="Permanent link">&para;</a></h2>
+<p>CASA C++ is intentionally layered. The Python <code>tclean</code> task and helper classes
+own task-level control, the <code>synthesisimager</code> tool exposes the C++ imager
+object, and <code>SynthesisImager</code> delegates actual image and visibility operations
+through mapper, image-store, normalizer, deconvolver, and FTMachine families.
+The split is large, but much of it corresponds to semantic or runtime
+boundaries rather than simple accidental fragmentation.</p>
+<div class="codehilite"><pre><span></span><code><span class="n">flowchart</span><span class="w"> </span><span class="n">TB</span>
+<span class="w">    </span><span class="n">task</span><span class="p">[</span><span class="s2">&quot;Task setup and parameter expansion&lt;br/&gt;task_tclean.py + ImagerParameters&quot;</span><span class="p">]</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">helper</span><span class="p">[</span><span class="s2">&quot;Task-level processing control&lt;br/&gt;PySynthesisImager&lt;br/&gt;makePSF(), runMajorCycle(), runMinorCycle()&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">helper</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">simager</span><span class="p">[</span><span class="s2">&quot;Imager orchestration&lt;br/&gt;casatools.synthesisimager -&gt; SynthesisImager&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">simager</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">select</span><span class="p">[</span><span class="s2">&quot;MS selection and iterator setup&lt;br/&gt;selectData(), tuneSelectData()&lt;br/&gt;VisibilityIterator / VisBuffer&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">simager</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">image</span><span class="p">[</span><span class="s2">&quot;Image definition and stores&lt;br/&gt;defineImage(), SIImageStore family&lt;br/&gt;model, residual, PSF, weight, PB&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">simager</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">weighting</span><span class="p">[</span><span class="s2">&quot;Weighting setup&lt;br/&gt;setWeighting(), imaging weights&quot;</span><span class="p">]</span>
+
+<span class="w">    </span><span class="n">weighting</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">gridft</span><span class="p">[</span><span class="s2">&quot;Standard gridding&lt;br/&gt;GridFT&lt;br/&gt;separate FTMachine class&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">weighting</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">wproj</span><span class="p">[</span><span class="s2">&quot;W-projection gridding&lt;br/&gt;WProjectFT&lt;br/&gt;separate FTMachine class&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">weighting</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">mosaic</span><span class="p">[</span><span class="s2">&quot;Mosaic / A-projection gridding&lt;br/&gt;MosaicFT / MosaicFTNew&lt;br/&gt;separate FTMachine classes&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">weighting</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">awproj</span><span class="p">[</span><span class="s2">&quot;AW-projection gridding&lt;br/&gt;AWProjectFT / AWProjectWBFT&lt;br/&gt;separate FTMachine classes&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">weighting</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">mtwrap</span><span class="p">[</span><span class="s2">&quot;MTMFS wrapping&lt;br/&gt;MultiTermFT / NewMultiTermFT&lt;br/&gt;wraps selected FTMachine&quot;</span><span class="p">]</span>
+
+<span class="w">    </span><span class="n">gridft</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">cfstd</span><span class="p">[</span><span class="s2">&quot;Standard convolution&lt;br/&gt;prolate/SF-style kernels&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">wproj</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">cfw</span><span class="p">[</span><span class="s2">&quot;W-term convolution functions&lt;br/&gt;WOnlyConvFunc / WPConvFunc&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">mosaic</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">cfpb</span><span class="p">[</span><span class="s2">&quot;PB convolution functions&lt;br/&gt;SimplePBConvFunc / HetArrayConvFunc&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">awproj</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">cfaw</span><span class="p">[</span><span class="s2">&quot;AW convolution functions&lt;br/&gt;AWConvFunc / AWConvFuncEPJones&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">mtwrap</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">mapper</span>
+<span class="w">    </span><span class="n">cfstd</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">mapper</span><span class="p">[</span><span class="s2">&quot;Grid/degrid execution&lt;br/&gt;SIMapperCollection / SIMapper&lt;br/&gt;initialize, grid, degrid, finalize&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">cfw</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">mapper</span>
+<span class="w">    </span><span class="n">cfpb</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">mapper</span>
+<span class="w">    </span><span class="n">cfaw</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">mapper</span>
+<span class="w">    </span><span class="n">select</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">mapper</span>
+<span class="w">    </span><span class="n">image</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">mapper</span>
+<span class="w">    </span><span class="n">mapper</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">fft</span><span class="p">[</span><span class="s2">&quot;FFT, grid finalization, normalization&lt;br/&gt;FTMachine + SIImageStore + synthesisnormalizer&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">fft</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">dirty</span><span class="p">[</span><span class="s2">&quot;Dirty, PSF, residual, PB products&lt;br/&gt;gather/divide/normalize by mode&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">dirty</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">deconv</span><span class="p">[</span><span class="s2">&quot;Deconvolution&lt;br/&gt;synthesisdeconvolver&lt;br/&gt;Hogbom, Clark, multiscale, MTMFS&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">deconv</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">predict</span><span class="p">[</span><span class="s2">&quot;Major-cycle model prediction&lt;br/&gt;predictModel(), degrid model, grid residual&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">predict</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">deconv</span>
+<span class="w">    </span><span class="n">deconv</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">restore</span><span class="p">[</span><span class="s2">&quot;Restoration and PB correction&lt;br/&gt;restoreImages(), pbcorImages()&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="n">restore</span><span class="w"> </span><span class="o">--&gt;</span><span class="w"> </span><span class="n">products</span><span class="p">[</span><span class="s2">&quot;CASA image-table products&lt;br/&gt;image, model, residual, PSF, PB, pbcor, masks, history&quot;</span><span class="p">]</span>
+
+<span class="w">    </span><span class="n">classDef</span><span class="w"> </span><span class="n">io</span><span class="w"> </span><span class="n">fill</span><span class="p">:</span><span class="c1">#e7f0ff,stroke:#315f9b,color:#1f1f1f;</span>
+<span class="w">    </span><span class="n">classDef</span><span class="w"> </span><span class="n">op</span><span class="w"> </span><span class="n">fill</span><span class="p">:</span><span class="c1">#e9f8e5,stroke:#3c7a36,color:#1f1f1f;</span>
+<span class="w">    </span><span class="n">classDef</span><span class="w"> </span><span class="n">mode</span><span class="w"> </span><span class="n">fill</span><span class="p">:</span><span class="c1">#f0e7ff,stroke:#6846a3,color:#1f1f1f;</span>
+<span class="w">    </span><span class="n">classDef</span><span class="w"> </span><span class="n">hot</span><span class="w"> </span><span class="n">fill</span><span class="p">:</span><span class="c1">#ffe8cc,stroke:#9a5b00,color:#1f1f1f;</span>
+<span class="w">    </span><span class="k">class</span><span class="w"> </span><span class="n">task</span><span class="p">,</span><span class="n">select</span><span class="p">,</span><span class="n">products</span><span class="w"> </span><span class="n">io</span><span class="p">;</span>
+<span class="w">    </span><span class="k">class</span><span class="w"> </span><span class="n">helper</span><span class="p">,</span><span class="n">simager</span><span class="p">,</span><span class="n">image</span><span class="p">,</span><span class="n">dirty</span><span class="p">,</span><span class="n">restore</span><span class="w"> </span><span class="n">op</span><span class="p">;</span>
+<span class="w">    </span><span class="k">class</span><span class="w"> </span><span class="n">gridft</span><span class="p">,</span><span class="n">wproj</span><span class="p">,</span><span class="n">mosaic</span><span class="p">,</span><span class="n">awproj</span><span class="p">,</span><span class="n">mtwrap</span><span class="p">,</span><span class="n">cfstd</span><span class="p">,</span><span class="n">cfw</span><span class="p">,</span><span class="n">cfpb</span><span class="p">,</span><span class="n">cfaw</span><span class="p">,</span><span class="n">deconv</span><span class="w"> </span><span class="n">mode</span><span class="p">;</span>
+<span class="w">    </span><span class="k">class</span><span class="w"> </span><span class="n">weighting</span><span class="p">,</span><span class="n">mapper</span><span class="p">,</span><span class="n">fft</span><span class="p">,</span><span class="n">predict</span><span class="w"> </span><span class="n">hot</span><span class="p">;</span>
+</code></pre></div>
+
+<p>Refactoring signals visible here:</p>
+<ul>
+<li>CASA C++ is useful as a semantic oracle, not as a direct shape to copy into
+  Rust. Its object graph is broad because it supports many historical modes,
+  tool boundaries, parallel helpers, image-store variants, and CF-cache flows.</li>
+<li>The <code>FTMachine</code> polymorphic family is the key mode boundary for standard,
+  W-projection, mosaic/A-projection, AW-projection, and multi-term behavior.</li>
+<li>The helper layer intentionally normalizes some products in Python for MFS and
+  MTMFS while cube normalization is handled in C++. That is a mode-specific
+  ownership split to understand before mirroring any behavior.</li>
+<li>The <code>SynthesisImager::runMajorCycle()</code> loop is the central dataflow bridge:
+  iterate <code>VisBuffer</code>, optionally degrid/predict model, grid observed or
+  residual data, then finalize mapper images.</li>
+</ul>
+<h2 id="libra-overlay">LibRA Overlay<a class="headerlink" href="#libra-overlay" title="Permanent link">&para;</a></h2>
+<p>LibRA carries much of the CASA synthesis vocabulary, but the distinctive split
+is at the workflow and resource boundary. <code>htcimager</code> and the ImageSolver
+wrappers decompose imaging into job modes such as weight, PSF, residual, model,
+gather, normalize, restore, and dirty image. Below that, LibRA keeps transform
+machine and image-sky-model families and adds explicit algorithm classes and
+threaded resamplers.</p>
+<div class="codehilite"><pre><span></span><code><span class="nx">flowchart</span><span class="w"> </span><span class="nx">TB</span>
+<span class="w">    </span><span class="nx">front</span><span class="p">[</span><span class="s">&quot;Workflow setup and resource choice&lt;br/&gt;htcimager.py, Slurm ImageSolver, HTCondor DAGMan&quot;</span><span class="p">]</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">partition</span><span class="p">[</span><span class="s">&quot;Partitioning and scheduling&lt;br/&gt;SPW/MS/CFCache partitioning, GPU/no-GPU jobs&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">partition</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">jobs</span><span class="p">[</span><span class="s">&quot;Separated image-solver job modes&lt;br/&gt;weight, psf, residual, model,&lt;br/&gt;gather, normalize, restore, dirty image&quot;</span><span class="p">]</span>
+
+<span class="w">    </span><span class="nx">jobs</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">read</span><span class="p">[</span><span class="s">&quot;MS read and staging&lt;br/&gt;ReadMSAlgorithm&lt;br/&gt;VisSet / VisBuffer row blocking&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">jobs</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">psf</span><span class="p">[</span><span class="s">&quot;PSF gridding job&lt;br/&gt;MakeApproxPSFAlgorithm&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">jobs</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">residual</span><span class="p">[</span><span class="s">&quot;Residual gridding job&lt;br/&gt;ResidualAlgorithm&lt;br/&gt;model - corrected, putResidualVis()&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">jobs</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">predict</span><span class="p">[</span><span class="s">&quot;Model prediction job&lt;br/&gt;PredictAlgorithm&lt;br/&gt;degrid model visibilities&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">jobs</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">write</span><span class="p">[</span><span class="s">&quot;MS writeback job&lt;br/&gt;WriteMSAlgorithm&quot;</span><span class="p">]</span>
+
+<span class="w">    </span><span class="nx">read</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">optionchoice</span><span class="p">[</span><span class="s">&quot;Projection/gridder option choice&lt;br/&gt;selected TransformMachine family&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">psf</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">optionchoice</span>
+<span class="w">    </span><span class="nx">residual</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">optionchoice</span>
+<span class="w">    </span><span class="nx">predict</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">optionchoice</span>
+<span class="w">    </span><span class="nx">optionchoice</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">gridft</span><span class="p">[</span><span class="s">&quot;Standard gridding option&lt;br/&gt;GridFT&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">optionchoice</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">wproj</span><span class="p">[</span><span class="s">&quot;W-projection option&lt;br/&gt;WProjectFT&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">optionchoice</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">mosaic</span><span class="p">[</span><span class="s">&quot;Mosaic/A option&lt;br/&gt;MosaicFT, PBMosaicFT, nPBWProjectFT&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">optionchoice</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">awproj</span><span class="p">[</span><span class="s">&quot;AW option&lt;br/&gt;AWProjectFT / AWProjectWBFT&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">optionchoice</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">mtmfs</span><span class="p">[</span><span class="s">&quot;MTMFS option&lt;br/&gt;MultiTermFT / MultiTermFTNew&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">gridft</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">resamp</span><span class="p">[</span><span class="s">&quot;Gridding/degridding hot loop&lt;br/&gt;VisibilityResampler, AWVisResampler,&lt;br/&gt;MultiThreadedVisibilityResampler, ResamplerWorklet&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">wproj</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">resamp</span>
+<span class="w">    </span><span class="nx">mosaic</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">resamp</span>
+<span class="w">    </span><span class="nx">awproj</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">resamp</span>
+<span class="w">    </span><span class="nx">mtmfs</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">resamp</span>
+<span class="w">    </span><span class="nx">resamp</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">partials</span><span class="p">[</span><span class="s">&quot;Partial image-domain products&lt;br/&gt;grids, weights, residuals, models&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">partials</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">clean</span><span class="p">[</span><span class="s">&quot;Image-domain deconvolution&lt;br/&gt;ImageSkyModel / CleanImageSkyModel family&lt;br/&gt;Clark, multi-field, wide-band, Cotton-Schwab&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">clean</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">gather</span><span class="p">[</span><span class="s">&quot;Gather, normalization, restoration&lt;br/&gt;workflow-level jobs&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">gather</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">products</span><span class="p">[</span><span class="s">&quot;Final products&lt;br/&gt;restored images, PB-corrected images,&lt;br/&gt;optional MS writes&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">write</span><span class="w"> </span><span class="o">--</span><span class="p">&gt;</span><span class="w"> </span><span class="nx">products</span>
+
+<span class="w">    </span><span class="nx">classDef</span><span class="w"> </span><span class="nx">io</span><span class="w"> </span><span class="nx">fill</span><span class="p">:</span><span class="err">#</span><span class="nx">e7f0ff</span><span class="p">,</span><span class="nx">stroke</span><span class="p">:</span><span class="err">#</span><span class="mi">315</span><span class="nx">f9b</span><span class="p">,</span><span class="nx">color</span><span class="p">:</span><span class="err">#</span><span class="mi">1</span><span class="nx">f1f1f</span><span class="p">;</span>
+<span class="w">    </span><span class="nx">classDef</span><span class="w"> </span><span class="nx">op</span><span class="w"> </span><span class="nx">fill</span><span class="p">:</span><span class="err">#</span><span class="nx">e9f8e5</span><span class="p">,</span><span class="nx">stroke</span><span class="p">:</span><span class="err">#</span><span class="mi">3</span><span class="nx">c7a36</span><span class="p">,</span><span class="nx">color</span><span class="p">:</span><span class="err">#</span><span class="mi">1</span><span class="nx">f1f1f</span><span class="p">;</span>
+<span class="w">    </span><span class="nx">classDef</span><span class="w"> </span><span class="nx">mode</span><span class="w"> </span><span class="nx">fill</span><span class="p">:</span><span class="err">#</span><span class="nx">f0e7ff</span><span class="p">,</span><span class="nx">stroke</span><span class="p">:</span><span class="err">#</span><span class="mi">6846</span><span class="nx">a3</span><span class="p">,</span><span class="nx">color</span><span class="p">:</span><span class="err">#</span><span class="mi">1</span><span class="nx">f1f1f</span><span class="p">;</span>
+<span class="w">    </span><span class="nx">classDef</span><span class="w"> </span><span class="nx">hot</span><span class="w"> </span><span class="nx">fill</span><span class="p">:</span><span class="err">#</span><span class="nx">ffe8cc</span><span class="p">,</span><span class="nx">stroke</span><span class="p">:</span><span class="err">#</span><span class="mi">9</span><span class="nx">a5b00</span><span class="p">,</span><span class="nx">color</span><span class="p">:</span><span class="err">#</span><span class="mi">1</span><span class="nx">f1f1f</span><span class="p">;</span>
+<span class="w">    </span><span class="kd">class</span><span class="w"> </span><span class="nx">front</span><span class="p">,</span><span class="nx">partition</span><span class="p">,</span><span class="nx">jobs</span><span class="p">,</span><span class="nx">read</span><span class="p">,</span><span class="nx">write</span><span class="p">,</span><span class="nx">gather</span><span class="p">,</span><span class="nx">products</span><span class="w"> </span><span class="nx">io</span><span class="p">;</span>
+<span class="w">    </span><span class="kd">class</span><span class="w"> </span><span class="nx">psf</span><span class="p">,</span><span class="nx">residual</span><span class="p">,</span><span class="nx">predict</span><span class="p">,</span><span class="nx">partials</span><span class="p">,</span><span class="nx">clean</span><span class="w"> </span><span class="nx">op</span><span class="p">;</span>
+<span class="w">    </span><span class="kd">class</span><span class="w"> </span><span class="nx">optionchoice</span><span class="p">,</span><span class="nx">gridft</span><span class="p">,</span><span class="nx">wproj</span><span class="p">,</span><span class="nx">mosaic</span><span class="p">,</span><span class="nx">awproj</span><span class="p">,</span><span class="nx">mtmfs</span><span class="w"> </span><span class="nx">mode</span><span class="p">;</span>
+<span class="w">    </span><span class="kd">class</span><span class="w"> </span><span class="nx">resamp</span><span class="w"> </span><span class="nx">hot</span><span class="p">;</span>
+</code></pre></div>
+
+<p>Refactoring signals visible here:</p>
+<ul>
+<li>LibRA's extra split is often a resource split, not just a source-file split.
+  The workflow layer exists to send gridding/model/residual/restore work to
+  local, Slurm, or HTCondor resources.</li>
+<li>The algorithm classes are a useful contrast to <code>casa-rs</code>: they name
+  distributed image-solver steps directly, whereas <code>casa-rs</code> currently names
+  mostly in-process request/result functions.</li>
+<li><code>MultiThreadedVisibilityResampler</code> and <code>ResamplerWorklet</code> are especially
+  relevant for later worker-thread and GPU discussions because they isolate
+  grid/degrid/residual hot loops behind a resampler boundary.</li>
+</ul>
+<h2 id="stage-comparison">Stage Comparison<a class="headerlink" href="#stage-comparison" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th><code>casa-rs</code> owner</th>
+<th>CASA C++ owner</th>
+<th>LibRA owner</th>
+<th>Refactoring / optimization signal</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Task/API input</td>
+<td><code>casars-python</code>, <code>casars-imager</code> JSON/CLI, GUI subprocess</td>
+<td><code>task_tclean.py</code>, <code>ImagerParameters</code></td>
+<td><code>htcimager.py</code>, Slurm/HTCondor ImageSolver wrappers</td>
+<td>Keep user/task compatibility at the edge; do not let task syntax leak into the pure core.</td>
+</tr>
+<tr>
+<td>MS selection and column I/O</td>
+<td><code>casars-imager::prepare_plane_input*</code></td>
+<td><code>SynthesisImager::selectData</code>, <code>VisibilityIterator</code>, helpers</td>
+<td><code>ReadMSAlgorithm</code>, per-job MS staging</td>
+<td>I/O overlap work belongs here, before gridder optimization.</td>
+</tr>
+<tr>
+<td>Sample shape</td>
+<td><code>VisibilityBatch</code>, <code>VisibilityMetadataBatch</code>, <code>CubeChannelRequest</code></td>
+<td><code>VisBuffer</code>, <code>SIMapper</code>, <code>FTMachine</code> input contracts</td>
+<td><code>VisBuffer</code>, Applicator records, algorithm payloads</td>
+<td>A typed sample/prepared-plane model is a good Rust boundary; avoid spreading it across writers and mode routers.</td>
+</tr>
+<tr>
+<td>Weighting</td>
+<td><code>apply_weighting*</code>, density diagnostics</td>
+<td><code>setweighting</code>, normalizer and imaging weights</td>
+<td>weight job modes and algorithm payloads</td>
+<td>Hot enough for profiling; also a correctness boundary because CASA modes normalize differently.</td>
+</tr>
+<tr>
+<td>Gridder/projection mode</td>
+<td><code>StandardGridder</code>, <code>WProjector</code>, <code>ScreenProjector</code>, <code>GridderMode</code>, <code>WTermMode</code></td>
+<td><code>FTMachine</code> subclasses plus convolution-function families</td>
+<td><code>TransformMachines</code> plus threaded resamplers</td>
+<td>Strong candidate for explicit trait/planning boundary before GPU work.</td>
+</tr>
+<tr>
+<td>MFS dirty/clean path</td>
+<td><code>run_imaging()</code></td>
+<td><code>SynthesisImager::makePSF/runMajorCycle</code> plus deconvolver</td>
+<td>residual/model jobs plus sky-model solvers</td>
+<td>Dataflow is simple enough to benchmark first.</td>
+</tr>
+<tr>
+<td>MTMFS path</td>
+<td><code>run_mtmfs()</code> with standard gridder only</td>
+<td><code>MultiTermFT</code>, multi-term image stores, deconvolver/normalizer helpers</td>
+<td>wide-band and multi-term transform/sky-model classes</td>
+<td>Rust currently has a narrow mode; expansion should avoid duplicating product-writing branches.</td>
+</tr>
+<tr>
+<td>Cube path</td>
+<td><code>run_cube()</code> for standard, <code>run_frontend_cube()</code> for mosaic/non-standard</td>
+<td>parallel cube helper and cube C++ algorithms</td>
+<td>SPW partitioning and image-solver workflow</td>
+<td>The frontend cube loop is a likely Rust refactor target.</td>
+</tr>
+<tr>
+<td>Mosaic/A/AW path</td>
+<td><code>MosaicGridderConfig</code>, <code>ScreenProjector</code>, PB products; AW-family rejected at task edge</td>
+<td><code>MosaicFT</code>, <code>AWProjectFT</code>, <code>AWProjectWBFT</code>, PB/CF families</td>
+<td><code>MosaicFT</code>, <code>AWProjectFT</code>, <code>PBMosaicFT</code>, <code>nPBWProjectFT</code></td>
+<td>CASA/LibRA show the likely future class family; Rust should first stabilize a smaller projection-plan abstraction.</td>
+</tr>
+<tr>
+<td>Minor cycle</td>
+<td><code>run_cotton_schwab_controller</code>, Hogbom/Clark/Multiscale variants</td>
+<td><code>synthesisdeconvolver</code>, image-store family</td>
+<td><code>CleanImageSkyModel</code> family</td>
+<td>Keep algorithm choice distinct from task routing and product writing.</td>
+</tr>
+<tr>
+<td>Residual refresh / prediction</td>
+<td>core major-cycle refresh plus optional <code>write_model_column()</code></td>
+<td><code>runMajorCycle</code>, <code>predictModel</code>, <code>VisibilityIterator::Model</code> writes</td>
+<td><code>ResidualAlgorithm</code>, <code>PredictAlgorithm</code>, <code>WriteMSAlgorithm</code></td>
+<td>This is the bridge where I/O, degrid, grid, and MS writes collide.</td>
+</tr>
+<tr>
+<td>Product writing</td>
+<td><code>write_products()</code>, coordinate builder, previews</td>
+<td>image-store plus normalizer/deconvolver helpers and task history</td>
+<td>gather/normalize/restore jobs</td>
+<td>Product writing is correctness-heavy but should be isolated from mode execution.</td>
+</tr>
+<tr>
+<td>Parallel/resource model</td>
+<td>mostly in-process today</td>
+<td>serial and parallel helper variants, MPI release path</td>
+<td>local, Slurm, HTCondor, GPU/no-GPU job modes</td>
+<td>LibRA is the better contrast for resource scheduling than CASA C++.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="how-to-read-split-pressure">How To Read Split Pressure<a class="headerlink" href="#how-to-read-split-pressure" title="Permanent link">&para;</a></h2>
+<p>This diagram style can show whether functionality is spread across too many
+functions or modules, but only if the reader distinguishes three split types.</p>
+<p>Keep a split when it is a real boundary:</p>
+<ul>
+<li>different data shape, such as raw MS rows versus prepared scalar visibility
+  batches</li>
+<li>different resource location, such as local process versus Slurm/HTCondor job</li>
+<li>different external contract, such as Python task syntax versus Rust core API</li>
+<li>different algorithm family, such as standard gridder versus AW-projection</li>
+<li>different persistence contract, such as in-memory image arrays versus CASA
+  image tables or <code>MODEL_DATA</code></li>
+</ul>
+<p>Question a split when it only changes control flow:</p>
+<ul>
+<li>several functions pass the same request and data shape through mode-specific
+  branches</li>
+<li>product writing branches know too much about how each mode was executed</li>
+<li>unsupported-mode checks are duplicated at task, adapter, and core layers</li>
+<li>cube and MFS paths run equivalent per-plane loops in different modules</li>
+<li>diagnostics and timings are assembled in many places after the same stage</li>
+</ul>
+<p>For <code>casa-rs</code>, the immediate hypothesis is not "collapse the core." The cleaner
+hypothesis is:</p>
+<ol>
+<li>Keep <code>casa-imaging</code> as the prepared-batch pure core.</li>
+<li>Extract an explicit prepared run plan in <code>casars-imager</code> that owns mode
+   dispatch, plane looping, and clean-mask seeding.</li>
+<li>Extract product emission behind a product manifest or writer abstraction so
+   MFS, MTMFS, cube, PB, pbcor, mask, preview, and model-column outputs do not
+   all expand one function.</li>
+<li>Make gridder/projection planning a named boundary before adding fast W/A/AW
+   kernels, GPU implementations, or multi-worker execution.</li>
+</ol>
+<h2 id="optimization-map">Optimization Map<a class="headerlink" href="#optimization-map" title="Permanent link">&para;</a></h2>
+<p>Once the shape is stable, this same diagram can be annotated with timings and
+resource ownership.</p>
+<p>Likely <code>casa-rs</code> measurement points:</p>
+<ul>
+<li>MS column loads in <code>prepare_plane_input_inner()</code></li>
+<li>weighting density construction</li>
+<li>standard gridder and W/screen projector sample loops</li>
+<li>FFT and normalization</li>
+<li>residual refresh/degrid during major cycles</li>
+<li>CASA image-table product writes and preview generation</li>
+<li>optional <code>MODEL_DATA</code> writes</li>
+</ul>
+<p>Likely optimization experiments:</p>
+<ul>
+<li>streaming or chunked prepared batches to reduce peak memory</li>
+<li>overlap MS column reads with weighting or gridding</li>
+<li>Rayon or scoped-worker parallelism behind gridder/projector traits</li>
+<li>GPU kernels behind a projection-plan boundary, not inside task routing</li>
+<li>separate product emission workers after core results are available</li>
+<li>reuse of LibRA-style resampler/worklet ideas for grid/degrid hot loops</li>
+</ul>
+<h2 id="source-context-for-circulation">Source Context For Circulation<a class="headerlink" href="#source-context-for-circulation" title="Permanent link">&para;</a></h2>
+<p>The diagrams were checked against local source snapshots rather than inferred
+only from package names. For circulation, the relevant repo anchors are:</p>
+<ul>
+<li><code>casa-rs</code>: <a href="https://github.com/bglenden/casa-rs.git">https://github.com/bglenden/casa-rs.git</a> at
+  <code>93ae5633c5533a2de65598bc64ba4c9bfa1fd308</code></li>
+<li>CASA C++/CASA6: <a href="https://open-bitbucket.nrao.edu/scm/casa/casa6.git">https://open-bitbucket.nrao.edu/scm/casa/casa6.git</a> at
+  <code>61020062cee290f5466cffed5ec5032e0c7a3434</code></li>
+<li>LibRA fork: <a href="https://github.com/bglenden/libRA">https://github.com/bglenden/libRA</a> at
+  <code>0ab99e261878334d6588eafa360cef3b673e897f</code></li>
+<li>LibRA upstream: <a href="https://github.com/ARDG-NRAO/LibRA.git">https://github.com/ARDG-NRAO/LibRA.git</a></li>
+</ul>
+<h2 id="source-paths-inspected">Source Paths Inspected<a class="headerlink" href="#source-paths-inspected" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>crates/casa-imaging/src/lib.rs</code></li>
+<li><code>crates/casa-imaging/src/cube.rs</code></li>
+<li><code>crates/casa-imaging/src/types.rs</code></li>
+<li><code>crates/casars-imager/src/lib.rs</code></li>
+<li><code>crates/casars-python/python/casars/tasks/imager.py</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatasks/src/private/task_tclean.py</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatasks/src/private/imagerhelpers/</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatools/src/code/synthesis/ImagerObjects/</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/casa/casatools/src/code/synthesis/TransformMachines/</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/libRA/frameworks/htcimager/</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/libRA/doc/AlgoArch/README.md</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/MeasurementComponents/</code></li>
+<li><code>/Users/brianglendenning/SoftwareProjects/libRA/src/synthesis/TransformMachines/</code></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

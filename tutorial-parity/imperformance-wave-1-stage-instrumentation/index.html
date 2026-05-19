@@ -575,15 +575,16 @@
 
 <h1 id="imperformance-wave-1-stage-instrumentation">ImPerformance Wave 1 Stage Instrumentation<a class="headerlink" href="#imperformance-wave-1-stage-instrumentation" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-05-15
-Verification: <code>python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py</code>; <code>python3 -m unittest tools/perf/imager/test_run_workload.py</code>; <code>tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/stage-instrumentation-dry-run wave1-standard-mfs-dirty-smoke</code>; <code>CASA_RS_TESTDATA_ROOT=/Users/brianglendenning/SoftwareProjects/casatestdata CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --repeats 1 --output-dir target/imperformance-wave1/stage-instrumentation-smoke wave1-standard-mfs-dirty-smoke</code></p>
+Last reality check: 2026-05-18
+Verification: <code>python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py</code>; <code>python3 -m unittest tools/perf/imager/test_run_workload.py</code>; <code>cargo test -p casars-imager --lib managed_output -- --nocapture</code>; <code>cargo check -p casars-imager --example profile_imager</code>; <code>tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/stage-instrumentation-dry-run wave1-standard-mfs-dirty-smoke</code>; <code>CASA_RS_TESTDATA_ROOT=/Users/brianglendenning/SoftwareProjects/casatestdata CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --repeats 1 --output-dir target/imperformance-wave1/stage-instrumentation-smoke wave1-standard-mfs-dirty-smoke</code></p>
 <p>Wave issue: #246
 Child issue: #249</p>
 <p>This note records the Wave 1 stage-level timing surface used by the benchmark
-harness. The implementation does not add public task-protocol fields or managed
-output schema fields. It normalizes the existing Rust profiler and CASA phase
-probe output into the local benchmark result JSON under
-<code>results.stage_breakdown</code>.</p>
+harness. The implementation does not add public task-protocol fields or change
+managed-output schema shape. It normalizes the existing Rust profiler and CASA
+phase probe output into the local benchmark result JSON under
+<code>results.stage_breakdown</code>, and keeps the managed-output timing value list aligned
+with the same complete core timing names.</p>
 <h2 id="contract-review">Contract Review<a class="headerlink" href="#contract-review" title="Permanent link">&para;</a></h2>
 <p>The structured timing object is local benchmark evidence:</p>
 <ul>
@@ -591,7 +592,9 @@ probe output into the local benchmark result JSON under
 <li>consumer: Wave 1 benchmark summaries and the #251 bottleneck ledger</li>
 <li>persisted public format: none</li>
 <li>provider protocol change: none</li>
-<li>managed-output contract change: none</li>
+<li>managed-output contract change: additive timing names inside the existing
+  <code>values_ns</code> list only; no new schema field, version bump, or consumer-visible
+  structural contract change</li>
 </ul>
 <p>If these fields are later promoted into <code>casars-imager</code> JSON task output,
 managed output, or provider contracts, that will need a separate contract
@@ -616,6 +619,16 @@ review.</p>
 <td><code>visibility_adaptation_and_chunking</code></td>
 <td><code>prepare_plane_input</code></td>
 <td>Visibility adaptation before pure imaging.</td>
+</tr>
+<tr>
+<td><code>standard_mfs_buffer_load</code></td>
+<td><code>get_ms_values_into_processing_buffer</code></td>
+<td>Standard-gridder MFS owned-buffer loading from MAIN data, flag, weight, optional weight-spectrum, and geometry inputs.</td>
+</tr>
+<tr>
+<td><code>standard_mfs_buffer_prepare</code></td>
+<td><code>prepare_processing_buffer</code></td>
+<td>Standard-gridder MFS owned-buffer adaptation into imaging visibility batches.</td>
 </tr>
 <tr>
 <td><code>weighting_density_setup</code></td>
@@ -645,7 +658,7 @@ review.</p>
 <tr>
 <td><code>deconvolution_minor_cycle</code></td>
 <td><code>minor_cycle_solve</code></td>
-<td>Minor-cycle component selection and subtraction.</td>
+<td>Solver-only minor-cycle component selection and subtraction.</td>
 </tr>
 <tr>
 <td><code>model_prediction_and_residual_refresh</code></td>
@@ -727,14 +740,15 @@ outside the measured imaging commands.</p>
 <ul>
 <li>Structured <code>casa-rs</code> timing data: <code>results.stage_breakdown.rust</code>.</li>
 <li>Frontend/MS preparation versus pure imaging core: separate frontend,
-  visibility-adaptation, and core categories plus <code>frontend_total</code> /
-  <code>core_total</code>.</li>
+  visibility-adaptation, standard-MFS buffer load/prepare drill-downs, and
+  core categories plus <code>frontend_total</code> / <code>core_total</code>.</li>
 <li>Grid/degrid, FFT, normalization/PB correction, deconvolution, and writeback:
   normalized Rust categories listed above.</li>
 <li>Disabled/skipped paths: dirty-only clean stages and preview generation are
   explicit <code>skipped</code> categories with reasons.</li>
-<li>Contract impact: local benchmark JSON only; no provider protocol or
-  managed-output schema change.</li>
+<li>Contract impact: local benchmark JSON plus additive managed-output timing
+  names inside the existing <code>values_ns</code> list; no provider protocol or
+  managed-output schema shape change.</li>
 <li>Overhead: no new hot-loop timers; normalization happens after each benchmark
   process completes.</li>
 </ul>

@@ -513,6 +513,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#measurementset-staging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MeasurementSet Staging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#supported-slice" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -586,8 +597,8 @@
 
 <h1 id="imperformance-wave-1-benchmark-harness">ImPerformance Wave 1 Benchmark Harness<a class="headerlink" href="#imperformance-wave-1-benchmark-harness" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-05-15
-Verification: <code>python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py</code>; <code>bash -n scripts/bench-imager-vs-casa.sh</code>; <code>tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/harness-dry-run wave1-standard-mfs-dirty-smoke</code>; <code>CASA_RS_TESTDATA_ROOT=/Users/brianglendenning/SoftwareProjects/casatestdata CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --repeats 1 --output-dir target/imperformance-wave1/harness-smoke wave1-standard-mfs-dirty-smoke</code></p>
+Last reality check: 2026-05-18
+Verification: <code>python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py</code>; <code>python3 -m unittest tools/perf/imager/test_run_workload.py</code>; <code>bash -n scripts/bench-imager-vs-casa.sh</code>; <code>CASA_RS_BENCH_MS_STAGING=direct CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --dry-run --repeats 1 --run-label warm-medium-direct-probe --storage-label external-ssd-wave1-medium-direct --output-dir target/imperformance-wave1/issue251-medium-large-dry-run target/imperformance-wave1/issue251-medium-large-plan/workloads/wave1-vla-single-medium-standard-mfs-dirty-control.json</code></p>
 <p>Wave issue: #246
 Child issue: #252</p>
 <p>This note records the reusable CASA C++ versus <code>casa-rs</code> imaging benchmark
@@ -628,6 +639,18 @@ generated manifest.</p>
 <p>The delegated shell script remains the only place that knows how to invoke the
 current <code>casars-imager</code> CLI and CASA <code>tclean</code> parameter sets. That keeps the
 manifest runner stable while the lower-level commands evolve.</p>
+<h2 id="measurementset-staging">MeasurementSet Staging<a class="headerlink" href="#measurementset-staging" title="Permanent link">&para;</a></h2>
+<p>The benchmark script supports two MeasurementSet staging modes:</p>
+<ul>
+<li><code>copy</code>: copy the input MS into the script temp directory before timing. This
+  is the default and is appropriate for small smoke workloads.</li>
+<li><code>direct</code>: read the manifest MS path in place. Set this through
+  <code>CASA_RS_BENCH_MS_STAGING=direct</code> when invoking <code>run_workload.py</code>, or through
+  <code>run.ms_staging: "direct"</code> in a generated/ad hoc manifest.</li>
+</ul>
+<p>Medium and large Wave 1 datasets must use <code>direct</code>. Copy staging consumed a
+32 GiB local <code>/var/folders</code> temp copy for the VLA medium MS before timing and
+left too little headroom for reliable benchmark execution.</p>
 <h2 id="supported-slice">Supported Slice<a class="headerlink" href="#supported-slice" title="Permanent link">&para;</a></h2>
 <p>The #252 harness slice supports:</p>
 <table>
@@ -666,7 +689,7 @@ are written. Those modes remain deferred to their owning tickets.</p>
 <p>Each completed run records:</p>
 <ul>
 <li>run identity, manifest path, selected workload, dataset path, storage label,
-  repeat count, and mode parameters;</li>
+  repeat count, MS staging mode, and mode parameters;</li>
 <li>exact delegated command and environment variables;</li>
 <li>Rust CLI per-run wallclock and median;</li>
 <li>CASA <code>tclean</code> per-run wallclock and median;</li>
