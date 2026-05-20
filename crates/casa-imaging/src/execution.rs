@@ -6,7 +6,7 @@ use num_complex::{Complex32, Complex64};
 
 use crate::{
     ImageGeometry, ImagingError, VisibilityBatch,
-    gridder::{PositiveTapSet, StandardGridder},
+    gridder::{PositiveTapSet, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason},
 };
 
 /// Internal backend selection for standard MFS execution.
@@ -22,7 +22,7 @@ pub(crate) enum StandardMfsBackend {
 /// CPU-only executor for standard MFS imaging.
 pub(crate) struct StandardMfsCpuExecutor<'a> {
     gridder: &'a StandardGridder,
-    plan: StandardMfsVisibilityPlan<'a>,
+    plan: StandardMfsVisibilityPlan,
     workspace: StandardMfsWorkspace,
 }
 
@@ -88,7 +88,7 @@ impl<'a> StandardMfsCpuExecutor<'a> {
         &mut self,
     ) -> (
         &'a StandardGridder,
-        &StandardMfsVisibilityPlan<'a>,
+        &StandardMfsVisibilityPlan,
         &mut StandardMfsWorkspace,
     ) {
         (self.gridder, &self.plan, &mut self.workspace)
@@ -96,7 +96,7 @@ impl<'a> StandardMfsCpuExecutor<'a> {
 
     /// Return the prepared visibility plan.
     #[cfg(test)]
-    pub(crate) fn plan(&self) -> &StandardMfsVisibilityPlan<'a> {
+    pub(crate) fn plan(&self) -> &StandardMfsVisibilityPlan {
         &self.plan
     }
 }
@@ -149,10 +149,14 @@ impl StandardMfsDirtyCpuExecutor {
 
         let gridder = &self.gridder;
         let (psf_grid, residual_grid) = self.workspace.dirty_grids_mut();
+        let mut census = StandardMfsTapCensus::new("streaming_dirty_accumulate");
         for batch in batches {
             for sample_index in 0..batch.len() {
                 if !batch.gridable[sample_index] {
                     self.skipped_samples += 1;
+                    if let Some(census) = census.as_mut() {
+                        census.observe_skip(StandardMfsTapSkipReason::NotGridable);
+                    }
                     continue;
                 }
                 let weight = batch.weight[sample_index];
@@ -163,14 +167,27 @@ impl StandardMfsDirtyCpuExecutor {
                     && sumwt_factor > 0.0)
                 {
                     self.skipped_samples += 1;
+                    if let Some(census) = census.as_mut() {
+                        if !(weight.is_finite() && weight > 0.0) {
+                            census.observe_skip(StandardMfsTapSkipReason::InvalidWeight);
+                        } else {
+                            census.observe_skip(StandardMfsTapSkipReason::InvalidSumwt);
+                        }
+                    }
                     continue;
                 }
                 let Some(plan) = gridder
                     .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
                 else {
                     self.skipped_samples += 1;
+                    if let Some(census) = census.as_mut() {
+                        census.observe_skip(StandardMfsTapSkipReason::OutOfGrid);
+                    }
                     continue;
                 };
+                if let Some(census) = census.as_mut() {
+                    census.observe_accepted(&plan);
+                }
                 let grid_weight = weight * sumwt_factor;
                 let sumwt = f64::from(grid_weight);
                 self.normalization_sumwt += sumwt;
@@ -194,6 +211,9 @@ impl StandardMfsDirtyCpuExecutor {
                     gridder.grid_sample_taps_real_planned_f64(psf_grid, &plan, sumwt);
                 }
             }
+        }
+        if let Some(census) = census {
+            census.log(std::mem::size_of::<StandardMfsPlannedSample>());
         }
         Ok(())
     }
@@ -220,27 +240,30 @@ impl StandardMfsDirtyCpuExecutor {
     }
 }
 
-/// Borrowed, planned view of weighted standard-gridder visibility samples.
-pub(crate) struct StandardMfsVisibilityPlan<'a> {
-    batches: &'a [VisibilityBatch],
+/// Compact planned view of weighted standard-gridder visibility samples.
+pub(crate) struct StandardMfsVisibilityPlan {
     samples: Vec<StandardMfsPlannedSample>,
     normalization_sumwt: f64,
     reported_sumwt: f64,
     skipped_samples: usize,
 }
 
-impl<'a> StandardMfsVisibilityPlan<'a> {
-    fn new(gridder: &StandardGridder, batches: &'a [VisibilityBatch]) -> Self {
+impl StandardMfsVisibilityPlan {
+    fn new(gridder: &StandardGridder, batches: &[VisibilityBatch]) -> Self {
         let sample_count = batches.iter().map(VisibilityBatch::len).sum();
         let mut samples = Vec::with_capacity(sample_count);
         let mut normalization_sumwt = 0.0f64;
         let mut reported_sumwt = 0.0f64;
         let mut skipped_samples = 0usize;
+        let mut census = StandardMfsTapCensus::new("visibility_plan");
 
-        for (batch_index, batch) in batches.iter().enumerate() {
+        for batch in batches {
             for sample_index in 0..batch.len() {
                 if !batch.gridable[sample_index] {
                     skipped_samples += 1;
+                    if let Some(census) = census.as_mut() {
+                        census.observe_skip(StandardMfsTapSkipReason::NotGridable);
+                    }
                     continue;
                 }
                 let weight = batch.weight[sample_index];
@@ -251,29 +274,43 @@ impl<'a> StandardMfsVisibilityPlan<'a> {
                     && sumwt_factor > 0.0)
                 {
                     skipped_samples += 1;
+                    if let Some(census) = census.as_mut() {
+                        if !(weight.is_finite() && weight > 0.0) {
+                            census.observe_skip(StandardMfsTapSkipReason::InvalidWeight);
+                        } else {
+                            census.observe_skip(StandardMfsTapSkipReason::InvalidSumwt);
+                        }
+                    }
                     continue;
                 }
                 let Some(positive_taps) = gridder
                     .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
                 else {
                     skipped_samples += 1;
+                    if let Some(census) = census.as_mut() {
+                        census.observe_skip(StandardMfsTapSkipReason::OutOfGrid);
+                    }
                     continue;
                 };
+                if let Some(census) = census.as_mut() {
+                    census.observe_accepted(&positive_taps);
+                }
                 let grid_weight = weight * sumwt_factor;
                 let sumwt = f64::from(grid_weight);
                 normalization_sumwt += sumwt;
                 reported_sumwt += sumwt;
                 samples.push(StandardMfsPlannedSample {
-                    batch_index,
-                    sample_index,
+                    visibility: batch.visibility[sample_index],
                     grid_weight,
                     positive_taps,
                 });
             }
         }
+        if let Some(census) = census {
+            census.log(std::mem::size_of::<StandardMfsPlannedSample>());
+        }
 
         Self {
-            batches,
             samples,
             normalization_sumwt,
             reported_sumwt,
@@ -284,11 +321,6 @@ impl<'a> StandardMfsVisibilityPlan<'a> {
     /// Return the planned samples accepted by the standard gridder.
     pub(crate) fn samples(&self) -> &[StandardMfsPlannedSample] {
         &self.samples
-    }
-
-    /// Return a planned sample's source batch.
-    pub(crate) fn batch(&self, sample: &StandardMfsPlannedSample) -> &'a VisibilityBatch {
-        &self.batches[sample.batch_index]
     }
 
     /// Return the PSF and residual normalization sum of accepted samples.
@@ -314,10 +346,8 @@ impl<'a> StandardMfsVisibilityPlan<'a> {
 
 /// One planned standard MFS visibility sample.
 pub(crate) struct StandardMfsPlannedSample {
-    /// Source visibility batch index.
-    pub(crate) batch_index: usize,
-    /// Source scalar sample index inside the batch.
-    pub(crate) sample_index: usize,
+    /// Weighted source visibility for this planned grid sample.
+    pub(crate) visibility: Complex32,
     /// Product of imaging weight and sumwt factor used by standard MFS grids.
     pub(crate) grid_weight: f32,
     /// Precomputed positive-UV gridder taps for this `(u, v)` coordinate.
@@ -411,8 +441,8 @@ mod tests {
         assert_eq!(plan.skipped_samples(), 2);
         assert!((plan.normalization_sumwt() - 5.0).abs() < 1.0e-6);
         assert!((plan.reported_sumwt() - 5.0).abs() < 1.0e-6);
-        assert_eq!(plan.samples()[0].batch_index, 0);
-        assert_eq!(plan.samples()[1].sample_index, 1);
+        assert_eq!(plan.samples()[0].visibility, Complex32::new(1.0, 0.0));
+        assert_eq!(plan.samples()[1].visibility, Complex32::new(1.0, 0.0));
     }
 
     #[test]

@@ -7585,6 +7585,7 @@ fn standard_mfs_memory_plan(
         .saturating_add(weighting_density_bytes)
         .saturating_add(gridded_visibility_bytes)
         .saturating_add(output_image_bytes)
+        .saturating_add(worker_staging_bytes)
         .saturating_add(gpu_staging_bytes);
     let prepare_buffer_bytes = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
         .filter(|value| *value > 0)

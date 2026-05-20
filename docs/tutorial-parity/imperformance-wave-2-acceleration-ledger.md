@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-20
-Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile and bounded serial call-tree probes on 2026-05-20
+Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging positive_tap_span_reconstructs_legacy_positive_taps --lib`; `cargo test -p casa-imaging compact_positive_tap_grid_and_degrid_match_product_taps --lib`; `cargo test -p casa-imaging fused_residual_refresh_matches_separate_degrid_grid --lib`; `cargo test -p casa-imaging standard_mfs_plan_buckets_gridder_accepted_samples --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile, bounded serial attribution probes, and final full-shape one-worker profiles on 2026-05-20
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -416,6 +416,79 @@ moved `prepare_plane_input` from `27.038 s` in the progress-probed baseline to
 `25.784 s` in the no-progress retained timing. The MFS row adapter now reserves
 the row-block sample capacity once per block instead of issuing per-row vector
 reservations.
+
+## Serial Attribution Pass
+
+The reprogrammed Wave 2 serial pass fixed the bounded workload at:
+
+```text
+64 channels, 1024 pixels, Briggs, multiscale, niter=50,
+minor_cycle_length=50, CASA_RS_STANDARD_MFS_GRID_THREADS=1
+```
+
+Each row below is a one-repeat release-profile run unless marked as a census or
+rejected candidate. Deltas are against the previous retained optimization step;
+the cumulative column is against the fresh 2026-05-20 baseline.
+
+| Step | Commit or state | Profile artifact | Frontend | Core | Prepare | PSF grid | Residual grid | Major refresh | Delta vs previous retained | Cumulative vs baseline | Correctness |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|---|---|
+| fresh serial baseline | pre-step local state | `target/imperformance-wave2/serial-attribution/baseline-one-worker-20260520/bounded-one-worker-baseline.log` | `45.180 s` | `23.694 s` | `21.391 s` | `4.137 s` | `16.372 s` | `12.288 s` | baseline | baseline | existing green path |
+| tap census counters | instrumentation-only local state | `target/imperformance-wave2/serial-attribution/tap-census-20260520/bounded-one-worker-tap-census.log` | timing invalid | timing invalid | timing invalid | timing invalid | timing invalid | timing invalid | not used for timing | not used for timing | counters only |
+| compact positive tap spans | retained in this Wave 2 commit | `target/imperformance-wave2/serial-attribution/compact-span-one-worker-20260520/bounded-one-worker-compact-span.log` | `40.788 s` | `19.164 s` | `21.555 s` | `3.632 s` | `12.431 s` | `8.851 s` | frontend `-4.392 s`, core `-4.529 s` | frontend `-4.392 s`, core `-4.529 s` | GREEN: compact span tests plus required residual/Briggs tests |
+| compact product table | rejected candidate, removed | `target/imperformance-wave2/serial-attribution/product-table-one-worker-20260520/bounded-one-worker-product-table-rerun.log` | `40.362 s` | `20.758 s` | `19.538 s` | `4.104 s` | `13.546 s` | `9.495 s` | core regressed `+1.594 s`; residual regressed `+1.115 s` | not retained | GREEN but rejected after two core regressions |
+| fused exact residual refresh | retained in this Wave 2 commit | `target/imperformance-wave2/serial-attribution/fused-refresh-one-worker-20260520/bounded-one-worker-fused-refresh-rerun.log` | `38.292 s` | `18.662 s` | `19.559 s` | `3.502 s` | `12.028 s` | `8.578 s` | frontend `-2.495 s`, core `-0.502 s` | frontend `-6.888 s`, core `-5.032 s` | GREEN: fused helper test plus required residual/Briggs tests |
+| compact prepared executor samples | retained in this Wave 2 commit | `target/imperformance-wave2/serial-attribution/compact-prepared-one-worker-20260520/bounded-one-worker-compact-prepared-rerun.log` | `38.113 s` | `18.496 s` | `19.549 s` | `3.497 s` | `11.861 s` | `8.416 s` | frontend `-0.179 s`, core `-0.166 s` | frontend `-7.067 s`, core `-5.198 s` | GREEN: compact plan test plus required residual/Briggs tests |
+
+The exact tap census found `197,519,040` accepted samples,
+`176,471,366` unique tap keys, and `21,047,674` duplicate samples. Adjacent
+duplicate runs were not useful: p50, p90, p99, and max adjacent run size were
+all `1`. The estimate also showed why compact spans were the right first
+memory move: current planned-sample bytes were estimated at `39.504 GiB`,
+versus `7.901 GiB` for the compact span representation.
+
+Aggregation is therefore not enabled in this pass. Adjacent-run aggregation is
+rejected by the max-run result of `1`; global sort/reduce aggregation is also
+rejected for now because the duplicate rate is only about `10.7%` and would
+add a large global sort or hash scratch structure to save a minority of tap
+visits. If a later workload shows materially higher duplicate density, the
+census gate can be rerun with `CASA_RS_STANDARD_MFS_TAP_CENSUS=exact`.
+
+The compact product-weight table was also rejected. It used a named central
+planner reserve while under test, but two bounded runs regressed the core path
+relative to compact spans (`20.613 s` and `20.758 s` core versus `19.164 s`),
+so the reserve and lookup table were removed. The retained centralized planner
+change is the worker-staging reserve for already-existing standard-MFS worker
+local grids.
+
+The compact prepared-sample step is deliberately scoped to the reusable
+standard-MFS executor. Once the executor has planned tap spans, it stores only
+the weighted visibility, grid weight, and compact tap span. It no longer keeps
+batch/sample indexes just to reach back into `u_lambda` and `v_lambda`, and the
+Cotton-Schwab controller reuses that executor for exact residual refreshes
+instead of rebuilding the tap plan from full batches on every major cycle.
+The full frontend still carries `VisibilityBatch` values for warning metadata,
+fallback streaming paths, W-projection, and trace-heavy modes; dropping those
+buffers entirely is a later ownership step, not hidden in this serial pass.
+
+The final full-shape one-worker gate used the generated
+`standard-mfs-clean-niter2` shape: `512` channels, `2048` pixels, Briggs,
+multiscale, `niter=2`, and `minor_cycle_length=2`. The first run was noisy in
+unrelated weighting and PSF buckets, so it was repeated before accepting a
+timing claim.
+
+| Full-shape one-worker run | Artifact | Frontend | Core | Prepare | Weighting | PSF grid | Residual grid | Major refresh | Interpretation |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| previous one-worker reference | earlier profiler note | `1327.510 s` | `1198.218 s` | `126.145 s` | `312.485 s` | `196.063 s` | `596.189 s` | `400.458 s` | pre-attribution reference |
+| final run 1 | `target/imperformance-wave2/serial-attribution/final-full-shape-one-worker-20260520/full-shape-one-worker-final.log` | `1471.488 s` | `1378.809 s` | `89.164 s` | `402.099 s` | `250.722 s` | `611.908 s` | `361.518 s` | rejected as noisy/conflicting |
+| final rerun | `target/imperformance-wave2/serial-attribution/final-full-shape-one-worker-20260520/full-shape-one-worker-final-rerun.log` | `1167.428 s` | `1075.047 s` | `88.518 s` | `292.866 s` | `177.577 s` | `508.367 s` | `331.164 s` | retained full-shape timing |
+
+Against the previous one-worker full-shape reference, the retained final rerun
+improved frontend total by `160.082 s` (`12.1%`), core total by `123.171 s`
+(`10.3%`), residual grid/degrid by `87.822 s`, and major-cycle refresh by
+`69.294 s`. This full-shape gate was Rust-only timing; product correctness for
+the full-shape `niter=2` diagnostic remains covered by the earlier paired
+Rust-vs-CASA comparison, while the new serial kernels are covered by the
+targeted tests listed in the verification line.
 
 ## GPU Feasibility Checkpoint
 
