@@ -32,6 +32,7 @@ mod error;
 mod execution;
 mod fft;
 mod gridder;
+mod profile;
 mod trace;
 mod types;
 mod weighting;
@@ -703,6 +704,12 @@ fn parse_standard_mfs_thread_count(value: &str) -> Option<usize> {
 
 fn standard_mfs_sample_count(batches: &[VisibilityBatch]) -> usize {
     batches.iter().map(VisibilityBatch::len).sum()
+}
+
+fn complex64_grid_bytes(nx: usize, ny: usize, grid_count: usize) -> usize {
+    nx.saturating_mul(ny)
+        .saturating_mul(grid_count)
+        .saturating_mul(std::mem::size_of::<Complex64>())
 }
 
 /// Run CASA-style MTMFS imaging on already-prepared MFS visibilities.
@@ -5467,6 +5474,7 @@ fn compute_dirty_psf_and_residual_standard_streaming(
         reported_sumwt,
         gridded_samples,
         skipped_samples,
+        ..
     } = accumulate_dirty_psf_and_residual_standard_streaming_grid(
         batches,
         gridder,
@@ -5524,6 +5532,12 @@ struct DirtyGridAccumulation {
     reported_sumwt: f64,
     gridded_samples: usize,
     skipped_samples: usize,
+    finite_visibility_samples: usize,
+    nonfinite_visibility_samples: usize,
+    skipped_not_gridable: usize,
+    skipped_invalid_weight: usize,
+    skipped_invalid_sumwt: usize,
+    skipped_out_of_grid: usize,
 }
 
 impl DirtyGridAccumulation {
@@ -5532,6 +5546,12 @@ impl DirtyGridAccumulation {
         self.reported_sumwt += other.reported_sumwt;
         self.gridded_samples += other.gridded_samples;
         self.skipped_samples += other.skipped_samples;
+        self.finite_visibility_samples += other.finite_visibility_samples;
+        self.nonfinite_visibility_samples += other.nonfinite_visibility_samples;
+        self.skipped_not_gridable += other.skipped_not_gridable;
+        self.skipped_invalid_weight += other.skipped_invalid_weight;
+        self.skipped_invalid_sumwt += other.skipped_invalid_sumwt;
+        self.skipped_out_of_grid += other.skipped_out_of_grid;
     }
 }
 
@@ -5559,21 +5579,36 @@ fn accumulate_dirty_psf_and_residual_standard_streaming_grid(
 
     let [nx, ny] = gridder.grid_shape();
     let chunk_len = batches.len().div_ceil(thread_count);
+    let stage_started = profile::maybe_profile_now();
     let mut local_results = Vec::with_capacity(thread_count);
+    let join_started = profile::maybe_profile_now();
     thread::scope(|scope| {
         let mut handles = Vec::with_capacity(thread_count);
         for (chunk_index, chunk) in batches.chunks(chunk_len).enumerate() {
             let batch_offset = chunk_index * chunk_len;
+            let worker_samples = standard_mfs_sample_count(chunk);
             handles.push(scope.spawn(move || {
+                let alloc_started = profile::maybe_profile_now();
                 let mut local_psf_grid = Array2::<Complex64>::zeros((nx, ny));
                 let mut local_residual_grid = Array2::<Complex64>::zeros((nx, ny));
+                let alloc_elapsed = profile::elapsed_since(alloc_started);
+                let compute_started = profile::maybe_profile_now();
                 let counts = accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
                     chunk,
                     gridder,
                     &mut local_psf_grid,
                     &mut local_residual_grid,
                 );
-                (batch_offset, local_psf_grid, local_residual_grid, counts)
+                let compute_elapsed = profile::elapsed_since(compute_started);
+                (
+                    batch_offset,
+                    worker_samples,
+                    local_psf_grid,
+                    local_residual_grid,
+                    counts,
+                    alloc_elapsed,
+                    compute_elapsed,
+                )
             }));
         }
         for handle in handles {
@@ -5583,13 +5618,63 @@ fn accumulate_dirty_psf_and_residual_standard_streaming_grid(
         }
         Ok::<(), ImagingError>(())
     })?;
+    let join_elapsed = profile::elapsed_since(join_started);
 
-    local_results.sort_by_key(|(batch_offset, _, _, _)| *batch_offset);
+    local_results.sort_by_key(|(batch_offset, _, _, _, _, _, _)| *batch_offset);
     let mut counts = DirtyGridAccumulation::default();
-    for (_, local_psf_grid, local_residual_grid, local_counts) in &local_results {
+    let merge_started = profile::maybe_profile_now();
+    for (_, _, local_psf_grid, local_residual_grid, local_counts, _, _) in &local_results {
         add_complex64_grid(psf_grid, local_psf_grid);
         add_complex64_grid(residual_grid, local_residual_grid);
         counts.add(*local_counts);
+    }
+    let merge_elapsed = profile::elapsed_since(merge_started);
+    profile::log_parallel_stage(profile::ParallelStageProfile {
+        stage: "dirty_psf_residual_grid",
+        requested_threads,
+        actual_threads: local_results.len(),
+        chunking: "batch",
+        chunk_len,
+        samples_total: standard_mfs_sample_count(batches),
+        samples_per_worker: local_results
+            .iter()
+            .map(|(_, worker_samples, _, _, _, _, _)| *worker_samples)
+            .collect(),
+        local_grid_bytes_per_worker: complex64_grid_bytes(nx, ny, 2),
+        local_grid_count: 2,
+        local_alloc_zero_by_worker: local_results
+            .iter()
+            .map(|(_, _, _, _, _, alloc_elapsed, _)| *alloc_elapsed)
+            .collect(),
+        worker_compute_by_worker: local_results
+            .iter()
+            .map(|(_, _, _, _, _, _, compute_elapsed)| *compute_elapsed)
+            .collect(),
+        join_duration: join_elapsed,
+        merge_duration: merge_elapsed,
+        stage_duration: profile::elapsed_since(stage_started),
+    });
+    for (worker_index, (_, worker_samples, _, _, local_counts, alloc_elapsed, compute_elapsed)) in
+        local_results.iter().enumerate()
+    {
+        profile::log_parallel_worker(profile::ParallelWorkerProfile {
+            stage: "dirty_psf_residual_grid",
+            worker_index,
+            samples: *worker_samples,
+            accepted_samples: local_counts.gridded_samples,
+            finite_visibility_samples: local_counts.finite_visibility_samples,
+            nonfinite_visibility_samples: local_counts.nonfinite_visibility_samples,
+            skipped_not_gridable: local_counts.skipped_not_gridable,
+            skipped_invalid_weight: local_counts.skipped_invalid_weight,
+            skipped_invalid_sumwt: local_counts.skipped_invalid_sumwt,
+            skipped_invalid_density: 0,
+            skipped_out_of_grid: local_counts.skipped_out_of_grid,
+            degrid_tap_visits: 0,
+            grid_tap_visits: local_counts.gridded_samples.saturating_mul(49),
+            density_cell_hits: 0,
+            local_alloc_zero: *alloc_elapsed,
+            worker_compute: *compute_elapsed,
+        });
     }
     Ok(counts)
 }
@@ -5601,10 +5686,14 @@ fn accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
     residual_grid: &mut Array2<Complex64>,
 ) -> DirtyGridAccumulation {
     let mut counts = DirtyGridAccumulation::default();
+    let collect_profile = profile::standard_mfs_profile_detail_enabled();
     for batch in batches {
         for sample_index in 0..batch.len() {
             if !batch.gridable[sample_index] {
                 counts.skipped_samples += 1;
+                if collect_profile {
+                    counts.skipped_not_gridable += 1;
+                }
                 continue;
             }
             let weight = batch.weight[sample_index];
@@ -5615,12 +5704,22 @@ fn accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
                 && sumwt_factor > 0.0)
             {
                 counts.skipped_samples += 1;
+                if collect_profile {
+                    if !(weight.is_finite() && weight > 0.0) {
+                        counts.skipped_invalid_weight += 1;
+                    } else {
+                        counts.skipped_invalid_sumwt += 1;
+                    }
+                }
                 continue;
             }
             let Some(plan) = gridder
                 .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
             else {
                 counts.skipped_samples += 1;
+                if collect_profile {
+                    counts.skipped_out_of_grid += 1;
+                }
                 continue;
             };
             let grid_weight = f64::from(weight * sumwt_factor);
@@ -5629,6 +5728,9 @@ fn accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
             counts.gridded_samples += 1;
             let observed_visibility = batch.visibility[sample_index];
             if finite_visibility(observed_visibility) {
+                if collect_profile {
+                    counts.finite_visibility_samples += 1;
+                }
                 let residual = Complex64::new(
                     f64::from(observed_visibility.re) * grid_weight,
                     f64::from(observed_visibility.im) * grid_weight,
@@ -5641,6 +5743,9 @@ fn accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
                     &plan,
                 );
             } else {
+                if collect_profile {
+                    counts.nonfinite_visibility_samples += 1;
+                }
                 gridder.grid_sample_taps_real_planned_f64(psf_grid, &plan, grid_weight);
             }
         }
@@ -5842,6 +5947,18 @@ fn compute_residual_standard_with_executor(
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
     let (gridder, plan, workspace) = executor.parts_mut();
+    if profile::standard_mfs_profile_detail_enabled() {
+        let [nx, ny] = gridder.grid_shape();
+        eprintln!(
+            "standard_mfs_executor_plan stage=residual_refresh samples={} skipped_samples={} normalization_sumwt={:.12e} reported_sumwt={:.12e} sample_plan_bytes={} residual_grid_bytes={}",
+            plan.gridded_samples(),
+            plan.skipped_samples(),
+            plan.normalization_sumwt(),
+            plan.reported_sumwt(),
+            plan.estimated_bytes(),
+            complex64_grid_bytes(nx, ny, 1),
+        );
+    }
     let residual_grid = workspace.clear_residual_grid();
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
@@ -5883,21 +6000,60 @@ fn accumulate_standard_mfs_residual_grid(
         .min(thread::available_parallelism().map_or(1, |value| value.get()))
         .max(1);
     if thread_count <= 1 || plan.samples().len() < 100_000 {
+        let stage_started = profile::maybe_profile_now();
+        let mut finite_samples = 0usize;
         for sample in plan.samples() {
+            if finite_visibility(sample.visibility) {
+                finite_samples += 1;
+            }
             accumulate_standard_mfs_residual_sample(gridder, model_grid, sample, residual_grid);
         }
+        let stage_duration = profile::elapsed_since(stage_started);
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "executor_residual_refresh",
+            samples_total: plan.samples().len(),
+            finite_visibility_samples: finite_samples,
+            nonfinite_visibility_samples: plan.samples().len().saturating_sub(finite_samples),
+            planned_samples: plan.samples().len(),
+            model_grid_present_samples: if model_grid.is_some() {
+                finite_samples
+            } else {
+                0
+            },
+            model_grid_absent_samples: if model_grid.is_some() {
+                0
+            } else {
+                finite_samples
+            },
+            degrid_tap_visits: if model_grid.is_some() {
+                finite_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: finite_samples.saturating_mul(49),
+            stage_duration,
+        });
         return Ok(());
     }
 
     let [nx, ny] = gridder.grid_shape();
     let chunk_len = plan.samples().len().div_ceil(thread_count);
+    let stage_started = profile::maybe_profile_now();
     let mut local_grids = Vec::with_capacity(thread_count);
+    let join_started = profile::maybe_profile_now();
     thread::scope(|scope| {
         let mut handles = Vec::with_capacity(thread_count);
         for samples in plan.samples().chunks(chunk_len) {
             handles.push(scope.spawn(move || {
+                let alloc_started = profile::maybe_profile_now();
                 let mut local_grid = Array2::<Complex64>::zeros((nx, ny));
+                let alloc_elapsed = profile::elapsed_since(alloc_started);
+                let compute_started = profile::maybe_profile_now();
+                let mut finite_samples = 0usize;
                 for sample in samples {
+                    if finite_visibility(sample.visibility) {
+                        finite_samples += 1;
+                    }
                     accumulate_standard_mfs_residual_sample(
                         gridder,
                         model_grid,
@@ -5905,7 +6061,14 @@ fn accumulate_standard_mfs_residual_grid(
                         &mut local_grid,
                     );
                 }
-                local_grid
+                let compute_elapsed = profile::elapsed_since(compute_started);
+                (
+                    samples.len(),
+                    finite_samples,
+                    local_grid,
+                    alloc_elapsed,
+                    compute_elapsed,
+                )
             }));
         }
         for handle in handles {
@@ -5915,10 +6078,92 @@ fn accumulate_standard_mfs_residual_grid(
         }
         Ok::<(), ImagingError>(())
     })?;
+    let join_elapsed = profile::elapsed_since(join_started);
 
-    for local_grid in &local_grids {
+    let merge_started = profile::maybe_profile_now();
+    for (_, _, local_grid, _, _) in &local_grids {
         add_complex64_grid(residual_grid, local_grid);
     }
+    let merge_elapsed = profile::elapsed_since(merge_started);
+    let finite_samples = local_grids
+        .iter()
+        .map(|(_, finite_samples, _, _, _)| *finite_samples)
+        .sum::<usize>();
+    profile::log_parallel_stage(profile::ParallelStageProfile {
+        stage: "executor_residual_refresh_grid",
+        requested_threads,
+        actual_threads: local_grids.len(),
+        chunking: "planned_sample",
+        chunk_len,
+        samples_total: plan.samples().len(),
+        samples_per_worker: local_grids
+            .iter()
+            .map(|(worker_samples, _, _, _, _)| *worker_samples)
+            .collect(),
+        local_grid_bytes_per_worker: complex64_grid_bytes(nx, ny, 1),
+        local_grid_count: 1,
+        local_alloc_zero_by_worker: local_grids
+            .iter()
+            .map(|(_, _, _, alloc_elapsed, _)| *alloc_elapsed)
+            .collect(),
+        worker_compute_by_worker: local_grids
+            .iter()
+            .map(|(_, _, _, _, compute_elapsed)| *compute_elapsed)
+            .collect(),
+        join_duration: join_elapsed,
+        merge_duration: merge_elapsed,
+        stage_duration: profile::elapsed_since(stage_started),
+    });
+    for (worker_index, (worker_samples, finite_samples, _, alloc_elapsed, compute_elapsed)) in
+        local_grids.iter().enumerate()
+    {
+        profile::log_parallel_worker(profile::ParallelWorkerProfile {
+            stage: "executor_residual_refresh_grid",
+            worker_index,
+            samples: *worker_samples,
+            accepted_samples: *finite_samples,
+            finite_visibility_samples: *finite_samples,
+            nonfinite_visibility_samples: worker_samples.saturating_sub(*finite_samples),
+            skipped_not_gridable: 0,
+            skipped_invalid_weight: 0,
+            skipped_invalid_sumwt: 0,
+            skipped_invalid_density: 0,
+            skipped_out_of_grid: 0,
+            degrid_tap_visits: if model_grid.is_some() {
+                finite_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: finite_samples.saturating_mul(49),
+            density_cell_hits: 0,
+            local_alloc_zero: *alloc_elapsed,
+            worker_compute: *compute_elapsed,
+        });
+    }
+    profile::log_serial_stage(profile::SerialStageProfile {
+        stage: "executor_residual_refresh_counts",
+        samples_total: plan.samples().len(),
+        finite_visibility_samples: finite_samples,
+        nonfinite_visibility_samples: plan.samples().len().saturating_sub(finite_samples),
+        planned_samples: plan.samples().len(),
+        model_grid_present_samples: if model_grid.is_some() {
+            finite_samples
+        } else {
+            0
+        },
+        model_grid_absent_samples: if model_grid.is_some() {
+            0
+        } else {
+            finite_samples
+        },
+        degrid_tap_visits: if model_grid.is_some() {
+            finite_samples.saturating_mul(49)
+        } else {
+            0
+        },
+        grid_tap_visits: finite_samples.saturating_mul(49),
+        stage_duration: Duration::ZERO,
+    });
     Ok(())
 }
 
@@ -5970,6 +6215,11 @@ struct ResidualGridAccumulation {
     valid_samples: usize,
     planned_samples: usize,
     gridded_residual_samples: usize,
+    skipped_not_gridable: usize,
+    skipped_invalid_weight: usize,
+    skipped_invalid_sumwt: usize,
+    skipped_out_of_grid: usize,
+    skipped_nonfinite_visibility: usize,
 }
 
 impl ResidualGridAccumulation {
@@ -5977,6 +6227,11 @@ impl ResidualGridAccumulation {
         self.valid_samples += other.valid_samples;
         self.planned_samples += other.planned_samples;
         self.gridded_residual_samples += other.gridded_residual_samples;
+        self.skipped_not_gridable += other.skipped_not_gridable;
+        self.skipped_invalid_weight += other.skipped_invalid_weight;
+        self.skipped_invalid_sumwt += other.skipped_invalid_sumwt;
+        self.skipped_out_of_grid += other.skipped_out_of_grid;
+        self.skipped_nonfinite_visibility += other.skipped_nonfinite_visibility;
     }
 }
 
@@ -5992,6 +6247,7 @@ fn accumulate_streaming_standard_mfs_residual_grid_serial(
 ) -> ResidualGridAccumulation {
     let mut counts = ResidualGridAccumulation::default();
     let mut census = StandardMfsTapCensus::new("streaming_residual_grid");
+    let collect_profile = profile::standard_mfs_profile_detail_enabled();
     for (batch_index, batch) in batches.iter().enumerate() {
         for index in 0..batch.len() {
             accumulate_streaming_standard_mfs_residual_sample(
@@ -6005,6 +6261,7 @@ fn accumulate_streaming_standard_mfs_residual_grid_serial(
                 samples.as_deref_mut(),
                 residual_grid,
                 &mut counts,
+                collect_profile,
                 census.as_mut(),
             );
         }
@@ -6027,7 +6284,8 @@ fn accumulate_streaming_standard_mfs_residual_grid_parallel(
         .min(thread::available_parallelism().map_or(1, |value| value.get()))
         .max(1);
     if thread_count <= 1 || batches.len() < 2 {
-        return Ok(accumulate_streaming_standard_mfs_residual_grid_serial(
+        let stage_started = profile::maybe_profile_now();
+        let counts = accumulate_streaming_standard_mfs_residual_grid_serial(
             gridder,
             batches,
             model_grid,
@@ -6035,18 +6293,50 @@ fn accumulate_streaming_standard_mfs_residual_grid_parallel(
             false,
             None,
             residual_grid,
-        ));
+        );
+        let samples_total = standard_mfs_sample_count(batches);
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "streaming_residual_refresh",
+            samples_total,
+            finite_visibility_samples: counts.valid_samples,
+            nonfinite_visibility_samples: samples_total.saturating_sub(counts.valid_samples),
+            planned_samples: counts.planned_samples,
+            model_grid_present_samples: if model_grid.is_some() {
+                counts.gridded_residual_samples
+            } else {
+                0
+            },
+            model_grid_absent_samples: if model_grid.is_some() {
+                0
+            } else {
+                counts.gridded_residual_samples
+            },
+            degrid_tap_visits: if model_grid.is_some() {
+                counts.gridded_residual_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+            stage_duration: profile::elapsed_since(stage_started),
+        });
+        return Ok(counts);
     }
 
     let [nx, ny] = gridder.grid_shape();
     let chunk_len = batches.len().div_ceil(thread_count);
+    let stage_started = profile::maybe_profile_now();
     let mut local_results = Vec::with_capacity(thread_count);
+    let join_started = profile::maybe_profile_now();
     thread::scope(|scope| {
         let mut handles = Vec::with_capacity(thread_count);
         for (chunk_index, chunk) in batches.chunks(chunk_len).enumerate() {
             let batch_offset = chunk_index * chunk_len;
+            let worker_samples = standard_mfs_sample_count(chunk);
             handles.push(scope.spawn(move || {
+                let alloc_started = profile::maybe_profile_now();
                 let mut local_grid = Array2::<Complex64>::zeros((nx, ny));
+                let alloc_elapsed = profile::elapsed_since(alloc_started);
+                let compute_started = profile::maybe_profile_now();
                 let counts = accumulate_streaming_standard_mfs_residual_grid_serial(
                     gridder,
                     chunk,
@@ -6056,7 +6346,15 @@ fn accumulate_streaming_standard_mfs_residual_grid_parallel(
                     None,
                     &mut local_grid,
                 );
-                (batch_offset, local_grid, counts)
+                let compute_elapsed = profile::elapsed_since(compute_started);
+                (
+                    batch_offset,
+                    worker_samples,
+                    local_grid,
+                    counts,
+                    alloc_elapsed,
+                    compute_elapsed,
+                )
             }));
         }
         for handle in handles {
@@ -6066,13 +6364,92 @@ fn accumulate_streaming_standard_mfs_residual_grid_parallel(
         }
         Ok::<(), ImagingError>(())
     })?;
+    let join_elapsed = profile::elapsed_since(join_started);
 
-    local_results.sort_by_key(|(batch_offset, _, _)| *batch_offset);
+    local_results.sort_by_key(|(batch_offset, _, _, _, _, _)| *batch_offset);
     let mut counts = ResidualGridAccumulation::default();
-    for (_, local_grid, local_counts) in &local_results {
+    let merge_started = profile::maybe_profile_now();
+    for (_, _, local_grid, local_counts, _, _) in &local_results {
         add_complex64_grid(residual_grid, local_grid);
         counts.add(*local_counts);
     }
+    let merge_elapsed = profile::elapsed_since(merge_started);
+    profile::log_parallel_stage(profile::ParallelStageProfile {
+        stage: "streaming_residual_refresh_grid",
+        requested_threads,
+        actual_threads: local_results.len(),
+        chunking: "batch",
+        chunk_len,
+        samples_total: standard_mfs_sample_count(batches),
+        samples_per_worker: local_results
+            .iter()
+            .map(|(_, worker_samples, _, _, _, _)| *worker_samples)
+            .collect(),
+        local_grid_bytes_per_worker: complex64_grid_bytes(nx, ny, 1),
+        local_grid_count: 1,
+        local_alloc_zero_by_worker: local_results
+            .iter()
+            .map(|(_, _, _, _, alloc_elapsed, _)| *alloc_elapsed)
+            .collect(),
+        worker_compute_by_worker: local_results
+            .iter()
+            .map(|(_, _, _, _, _, compute_elapsed)| *compute_elapsed)
+            .collect(),
+        join_duration: join_elapsed,
+        merge_duration: merge_elapsed,
+        stage_duration: profile::elapsed_since(stage_started),
+    });
+    for (worker_index, (_, worker_samples, _, local_counts, alloc_elapsed, compute_elapsed)) in
+        local_results.iter().enumerate()
+    {
+        profile::log_parallel_worker(profile::ParallelWorkerProfile {
+            stage: "streaming_residual_refresh_grid",
+            worker_index,
+            samples: *worker_samples,
+            accepted_samples: local_counts.planned_samples,
+            finite_visibility_samples: local_counts.valid_samples,
+            nonfinite_visibility_samples: local_counts.skipped_nonfinite_visibility,
+            skipped_not_gridable: local_counts.skipped_not_gridable,
+            skipped_invalid_weight: local_counts.skipped_invalid_weight,
+            skipped_invalid_sumwt: local_counts.skipped_invalid_sumwt,
+            skipped_invalid_density: 0,
+            skipped_out_of_grid: local_counts.skipped_out_of_grid,
+            degrid_tap_visits: if model_grid.is_some() {
+                local_counts.gridded_residual_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: local_counts.gridded_residual_samples.saturating_mul(49),
+            density_cell_hits: 0,
+            local_alloc_zero: *alloc_elapsed,
+            worker_compute: *compute_elapsed,
+        });
+    }
+    profile::log_serial_stage(profile::SerialStageProfile {
+        stage: "streaming_residual_refresh_counts",
+        samples_total: standard_mfs_sample_count(batches),
+        finite_visibility_samples: counts.valid_samples,
+        nonfinite_visibility_samples: standard_mfs_sample_count(batches)
+            .saturating_sub(counts.valid_samples),
+        planned_samples: counts.planned_samples,
+        model_grid_present_samples: if model_grid.is_some() {
+            counts.gridded_residual_samples
+        } else {
+            0
+        },
+        model_grid_absent_samples: if model_grid.is_some() {
+            0
+        } else {
+            counts.gridded_residual_samples
+        },
+        degrid_tap_visits: if model_grid.is_some() {
+            counts.gridded_residual_samples.saturating_mul(49)
+        } else {
+            0
+        },
+        grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+        stage_duration: Duration::ZERO,
+    });
     Ok(counts)
 }
 
@@ -6088,6 +6465,7 @@ fn accumulate_streaming_standard_mfs_residual_sample(
     samples: Option<&mut Vec<ResidualSampleTraceInternal>>,
     residual_grid: &mut Array2<Complex64>,
     counts: &mut ResidualGridAccumulation,
+    collect_profile: bool,
     mut census: Option<&mut StandardMfsTapCensus>,
 ) {
     let weight = batch.weight[index];
@@ -6104,17 +6482,35 @@ fn accumulate_streaming_standard_mfs_residual_sample(
                 if let Some(census) = census.as_mut() {
                     census.observe_accepted(plan);
                 }
-            } else if let Some(census) = census.as_mut() {
-                census.observe_skip(StandardMfsTapSkipReason::OutOfGrid);
+            } else {
+                if collect_profile {
+                    counts.skipped_out_of_grid += 1;
+                }
+                if let Some(census) = census.as_mut() {
+                    census.observe_skip(StandardMfsTapSkipReason::OutOfGrid);
+                }
             }
             planned_sample
         } else {
-            if let Some(census) = census.as_mut() {
-                if !gridable {
+            if !gridable {
+                if collect_profile {
+                    counts.skipped_not_gridable += 1;
+                }
+                if let Some(census) = census.as_mut() {
                     census.observe_skip(StandardMfsTapSkipReason::NotGridable);
-                } else if !(weight.is_finite() && weight > 0.0) {
+                }
+            } else if !(weight.is_finite() && weight > 0.0) {
+                if collect_profile {
+                    counts.skipped_invalid_weight += 1;
+                }
+                if let Some(census) = census.as_mut() {
                     census.observe_skip(StandardMfsTapSkipReason::InvalidWeight);
-                } else {
+                }
+            } else {
+                if collect_profile {
+                    counts.skipped_nonfinite_visibility += 1;
+                }
+                if let Some(census) = census.as_mut() {
                     census.observe_skip(StandardMfsTapSkipReason::NonfiniteVisibility);
                 }
             }
@@ -6176,6 +6572,9 @@ fn accumulate_streaming_standard_mfs_residual_sample(
         return;
     };
     if !sumwt_valid {
+        if collect_profile {
+            counts.skipped_invalid_sumwt += 1;
+        }
         if let Some(census) = census.as_mut() {
             census.observe_skip(StandardMfsTapSkipReason::InvalidSumwt);
         }
@@ -6257,10 +6656,12 @@ fn compute_residual_standard_internal(
     } else {
         standard_mfs_grid_threads()
     };
+    let samples_total = standard_mfs_sample_count(batches);
     let ResidualGridAccumulation {
         valid_samples,
         planned_samples,
         gridded_residual_samples,
+        ..
     } = if grid_threads > 1 {
         accumulate_streaming_standard_mfs_residual_grid_parallel(
             gridder,
@@ -6270,7 +6671,8 @@ fn compute_residual_standard_internal(
             grid_threads,
         )?
     } else {
-        accumulate_streaming_standard_mfs_residual_grid_serial(
+        let stage_started = profile::maybe_profile_now();
+        let counts = accumulate_streaming_standard_mfs_residual_grid_serial(
             gridder,
             batches,
             model_grid.as_ref(),
@@ -6278,7 +6680,32 @@ fn compute_residual_standard_internal(
             use_direct_point_predict,
             capture_samples.then_some(&mut samples),
             &mut residual_grid,
-        )
+        );
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "streaming_residual_refresh",
+            samples_total,
+            finite_visibility_samples: counts.valid_samples,
+            nonfinite_visibility_samples: samples_total.saturating_sub(counts.valid_samples),
+            planned_samples: counts.planned_samples,
+            model_grid_present_samples: if model_grid.is_some() {
+                counts.gridded_residual_samples
+            } else {
+                0
+            },
+            model_grid_absent_samples: if model_grid.is_some() {
+                0
+            } else {
+                counts.gridded_residual_samples
+            },
+            degrid_tap_visits: if model_grid.is_some() {
+                counts.gridded_residual_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+            stage_duration: profile::elapsed_since(stage_started),
+        });
+        counts
     };
     timings.degrid_grid = degrid_grid_started.elapsed();
 

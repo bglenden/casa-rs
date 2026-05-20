@@ -7,6 +7,7 @@ use num_complex::{Complex32, Complex64};
 use crate::{
     ImageGeometry, ImagingError, VisibilityBatch,
     gridder::{PositiveTapSet, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason},
+    profile,
 };
 
 /// Internal backend selection for standard MFS execution.
@@ -250,6 +251,7 @@ pub(crate) struct StandardMfsVisibilityPlan {
 
 impl StandardMfsVisibilityPlan {
     fn new(gridder: &StandardGridder, batches: &[VisibilityBatch]) -> Self {
+        let plan_started = profile::maybe_profile_now();
         let sample_count = batches.iter().map(VisibilityBatch::len).sum();
         let mut samples = Vec::with_capacity(sample_count);
         let mut normalization_sumwt = 0.0f64;
@@ -309,6 +311,18 @@ impl StandardMfsVisibilityPlan {
         if let Some(census) = census {
             census.log(std::mem::size_of::<StandardMfsPlannedSample>());
         }
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_executor_plan stage=build input_samples={} accepted_samples={} skipped_samples={} sample_plan_bytes={} build_ms={:.3}",
+                sample_count,
+                samples.len(),
+                skipped_samples,
+                samples
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<StandardMfsPlannedSample>()),
+                profile::millis(profile::elapsed_since(plan_started)),
+            );
+        }
 
         Self {
             samples,
@@ -341,6 +355,13 @@ impl StandardMfsVisibilityPlan {
     /// Return the number of samples rejected while building the plan.
     pub(crate) fn skipped_samples(&self) -> usize {
         self.skipped_samples
+    }
+
+    /// Return approximate heap bytes owned by the compact sample plan.
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        self.samples
+            .capacity()
+            .saturating_mul(std::mem::size_of::<StandardMfsPlannedSample>())
     }
 }
 

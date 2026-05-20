@@ -845,6 +845,7 @@ dependencies = [
  "casa-types",
  "flate2",
  "image 0.25.10",
+ "libc",
  "ndarray",
  "num-complex",
  "schemars",

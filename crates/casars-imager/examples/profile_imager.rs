@@ -10,6 +10,8 @@
 
 use std::env;
 use std::fs;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -118,6 +120,7 @@ fn run() -> Result<(), String> {
             millis(summary.stage_timings.beam_fit),
             millis(summary.stage_timings.restore),
         );
+        maybe_print_standard_mfs_profile_run(run_index + 1, &options, &summary);
         runs.push(summary);
     }
 
@@ -397,6 +400,83 @@ fn median_usize(runs: &[RunSummary], selector: impl Fn(&RunSummary) -> usize) ->
 
 fn print_stage(label: &str, value: Duration) {
     println!("  {label}={:.3}", millis(value));
+}
+
+fn maybe_print_standard_mfs_profile_run(
+    run_number: usize,
+    options: &Options,
+    summary: &RunSummary,
+) {
+    if env::var_os("CASA_RS_STANDARD_MFS_PROFILE_DETAIL").is_none() {
+        return;
+    }
+    let thread_env =
+        env::var("CASA_RS_STANDARD_MFS_GRID_THREADS").unwrap_or_else(|_| "unset".to_string());
+    let row_block_env =
+        env::var("CASA_RS_IMAGING_PREPARE_ROW_BLOCK").unwrap_or_else(|_| "auto".to_string());
+    let prepare_workers_env =
+        env::var("CASA_RS_IMAGING_PREPARE_WORKERS").unwrap_or_else(|_| "auto".to_string());
+    println!(
+        "standard_mfs_profile_run run={} workload_ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} spectral_mode={:?} weighting={:?} deconvolver={:?} nterms={} imsize={} niter={} dirty_only={} thread_env={} row_block_rows_env={} prepare_workers_env={} frontend_total_ms={:.3} core_total_ms={:.3} prepare_plane_input_ms={:.3} get_ms_values_ms={:.3} prepare_processing_buffer_ms={:.3} weighting_ms={:.3} psf_grid_ms={:.3} residual_degrid_grid_ms={:.3} major_cycle_refresh_ms={:.3} peak_rss_bytes={} product_status=written",
+        run_number,
+        options.ms.display(),
+        options.field_ids,
+        options.phasecenter_field,
+        options.ddid,
+        options.spw,
+        options.channel_start,
+        options.channel_count,
+        options.spectral_mode,
+        options.weighting,
+        options.deconvolver,
+        options.nterms,
+        options.imsize,
+        options.niter,
+        options.dirty_only,
+        thread_env,
+        row_block_env,
+        prepare_workers_env,
+        millis(summary.frontend_timings.total),
+        millis(summary.stage_timings.total),
+        millis(summary.frontend_timings.prepare_plane_input),
+        millis(
+            summary
+                .frontend_timings
+                .get_ms_values_into_processing_buffer,
+        ),
+        millis(summary.frontend_timings.prepare_processing_buffer),
+        millis(summary.stage_timings.weighting),
+        millis(summary.stage_timings.psf_grid),
+        millis(summary.stage_timings.residual_degrid_grid),
+        millis(summary.stage_timings.major_cycle_refresh),
+        peak_rss_bytes().unwrap_or(0),
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn peak_rss_bytes() -> Option<u64> {
+    let mut usage = MaybeUninit::<libc::rusage>::zeroed();
+    let status = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    if status != 0 {
+        return None;
+    }
+    let max_rss = unsafe { usage.assume_init() }.ru_maxrss;
+    if max_rss < 0 {
+        return None;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Some(max_rss as u64)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Some((max_rss as u64).saturating_mul(1024))
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn peak_rss_bytes() -> Option<u64> {
+    None
 }
 
 fn millis(value: Duration) -> f64 {

@@ -9,6 +9,7 @@ use crate::{
     GaussianUvTaper, ImagingRequest, UvTaperSize, VisibilityBatch, WeightDensityMode,
     WeightingMode,
     gridder::{DensityCellConvention, StandardGridder},
+    profile,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +50,58 @@ enum DensityReweightMode {
 
 fn standard_mfs_worker_threads() -> usize {
     crate::standard_mfs_thread_count_from_env()
+}
+
+fn visibility_sample_count(batches: &[VisibilityBatch]) -> usize {
+    batches.iter().map(VisibilityBatch::len).sum()
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct WeightingWorkStats {
+    accepted_samples: usize,
+    skipped_invalid_weight: usize,
+    skipped_invalid_density: usize,
+    skipped_out_of_grid: usize,
+    density_cell_hits: usize,
+}
+
+impl WeightingWorkStats {
+    fn add(&mut self, other: Self) {
+        self.accepted_samples += other.accepted_samples;
+        self.skipped_invalid_weight += other.skipped_invalid_weight;
+        self.skipped_invalid_density += other.skipped_invalid_density;
+        self.skipped_out_of_grid += other.skipped_out_of_grid;
+        self.density_cell_hits += other.density_cell_hits;
+    }
+}
+
+fn log_weighting_stage(
+    stage: &str,
+    samples_total: usize,
+    density: Option<&Array2<f32>>,
+    density_build: std::time::Duration,
+    robust_scaling: std::time::Duration,
+    reweight: std::time::Duration,
+    total: std::time::Duration,
+) {
+    if !profile::standard_mfs_profile_detail_enabled() {
+        return;
+    }
+    let density_cells = density.map_or(0, |density| density.len());
+    let density_nonzero = density.map_or(0, |density| {
+        density.iter().filter(|value| **value > 0.0).count()
+    });
+    eprintln!(
+        "standard_mfs_weighting_stage stage={} samples_total={} density_cells={} density_nonzero={} density_build_ms={:.3} robust_scaling_ms={:.3} reweight_ms={:.3} stage_total_ms={:.3}",
+        stage,
+        samples_total,
+        density_cells,
+        density_nonzero,
+        profile::millis(density_build),
+        profile::millis(robust_scaling),
+        profile::millis(reweight),
+        profile::millis(total),
+    );
 }
 
 pub(crate) fn apply_weighting(
@@ -94,31 +147,49 @@ fn apply_weighting_to_owned_batches_with_options(
     match weighting {
         WeightingMode::Natural => Ok(apply_optional_uv_taper(batches, uv_taper)),
         WeightingMode::Uniform => {
+            let stage_started = profile::maybe_profile_now();
+            let density_started = profile::maybe_profile_now();
             let density = build_density_grid(
                 &batches,
                 gridder,
                 density_includes_conjugates(density_build_convention),
                 density_build_convention,
             );
-            Ok(apply_optional_uv_taper(
-                reweight_owned_batches(
-                    batches,
-                    gridder,
-                    &density,
-                    density_convention,
-                    trace_weighting,
-                    DensityReweightMode::Uniform,
-                ),
-                uv_taper,
-            ))
+            let density_elapsed = profile::elapsed_since(density_started);
+            let reweight_started = profile::maybe_profile_now();
+            let weighted = reweight_owned_batches(
+                batches,
+                gridder,
+                &density,
+                density_convention,
+                trace_weighting,
+                DensityReweightMode::Uniform,
+            );
+            let reweight_elapsed = profile::elapsed_since(reweight_started);
+            let samples_total = visibility_sample_count(&weighted);
+            let weighted = apply_optional_uv_taper(weighted, uv_taper);
+            log_weighting_stage(
+                "owned_uniform",
+                samples_total,
+                Some(&density),
+                density_elapsed,
+                profile::elapsed_since(None),
+                reweight_elapsed,
+                profile::elapsed_since(stage_started),
+            );
+            Ok(weighted)
         }
         WeightingMode::Briggs { robust } | WeightingMode::BriggsBwTaper { robust } => {
+            let stage_started = profile::maybe_profile_now();
+            let density_started = profile::maybe_profile_now();
             let density = build_density_grid(
                 &batches,
                 gridder,
                 density_includes_conjugates(density_build_convention),
                 density_build_convention,
             );
+            let density_elapsed = profile::elapsed_since(density_started);
+            let robust_started = profile::maybe_profile_now();
             let density_weight_sum = density.iter().map(|value| f64::from(*value)).sum::<f64>();
             let total_density_weight = density_weight_sum;
             let sumlocwt = density
@@ -141,24 +212,33 @@ fn apply_weighting_to_owned_batches_with_options(
                     "CASA_RS_TRACE_RUST_WEIGHTING briggs_density_summary total_density_weight={total_density_weight:.12e} density_sum_sq={sumlocwt:.12e} density_max={density_max:.12e} density_nonzero={density_nonzero} f2={f2:.12e}"
                 );
             }
-            Ok(apply_optional_uv_taper(
-                reweight_owned_batches(
-                    batches,
-                    gridder,
-                    &density,
-                    density_convention,
-                    trace_weighting,
-                    DensityReweightMode::Briggs {
-                        f2,
-                        use_bandwidth_taper: matches!(
-                            weighting,
-                            WeightingMode::BriggsBwTaper { .. }
-                        ),
-                        fractional_bandwidth,
-                    },
-                ),
-                uv_taper,
-            ))
+            let robust_elapsed = profile::elapsed_since(robust_started);
+            let reweight_started = profile::maybe_profile_now();
+            let weighted = reweight_owned_batches(
+                batches,
+                gridder,
+                &density,
+                density_convention,
+                trace_weighting,
+                DensityReweightMode::Briggs {
+                    f2,
+                    use_bandwidth_taper: matches!(weighting, WeightingMode::BriggsBwTaper { .. }),
+                    fractional_bandwidth,
+                },
+            );
+            let reweight_elapsed = profile::elapsed_since(reweight_started);
+            let samples_total = visibility_sample_count(&weighted);
+            let weighted = apply_optional_uv_taper(weighted, uv_taper);
+            log_weighting_stage(
+                "owned_briggs",
+                samples_total,
+                Some(&density),
+                density_elapsed,
+                robust_elapsed,
+                reweight_elapsed,
+                profile::elapsed_since(stage_started),
+            );
+            Ok(weighted)
         }
     }
 }
@@ -530,29 +610,64 @@ fn build_density_grid_serial(
 ) -> Array2<f32> {
     let [nx, ny] = gridder.density_grid_shape();
     let mut density_grid = Array2::<f32>::zeros((nx, ny));
+    accumulate_density_grid_serial(
+        batches,
+        gridder,
+        mirror_hermitian,
+        convention,
+        &mut density_grid,
+        false,
+    );
+    density_grid
+}
+
+fn accumulate_density_grid_serial(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    mirror_hermitian: bool,
+    convention: DensityCellConvention,
+    density_grid: &mut Array2<f32>,
+    collect_stats: bool,
+) -> WeightingWorkStats {
+    let mut stats = WeightingWorkStats::default();
     for batch in batches {
         for index in 0..batch.len() {
             let weight = batch.weight[index];
             if !(weight.is_finite() && weight > 0.0) {
+                if collect_stats {
+                    stats.skipped_invalid_weight += 1;
+                }
                 continue;
             }
             let u_lambda = batch.u_lambda[index];
             let v_lambda = batch.v_lambda[index];
+            let mut hits = 0usize;
             if let Some((x, y)) =
                 gridder.density_cell_index_with_convention(u_lambda, v_lambda, convention)
             {
                 density_grid[(x, y)] += weight;
+                hits += 1;
             }
             if mirror_hermitian {
                 if let Some((x, y)) =
                     gridder.density_cell_index_with_convention(-u_lambda, -v_lambda, convention)
                 {
                     density_grid[(x, y)] += weight;
+                    hits += 1;
                 }
+            }
+            if !collect_stats {
+                continue;
+            }
+            if hits > 0 {
+                stats.accepted_samples += 1;
+                stats.density_cell_hits += hits;
+            } else {
+                stats.skipped_out_of_grid += 1;
             }
         }
     }
-    density_grid
+    stats
 }
 
 fn build_density_grid_parallel(
@@ -562,24 +677,100 @@ fn build_density_grid_parallel(
     convention: DensityCellConvention,
     thread_count: usize,
 ) -> Array2<f32> {
+    let requested_threads = standard_mfs_worker_threads();
+    let [nx, ny] = gridder.density_grid_shape();
     let chunk_len = batches.len().div_ceil(thread_count);
+    let stage_started = profile::maybe_profile_now();
+    let collect_stats = profile::standard_mfs_profile_detail_enabled();
     let mut local_grids = Vec::with_capacity(thread_count);
+    let join_started = profile::maybe_profile_now();
     thread::scope(|scope| {
         let mut handles = Vec::with_capacity(thread_count);
         for chunk in batches.chunks(chunk_len) {
+            let worker_samples = visibility_sample_count(chunk);
             handles.push(scope.spawn(move || {
-                build_density_grid_serial(chunk, gridder, mirror_hermitian, convention)
+                let alloc_started = profile::maybe_profile_now();
+                let mut density_grid = Array2::<f32>::zeros((nx, ny));
+                let alloc_elapsed = profile::elapsed_since(alloc_started);
+                let compute_started = profile::maybe_profile_now();
+                let stats = accumulate_density_grid_serial(
+                    chunk,
+                    gridder,
+                    mirror_hermitian,
+                    convention,
+                    &mut density_grid,
+                    collect_stats,
+                );
+                let compute_elapsed = profile::elapsed_since(compute_started);
+                (
+                    worker_samples,
+                    stats,
+                    density_grid,
+                    alloc_elapsed,
+                    compute_elapsed,
+                )
             }));
         }
         for handle in handles {
             local_grids.push(handle.join().expect("standard MFS density worker panicked"));
         }
     });
+    let join_elapsed = profile::elapsed_since(join_started);
 
-    let [nx, ny] = gridder.density_grid_shape();
     let mut density_grid = Array2::<f32>::zeros((nx, ny));
-    for local_grid in &local_grids {
+    let merge_started = profile::maybe_profile_now();
+    for (_, _, local_grid, _, _) in &local_grids {
         add_f32_grid(&mut density_grid, local_grid);
+    }
+    let merge_elapsed = profile::elapsed_since(merge_started);
+    profile::log_parallel_stage(profile::ParallelStageProfile {
+        stage: "weighting_density",
+        requested_threads,
+        actual_threads: local_grids.len(),
+        chunking: "batch",
+        chunk_len,
+        samples_total: visibility_sample_count(batches),
+        samples_per_worker: local_grids
+            .iter()
+            .map(|(worker_samples, _, _, _, _)| *worker_samples)
+            .collect(),
+        local_grid_bytes_per_worker: nx
+            .saturating_mul(ny)
+            .saturating_mul(std::mem::size_of::<f32>()),
+        local_grid_count: 1,
+        local_alloc_zero_by_worker: local_grids
+            .iter()
+            .map(|(_, _, _, alloc_elapsed, _)| *alloc_elapsed)
+            .collect(),
+        worker_compute_by_worker: local_grids
+            .iter()
+            .map(|(_, _, _, _, compute_elapsed)| *compute_elapsed)
+            .collect(),
+        join_duration: join_elapsed,
+        merge_duration: merge_elapsed,
+        stage_duration: profile::elapsed_since(stage_started),
+    });
+    for (worker_index, (worker_samples, stats, _, alloc_elapsed, compute_elapsed)) in
+        local_grids.iter().enumerate()
+    {
+        profile::log_parallel_worker(profile::ParallelWorkerProfile {
+            stage: "weighting_density",
+            worker_index,
+            samples: *worker_samples,
+            accepted_samples: stats.accepted_samples,
+            finite_visibility_samples: 0,
+            nonfinite_visibility_samples: 0,
+            skipped_not_gridable: 0,
+            skipped_invalid_weight: stats.skipped_invalid_weight,
+            skipped_invalid_sumwt: 0,
+            skipped_invalid_density: stats.skipped_invalid_density,
+            skipped_out_of_grid: stats.skipped_out_of_grid,
+            degrid_tap_visits: 0,
+            grid_tap_visits: 0,
+            density_cell_hits: stats.density_cell_hits,
+            local_alloc_zero: *alloc_elapsed,
+            worker_compute: *compute_elapsed,
+        });
     }
     density_grid
 }
@@ -680,34 +871,99 @@ fn reweight_owned_batches(
         .max(1);
     if trace_weighting || thread_count <= 1 || batches.len() < 2 {
         for batch in &mut batches {
-            reweight_owned_batch_in_place(
+            let _ = reweight_owned_batch_in_place(
                 batch,
                 gridder,
                 density,
                 convention,
                 trace_weighting,
                 mode,
+                false,
             );
         }
         return batches;
     }
 
     let chunk_len = batches.len().div_ceil(thread_count);
+    let stage_started = profile::maybe_profile_now();
+    let collect_stats = profile::standard_mfs_profile_detail_enabled();
+    let mut worker_profiles = Vec::with_capacity(thread_count);
+    let join_started = profile::maybe_profile_now();
     thread::scope(|scope| {
         let mut handles = Vec::with_capacity(thread_count);
         for chunk in batches.chunks_mut(chunk_len) {
+            let worker_samples = visibility_sample_count(chunk);
             handles.push(scope.spawn(move || {
+                let compute_started = profile::maybe_profile_now();
+                let mut stats = WeightingWorkStats::default();
                 for batch in chunk {
-                    reweight_owned_batch_in_place(batch, gridder, density, convention, false, mode);
+                    stats.add(reweight_owned_batch_in_place(
+                        batch,
+                        gridder,
+                        density,
+                        convention,
+                        false,
+                        mode,
+                        collect_stats,
+                    ));
                 }
+                let compute_elapsed = profile::elapsed_since(compute_started);
+                (worker_samples, stats, compute_elapsed)
             }));
         }
         for handle in handles {
-            handle
-                .join()
-                .expect("standard MFS reweight worker panicked");
+            worker_profiles.push(
+                handle
+                    .join()
+                    .expect("standard MFS reweight worker panicked"),
+            );
         }
     });
+    let join_elapsed = profile::elapsed_since(join_started);
+    profile::log_parallel_stage(profile::ParallelStageProfile {
+        stage: "weighting_reweight",
+        requested_threads,
+        actual_threads: worker_profiles.len(),
+        chunking: "batch",
+        chunk_len,
+        samples_total: visibility_sample_count(&batches),
+        samples_per_worker: worker_profiles
+            .iter()
+            .map(|(worker_samples, _, _)| *worker_samples)
+            .collect(),
+        local_grid_bytes_per_worker: 0,
+        local_grid_count: 0,
+        local_alloc_zero_by_worker: vec![std::time::Duration::ZERO; worker_profiles.len()],
+        worker_compute_by_worker: worker_profiles
+            .iter()
+            .map(|(_, _, compute_elapsed)| *compute_elapsed)
+            .collect(),
+        join_duration: join_elapsed,
+        merge_duration: std::time::Duration::ZERO,
+        stage_duration: profile::elapsed_since(stage_started),
+    });
+    for (worker_index, (worker_samples, stats, compute_elapsed)) in
+        worker_profiles.iter().enumerate()
+    {
+        profile::log_parallel_worker(profile::ParallelWorkerProfile {
+            stage: "weighting_reweight",
+            worker_index,
+            samples: *worker_samples,
+            accepted_samples: stats.accepted_samples,
+            finite_visibility_samples: 0,
+            nonfinite_visibility_samples: 0,
+            skipped_not_gridable: 0,
+            skipped_invalid_weight: stats.skipped_invalid_weight,
+            skipped_invalid_sumwt: 0,
+            skipped_invalid_density: stats.skipped_invalid_density,
+            skipped_out_of_grid: stats.skipped_out_of_grid,
+            degrid_tap_visits: 0,
+            grid_tap_visits: 0,
+            density_cell_hits: stats.density_cell_hits,
+            local_alloc_zero: std::time::Duration::ZERO,
+            worker_compute: *compute_elapsed,
+        });
+    }
     batches
 }
 
@@ -748,35 +1004,43 @@ fn reweight_owned_batch_in_place(
     convention: DensityCellConvention,
     trace_weighting: bool,
     mode: DensityReweightMode,
-) {
+    collect_stats: bool,
+) -> WeightingWorkStats {
     if !trace_weighting {
-        match mode {
-            DensityReweightMode::Uniform => {
-                reweight_owned_batch_uniform_in_place(batch, gridder, density, convention);
-            }
+        return match mode {
+            DensityReweightMode::Uniform => reweight_owned_batch_uniform_in_place(
+                batch,
+                gridder,
+                density,
+                convention,
+                collect_stats,
+            ),
             DensityReweightMode::Briggs {
                 f2,
                 use_bandwidth_taper: false,
                 ..
-            } => {
-                reweight_owned_batch_briggs_in_place(batch, gridder, density, convention, f2);
-            }
+            } => reweight_owned_batch_briggs_in_place(
+                batch,
+                gridder,
+                density,
+                convention,
+                f2,
+                collect_stats,
+            ),
             DensityReweightMode::Briggs {
                 f2,
                 use_bandwidth_taper: true,
                 fractional_bandwidth,
-            } => {
-                reweight_owned_batch_briggs_taper_in_place(
-                    batch,
-                    gridder,
-                    density,
-                    convention,
-                    f2,
-                    fractional_bandwidth,
-                );
-            }
-        }
-        return;
+            } => reweight_owned_batch_briggs_taper_in_place(
+                batch,
+                gridder,
+                density,
+                convention,
+                f2,
+                fractional_bandwidth,
+                collect_stats,
+            ),
+        };
     }
     reweight_owned_batch_with_transform(
         batch,
@@ -784,10 +1048,11 @@ fn reweight_owned_batch_in_place(
         density,
         convention,
         trace_weighting,
+        collect_stats,
         |weight, density, u_lambda, v_lambda| {
             reweight_density_sample(weight, density, u_lambda, v_lambda, gridder, mode)
         },
-    );
+    )
 }
 
 fn reweight_owned_batch_uniform_in_place(
@@ -795,7 +1060,9 @@ fn reweight_owned_batch_uniform_in_place(
     gridder: &StandardGridder,
     density: &Array2<f32>,
     convention: DensityCellConvention,
-) {
+    collect_stats: bool,
+) -> WeightingWorkStats {
+    let mut stats = WeightingWorkStats::default();
     for index in 0..batch.len() {
         let weight = batch.weight[index];
         let Some(cell_density) = gridder.density_at_with_convention(
@@ -805,16 +1072,33 @@ fn reweight_owned_batch_uniform_in_place(
             convention,
         ) else {
             batch.weight[index] = 0.0;
+            if collect_stats {
+                stats.skipped_out_of_grid += 1;
+            }
             continue;
         };
+        if collect_stats {
+            stats.density_cell_hits += 1;
+        }
         batch.weight[index] =
             if weight.is_finite() && weight > 0.0 && cell_density.is_finite() && cell_density > 0.0
             {
+                if collect_stats {
+                    stats.accepted_samples += 1;
+                }
                 weight / cell_density
             } else {
+                if collect_stats {
+                    if !(weight.is_finite() && weight > 0.0) {
+                        stats.skipped_invalid_weight += 1;
+                    } else {
+                        stats.skipped_invalid_density += 1;
+                    }
+                }
                 0.0
             };
     }
+    stats
 }
 
 fn reweight_owned_batch_briggs_in_place(
@@ -823,7 +1107,9 @@ fn reweight_owned_batch_briggs_in_place(
     density: &Array2<f32>,
     convention: DensityCellConvention,
     f2: f32,
-) {
+    collect_stats: bool,
+) -> WeightingWorkStats {
+    let mut stats = WeightingWorkStats::default();
     for index in 0..batch.len() {
         let weight = batch.weight[index];
         let Some(cell_density) = gridder.density_at_with_convention(
@@ -833,16 +1119,33 @@ fn reweight_owned_batch_briggs_in_place(
             convention,
         ) else {
             batch.weight[index] = 0.0;
+            if collect_stats {
+                stats.skipped_out_of_grid += 1;
+            }
             continue;
         };
+        if collect_stats {
+            stats.density_cell_hits += 1;
+        }
         batch.weight[index] =
             if weight.is_finite() && weight > 0.0 && cell_density.is_finite() && cell_density > 0.0
             {
+                if collect_stats {
+                    stats.accepted_samples += 1;
+                }
                 weight / (f2 * cell_density + 1.0)
             } else {
+                if collect_stats {
+                    if !(weight.is_finite() && weight > 0.0) {
+                        stats.skipped_invalid_weight += 1;
+                    } else {
+                        stats.skipped_invalid_density += 1;
+                    }
+                }
                 0.0
             };
     }
+    stats
 }
 
 fn reweight_owned_batch_briggs_taper_in_place(
@@ -852,7 +1155,9 @@ fn reweight_owned_batch_briggs_taper_in_place(
     convention: DensityCellConvention,
     f2: f32,
     fractional_bandwidth: f64,
-) {
+    collect_stats: bool,
+) -> WeightingWorkStats {
+    let mut stats = WeightingWorkStats::default();
     for index in 0..batch.len() {
         let weight = batch.weight[index];
         let u_lambda = batch.u_lambda[index];
@@ -861,11 +1166,20 @@ fn reweight_owned_batch_briggs_taper_in_place(
             gridder.density_at_with_convention(density, u_lambda, v_lambda, convention)
         else {
             batch.weight[index] = 0.0;
+            if collect_stats {
+                stats.skipped_out_of_grid += 1;
+            }
             continue;
         };
+        if collect_stats {
+            stats.density_cell_hits += 1;
+        }
         batch.weight[index] =
             if weight.is_finite() && weight > 0.0 && cell_density.is_finite() && cell_density > 0.0
             {
+                if collect_stats {
+                    stats.accepted_samples += 1;
+                }
                 let taper_factor = briggs_bw_taper_uv_distance_factor(
                     fractional_bandwidth,
                     gridder,
@@ -874,9 +1188,17 @@ fn reweight_owned_batch_briggs_taper_in_place(
                 ) as f32;
                 weight / ((f2 * cell_density) / taper_factor + 1.0)
             } else {
+                if collect_stats {
+                    if !(weight.is_finite() && weight > 0.0) {
+                        stats.skipped_invalid_weight += 1;
+                    } else {
+                        stats.skipped_invalid_density += 1;
+                    }
+                }
                 0.0
             };
     }
+    stats
 }
 
 fn reweight_owned_batch_with_transform(
@@ -885,8 +1207,10 @@ fn reweight_owned_batch_with_transform(
     density: &Array2<f32>,
     convention: DensityCellConvention,
     trace_weighting: bool,
+    collect_stats: bool,
     transform: impl Fn(f32, f32, f64, f64) -> f32,
-) {
+) -> WeightingWorkStats {
+    let mut stats = WeightingWorkStats::default();
     for index in 0..batch.len() {
         let weight = batch.weight[index];
         let u_lambda = batch.u_lambda[index];
@@ -895,10 +1219,23 @@ fn reweight_owned_batch_with_transform(
             gridder.density_at_with_convention(density, u_lambda, v_lambda, convention)
         else {
             batch.weight[index] = 0.0;
+            if collect_stats {
+                stats.skipped_out_of_grid += 1;
+            }
             continue;
         };
+        if collect_stats {
+            stats.density_cell_hits += 1;
+        }
         if !(weight.is_finite() && weight > 0.0 && cell_density.is_finite() && cell_density > 0.0) {
             batch.weight[index] = 0.0;
+            if collect_stats {
+                if !(weight.is_finite() && weight > 0.0) {
+                    stats.skipped_invalid_weight += 1;
+                } else {
+                    stats.skipped_invalid_density += 1;
+                }
+            }
             if trace_weighting {
                 trace_weighting_sample(
                     index,
@@ -911,6 +1248,9 @@ fn reweight_owned_batch_with_transform(
                 );
             }
             continue;
+        }
+        if collect_stats {
+            stats.accepted_samples += 1;
         }
         let output_weight = transform(weight, cell_density, u_lambda, v_lambda);
         if trace_weighting {
@@ -926,6 +1266,7 @@ fn reweight_owned_batch_with_transform(
         }
         batch.weight[index] = output_weight;
     }
+    stats
 }
 
 fn trace_weighting_enabled() -> bool {

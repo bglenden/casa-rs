@@ -3552,6 +3552,10 @@ fn frontend_progress_enabled() -> bool {
     env::var_os("CASA_RS_IMAGING_PROGRESS").is_some()
 }
 
+fn standard_mfs_profile_detail_enabled() -> bool {
+    env::var_os("CASA_RS_STANDARD_MFS_PROFILE_DETAIL").is_some()
+}
+
 fn maybe_log_frontend_progress(stage: &str, stage_elapsed: Duration, total_elapsed: Duration) {
     if frontend_progress_enabled() {
         eprintln!(
@@ -7096,6 +7100,30 @@ fn prepare_standard_mfs_input_in_row_blocks(
             strategy.worker_staging_bytes as f64 / (1024.0 * 1024.0),
             strategy.gpu_staging_bytes as f64 / (1024.0 * 1024.0),
             strategy.prepare_buffer_bytes as f64 / (1024.0 * 1024.0),
+        );
+    }
+    if standard_mfs_profile_detail_enabled() {
+        let executor_plan_bytes_estimate = active_selected_rows
+            .len()
+            .saturating_mul(strategy.selected_channel_count)
+            .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES);
+        eprintln!(
+            "standard_mfs_memory_plan_actual rows_total={} selected_channels={} row_block_rows={} worker_buffers={} total_budget_bytes={} planned_reserved_bytes={} prepare_buffer_bytes={} image_working_set_bytes={} weighting_density_bytes={} gridded_visibility_bytes={} output_image_bytes={} worker_staging_bytes={} gpu_staging_bytes={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} peak_rss_bytes=0 product_status=cpu",
+            active_selected_rows.len(),
+            strategy.selected_channel_count,
+            strategy.row_block_rows,
+            strategy.worker_buffers,
+            strategy.total_budget_bytes,
+            strategy.reserved_buffer_bytes,
+            strategy.prepare_buffer_bytes,
+            strategy.image_working_set_bytes,
+            strategy.weighting_density_bytes,
+            strategy.gridded_visibility_bytes,
+            strategy.output_image_bytes,
+            strategy.worker_staging_bytes,
+            strategy.gpu_staging_bytes,
+            executor_plan_bytes_estimate,
+            strategy.worker_staging_bytes,
         );
     }
 
