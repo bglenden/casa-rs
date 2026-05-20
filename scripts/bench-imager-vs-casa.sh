@@ -65,8 +65,9 @@ threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
 nsigma="${IMAGER_BENCH_NSIGMA:-0}"
 psfcutoff="${IMAGER_BENCH_PSFCUTOFF:-0.35}"
 keep_output_root="${IMAGER_BENCH_KEEP_OUTPUT_ROOT:-}"
-ms_staging="${IMAGER_BENCH_MS_STAGING:-copy}"
+ms_staging="${IMAGER_BENCH_MS_STAGING:-direct}"
 tmp_root="${IMAGER_BENCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
+phase_probe="${IMAGER_BENCH_PHASE_PROBE:-0}"
 
 if [[ "$wterm" != "none" ]]; then
   echo "error: scripts/bench-imager-vs-casa.sh only supports IMAGER_BENCH_WTERM=none for Rust-vs-CASA comparisons" >&2
@@ -92,6 +93,19 @@ if [[ "$ms_staging" != "copy" && "$ms_staging" != "direct" ]]; then
   echo "error: IMAGER_BENCH_MS_STAGING must be copy or direct" >&2
   exit 2
 fi
+
+case "$phase_probe" in
+  1|true|TRUE|yes|YES|on|ON)
+    phase_probe_enabled=1
+    ;;
+  0|false|FALSE|no|NO|off|OFF|"")
+    phase_probe_enabled=0
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_PHASE_PROBE must be 0/1, true/false, yes/no, or on/off" >&2
+    exit 2
+    ;;
+esac
 
 if [[ ! -d "$tmp_root" ]]; then
   echo "error: IMAGER_BENCH_TMP_ROOT does not exist: $tmp_root" >&2
@@ -146,7 +160,7 @@ PY
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction ms_staging=$ms_staging"
+echo "mode=$mode specmode=$specmode gridder=$gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count interpolation=$interpolation weighting=$weighting robust=$robust deconvolver=$deconvolver nterms=$nterms scales=$scales wterm=$wterm imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction ms_staging=$ms_staging phase_probe=$phase_probe_enabled"
 echo
 
 cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
@@ -472,31 +486,36 @@ if [[ -n "$keep_output_root" ]]; then
   echo
 fi
 
-echo "CASA PySynthesisImager stage medians (milliseconds):"
-CASA_RS_BENCH_MS_PATH="$ms_path" \
-CASA_RS_BENCH_REPEATS="$repeats" \
-CASA_RS_BENCH_FIELD="$field" \
-CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
-CASA_RS_BENCH_SPW="$spw" \
-CASA_RS_BENCH_CHANNEL_START="$channel_start" \
-CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
-CASA_RS_BENCH_SPECMODE="$specmode" \
-CASA_RS_BENCH_GRIDDER="$gridder" \
-CASA_RS_BENCH_IMSIZE="$imsize" \
-CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
-CASA_RS_BENCH_WEIGHTING="$weighting" \
-CASA_RS_BENCH_ROBUST="$robust" \
-CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
-CASA_RS_BENCH_NTERMS="$nterms" \
-CASA_RS_BENCH_SCALES="$scales" \
-CASA_RS_BENCH_NITER="$casa_niter" \
-CASA_RS_BENCH_GAIN="$gain" \
-CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
-CASA_RS_BENCH_NSIGMA="$nsigma" \
-CASA_RS_BENCH_PSFCUTOFF="$psfcutoff" \
-CASA_RS_BENCH_MINOR_CYCLE_LENGTH="$minor_cycle_length" \
-CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
-CASA_RS_BENCH_MIN_PSFFRACTION="$min_psf_fraction" \
-CASA_RS_BENCH_MAX_PSFFRACTION="$max_psf_fraction" \
-CASA_RS_BENCH_INTERPOLATION="$interpolation" \
-  "$CASA_RS_CASA_PYTHON" "$repo_root/tools/perf/imager/casa_phase_bench.py" | sed 's/^/  /'
+if [[ "$phase_probe_enabled" == "1" ]]; then
+  echo "CASA PySynthesisImager stage medians (milliseconds):"
+  CASA_RS_BENCH_MS_PATH="$ms_path" \
+  CASA_RS_BENCH_REPEATS="$repeats" \
+  CASA_RS_BENCH_FIELD="$field" \
+  CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
+  CASA_RS_BENCH_SPW="$spw" \
+  CASA_RS_BENCH_CHANNEL_START="$channel_start" \
+  CASA_RS_BENCH_CHANNEL_COUNT="$channel_count" \
+  CASA_RS_BENCH_SPECMODE="$specmode" \
+  CASA_RS_BENCH_GRIDDER="$gridder" \
+  CASA_RS_BENCH_IMSIZE="$imsize" \
+  CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
+  CASA_RS_BENCH_WEIGHTING="$weighting" \
+  CASA_RS_BENCH_ROBUST="$robust" \
+  CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
+  CASA_RS_BENCH_NTERMS="$nterms" \
+  CASA_RS_BENCH_SCALES="$scales" \
+  CASA_RS_BENCH_NITER="$casa_niter" \
+  CASA_RS_BENCH_GAIN="$gain" \
+  CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
+  CASA_RS_BENCH_NSIGMA="$nsigma" \
+  CASA_RS_BENCH_PSFCUTOFF="$psfcutoff" \
+  CASA_RS_BENCH_MINOR_CYCLE_LENGTH="$minor_cycle_length" \
+  CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
+  CASA_RS_BENCH_MIN_PSFFRACTION="$min_psf_fraction" \
+  CASA_RS_BENCH_MAX_PSFFRACTION="$max_psf_fraction" \
+  CASA_RS_BENCH_INTERPOLATION="$interpolation" \
+    "$CASA_RS_CASA_PYTHON" "$repo_root/tools/perf/imager/casa_phase_bench.py" | sed 's/^/  /'
+else
+  echo "CASA PySynthesisImager stage medians (milliseconds):"
+  echo "  skipped; set IMAGER_BENCH_PHASE_PROBE=1 for CASA phase diagnostics"
+fi

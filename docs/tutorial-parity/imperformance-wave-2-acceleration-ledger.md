@@ -1,8 +1,8 @@
 # ImPerformance Wave 2 Acceleration Ledger
 
 Truth class: current descriptive
-Last reality check: 2026-05-19
-Verification: `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just docs-check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below
+Last reality check: 2026-05-20
+Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile on 2026-05-20
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -177,6 +177,9 @@ standard-MFS residual refresh.
 | bounded thread scaling | `32,768` | `8` | `36.280 s` | `21.451 s` | `18.526 s` | `18.477 s` |
 | bounded thread scaling | `32,768` | `10` | `28.253 s` | `15.239 s` | `16.426 s` | `16.388 s` |
 | bounded thread scaling | `32,768` | `auto` | `28.481 s` | `15.290 s` | `18.959 s` | `18.916 s` |
+| positive-only standard gridder plan | `32,768` | `4` | `26.942 s` | `13.713 s` | `15.699 s` | `15.639 s` |
+| compact product tap set | `32,768` | `4` | `27.166 s` | `13.674 s` | `19.083 s` | `19.017 s` |
+| compact product tap set | planner-sized | `10` | `33.055 s` | `16.969 s` | `18.244 s` | `18.195 s` |
 
 The one-buffer planner default reduced this diagnostic's prepare phase by
 `14.356 s` (`35.7%`) and total frontend runtime by `14.616 s` (`13.3%`). The
@@ -191,15 +194,35 @@ PSF/dirty grid, the same bounded workload moved most remaining time back to
 frontend row preparation. Raising the worker count above the first `4`-worker
 checkpoint still helps, but not linearly; on the local 10-logical-CPU machine
 the bounded `10`-worker run reduced `run_imaging` to `16.426 s`, while
-`auto` landed at `18.959 s` in a later one-repeat run.
+`auto` landed at `18.959 s` in a later one-repeat run. The next local planner
+change added a positive-only sample plan for standard-MFS streaming paths that
+only ever use the positive UV tap products. That avoids computing and
+flattening the conjugate negative-tap products in the initial PSF/dirty grid
+and residual refresh loops. On the same bounded `4`-worker profile, it reduced
+`run_imaging` from `22.014 s` to `15.699 s`; two broader experiments in the
+same area, a per-worker grid merge helper and paired PSF/residual updates, were
+discarded after regressing this profile. A standard-MFS row-block prepare
+worker prototype using `CASA_RS_IMAGING_PREPARE_WORKERS=4` was also discarded:
+it reduced no measured bottleneck on this dataset, moving prepare from about
+`27.0 s` to `30.7 s` because smaller row blocks and parallel column reads cost
+more than the row-adaptation overlap saved. The retained follow-up shrank
+`ProductTapSet` to the flat index and weight arrays used by the hot contiguous
+grids; fallback paths now derive row/column coordinates from the flat index
+only when needed. Later one-repeat bounded runs were noisier than the first
+positive-only profile, but the compact representation still kept the `4`-worker
+core below the earlier `22.014 s` checkpoint. Raising the same run to `10`
+grid workers improved core imaging to `18.244 s` but forced the centralized
+planner to reserve more worker staging, reducing row-buffer size and moving
+`prepare_plane_input` to `33.055 s`; for this bounded workload, `4` workers
+remained the better end-to-end tradeoff.
 
 | Core stage | Median |
 |---|---:|
-| `weighting` | `0.574 s` |
-| `psf_grid` | `5.148 s` |
-| `residual_degrid_grid` | `14.742 s` |
-| `major_cycle_refresh` | `9.649 s` |
-| `multiscale_scale_refresh` | `0.667 s` |
+| `weighting` | `0.765 s` |
+| `psf_grid` | `4.104 s` |
+| `residual_degrid_grid` | `12.167 s` |
+| `major_cycle_refresh` | `8.140 s` |
+| `multiscale_scale_refresh` | `0.845 s` |
 | `minor_cycle_solve` | `0.011 s` |
 
 The full 2048-pixel, 512-channel, `niter=2` profile shows the same worker
@@ -211,6 +234,7 @@ changes carry to the full-medium shape:
 | weighting workers | `4` | `125.454 s` | `387.984 s` | `590.097 s` | `202.655 s` | `1238.520 s` | `1406.923 s` |
 | weighting plus combined dirty-grid workers | `4` | `119.135 s` | `195.249 s` | `455.601 s` | `260.904 s` | `917.914 s` | `1088.750 s` |
 | auto worker count | `auto` | `160.042 s` | `139.826 s` | `351.524 s` | `211.994 s` | `827.926 s` | `1004.912 s` |
+| positive compact tap plan | `auto` | `104.285 s` | `91.790 s` | `250.545 s` | `159.118 s` | `589.248 s` | `758.891 s` |
 
 The full-shape `auto` run was Rust-only, not paired with CASA, but it confirms
 that increasing worker count still helps at the real shape. Compared with the
@@ -218,7 +242,15 @@ previous `4`-worker standalone profile, `run_imaging` improved by `89.988 s`
 and frontend total improved by `83.838 s`. The benefit came from PSF and
 residual grid/degrid traversal; weighting moved the other way in this
 one-repeat run and still needs repeated measurement before changing the
-recommended full-run setting.
+recommended full-run setting. The later positive compact tap plan keeps the
+same `auto` worker setting but removes unnecessary negative-tap planning from
+streaming standard-MFS loops and shrinks each flattened product-tap plan to the
+flat index and weight arrays used by contiguous grids. On the same full-shape
+diagnostic it reduced `run_imaging` by `238.678 s` (`28.8%`) and frontend total
+by `246.021 s` (`24.5%`) against the prior standalone `auto` row. The biggest
+core movements were `weighting` (`160.042 s` to `104.285 s`), `psf_grid`
+(`139.826 s` to `91.790 s`), and `residual_degrid_grid` (`351.524 s` to
+`250.545 s`).
 
 A paired Rust-vs-CASA run of the full 2048-pixel, 512-channel, `niter=2`
 diagnostic then completed with product comparison:
@@ -226,35 +258,57 @@ diagnostic then completed with product comparison:
 | Workload | Result JSON | Rust median | CASA median | Ratio | Correctness |
 |---|---|---:|---:|---:|---|
 | `wave1-vla-single-medium-standard-mfs-clean-niter2` | `target/imperformance-wave2/threaded-clean-niter2-casa/20260519T190828Z-wave1-vla-single-medium-standard-mfs-clean-niter2-58852a06.json` | `1214.646 s` | `2138.483 s` | `0.57x` | GREEN: `.image`, `.residual`, `.psf`, and `.model` compared |
+| `wave1-vla-single-medium-standard-mfs-clean-niter2` | `target/imperformance-wave2/positive-compact-clean-niter2-casa/20260520T030729Z-wave1-vla-single-medium-standard-mfs-clean-niter2-b693a634.json` | `719.611 s` | `2017.326 s` | `0.36x` | GREEN: `.image`, `.residual`, `.psf`, and `.model` compared |
 
-This is the first full-shape clean timing comparison where the Wave 2 Rust path
-is materially faster than CASA on the same diagnostic, about `1.76x` faster by
-wall time. It is still a shallow clean diagnostic: `niter=2` produced two Rust
-minor iterations and should not be read as a science-depth deconvolution run.
+The first paired clean comparison made the Wave 2 Rust path materially faster
+than CASA on the same diagnostic, about `1.76x` faster by wall time. The later
+positive compact tap plan moved the paired CLI timing to `719.611 s`, about
+`2.80x` faster than CASA's `2017.326 s` direct `tclean` wall time. It is still a
+shallow clean diagnostic: `niter=2` produced two Rust minor iterations and
+should not be read as a science-depth deconvolution run.
 
-The sampled product deltas were:
+The latest sampled product deltas were:
 
 | Product | `diff_abs_max` | `diff_rms` | `diff_abs_max_over_casa_peak` | `diff_rms_over_casa_rms` |
 |---|---:|---:|---:|---:|
-| `.image` | `9.822845e-4` | `1.382698e-5` | `5.107993e-5` | `8.955059e-5` |
-| `.residual` | `8.716583e-4` | `1.365339e-5` | `5.741499e-5` | `9.506270e-5` |
-| `.psf` | `8.133054e-5` | `1.299795e-6` | `1.991039e-4` | `2.559283e-3` |
-| `.model` | `2.980232e-7` | `9.741179e-10` | `2.496955e-7` | `1.929741e-7` |
+| `.image` | `3.566742e-4` | `1.085070e-5` | `1.854747e-5` | `7.027464e-5` |
+| `.residual` | `4.953146e-5` | `1.074190e-5` | `3.262572e-6` | `7.479129e-5` |
+| `.psf` | `8.560910e-7` | `5.215558e-8` | `2.095782e-6` | `1.026938e-4` |
+| `.model` | `3.576279e-7` | `1.172043e-9` | `2.996346e-7` | `2.321833e-7` |
 
 The paired harness run reported slower Rust stage timings than the immediately
 preceding standalone profile, so the conservative evidence to compare against
-CASA is the paired wall-clock result above, not the standalone `1088.750 s`
-frontend profile. In that paired run the Rust core remained CPU dominated:
-`weighting=166.740 s`, `psf_grid=281.194 s`, `residual_degrid_grid=583.911 s`,
-`major_cycle_refresh=303.179 s`, and `prepare_plane_input=205.438 s`. CASA's
-measured PySynthesisImager stages were dominated by `make_psf=522.414 s`,
-`calcres_major_cycle=576.322 s`, and `clean_major_cycle=720.812 s`, with
-`set_weighting=44.151 s`.
+CASA is the paired wall-clock result above, not standalone frontend profiles.
+In the latest paired run the Rust core remained CPU dominated:
+`weighting=98.431 s`, `psf_grid=89.829 s`, `residual_degrid_grid=266.098 s`,
+`major_cycle_refresh=176.525 s`, and `prepare_plane_input=138.915 s`. The CASA
+phase probe, which is diagnostic and not the headline CASA wall-clock
+comparison, was dominated by `make_psf=608.218 s`,
+`calcres_major_cycle=669.309 s`, and `clean_major_cycle=785.696 s`, with
+`set_weighting=60.419 s`. The probe itself took `2129.522 s`, confirming that
+CASA phase diagnostics cost roughly another CASA imaging pass on this shape and
+must be opt-in rather than part of routine paired timing.
 
-The next Wave 2 optimization target is therefore the remaining standard-MFS
-grid/degrid traversal inside the full-shape clean path and the GPU feasibility
-prototype/ruling for a regular high-arithmetic kernel, not minor-cycle
-execution.
+The next Wave 2 optimization target remains the standard-MFS grid/degrid
+traversal inside the full-shape clean path. Minor-cycle execution is still not
+material at `niter=2`; the large buckets are CPU gridding/degridding, weighting,
+and frontend row preparation.
+
+## GPU Feasibility Checkpoint
+
+The local profiler host reports an Apple M4 GPU with 10 cores and Metal
+support. The repo does not currently carry a Metal, wgpu, CUDA, or other GPU
+runtime dependency. The standard-MFS execution layer already has a reserved
+backend marker that fails before execution for names such as `gpu`, and the
+central memory planner already exposes a named GPU staging reserve through
+`CASA_RS_IMAGING_GPU_STAGING_MB`.
+
+The Wave 2 conclusion so far is that a GPU implementation should plug in behind
+the existing standard-MFS backend/planner boundary, not inside task routing or
+frontend row preparation. Adding a real Metal/wgpu dependency is a substantial
+runtime/dependency decision and was not done silently in this CPU optimization
+pass. The current retained CPU work keeps the GPU path prepared at the resource
+planning seam while deferring the dependency choice for explicit review.
 
 Earlier stopped clean attempts wrote failed result records only:
 
@@ -299,14 +353,19 @@ tools/perf/imager/run_workload.py \
 Run the completed full-shape `niter=2` clean comparison:
 
 ```sh
-CASA_RS_STANDARD_MFS_GRID_THREADS=4 \
+CASA_RS_STANDARD_MFS_GRID_THREADS=auto \
 CASA_RS_BENCH_MS_STAGING=direct \
 CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance \
 CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python \
 tools/perf/imager/run_workload.py \
   --repeats 1 \
-  --run-label wave2-threaded-clean-niter2 \
+  --run-label wave2-positive-compact-clean-niter2 \
   --storage-label external-ssd-wave2-medium-direct \
-  --output-dir target/imperformance-wave2/threaded-clean-niter2-casa \
+  --output-dir target/imperformance-wave2/positive-compact-clean-niter2-casa \
   target/imperformance-wave2/medium-plan-current/workloads/wave1-vla-single-medium-standard-mfs-clean-niter2.json
 ```
+
+Set `CASA_RS_BENCH_PHASE_PROBE=1` on that command only when CASA
+`PySynthesisImager` phase medians are needed. The default paired run records
+Rust/CASA wall times and product comparisons without paying for a second CASA
+diagnostic pass.

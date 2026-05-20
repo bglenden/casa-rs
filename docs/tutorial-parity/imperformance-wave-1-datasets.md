@@ -1,8 +1,8 @@
 # ImPerformance Wave 1 Simulated Dataset Plan
 
 Truth class: current descriptive
-Last reality check: 2026-05-19
-Verification: `python3 -m py_compile tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/bench_simobserve.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_bench_simobserve.py`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/dataset-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/dataset-small-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --materialize-models --materialize-workloads --output-dir target/imperformance-wave1/dataset-small-materialized`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-alma-mosaic-large --allow-non-external-large-root --materialize-workloads --output-dir target/imperformance-wave1/dataset-large-workloads`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/generated-workload-dry-run target/imperformance-wave1/dataset-small-materialized/workloads/wave1-vla-single-small-standard-mfs-dirty-control.json`; `python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/fixed-axis-vla-small-bench-v2 --disable-noise --strict-values`; `python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-alma-single-small --output-dir target/imperformance-wave1/fixed-axis-alma-small-bench-v2 --disable-noise --strict-values`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/issue248-closeout-dry-run`; `du -sh /Volumes/GLENDENNING/casa-rs-imperformance/wave1/.../*.ms`; `cargo test -p casa-ms`; `just docs-check`; `just quick`
+Last reality check: 2026-05-20
+Verification: `python3 -m py_compile tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/bench_simobserve.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_bench_simobserve.py`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/dataset-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/dataset-small-dry-run`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-vla-single-small --materialize-models --materialize-workloads --output-dir target/imperformance-wave1/dataset-small-materialized`; `tools/perf/imager/stage_wave1_datasets.py --data-root /tmp/casa-rs-imperformance --dataset wave1-alma-mosaic-large --allow-non-external-large-root --materialize-workloads --output-dir target/imperformance-wave1/dataset-large-workloads`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/generated-workload-dry-run target/imperformance-wave1/dataset-small-materialized/workloads/wave1-vla-single-small-standard-mfs-dirty-control.json`; `tools/perf/imager/stage_wave1_datasets.py --data-root /Volumes/GLENDENNING/casa-rs-imperformance --dataset wave1-vla-single-medium --materialize-workloads --output-dir target/imperformance-wave2/medium-plan-current`; `python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-vla-single-small --output-dir target/imperformance-wave1/fixed-axis-vla-small-bench-v2 --disable-noise --strict-values`; `python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/current-plan/wave1-dataset-plan.json --dataset wave1-alma-single-small --output-dir target/imperformance-wave1/fixed-axis-alma-small-bench-v2 --disable-noise --strict-values`; `tools/perf/imager/stage_wave1_datasets.py --dry-run --data-root /Volumes/GLENDENNING/casa-rs-imperformance --output-dir target/imperformance-wave1/issue248-closeout-dry-run`; `du -sh /Volumes/GLENDENNING/casa-rs-imperformance/wave1/.../*.ms`; `cargo test -p casa-ms`; `just docs-check`; `just quick`
 
 Wave issue: #246
 Child issue: #248
@@ -68,6 +68,64 @@ The currently staged MeasurementSet sizes are:
 | `wave1-alma-single-medium` | medium | `36G` |
 | `wave1-alma-mosaic-small` | small | `1.1G` |
 | `wave1-alma-mosaic-large` | large | `107G` |
+
+## External Disk Cleanup Policy
+
+External MeasurementSets and tutorial parity clones are managed resources, not
+permanent scratch space. Source archives and canonical staged benchmark
+datasets may stay on the external root while they are part of the active
+performance plan. Generated run directories, trace MeasurementSets, and dated
+copy-on-write parity clones must be deleted after their timing or evidence has
+been recorded.
+
+The cleanup planner is dry-run by default:
+
+```sh
+just external-data-cleanup --root /Volumes/GLENDENNING
+```
+
+Apply only after reviewing the printed candidate list:
+
+```sh
+just external-data-cleanup --root /Volumes/GLENDENNING --apply
+```
+
+The default cleanup targets are conservative:
+
+- dated VLA flagging tutorial parity/performance clones under
+  `casa-rs/tutorial-data/tutorial-parity/vla/flagging/parity-runs`;
+- generated ImPerformance I/O trace data under
+  `casa-rs-imperformance/io-trace`;
+- superseded M100 split-parity work directories under
+  `casa-rs/tutorial-data/tutorial-parity/alma/m100/band3-combine/work`, keeping
+  the newest dated run as inspectable evidence.
+
+Older issue-specific generated run data, such as `casa-rs/issue175-runs`, is
+opt-in:
+
+```sh
+just external-data-cleanup \
+  --root /Volumes/GLENDENNING \
+  --include-issue175-runs
+```
+
+Run the dry-run planner at these triggers:
+
+- after any parity/performance script writes to `/Volumes/GLENDENNING`;
+- before moving a performance or tutorial-parity PR from In Progress to Review;
+- after closing a tutorial/parity issue that left an issue-specific run
+  directory behind;
+- whenever `/Volumes/GLENDENNING` exceeds 70% capacity.
+
+Apply cleanup during the same work session when the candidates are generated
+run products and the evidence has already been captured in docs, JSON, plots,
+or PR notes. If a candidate is still the only copy of source data or signoff
+evidence, keep it and record why.
+
+Benchmark harnesses must use direct MeasurementSet staging by default. Temporary
+full-MS copies are allowed only through an explicit `IMAGER_BENCH_MS_STAGING=copy`
+or `CASA_RS_BENCH_MS_STAGING=copy` override for small, intentionally disposable
+runs.
 
 ## Instruments And Families
 

@@ -39,6 +39,9 @@ release-cpp-interop:
 release-perf:
     bash scripts/test-release-perf.sh
 
+external-data-cleanup *args:
+    tools/perf/imager/cleanup_external_data.py {{args}}
+
 arch-check:
     bash scripts/arch-check.sh
 

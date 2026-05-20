@@ -28,8 +28,6 @@ pub(crate) struct TapSet {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ProductTapSet {
-    pub(crate) x_indices: [usize; GRIDDER_PRODUCT_TAP_COUNT],
-    pub(crate) y_indices: [usize; GRIDDER_PRODUCT_TAP_COUNT],
     pub(crate) flat_indices: [usize; GRIDDER_PRODUCT_TAP_COUNT],
     pub(crate) weights: [f32; GRIDDER_PRODUCT_TAP_COUNT],
 }
@@ -174,6 +172,20 @@ impl StandardGridder {
         })
     }
 
+    pub(crate) fn plan_positive_sample(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+    ) -> Option<ProductTapSet> {
+        let positive_x = self.sample_taps(self.grid_coordinate_x(u_lambda), self.grid_shape[0])?;
+        let positive_y = self.sample_taps(self.grid_coordinate_y(v_lambda), self.grid_shape[1])?;
+        Some(flatten_tap_products(
+            &positive_x,
+            &positive_y,
+            self.grid_shape[1],
+        ))
+    }
+
     #[allow(dead_code)]
     pub(crate) fn grid_sample_planned(
         &self,
@@ -206,7 +218,11 @@ impl StandardGridder {
             return;
         }
         for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
-            grid[(taps.x_indices[tap], taps.y_indices[tap])] += value * taps.weights[tap];
+            let flat_index = taps.flat_indices[tap];
+            grid[(
+                flat_index / self.grid_shape[1],
+                flat_index % self.grid_shape[1],
+            )] += value * taps.weights[tap];
         }
     }
 
@@ -223,8 +239,11 @@ impl StandardGridder {
             return;
         }
         for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
-            grid[(taps.x_indices[tap], taps.y_indices[tap])] +=
-                value * f64::from(taps.weights[tap]);
+            let flat_index = taps.flat_indices[tap];
+            grid[(
+                flat_index / self.grid_shape[1],
+                flat_index % self.grid_shape[1],
+            )] += value * f64::from(taps.weights[tap]);
         }
     }
 
@@ -250,7 +269,11 @@ impl StandardGridder {
         }
         for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
             let weight = f64::from(taps.weights[tap]);
-            let index = (taps.x_indices[tap], taps.y_indices[tap]);
+            let flat_index = taps.flat_indices[tap];
+            let index = (
+                flat_index / self.grid_shape[1],
+                flat_index % self.grid_shape[1],
+            );
             first_grid[index] += first_value * weight;
             second_grid[index] += second_value * weight;
         }
@@ -290,7 +313,11 @@ impl StandardGridder {
         }
         let mut value = Complex32::new(0.0, 0.0);
         for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
-            value += grid[(taps.x_indices[tap], taps.y_indices[tap])] * taps.weights[tap];
+            let flat_index = taps.flat_indices[tap];
+            value += grid[(
+                flat_index / self.grid_shape[1],
+                flat_index % self.grid_shape[1],
+            )] * taps.weights[tap];
         }
         value
     }
@@ -651,8 +678,6 @@ impl StandardGridder {
 }
 
 fn flatten_tap_products(x_taps: &TapSet, y_taps: &TapSet, grid_stride: usize) -> ProductTapSet {
-    let mut x_indices = [0usize; GRIDDER_PRODUCT_TAP_COUNT];
-    let mut y_indices = [0usize; GRIDDER_PRODUCT_TAP_COUNT];
     let mut flat_indices = [0usize; GRIDDER_PRODUCT_TAP_COUNT];
     let mut weights = [0.0f32; GRIDDER_PRODUCT_TAP_COUNT];
     let mut slot = 0usize;
@@ -660,16 +685,12 @@ fn flatten_tap_products(x_taps: &TapSet, y_taps: &TapSet, grid_stride: usize) ->
         let x_index = x_taps.indices[x_tap];
         let x_weight = x_taps.weights[x_tap];
         for y_tap in 0..GRIDDER_TAP_COUNT {
-            x_indices[slot] = x_index;
-            y_indices[slot] = y_taps.indices[y_tap];
-            flat_indices[slot] = x_index * grid_stride + y_indices[slot];
+            flat_indices[slot] = x_index * grid_stride + y_taps.indices[y_tap];
             weights[slot] = x_weight * y_taps.weights[y_tap];
             slot += 1;
         }
     }
     ProductTapSet {
-        x_indices,
-        y_indices,
         flat_indices,
         weights,
     }

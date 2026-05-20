@@ -330,7 +330,9 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
     is_mtmfs = mode_id.startswith("mtmfs")
     deconvolver = "mtmfs" if is_mtmfs else ("multiscale" if is_clean else "hogbom")
     channels = workload_channel_count(dataset, mode_id, specmode)
-    if dataset["tier"] == "small":
+    if mode_id.endswith("-niter2"):
+        niter = 2 if is_clean else 0
+    elif dataset["tier"] == "small":
         niter = 25 if is_clean else 0
     elif dataset["tier"] == "medium":
         niter = 100 if is_clean else 0
