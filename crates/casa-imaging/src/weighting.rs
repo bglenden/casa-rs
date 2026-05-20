@@ -536,20 +536,19 @@ fn build_density_grid_serial(
             if !(weight.is_finite() && weight > 0.0) {
                 continue;
             }
-            let primary = (batch.u_lambda[index], batch.v_lambda[index]);
-            let conjugate = (-batch.u_lambda[index], -batch.v_lambda[index]);
-            let positions = if mirror_hermitian {
-                [Some(primary), Some(conjugate)]
-            } else {
-                [Some(primary), None]
-            };
-            for (u_lambda, v_lambda) in positions.into_iter().flatten() {
-                let Some((x, y)) =
-                    gridder.density_cell_index_with_convention(u_lambda, v_lambda, convention)
-                else {
-                    continue;
-                };
+            let u_lambda = batch.u_lambda[index];
+            let v_lambda = batch.v_lambda[index];
+            if let Some((x, y)) =
+                gridder.density_cell_index_with_convention(u_lambda, v_lambda, convention)
+            {
                 density_grid[(x, y)] += weight;
+            }
+            if mirror_hermitian {
+                if let Some((x, y)) =
+                    gridder.density_cell_index_with_convention(-u_lambda, -v_lambda, convention)
+                {
+                    density_grid[(x, y)] += weight;
+                }
             }
         }
     }
@@ -750,6 +749,35 @@ fn reweight_owned_batch_in_place(
     trace_weighting: bool,
     mode: DensityReweightMode,
 ) {
+    if !trace_weighting {
+        match mode {
+            DensityReweightMode::Uniform => {
+                reweight_owned_batch_uniform_in_place(batch, gridder, density, convention);
+            }
+            DensityReweightMode::Briggs {
+                f2,
+                use_bandwidth_taper: false,
+                ..
+            } => {
+                reweight_owned_batch_briggs_in_place(batch, gridder, density, convention, f2);
+            }
+            DensityReweightMode::Briggs {
+                f2,
+                use_bandwidth_taper: true,
+                fractional_bandwidth,
+            } => {
+                reweight_owned_batch_briggs_taper_in_place(
+                    batch,
+                    gridder,
+                    density,
+                    convention,
+                    f2,
+                    fractional_bandwidth,
+                );
+            }
+        }
+        return;
+    }
     reweight_owned_batch_with_transform(
         batch,
         gridder,
@@ -760,6 +788,95 @@ fn reweight_owned_batch_in_place(
             reweight_density_sample(weight, density, u_lambda, v_lambda, gridder, mode)
         },
     );
+}
+
+fn reweight_owned_batch_uniform_in_place(
+    batch: &mut VisibilityBatch,
+    gridder: &StandardGridder,
+    density: &Array2<f32>,
+    convention: DensityCellConvention,
+) {
+    for index in 0..batch.len() {
+        let weight = batch.weight[index];
+        let Some(cell_density) = gridder.density_at_with_convention(
+            density,
+            batch.u_lambda[index],
+            batch.v_lambda[index],
+            convention,
+        ) else {
+            batch.weight[index] = 0.0;
+            continue;
+        };
+        batch.weight[index] =
+            if weight.is_finite() && weight > 0.0 && cell_density.is_finite() && cell_density > 0.0
+            {
+                weight / cell_density
+            } else {
+                0.0
+            };
+    }
+}
+
+fn reweight_owned_batch_briggs_in_place(
+    batch: &mut VisibilityBatch,
+    gridder: &StandardGridder,
+    density: &Array2<f32>,
+    convention: DensityCellConvention,
+    f2: f32,
+) {
+    for index in 0..batch.len() {
+        let weight = batch.weight[index];
+        let Some(cell_density) = gridder.density_at_with_convention(
+            density,
+            batch.u_lambda[index],
+            batch.v_lambda[index],
+            convention,
+        ) else {
+            batch.weight[index] = 0.0;
+            continue;
+        };
+        batch.weight[index] =
+            if weight.is_finite() && weight > 0.0 && cell_density.is_finite() && cell_density > 0.0
+            {
+                weight / (f2 * cell_density + 1.0)
+            } else {
+                0.0
+            };
+    }
+}
+
+fn reweight_owned_batch_briggs_taper_in_place(
+    batch: &mut VisibilityBatch,
+    gridder: &StandardGridder,
+    density: &Array2<f32>,
+    convention: DensityCellConvention,
+    f2: f32,
+    fractional_bandwidth: f64,
+) {
+    for index in 0..batch.len() {
+        let weight = batch.weight[index];
+        let u_lambda = batch.u_lambda[index];
+        let v_lambda = batch.v_lambda[index];
+        let Some(cell_density) =
+            gridder.density_at_with_convention(density, u_lambda, v_lambda, convention)
+        else {
+            batch.weight[index] = 0.0;
+            continue;
+        };
+        batch.weight[index] =
+            if weight.is_finite() && weight > 0.0 && cell_density.is_finite() && cell_density > 0.0
+            {
+                let taper_factor = briggs_bw_taper_uv_distance_factor(
+                    fractional_bandwidth,
+                    gridder,
+                    u_lambda,
+                    v_lambda,
+                ) as f32;
+                weight / ((f2 * cell_density) / taper_factor + 1.0)
+            } else {
+                0.0
+            };
+    }
 }
 
 fn reweight_owned_batch_with_transform(

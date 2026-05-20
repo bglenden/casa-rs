@@ -306,6 +306,36 @@ standard-MFS weighting and grid/degrid traversal in scope for Wave 2: worker
 scaling wins the headline comparison, but it is masking substantial
 single-thread cost.
 
+The first serial-kernel pass precomputes normalized standard-gridder tap weights
+per oversampling offset, precomputes density-cell scale constants, removes a
+temporary density-position iterator from Briggs density construction, specializes
+the owned no-trace Briggs reweight path, and updates complex grid cells by
+their real/imaginary fields in the product-tap loop. On the same one-worker
+full-shape diagnostic, that moved `frontend_total` to `1286.448 s` and
+`core_total` to `1156.535 s`, a `41.063 s` (`3.1%`) frontend reduction and
+`41.684 s` (`3.5%`) core reduction from the first one-worker profile. The
+clearest movement was residual refresh/grid planning:
+`residual_degrid_grid=560.749 s` and `major_cycle_refresh=362.298 s`, down from
+`596.189 s` and `400.458 s`. This is useful but not sufficient; it confirms
+that the remaining serial high nail is algorithmic residual refresh and
+per-sample traversal, not only scalar-loop overhead.
+
+Fresh call-tree samples on the bounded one-worker clean diagnostic changed the
+next target. The first 2026-05-20 core sample was dominated by
+`accumulate_streaming_standard_mfs_residual_grid_serial`, `flatten_tap_products`,
+`sample_taps`, `degrid_sample_product_planned`, and the f64 product-grid update
+helpers; FFT and minor-cycle solve were not material. Replacing streaming-path
+product-tap flattening with direct positive-axis tap traversal kept the reusable
+executor path unchanged, but removed the temporary 49-product tap set from the
+large streaming path. On the same bounded 64-channel, 1024-pixel,
+`niter=50`, `minor_cycle_length=50`, one-worker run, this moved
+`core_total=31.373 s` to `23.094 s`, `psf_grid=6.595 s` to `4.171 s`, and
+`residual_degrid_grid=21.526 s` to `15.790 s`. A post-change sample no longer
+showed `flatten_tap_products` in the hot stack; the remaining stack was direct
+tap traversal (`grid_sample_taps_pair_planned_f64`,
+`degrid_sample_taps_planned_normalized`, `grid_sample_taps_planned_f64`) plus
+`sample_taps`.
+
 The next Wave 2 optimization target remains the standard-MFS grid/degrid
 traversal inside the full-shape clean path. Minor-cycle execution is still not
 material at `niter=2`; the large buckets are CPU gridding/degridding, weighting,

@@ -60,8 +60,8 @@ use execution::{
 };
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{
-    PlannedSample, ProductTapSet, ScreenProjector, StandardGridder, WProjectSamplePlan, WProjector,
-    hetarray_screen_conv_size_for_support,
+    PlannedSample, PositiveTapSet, ScreenProjector, StandardGridder, WProjectSamplePlan,
+    WProjector, hetarray_screen_conv_size_for_support,
 };
 use weighting::{
     apply_weighting, apply_weighting_to_owned_batches, apply_weighting_with_density_source,
@@ -5240,8 +5240,11 @@ fn compute_psf_standard(
 
     let grid_started = Instant::now();
     for sample in plan.samples() {
-        let psf_weight = Complex64::new(sample.grid_weight_f64(), 0.0);
-        gridder.grid_sample_product_planned_f64(psf_grid, &sample.positive_taps, psf_weight);
+        gridder.grid_sample_product_real_planned_f64(
+            psf_grid,
+            &sample.positive_taps,
+            sample.grid_weight_f64(),
+        );
     }
     timings.grid = grid_started.elapsed();
 
@@ -5310,7 +5313,7 @@ fn compute_psf_standard_streaming(
                 continue;
             }
             let Some(plan) = gridder
-                .plan_positive_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
             else {
                 skipped_samples += 1;
                 continue;
@@ -5319,11 +5322,7 @@ fn compute_psf_standard_streaming(
             normalization_sumwt += grid_weight;
             reported_sumwt += grid_weight;
             gridded_samples += 1;
-            gridder.grid_sample_product_planned_f64(
-                &mut psf_grid,
-                &plan,
-                Complex64::new(grid_weight, 0.0),
-            );
+            gridder.grid_sample_taps_real_planned_f64(&mut psf_grid, &plan, grid_weight);
         }
     }
     timings.grid = grid_started.elapsed();
@@ -5380,8 +5379,7 @@ fn compute_dirty_psf_and_residual_standard_with_executor(
     let grid_started = Instant::now();
     for sample in plan.samples() {
         let grid_weight = sample.grid_weight_f64();
-        let psf_weight = Complex64::new(grid_weight, 0.0);
-        gridder.grid_sample_product_planned_f64(psf_grid, &sample.positive_taps, psf_weight);
+        gridder.grid_sample_product_real_planned_f64(psf_grid, &sample.positive_taps, grid_weight);
 
         let batch = plan.batch(sample);
         let observed_visibility = batch.visibility[sample.sample_index];
@@ -5606,7 +5604,7 @@ fn accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
                 continue;
             }
             let Some(plan) = gridder
-                .plan_positive_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
             else {
                 counts.skipped_samples += 1;
                 continue;
@@ -5615,18 +5613,21 @@ fn accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
             counts.normalization_sumwt += grid_weight;
             counts.reported_sumwt += grid_weight;
             counts.gridded_samples += 1;
-            gridder.grid_sample_product_planned_f64(
-                psf_grid,
-                &plan,
-                Complex64::new(grid_weight, 0.0),
-            );
             let observed_visibility = batch.visibility[sample_index];
             if finite_visibility(observed_visibility) {
                 let residual = Complex64::new(
                     f64::from(observed_visibility.re) * grid_weight,
                     f64::from(observed_visibility.im) * grid_weight,
                 );
-                gridder.grid_sample_product_planned_f64(residual_grid, &plan, residual);
+                gridder.grid_sample_taps_pair_planned_f64(
+                    psf_grid,
+                    Complex64::new(grid_weight, 0.0),
+                    residual_grid,
+                    residual,
+                    &plan,
+                );
+            } else {
+                gridder.grid_sample_taps_real_planned_f64(psf_grid, &plan, grid_weight);
             }
         }
     }
@@ -6076,9 +6077,9 @@ fn accumulate_streaming_standard_mfs_residual_sample(
         && weight > 0.0
         && observed_visibility.re.is_finite()
         && observed_visibility.im.is_finite();
-    let planned_sample: Option<ProductTapSet> = if valid_sample {
+    let planned_sample: Option<PositiveTapSet> = if valid_sample {
         counts.valid_samples += 1;
-        gridder.plan_positive_sample(batch.u_lambda[index], batch.v_lambda[index])
+        gridder.plan_positive_taps(batch.u_lambda[index], batch.v_lambda[index])
     } else {
         None
     };
@@ -6101,7 +6102,7 @@ fn accumulate_streaming_standard_mfs_residual_sample(
         } else {
             model_grid.as_ref().map_or_else(
                 || Complex32::new(0.0, 0.0),
-                |grid| gridder.degrid_sample_product_planned_normalized(grid, plan),
+                |grid| gridder.degrid_sample_taps_planned_normalized(grid, plan),
             )
         }
     } else {
@@ -6135,7 +6136,7 @@ fn accumulate_streaming_standard_mfs_residual_sample(
         f64::from(residual_visibility.re) * residual_weight,
         f64::from(residual_visibility.im) * residual_weight,
     );
-    gridder.grid_sample_product_planned_f64(residual_grid, plan, residual);
+    gridder.grid_sample_taps_planned_f64(residual_grid, plan, residual);
 }
 
 fn compute_residual_trace_standard(

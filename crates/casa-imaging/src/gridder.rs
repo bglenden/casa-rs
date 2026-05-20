@@ -32,6 +32,12 @@ pub(crate) struct ProductTapSet {
     pub(crate) weights: [f32; GRIDDER_PRODUCT_TAP_COUNT],
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PositiveTapSet {
+    pub(crate) x: TapSet,
+    pub(crate) y: TapSet,
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PlannedSample {
@@ -49,10 +55,17 @@ pub(crate) struct StandardGridder {
     image_blc: [usize; 2],
     oversampling: usize,
     kernel_table: Vec<f32>,
+    normalized_tap_weights: Vec<[f32; GRIDDER_TAP_COUNT]>,
     correction_x: Vec<f32>,
     correction_y: Vec<f32>,
     du_lambda: f64,
     dv_lambda: f64,
+    density_center_x: f64,
+    density_center_y: f64,
+    density_u_scale: f64,
+    density_v_scale: f64,
+    density_limit_x: isize,
+    density_limit_y: isize,
 }
 
 impl StandardGridder {
@@ -102,9 +115,14 @@ impl StandardGridder {
             let distance = index as f64 / (GRIDDER_SUPPORT as f64 * oversampling as f64);
             *kernel = spheroidal_kernel(distance * GRIDDER_SUPPORT as f64, GRIDDER_SUPPORT as f64);
         }
+        let normalized_tap_weights = build_normalized_tap_weights(&kernel_table, oversampling);
         let correction_x = build_correction_axis(grid_shape[0]);
         let correction_y = build_correction_axis(grid_shape[1]);
 
+        let density_center_x = geometry.nx() as f64 / 2.0;
+        let density_center_y = geometry.ny() as f64 / 2.0;
+        let density_u_scale = geometry.nx() as f64 * geometry.cell_size_rad[0];
+        let density_v_scale = geometry.ny() as f64 * geometry.cell_size_rad[1];
         Ok(Self {
             du_lambda: 1.0 / (grid_shape[0] as f64 * geometry.cell_size_rad[0]),
             dv_lambda: 1.0 / (grid_shape[1] as f64 * geometry.cell_size_rad[1]),
@@ -113,8 +131,15 @@ impl StandardGridder {
             image_blc,
             oversampling,
             kernel_table,
+            normalized_tap_weights,
             correction_x,
             correction_y,
+            density_center_x,
+            density_center_y,
+            density_u_scale,
+            density_v_scale,
+            density_limit_x: geometry.nx() as isize,
+            density_limit_y: geometry.ny() as isize,
         })
     }
 
@@ -177,13 +202,23 @@ impl StandardGridder {
         u_lambda: f64,
         v_lambda: f64,
     ) -> Option<ProductTapSet> {
-        let positive_x = self.sample_taps(self.grid_coordinate_x(u_lambda), self.grid_shape[0])?;
-        let positive_y = self.sample_taps(self.grid_coordinate_y(v_lambda), self.grid_shape[1])?;
+        let positive = self.plan_positive_taps(u_lambda, v_lambda)?;
         Some(flatten_tap_products(
-            &positive_x,
-            &positive_y,
+            &positive.x,
+            &positive.y,
             self.grid_shape[1],
         ))
+    }
+
+    pub(crate) fn plan_positive_taps(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+    ) -> Option<PositiveTapSet> {
+        Some(PositiveTapSet {
+            x: self.sample_taps(self.grid_coordinate_x(u_lambda), self.grid_shape[0])?,
+            y: self.sample_taps(self.grid_coordinate_y(v_lambda), self.grid_shape[1])?,
+        })
     }
 
     #[allow(dead_code)]
@@ -213,16 +248,22 @@ impl StandardGridder {
     ) {
         if let Some(storage) = grid.as_slice_memory_order_mut() {
             for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
-                storage[taps.flat_indices[tap]] += value * taps.weights[tap];
+                let weight = taps.weights[tap];
+                let cell = &mut storage[taps.flat_indices[tap]];
+                cell.re += value.re * weight;
+                cell.im += value.im * weight;
             }
             return;
         }
         for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
             let flat_index = taps.flat_indices[tap];
-            grid[(
+            let weight = taps.weights[tap];
+            let cell = &mut grid[(
                 flat_index / self.grid_shape[1],
                 flat_index % self.grid_shape[1],
-            )] += value * taps.weights[tap];
+            )];
+            cell.re += value.re * weight;
+            cell.im += value.im * weight;
         }
     }
 
@@ -234,7 +275,66 @@ impl StandardGridder {
     ) {
         if let Some(storage) = grid.as_slice_memory_order_mut() {
             for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
-                storage[taps.flat_indices[tap]] += value * f64::from(taps.weights[tap]);
+                let weight = f64::from(taps.weights[tap]);
+                let cell = &mut storage[taps.flat_indices[tap]];
+                cell.re += value.re * weight;
+                cell.im += value.im * weight;
+            }
+            return;
+        }
+        for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
+            let flat_index = taps.flat_indices[tap];
+            let weight = f64::from(taps.weights[tap]);
+            let cell = &mut grid[(
+                flat_index / self.grid_shape[1],
+                flat_index % self.grid_shape[1],
+            )];
+            cell.re += value.re * weight;
+            cell.im += value.im * weight;
+        }
+    }
+
+    pub(crate) fn grid_sample_taps_planned_f64(
+        &self,
+        grid: &mut Array2<Complex64>,
+        taps: &PositiveTapSet,
+        value: Complex64,
+    ) {
+        if let Some(storage) = grid.as_slice_memory_order_mut() {
+            let grid_stride = self.grid_shape[1];
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = taps.x.indices[x_tap] * grid_stride;
+                let x_weight = taps.x.weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    let weight = f64::from(x_weight * taps.y.weights[y_tap]);
+                    let cell = &mut storage[x_index + taps.y.indices[y_tap]];
+                    cell.re += value.re * weight;
+                    cell.im += value.im * weight;
+                }
+            }
+            return;
+        }
+        for x_tap in 0..GRIDDER_TAP_COUNT {
+            let x_index = taps.x.indices[x_tap];
+            let x_weight = taps.x.weights[x_tap];
+            for y_tap in 0..GRIDDER_TAP_COUNT {
+                let weight = f64::from(x_weight * taps.y.weights[y_tap]);
+                let cell = &mut grid[(x_index, taps.y.indices[y_tap])];
+                cell.re += value.re * weight;
+                cell.im += value.im * weight;
+            }
+        }
+    }
+
+    pub(crate) fn grid_sample_product_real_planned_f64(
+        &self,
+        grid: &mut Array2<Complex64>,
+        taps: &ProductTapSet,
+        value: f64,
+    ) {
+        if let Some(storage) = grid.as_slice_memory_order_mut() {
+            for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
+                storage[taps.flat_indices[tap]].re += value * f64::from(taps.weights[tap]);
             }
             return;
         }
@@ -243,7 +343,36 @@ impl StandardGridder {
             grid[(
                 flat_index / self.grid_shape[1],
                 flat_index % self.grid_shape[1],
-            )] += value * f64::from(taps.weights[tap]);
+            )]
+                .re += value * f64::from(taps.weights[tap]);
+        }
+    }
+
+    pub(crate) fn grid_sample_taps_real_planned_f64(
+        &self,
+        grid: &mut Array2<Complex64>,
+        taps: &PositiveTapSet,
+        value: f64,
+    ) {
+        if let Some(storage) = grid.as_slice_memory_order_mut() {
+            let grid_stride = self.grid_shape[1];
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = taps.x.indices[x_tap] * grid_stride;
+                let x_weight = taps.x.weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    storage[x_index + taps.y.indices[y_tap]].re +=
+                        value * f64::from(x_weight * taps.y.weights[y_tap]);
+                }
+            }
+            return;
+        }
+        for x_tap in 0..GRIDDER_TAP_COUNT {
+            let x_index = taps.x.indices[x_tap];
+            let x_weight = taps.x.weights[x_tap];
+            for y_tap in 0..GRIDDER_TAP_COUNT {
+                grid[(x_index, taps.y.indices[y_tap])].re +=
+                    value * f64::from(x_weight * taps.y.weights[y_tap]);
+            }
         }
     }
 
@@ -262,8 +391,12 @@ impl StandardGridder {
             for tap in 0..GRIDDER_PRODUCT_TAP_COUNT {
                 let weight = f64::from(taps.weights[tap]);
                 let index = taps.flat_indices[tap];
-                first_storage[index] += first_value * weight;
-                second_storage[index] += second_value * weight;
+                let first_cell = &mut first_storage[index];
+                first_cell.re += first_value.re * weight;
+                first_cell.im += first_value.im * weight;
+                let second_cell = &mut second_storage[index];
+                second_cell.re += second_value.re * weight;
+                second_cell.im += second_value.im * weight;
             }
             return;
         }
@@ -274,8 +407,57 @@ impl StandardGridder {
                 flat_index / self.grid_shape[1],
                 flat_index % self.grid_shape[1],
             );
-            first_grid[index] += first_value * weight;
-            second_grid[index] += second_value * weight;
+            let first_cell = &mut first_grid[index];
+            first_cell.re += first_value.re * weight;
+            first_cell.im += first_value.im * weight;
+            let second_cell = &mut second_grid[index];
+            second_cell.re += second_value.re * weight;
+            second_cell.im += second_value.im * weight;
+        }
+    }
+
+    pub(crate) fn grid_sample_taps_pair_planned_f64(
+        &self,
+        first_grid: &mut Array2<Complex64>,
+        first_value: Complex64,
+        second_grid: &mut Array2<Complex64>,
+        second_value: Complex64,
+        taps: &PositiveTapSet,
+    ) {
+        if let (Some(first_storage), Some(second_storage)) = (
+            first_grid.as_slice_memory_order_mut(),
+            second_grid.as_slice_memory_order_mut(),
+        ) {
+            let grid_stride = self.grid_shape[1];
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = taps.x.indices[x_tap] * grid_stride;
+                let x_weight = taps.x.weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    let weight = f64::from(x_weight * taps.y.weights[y_tap]);
+                    let index = x_index + taps.y.indices[y_tap];
+                    let first_cell = &mut first_storage[index];
+                    first_cell.re += first_value.re * weight;
+                    first_cell.im += first_value.im * weight;
+                    let second_cell = &mut second_storage[index];
+                    second_cell.re += second_value.re * weight;
+                    second_cell.im += second_value.im * weight;
+                }
+            }
+            return;
+        }
+        for x_tap in 0..GRIDDER_TAP_COUNT {
+            let x_index = taps.x.indices[x_tap];
+            let x_weight = taps.x.weights[x_tap];
+            for y_tap in 0..GRIDDER_TAP_COUNT {
+                let weight = f64::from(x_weight * taps.y.weights[y_tap]);
+                let index = (x_index, taps.y.indices[y_tap]);
+                let first_cell = &mut first_grid[index];
+                first_cell.re += first_value.re * weight;
+                first_cell.im += first_value.im * weight;
+                let second_cell = &mut second_grid[index];
+                second_cell.re += second_value.re * weight;
+                second_cell.im += second_value.im * weight;
+            }
         }
     }
 
@@ -370,6 +552,36 @@ impl StandardGridder {
     ) -> Complex32 {
         debug_assert!((taps.weights.iter().sum::<f32>() - 1.0).abs() <= 1.0e-5);
         self.degrid_sample_product_planned(grid, taps)
+    }
+
+    pub(crate) fn degrid_sample_taps_planned_normalized(
+        &self,
+        grid: &Array2<Complex32>,
+        taps: &PositiveTapSet,
+    ) -> Complex32 {
+        if let Some(storage) = grid.as_slice_memory_order() {
+            let grid_stride = self.grid_shape[1];
+            let mut value = Complex32::new(0.0, 0.0);
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = taps.x.indices[x_tap] * grid_stride;
+                let x_weight = taps.x.weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    value += storage[x_index + taps.y.indices[y_tap]]
+                        * (x_weight * taps.y.weights[y_tap]);
+                }
+            }
+            return value;
+        }
+        let mut value = Complex32::new(0.0, 0.0);
+        for x_tap in 0..GRIDDER_TAP_COUNT {
+            let x_index = taps.x.indices[x_tap];
+            let x_weight = taps.x.weights[x_tap];
+            for y_tap in 0..GRIDDER_TAP_COUNT {
+                value +=
+                    grid[(x_index, taps.y.indices[y_tap])] * (x_weight * taps.y.weights[y_tap]);
+            }
+        }
+        value
     }
 
     #[cfg(test)]
@@ -553,10 +765,8 @@ impl StandardGridder {
     }
 
     pub(crate) fn cube_briggs_uv_cell_radius(&self, u_lambda: f64, v_lambda: f64) -> f64 {
-        let nx = self.geometry.nx() as f64;
-        let ny = self.geometry.ny() as f64;
-        let u_cells = u_lambda * nx * self.geometry.cell_size_rad[0];
-        let v_cells = v_lambda * ny * self.geometry.cell_size_rad[1];
+        let u_cells = u_lambda * self.density_u_scale;
+        let v_cells = v_lambda * self.density_v_scale;
         (u_cells * u_cells + v_cells * v_cells).sqrt()
     }
 
@@ -577,24 +787,22 @@ impl StandardGridder {
         v_lambda: f64,
         convention: DensityCellConvention,
     ) -> Option<(usize, usize)> {
-        let nx = self.geometry.nx() as f64;
-        let ny = self.geometry.ny() as f64;
         let (x, y) = match convention {
             DensityCellConvention::VisImagingWeight => {
                 let u = f64::from(u_lambda as f32);
                 let v = f64::from(v_lambda as f32);
                 (
-                    -u * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
-                    v * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
+                    -u * self.density_u_scale + self.density_center_x,
+                    v * self.density_v_scale + self.density_center_y,
                 )
             }
             DensityCellConvention::CubeBriggsWeightorDensity => (
-                u_lambda * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
-                -v_lambda * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
+                u_lambda * self.density_u_scale + self.density_center_x,
+                -v_lambda * self.density_v_scale + self.density_center_y,
             ),
             DensityCellConvention::CubeBriggsWeightorLookup => (
-                u_lambda * nx * self.geometry.cell_size_rad[0] + nx / 2.0,
-                -v_lambda * ny * self.geometry.cell_size_rad[1] + ny / 2.0,
+                u_lambda * self.density_u_scale + self.density_center_x,
+                -v_lambda * self.density_v_scale + self.density_center_y,
             ),
         };
         if !(x.is_finite() && y.is_finite()) {
@@ -609,8 +817,8 @@ impl StandardGridder {
         };
         if anchor_x <= 0
             || anchor_y <= 0
-            || anchor_x >= self.geometry.nx() as isize
-            || anchor_y >= self.geometry.ny() as isize
+            || anchor_x >= self.density_limit_x
+            || anchor_y >= self.density_limit_y
         {
             return None;
         }
@@ -623,29 +831,26 @@ impl StandardGridder {
         }
         let anchor = coordinate.round() as isize;
         let offset = ((anchor as f64 - coordinate) * self.oversampling as f64).round() as isize;
-        let mut indices = [0usize; GRIDDER_TAP_COUNT];
-        let mut weights = [0.0f32; GRIDDER_TAP_COUNT];
-        let mut norm = 0.0f32;
-        for (tap, index) in
-            ((anchor - GRIDDER_SUPPORT as isize)..=(anchor + GRIDDER_SUPPORT as isize)).enumerate()
-        {
-            if index < 0 || index >= size as isize {
-                return None;
-            }
-            let delta = index - anchor;
-            let lookup = (delta * self.oversampling as isize + offset).unsigned_abs();
-            let weight = self.kernel_table.get(lookup).copied().unwrap_or(0.0);
-            indices[tap] = index as usize;
-            weights[tap] = weight;
-            norm += weight;
-        }
-        if norm <= 0.0 {
+        let start = anchor - GRIDDER_SUPPORT as isize;
+        let end = anchor + GRIDDER_SUPPORT as isize;
+        if start < 0 || end >= size as isize {
             return None;
         }
-        for weight in &mut weights {
-            *weight /= norm;
+        let weight_index = self.normalized_tap_weight_index(offset)?;
+        let mut indices = [0usize; GRIDDER_TAP_COUNT];
+        for (tap, index) in (start..=end).enumerate() {
+            indices[tap] = index as usize;
         }
-        Some(TapSet { indices, weights })
+        Some(TapSet {
+            indices,
+            weights: self.normalized_tap_weights[weight_index],
+        })
+    }
+
+    fn normalized_tap_weight_index(&self, offset: isize) -> Option<usize> {
+        let half = self.oversampling as isize / 2;
+        let index = offset + half;
+        (index >= 0 && index < self.normalized_tap_weights.len() as isize).then_some(index as usize)
     }
 
     fn sample_taps_unnormalized(&self, coordinate: f64, size: usize) -> Option<TapSet> {
@@ -675,6 +880,33 @@ impl StandardGridder {
         }
         Some(TapSet { indices, weights })
     }
+}
+
+fn build_normalized_tap_weights(
+    kernel_table: &[f32],
+    oversampling: usize,
+) -> Vec<[f32; GRIDDER_TAP_COUNT]> {
+    let half = oversampling as isize / 2;
+    (-half..=half)
+        .map(|offset| {
+            let mut weights = [0.0f32; GRIDDER_TAP_COUNT];
+            let mut norm = 0.0f32;
+            for (tap, delta) in
+                (-(GRIDDER_SUPPORT as isize)..=(GRIDDER_SUPPORT as isize)).enumerate()
+            {
+                let lookup = (delta * oversampling as isize + offset).unsigned_abs();
+                let weight = kernel_table.get(lookup).copied().unwrap_or(0.0);
+                weights[tap] = weight;
+                norm += weight;
+            }
+            if norm > 0.0 {
+                for weight in &mut weights {
+                    *weight /= norm;
+                }
+            }
+            weights
+        })
+        .collect()
 }
 
 fn flatten_tap_products(x_taps: &TapSet, y_taps: &TapSet, grid_stride: usize) -> ProductTapSet {
@@ -2138,6 +2370,12 @@ mod tests {
         let mut separate_second = Array2::<Complex64>::zeros(shape);
         gridder.grid_sample_product_planned_f64(&mut separate_first, &plan.positive, first_value);
         gridder.grid_sample_product_planned_f64(&mut separate_second, &plan.positive, second_value);
+        let mut separate_real = Array2::<Complex64>::zeros(shape);
+        gridder.grid_sample_product_planned_f64(
+            &mut separate_real,
+            &plan.positive,
+            Complex64::new(first_value.re, 0.0),
+        );
 
         let mut paired_first = Array2::<Complex64>::zeros(shape);
         let mut paired_second = Array2::<Complex64>::zeros(shape);
@@ -2151,6 +2389,10 @@ mod tests {
 
         assert_eq!(paired_first, separate_first);
         assert_eq!(paired_second, separate_second);
+
+        let mut real = Array2::<Complex64>::zeros(shape);
+        gridder.grid_sample_product_real_planned_f64(&mut real, &plan.positive, first_value.re);
+        assert_eq!(real, separate_real);
     }
 
     #[test]
