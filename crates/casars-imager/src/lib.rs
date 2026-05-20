@@ -9367,15 +9367,16 @@ impl PreparedSelection {
                     .enumerate()
                 {
                     let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                    if flags_2d.get(*corr_index, channel_index)? {
+                    let local_channel = data_2d.local_channel(channel_index)?;
+                    if flags_2d.get_local(*corr_index, local_channel, channel_index)? {
                         continue;
                     }
                     let visibility = phase_rotate_visibility(
-                        data_2d.get(*corr_index, channel_index)?,
+                        data_2d.get_local(*corr_index, local_channel, channel_index)?,
                         transform.phase_shift_m,
                         imaging_frequency_hz,
                     );
-                    let (weight, weight_source) = weights.get(*corr_index, channel_index)?;
+                    let (weight, weight_source) = weights.get_local(*corr_index, local_channel)?;
                     if !(weight.is_finite() && weight > 0.0) {
                         continue;
                     }
@@ -9710,20 +9711,22 @@ impl PreparedSelection {
                     .zip(self.source_channel_frequencies_hz.iter().copied())
                 {
                     let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
+                    let local_channel = data_2d.local_channel(channel_index)?;
                     let first_visibility = phase_rotate_visibility(
-                        data_2d.get(pair.0, channel_index)?,
+                        data_2d.get_local(pair.0, local_channel, channel_index)?,
                         transform.phase_shift_m,
                         imaging_frequency_hz,
                     );
                     let second_visibility = phase_rotate_visibility(
-                        data_2d.get(pair.1, channel_index)?,
+                        data_2d.get_local(pair.1, local_channel, channel_index)?,
                         transform.phase_shift_m,
                         imaging_frequency_hz,
                     );
-                    let (first_weight, _) = weights.get(pair.0, channel_index)?;
-                    let (second_weight, _) = weights.get(pair.1, channel_index)?;
-                    let first_flagged = flags_2d.get(pair.0, channel_index)?;
-                    let second_flagged = flags_2d.get(pair.1, channel_index)?;
+                    let (first_weight, _) = weights.get_local(pair.0, local_channel)?;
+                    let (second_weight, _) = weights.get_local(pair.1, local_channel)?;
+                    let first_flagged = flags_2d.get_local(pair.0, local_channel, channel_index)?;
+                    let second_flagged =
+                        flags_2d.get_local(pair.1, local_channel, channel_index)?;
                     if first_flagged || second_flagged {
                         continue;
                     }
@@ -9769,21 +9772,24 @@ impl PreparedSelection {
                 {
                     let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                     let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let local_channel = data_2d.local_channel(channel_index)?;
                     let first_visibility = phase_rotate_visibility(
-                        data_2d.get(pair.0, channel_index)?,
+                        data_2d.get_local(pair.0, local_channel, channel_index)?,
                         transform.phase_shift_m,
                         imaging_frequency_hz,
                     );
                     let second_visibility = phase_rotate_visibility(
-                        data_2d.get(pair.1, channel_index)?,
+                        data_2d.get_local(pair.1, local_channel, channel_index)?,
                         transform.phase_shift_m,
                         imaging_frequency_hz,
                     );
-                    let (first_weight, first_weight_source) = weights.get(pair.0, channel_index)?;
+                    let (first_weight, first_weight_source) =
+                        weights.get_local(pair.0, local_channel)?;
                     let (second_weight, second_weight_source) =
-                        weights.get(pair.1, channel_index)?;
-                    let first_flagged = flags_2d.get(pair.0, channel_index)?;
-                    let second_flagged = flags_2d.get(pair.1, channel_index)?;
+                        weights.get_local(pair.1, local_channel)?;
+                    let first_flagged = flags_2d.get_local(pair.0, local_channel, channel_index)?;
+                    let second_flagged =
+                        flags_2d.get_local(pair.1, local_channel, channel_index)?;
                     paired.u_lambda.push(uvw_m[0] * lambda_scale);
                     paired.v_lambda.push(uvw_m[1] * lambda_scale);
                     paired.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -14269,10 +14275,14 @@ enum ComplexRow2d<'a> {
     },
     Complex32Array {
         values: &'a ArrayD<Complex32>,
+        shape: [usize; 2],
+        strides: [isize; 2],
         channel_origin: usize,
     },
     Complex64Array {
         values: &'a ArrayD<Complex64>,
+        shape: [usize; 2],
+        strides: [isize; 2],
         channel_origin: usize,
     },
 }
@@ -14289,10 +14299,15 @@ impl<'a> ComplexRow2d<'a> {
                     channels: *channels,
                     channel_origin,
                 }),
-                ([_, _], None) => Ok(Self::Complex32Array {
-                    values,
-                    channel_origin,
-                }),
+                ([corrs, channels], None) => {
+                    let strides = values.strides();
+                    Ok(Self::Complex32Array {
+                        values,
+                        shape: [*corrs, *channels],
+                        strides: [strides[0], strides[1]],
+                        channel_origin,
+                    })
+                }
                 (shape, _) => Err(format!(
                     "visibility data must be 2-D Complex32/Complex64, found shape {shape:?}"
                 )),
@@ -14303,10 +14318,15 @@ impl<'a> ComplexRow2d<'a> {
                     channels: *channels,
                     channel_origin,
                 }),
-                ([_, _], None) => Ok(Self::Complex64Array {
-                    values,
-                    channel_origin,
-                }),
+                ([corrs, channels], None) => {
+                    let strides = values.strides();
+                    Ok(Self::Complex64Array {
+                        values,
+                        shape: [*corrs, *channels],
+                        strides: [strides[0], strides[1]],
+                        channel_origin,
+                    })
+                }
                 (shape, _) => Err(format!(
                     "visibility data must be 2-D Complex32/Complex64, found shape {shape:?}"
                 )),
@@ -14318,57 +14338,94 @@ impl<'a> ComplexRow2d<'a> {
         }
     }
 
-    fn get(&self, corr: usize, chan: usize) -> Result<Complex32, String> {
+    fn local_channel(&self, chan: usize) -> Result<usize, String> {
         match self {
             Self::Complex32Slice {
-                values,
                 channels,
                 channel_origin,
-            } => {
-                let local_chan = local_channel_index(chan, *channel_origin, *channels)?;
-                values
-                    .get(corr * *channels + local_chan)
-                    .copied()
-                    .ok_or_else(|| {
-                        format!("complex32 visibility index [{corr}, {chan}] out of bounds")
-                    })
+                ..
             }
+            | Self::Complex64Slice {
+                channels,
+                channel_origin,
+                ..
+            } => local_channel_index(chan, *channel_origin, *channels),
+            Self::Complex32Array {
+                shape,
+                channel_origin,
+                ..
+            } => local_channel_index(chan, *channel_origin, shape[1]),
+            Self::Complex64Array {
+                shape,
+                channel_origin,
+                ..
+            } => local_channel_index(chan, *channel_origin, shape[1]),
+        }
+    }
+
+    fn get_local(
+        &self,
+        corr: usize,
+        local_chan: usize,
+        source_chan: usize,
+    ) -> Result<Complex32, String> {
+        match self {
+            Self::Complex32Slice {
+                values, channels, ..
+            } => values
+                .get(corr * *channels + local_chan)
+                .copied()
+                .ok_or_else(|| {
+                    format!("complex32 visibility index [{corr}, {source_chan}] out of bounds")
+                }),
             Self::Complex64Slice {
-                values,
-                channels,
-                channel_origin,
-            } => {
-                let local_chan = local_channel_index(chan, *channel_origin, *channels)?;
-                values
-                    .get(corr * *channels + local_chan)
-                    .map(|value| Complex32::new(value.re as f32, value.im as f32))
-                    .ok_or_else(|| {
-                        format!("complex64 visibility index [{corr}, {chan}] out of bounds")
-                    })
-            }
+                values, channels, ..
+            } => values
+                .get(corr * *channels + local_chan)
+                .map(|value| Complex32::new(value.re as f32, value.im as f32))
+                .ok_or_else(|| {
+                    format!("complex64 visibility index [{corr}, {source_chan}] out of bounds")
+                }),
             Self::Complex32Array {
                 values,
-                channel_origin,
+                shape,
+                strides,
+                ..
             } => {
-                let local_chan = local_channel_index(chan, *channel_origin, values.shape()[1])?;
-                values
-                    .get(IxDyn(&[corr, local_chan]))
-                    .copied()
-                    .ok_or_else(|| {
-                        format!("complex32 visibility index [{corr}, {chan}] out of bounds")
-                    })
+                if corr >= shape[0] || local_chan >= shape[1] {
+                    return Err(format!(
+                        "complex32 visibility index [{corr}, {source_chan}] out of bounds"
+                    ));
+                }
+                let offset = corr as isize * strides[0] + local_chan as isize * strides[1];
+                if offset < 0 {
+                    return Err(format!(
+                        "complex32 visibility index [{corr}, {source_chan}] out of bounds"
+                    ));
+                }
+                // Shape and strides were captured from this validated owned 2-D ndarray row.
+                Ok(unsafe { *values.as_ptr().offset(offset) })
             }
             Self::Complex64Array {
                 values,
-                channel_origin,
+                shape,
+                strides,
+                ..
             } => {
-                let local_chan = local_channel_index(chan, *channel_origin, values.shape()[1])?;
-                values
-                    .get(IxDyn(&[corr, local_chan]))
-                    .map(|value| Complex32::new(value.re as f32, value.im as f32))
-                    .ok_or_else(|| {
-                        format!("complex64 visibility index [{corr}, {chan}] out of bounds")
-                    })
+                if corr >= shape[0] || local_chan >= shape[1] {
+                    return Err(format!(
+                        "complex64 visibility index [{corr}, {source_chan}] out of bounds"
+                    ));
+                }
+                let offset = corr as isize * strides[0] + local_chan as isize * strides[1];
+                if offset < 0 {
+                    return Err(format!(
+                        "complex64 visibility index [{corr}, {source_chan}] out of bounds"
+                    ));
+                }
+                // Shape and strides were captured from this validated owned 2-D ndarray row.
+                let value = unsafe { *values.as_ptr().offset(offset) };
+                Ok(Complex32::new(value.re as f32, value.im as f32))
             }
         }
     }
@@ -14382,6 +14439,8 @@ enum BoolRow2d<'a> {
     },
     Array {
         values: &'a ArrayD<bool>,
+        shape: [usize; 2],
+        strides: [isize; 2],
         channel_origin: usize,
     },
 }
@@ -14398,10 +14457,15 @@ impl<'a> BoolRow2d<'a> {
                     channels: *channels,
                     channel_origin,
                 }),
-                ([_, _], None) => Ok(Self::Array {
-                    values,
-                    channel_origin,
-                }),
+                ([corrs, channels], None) => {
+                    let strides = values.strides();
+                    Ok(Self::Array {
+                        values,
+                        shape: [*corrs, *channels],
+                        strides: [strides[0], strides[1]],
+                        channel_origin,
+                    })
+                }
                 (shape, _) => Err(format!("FLAG must be 2-D Bool, found shape {shape:?}")),
             },
             other => Err(format!(
@@ -14425,14 +14489,44 @@ impl<'a> BoolRow2d<'a> {
                     .ok_or_else(|| format!("flag index [{corr}, {chan}] out of bounds"))
             }
             Self::Array {
-                values,
+                shape,
                 channel_origin,
+                ..
             } => {
-                let local_chan = local_channel_index(chan, *channel_origin, values.shape()[1])?;
-                values
-                    .get(IxDyn(&[corr, local_chan]))
-                    .copied()
-                    .ok_or_else(|| format!("flag index [{corr}, {chan}] out of bounds"))
+                let local_chan = local_channel_index(chan, *channel_origin, shape[1])?;
+                self.get_local(corr, local_chan, chan)
+            }
+        }
+    }
+
+    fn get_local(
+        &self,
+        corr: usize,
+        local_chan: usize,
+        source_chan: usize,
+    ) -> Result<bool, String> {
+        match self {
+            Self::Slice {
+                values, channels, ..
+            } => values
+                .get(corr * *channels + local_chan)
+                .copied()
+                .ok_or_else(|| format!("flag index [{corr}, {source_chan}] out of bounds")),
+            Self::Array {
+                values,
+                shape,
+                strides,
+                ..
+            } => {
+                if corr >= shape[0] || local_chan >= shape[1] {
+                    return Err(format!("flag index [{corr}, {source_chan}] out of bounds"));
+                }
+                let offset = corr as isize * strides[0] + local_chan as isize * strides[1];
+                if offset < 0 {
+                    return Err(format!("flag index [{corr}, {source_chan}] out of bounds"));
+                }
+                // Shape and strides were captured from this validated owned 2-D ndarray row.
+                Ok(unsafe { *values.as_ptr().offset(offset) })
             }
         }
     }
@@ -14604,6 +14698,23 @@ impl<'a> FloatRow2d<'a> {
             }
         }
     }
+
+    fn get_local(&self, corr: usize, local_chan: usize) -> Option<f32> {
+        match self {
+            Self::Float32Slice {
+                values, channels, ..
+            } => values.get(corr * *channels + local_chan).copied(),
+            Self::Float64Slice {
+                values, channels, ..
+            } => values
+                .get(corr * *channels + local_chan)
+                .map(|value| *value as f32),
+            Self::Float32Array { values, .. } => values.get(IxDyn(&[corr, local_chan])).copied(),
+            Self::Float64Array { values, .. } => values
+                .get(IxDyn(&[corr, local_chan]))
+                .map(|value| *value as f32),
+        }
+    }
 }
 
 struct WeightRow<'a> {
@@ -14634,6 +14745,17 @@ impl<'a> WeightRow<'a> {
     fn get(&self, corr: usize, chan: usize) -> Result<(f32, WeightSourceKind), String> {
         if let Some(spectrum) = &self.spectrum
             && let Some(weight) = spectrum.get(corr, chan, "WEIGHT_SPECTRUM")
+        {
+            return Ok((weight, WeightSourceKind::WeightSpectrum));
+        }
+        self.weights
+            .get(corr, "WEIGHT")
+            .map(|weight| (weight, WeightSourceKind::Weight))
+    }
+
+    fn get_local(&self, corr: usize, local_chan: usize) -> Result<(f32, WeightSourceKind), String> {
+        if let Some(spectrum) = &self.spectrum
+            && let Some(weight) = spectrum.get_local(corr, local_chan)
         {
             return Ok((weight, WeightSourceKind::WeightSpectrum));
         }

@@ -5240,7 +5240,7 @@ fn compute_psf_standard(
 
     let grid_started = Instant::now();
     for sample in plan.samples() {
-        gridder.grid_sample_product_real_planned_f64(
+        gridder.grid_sample_taps_real_planned_f64(
             psf_grid,
             &sample.positive_taps,
             sample.grid_weight_f64(),
@@ -5379,7 +5379,7 @@ fn compute_dirty_psf_and_residual_standard_with_executor(
     let grid_started = Instant::now();
     for sample in plan.samples() {
         let grid_weight = sample.grid_weight_f64();
-        gridder.grid_sample_product_real_planned_f64(psf_grid, &sample.positive_taps, grid_weight);
+        gridder.grid_sample_taps_real_planned_f64(psf_grid, &sample.positive_taps, grid_weight);
 
         let batch = plan.batch(sample);
         let observed_visibility = batch.visibility[sample.sample_index];
@@ -5388,7 +5388,7 @@ fn compute_dirty_psf_and_residual_standard_with_executor(
                 f64::from(observed_visibility.re) * grid_weight,
                 f64::from(observed_visibility.im) * grid_weight,
             );
-            gridder.grid_sample_product_planned_f64(residual_grid, &sample.positive_taps, residual);
+            gridder.grid_sample_taps_planned_f64(residual_grid, &sample.positive_taps, residual);
         }
     }
     let grid_elapsed = grid_started.elapsed();
@@ -5619,9 +5619,9 @@ fn accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
                     f64::from(observed_visibility.re) * grid_weight,
                     f64::from(observed_visibility.im) * grid_weight,
                 );
-                gridder.grid_sample_taps_pair_planned_f64(
+                gridder.grid_sample_taps_real_complex_pair_planned_f64(
                     psf_grid,
-                    Complex64::new(grid_weight, 0.0),
+                    grid_weight,
                     residual_grid,
                     residual,
                     &plan,
@@ -5924,7 +5924,7 @@ fn accumulate_standard_mfs_residual_sample(
     }
     let predicted_visibility = model_grid.as_ref().map_or_else(
         || Complex32::new(0.0, 0.0),
-        |grid| gridder.degrid_sample_product_planned_normalized(grid, &sample.positive_taps),
+        |grid| gridder.degrid_sample_taps_planned_normalized(grid, &sample.positive_taps),
     );
     let residual_visibility = observed_visibility - predicted_visibility;
     let residual_weight = sample.grid_weight_f64();
@@ -5932,7 +5932,7 @@ fn accumulate_standard_mfs_residual_sample(
         f64::from(residual_visibility.re) * residual_weight,
         f64::from(residual_visibility.im) * residual_weight,
     );
-    gridder.grid_sample_product_planned_f64(residual_grid, &sample.positive_taps, residual);
+    gridder.grid_sample_taps_planned_f64(residual_grid, &sample.positive_taps, residual);
 }
 
 fn add_complex64_grid(target: &mut Array2<Complex64>, source: &Array2<Complex64>) {

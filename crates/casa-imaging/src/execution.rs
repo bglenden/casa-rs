@@ -6,7 +6,7 @@ use num_complex::{Complex32, Complex64};
 
 use crate::{
     ImageGeometry, ImagingError, VisibilityBatch,
-    gridder::{ProductTapSet, StandardGridder},
+    gridder::{PositiveTapSet, StandardGridder},
 };
 
 /// Internal backend selection for standard MFS execution.
@@ -165,8 +165,8 @@ impl StandardMfsDirtyCpuExecutor {
                     self.skipped_samples += 1;
                     continue;
                 }
-                let Some(plan) =
-                    gridder.plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+                let Some(plan) = gridder
+                    .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
                 else {
                     self.skipped_samples += 1;
                     continue;
@@ -183,19 +183,15 @@ impl StandardMfsDirtyCpuExecutor {
                         f64::from(observed_visibility.re) * sumwt,
                         f64::from(observed_visibility.im) * sumwt,
                     );
-                    gridder.grid_sample_product_pair_planned_f64(
+                    gridder.grid_sample_taps_real_complex_pair_planned_f64(
                         psf_grid,
-                        Complex64::new(sumwt, 0.0),
+                        sumwt,
                         residual_grid,
                         residual,
-                        &plan.positive,
+                        &plan,
                     );
                 } else {
-                    gridder.grid_sample_product_planned_f64(
-                        psf_grid,
-                        &plan.positive,
-                        Complex64::new(sumwt, 0.0),
-                    );
+                    gridder.grid_sample_taps_real_planned_f64(psf_grid, &plan, sumwt);
                 }
             }
         }
@@ -257,10 +253,9 @@ impl<'a> StandardMfsVisibilityPlan<'a> {
                     skipped_samples += 1;
                     continue;
                 }
-                let Some(positive_taps) = gridder.plan_positive_sample(
-                    batch.u_lambda[sample_index],
-                    batch.v_lambda[sample_index],
-                ) else {
+                let Some(positive_taps) = gridder
+                    .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+                else {
                     skipped_samples += 1;
                     continue;
                 };
@@ -326,7 +321,7 @@ pub(crate) struct StandardMfsPlannedSample {
     /// Product of imaging weight and sumwt factor used by standard MFS grids.
     pub(crate) grid_weight: f32,
     /// Precomputed positive-UV gridder taps for this `(u, v)` coordinate.
-    pub(crate) positive_taps: ProductTapSet,
+    pub(crate) positive_taps: PositiveTapSet,
 }
 
 impl StandardMfsPlannedSample {

@@ -101,7 +101,7 @@ fn trace_streamed_tiled_writes() -> bool {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct SharedTileKey {
-    table_path: PathBuf,
+    table_id: u64,
     dm_seq_nr: u32,
     cube_idx: usize,
     target_col_idx: usize,
@@ -120,6 +120,8 @@ struct SharedTileCacheState {
     explicit_budget: Option<usize>,
     bytes_used: usize,
     clock: u64,
+    next_table_id: u64,
+    table_ids: std::collections::HashMap<PathBuf, u64>,
     entries: std::collections::HashMap<SharedTileKey, SharedTileEntry>,
 }
 
@@ -130,6 +132,8 @@ impl SharedTileCacheState {
             explicit_budget: None,
             bytes_used: 0,
             clock: 0,
+            next_table_id: 1,
+            table_ids: std::collections::HashMap::new(),
             entries: std::collections::HashMap::new(),
         }
     }
@@ -154,10 +158,22 @@ impl SharedTileCacheState {
 
     fn reset_for_tests(&mut self) {
         self.entries.clear();
+        self.table_ids.clear();
         self.bytes_used = 0;
         self.clock = 0;
+        self.next_table_id = 1;
         self.explicit_budget = None;
         self.budget_bytes = table_cache_budget_from_env();
+    }
+
+    fn table_id(&mut self, table_path: &Path) -> u64 {
+        if let Some(id) = self.table_ids.get(table_path) {
+            return *id;
+        }
+        let id = self.next_table_id;
+        self.next_table_id = self.next_table_id.wrapping_add(1).max(1);
+        self.table_ids.insert(table_path.to_path_buf(), id);
+        id
     }
 
     fn insert(&mut self, key: SharedTileKey, data: Arc<[u8]>) -> Arc<[u8]> {
@@ -246,12 +262,16 @@ pub(crate) fn shared_tile_cache_entry_count() -> usize {
 
 #[cfg(test)]
 fn shared_tile_cache_entry_count_for_table(table_path: &Path) -> usize {
-    SHARED_TILE_CACHE
+    let cache = SHARED_TILE_CACHE
         .lock()
-        .expect("shared tile cache lock poisoned")
+        .expect("shared tile cache lock poisoned");
+    let Some(table_id) = cache.table_ids.get(table_path).copied() else {
+        return 0;
+    };
+    cache
         .entries
         .keys()
-        .filter(|key| key.table_path == table_path)
+        .filter(|key| key.table_id == table_id)
         .count()
 }
 
@@ -260,8 +280,11 @@ pub(crate) fn invalidate_shared_tile_cache_for_table(table_path: &Path) {
         .lock()
         .expect("shared tile cache lock poisoned");
     let mut freed_bytes = 0usize;
+    let Some(table_id) = cache.table_ids.remove(table_path) else {
+        return;
+    };
     cache.entries.retain(|key, entry| {
-        let keep = key.table_path != table_path;
+        let keep = key.table_id != table_id;
         if !keep {
             freed_bytes += entry.bytes;
         }
@@ -6209,10 +6232,23 @@ fn write_tiled_file_tile(
 
 #[derive(Default)]
 struct TileReadSession {
+    table_id: Option<u64>,
     files: std::collections::HashMap<u32, std::fs::File>,
 }
 
 impl TileReadSession {
+    fn table_id(&mut self, table_path: &Path) -> u64 {
+        if let Some(id) = self.table_id {
+            return id;
+        }
+        let mut cache = SHARED_TILE_CACHE
+            .lock()
+            .expect("shared tile cache lock poisoned");
+        let id = cache.table_id(table_path);
+        self.table_id = Some(id);
+        id
+    }
+
     fn file(
         &mut self,
         table_path: &Path,
@@ -6246,8 +6282,9 @@ fn load_shared_column_tile(
     tile_index: usize,
     session: &mut TileReadSession,
 ) -> Result<Arc<[u8]>, StorageError> {
+    let table_id = session.table_id(table_path);
     let key = SharedTileKey {
-        table_path: table_path.to_path_buf(),
+        table_id,
         dm_seq_nr,
         cube_idx,
         target_col_idx,

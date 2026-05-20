@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-20
-Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile on 2026-05-20
+Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile and bounded serial call-tree probes on 2026-05-20
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -332,9 +332,54 @@ large streaming path. On the same bounded 64-channel, 1024-pixel,
 `core_total=31.373 s` to `23.094 s`, `psf_grid=6.595 s` to `4.171 s`, and
 `residual_degrid_grid=21.526 s` to `15.790 s`. A post-change sample no longer
 showed `flatten_tap_products` in the hot stack; the remaining stack was direct
-tap traversal (`grid_sample_taps_pair_planned_f64`,
-`degrid_sample_taps_planned_normalized`, `grid_sample_taps_planned_f64`) plus
-`sample_taps`.
+tap traversal plus `sample_taps`.
+
+The next serial pass attacked API overhead rather than adding more workers.
+The shared tiled-storage cache now maps table paths to compact table IDs once
+per table and uses those IDs in cache keys, so repeated tile lookups no longer
+hash long table paths. The standard-MFS frontend row adapter also avoids
+dynamic `ndarray` indexing in the hot DATA/FLAG accessors: selected channels
+are converted to local channel offsets once, and array-backed row values use
+cached shape/stride metadata for direct local indexing. On the same bounded
+one-worker run this moved `prepare_processing_buffer` from the
+`8.4-8.8 s` range to `5.3-5.5 s`, with the best retained frontend result at
+`43.704 s`. The current sample no longer shows the earlier dynamic
+`IxDyn`/`memmove` row-access stack as the dominant frontend cost.
+
+The reusable executor path was brought onto the same compact positive-tap
+representation as the streaming path so standard-MFS planning uses one exact
+tap representation instead of retaining 49-product tap arrays in some paths.
+The f64 grid/degrid slice fast paths now use unchecked indexing only after
+`sample_taps` has proved the tap coordinates are inside the grid. The initial
+dirty PSF/residual pair update also has a real-PSF plus complex-residual helper
+so it no longer updates the PSF imaginary lane with zero. The best retained
+bounded one-worker probe after those changes was:
+
+```text
+target/imperformance-wave2/calltree-probe/bounded-one-worker-real-complex-pair.log
+frontend_total=43.704 s
+prepare_plane_input=20.147 s
+prepare_processing_buffer=5.288 s
+core_total=23.476 s
+psf_grid=4.122 s
+residual_degrid_grid=16.219 s
+major_cycle_refresh=12.149 s
+major_cycles=2
+minor_iterations=50
+```
+
+This is a valid serial improvement over the pre-direct-tap bounded baseline
+(`frontend_total=57.788 s`, `core_total=31.373 s`) and over the first
+post-direct-tap retained run (`frontend_total=49.524 s`,
+`core_total=24.136 s`). It is still not the factor-of-two serial break loose:
+the remaining high nail is exact visibility-domain residual refresh.
+
+A deliberately tempting image-domain residual-refresh shortcut was tested and
+rejected. It reduced the bounded run to about `34.996 s` and made
+`major_cycle_refresh` nearly disappear, but the equivalence test
+`trace_residual_refresh_matches_fft_residual_and_prediction_order` caught a
+structured-model mismatch (`rms=3.6932018e-2`). That path is not part of Wave 2
+unless a correct CASA-equivalent derivation is found.
 
 The next Wave 2 optimization target remains the standard-MFS grid/degrid
 traversal inside the full-shape clean path. Minor-cycle execution is still not

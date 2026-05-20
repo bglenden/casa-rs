@@ -197,19 +197,6 @@ impl StandardGridder {
         })
     }
 
-    pub(crate) fn plan_positive_sample(
-        &self,
-        u_lambda: f64,
-        v_lambda: f64,
-    ) -> Option<ProductTapSet> {
-        let positive = self.plan_positive_taps(u_lambda, v_lambda)?;
-        Some(flatten_tap_products(
-            &positive.x,
-            &positive.y,
-            self.grid_shape[1],
-        ))
-    }
-
     pub(crate) fn plan_positive_taps(
         &self,
         u_lambda: f64,
@@ -307,7 +294,10 @@ impl StandardGridder {
                 let x_weight = taps.x.weights[x_tap];
                 for y_tap in 0..GRIDDER_TAP_COUNT {
                     let weight = f64::from(x_weight * taps.y.weights[y_tap]);
-                    let cell = &mut storage[x_index + taps.y.indices[y_tap]];
+                    let index = x_index + taps.y.indices[y_tap];
+                    debug_assert!(index < storage.len());
+                    // `sample_taps` only produces in-bounds grid coordinates.
+                    let cell = unsafe { storage.get_unchecked_mut(index) };
                     cell.re += value.re * weight;
                     cell.im += value.im * weight;
                 }
@@ -326,6 +316,7 @@ impl StandardGridder {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn grid_sample_product_real_planned_f64(
         &self,
         grid: &mut Array2<Complex64>,
@@ -360,8 +351,13 @@ impl StandardGridder {
                 let x_index = taps.x.indices[x_tap] * grid_stride;
                 let x_weight = taps.x.weights[x_tap];
                 for y_tap in 0..GRIDDER_TAP_COUNT {
-                    storage[x_index + taps.y.indices[y_tap]].re +=
-                        value * f64::from(x_weight * taps.y.weights[y_tap]);
+                    let index = x_index + taps.y.indices[y_tap];
+                    debug_assert!(index < storage.len());
+                    // `sample_taps` only produces in-bounds grid coordinates.
+                    unsafe {
+                        storage.get_unchecked_mut(index).re +=
+                            value * f64::from(x_weight * taps.y.weights[y_tap]);
+                    }
                 }
             }
             return;
@@ -376,6 +372,7 @@ impl StandardGridder {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn grid_sample_product_pair_planned_f64(
         &self,
         first_grid: &mut Array2<Complex64>,
@@ -416,17 +413,17 @@ impl StandardGridder {
         }
     }
 
-    pub(crate) fn grid_sample_taps_pair_planned_f64(
+    pub(crate) fn grid_sample_taps_real_complex_pair_planned_f64(
         &self,
-        first_grid: &mut Array2<Complex64>,
-        first_value: Complex64,
-        second_grid: &mut Array2<Complex64>,
-        second_value: Complex64,
+        real_grid: &mut Array2<Complex64>,
+        real_value: f64,
+        complex_grid: &mut Array2<Complex64>,
+        complex_value: Complex64,
         taps: &PositiveTapSet,
     ) {
-        if let (Some(first_storage), Some(second_storage)) = (
-            first_grid.as_slice_memory_order_mut(),
-            second_grid.as_slice_memory_order_mut(),
+        if let (Some(real_storage), Some(complex_storage)) = (
+            real_grid.as_slice_memory_order_mut(),
+            complex_grid.as_slice_memory_order_mut(),
         ) {
             let grid_stride = self.grid_shape[1];
             for x_tap in 0..GRIDDER_TAP_COUNT {
@@ -435,12 +432,15 @@ impl StandardGridder {
                 for y_tap in 0..GRIDDER_TAP_COUNT {
                     let weight = f64::from(x_weight * taps.y.weights[y_tap]);
                     let index = x_index + taps.y.indices[y_tap];
-                    let first_cell = &mut first_storage[index];
-                    first_cell.re += first_value.re * weight;
-                    first_cell.im += first_value.im * weight;
-                    let second_cell = &mut second_storage[index];
-                    second_cell.re += second_value.re * weight;
-                    second_cell.im += second_value.im * weight;
+                    debug_assert!(index < real_storage.len());
+                    debug_assert!(index < complex_storage.len());
+                    // `sample_taps` only produces in-bounds grid coordinates.
+                    unsafe {
+                        real_storage.get_unchecked_mut(index).re += real_value * weight;
+                        let complex_cell = complex_storage.get_unchecked_mut(index);
+                        complex_cell.re += complex_value.re * weight;
+                        complex_cell.im += complex_value.im * weight;
+                    }
                 }
             }
             return;
@@ -451,12 +451,10 @@ impl StandardGridder {
             for y_tap in 0..GRIDDER_TAP_COUNT {
                 let weight = f64::from(x_weight * taps.y.weights[y_tap]);
                 let index = (x_index, taps.y.indices[y_tap]);
-                let first_cell = &mut first_grid[index];
-                first_cell.re += first_value.re * weight;
-                first_cell.im += first_value.im * weight;
-                let second_cell = &mut second_grid[index];
-                second_cell.re += second_value.re * weight;
-                second_cell.im += second_value.im * weight;
+                real_grid[index].re += real_value * weight;
+                let complex_cell = &mut complex_grid[index];
+                complex_cell.re += complex_value.re * weight;
+                complex_cell.im += complex_value.im * weight;
             }
         }
     }
@@ -566,7 +564,10 @@ impl StandardGridder {
                 let x_index = taps.x.indices[x_tap] * grid_stride;
                 let x_weight = taps.x.weights[x_tap];
                 for y_tap in 0..GRIDDER_TAP_COUNT {
-                    value += storage[x_index + taps.y.indices[y_tap]]
+                    let index = x_index + taps.y.indices[y_tap];
+                    debug_assert!(index < storage.len());
+                    // `sample_taps` only produces in-bounds grid coordinates.
+                    value += unsafe { *storage.get_unchecked(index) }
                         * (x_weight * taps.y.weights[y_tap]);
                 }
             }
