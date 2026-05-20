@@ -289,6 +289,23 @@ comparison, was dominated by `make_psf=608.218 s`,
 CASA phase diagnostics cost roughly another CASA imaging pass on this shape and
 must be opt-in rather than part of routine paired timing.
 
+A 2026-05-20 Rust-only profiler check with
+`CASA_RS_STANDARD_MFS_GRID_THREADS=1` on the same full-shape `niter=2`
+diagnostic reported `frontend_total=1327.510 s`, `prepare_plane_input=126.145 s`,
+`run_imaging=1201.220 s`, and `core_total=1198.218 s`. Against the paired CASA
+wall-clock baseline of `2017.326 s`, that is still about `1.52x` faster than
+CASA, but only because this was a Rust profile compared to the existing paired
+CASA wall time rather than a fresh product-writing paired harness run. Compared
+with the latest `auto` Rust profiler row from the paired run, the one-worker
+profile was `1.81x` slower overall and `2.03x` slower in the imaging core. The
+largest one-worker-to-auto regressions were `weighting` (`312.485 s` vs
+`98.431 s`), `psf_grid` (`196.063 s` vs `89.829 s`),
+`residual_degrid_grid` (`596.189 s` vs `266.098 s`), and
+`major_cycle_refresh` (`400.458 s` vs `176.525 s`). This keeps serial
+standard-MFS weighting and grid/degrid traversal in scope for Wave 2: worker
+scaling wins the headline comparison, but it is masking substantial
+single-thread cost.
+
 The next Wave 2 optimization target remains the standard-MFS grid/degrid
 traversal inside the full-shape clean path. Minor-cycle execution is still not
 material at `niter=2`; the large buckets are CPU gridding/degridding, weighting,
