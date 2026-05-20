@@ -5241,7 +5241,7 @@ fn compute_psf_standard(
     let grid_started = Instant::now();
     for sample in plan.samples() {
         let psf_weight = Complex64::new(sample.grid_weight_f64(), 0.0);
-        gridder.grid_sample_product_planned_f64(psf_grid, &sample.plan.positive, psf_weight);
+        gridder.grid_sample_product_planned_f64(psf_grid, &sample.positive_taps, psf_weight);
     }
     timings.grid = grid_started.elapsed();
 
@@ -5381,7 +5381,7 @@ fn compute_dirty_psf_and_residual_standard_with_executor(
     for sample in plan.samples() {
         let grid_weight = sample.grid_weight_f64();
         let psf_weight = Complex64::new(grid_weight, 0.0);
-        gridder.grid_sample_product_planned_f64(psf_grid, &sample.plan.positive, psf_weight);
+        gridder.grid_sample_product_planned_f64(psf_grid, &sample.positive_taps, psf_weight);
 
         let batch = plan.batch(sample);
         let observed_visibility = batch.visibility[sample.sample_index];
@@ -5390,7 +5390,7 @@ fn compute_dirty_psf_and_residual_standard_with_executor(
                 f64::from(observed_visibility.re) * grid_weight,
                 f64::from(observed_visibility.im) * grid_weight,
             );
-            gridder.grid_sample_product_planned_f64(residual_grid, &sample.plan.positive, residual);
+            gridder.grid_sample_product_planned_f64(residual_grid, &sample.positive_taps, residual);
         }
     }
     let grid_elapsed = grid_started.elapsed();
@@ -5923,7 +5923,7 @@ fn accumulate_standard_mfs_residual_sample(
     }
     let predicted_visibility = model_grid.as_ref().map_or_else(
         || Complex32::new(0.0, 0.0),
-        |grid| gridder.degrid_sample_product_planned_normalized(grid, &sample.plan.positive),
+        |grid| gridder.degrid_sample_product_planned_normalized(grid, &sample.positive_taps),
     );
     let residual_visibility = observed_visibility - predicted_visibility;
     let residual_weight = sample.grid_weight_f64();
@@ -5931,7 +5931,7 @@ fn accumulate_standard_mfs_residual_sample(
         f64::from(residual_visibility.re) * residual_weight,
         f64::from(residual_visibility.im) * residual_weight,
     );
-    gridder.grid_sample_product_planned_f64(residual_grid, &sample.plan.positive, residual);
+    gridder.grid_sample_product_planned_f64(residual_grid, &sample.positive_taps, residual);
 }
 
 fn add_complex64_grid(target: &mut Array2<Complex64>, source: &Array2<Complex64>) {

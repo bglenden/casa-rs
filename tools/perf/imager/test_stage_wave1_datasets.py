@@ -125,6 +125,8 @@ class StageWave1DatasetsTest(unittest.TestCase):
             [".image", ".residual", ".psf", ".model"],
             workload["comparison"]["products"],
         )
+        self.assertEqual(100, workload["imaging"]["niter"])
+        self.assertEqual(100, workload["imaging"]["minor_cycle_length"])
 
     def test_niter2_clean_workload_is_shallow_diagnostic(self) -> None:
         spec = stage.select_datasets(
@@ -144,6 +146,7 @@ class StageWave1DatasetsTest(unittest.TestCase):
 
         self.assertEqual("clean", workload["imaging"]["mode"])
         self.assertEqual(2, workload["imaging"]["niter"])
+        self.assertEqual(2, workload["imaging"]["minor_cycle_length"])
         self.assertEqual(
             [".image", ".residual", ".psf", ".model"],
             workload["comparison"]["products"],

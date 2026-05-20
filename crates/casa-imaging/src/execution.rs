@@ -6,7 +6,7 @@ use num_complex::{Complex32, Complex64};
 
 use crate::{
     ImageGeometry, ImagingError, VisibilityBatch,
-    gridder::{PlannedSample, StandardGridder},
+    gridder::{ProductTapSet, StandardGridder},
 };
 
 /// Internal backend selection for standard MFS execution.
@@ -257,9 +257,10 @@ impl<'a> StandardMfsVisibilityPlan<'a> {
                     skipped_samples += 1;
                     continue;
                 }
-                let Some(plan) =
-                    gridder.plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-                else {
+                let Some(positive_taps) = gridder.plan_positive_sample(
+                    batch.u_lambda[sample_index],
+                    batch.v_lambda[sample_index],
+                ) else {
                     skipped_samples += 1;
                     continue;
                 };
@@ -271,7 +272,7 @@ impl<'a> StandardMfsVisibilityPlan<'a> {
                     batch_index,
                     sample_index,
                     grid_weight,
-                    plan,
+                    positive_taps,
                 });
             }
         }
@@ -324,8 +325,8 @@ pub(crate) struct StandardMfsPlannedSample {
     pub(crate) sample_index: usize,
     /// Product of imaging weight and sumwt factor used by standard MFS grids.
     pub(crate) grid_weight: f32,
-    /// Precomputed gridder taps for this `(u, v)` coordinate.
-    pub(crate) plan: PlannedSample,
+    /// Precomputed positive-UV gridder taps for this `(u, v)` coordinate.
+    pub(crate) positive_taps: ProductTapSet,
 }
 
 impl StandardMfsPlannedSample {

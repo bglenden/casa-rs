@@ -6961,6 +6961,7 @@ fn prepare_processing_buffer(
         phase_center.clone(),
         false,
     )?;
+    prepared.reserve_standard_mfs_row_block(buffer.geometry_rows.len());
     for (row_slot, row) in buffer.geometry_rows.iter().enumerate() {
         prepared.accumulate_row(
             row,
@@ -7584,7 +7585,6 @@ fn standard_mfs_memory_plan(
         .saturating_add(weighting_density_bytes)
         .saturating_add(gridded_visibility_bytes)
         .saturating_add(output_image_bytes)
-        .saturating_add(worker_staging_bytes)
         .saturating_add(gpu_staging_bytes);
     let prepare_buffer_bytes = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
         .filter(|value| *value > 0)
@@ -8658,6 +8658,40 @@ impl PreparedSelection {
         })
     }
 
+    fn reserve_standard_mfs_row_block(&mut self, row_count: usize) {
+        let sample_capacity = row_count.saturating_mul(self.source_channel_frequencies_hz.len());
+        match (&mut self.state, &mut self.trace_state) {
+            (
+                PreparedState::ExplicitMfs { batch, .. },
+                PreparedTraceState::ExplicitMfs { samples },
+            ) => {
+                reserve_visibility_batch(batch, sample_capacity);
+                if self.trace_enabled {
+                    samples.reserve(sample_capacity);
+                }
+            }
+            (
+                PreparedState::CollapsedMfs { batch, .. },
+                PreparedTraceState::PairedMfs { samples },
+            ) => {
+                reserve_visibility_batch(batch, sample_capacity);
+                if self.trace_enabled {
+                    samples.reserve(sample_capacity);
+                }
+            }
+            (
+                PreparedState::PairedMfs { paired, .. },
+                PreparedTraceState::PairedMfs { samples },
+            ) => {
+                reserve_parallel_hand_batch(paired, sample_capacity);
+                if self.trace_enabled {
+                    samples.reserve(sample_capacity);
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new(
         config: &CliConfig,
@@ -9325,30 +9359,6 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::ExplicitMfs { samples },
             ) => {
-                batch
-                    .u_lambda
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .v_lambda
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .w_lambda
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .weight
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .sumwt_factor
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .gridable
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .visibility
-                    .reserve(self.source_channel_frequencies_hz.len());
-                if trace_enabled {
-                    samples.reserve(self.source_channel_frequencies_hz.len());
-                }
                 for (channel_slot, (channel_index, frequency_hz)) in self
                     .source_channel_indices
                     .iter()
@@ -9692,27 +9702,6 @@ impl PreparedSelection {
                 },
                 PreparedTraceState::PairedMfs { .. },
             ) => {
-                batch
-                    .u_lambda
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .v_lambda
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .w_lambda
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .weight
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .sumwt_factor
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .gridable
-                    .reserve(self.source_channel_frequencies_hz.len());
-                batch
-                    .visibility
-                    .reserve(self.source_channel_frequencies_hz.len());
                 let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
                 for (channel_index, frequency_hz) in self
                     .source_channel_indices
@@ -9771,39 +9760,6 @@ impl PreparedSelection {
                 PreparedState::PairedMfs { paired, pair, .. },
                 PreparedTraceState::PairedMfs { samples },
             ) => {
-                paired
-                    .u_lambda
-                    .reserve(self.source_channel_frequencies_hz.len());
-                paired
-                    .v_lambda
-                    .reserve(self.source_channel_frequencies_hz.len());
-                paired
-                    .w_lambda
-                    .reserve(self.source_channel_frequencies_hz.len());
-                paired
-                    .first_visibility
-                    .reserve(self.source_channel_frequencies_hz.len());
-                paired
-                    .second_visibility
-                    .reserve(self.source_channel_frequencies_hz.len());
-                paired
-                    .first_weight
-                    .reserve(self.source_channel_frequencies_hz.len());
-                paired
-                    .second_weight
-                    .reserve(self.source_channel_frequencies_hz.len());
-                paired
-                    .first_flagged
-                    .reserve(self.source_channel_frequencies_hz.len());
-                paired
-                    .second_flagged
-                    .reserve(self.source_channel_frequencies_hz.len());
-                paired
-                    .gridable
-                    .reserve(self.source_channel_frequencies_hz.len());
-                if trace_enabled {
-                    samples.reserve(self.source_channel_frequencies_hz.len());
-                }
                 for (channel_slot, (channel_index, frequency_hz)) in self
                     .source_channel_indices
                     .iter()
@@ -13802,6 +13758,16 @@ fn empty_visibility_batch(capacity: usize) -> VisibilityBatch {
     }
 }
 
+fn reserve_visibility_batch(batch: &mut VisibilityBatch, additional: usize) {
+    batch.u_lambda.reserve(additional);
+    batch.v_lambda.reserve(additional);
+    batch.w_lambda.reserve(additional);
+    batch.weight.reserve(additional);
+    batch.sumwt_factor.reserve(additional);
+    batch.gridable.reserve(additional);
+    batch.visibility.reserve(additional);
+}
+
 fn empty_parallel_hand_batch(capacity: usize) -> ParallelHandBatch {
     ParallelHandBatch {
         u_lambda: Vec::with_capacity(capacity),
@@ -13815,6 +13781,19 @@ fn empty_parallel_hand_batch(capacity: usize) -> ParallelHandBatch {
         second_flagged: Vec::with_capacity(capacity),
         gridable: Vec::with_capacity(capacity),
     }
+}
+
+fn reserve_parallel_hand_batch(batch: &mut ParallelHandBatch, additional: usize) {
+    batch.u_lambda.reserve(additional);
+    batch.v_lambda.reserve(additional);
+    batch.w_lambda.reserve(additional);
+    batch.first_visibility.reserve(additional);
+    batch.second_visibility.reserve(additional);
+    batch.first_weight.reserve(additional);
+    batch.second_weight.reserve(additional);
+    batch.first_flagged.reserve(additional);
+    batch.second_flagged.reserve(additional);
+    batch.gridable.reserve(additional);
 }
 
 fn chunk_visibility_batch(batch: VisibilityBatch, max_batch_size: usize) -> Vec<VisibilityBatch> {

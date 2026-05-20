@@ -338,6 +338,7 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
         niter = 100 if is_clean else 0
     else:
         niter = 250 if is_clean else 0
+    minor_cycle_length = niter if is_clean else 2
     return {
         "id": f"{dataset['id']}-{mode_id}",
         "mode_id": mode_id,
@@ -364,6 +365,7 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
             "nterms": 2 if is_mtmfs else 1,
             "scales": [0, 5, 15] if deconvolver == "multiscale" else "",
             "niter": niter,
+            "minor_cycle_length": minor_cycle_length,
             "wterm": "none",
         },
         "run": {

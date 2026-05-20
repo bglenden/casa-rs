@@ -294,6 +294,37 @@ traversal inside the full-shape clean path. Minor-cycle execution is still not
 material at `niter=2`; the large buckets are CPU gridding/degridding, weighting,
 and frontend row preparation.
 
+To avoid chasing the wrong high nail, Wave 2 now keeps two clean benchmark
+controls explicit. The generated `standard-mfs-clean-niter2` workload remains a
+shallow major-cycle diagnostic with `minor_cycle_length=2`. The normal generated
+clean workloads now set `minor_cycle_length=niter`, so medium-tier
+`standard-mfs-clean-current` runs `niter=100` without forcing a residual refresh
+after every two minor iterations.
+
+A bounded 64-channel, 1024-pixel Rust-only check showed why this matters:
+
+| Workload controls | Frontend | Run imaging | Major refresh | Residual grid | Minor solve | Major cycles | Minor iterations |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `niter=50`, `minor_cycle_length=2` | `125.223 s` | `96.820 s` | `75.085 s` | `75.336 s` | `0.265 s` | `26` | `50` |
+| `niter=50`, `minor_cycle_length=50` | `34.815 s` | `8.063 s` | `2.963 s` | `4.392 s` | `0.263 s` | `2` | `50` |
+| `niter=50`, `minor_cycle_length=50`, planner/reserve update | `33.933 s` | `8.123 s` | `3.031 s` | `4.446 s` | `0.261 s` | `2` | `50` |
+
+The deeper-clean conclusion is that minor-cycle solving is still not a dominant
+cost for this multiscale slice. With realistic cycle budgeting, bounded
+deconvolution depth shifts attention back to frontend row preparation and the
+same standard-MFS grid/degrid traversal; with `cycleniter=2`, the benchmark is a
+deliberate stress test of repeated major-cycle refresh, not a representative
+science-depth clean.
+
+The planner/reserve update keeps imaging worker-local grid staging in the
+central plan but no longer subtracts that future imaging-phase reserve from the
+transient MS-read row-block buffer. On the bounded realistic profile this moved
+the auto row block from `16,384` to the conservative cap of `32,768` rows and
+moved `prepare_plane_input` from `27.038 s` in the progress-probed baseline to
+`25.784 s` in the no-progress retained timing. The MFS row adapter now reserves
+the row-block sample capacity once per block instead of issuing per-row vector
+reservations.
+
 ## GPU Feasibility Checkpoint
 
 The local profiler host reports an Apple M4 GPU with 10 cores and Metal
