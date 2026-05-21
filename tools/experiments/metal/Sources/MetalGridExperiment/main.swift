@@ -64,6 +64,11 @@ struct TileCellBinParams {
     uint tile_halo_edge;
 };
 
+struct PrefixParams {
+    uint element_count;
+    uint step;
+};
+
 static inline void atomic_add_float(device atomic_uint *address, float value) {
     uint old_bits = atomic_load_explicit(address, memory_order_relaxed);
     while (true) {
@@ -108,6 +113,62 @@ kernel void grid_global_atomic(
             uint cell = uint(x) * params.height + uint(y);
             atomic_add_float(&grid_re[cell], sample.visibility_re * tap_weight);
             atomic_add_float(&grid_im[cell], sample.visibility_im * tap_weight);
+        }
+    }
+}
+
+kernel void residual_refresh_global_atomic(
+    device const MetalGridSample *samples [[buffer(0)]],
+    device const float *taps [[buffer(1)]],
+    device const float *model_re [[buffer(2)]],
+    device const float *model_im [[buffer(3)]],
+    device atomic_uint *grid_re [[buffer(4)]],
+    device atomic_uint *grid_im [[buffer(5)]],
+    constant ExperimentParams &params [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= params.sample_count) {
+        return;
+    }
+
+    MetalGridSample sample = samples[gid];
+    float predicted_re = 0.0f;
+    float predicted_im = 0.0f;
+    for (uint dx = 0; dx < params.tap_count; dx++) {
+        int x = int(sample.center_x) + int(dx) - int(params.support);
+        if (x < 0 || x >= int(params.width)) {
+            continue;
+        }
+        float wx = taps[dx];
+        for (uint dy = 0; dy < params.tap_count; dy++) {
+            int y = int(sample.center_y) + int(dy) - int(params.support);
+            if (y < 0 || y >= int(params.height)) {
+                continue;
+            }
+            float tap_weight = wx * taps[dy];
+            uint cell = uint(x) * params.height + uint(y);
+            predicted_re += model_re[cell] * tap_weight;
+            predicted_im += model_im[cell] * tap_weight;
+        }
+    }
+
+    float residual_re = sample.visibility_re - predicted_re;
+    float residual_im = sample.visibility_im - predicted_im;
+    for (uint dx = 0; dx < params.tap_count; dx++) {
+        int x = int(sample.center_x) + int(dx) - int(params.support);
+        if (x < 0 || x >= int(params.width)) {
+            continue;
+        }
+        float wx = taps[dx];
+        for (uint dy = 0; dy < params.tap_count; dy++) {
+            int y = int(sample.center_y) + int(dy) - int(params.support);
+            if (y < 0 || y >= int(params.height)) {
+                continue;
+            }
+            float tap_weight = wx * taps[dy] * sample.weight;
+            uint cell = uint(x) * params.height + uint(y);
+            atomic_add_float(&grid_re[cell], residual_re * tap_weight);
+            atomic_add_float(&grid_im[cell], residual_im * tap_weight);
         }
     }
 }
@@ -346,6 +407,113 @@ kernel void fill_tile_cell_bins(
         }
     }
 }
+
+kernel void prefix_scan_step(
+    device const uint *input [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    constant PrefixParams &params [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= params.element_count) {
+        return;
+    }
+    uint value = input[gid];
+    if (gid >= params.step) {
+        value += input[gid - params.step];
+    }
+    output[gid] = value;
+}
+
+kernel void fill_tile_cell_bins_all(
+    device const MetalGridSample *samples [[buffer(0)]],
+    device const uint *inclusive_prefix [[buffer(1)]],
+    device atomic_uint *fill_counts [[buffer(2)]],
+    device uint *sample_indices [[buffer(3)]],
+    constant TileCellBinParams &params [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= params.sample_count) {
+        return;
+    }
+
+    MetalGridSample sample = samples[gid];
+    uint tile_x = sample.center_x / params.tile_edge;
+    uint tile_y = sample.center_y / params.tile_edge;
+    uint tile_id = tile_x * params.tiles_y + tile_y;
+    uint halo_cells = params.tile_halo_edge * params.tile_halo_edge;
+
+    for (uint dx = 0; dx < params.tap_count; dx++) {
+        int global_x = int(sample.center_x) + int(dx) - int(params.support);
+        if (global_x < 0 || global_x >= int(params.width)) {
+            continue;
+        }
+        uint local_x = uint(global_x - int(tile_x * params.tile_edge) + int(params.support));
+        for (uint dy = 0; dy < params.tap_count; dy++) {
+            int global_y = int(sample.center_y) + int(dy) - int(params.support);
+            if (global_y < 0 || global_y >= int(params.height)) {
+                continue;
+            }
+            uint local_y = uint(global_y - int(tile_y * params.tile_edge) + int(params.support));
+            uint tile_cell = tile_id * halo_cells + local_x * params.tile_halo_edge + local_y;
+            uint start = tile_cell == 0 ? 0 : inclusive_prefix[tile_cell - 1];
+            uint output = start +
+                atomic_fetch_add_explicit(&fill_counts[tile_cell], 1u, memory_order_relaxed);
+            sample_indices[output] = gid;
+        }
+    }
+}
+
+kernel void grid_tile_cell_bins_all(
+    device const MetalGridSample *samples [[buffer(0)]],
+    device const uint *inclusive_prefix [[buffer(1)]],
+    device const uint *sample_indices [[buffer(2)]],
+    device const float *taps [[buffer(3)]],
+    device float *tile_re [[buffer(4)]],
+    device float *tile_im [[buffer(5)]],
+    constant TileCellBinParams &params [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint halo_cells = params.tile_halo_edge * params.tile_halo_edge;
+    uint total_cells = params.tile_count * halo_cells;
+    if (gid >= total_cells) {
+        return;
+    }
+
+    uint tile_id = gid / halo_cells;
+    uint local_cell = gid - tile_id * halo_cells;
+    uint local_x = local_cell / params.tile_halo_edge;
+    uint local_y = local_cell - local_x * params.tile_halo_edge;
+    uint tile_x = tile_id / params.tiles_y;
+    uint tile_y = tile_id - tile_x * params.tiles_y;
+    int global_x = int(tile_x * params.tile_edge + local_x) - int(params.support);
+    int global_y = int(tile_y * params.tile_edge + local_y) - int(params.support);
+
+    if (global_x < 0 || global_y < 0 ||
+        global_x >= int(params.width) || global_y >= int(params.height)) {
+        tile_re[gid] = 0.0f;
+        tile_im[gid] = 0.0f;
+        return;
+    }
+
+    uint start = gid == 0 ? 0 : inclusive_prefix[gid - 1];
+    uint end = inclusive_prefix[gid];
+    float sum_re = 0.0f;
+    float sum_im = 0.0f;
+    for (uint index = start; index < end; index++) {
+        MetalGridSample sample = samples[sample_indices[index]];
+        int dx = global_x - int(sample.center_x) + int(params.support);
+        int dy = global_y - int(sample.center_y) + int(params.support);
+        if (dx < 0 || dy < 0 || dx >= int(params.tap_count) || dy >= int(params.tap_count)) {
+            continue;
+        }
+        float tap_weight = taps[uint(dx)] * taps[uint(dy)] * sample.weight;
+        sum_re += sample.visibility_re * tap_weight;
+        sum_im += sample.visibility_im * tap_weight;
+    }
+
+    tile_re[gid] = sum_re;
+    tile_im[gid] = sum_im;
+}
 """
 
 private struct MetalGridSample {
@@ -404,6 +572,11 @@ private struct TileCellBinParams {
     var tileHaloEdge: UInt32
 }
 
+private struct PrefixParams {
+    var elementCount: UInt32
+    var step: UInt32
+}
+
 private struct ReducedContributionPlan {
     var contributions: [GridContribution]
     var activeCells: [UInt32]
@@ -454,6 +627,9 @@ private struct RunConfig {
     var distribution: String = "uniform"
     var repeats: Int = 1
     var tileEdge: Int = 64
+    var preparedSamplesJSON: String?
+    var cellArcsec: Double = 1.0
+    var skipSlowBaselines = false
 
     static func parse() throws -> RunConfig {
         var config = RunConfig()
@@ -480,6 +656,15 @@ private struct RunConfig {
                 config.repeats = try Int(requireValue()).requirePositive(arg)
             case "--tile-edge":
                 config.tileEdge = try Int(requireValue()).requirePositive(arg)
+            case "--prepared-samples-json":
+                config.preparedSamplesJSON = try requireValue()
+            case "--cell-arcsec":
+                guard let value = Double(try requireValue()), value > 0 else {
+                    throw ExperimentError.invalidArgument("--cell-arcsec must be a positive number")
+                }
+                config.cellArcsec = value
+            case "--skip-slow-baselines":
+                config.skipSlowBaselines = true
             case "--help", "-h":
                 printUsageAndExit()
             default:
@@ -502,6 +687,7 @@ private enum ExperimentError: Error, CustomStringConvertible {
     case invalidArgument(String)
     case metalUnavailable
     case metalFailure(String)
+    case fixtureFailure(String)
 
     var description: String {
         switch self {
@@ -511,7 +697,29 @@ private enum ExperimentError: Error, CustomStringConvertible {
             return "no Metal device is available"
         case .metalFailure(let message):
             return "Metal failure: \(message)"
+        case .fixtureFailure(let message):
+            return "fixture failure: \(message)"
         }
+    }
+}
+
+private struct PreparedVisibilitySampleTrace: Decodable {
+    let imagingUVWm: [Double]
+    let outputFrequencyHz: Double
+    let visibilityRe: Float
+    let visibilityIm: Float
+    let weight: Float
+    let sumwtFactor: Float
+    let gridable: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case imagingUVWm = "imaging_uvw_m"
+        case outputFrequencyHz = "output_frequency_hz"
+        case visibilityRe = "visibility_re"
+        case visibilityIm = "visibility_im"
+        case weight
+        case sumwtFactor = "sumwt_factor"
+        case gridable
     }
 }
 
@@ -548,7 +756,8 @@ private final class Lcg {
 private func printUsageAndExit() -> Never {
     print("""
     Usage:
-      swift run MetalGridExperiment [--samples N] [--imsize N] [--support N] [--distribution uniform|cluster|boundary] [--tile-edge N] [--repeats N]
+      swift run MetalGridExperiment [--samples N] [--imsize N] [--support N] [--distribution uniform|cluster|boundary] [--tile-edge N] [--repeats N] [--skip-slow-baselines]
+      swift run MetalGridExperiment --prepared-samples-json prepared_samples.json [--samples MAX] [--imsize N] [--cell-arcsec ARCSEC] [--skip-slow-baselines]
     """)
     exit(0)
 }
@@ -616,6 +825,80 @@ private func makeSamples(config: RunConfig) -> [MetalGridSample] {
     }
 }
 
+private func loadPreparedSamplesFixture(config: RunConfig) throws -> [MetalGridSample] {
+    guard let path = config.preparedSamplesJSON else {
+        return makeSamples(config: config)
+    }
+    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    let traces: [PreparedVisibilitySampleTrace]
+    do {
+        traces = try JSONDecoder().decode([PreparedVisibilitySampleTrace].self, from: data)
+    } catch {
+        throw ExperimentError.fixtureFailure("decode \(path): \(error)")
+    }
+
+    let cellRad = config.cellArcsec * Double.pi / (180.0 * 3600.0)
+    let duLambda = 1.0 / (Double(config.imsize) * cellRad)
+    let dvLambda = duLambda
+    let center = Double(config.imsize) / 2.0
+    let maxSamples = config.samples
+    var samples: [MetalGridSample] = []
+    samples.reserveCapacity(min(maxSamples, traces.count))
+
+    for trace in traces {
+        if samples.count >= maxSamples {
+            break
+        }
+        guard trace.gridable,
+              trace.imagingUVWm.count >= 2,
+              trace.outputFrequencyHz.isFinite,
+              trace.outputFrequencyHz > 0,
+              trace.weight.isFinite,
+              trace.weight > 0,
+              trace.sumwtFactor.isFinite,
+              trace.sumwtFactor > 0,
+              trace.visibilityRe.isFinite,
+              trace.visibilityIm.isFinite
+        else {
+            continue
+        }
+
+        let lambdaScale = trace.outputFrequencyHz / 299_792_458.0
+        let uLambda = trace.imagingUVWm[0] * lambdaScale
+        let vLambda = trace.imagingUVWm[1] * lambdaScale
+        let xAnchor = Int((uLambda / duLambda + center).rounded())
+        let yAnchor = Int((-vLambda / dvLambda + center).rounded())
+        let startX = xAnchor - config.support
+        let startY = yAnchor - config.support
+        let endX = xAnchor + config.support
+        let endY = yAnchor + config.support
+        if startX < 0 || startY < 0 || endX >= config.imsize || endY >= config.imsize {
+            continue
+        }
+
+        samples.append(
+            MetalGridSample(
+                centerX: UInt32(xAnchor),
+                centerY: UInt32(yAnchor),
+                kernelU: 0,
+                kernelV: 0,
+                supportId: 0,
+                gridPlane: 0,
+                flags: 1,
+                weight: trace.weight * trace.sumwtFactor,
+                visibilityRe: trace.visibilityRe,
+                visibilityIm: trace.visibilityIm
+            )
+        )
+    }
+    if samples.isEmpty {
+        throw ExperimentError.fixtureFailure(
+            "no gridable samples from \(path); try a larger --imsize or larger --cell-arcsec"
+        )
+    }
+    return samples
+}
+
 private func clamp(_ value: Int, _ low: Int, _ high: Int) -> Int {
     min(max(value, low), high)
 }
@@ -641,6 +924,79 @@ private func cpuReference(samples: [MetalGridSample], taps: [Float], config: Run
                 let index = x * config.imsize + y
                 grid.re[index] += sample.visibilityRe * weight
                 grid.im[index] += sample.visibilityIm * weight
+            }
+        }
+    }
+    return grid
+}
+
+private func makeModelGrid(config: RunConfig) -> ComplexGrid {
+    var grid = ComplexGrid(
+        re: Array(repeating: 0, count: config.imsize * config.imsize),
+        im: Array(repeating: 0, count: config.imsize * config.imsize)
+    )
+    let center = Float(config.imsize - 1) * 0.5
+    let scale = max(Float(config.imsize) * 0.19, 1)
+    for x in 0..<config.imsize {
+        let fx = (Float(x) - center) / scale
+        for y in 0..<config.imsize {
+            let fy = (Float(y) - center) / scale
+            let envelope = exp(-0.5 * (fx * fx + fy * fy))
+            let ripple = sin(Float(x) * 0.073) * cos(Float(y) * 0.041)
+            let index = x * config.imsize + y
+            grid.re[index] = 0.025 * envelope * (1.0 + 0.2 * ripple)
+            grid.im[index] = 0.0125 * envelope * ripple
+        }
+    }
+    return grid
+}
+
+private func cpuResidualRefreshReference(
+    samples: [MetalGridSample],
+    taps: [Float],
+    model: ComplexGrid,
+    config: RunConfig
+) -> ComplexGrid {
+    var grid = ComplexGrid(
+        re: Array(repeating: 0, count: config.imsize * config.imsize),
+        im: Array(repeating: 0, count: config.imsize * config.imsize)
+    )
+    let tapCount = 2 * config.support + 1
+    for sample in samples {
+        var predictedRe: Float = 0
+        var predictedIm: Float = 0
+        for dx in 0..<tapCount {
+            let x = Int(sample.centerX) + dx - config.support
+            if x < 0 || x >= config.imsize {
+                continue
+            }
+            for dy in 0..<tapCount {
+                let y = Int(sample.centerY) + dy - config.support
+                if y < 0 || y >= config.imsize {
+                    continue
+                }
+                let tapWeight = taps[dx] * taps[dy]
+                let index = x * config.imsize + y
+                predictedRe += model.re[index] * tapWeight
+                predictedIm += model.im[index] * tapWeight
+            }
+        }
+        let residualRe = sample.visibilityRe - predictedRe
+        let residualIm = sample.visibilityIm - predictedIm
+        for dx in 0..<tapCount {
+            let x = Int(sample.centerX) + dx - config.support
+            if x < 0 || x >= config.imsize {
+                continue
+            }
+            for dy in 0..<tapCount {
+                let y = Int(sample.centerY) + dy - config.support
+                if y < 0 || y >= config.imsize {
+                    continue
+                }
+                let weight = taps[dx] * taps[dy] * sample.weight
+                let index = x * config.imsize + y
+                grid.re[index] += residualRe * weight
+                grid.im[index] += residualIm * weight
             }
         }
     }
@@ -965,6 +1321,46 @@ private func runKernel(
     return max(0, commandBuffer.gpuEndTime - commandBuffer.gpuStartTime)
 }
 
+private func runResidualRefreshKernel(
+    queue: MTLCommandQueue,
+    pipeline: MTLComputePipelineState,
+    sampleBuffer: MTLBuffer,
+    tapBuffer: MTLBuffer,
+    modelReBuffer: MTLBuffer,
+    modelImBuffer: MTLBuffer,
+    reBuffer: MTLBuffer,
+    imBuffer: MTLBuffer,
+    paramsBuffer: MTLBuffer,
+    threadCount: Int
+) throws -> Double {
+    guard let commandBuffer = queue.makeCommandBuffer(),
+          let encoder = commandBuffer.makeComputeCommandEncoder()
+    else {
+        throw ExperimentError.metalFailure("failed to create residual refresh command buffer")
+    }
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(sampleBuffer, offset: 0, index: 0)
+    encoder.setBuffer(tapBuffer, offset: 0, index: 1)
+    encoder.setBuffer(modelReBuffer, offset: 0, index: 2)
+    encoder.setBuffer(modelImBuffer, offset: 0, index: 3)
+    encoder.setBuffer(reBuffer, offset: 0, index: 4)
+    encoder.setBuffer(imBuffer, offset: 0, index: 5)
+    encoder.setBuffer(paramsBuffer, offset: 0, index: 6)
+
+    let threadsPerGroup = min(pipeline.maxTotalThreadsPerThreadgroup, max(1, pipeline.threadExecutionWidth))
+    encoder.dispatchThreads(
+        MTLSize(width: threadCount, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: threadsPerGroup, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    commandBuffer.commit()
+    commandBuffer.waitUntilCompleted()
+    if let error = commandBuffer.error {
+        throw ExperimentError.metalFailure(error.localizedDescription)
+    }
+    return max(0, commandBuffer.gpuEndTime - commandBuffer.gpuStartTime)
+}
+
 private func runReduceKernel(
     queue: MTLCommandQueue,
     pipeline: MTLComputePipelineState,
@@ -1153,6 +1549,114 @@ private func runTileCellBinFillKernel(
     return max(0, commandBuffer.gpuEndTime - commandBuffer.gpuStartTime)
 }
 
+private func runPrefixScanStepKernel(
+    queue: MTLCommandQueue,
+    pipeline: MTLComputePipelineState,
+    inputBuffer: MTLBuffer,
+    outputBuffer: MTLBuffer,
+    paramsBuffer: MTLBuffer,
+    elementCount: Int
+) throws -> Double {
+    guard let commandBuffer = queue.makeCommandBuffer(),
+          let encoder = commandBuffer.makeComputeCommandEncoder()
+    else {
+        throw ExperimentError.metalFailure("failed to create prefix-scan command buffer")
+    }
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(inputBuffer, offset: 0, index: 0)
+    encoder.setBuffer(outputBuffer, offset: 0, index: 1)
+    encoder.setBuffer(paramsBuffer, offset: 0, index: 2)
+
+    let threadsPerGroup = min(pipeline.maxTotalThreadsPerThreadgroup, max(1, pipeline.threadExecutionWidth))
+    encoder.dispatchThreads(
+        MTLSize(width: elementCount, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: threadsPerGroup, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    commandBuffer.commit()
+    commandBuffer.waitUntilCompleted()
+    if let error = commandBuffer.error {
+        throw ExperimentError.metalFailure(error.localizedDescription)
+    }
+    return max(0, commandBuffer.gpuEndTime - commandBuffer.gpuStartTime)
+}
+
+private func runTileCellBinFillAllKernel(
+    queue: MTLCommandQueue,
+    pipeline: MTLComputePipelineState,
+    sampleBuffer: MTLBuffer,
+    prefixBuffer: MTLBuffer,
+    fillCountBuffer: MTLBuffer,
+    sampleIndexBuffer: MTLBuffer,
+    paramsBuffer: MTLBuffer,
+    sampleCount: Int
+) throws -> Double {
+    guard let commandBuffer = queue.makeCommandBuffer(),
+          let encoder = commandBuffer.makeComputeCommandEncoder()
+    else {
+        throw ExperimentError.metalFailure("failed to create all-cell fill command buffer")
+    }
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(sampleBuffer, offset: 0, index: 0)
+    encoder.setBuffer(prefixBuffer, offset: 0, index: 1)
+    encoder.setBuffer(fillCountBuffer, offset: 0, index: 2)
+    encoder.setBuffer(sampleIndexBuffer, offset: 0, index: 3)
+    encoder.setBuffer(paramsBuffer, offset: 0, index: 4)
+
+    let threadsPerGroup = min(pipeline.maxTotalThreadsPerThreadgroup, max(1, pipeline.threadExecutionWidth))
+    encoder.dispatchThreads(
+        MTLSize(width: sampleCount, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: threadsPerGroup, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    commandBuffer.commit()
+    commandBuffer.waitUntilCompleted()
+    if let error = commandBuffer.error {
+        throw ExperimentError.metalFailure(error.localizedDescription)
+    }
+    return max(0, commandBuffer.gpuEndTime - commandBuffer.gpuStartTime)
+}
+
+private func runTileCellBinReduceAllKernel(
+    queue: MTLCommandQueue,
+    pipeline: MTLComputePipelineState,
+    sampleBuffer: MTLBuffer,
+    prefixBuffer: MTLBuffer,
+    sampleIndexBuffer: MTLBuffer,
+    tapBuffer: MTLBuffer,
+    reBuffer: MTLBuffer,
+    imBuffer: MTLBuffer,
+    paramsBuffer: MTLBuffer,
+    tileCellCount: Int
+) throws -> Double {
+    guard let commandBuffer = queue.makeCommandBuffer(),
+          let encoder = commandBuffer.makeComputeCommandEncoder()
+    else {
+        throw ExperimentError.metalFailure("failed to create all-cell reduce command buffer")
+    }
+    encoder.setComputePipelineState(pipeline)
+    encoder.setBuffer(sampleBuffer, offset: 0, index: 0)
+    encoder.setBuffer(prefixBuffer, offset: 0, index: 1)
+    encoder.setBuffer(sampleIndexBuffer, offset: 0, index: 2)
+    encoder.setBuffer(tapBuffer, offset: 0, index: 3)
+    encoder.setBuffer(reBuffer, offset: 0, index: 4)
+    encoder.setBuffer(imBuffer, offset: 0, index: 5)
+    encoder.setBuffer(paramsBuffer, offset: 0, index: 6)
+
+    let threadsPerGroup = min(pipeline.maxTotalThreadsPerThreadgroup, max(1, pipeline.threadExecutionWidth))
+    encoder.dispatchThreads(
+        MTLSize(width: tileCellCount, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: threadsPerGroup, height: 1, depth: 1)
+    )
+    encoder.endEncoding()
+    commandBuffer.commit()
+    commandBuffer.waitUntilCompleted()
+    if let error = commandBuffer.error {
+        throw ExperimentError.metalFailure(error.localizedDescription)
+    }
+    return max(0, commandBuffer.gpuEndTime - commandBuffer.gpuStartTime)
+}
+
 private func readFloatGrid(reBuffer: MTLBuffer, imBuffer: MTLBuffer, count: Int) -> ComplexGrid {
     let rePtr = reBuffer.contents().bindMemory(to: Float.self, capacity: count)
     let imPtr = imBuffer.contents().bindMemory(to: Float.self, capacity: count)
@@ -1217,7 +1721,7 @@ private func formatMetric(_ value: Double) -> String {
 }
 
 private func main() throws {
-    let config = try RunConfig.parse()
+    var config = try RunConfig.parse()
     guard MemoryLayout<MetalGridSample>.stride == 32 else {
         throw ExperimentError.metalFailure(
             "unexpected MetalGridSample stride \(MemoryLayout<MetalGridSample>.stride)"
@@ -1232,24 +1736,43 @@ private func main() throws {
 
     let library = try device.makeLibrary(source: shaderSource, options: nil)
     let globalFunction = library.makeFunction(name: "grid_global_atomic")!
+    let residualRefreshFunction = library.makeFunction(name: "residual_refresh_global_atomic")!
     let cellOwnerFunction = library.makeFunction(name: "grid_cell_owner")!
     let reduceFunction = library.makeFunction(name: "grid_sorted_reduce")!
     let tileFunction = library.makeFunction(name: "grid_tile_bucket_cell_owner")!
     let tileCellBinFunction = library.makeFunction(name: "grid_tile_cell_bins")!
     let tileCellBinCountFunction = library.makeFunction(name: "count_tile_cell_bins")!
     let tileCellBinFillFunction = library.makeFunction(name: "fill_tile_cell_bins")!
+    let prefixScanFunction = library.makeFunction(name: "prefix_scan_step")!
+    let tileCellBinFillAllFunction = library.makeFunction(name: "fill_tile_cell_bins_all")!
+    let tileCellBinReduceAllFunction = library.makeFunction(name: "grid_tile_cell_bins_all")!
     let globalPipeline = try device.makeComputePipelineState(function: globalFunction)
+    let residualRefreshPipeline = try device.makeComputePipelineState(function: residualRefreshFunction)
     let cellOwnerPipeline = try device.makeComputePipelineState(function: cellOwnerFunction)
     let reducePipeline = try device.makeComputePipelineState(function: reduceFunction)
     let tilePipeline = try device.makeComputePipelineState(function: tileFunction)
     let tileCellBinPipeline = try device.makeComputePipelineState(function: tileCellBinFunction)
     let tileCellBinCountPipeline = try device.makeComputePipelineState(function: tileCellBinCountFunction)
     let tileCellBinFillPipeline = try device.makeComputePipelineState(function: tileCellBinFillFunction)
+    let prefixScanPipeline = try device.makeComputePipelineState(function: prefixScanFunction)
+    let tileCellBinFillAllPipeline = try device.makeComputePipelineState(function: tileCellBinFillAllFunction)
+    let tileCellBinReduceAllPipeline = try device.makeComputePipelineState(function: tileCellBinReduceAllFunction)
 
     let prepareStart = DispatchTime.now().uptimeNanoseconds
-    let samples = makeSamples(config: config)
+    let samples = try loadPreparedSamplesFixture(config: config)
+    if config.preparedSamplesJSON != nil {
+        config.samples = samples.count
+        config.distribution = "fixture"
+    }
     let taps = makeTaps(support: config.support)
     let reference = cpuReference(samples: samples, taps: taps, config: config)
+    let model = makeModelGrid(config: config)
+    let residualReference = cpuResidualRefreshReference(
+        samples: samples,
+        taps: taps,
+        model: model,
+        config: config
+    )
     let prepareEnd = DispatchTime.now().uptimeNanoseconds
     let reductionPlan = try makeReducedContributionPlan(samples: samples, taps: taps, config: config)
     let tilePlan = makeTileBucketPlan(samples: samples, config: config)
@@ -1268,6 +1791,8 @@ private func main() throws {
     let sampleBuffer = try makeBuffer(device: device, array: samples)
     let tapBuffer = try makeBuffer(device: device, array: taps)
     let paramsBuffer = try makeBuffer(device: device, value: params)
+    let modelReBuffer = try makeBuffer(device: device, array: model.re)
+    let modelImBuffer = try makeBuffer(device: device, array: model.im)
     let contributionBuffer = try makeBuffer(device: device, array: reductionPlan.contributions)
     let activeCellBuffer = try makeBuffer(device: device, array: reductionPlan.activeCells)
     let offsetBuffer = try makeBuffer(device: device, array: reductionPlan.offsets)
@@ -1312,6 +1837,9 @@ private func main() throws {
 
     print("device=\(device.name)")
     print("config samples=\(config.samples) imsize=\(config.imsize) support=\(config.support) distribution=\(config.distribution) tile_edge=\(config.tileEdge) repeats=\(config.repeats)")
+    if let preparedSamplesJSON = config.preparedSamplesJSON {
+        print("fixture_prepared_samples_json=\(preparedSamplesJSON) cell_arcsec=\(config.cellArcsec)")
+    }
     print("sample_stride_bytes=\(MemoryLayout<MetalGridSample>.stride)")
     print("host_prepare_s=\(formatSeconds(Double(prepareEnd - prepareStart) / 1_000_000_000.0))")
     print("sorted_reduce_prepare_s=\(formatSeconds(reductionPlan.prepareSeconds)) active_cells=\(reductionPlan.activeCells.count) contributions=\(reductionPlan.contributions.count)")
@@ -1337,22 +1865,54 @@ private func main() throws {
         let globalDownloadEnd = DispatchTime.now().uptimeNanoseconds
         let globalMetrics = compare(reference, globalGrid)
 
-        let ownerRe = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<Float>.stride)
-        let ownerIm = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<Float>.stride)
-        let ownerGpuSeconds = try runKernel(
+        let residualAtomicRe = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<UInt32>.stride)
+        let residualAtomicIm = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<UInt32>.stride)
+        let residualGpuSeconds = try runResidualRefreshKernel(
             queue: queue,
-            pipeline: cellOwnerPipeline,
+            pipeline: residualRefreshPipeline,
             sampleBuffer: sampleBuffer,
             tapBuffer: tapBuffer,
-            reBuffer: ownerRe,
-            imBuffer: ownerIm,
+            modelReBuffer: modelReBuffer,
+            modelImBuffer: modelImBuffer,
+            reBuffer: residualAtomicRe,
+            imBuffer: residualAtomicIm,
             paramsBuffer: paramsBuffer,
-            threadCount: cellCount
+            threadCount: config.samples
         )
-        let ownerDownloadStart = DispatchTime.now().uptimeNanoseconds
-        let ownerGrid = readFloatGrid(reBuffer: ownerRe, imBuffer: ownerIm, count: cellCount)
-        let ownerDownloadEnd = DispatchTime.now().uptimeNanoseconds
-        let ownerMetrics = compare(reference, ownerGrid)
+        let residualDownloadStart = DispatchTime.now().uptimeNanoseconds
+        let residualGrid = readAtomicFloatGrid(
+            reBuffer: residualAtomicRe,
+            imBuffer: residualAtomicIm,
+            count: cellCount
+        )
+        let residualDownloadEnd = DispatchTime.now().uptimeNanoseconds
+        let residualMetrics = compare(residualReference, residualGrid)
+
+        let ownerResult: (gpuSeconds: Double, downloadSeconds: Double, metrics: Metrics)?
+        if config.skipSlowBaselines {
+            ownerResult = nil
+        } else {
+            let ownerRe = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<Float>.stride)
+            let ownerIm = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<Float>.stride)
+            let ownerGpuSeconds = try runKernel(
+                queue: queue,
+                pipeline: cellOwnerPipeline,
+                sampleBuffer: sampleBuffer,
+                tapBuffer: tapBuffer,
+                reBuffer: ownerRe,
+                imBuffer: ownerIm,
+                paramsBuffer: paramsBuffer,
+                threadCount: cellCount
+            )
+            let ownerDownloadStart = DispatchTime.now().uptimeNanoseconds
+            let ownerGrid = readFloatGrid(reBuffer: ownerRe, imBuffer: ownerIm, count: cellCount)
+            let ownerDownloadEnd = DispatchTime.now().uptimeNanoseconds
+            ownerResult = (
+                ownerGpuSeconds,
+                Double(ownerDownloadEnd - ownerDownloadStart) / 1_000_000_000.0,
+                compare(reference, ownerGrid)
+            )
+        }
 
         let reduceRe = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<Float>.stride)
         let reduceIm = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<Float>.stride)
@@ -1484,6 +2044,87 @@ private func main() throws {
         let gpuBinDownloadEnd = DispatchTime.now().uptimeNanoseconds
         let gpuBinMetrics = compare(reference, gpuBinGrid)
 
+        let gpuPrefixCountBuffer = try makeEmptyBuffer(
+            device: device,
+            bytes: tileCellCount * MemoryLayout<UInt32>.stride
+        )
+        let gpuPrefixCountSeconds = try runTileCellBinCountKernel(
+            queue: queue,
+            pipeline: tileCellBinCountPipeline,
+            sampleBuffer: tileSampleBuffer,
+            countBuffer: gpuPrefixCountBuffer,
+            paramsBuffer: tileCellBinParamsBuffer,
+            sampleCount: config.samples
+        )
+        let scanBufferA = try makeEmptyBuffer(
+            device: device,
+            bytes: tileCellCount * MemoryLayout<UInt32>.stride
+        )
+        var scanInput = gpuPrefixCountBuffer
+        var scanOutput = scanBufferA
+        var gpuPrefixScanSeconds = 0.0
+        let scanWallStart = DispatchTime.now().uptimeNanoseconds
+        var step = 1
+        while step < tileCellCount {
+            let scanParamsBuffer = try makeBuffer(
+                device: device,
+                value: PrefixParams(elementCount: UInt32(tileCellCount), step: UInt32(step))
+            )
+            gpuPrefixScanSeconds += try runPrefixScanStepKernel(
+                queue: queue,
+                pipeline: prefixScanPipeline,
+                inputBuffer: scanInput,
+                outputBuffer: scanOutput,
+                paramsBuffer: scanParamsBuffer,
+                elementCount: tileCellCount
+            )
+            swap(&scanInput, &scanOutput)
+            step *= 2
+        }
+        let scanWallEnd = DispatchTime.now().uptimeNanoseconds
+        let gpuPrefixFillCountBuffer = try makeEmptyBuffer(
+            device: device,
+            bytes: tileCellCount * MemoryLayout<UInt32>.stride
+        )
+        let maxSampleRefs = config.samples * (2 * config.support + 1) * (2 * config.support + 1)
+        let gpuPrefixSampleIndexBuffer = try makeEmptyBuffer(
+            device: device,
+            bytes: maxSampleRefs * MemoryLayout<UInt32>.stride
+        )
+        let gpuPrefixFillSeconds = try runTileCellBinFillAllKernel(
+            queue: queue,
+            pipeline: tileCellBinFillAllPipeline,
+            sampleBuffer: tileSampleBuffer,
+            prefixBuffer: scanInput,
+            fillCountBuffer: gpuPrefixFillCountBuffer,
+            sampleIndexBuffer: gpuPrefixSampleIndexBuffer,
+            paramsBuffer: tileCellBinParamsBuffer,
+            sampleCount: config.samples
+        )
+        let gpuPrefixRe = try makeEmptyBuffer(device: device, bytes: tileCellCount * MemoryLayout<Float>.stride)
+        let gpuPrefixIm = try makeEmptyBuffer(device: device, bytes: tileCellCount * MemoryLayout<Float>.stride)
+        let gpuPrefixReduceSeconds = try runTileCellBinReduceAllKernel(
+            queue: queue,
+            pipeline: tileCellBinReduceAllPipeline,
+            sampleBuffer: tileSampleBuffer,
+            prefixBuffer: scanInput,
+            sampleIndexBuffer: gpuPrefixSampleIndexBuffer,
+            tapBuffer: tapBuffer,
+            reBuffer: gpuPrefixRe,
+            imBuffer: gpuPrefixIm,
+            paramsBuffer: tileCellBinParamsBuffer,
+            tileCellCount: tileCellCount
+        )
+        let gpuPrefixDownloadStart = DispatchTime.now().uptimeNanoseconds
+        let gpuPrefixGrid = mergeTileGrid(
+            reBuffer: gpuPrefixRe,
+            imBuffer: gpuPrefixIm,
+            plan: tilePlan,
+            config: config
+        )
+        let gpuPrefixDownloadEnd = DispatchTime.now().uptimeNanoseconds
+        let gpuPrefixMetrics = compare(reference, gpuPrefixGrid)
+
         let tapUpdates = Double(config.samples * (2 * config.support + 1) * (2 * config.support + 1))
         let bufferBytes =
             samples.count * MemoryLayout<MetalGridSample>.stride
@@ -1512,14 +2153,27 @@ private func main() throws {
             + gpuBinPrefix.cellOffsets.count * MemoryLayout<UInt32>.stride
             + gpuBinPrefix.sampleRefCount * MemoryLayout<UInt32>.stride
             + 2 * tileCellCount * MemoryLayout<Float>.stride
+        let gpuPrefixTileCellBinBufferBytes =
+            tilePlan.samples.count * MemoryLayout<MetalGridSample>.stride
+            + 4 * tileCellCount * MemoryLayout<UInt32>.stride
+            + maxSampleRefs * MemoryLayout<UInt32>.stride
+            + 2 * tileCellCount * MemoryLayout<Float>.stride
 
         print("run=\(repeatIndex + 1) strategy=global_atomic gpu_s=\(formatSeconds(globalGpuSeconds)) download_s=\(formatSeconds(Double(globalDownloadEnd - globalDownloadStart) / 1_000_000_000.0)) samples_per_s=\(formatMetric(Double(config.samples) / max(globalGpuSeconds, 1e-12))) tap_updates_per_s=\(formatMetric(tapUpdates / max(globalGpuSeconds, 1e-12))) max_abs_error=\(formatMetric(globalMetrics.maxAbsError)) rms_error=\(formatMetric(globalMetrics.rmsError)) relative_rms_error=\(formatMetric(globalMetrics.relativeRmsError))")
-        print("run=\(repeatIndex + 1) strategy=cell_owner gpu_s=\(formatSeconds(ownerGpuSeconds)) download_s=\(formatSeconds(Double(ownerDownloadEnd - ownerDownloadStart) / 1_000_000_000.0)) samples_per_s=\(formatMetric(Double(config.samples) / max(ownerGpuSeconds, 1e-12))) tap_updates_per_s=\(formatMetric(tapUpdates / max(ownerGpuSeconds, 1e-12))) max_abs_error=\(formatMetric(ownerMetrics.maxAbsError)) rms_error=\(formatMetric(ownerMetrics.rmsError)) relative_rms_error=\(formatMetric(ownerMetrics.relativeRmsError))")
+        let residualTapPasses = tapUpdates * 2.0
+        print("run=\(repeatIndex + 1) strategy=residual_refresh_global_atomic gpu_s=\(formatSeconds(residualGpuSeconds)) download_s=\(formatSeconds(Double(residualDownloadEnd - residualDownloadStart) / 1_000_000_000.0)) samples_per_s=\(formatMetric(Double(config.samples) / max(residualGpuSeconds, 1e-12))) tap_passes_per_s=\(formatMetric(residualTapPasses / max(residualGpuSeconds, 1e-12))) max_abs_error=\(formatMetric(residualMetrics.maxAbsError)) rms_error=\(formatMetric(residualMetrics.rmsError)) relative_rms_error=\(formatMetric(residualMetrics.relativeRmsError))")
+        if let ownerResult {
+            print("run=\(repeatIndex + 1) strategy=cell_owner gpu_s=\(formatSeconds(ownerResult.gpuSeconds)) download_s=\(formatSeconds(ownerResult.downloadSeconds)) samples_per_s=\(formatMetric(Double(config.samples) / max(ownerResult.gpuSeconds, 1e-12))) tap_updates_per_s=\(formatMetric(tapUpdates / max(ownerResult.gpuSeconds, 1e-12))) max_abs_error=\(formatMetric(ownerResult.metrics.maxAbsError)) rms_error=\(formatMetric(ownerResult.metrics.rmsError)) relative_rms_error=\(formatMetric(ownerResult.metrics.relativeRmsError))")
+        } else {
+            print("run=\(repeatIndex + 1) strategy=cell_owner skipped=true reason=skip_slow_baselines")
+        }
         print("run=\(repeatIndex + 1) strategy=sorted_reduce gpu_s=\(formatSeconds(reduceGpuSeconds)) download_s=\(formatSeconds(Double(reduceDownloadEnd - reduceDownloadStart) / 1_000_000_000.0)) samples_per_s=\(formatMetric(Double(config.samples) / max(reduceGpuSeconds, 1e-12))) tap_updates_per_s=\(formatMetric(tapUpdates / max(reduceGpuSeconds, 1e-12))) max_abs_error=\(formatMetric(reduceMetrics.maxAbsError)) rms_error=\(formatMetric(reduceMetrics.rmsError)) relative_rms_error=\(formatMetric(reduceMetrics.relativeRmsError)) reduce_buffer_bytes=\(reduceBufferBytes)")
         print("run=\(repeatIndex + 1) strategy=tile_bucket_cell_owner gpu_s=\(formatSeconds(tileGpuSeconds)) download_s=\(formatSeconds(Double(tileDownloadEnd - tileDownloadStart) / 1_000_000_000.0)) samples_per_s=\(formatMetric(Double(config.samples) / max(tileGpuSeconds, 1e-12))) tap_updates_per_s=\(formatMetric(tapUpdates / max(tileGpuSeconds, 1e-12))) max_abs_error=\(formatMetric(tileMetrics.maxAbsError)) rms_error=\(formatMetric(tileMetrics.rmsError)) relative_rms_error=\(formatMetric(tileMetrics.relativeRmsError)) tile_buffer_bytes=\(tileBufferBytes)")
         print("run=\(repeatIndex + 1) strategy=tile_cell_bins gpu_s=\(formatSeconds(tileBinGpuSeconds)) download_s=\(formatSeconds(Double(tileBinDownloadEnd - tileBinDownloadStart) / 1_000_000_000.0)) samples_per_s=\(formatMetric(Double(config.samples) / max(tileBinGpuSeconds, 1e-12))) tap_updates_per_s=\(formatMetric(tapUpdates / max(tileBinGpuSeconds, 1e-12))) max_abs_error=\(formatMetric(tileBinMetrics.maxAbsError)) rms_error=\(formatMetric(tileBinMetrics.rmsError)) relative_rms_error=\(formatMetric(tileBinMetrics.relativeRmsError)) tile_cell_bin_buffer_bytes=\(tileCellBinBufferBytes)")
         let gpuBinTotalSeconds = gpuBinCountSeconds + gpuBinFillSeconds + gpuBinReduceSeconds
         print("run=\(repeatIndex + 1) strategy=gpu_tile_cell_bins gpu_count_s=\(formatSeconds(gpuBinCountSeconds)) prefix_read_s=\(formatSeconds(Double(gpuBinPrefixEnd - gpuBinPrefixStart) / 1_000_000_000.0)) prefix_cpu_s=\(formatSeconds(gpuBinPrefix.prefixSeconds)) gpu_fill_s=\(formatSeconds(gpuBinFillSeconds)) gpu_reduce_s=\(formatSeconds(gpuBinReduceSeconds)) gpu_total_s=\(formatSeconds(gpuBinTotalSeconds)) download_s=\(formatSeconds(Double(gpuBinDownloadEnd - gpuBinDownloadStart) / 1_000_000_000.0)) samples_per_s=\(formatMetric(Double(config.samples) / max(gpuBinTotalSeconds, 1e-12))) tap_updates_per_s=\(formatMetric(tapUpdates / max(gpuBinTotalSeconds, 1e-12))) max_abs_error=\(formatMetric(gpuBinMetrics.maxAbsError)) rms_error=\(formatMetric(gpuBinMetrics.rmsError)) relative_rms_error=\(formatMetric(gpuBinMetrics.relativeRmsError)) active_tile_cells=\(gpuBinPrefix.activeTileCells.count) sample_refs=\(gpuBinPrefix.sampleRefCount) gpu_tile_cell_bin_buffer_bytes=\(gpuTileCellBinBufferBytes)")
+        let gpuPrefixTotalSeconds = gpuPrefixCountSeconds + gpuPrefixScanSeconds + gpuPrefixFillSeconds + gpuPrefixReduceSeconds
+        print("run=\(repeatIndex + 1) strategy=gpu_prefix_tile_cell_bins gpu_count_s=\(formatSeconds(gpuPrefixCountSeconds)) gpu_scan_s=\(formatSeconds(gpuPrefixScanSeconds)) scan_wall_s=\(formatSeconds(Double(scanWallEnd - scanWallStart) / 1_000_000_000.0)) gpu_fill_s=\(formatSeconds(gpuPrefixFillSeconds)) gpu_reduce_s=\(formatSeconds(gpuPrefixReduceSeconds)) gpu_total_s=\(formatSeconds(gpuPrefixTotalSeconds)) download_s=\(formatSeconds(Double(gpuPrefixDownloadEnd - gpuPrefixDownloadStart) / 1_000_000_000.0)) samples_per_s=\(formatMetric(Double(config.samples) / max(gpuPrefixTotalSeconds, 1e-12))) tap_updates_per_s=\(formatMetric(tapUpdates / max(gpuPrefixTotalSeconds, 1e-12))) max_abs_error=\(formatMetric(gpuPrefixMetrics.maxAbsError)) rms_error=\(formatMetric(gpuPrefixMetrics.rmsError)) relative_rms_error=\(formatMetric(gpuPrefixMetrics.relativeRmsError)) max_sample_refs=\(maxSampleRefs) gpu_prefix_tile_cell_bin_buffer_bytes=\(gpuPrefixTileCellBinBufferBytes)")
         print("estimated_live_buffer_bytes=\(bufferBytes)")
     }
 }

@@ -2,7 +2,7 @@
 
 Truth class: experimental
 Last reality check: 2026-05-21
-Verification: `swift run MetalGridExperiment --samples 2000 --imsize 128 --distribution uniform --tile-edge 32`; `swift run -c release MetalGridExperiment --samples 200000 --imsize 512 --distribution uniform --tile-edge 64`
+Verification: `swift run -c release MetalGridExperiment --samples 2000 --imsize 128 --distribution uniform --tile-edge 32 --skip-slow-baselines`; `swift run -c release MetalGridExperiment --samples 200000 --imsize 512 --support 3 --distribution uniform --tile-edge 64 --skip-slow-baselines`; `swift run -c release MetalGridExperiment --prepared-samples-json /private/tmp/metal_prepare_small/prepared_samples.json --samples 50000 --imsize 512 --cell-arcsec 0.05 --tile-edge 64`
 
 ## Purpose
 
@@ -33,63 +33,110 @@ The prototype compiles Metal shader source at runtime from Swift. That is
 deliberate for experiment speed; a production backend should precompile
 `.metal` sources to `.metallib` with the Xcode Metal toolchain.
 
+To run the prepared-sample fixture path, first emit an existing imager prepare
+oracle bundle and expand the sample JSON:
+
+```bash
+cargo run -p casars-imager --example emit_prepare_oracle_bundle -- \
+  --output-dir /private/tmp/metal_prepare_small \
+  --dataset-tier tier-a \
+  --ms /private/tmp/mssel_test_small.ms \
+  --imagename /private/tmp/unused \
+  --imsize 512 \
+  --cell-arcsec 1.0 \
+  --gridder standard \
+  --dirty-only \
+  --ddid 1 \
+  --phasecenter-field 0
+gzip -dc /private/tmp/metal_prepare_small/prepared_samples.json.gz \
+  > /private/tmp/metal_prepare_small/prepared_samples.json
+swift run -c release MetalGridExperiment \
+  --prepared-samples-json /private/tmp/metal_prepare_small/prepared_samples.json \
+  --samples 50000 \
+  --imsize 512 \
+  --cell-arcsec 0.05 \
+  --tile-edge 64
+```
+
+The fixture loader is intentionally an experiment bridge. It consumes
+`PreparedVisibilitySampleTrace`, recomputes center cells from UVW/frequency and
+the requested image geometry, and emits the compact Metal sample records. It
+does not change any production casa-rs API.
+
 ## Initial Results On Apple M4
 
-Release-mode runs on 2026-05-21 used the runtime-compiled Swift/Metal harness.
-The CPU reference is single-threaded f32 accumulation over the same synthetic
-records. Error metrics compare Metal output to that CPU reference.
+Release-mode runs on 2026-05-21 used the runtime-compiled Swift/Metal harness
+on an Apple M4. The CPU reference is single-threaded f32 accumulation over the
+same compact records. Error metrics compare Metal output to that CPU reference.
+
+The harness now includes:
+
+- global f32 atomic scatter
+- combined degrid + residual + grid global atomic scatter
+- cell-owner no-atomic baseline
+- CPU-expanded sorted reduce
+- fixed-tile bucket cell-owner
+- CPU-built tile-cell sample-reference bins
+- GPU-built tile-cell sample-reference bins with a CPU prefix/read bridge
+- GPU-built tile-cell bins with a naive all-GPU prefix scan
 
 | Case | Strategy | GPU s | Samples/s | Tap updates/s | Max error | Relative RMS |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| 20k samples, 512, support 3, uniform | global atomic | 0.001753 | 1.14e7 | 5.59e8 | 3.03e-8 | 7.56e-8 |
-| 20k samples, 512, support 3, uniform | cell owner | 0.088013 | 2.27e5 | 1.11e7 | 3.10e-8 | 7.25e-8 |
-| 20k samples, 512, support 3, uniform | sorted reduce | 0.000214 | 9.33e7 | 4.57e9 | 0.00 | 0.00 |
-| 20k samples, 512, support 3, uniform | tile bucket cell owner | 0.001149 | 1.74e7 | 8.53e8 | 3.10e-8 | 7.29e-8 |
-| 20k samples, 512, support 3, uniform | tile cell bins | 0.001713 | 1.17e7 | 5.72e8 | 3.10e-8 | 7.29e-8 |
-| 20k samples, 512, support 3, uniform | GPU-built tile cell bins | 0.000613 | 3.26e7 | 1.60e9 | 3.33e-8 | 7.77e-8 |
-| 20k samples, 512, support 3, central cluster | global atomic | 0.003073 | 6.51e6 | 3.19e8 | 1.22e-6 | 6.01e-7 |
-| 20k samples, 512, support 3, central cluster | cell owner | 0.079669 | 2.51e5 | 1.23e7 | 5.37e-7 | 2.45e-7 |
-| 20k samples, 512, support 3, central cluster | sorted reduce | 0.000550 | 3.64e7 | 1.78e9 | 0.00 | 0.00 |
-| 20k samples, 512, support 3, central cluster | tile bucket cell owner | 0.001395 | 1.43e7 | 7.02e8 | 1.07e-6 | 3.73e-7 |
-| 20k samples, 512, support 3, central cluster | tile cell bins | 0.000893 | 2.24e7 | 1.10e9 | 1.07e-6 | 3.73e-7 |
-| 20k samples, 512, support 3, central cluster | GPU-built tile cell bins | 0.000708 | 2.83e7 | 1.38e9 | 1.61e-6 | 6.54e-7 |
-| 20k samples, 512, support 3, boundary | global atomic | 0.001874 | 1.07e7 | 5.23e8 | 1.80e-7 | 1.84e-7 |
-| 20k samples, 512, support 3, boundary | cell owner | 0.087449 | 2.29e5 | 1.12e7 | 1.50e-7 | 1.29e-7 |
-| 20k samples, 512, support 3, boundary | sorted reduce | 0.000266 | 7.52e7 | 3.69e9 | 0.00 | 0.00 |
-| 20k samples, 512, support 3, boundary | tile bucket cell owner | 0.001342 | 1.49e7 | 7.30e8 | 1.79e-7 | 1.33e-7 |
-| 20k samples, 512, support 3, boundary | tile cell bins | 0.000337 | 5.94e7 | 2.91e9 | 1.79e-7 | 1.33e-7 |
-| 20k samples, 512, support 3, boundary | GPU-built tile cell bins | 0.000486 | 4.11e7 | 2.01e9 | 2.11e-7 | 2.02e-7 |
-| 20k samples, 1024, support 3, uniform | global atomic | 0.001854 | 1.08e7 | 5.29e8 | 2.99e-8 | 6.00e-8 |
-| 20k samples, 1024, support 3, uniform | cell owner | 0.272481 | 7.34e4 | 3.60e6 | 2.99e-8 | 5.95e-8 |
-| 20k samples, 512, support 5, uniform | global atomic | 0.001573 | 1.27e7 | 1.54e9 | 2.30e-8 | 9.67e-8 |
-| 20k samples, 512, support 5, uniform | cell owner | 0.090628 | 2.21e5 | 2.67e7 | 1.54e-8 | 8.72e-8 |
-| 200k samples, 512, support 3, uniform | global atomic | 0.006619 | 3.02e7 | 1.48e9 | 1.08e-7 | 1.22e-7 |
-| 200k samples, 512, support 3, uniform | sorted reduce | 0.001803 | 1.11e8 | 5.44e9 | 0.00 | 0.00 |
-| 200k samples, 512, support 3, uniform | tile bucket cell owner | 0.011306 | 1.77e7 | 8.67e8 | 1.05e-7 | 1.17e-7 |
-| 200k samples, 512, support 3, uniform | tile cell bins, edge 32 | 0.000777 | 2.57e8 | 1.26e10 | 1.20e-7 | 1.22e-7 |
-| 200k samples, 512, support 3, uniform | tile cell bins, edge 64 | 0.000756 | 2.65e8 | 1.30e10 | 1.05e-7 | 1.17e-7 |
-| 200k samples, 512, support 3, uniform | tile cell bins, edge 128 | 0.002853 | 7.01e7 | 3.44e9 | 9.22e-8 | 1.15e-7 |
-| 200k samples, 512, support 3, uniform | GPU-built tile cell bins, edge 64 | 0.005487 | 3.64e7 | 1.79e9 | 2.09e-7 | 1.57e-7 |
-| 200k samples, 512, support 3, central cluster | global atomic | 0.027597 | 7.25e6 | 3.55e8 | 7.79e-6 | 1.39e-6 |
-| 200k samples, 512, support 3, central cluster | GPU-built tile cell bins, edge 64 | 0.008604 | 2.32e7 | 1.14e9 | 1.16e-5 | 1.73e-6 |
+| 200k synthetic uniform, 512, support 3 | global atomic | 0.011002 | 1.82e7 | 8.91e8 | 1.21e-7 | 1.23e-7 |
+| 200k synthetic uniform, 512, support 3 | residual refresh global atomic | 0.011978 | 1.67e7 | 1.64e9 tap passes/s | 9.42e-8 | 1.21e-7 |
+| 200k synthetic uniform, 512, support 3 | sorted reduce | 0.002922 | 6.84e7 | 3.35e9 | 0.00 | 0.00 |
+| 200k synthetic uniform, 512, support 3 | tile bucket cell owner | 0.039742 | 5.03e6 | 2.47e8 | 1.05e-7 | 1.17e-7 |
+| 200k synthetic uniform, 512, support 3 | tile cell bins | 0.004311 | 4.64e7 | 2.27e9 | 1.05e-7 | 1.17e-7 |
+| 200k synthetic uniform, 512, support 3 | GPU-built tile cell bins | 0.023807 | 8.40e6 | 4.12e8 | 1.52e-7 | 1.56e-7 |
+| 200k synthetic uniform, 512, support 3 | GPU-prefix tile cell bins | 0.018563 | 1.08e7 | 5.28e8 | 1.88e-7 | 1.56e-7 |
+| 200k central cluster, 512, support 3 | global atomic | 0.023641 | 8.46e6 | 4.15e8 | 8.48e-6 | 1.34e-6 |
+| 200k central cluster, 512, support 3 | residual refresh global atomic | 0.022728 | 8.80e6 | 8.62e8 tap passes/s | 1.10e-5 | 7.94e-7 |
+| 200k central cluster, 512, support 3 | tile cell bins | 0.013336 | 1.50e7 | 7.35e8 | 1.07e-5 | 9.05e-7 |
+| 200k central cluster, 512, support 3 | GPU-built tile cell bins | 0.023625 | 8.47e6 | 4.15e8 | 1.32e-5 | 1.72e-6 |
+| 200k central cluster, 512, support 3 | GPU-prefix tile cell bins | 0.030447 | 6.57e6 | 3.22e8 | 1.05e-5 | 1.75e-6 |
+| 200k synthetic uniform, 512, support 5 | global atomic | 0.030600 | 6.54e6 | 7.91e8 | 8.20e-8 | 1.70e-7 |
+| 200k synthetic uniform, 512, support 5 | tile cell bins | 0.010460 | 1.91e7 | 2.31e9 | 1.05e-7 | 1.58e-7 |
+| 200k synthetic uniform, 512, support 5 | GPU-prefix tile cell bins | 0.028567 | 7.00e6 | 8.47e8 | 1.35e-7 | 2.32e-7 |
+| 20k synthetic uniform, 2048, support 3 | global atomic | 0.001179 | 1.70e7 | 8.31e8 | 1.86e-8 | 5.36e-8 |
+| 20k synthetic uniform, 2048, support 3 | tile cell bins | 0.001334 | 1.50e7 | 7.35e8 | 1.86e-8 | 5.35e-8 |
+| 20k synthetic uniform, 2048, support 3 | GPU-built tile cell bins | 0.003357 | 5.96e6 | 2.92e8 | 1.86e-8 | 5.36e-8 |
+| fixture-derived compact samples, 22,078 accepted, 512, support 3 | global atomic | 0.011225 | 1.97e6 | 9.64e7 | 1.13e0 | 6.78e-7 |
+| fixture-derived compact samples, 22,078 accepted, 512, support 3 | residual refresh global atomic | 0.010957 | 2.01e6 | 1.97e8 tap passes/s | 2.72e2 | 4.83e-7 |
+| fixture-derived compact samples, 22,078 accepted, 512, support 3 | tile cell bins | 0.002180 | 1.01e7 | 4.96e8 | 3.87e-1 | 1.59e-7 |
+| fixture-derived compact samples, 22,078 accepted, 512, support 3 | GPU-built tile cell bins | 0.004142 | 5.33e6 | 2.61e8 | 1.00e0 | 6.83e-7 |
 
-The sorted-reduce rows exclude CPU-side expansion and sorting. That preparation
-cost was `0.023917 s` and `19.8 MB` of reduce buffers for the 20k uniform case,
-and `0.254434 s` and `161.0 MB` for the 200k uniform case.
-The tile-bucket rows use `--tile-edge 64`; tile-bucket preparation was
-`0.000154 s` and `3.15 MB` for 20k uniform, and `0.000918 s` and `8.91 MB` for
-200k uniform.
+The sorted-reduce rows exclude CPU-side expansion and sorting. For `200k`
+uniform support-3, that preparation cost was `0.509869 s` and `161.0 MB` of
+reduce buffers. For support-5, it rose to `1.666998 s` and `391.4 MB`. This is
+not a viable production contract.
+
 The tile-cell-bin rows keep compact samples and add one `u32` sample reference
-per tap contribution. For `200k` uniform, tile-cell-bin preparation was
-`0.072883 s`, used `50.6 MB`, and produced `9.8M` sample references. That is
-far better than the sorted-reduce value expansion but still too expensive to do
-on the CPU in a production path.
+per tap contribution. For `200k` uniform support-3, CPU bin preparation was
+`0.141489 s`, used `50.6 MB`, and produced `9.8M` sample references. For
+support-5, CPU bin preparation was `0.462270 s`, used `108.7 MB`, and produced
+`24.2M` refs. This validates the reduction shape but confirms CPU-side bin
+construction is still too expensive.
+
 The GPU-built tile-cell-bin rows include GPU count, CPU prefix/read, GPU fill,
-and GPU reduce, but exclude final host-side tile merge. For `200k` uniform,
-those were `0.001099 s` count, `0.001571 s` prefix/read,
-`0.003528 s` fill, and `0.000860 s` reduce. For `200k` central cluster, count
-and fill stayed cheap but reduce rose to `0.005858 s` because only `2025` active
-tile cells hold all `9.8M` sample references.
+and GPU reduce, but exclude final host-side tile merge. For `200k` uniform
+support-3, those were `0.003323 s` count, `0.003987 s` prefix/read,
+`0.017507 s` fill, and `0.002977 s` reduce. For central clustering, reduce
+rose to `0.016091 s` because only `2025` active tile cells hold all `9.8M`
+sample references.
+
+The GPU-prefix rows replace CPU prefix/read with a naive log-step Hillis-Steele
+style scan over every tile-halo cell. It is correct, but too many command-buffer
+passes make it unattractive. In the 2048 pressure case, all-GPU prefix storage
+used `114.9 MB`, while the CPU-prefix GPU-built path used `85.1 MB` and still
+spent `0.021995 s` in the read/prefix bridge. A production path needs a
+tile-local/block prefix, not this global scan.
+
+The 2048 grid case shows a separate slab pressure issue: kernel time stayed
+small, but reading full grid buffers back to the host cost `0.015-0.030 s`.
+Future cube/slab work should avoid round-tripping full planes after every small
+block. The backend contract needs explicit stage ownership for PSF/residual
+grids and should keep resident slab buffers on device until a bounded flush is
+required.
 
 Observed conclusions:
 
@@ -114,6 +161,10 @@ Observed conclusions:
   blocker. The remaining costs are the CPU prefix/read bridge and nondeterminism
   from atomic fill order. In dense central clusters, the reduce pass becomes the
   new bottleneck because a small number of active cells own nearly all refs.
+- A fully GPU-resident prefix is feasible but not with the naive scan used here.
+  The scan's GPU time and command-launch wall time erase the small CPU-prefix
+  bridge savings. The useful follow-up is a tile-local block prefix, not more
+  global scan tuning.
 - A production Metal backend should therefore move next to tile-bucketed
   reductions: keep the compact row-block/tile input, group contributions inside
   bounded GPU work units, and reduce collisions before global writes without
@@ -213,6 +264,45 @@ production backend, the prefix step should move to GPU or be batched at tile
 granularity, and the fill/reduce order needs a documented tolerance policy or a
 stable ordering pass for products that need tighter reproducibility.
 
+## Stable-Order And Tolerance Notes
+
+The deterministic comparators are the CPU reference, sorted-reduce, and
+tile-bucket cell-owner paths. The GPU fill paths use atomics and therefore do
+not preserve sample order inside each active tile cell.
+
+For `200k` central-cluster samples:
+
+- global atomics: relative RMS `1.34e-6`
+- residual-refresh global atomics: relative RMS `7.94e-7`
+- deterministic tile-bucket cell-owner: relative RMS `9.05e-7`
+- CPU-built tile-cell bins: relative RMS `9.05e-7`
+- GPU-built tile-cell bins: relative RMS `1.72e-6`
+- GPU-prefix tile-cell bins: relative RMS `1.75e-6`
+
+This is still plausibly inside a CASA-compatible tolerance envelope for dirty
+grids, but it is not a bitwise- or tight-reproducibility path. A production
+backend should expose two modes if this matters: a fast atomic-fill mode and a
+stable mode for hot cells or validation runs.
+
+## Residual Refresh Prototype
+
+The combined residual prototype reads a model grid, degrids a predicted
+visibility for each sample, subtracts it from the observed visibility, and
+atomically grids the residual in the same kernel. It is intentionally global
+atomic first because the purpose was to test whether the residual-refresh data
+flow is plausible on Metal.
+
+On `200k` uniform support-3, combined residual refresh ran in `0.011978 s`,
+very close to simple global gridding at `0.011002 s`, while doing one degrid tap
+pass plus one grid tap pass per sample. On central-clustered samples, it ran in
+`0.022728 s`, again tracking the same contention problem as global gridding.
+
+The implication is that residual refresh can be fused on device, but it should
+not use global atomics as the production shape. It should reuse the same
+tile-cell grouping path as dirty/PSF gridding so the model-grid reads, residual
+formation, and residual accumulation stay inside bounded tile or slab work
+units.
+
 ### Strategy C: Bin Then Reduce
 
 Samples are sorted or bucketed by tile/cell/kernel key before accumulation.
@@ -239,6 +329,7 @@ tile-local or cell-local ranges before a deterministic merge.
 | CASA-compatible tolerance under nondeterministic accumulation | High | Keep CPU reference comparisons and favor bin/reduce for parity-sensitive stages. |
 | Threadgroup memory ceiling | Medium | Size microtiles from 32 KB limits and number of complex planes; do not assume all cube planes fit. |
 | Host preparation hides GPU wins | Medium | Report host prep, buffer creation, kernel, download, and end-to-end timing separately. |
+| Full-grid host round trips dominate large slabs | Medium | Keep PSF/residual/model slab buffers resident on device and flush only bounded products. |
 | FFT remains CPU-bound | Medium | Keep FFT as a separate backend boundary; evaluate MPSGraph/custom FFT only after gridding evidence exists. |
 | Rust binding churn | Medium | Isolate backend behind a macOS-only crate/module using `objc2-metal`; keep production crates dependency-clean until evidence justifies it. |
 | Profiling gap | Medium | Use command-buffer timing first, then Xcode GPU capture and Metal System Trace for serious kernels. |
@@ -267,3 +358,35 @@ This is a 32-byte record matching the Swift and Metal prototype layout. Future
 records likely also need a tile id or tile-offset side table, per-plane offsets,
 and optional PSF/residual mode flags. Kernel support tables should be shared per
 block or per support id, not expanded into persistent per-sample tap products.
+
+The backend-facing work unit should be closer to this shape than to a flat
+visibility array:
+
+```rust
+pub struct MetalGridWorkUnit<'a> {
+    pub grid_shape: [u32; 2],
+    pub tile_edge: u32,
+    pub support: u16,
+    pub stage_planes: u16,
+    pub samples: &'a [MetalGridSample],
+    pub tile_offsets: &'a [u32],
+    pub nonempty_tiles: &'a [u32],
+    pub kernel_tables: &'a [f32],
+    pub mode: MetalGridMode,
+}
+
+pub enum MetalGridMode {
+    Dirty,
+    Psf,
+    ResidualRefresh {
+        model_grid_plane: u16,
+        residual_grid_plane: u16,
+    },
+}
+```
+
+The CPU streaming frontend should remain responsible for row-block preparation,
+weighting, flag filtering, and bounded tile ownership. Metal should receive
+already-bounded compact tile buckets, construct any per-cell collision groups
+inside the bounded GPU work unit, and leave resident grids on device until the
+caller asks for a bounded flush.
