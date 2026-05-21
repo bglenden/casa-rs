@@ -442,11 +442,14 @@ fn maybe_probe_standard_mfs_tile_buckets(
         }
     }
 
+    let mut all_tile_counts = vec![0usize; partition.tile_count()];
     let mut max_bucket_samples = 0usize;
     let mut resident_bytes_if_all_nonempty = 0usize;
     let mut interior_cells_if_all_nonempty = 0usize;
     for &tile_id in buckets.nonempty_tiles() {
-        max_bucket_samples = max_bucket_samples.max(buckets.tile_samples(tile_id).len());
+        let bucket_samples = buckets.tile_samples(tile_id).len();
+        all_tile_counts[tile_id.index()] = bucket_samples;
+        max_bucket_samples = max_bucket_samples.max(bucket_samples);
         resident_bytes_if_all_nonempty = resident_bytes_if_all_nonempty
             .saturating_add(partition.resident_tile_bytes(tile_id, 2).unwrap_or(0));
         if let Some(tile) = partition.tile(tile_id) {
@@ -455,6 +458,14 @@ fn maybe_probe_standard_mfs_tile_buckets(
                 .saturating_add(tile.interior.width().saturating_mul(tile.interior.height()));
         }
     }
+    let touched_tile_counts = all_tile_counts
+        .iter()
+        .copied()
+        .filter(|count| *count > 0)
+        .collect::<Vec<_>>();
+    let all_distribution = tile_bucket_distribution_stats(&all_tile_counts);
+    let touched_distribution = tile_bucket_distribution_stats(&touched_tile_counts);
+    let top_tile_counts = top_tile_bucket_counts(&all_tile_counts, 8);
 
     eprintln!(
         "standard_mfs_tile_bucket_probe \
@@ -469,6 +480,20 @@ fn maybe_probe_standard_mfs_tile_buckets(
          bucket_bytes={} \
          nonempty_tiles={} \
          max_bucket_samples={} \
+         all_tile_mean={:.3} \
+         all_tile_p50={} \
+         all_tile_p90={} \
+         all_tile_p99={} \
+         all_tile_zero_fraction={:.6} \
+         all_tile_max_over_mean={:.3} \
+         all_tile_gini={:.6} \
+         touched_tile_mean={:.3} \
+         touched_tile_p50={} \
+         touched_tile_p90={} \
+         touched_tile_p99={} \
+         touched_tile_max_over_mean={:.3} \
+         touched_tile_gini={:.6} \
+         top_tile_counts={} \
          interior_cells_if_all_nonempty={} \
          resident_bytes_if_all_nonempty={}",
         grid_shape[0],
@@ -484,11 +509,92 @@ fn maybe_probe_standard_mfs_tile_buckets(
         buckets.estimated_bytes(),
         buckets.nonempty_tiles().len(),
         max_bucket_samples,
+        all_distribution.mean,
+        all_distribution.p50,
+        all_distribution.p90,
+        all_distribution.p99,
+        all_distribution.zero_fraction,
+        all_distribution.max_over_mean,
+        all_distribution.gini,
+        touched_distribution.mean,
+        touched_distribution.p50,
+        touched_distribution.p90,
+        touched_distribution.p99,
+        touched_distribution.max_over_mean,
+        touched_distribution.gini,
+        top_tile_counts,
         interior_cells_if_all_nonempty,
         resident_bytes_if_all_nonempty
     );
 
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TileBucketDistributionStats {
+    mean: f64,
+    p50: usize,
+    p90: usize,
+    p99: usize,
+    zero_fraction: f64,
+    max_over_mean: f64,
+    gini: f64,
+}
+
+fn tile_bucket_distribution_stats(counts: &[usize]) -> TileBucketDistributionStats {
+    if counts.is_empty() {
+        return TileBucketDistributionStats::default();
+    }
+    let mut sorted = counts.to_vec();
+    sorted.sort_unstable();
+    let total = sorted.iter().sum::<usize>();
+    let mean = total as f64 / sorted.len() as f64;
+    let max = sorted.last().copied().unwrap_or(0);
+    let zero_count = sorted.iter().take_while(|count| **count == 0).count();
+    TileBucketDistributionStats {
+        mean,
+        p50: percentile_sorted_usize(&sorted, 0.50),
+        p90: percentile_sorted_usize(&sorted, 0.90),
+        p99: percentile_sorted_usize(&sorted, 0.99),
+        zero_fraction: zero_count as f64 / sorted.len() as f64,
+        max_over_mean: if mean > 0.0 { max as f64 / mean } else { 0.0 },
+        gini: gini_sorted_usize(&sorted, total),
+    }
+}
+
+fn percentile_sorted_usize(sorted: &[usize], percentile: f64) -> usize {
+    debug_assert!(!sorted.is_empty());
+    let rank = ((sorted.len() - 1) as f64 * percentile).ceil() as usize;
+    sorted[rank.min(sorted.len() - 1)]
+}
+
+fn gini_sorted_usize(sorted: &[usize], total: usize) -> f64 {
+    if sorted.is_empty() || total == 0 {
+        return 0.0;
+    }
+    let weighted_sum = sorted
+        .iter()
+        .enumerate()
+        .map(|(index, count)| (index + 1) as f64 * *count as f64)
+        .sum::<f64>();
+    (2.0 * weighted_sum) / (sorted.len() as f64 * total as f64)
+        - (sorted.len() as f64 + 1.0) / sorted.len() as f64
+}
+
+fn top_tile_bucket_counts(counts: &[usize], limit: usize) -> String {
+    let mut ranked = counts
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, count)| *count > 0)
+        .collect::<Vec<_>>();
+    ranked.sort_unstable_by(|lhs, rhs| rhs.1.cmp(&lhs.1).then_with(|| lhs.0.cmp(&rhs.0)));
+    ranked
+        .into_iter()
+        .take(limit)
+        .map(|(tile_index, count)| format!("{tile_index}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn standard_mfs_tile_bucket_probe_enabled() -> bool {
@@ -604,6 +710,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             skipped_samples: 0,
             max_abs_w_lambda: 0.0,
         };
+        maybe_probe_standard_mfs_tile_buckets(self.gridder, batches)?;
         let mut cache = DirtyTileCache::new(
             &self.partition,
             self.resident_tile_limit,
