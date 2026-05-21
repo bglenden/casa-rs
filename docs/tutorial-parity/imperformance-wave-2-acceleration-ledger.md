@@ -612,6 +612,58 @@ the full Wave 2 acceleration ladder remains open until the remaining CPU
 grid/degrid work is reduced further, GPU feasibility is settled, and broader
 clean validation is recorded.
 
+## Fine Fixed-Tile Scheduler Checkpoint
+
+The next CPU backend pass replaces the coarse fixed-tile experiment with
+planner-owned fine tiles and a bounded one-live-row-block task scheduler. The
+implementation now supports `CASA_RS_STANDARD_MFS_TILE_ANCHOR=zero|center_boundary`.
+The center-boundary mode uses the standard gridder's actual integer tap center
+as the anchor source and special-cases `origin == 0`, so no empty leading tile
+is introduced.
+
+The tile bucket probe now reports the fields needed before accepting timing
+claims: tile origin, gridder center, per-stage tile distribution, per-row-block
+task and hot-tail summaries, near-origin integer tap-center counts, UV-quadrant
+owner distribution, finite/nonfinite counts, estimated bucket bytes, and
+all-resident tile bytes. `StandardMfsTileBucketSample` remains a current-block
+routing record only; it stores sample index, integer center, final grid weight,
+flags, and tap-count work estimate, but not `PositiveTapSet` or tap arrays.
+
+The first scheduler uses `max_live_row_blocks=1`: one task per nonempty tile,
+descending estimated tap visits, scoped CPU workers, task-local tile buffers,
+deterministic tile-id merge into resident halo-padded tile buffers, and stage
+or deterministic-eviction flush by default. `CASA_RS_STANDARD_MFS_TILE_FLUSH=per_block`
+is debug-only. Dirty, PSF, and residual-refresh gridding now use the same
+bounded tile-task path. Queue depth two, active-tile skip/postpone, and hot-tile
+splitting remain gated by measured tail-idle evidence.
+
+The memory planner now records tile edge, center-boundary anchor selection,
+`max_live_row_blocks`, live row-block bytes, live bucket bytes, queued task
+bytes, resident tile-buffer bytes, global grid bytes, and tile-cell/bin
+placeholder bytes. Explicit `CASA_RS_STANDARD_MFS_TILE_EDGE` still wins; absent
+that, the planner chooses `32` for smaller fixed-tile standard-MFS runs and
+`64` for `imsize >= 2048` or tighter large-image residency. Fixed-tile runs no
+longer reserve the legacy full-grid-per-worker staging buffers; those are only
+charged to the old worker-local full-grid reference path.
+
+Bounded diagnostic workload: 64-channel, 1024-image, Briggs,
+multiscale-clean `niter=2`, direct external-disk MS, fixed-tile backend,
+`CASA_RS_STANDARD_MFS_GRID_THREADS=10`, one repeat, no warmup.
+
+| Step | Artifact | Threads | Tile edge/anchor | Frontend | Core | PSF grid | Residual grid/degrid | Major refresh | Correctness | Decision |
+|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
+| coarse baseline diagnostic | `target/imperformance-wave2/fine-tile-scheduler-20260521/bounded-10w-edge256-zero.log` | 10 | 256 / zero | 50.897s | 29.209s | 9.531s | 17.858s | 8.380s | GREEN targeted fixed-tile tests | rejected as CPU scheduler shape: hottest tile 53.95%, per-block nonempty p50=8 |
+| fine tile candidate | `target/imperformance-wave2/fine-tile-scheduler-20260521/bounded-10w-edge64-center.log` | 10 | 64 / center-boundary | 41.477s | 21.073s | 7.498s | 11.800s | 4.355s | GREEN targeted fixed-tile tests | retained as lower-overhead fallback: hottest tile 8.51%, per-block nonempty p50=51 |
+| fine tile candidate | `target/imperformance-wave2/fine-tile-scheduler-20260521/bounded-10w-edge32-center.log` | 10 | 32 / center-boundary | 39.693s | 19.407s | 6.524s | 11.089s | 4.617s | GREEN targeted fixed-tile tests | retained as current 1024 default: hottest tile 2.96%, per-block nonempty p50=160 |
+
+The stage-level and row-block-level diagnostics agree that the coarse
+zero-anchored 256 decomposition is not a viable CPU scheduling shape. The
+center-boundary 32-tile run cuts bounded frontend time by 11.203s versus the
+coarse diagnostic and exposes enough per-row-block tile tasks to feed a
+10-worker pool on this workload. The 64-tile run is kept as the planner's
+large-image or tighter-memory fallback because it has less tile metadata and
+halo residency, while still removing the single central-tile bottleneck.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:

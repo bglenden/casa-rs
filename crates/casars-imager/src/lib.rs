@@ -1865,7 +1865,7 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
             strategy.per_worker_buffer_bytes as f64 / (1024.0 * 1024.0),
         );
         eprintln!(
-            "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} reserved_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} gridded_visibility_reserve_mib={:.1} output_image_reserve_mib={:.1} fixed_tile_resident_mib={:.1} fixed_tile_resident_limit={} worker_staging_reserve_mib={:.1} gpu_staging_reserve_mib={:.1} prepare_buffer_mib={:.1}",
+            "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} reserved_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} gridded_visibility_reserve_mib={:.1} output_image_reserve_mib={:.1} fixed_tile_resident_mib={:.1} fixed_tile_resident_limit={} fixed_tile_edge={} fixed_tile_anchor={} max_live_row_blocks={} live_bucket_mib={:.1} queued_task_mib={:.1} global_grid_mib={:.1} tile_cell_bin_mib={:.1} worker_staging_reserve_mib={:.1} gpu_staging_reserve_mib={:.1} prepare_buffer_mib={:.1}",
             strategy.total_budget_bytes as f64 / (1024.0 * 1024.0),
             strategy.reserved_buffer_bytes as f64 / (1024.0 * 1024.0),
             strategy.image_working_set_bytes as f64 / (1024.0 * 1024.0),
@@ -1874,6 +1874,17 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
             strategy.output_image_bytes as f64 / (1024.0 * 1024.0),
             strategy.fixed_tile_resident_bytes as f64 / (1024.0 * 1024.0),
             strategy.fixed_tile_resident_limit_estimate,
+            strategy.fixed_tile_edge,
+            if strategy.fixed_tile_anchor_center_boundary {
+                "center_boundary"
+            } else {
+                "zero"
+            },
+            strategy.max_live_row_blocks,
+            strategy.live_bucket_bytes as f64 / (1024.0 * 1024.0),
+            strategy.queued_task_bytes as f64 / (1024.0 * 1024.0),
+            strategy.global_grid_bytes as f64 / (1024.0 * 1024.0),
+            strategy.tile_cell_bin_bytes as f64 / (1024.0 * 1024.0),
             strategy.worker_staging_bytes as f64 / (1024.0 * 1024.0),
             strategy.gpu_staging_bytes as f64 / (1024.0 * 1024.0),
             strategy.prepare_buffer_bytes as f64 / (1024.0 * 1024.0),
@@ -7096,7 +7107,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
             strategy.per_worker_buffer_bytes as f64 / (1024.0 * 1024.0),
         );
         eprintln!(
-            "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} reserved_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} gridded_visibility_reserve_mib={:.1} output_image_reserve_mib={:.1} fixed_tile_resident_mib={:.1} fixed_tile_resident_limit={} worker_staging_reserve_mib={:.1} gpu_staging_reserve_mib={:.1} prepare_buffer_mib={:.1}",
+            "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} reserved_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} gridded_visibility_reserve_mib={:.1} output_image_reserve_mib={:.1} fixed_tile_resident_mib={:.1} fixed_tile_resident_limit={} fixed_tile_edge={} fixed_tile_anchor={} max_live_row_blocks={} live_bucket_mib={:.1} queued_task_mib={:.1} global_grid_mib={:.1} tile_cell_bin_mib={:.1} worker_staging_reserve_mib={:.1} gpu_staging_reserve_mib={:.1} prepare_buffer_mib={:.1}",
             strategy.total_budget_bytes as f64 / (1024.0 * 1024.0),
             strategy.reserved_buffer_bytes as f64 / (1024.0 * 1024.0),
             strategy.image_working_set_bytes as f64 / (1024.0 * 1024.0),
@@ -7105,6 +7116,17 @@ fn prepare_standard_mfs_input_in_row_blocks(
             strategy.output_image_bytes as f64 / (1024.0 * 1024.0),
             strategy.fixed_tile_resident_bytes as f64 / (1024.0 * 1024.0),
             strategy.fixed_tile_resident_limit_estimate,
+            strategy.fixed_tile_edge,
+            if strategy.fixed_tile_anchor_center_boundary {
+                "center_boundary"
+            } else {
+                "zero"
+            },
+            strategy.max_live_row_blocks,
+            strategy.live_bucket_bytes as f64 / (1024.0 * 1024.0),
+            strategy.queued_task_bytes as f64 / (1024.0 * 1024.0),
+            strategy.global_grid_bytes as f64 / (1024.0 * 1024.0),
+            strategy.tile_cell_bin_bytes as f64 / (1024.0 * 1024.0),
             strategy.worker_staging_bytes as f64 / (1024.0 * 1024.0),
             strategy.gpu_staging_bytes as f64 / (1024.0 * 1024.0),
             strategy.prepare_buffer_bytes as f64 / (1024.0 * 1024.0),
@@ -7116,7 +7138,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
             .saturating_mul(strategy.selected_channel_count)
             .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES);
         eprintln!(
-            "standard_mfs_memory_plan_actual rows_total={} selected_channels={} row_block_rows={} worker_buffers={} total_budget_bytes={} planned_reserved_bytes={} prepare_buffer_bytes={} image_working_set_bytes={} weighting_density_bytes={} gridded_visibility_bytes={} output_image_bytes={} fixed_tile_resident_bytes={} fixed_tile_resident_limit={} worker_staging_bytes={} gpu_staging_bytes={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} peak_rss_bytes=0 product_status={}",
+            "standard_mfs_memory_plan_actual rows_total={} selected_channels={} row_block_rows={} worker_buffers={} total_budget_bytes={} planned_reserved_bytes={} prepare_buffer_bytes={} image_working_set_bytes={} weighting_density_bytes={} gridded_visibility_bytes={} output_image_bytes={} fixed_tile_resident_bytes={} fixed_tile_resident_limit={} fixed_tile_edge={} fixed_tile_anchor={} max_live_row_blocks={} live_row_block_bytes={} live_bucket_bytes={} queued_task_bytes={} resident_tile_buffer_bytes={} global_grid_bytes={} tile_cell_bin_bytes={} worker_staging_bytes={} gpu_staging_bytes={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} peak_rss_bytes=0 product_status={}",
             active_selected_rows.len(),
             strategy.selected_channel_count,
             strategy.row_block_rows,
@@ -7130,6 +7152,19 @@ fn prepare_standard_mfs_input_in_row_blocks(
             strategy.output_image_bytes,
             strategy.fixed_tile_resident_bytes,
             strategy.fixed_tile_resident_limit_estimate,
+            strategy.fixed_tile_edge,
+            if strategy.fixed_tile_anchor_center_boundary {
+                "center_boundary"
+            } else {
+                "zero"
+            },
+            strategy.max_live_row_blocks,
+            strategy.live_row_block_bytes,
+            strategy.live_bucket_bytes,
+            strategy.queued_task_bytes,
+            strategy.resident_tile_buffer_bytes,
+            strategy.global_grid_bytes,
+            strategy.tile_cell_bin_bytes,
             strategy.worker_staging_bytes,
             strategy.gpu_staging_bytes,
             executor_plan_bytes_estimate,
@@ -7602,6 +7637,15 @@ struct StandardMfsMemoryPlan {
     output_image_bytes: usize,
     fixed_tile_resident_bytes: usize,
     fixed_tile_resident_limit_estimate: usize,
+    fixed_tile_edge: usize,
+    fixed_tile_anchor_center_boundary: bool,
+    max_live_row_blocks: usize,
+    live_row_block_bytes: usize,
+    live_bucket_bytes: usize,
+    queued_task_bytes: usize,
+    resident_tile_buffer_bytes: usize,
+    global_grid_bytes: usize,
+    tile_cell_bin_bytes: usize,
     worker_staging_bytes: usize,
     gpu_staging_bytes: usize,
     selected_channel_count: usize,
@@ -7612,6 +7656,7 @@ fn standard_mfs_memory_plan(
     selected_channel_count: usize,
 ) -> StandardMfsMemoryPlan {
     let selected_channel_count = selected_channel_count.max(1);
+    let fixed_tile_backend_enabled = standard_mfs_fixed_tile_backend_enabled_for_frontend();
     let worker_buffers = env_usize("CASA_RS_IMAGING_PREPARE_WORKERS")
         .filter(|value| *value > 0)
         .unwrap_or(1);
@@ -7620,14 +7665,37 @@ fn standard_mfs_memory_plan(
     let weighting_density_bytes = estimated_weighting_density_working_set_bytes(config);
     let gridded_visibility_bytes = estimated_gridded_visibility_working_set_bytes(config);
     let output_image_bytes = estimated_output_image_working_set_bytes(config);
-    let fixed_tile_resident = estimated_fixed_tile_residency(config);
-    let worker_staging_bytes = estimated_worker_staging_bytes(config);
+    let fixed_tile_resident =
+        estimated_fixed_tile_residency_with_backend(config, fixed_tile_backend_enabled);
+    let max_live_row_blocks = env_usize("CASA_RS_STANDARD_MFS_QUEUE_BLOCKS")
+        .filter(|value| *value > 0)
+        .map(|value| value.min(2))
+        .unwrap_or(1);
+    let live_row_block_bytes = selected_channel_count
+        .saturating_mul(MAX_PREPARE_ROW_BLOCK_ROWS)
+        .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES)
+        .saturating_mul(max_live_row_blocks);
+    let live_bucket_bytes = live_row_block_bytes / 4;
+    let queued_task_bytes = fixed_tile_resident
+        .tile_limit
+        .saturating_mul(max_live_row_blocks)
+        .saturating_mul(32);
+    let global_grid_bytes = estimated_standard_mfs_global_grid_bytes(config);
+    let tile_cell_bin_bytes = fixed_tile_resident.tile_limit.saturating_mul(16);
+    let worker_staging_bytes = if fixed_tile_backend_enabled {
+        0
+    } else {
+        estimated_worker_staging_bytes(config)
+    };
     let gpu_staging_bytes = estimated_gpu_staging_bytes();
     let reserved_buffer_bytes = image_working_set_bytes
         .saturating_add(weighting_density_bytes)
         .saturating_add(gridded_visibility_bytes)
         .saturating_add(output_image_bytes)
         .saturating_add(fixed_tile_resident.bytes)
+        .saturating_add(live_bucket_bytes)
+        .saturating_add(queued_task_bytes)
+        .saturating_add(tile_cell_bin_bytes)
         .saturating_add(worker_staging_bytes)
         .saturating_add(gpu_staging_bytes);
     let prepare_buffer_bytes = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
@@ -7660,6 +7728,15 @@ fn standard_mfs_memory_plan(
         output_image_bytes,
         fixed_tile_resident_bytes: fixed_tile_resident.bytes,
         fixed_tile_resident_limit_estimate: fixed_tile_resident.tile_limit,
+        fixed_tile_edge: fixed_tile_resident.tile_edge,
+        fixed_tile_anchor_center_boundary: fixed_tile_resident.center_boundary_anchor,
+        max_live_row_blocks,
+        live_row_block_bytes,
+        live_bucket_bytes,
+        queued_task_bytes,
+        resident_tile_buffer_bytes: fixed_tile_resident.bytes,
+        global_grid_bytes,
+        tile_cell_bin_bytes,
         worker_staging_bytes,
         gpu_staging_bytes,
         selected_channel_count,
@@ -7716,16 +7793,32 @@ fn estimated_output_image_working_set_bytes(_config: &CliConfig) -> usize {
     0
 }
 
+fn estimated_standard_mfs_global_grid_bytes(config: &CliConfig) -> usize {
+    let grid_side = casa_composite_padded_len_estimate(config.imsize, 1.2);
+    grid_side
+        .saturating_mul(grid_side)
+        .saturating_mul(2)
+        .saturating_mul(std::mem::size_of::<Complex64>())
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct FixedTileResidencyEstimate {
     bytes: usize,
     tile_limit: usize,
+    tile_edge: usize,
+    center_boundary_anchor: bool,
 }
 
 fn standard_mfs_execution_config(config: &CliConfig) -> StandardMfsExecutionConfig {
+    let fixed_tile_resident = estimated_fixed_tile_residency(config);
     StandardMfsExecutionConfig {
-        fixed_tile_resident_bytes: Some(estimated_fixed_tile_residency(config).bytes)
-            .filter(|bytes| *bytes > 0),
+        fixed_tile_resident_bytes: Some(fixed_tile_resident.bytes).filter(|bytes| *bytes > 0),
+        fixed_tile_edge: Some(fixed_tile_resident.tile_edge).filter(|edge| *edge > 0),
+        fixed_tile_center_boundary: fixed_tile_resident.center_boundary_anchor,
+        fixed_tile_max_live_row_blocks: env_usize("CASA_RS_STANDARD_MFS_QUEUE_BLOCKS")
+            .filter(|value| *value > 0)
+            .map(|value| value.min(2))
+            .unwrap_or(1),
     }
 }
 
@@ -7749,7 +7842,8 @@ fn estimated_fixed_tile_residency_with_backend(
         .unwrap_or(512 * 1024 * 1024);
     let tile_edge = env_usize("CASA_RS_STANDARD_MFS_TILE_EDGE")
         .filter(|value| *value > 0)
-        .unwrap_or(256);
+        .unwrap_or(if config.imsize >= 2048 { 64 } else { 32 });
+    let center_boundary_anchor = standard_mfs_center_boundary_anchor_for_frontend();
     let halo = 3usize;
     let grid_side = casa_composite_padded_len_estimate(config.imsize, 1.2);
     let tiles_per_axis = grid_side.div_ceil(tile_edge);
@@ -7763,7 +7857,19 @@ fn estimated_fixed_tile_residency_with_backend(
     FixedTileResidencyEstimate {
         bytes: tile_limit.saturating_mul(two_grid_tile_bytes),
         tile_limit,
+        tile_edge,
+        center_boundary_anchor,
     }
+}
+
+fn standard_mfs_center_boundary_anchor_for_frontend() -> bool {
+    env::var("CASA_RS_STANDARD_MFS_TILE_ANCHOR")
+        .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "zero" => false,
+            "center_boundary" | "center-boundary" | "center" | "boundary" => true,
+            _ => true,
+        })
+        .unwrap_or(true)
 }
 
 fn standard_mfs_fixed_tile_backend_enabled_for_frontend() -> bool {
@@ -15933,6 +16039,7 @@ mod tests {
     use std::fs;
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
 
     use casa_coordinates::Coordinate;
     use casa_images::PagedImage;
@@ -15957,6 +16064,43 @@ mod tests {
 
     use super::*;
 
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        name: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(name: &'static str, value: &str) -> Self {
+            let previous = env::var_os(name);
+            unsafe {
+                env::set_var(name, value);
+            }
+            Self { name, previous }
+        }
+
+        fn unset(name: &'static str) -> Self {
+            let previous = env::var_os(name);
+            unsafe {
+                env::remove_var(name);
+            }
+            Self { name, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(previous) = &self.previous {
+                    env::set_var(self.name, previous);
+                } else {
+                    env::remove_var(self.name);
+                }
+            }
+        }
+    }
+
     fn diagnostic_padded_len(image_len: usize, padding_factor: f64) -> usize {
         let padded = (padding_factor * image_len as f64 - 0.5).floor() as usize;
         let padded = padded.max(image_len);
@@ -15976,6 +16120,9 @@ mod tests {
 
     #[test]
     fn standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
+        let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
         let mut config =
             minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
         config.imsize = 1024;
@@ -15987,10 +16134,40 @@ mod tests {
         let enabled = estimated_fixed_tile_residency_with_backend(&config, true);
         assert!(enabled.bytes > 0);
         assert!(enabled.tile_limit > 0);
+        assert_eq!(enabled.tile_edge, 32);
+        assert!(enabled.center_boundary_anchor);
         let execution = StandardMfsExecutionConfig {
             fixed_tile_resident_bytes: Some(enabled.bytes),
+            fixed_tile_edge: Some(enabled.tile_edge),
+            fixed_tile_center_boundary: enabled.center_boundary_anchor,
+            fixed_tile_max_live_row_blocks: 1,
         };
         assert_eq!(execution.fixed_tile_resident_bytes, Some(enabled.bytes));
+        assert_eq!(execution.fixed_tile_edge, Some(32));
+        assert!(execution.fixed_tile_center_boundary);
+    }
+
+    #[test]
+    fn standard_mfs_memory_planner_respects_fixed_tile_overrides() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _tile_edge = EnvGuard::set("CASA_RS_STANDARD_MFS_TILE_EDGE", "64");
+        let _tile_anchor = EnvGuard::set("CASA_RS_STANDARD_MFS_TILE_ANCHOR", "zero");
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imsize = 1024;
+        config.weighting = WeightingMode::Briggs { robust: 0.5 };
+
+        let enabled = estimated_fixed_tile_residency_with_backend(&config, true);
+        assert_eq!(enabled.tile_edge, 64);
+        assert!(!enabled.center_boundary_anchor);
+
+        let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
+        let _threads = EnvGuard::set("CASA_RS_STANDARD_MFS_GRID_THREADS", "10");
+        let plan = standard_mfs_memory_plan(&config, 64);
+        assert_eq!(plan.fixed_tile_edge, 64);
+        assert!(!plan.fixed_tile_anchor_center_boundary);
+        assert_eq!(plan.worker_staging_bytes, 0);
+        assert!(plan.resident_tile_buffer_bytes > 0);
     }
 
     fn test_phase_center() -> PhaseCenter {

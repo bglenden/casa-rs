@@ -340,6 +340,12 @@ impl StandardGridder {
         self.grid_shape
     }
 
+    pub(crate) fn positive_tap_grid_center(&self) -> [usize; 2] {
+        self.plan_positive_taps(0.0, 0.0)
+            .map(|taps| taps.center())
+            .unwrap_or([self.grid_shape[0] / 2, self.grid_shape[1] / 2])
+    }
+
     pub(crate) fn grid_spacing_lambda(&self) -> [f64; 2] {
         [self.du_lambda, self.dv_lambda]
     }

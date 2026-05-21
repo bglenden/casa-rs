@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Internal imaging execution plans and CPU workspaces.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Instant,
+};
 
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
 use crate::{
-    ImageGeometry, ImagingError, VisibilityBatch,
+    ImageGeometry, ImagingError, StandardMfsExecutionConfig, VisibilityBatch,
     gridder::{
         PositiveTapSet, STANDARD_GRIDDER_SUPPORT, STANDARD_GRIDDER_TAP_COUNT, StandardGridder,
         StandardMfsTapCensus, StandardMfsTapSkipReason,
@@ -69,9 +73,22 @@ pub(crate) struct StandardMfsDirtyAccumulation {
     pub(crate) max_abs_w_lambda: f64,
 }
 
+impl StandardMfsDirtyAccumulation {
+    fn add(&mut self, other: Self) {
+        self.normalization_sumwt += other.normalization_sumwt;
+        self.reported_sumwt += other.reported_sumwt;
+        self.gridded_samples += other.gridded_samples;
+        self.skipped_samples += other.skipped_samples;
+        self.max_abs_w_lambda = self.max_abs_w_lambda.max(other.max_abs_w_lambda);
+    }
+}
+
 const STANDARD_MFS_TILE_BUCKET_PROBE_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_BUCKET_PROBE";
 const STANDARD_MFS_TILE_EDGE_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_EDGE";
+const STANDARD_MFS_TILE_ANCHOR_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_ANCHOR";
+const STANDARD_MFS_TILE_FLUSH_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_FLUSH";
 const STANDARD_MFS_TILE_RESIDENT_LIMIT_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT";
+const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
 const DEFAULT_STANDARD_MFS_TILE_EDGE: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -112,6 +129,8 @@ pub(crate) struct StandardMfsFixedTile {
 pub(crate) struct StandardMfsFixedTilePartition {
     grid_shape: [usize; 2],
     tile_shape: [usize; 2],
+    tile_origin: [usize; 2],
+    anchor_label: &'static str,
     tiles_y: usize,
     tiles: Vec<StandardMfsFixedTile>,
 }
@@ -121,6 +140,31 @@ impl StandardMfsFixedTilePartition {
         grid_shape: [usize; 2],
         tile_shape: [usize; 2],
         halo: usize,
+    ) -> Result<Self, ImagingError> {
+        Self::new_with_origin(grid_shape, tile_shape, halo, [0, 0], "zero")
+    }
+
+    pub(crate) fn new_center_boundary(
+        gridder: &StandardGridder,
+        tile_shape: [usize; 2],
+        halo: usize,
+    ) -> Result<Self, ImagingError> {
+        let center = gridder.positive_tap_grid_center();
+        Self::new_with_origin(
+            gridder.grid_shape(),
+            tile_shape,
+            halo,
+            [center[0] % tile_shape[0], center[1] % tile_shape[1]],
+            "center_boundary",
+        )
+    }
+
+    pub(crate) fn new_with_origin(
+        grid_shape: [usize; 2],
+        tile_shape: [usize; 2],
+        halo: usize,
+        tile_origin: [usize; 2],
+        anchor_label: &'static str,
     ) -> Result<Self, ImagingError> {
         if grid_shape[0] == 0 || grid_shape[1] == 0 {
             return Err(ImagingError::InvalidRequest(
@@ -132,9 +176,14 @@ impl StandardMfsFixedTilePartition {
                 "standard MFS tile shape must be non-empty".to_string(),
             ));
         }
+        if tile_origin[0] >= grid_shape[0] || tile_origin[1] >= grid_shape[1] {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS tile origin must be inside the grid".to_string(),
+            ));
+        }
 
-        let tiles_x = grid_shape[0].div_ceil(tile_shape[0]);
-        let tiles_y = grid_shape[1].div_ceil(tile_shape[1]);
+        let tiles_x = tile_count_1d(grid_shape[0], tile_shape[0], tile_origin[0]);
+        let tiles_y = tile_count_1d(grid_shape[1], tile_shape[1], tile_origin[1]);
         let tile_count = tiles_x
             .checked_mul(tiles_y)
             .filter(|count| *count <= u32::MAX as usize)
@@ -145,11 +194,11 @@ impl StandardMfsFixedTilePartition {
             })?;
         let mut tiles = Vec::with_capacity(tile_count);
         for tile_x in 0..tiles_x {
-            let interior_x0 = tile_x * tile_shape[0];
-            let interior_x1 = (interior_x0 + tile_shape[0]).min(grid_shape[0]);
+            let (interior_x0, interior_x1) =
+                tile_bounds_1d(tile_x, grid_shape[0], tile_shape[0], tile_origin[0]);
             for tile_y in 0..tiles_y {
-                let interior_y0 = tile_y * tile_shape[1];
-                let interior_y1 = (interior_y0 + tile_shape[1]).min(grid_shape[1]);
+                let (interior_y0, interior_y1) =
+                    tile_bounds_1d(tile_y, grid_shape[1], tile_shape[1], tile_origin[1]);
                 let id = StandardMfsTileId((tile_x * tiles_y + tile_y) as u32);
                 let interior = StandardMfsTileExtent {
                     x0: interior_x0,
@@ -174,6 +223,8 @@ impl StandardMfsFixedTilePartition {
         Ok(Self {
             grid_shape,
             tile_shape,
+            tile_origin,
+            anchor_label,
             tiles_y,
             tiles,
         })
@@ -187,12 +238,34 @@ impl StandardMfsFixedTilePartition {
         self.tiles.get(id.index())
     }
 
+    pub(crate) fn tile_shape(&self) -> [usize; 2] {
+        self.tile_shape
+    }
+
+    pub(crate) fn tile_origin(&self) -> [usize; 2] {
+        self.tile_origin
+    }
+
+    pub(crate) fn anchor_label(&self) -> &'static str {
+        self.anchor_label
+    }
+
     pub(crate) fn owner(&self, center_x: usize, center_y: usize) -> Option<StandardMfsTileId> {
         if center_x >= self.grid_shape[0] || center_y >= self.grid_shape[1] {
             return None;
         }
-        let tile_x = center_x / self.tile_shape[0];
-        let tile_y = center_y / self.tile_shape[1];
+        let tile_x = owner_1d(
+            center_x,
+            self.grid_shape[0],
+            self.tile_shape[0],
+            self.tile_origin[0],
+        )?;
+        let tile_y = owner_1d(
+            center_y,
+            self.grid_shape[1],
+            self.tile_shape[1],
+            self.tile_origin[1],
+        )?;
         Some(StandardMfsTileId((tile_x * self.tiles_y + tile_y) as u32))
     }
 
@@ -212,6 +285,48 @@ impl StandardMfsFixedTilePartition {
     }
 }
 
+fn owner_1d(coord: usize, grid_len: usize, edge: usize, origin: usize) -> Option<usize> {
+    if coord >= grid_len {
+        return None;
+    }
+    if origin == 0 {
+        Some(coord / edge)
+    } else if coord < origin {
+        Some(0)
+    } else {
+        Some(1 + (coord - origin) / edge)
+    }
+}
+
+fn tile_count_1d(grid_len: usize, edge: usize, origin: usize) -> usize {
+    if grid_len == 0 {
+        0
+    } else if origin == 0 {
+        grid_len.div_ceil(edge)
+    } else if grid_len <= origin {
+        1
+    } else {
+        1 + (grid_len - origin).div_ceil(edge)
+    }
+}
+
+fn tile_bounds_1d(
+    tile_index: usize,
+    grid_len: usize,
+    edge: usize,
+    origin: usize,
+) -> (usize, usize) {
+    if origin == 0 {
+        let start = tile_index * edge;
+        (start, (start + edge).min(grid_len))
+    } else if tile_index == 0 {
+        (0, origin.min(grid_len))
+    } else {
+        let start = origin + (tile_index - 1) * edge;
+        (start, (start + edge).min(grid_len))
+    }
+}
+
 pub(crate) const STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY: u16 = 1 << 0;
 pub(crate) const STANDARD_MFS_TILE_FLAG_PSF_ONLY: u16 = 1 << 1;
 
@@ -226,6 +341,7 @@ pub(crate) struct StandardMfsTileBucketSample {
     pub(crate) support_id: u16,
     pub(crate) flags: u16,
     pub(crate) grid_weight: f32,
+    pub(crate) tap_count: u8,
 }
 
 impl StandardMfsTileBucketSample {
@@ -270,7 +386,7 @@ impl StandardMfsBlockTileBuckets {
 
         for batch in batches {
             for sample_index in 0..batch.len() {
-                let Some((tile_id, _center, _flags, _grid_weight)) =
+                let Some((tile_id, _center, _flags, _grid_weight, _tap_count)) =
                     plan_dirty_tile_sample(gridder, partition, batch, sample_index)
                 else {
                     skipped_samples += 1;
@@ -302,6 +418,7 @@ impl StandardMfsBlockTileBuckets {
                 support_id: 0,
                 flags: 0,
                 grid_weight: 0.0,
+                tap_count: 0,
             };
             accepted_samples
         ];
@@ -309,7 +426,7 @@ impl StandardMfsBlockTileBuckets {
         let mut flat_sample_index = 0usize;
         for batch in batches {
             for sample_index in 0..batch.len() {
-                let Some((tile_id, center, flags, grid_weight)) =
+                let Some((tile_id, center, flags, grid_weight, tap_count)) =
                     plan_dirty_tile_sample(gridder, partition, batch, sample_index)
                 else {
                     flat_sample_index += 1;
@@ -326,6 +443,7 @@ impl StandardMfsBlockTileBuckets {
                     support_id: 0,
                     flags,
                     grid_weight,
+                    tap_count,
                 };
                 flat_sample_index += 1;
             }
@@ -344,6 +462,101 @@ impl StandardMfsBlockTileBuckets {
             accepted_samples,
             skipped_samples,
         })
+    }
+
+    pub(crate) fn build_for_residual_refresh(
+        gridder: &StandardGridder,
+        partition: &StandardMfsFixedTilePartition,
+        batch: &VisibilityBatch,
+    ) -> Result<(Self, StandardMfsTiledResidualAccumulation), ImagingError> {
+        batch.validate()?;
+        if batch.len() > u32::MAX as usize {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS residual tile bucket block has too many samples".to_string(),
+            ));
+        }
+        let mut accumulation = StandardMfsTiledResidualAccumulation::default();
+        let mut per_tile = vec![Vec::<StandardMfsTileBucketSample>::new(); partition.tile_count()];
+        for sample_index in 0..batch.len() {
+            let weight = batch.weight[sample_index];
+            let observed_visibility = batch.visibility[sample_index];
+            if !batch.gridable[sample_index] {
+                accumulation.skipped_not_gridable += 1;
+                continue;
+            }
+            if !(weight.is_finite() && weight > 0.0) {
+                accumulation.skipped_invalid_weight += 1;
+                continue;
+            }
+            if !finite_visibility(observed_visibility) {
+                accumulation.skipped_nonfinite_visibility += 1;
+                continue;
+            }
+            accumulation.valid_samples += 1;
+            let Some(taps) = gridder
+                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+            else {
+                accumulation.skipped_out_of_grid += 1;
+                continue;
+            };
+            accumulation.planned_samples += 1;
+            let sumwt_factor = batch.sumwt_factor[sample_index];
+            if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
+                accumulation.skipped_invalid_sumwt += 1;
+                continue;
+            }
+            let residual_weight = weight * sumwt_factor;
+            if !(residual_weight.is_finite() && residual_weight > 0.0) {
+                accumulation.skipped_invalid_sumwt += 1;
+                continue;
+            }
+            let center = taps.center();
+            let Some(tile_id) = partition.owner(center[0], center[1]) else {
+                accumulation.skipped_out_of_grid += 1;
+                continue;
+            };
+            per_tile[tile_id.index()].push(StandardMfsTileBucketSample {
+                sample_index: sample_index as u32,
+                center_x: center[0] as u32,
+                center_y: center[1] as u32,
+                kernel_u: 0,
+                kernel_v: 0,
+                support_id: 0,
+                flags: STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
+                grid_weight: residual_weight,
+                tap_count: STANDARD_GRIDDER_TAP_COUNT.saturating_mul(STANDARD_GRIDDER_TAP_COUNT)
+                    as u8,
+            });
+        }
+
+        let mut samples = Vec::<StandardMfsTileBucketSample>::new();
+        let mut tile_offsets = Vec::with_capacity(partition.tile_count() + 1);
+        let mut nonempty_tiles = Vec::<StandardMfsTileId>::new();
+        tile_offsets.push(0);
+        for (tile_index, mut tile_samples) in per_tile.into_iter().enumerate() {
+            if !tile_samples.is_empty() {
+                nonempty_tiles.push(StandardMfsTileId(tile_index as u32));
+            }
+            samples.append(&mut tile_samples);
+            tile_offsets.push(samples.len() as u32);
+        }
+        let accepted_samples = samples.len();
+        let skipped_samples = accumulation
+            .skipped_not_gridable
+            .saturating_add(accumulation.skipped_invalid_weight)
+            .saturating_add(accumulation.skipped_invalid_sumwt)
+            .saturating_add(accumulation.skipped_out_of_grid)
+            .saturating_add(accumulation.skipped_nonfinite_visibility);
+        Ok((
+            Self {
+                samples,
+                tile_offsets,
+                nonempty_tiles,
+                accepted_samples,
+                skipped_samples,
+            },
+            accumulation,
+        ))
     }
 
     pub(crate) fn samples(&self) -> &[StandardMfsTileBucketSample] {
@@ -369,6 +582,32 @@ impl StandardMfsBlockTileBuckets {
         &self.samples[start..end]
     }
 
+    pub(crate) fn tile_tasks_descending(&self) -> Vec<StandardMfsTileTask> {
+        let mut tasks = self
+            .nonempty_tiles
+            .iter()
+            .map(|&tile_id| {
+                let samples = self.tile_samples(tile_id);
+                let estimated_tap_visits = samples
+                    .iter()
+                    .map(|sample| usize::from(sample.tap_count))
+                    .sum::<usize>();
+                StandardMfsTileTask {
+                    tile_id,
+                    sample_count: samples.len(),
+                    estimated_tap_visits,
+                }
+            })
+            .collect::<Vec<_>>();
+        tasks.sort_unstable_by(|lhs, rhs| {
+            rhs.estimated_tap_visits
+                .cmp(&lhs.estimated_tap_visits)
+                .then_with(|| rhs.sample_count.cmp(&lhs.sample_count))
+                .then_with(|| lhs.tile_id.cmp(&rhs.tile_id))
+        });
+        tasks
+    }
+
     pub(crate) fn estimated_bytes(&self) -> usize {
         self.samples
             .capacity()
@@ -386,12 +625,19 @@ impl StandardMfsBlockTileBuckets {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StandardMfsTileTask {
+    pub(crate) tile_id: StandardMfsTileId,
+    pub(crate) sample_count: usize,
+    pub(crate) estimated_tap_visits: usize,
+}
+
 fn plan_dirty_tile_sample(
     gridder: &StandardGridder,
     partition: &StandardMfsFixedTilePartition,
     batch: &VisibilityBatch,
     sample_index: usize,
-) -> Option<(StandardMfsTileId, [usize; 2], u16, f32)> {
+) -> Option<(StandardMfsTileId, [usize; 2], u16, f32, u8)> {
     if !batch.gridable[sample_index] {
         return None;
     }
@@ -413,7 +659,13 @@ fn plan_dirty_tile_sample(
     } else {
         STANDARD_MFS_TILE_FLAG_PSF_ONLY
     };
-    Some((tile_id, center, flags, grid_weight))
+    Some((
+        tile_id,
+        center,
+        flags,
+        grid_weight,
+        STANDARD_GRIDDER_TAP_COUNT.saturating_mul(STANDARD_GRIDDER_TAP_COUNT) as u8,
+    ))
 }
 
 fn maybe_probe_standard_mfs_tile_buckets(
@@ -423,13 +675,24 @@ fn maybe_probe_standard_mfs_tile_buckets(
     if !standard_mfs_tile_bucket_probe_enabled() {
         return Ok(());
     }
+    let partition = standard_mfs_tile_partition_for_gridder(gridder)?;
+    probe_standard_mfs_tile_buckets_with_partition(gridder, &partition, batches)
+}
+
+fn probe_standard_mfs_tile_buckets_with_partition(
+    gridder: &StandardGridder,
+    partition: &StandardMfsFixedTilePartition,
+    batches: &[VisibilityBatch],
+) -> Result<(), ImagingError> {
+    if !standard_mfs_tile_bucket_probe_enabled() {
+        return Ok(());
+    }
 
     let grid_shape = gridder.grid_shape();
-    let tile_edge = standard_mfs_tile_edge().min(grid_shape[0].max(grid_shape[1]));
-    let tile_shape = [tile_edge, tile_edge];
+    let tile_shape = partition.tile_shape();
+    let tile_origin = partition.tile_origin();
     let halo = gridder.positive_tap_halo();
-    let partition = StandardMfsFixedTilePartition::new(grid_shape, tile_shape, halo)?;
-    let buckets = StandardMfsBlockTileBuckets::build_for_dirty(gridder, &partition, batches)?;
+    let buckets = StandardMfsBlockTileBuckets::build_for_dirty(gridder, partition, batches)?;
 
     let mut finite_visibility_samples = 0usize;
     let mut psf_only_samples = 0usize;
@@ -466,11 +729,16 @@ fn maybe_probe_standard_mfs_tile_buckets(
     let all_distribution = tile_bucket_distribution_stats(&all_tile_counts);
     let touched_distribution = tile_bucket_distribution_stats(&touched_tile_counts);
     let top_tile_counts = top_tile_bucket_counts(&all_tile_counts, 8);
+    let per_block_summary = per_row_block_tile_probe_summary(gridder, partition, batches)?;
+    let near_origin_summary = near_origin_tile_probe_summary(gridder, partition, batches);
 
     eprintln!(
         "standard_mfs_tile_bucket_probe \
          grid_shape={}x{} \
          tile_shape={}x{} \
+         tile_anchor={} \
+         tile_origin={}x{} \
+         gridder_center={}x{} \
          halo={} \
          tiles={} \
          accepted_samples={} \
@@ -494,12 +762,19 @@ fn maybe_probe_standard_mfs_tile_buckets(
          touched_tile_max_over_mean={:.3} \
          touched_tile_gini={:.6} \
          top_tile_counts={} \
+         per_row_block={} \
+         near_origin={} \
          interior_cells_if_all_nonempty={} \
          resident_bytes_if_all_nonempty={}",
         grid_shape[0],
         grid_shape[1],
         tile_shape[0],
         tile_shape[1],
+        partition.anchor_label(),
+        tile_origin[0],
+        tile_origin[1],
+        gridder.positive_tap_grid_center()[0],
+        gridder.positive_tap_grid_center()[1],
         halo,
         partition.tile_count(),
         buckets.accepted_samples(),
@@ -523,11 +798,149 @@ fn maybe_probe_standard_mfs_tile_buckets(
         touched_distribution.max_over_mean,
         touched_distribution.gini,
         top_tile_counts,
+        per_block_summary,
+        near_origin_summary,
         interior_cells_if_all_nonempty,
         resident_bytes_if_all_nonempty
     );
 
     Ok(())
+}
+
+fn per_row_block_tile_probe_summary(
+    gridder: &StandardGridder,
+    partition: &StandardMfsFixedTilePartition,
+    batches: &[VisibilityBatch],
+) -> Result<String, ImagingError> {
+    if batches.is_empty() {
+        return Ok("blocks=0".to_string());
+    }
+    let mut nonempty_tiles = Vec::with_capacity(batches.len());
+    let mut hottest_share_bps = Vec::with_capacity(batches.len());
+    let mut top4_share_bps = Vec::with_capacity(batches.len());
+    let mut top8_share_bps = Vec::with_capacity(batches.len());
+    let mut task_counts = Vec::with_capacity(batches.len());
+    let mut largest_task_samples = Vec::with_capacity(batches.len());
+    let mut largest_task_tap_visits = Vec::with_capacity(batches.len());
+
+    for batch in batches {
+        let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
+            gridder,
+            partition,
+            std::slice::from_ref(batch),
+        )?;
+        let accepted = buckets.accepted_samples().max(1);
+        let mut counts = buckets
+            .nonempty_tiles()
+            .iter()
+            .map(|&tile_id| buckets.tile_samples(tile_id).len())
+            .collect::<Vec<_>>();
+        counts.sort_unstable_by(|lhs, rhs| rhs.cmp(lhs));
+        nonempty_tiles.push(counts.len());
+        task_counts.push(counts.len());
+        largest_task_samples.push(counts.first().copied().unwrap_or(0));
+        hottest_share_bps
+            .push(counts.first().copied().unwrap_or(0).saturating_mul(10_000) / accepted);
+        top4_share_bps.push(counts.iter().take(4).sum::<usize>().saturating_mul(10_000) / accepted);
+        top8_share_bps.push(counts.iter().take(8).sum::<usize>().saturating_mul(10_000) / accepted);
+        largest_task_tap_visits.push(
+            buckets
+                .tile_tasks_descending()
+                .first()
+                .map(|task| task.estimated_tap_visits)
+                .unwrap_or(0),
+        );
+    }
+
+    Ok(format!(
+        "blocks={},nonempty_tiles={},hottest_bps={},top4_bps={},top8_bps={},task_count={},largest_task_samples={},largest_task_tap_visits={}",
+        batches.len(),
+        stats_triplet(&nonempty_tiles),
+        stats_triplet(&hottest_share_bps),
+        stats_triplet(&top4_share_bps),
+        stats_triplet(&top8_share_bps),
+        stats_triplet(&task_counts),
+        stats_triplet(&largest_task_samples),
+        stats_triplet(&largest_task_tap_visits),
+    ))
+}
+
+fn near_origin_tile_probe_summary(
+    gridder: &StandardGridder,
+    partition: &StandardMfsFixedTilePartition,
+    batches: &[VisibilityBatch],
+) -> String {
+    let center = gridder.positive_tap_grid_center();
+    let mut window_counts = [0usize; 25];
+    let mut quadrant_counts = [0usize; 4];
+    let mut quadrant_owner_counts = BTreeMap::<(usize, usize), usize>::new();
+
+    for batch in batches {
+        for sample_index in 0..batch.len() {
+            let Some((tile_id, sample_center, _flags, _grid_weight, _tap_count)) =
+                plan_dirty_tile_sample(gridder, partition, batch, sample_index)
+            else {
+                continue;
+            };
+            let dx = sample_center[0] as isize - center[0] as isize;
+            let dy = sample_center[1] as isize - center[1] as isize;
+            if !((-2..=2).contains(&dx) && (-2..=2).contains(&dy)) {
+                continue;
+            }
+            let window_index = ((dx + 2) as usize) * 5 + (dy + 2) as usize;
+            window_counts[window_index] += 1;
+            let quadrant = match (
+                batch.u_lambda[sample_index].is_sign_negative(),
+                batch.v_lambda[sample_index].is_sign_negative(),
+            ) {
+                (false, false) => 0,
+                (true, false) => 1,
+                (true, true) => 2,
+                (false, true) => 3,
+            };
+            quadrant_counts[quadrant] += 1;
+            *quadrant_owner_counts
+                .entry((quadrant, tile_id.index()))
+                .or_insert(0) += 1;
+        }
+    }
+
+    let mut window = Vec::new();
+    for dx in -2..=2 {
+        for dy in -2..=2 {
+            let count = window_counts[((dx + 2) as usize) * 5 + (dy + 2) as usize];
+            if count > 0 {
+                window.push(format!("{dx}:{dy}:{count}"));
+            }
+        }
+    }
+    let mut owner_counts = quadrant_owner_counts
+        .into_iter()
+        .map(|((quadrant, tile), count)| (quadrant, tile, count))
+        .collect::<Vec<_>>();
+    owner_counts.sort_unstable_by(|lhs, rhs| {
+        rhs.2
+            .cmp(&lhs.2)
+            .then_with(|| lhs.0.cmp(&rhs.0))
+            .then_with(|| lhs.1.cmp(&rhs.1))
+    });
+    let owners = owner_counts
+        .into_iter()
+        .take(12)
+        .map(|(quadrant, tile, count)| format!("q{quadrant}:t{tile}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "center={}x{},window={},quadrants={},{},{},{},owners={}",
+        center[0],
+        center[1],
+        window.join(","),
+        quadrant_counts[0],
+        quadrant_counts[1],
+        quadrant_counts[2],
+        quadrant_counts[3],
+        owners,
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -566,6 +979,21 @@ fn percentile_sorted_usize(sorted: &[usize], percentile: f64) -> usize {
     debug_assert!(!sorted.is_empty());
     let rank = ((sorted.len() - 1) as f64 * percentile).ceil() as usize;
     sorted[rank.min(sorted.len() - 1)]
+}
+
+fn stats_triplet(values: &[usize]) -> String {
+    if values.is_empty() {
+        return "p50:0,p90:0,p99:0,max:0".to_string();
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    format!(
+        "p50:{},p90:{},p99:{},max:{}",
+        percentile_sorted_usize(&sorted, 0.50),
+        percentile_sorted_usize(&sorted, 0.90),
+        percentile_sorted_usize(&sorted, 0.99),
+        sorted.last().copied().unwrap_or(0)
+    )
 }
 
 fn gini_sorted_usize(sorted: &[usize], total: usize) -> f64 {
@@ -610,12 +1038,55 @@ fn standard_mfs_tile_bucket_probe_enabled() -> bool {
         .unwrap_or(false)
 }
 
-fn standard_mfs_tile_edge() -> usize {
+fn standard_mfs_tile_edge_with_config(config_edge: Option<usize>) -> usize {
     std::env::var(STANDARD_MFS_TILE_EDGE_ENV)
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|edge| *edge > 0)
+        .or(config_edge.filter(|edge| *edge > 0))
         .unwrap_or(DEFAULT_STANDARD_MFS_TILE_EDGE)
+}
+
+fn standard_mfs_tile_partition_for_gridder(
+    gridder: &StandardGridder,
+) -> Result<StandardMfsFixedTilePartition, ImagingError> {
+    standard_mfs_tile_partition_for_gridder_with_config(
+        gridder,
+        StandardMfsExecutionConfig::default(),
+    )
+}
+
+fn standard_mfs_tile_partition_for_gridder_with_config(
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+) -> Result<StandardMfsFixedTilePartition, ImagingError> {
+    let grid_shape = gridder.grid_shape();
+    let tile_edge = standard_mfs_tile_edge_with_config(execution_config.fixed_tile_edge)
+        .min(grid_shape[0].max(grid_shape[1]));
+    let tile_shape = [tile_edge, tile_edge];
+    let halo = gridder.positive_tap_halo();
+    if let Ok(anchor) = std::env::var(STANDARD_MFS_TILE_ANCHOR_ENV) {
+        match anchor.trim().to_ascii_lowercase().as_str() {
+            "zero" | "grid_zero" | "origin" => {
+                return StandardMfsFixedTilePartition::new(grid_shape, tile_shape, halo);
+            }
+            "center_boundary" | "center-boundary" | "center" => {
+                return StandardMfsFixedTilePartition::new_center_boundary(
+                    gridder, tile_shape, halo,
+                );
+            }
+            other => {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "unsupported standard MFS tile anchor '{other}'"
+                )));
+            }
+        }
+    }
+    if execution_config.fixed_tile_center_boundary {
+        StandardMfsFixedTilePartition::new_center_boundary(gridder, tile_shape, halo)
+    } else {
+        StandardMfsFixedTilePartition::new(grid_shape, tile_shape, halo)
+    }
 }
 
 fn standard_mfs_tile_resident_limit(
@@ -642,6 +1113,30 @@ fn standard_mfs_tile_resident_limit(
         .unwrap_or(tile_count)
         .min(tile_count)
         .max(1)
+}
+
+fn standard_mfs_grid_threads() -> usize {
+    std::env::var(STANDARD_MFS_GRID_THREADS_ENV)
+        .ok()
+        .and_then(|value| {
+            let value = value.trim();
+            if value.eq_ignore_ascii_case("auto") {
+                Some(std::thread::available_parallelism().map_or(1, |value| value.get()))
+            } else {
+                value.parse::<usize>().ok()
+            }
+        })
+        .filter(|threads| *threads > 0)
+        .unwrap_or(1)
+}
+
+fn standard_mfs_per_block_flush_enabled() -> bool {
+    std::env::var(STANDARD_MFS_TILE_FLUSH_ENV)
+        .map(|value| {
+            let value = value.trim();
+            value.eq_ignore_ascii_case("per_block") || value.eq_ignore_ascii_case("per-block")
+        })
+        .unwrap_or(false)
 }
 
 /// CPU executor for bounded fixed-tile standard MFS gridding.
@@ -675,20 +1170,30 @@ pub(crate) struct StandardMfsTiledResidualAccumulation {
     pub(crate) skipped_nonfinite_visibility: usize,
 }
 
+impl StandardMfsTiledResidualAccumulation {
+    fn add_residual(&mut self, other: Self) {
+        self.valid_samples += other.valid_samples;
+        self.planned_samples += other.planned_samples;
+        self.gridded_residual_samples += other.gridded_residual_samples;
+        self.skipped_not_gridable += other.skipped_not_gridable;
+        self.skipped_invalid_weight += other.skipped_invalid_weight;
+        self.skipped_invalid_sumwt += other.skipped_invalid_sumwt;
+        self.skipped_out_of_grid += other.skipped_out_of_grid;
+        self.skipped_nonfinite_visibility += other.skipped_nonfinite_visibility;
+    }
+}
+
 impl<'a> StandardMfsTiledCpuExecutor<'a> {
-    /// Build a fixed-tile executor with an optional resident tile byte budget.
-    pub(crate) fn new_with_resident_bytes(
+    pub(crate) fn new_with_execution_config(
         gridder: &'a StandardGridder,
-        resident_bytes: Option<usize>,
+        execution_config: StandardMfsExecutionConfig,
     ) -> Result<Self, ImagingError> {
-        let grid_shape = gridder.grid_shape();
-        let tile_edge = standard_mfs_tile_edge().min(grid_shape[0].max(grid_shape[1]));
-        let partition = StandardMfsFixedTilePartition::new(
-            grid_shape,
-            [tile_edge, tile_edge],
-            gridder.positive_tap_halo(),
-        )?;
-        let resident_tile_limit = standard_mfs_tile_resident_limit(&partition, resident_bytes);
+        let partition =
+            standard_mfs_tile_partition_for_gridder_with_config(gridder, execution_config)?;
+        let resident_tile_limit = standard_mfs_tile_resident_limit(
+            &partition,
+            execution_config.fixed_tile_resident_bytes,
+        );
         Ok(Self {
             gridder,
             partition,
@@ -710,7 +1215,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             skipped_samples: 0,
             max_abs_w_lambda: 0.0,
         };
-        maybe_probe_standard_mfs_tile_buckets(self.gridder, batches)?;
+        probe_standard_mfs_tile_buckets_with_partition(self.gridder, &self.partition, batches)?;
         let mut cache = DirtyTileCache::new(
             &self.partition,
             self.resident_tile_limit,
@@ -732,60 +1237,9 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 std::slice::from_ref(batch),
             )?;
             accumulation.skipped_samples += buckets.skipped_samples();
-            for &tile_id in buckets.nonempty_tiles() {
-                let tile = self.partition.tile(tile_id).ok_or_else(|| {
-                    ImagingError::InvalidRequest(format!(
-                        "standard MFS tile id {} is out of range",
-                        tile_id.index()
-                    ))
-                })?;
-                let offset = tile_offset(tile);
-                let tile_grids = cache.acquire(tile_id)?;
-                for sample in buckets.tile_samples(tile_id) {
-                    let sample_index = sample.sample_index as usize;
-                    let taps = self
-                        .gridder
-                        .plan_positive_taps(
-                            batch.u_lambda[sample_index],
-                            batch.v_lambda[sample_index],
-                        )
-                        .ok_or_else(|| {
-                            ImagingError::InvalidRequest(
-                                "standard MFS tiled dirty bucket lost its tap plan".to_string(),
-                            )
-                        })?;
-                    debug_assert_eq!(
-                        taps.center(),
-                        [sample.center_x as usize, sample.center_y as usize]
-                    );
-                    let grid_weight = f64::from(sample.grid_weight);
-                    accumulation.normalization_sumwt += grid_weight;
-                    accumulation.reported_sumwt += grid_weight;
-                    accumulation.gridded_samples += 1;
-                    if sample.finite_visibility() {
-                        let observed_visibility = batch.visibility[sample_index];
-                        let residual = Complex64::new(
-                            f64::from(observed_visibility.re) * grid_weight,
-                            f64::from(observed_visibility.im) * grid_weight,
-                        );
-                        self.gridder
-                            .grid_sample_taps_real_complex_pair_planned_f64_with_offset(
-                                &mut tile_grids.psf_grid,
-                                grid_weight,
-                                &mut tile_grids.residual_grid,
-                                residual,
-                                &taps,
-                                offset,
-                            );
-                    } else {
-                        self.gridder.grid_sample_taps_real_planned_f64_with_offset(
-                            &mut tile_grids.psf_grid,
-                            &taps,
-                            grid_weight,
-                            offset,
-                        );
-                    }
-                }
+            self.accumulate_dirty_block(batch, &buckets, &mut cache, &mut accumulation)?;
+            if standard_mfs_per_block_flush_enabled() {
+                cache.flush_all();
             }
         }
         cache.flush_all();
@@ -821,47 +1275,280 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 std::slice::from_ref(batch),
             )?;
             accumulation.skipped_samples += buckets.skipped_samples();
-            for &tile_id in buckets.nonempty_tiles() {
-                let tile = self.partition.tile(tile_id).ok_or_else(|| {
-                    ImagingError::InvalidRequest(format!(
-                        "standard MFS tile id {} is out of range",
-                        tile_id.index()
-                    ))
-                })?;
-                let offset = tile_offset(tile);
-                let tile_grid = cache.acquire(tile_id)?;
-                for sample in buckets.tile_samples(tile_id) {
-                    let sample_index = sample.sample_index as usize;
-                    let taps = self
-                        .gridder
-                        .plan_positive_taps(
-                            batch.u_lambda[sample_index],
-                            batch.v_lambda[sample_index],
-                        )
-                        .ok_or_else(|| {
-                            ImagingError::InvalidRequest(
-                                "standard MFS tiled PSF bucket lost its tap plan".to_string(),
-                            )
-                        })?;
-                    debug_assert_eq!(
-                        taps.center(),
-                        [sample.center_x as usize, sample.center_y as usize]
-                    );
-                    let grid_weight = f64::from(sample.grid_weight);
-                    accumulation.normalization_sumwt += grid_weight;
-                    accumulation.reported_sumwt += grid_weight;
-                    accumulation.gridded_samples += 1;
-                    self.gridder.grid_sample_taps_real_planned_f64_with_offset(
-                        &mut tile_grid.psf_grid,
-                        &taps,
-                        grid_weight,
-                        offset,
-                    );
-                }
+            self.accumulate_psf_block(batch, &buckets, &mut cache, &mut accumulation)?;
+            if standard_mfs_per_block_flush_enabled() {
+                cache.flush_all();
             }
         }
         cache.flush_all();
         Ok(accumulation)
+    }
+
+    fn accumulate_dirty_block(
+        &self,
+        batch: &VisibilityBatch,
+        buckets: &StandardMfsBlockTileBuckets,
+        cache: &mut DirtyTileCache<'_, '_>,
+        accumulation: &mut StandardMfsDirtyAccumulation,
+    ) -> Result<(), ImagingError> {
+        let tasks = buckets.tile_tasks_descending();
+        let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
+        let started = Instant::now();
+        if worker_count <= 1 || tasks.len() <= 1 {
+            for task in &tasks {
+                let (buffer, task_accumulation) =
+                    self.grid_dirty_tile_task(batch, buckets, task.tile_id)?;
+                merge_dirty_tile_buffer_into_cache(cache, buffer)?;
+                accumulation.add(task_accumulation);
+            }
+            log_tiled_scheduler_block("dirty", worker_count, &tasks, started.elapsed(), 0, 0);
+            return Ok(());
+        }
+
+        let next_task = AtomicUsize::new(0);
+        let mut outputs = Vec::<Vec<(DirtyTileBuffer, StandardMfsDirtyAccumulation)>>::new();
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(worker_count);
+            for _ in 0..worker_count {
+                handles.push(scope.spawn(|| {
+                    let mut worker_outputs =
+                        Vec::<(DirtyTileBuffer, StandardMfsDirtyAccumulation)>::new();
+                    loop {
+                        let task_index = next_task.fetch_add(1, Ordering::Relaxed);
+                        let Some(task) = tasks.get(task_index) else {
+                            break;
+                        };
+                        worker_outputs.push(self.grid_dirty_tile_task(
+                            batch,
+                            buckets,
+                            task.tile_id,
+                        )?);
+                    }
+                    Ok::<_, ImagingError>(worker_outputs)
+                }));
+            }
+            for handle in handles {
+                outputs.push(handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS tiled dirty worker panicked".to_string(),
+                    )
+                })??);
+            }
+            Ok::<_, ImagingError>(())
+        })?;
+
+        let merge_started = Instant::now();
+        let mut merged = outputs.into_iter().flatten().collect::<Vec<_>>();
+        merged.sort_unstable_by_key(|(buffer, _)| buffer.id);
+        let merged_count = merged.len();
+        for (buffer, task_accumulation) in merged {
+            merge_dirty_tile_buffer_into_cache(cache, buffer)?;
+            accumulation.add(task_accumulation);
+        }
+        log_tiled_scheduler_block(
+            "dirty",
+            worker_count,
+            &tasks,
+            started.elapsed(),
+            merge_started.elapsed().as_micros() as u64,
+            merged_count,
+        );
+        Ok(())
+    }
+
+    fn grid_dirty_tile_task(
+        &self,
+        batch: &VisibilityBatch,
+        buckets: &StandardMfsBlockTileBuckets,
+        tile_id: StandardMfsTileId,
+    ) -> Result<(DirtyTileBuffer, StandardMfsDirtyAccumulation), ImagingError> {
+        let tile = self.partition.tile(tile_id).ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "standard MFS tile id {} is out of range",
+                tile_id.index()
+            ))
+        })?;
+        let shape = (tile.halo.width(), tile.halo.height());
+        let offset = tile_offset(tile);
+        let mut buffer = DirtyTileBuffer {
+            id: tile_id,
+            psf_grid: Array2::zeros(shape),
+            residual_grid: Array2::zeros(shape),
+        };
+        let mut accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 0.0,
+            reported_sumwt: 0.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+            max_abs_w_lambda: 0.0,
+        };
+        for sample in buckets.tile_samples(tile_id) {
+            let sample_index = sample.sample_index as usize;
+            let taps = self
+                .gridder
+                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS tiled dirty bucket lost its tap plan".to_string(),
+                    )
+                })?;
+            debug_assert_eq!(
+                taps.center(),
+                [sample.center_x as usize, sample.center_y as usize]
+            );
+            let grid_weight = f64::from(sample.grid_weight);
+            accumulation.normalization_sumwt += grid_weight;
+            accumulation.reported_sumwt += grid_weight;
+            accumulation.gridded_samples += 1;
+            if sample.finite_visibility() {
+                let observed_visibility = batch.visibility[sample_index];
+                let residual = Complex64::new(
+                    f64::from(observed_visibility.re) * grid_weight,
+                    f64::from(observed_visibility.im) * grid_weight,
+                );
+                self.gridder
+                    .grid_sample_taps_real_complex_pair_planned_f64_with_offset(
+                        &mut buffer.psf_grid,
+                        grid_weight,
+                        &mut buffer.residual_grid,
+                        residual,
+                        &taps,
+                        offset,
+                    );
+            } else {
+                self.gridder.grid_sample_taps_real_planned_f64_with_offset(
+                    &mut buffer.psf_grid,
+                    &taps,
+                    grid_weight,
+                    offset,
+                );
+            }
+        }
+        Ok((buffer, accumulation))
+    }
+
+    fn accumulate_psf_block(
+        &self,
+        batch: &VisibilityBatch,
+        buckets: &StandardMfsBlockTileBuckets,
+        cache: &mut PsfTileCache<'_, '_>,
+        accumulation: &mut StandardMfsDirtyAccumulation,
+    ) -> Result<(), ImagingError> {
+        let tasks = buckets.tile_tasks_descending();
+        let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
+        let started = Instant::now();
+        if worker_count <= 1 || tasks.len() <= 1 {
+            for task in &tasks {
+                let (buffer, task_accumulation) =
+                    self.grid_psf_tile_task(batch, buckets, task.tile_id)?;
+                merge_psf_tile_buffer_into_cache(cache, buffer)?;
+                accumulation.add(task_accumulation);
+            }
+            log_tiled_scheduler_block("psf", worker_count, &tasks, started.elapsed(), 0, 0);
+            return Ok(());
+        }
+
+        let next_task = AtomicUsize::new(0);
+        let mut outputs = Vec::<Vec<(PsfTileBuffer, StandardMfsDirtyAccumulation)>>::new();
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(worker_count);
+            for _ in 0..worker_count {
+                handles.push(scope.spawn(|| {
+                    let mut worker_outputs =
+                        Vec::<(PsfTileBuffer, StandardMfsDirtyAccumulation)>::new();
+                    loop {
+                        let task_index = next_task.fetch_add(1, Ordering::Relaxed);
+                        let Some(task) = tasks.get(task_index) else {
+                            break;
+                        };
+                        worker_outputs.push(self.grid_psf_tile_task(
+                            batch,
+                            buckets,
+                            task.tile_id,
+                        )?);
+                    }
+                    Ok::<_, ImagingError>(worker_outputs)
+                }));
+            }
+            for handle in handles {
+                outputs.push(handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS tiled PSF worker panicked".to_string(),
+                    )
+                })??);
+            }
+            Ok::<_, ImagingError>(())
+        })?;
+
+        let merge_started = Instant::now();
+        let mut merged = outputs.into_iter().flatten().collect::<Vec<_>>();
+        merged.sort_unstable_by_key(|(buffer, _)| buffer.id);
+        let merged_count = merged.len();
+        for (buffer, task_accumulation) in merged {
+            merge_psf_tile_buffer_into_cache(cache, buffer)?;
+            accumulation.add(task_accumulation);
+        }
+        log_tiled_scheduler_block(
+            "psf",
+            worker_count,
+            &tasks,
+            started.elapsed(),
+            merge_started.elapsed().as_micros() as u64,
+            merged_count,
+        );
+        Ok(())
+    }
+
+    fn grid_psf_tile_task(
+        &self,
+        batch: &VisibilityBatch,
+        buckets: &StandardMfsBlockTileBuckets,
+        tile_id: StandardMfsTileId,
+    ) -> Result<(PsfTileBuffer, StandardMfsDirtyAccumulation), ImagingError> {
+        let tile = self.partition.tile(tile_id).ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "standard MFS tile id {} is out of range",
+                tile_id.index()
+            ))
+        })?;
+        let offset = tile_offset(tile);
+        let mut buffer = PsfTileBuffer {
+            id: tile_id,
+            psf_grid: Array2::zeros((tile.halo.width(), tile.halo.height())),
+        };
+        let mut accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 0.0,
+            reported_sumwt: 0.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+            max_abs_w_lambda: 0.0,
+        };
+        for sample in buckets.tile_samples(tile_id) {
+            let sample_index = sample.sample_index as usize;
+            let taps = self
+                .gridder
+                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS tiled PSF bucket lost its tap plan".to_string(),
+                    )
+                })?;
+            debug_assert_eq!(
+                taps.center(),
+                [sample.center_x as usize, sample.center_y as usize]
+            );
+            let grid_weight = f64::from(sample.grid_weight);
+            accumulation.normalization_sumwt += grid_weight;
+            accumulation.reported_sumwt += grid_weight;
+            accumulation.gridded_samples += 1;
+            self.gridder.grid_sample_taps_real_planned_f64_with_offset(
+                &mut buffer.psf_grid,
+                &taps,
+                grid_weight,
+                offset,
+            );
+        }
+        Ok((buffer, accumulation))
     }
 
     /// Accumulate a residual-refresh grid through resident halo tiles.
@@ -877,77 +1564,161 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
 
         for batch in batches {
             batch.validate()?;
-            for sample_index in 0..batch.len() {
-                let weight = batch.weight[sample_index];
-                let observed_visibility = batch.visibility[sample_index];
-                if !batch.gridable[sample_index] {
-                    accumulation.skipped_not_gridable += 1;
-                    continue;
-                }
-                if !(weight.is_finite() && weight > 0.0) {
-                    accumulation.skipped_invalid_weight += 1;
-                    continue;
-                }
-                if !finite_visibility(observed_visibility) {
-                    accumulation.skipped_nonfinite_visibility += 1;
-                    continue;
-                }
-                accumulation.valid_samples += 1;
-                let Some(taps) = self
-                    .gridder
-                    .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-                else {
-                    accumulation.skipped_out_of_grid += 1;
-                    continue;
-                };
-                accumulation.planned_samples += 1;
-                let sumwt_factor = batch.sumwt_factor[sample_index];
-                if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
-                    accumulation.skipped_invalid_sumwt += 1;
-                    continue;
-                }
-                let center = taps.center();
-                let tile_id = self.partition.owner(center[0], center[1]).ok_or_else(|| {
-                    ImagingError::InvalidRequest(
-                        "standard MFS tiled residual plan has no owner tile".to_string(),
-                    )
-                })?;
-                let tile = self.partition.tile(tile_id).ok_or_else(|| {
-                    ImagingError::InvalidRequest(format!(
-                        "standard MFS tile id {} is out of range",
-                        tile_id.index()
-                    ))
-                })?;
-                let offset = tile_offset(tile);
-                let tile_grid = cache.acquire(tile_id)?;
-                let residual_weight = f64::from(weight * sumwt_factor);
-                if let Some(model_grid) = model_grid {
-                    self.gridder
-                        .degrid_model_and_grid_residual_taps_planned_f64_with_residual_offset(
-                            model_grid,
-                            &mut tile_grid.residual_grid,
-                            &taps,
-                            observed_visibility,
-                            residual_weight,
-                            offset,
-                        );
-                } else {
-                    let residual = Complex64::new(
-                        f64::from(observed_visibility.re) * residual_weight,
-                        f64::from(observed_visibility.im) * residual_weight,
-                    );
-                    self.gridder.grid_sample_taps_planned_f64_with_offset(
-                        &mut tile_grid.residual_grid,
-                        &taps,
-                        residual,
-                        offset,
-                    );
-                }
-                accumulation.gridded_residual_samples += 1;
+            let (buckets, block_accumulation) =
+                StandardMfsBlockTileBuckets::build_for_residual_refresh(
+                    self.gridder,
+                    &self.partition,
+                    batch,
+                )?;
+            accumulation.add_residual(block_accumulation);
+            self.accumulate_residual_block(
+                batch,
+                &buckets,
+                model_grid,
+                &mut cache,
+                &mut accumulation,
+            )?;
+            if standard_mfs_per_block_flush_enabled() {
+                cache.flush_all();
             }
         }
         cache.flush_all();
         Ok(accumulation)
+    }
+
+    fn accumulate_residual_block(
+        &self,
+        batch: &VisibilityBatch,
+        buckets: &StandardMfsBlockTileBuckets,
+        model_grid: Option<&Array2<Complex32>>,
+        cache: &mut ResidualTileCache<'_, '_>,
+        accumulation: &mut StandardMfsTiledResidualAccumulation,
+    ) -> Result<(), ImagingError> {
+        let tasks = buckets.tile_tasks_descending();
+        let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
+        let started = Instant::now();
+        if worker_count <= 1 || tasks.len() <= 1 {
+            for task in &tasks {
+                let (buffer, gridded_samples) =
+                    self.grid_residual_tile_task(batch, buckets, model_grid, task.tile_id)?;
+                merge_residual_tile_buffer_into_cache(cache, buffer)?;
+                accumulation.gridded_residual_samples += gridded_samples;
+            }
+            log_tiled_scheduler_block("residual", worker_count, &tasks, started.elapsed(), 0, 0);
+            return Ok(());
+        }
+
+        let next_task = AtomicUsize::new(0);
+        let mut outputs = Vec::<Vec<(ResidualTileBuffer, usize)>>::new();
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(worker_count);
+            for _ in 0..worker_count {
+                handles.push(scope.spawn(|| {
+                    let mut worker_outputs = Vec::<(ResidualTileBuffer, usize)>::new();
+                    loop {
+                        let task_index = next_task.fetch_add(1, Ordering::Relaxed);
+                        let Some(task) = tasks.get(task_index) else {
+                            break;
+                        };
+                        worker_outputs.push(self.grid_residual_tile_task(
+                            batch,
+                            buckets,
+                            model_grid,
+                            task.tile_id,
+                        )?);
+                    }
+                    Ok::<_, ImagingError>(worker_outputs)
+                }));
+            }
+            for handle in handles {
+                outputs.push(handle.join().map_err(|_| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS tiled residual worker panicked".to_string(),
+                    )
+                })??);
+            }
+            Ok::<_, ImagingError>(())
+        })?;
+
+        let merge_started = Instant::now();
+        let mut merged = outputs.into_iter().flatten().collect::<Vec<_>>();
+        merged.sort_unstable_by_key(|(buffer, _)| buffer.id);
+        let merged_count = merged.len();
+        for (buffer, gridded_samples) in merged {
+            merge_residual_tile_buffer_into_cache(cache, buffer)?;
+            accumulation.gridded_residual_samples += gridded_samples;
+        }
+        log_tiled_scheduler_block(
+            "residual",
+            worker_count,
+            &tasks,
+            started.elapsed(),
+            merge_started.elapsed().as_micros() as u64,
+            merged_count,
+        );
+        Ok(())
+    }
+
+    fn grid_residual_tile_task(
+        &self,
+        batch: &VisibilityBatch,
+        buckets: &StandardMfsBlockTileBuckets,
+        model_grid: Option<&Array2<Complex32>>,
+        tile_id: StandardMfsTileId,
+    ) -> Result<(ResidualTileBuffer, usize), ImagingError> {
+        let tile = self.partition.tile(tile_id).ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "standard MFS tile id {} is out of range",
+                tile_id.index()
+            ))
+        })?;
+        let offset = tile_offset(tile);
+        let mut buffer = ResidualTileBuffer {
+            id: tile_id,
+            residual_grid: Array2::zeros((tile.halo.width(), tile.halo.height())),
+        };
+        let mut gridded_samples = 0usize;
+        for sample in buckets.tile_samples(tile_id) {
+            let sample_index = sample.sample_index as usize;
+            let taps = self
+                .gridder
+                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS tiled residual bucket lost its tap plan".to_string(),
+                    )
+                })?;
+            debug_assert_eq!(
+                taps.center(),
+                [sample.center_x as usize, sample.center_y as usize]
+            );
+            let observed_visibility = batch.visibility[sample_index];
+            let residual_weight = f64::from(sample.grid_weight);
+            if let Some(model_grid) = model_grid {
+                self.gridder
+                    .degrid_model_and_grid_residual_taps_planned_f64_with_residual_offset(
+                        model_grid,
+                        &mut buffer.residual_grid,
+                        &taps,
+                        observed_visibility,
+                        residual_weight,
+                        offset,
+                    );
+            } else {
+                let residual = Complex64::new(
+                    f64::from(observed_visibility.re) * residual_weight,
+                    f64::from(observed_visibility.im) * residual_weight,
+                );
+                self.gridder.grid_sample_taps_planned_f64_with_offset(
+                    &mut buffer.residual_grid,
+                    &taps,
+                    residual,
+                    offset,
+                );
+            }
+            gridded_samples += 1;
+        }
+        Ok((buffer, gridded_samples))
     }
 }
 
@@ -970,13 +1741,7 @@ impl<'a> StandardMfsMetalExecutor<'a> {
         gridder: &'a StandardGridder,
         _resident_bytes: Option<usize>,
     ) -> Result<Self, ImagingError> {
-        let grid_shape = gridder.grid_shape();
-        let tile_edge = standard_mfs_tile_edge().min(grid_shape[0].max(grid_shape[1]));
-        let partition = StandardMfsFixedTilePartition::new(
-            grid_shape,
-            [tile_edge, tile_edge],
-            gridder.positive_tap_halo(),
-        )?;
+        let partition = standard_mfs_tile_partition_for_gridder(gridder)?;
         Ok(Self {
             gridder,
             partition,
@@ -1715,6 +2480,76 @@ fn add_tile_grid(
     }
 }
 
+fn merge_dirty_tile_buffer_into_cache(
+    cache: &mut DirtyTileCache<'_, '_>,
+    buffer: DirtyTileBuffer,
+) -> Result<(), ImagingError> {
+    let target = cache.acquire(buffer.id)?;
+    add_same_shape_grid(&buffer.psf_grid, &mut target.psf_grid);
+    add_same_shape_grid(&buffer.residual_grid, &mut target.residual_grid);
+    Ok(())
+}
+
+fn merge_psf_tile_buffer_into_cache(
+    cache: &mut PsfTileCache<'_, '_>,
+    buffer: PsfTileBuffer,
+) -> Result<(), ImagingError> {
+    let target = cache.acquire(buffer.id)?;
+    add_same_shape_grid(&buffer.psf_grid, &mut target.psf_grid);
+    Ok(())
+}
+
+fn merge_residual_tile_buffer_into_cache(
+    cache: &mut ResidualTileCache<'_, '_>,
+    buffer: ResidualTileBuffer,
+) -> Result<(), ImagingError> {
+    let target = cache.acquire(buffer.id)?;
+    add_same_shape_grid(&buffer.residual_grid, &mut target.residual_grid);
+    Ok(())
+}
+
+fn add_same_shape_grid(source: &Array2<Complex64>, target: &mut Array2<Complex64>) {
+    debug_assert_eq!(source.raw_dim(), target.raw_dim());
+    for (target_cell, source_cell) in target.iter_mut().zip(source.iter()) {
+        *target_cell += *source_cell;
+    }
+}
+
+fn log_tiled_scheduler_block(
+    stage: &str,
+    worker_count: usize,
+    tasks: &[StandardMfsTileTask],
+    elapsed: std::time::Duration,
+    merge_us: u64,
+    merged_tiles: usize,
+) {
+    if !profile::standard_mfs_profile_detail_enabled() {
+        return;
+    }
+    let sample_counts = tasks
+        .iter()
+        .map(|task| task.sample_count)
+        .collect::<Vec<_>>();
+    let tap_visits = tasks
+        .iter()
+        .map(|task| task.estimated_tap_visits)
+        .collect::<Vec<_>>();
+    eprintln!(
+        "standard_mfs_parallel_stage stage={} requested_threads={} actual_threads={} max_live_row_blocks=1 task_count={} samples={} tap_visits={} task_samples={} task_tap_visits={} worker_compute_ms={:.3} merge_ms={:.3} merged_tiles={} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0",
+        stage,
+        standard_mfs_grid_threads(),
+        worker_count,
+        tasks.len(),
+        sample_counts.iter().sum::<usize>(),
+        tap_visits.iter().sum::<usize>(),
+        stats_triplet(&sample_counts),
+        stats_triplet(&tap_visits),
+        profile::millis(elapsed),
+        merge_us as f64 / 1000.0,
+        merged_tiles,
+    );
+}
+
 impl<'a> StandardMfsCpuExecutor<'a> {
     /// Build a CPU executor over weighted standard-gridder visibility batches.
     pub(crate) fn new(
@@ -2231,6 +3066,7 @@ mod tests {
         assert!(tile0[0].finite_visibility());
         assert!(!tile0[0].psf_only());
         assert_eq!(tile0[0].grid_weight, 1.0);
+        assert_eq!(tile0[0].tap_count, 49);
 
         let tile3 = buckets.tile_samples(StandardMfsTileId(3));
         assert_eq!(tile3.len(), 2);
@@ -2240,13 +3076,80 @@ mod tests {
         assert!(!tile3[0].finite_visibility());
         assert!(tile3[0].psf_only());
         assert_eq!(tile3[0].grid_weight, 4.0);
+        assert_eq!(tile3[0].tap_count, 49);
         assert_eq!(tile3[1].sample_index, 3);
         assert_eq!((tile3[1].center_x, tile3[1].center_y), (24, 24));
         assert_eq!(tile3[1].grid_weight, 12.0);
+        assert_eq!(tile3[1].tap_count, 49);
 
         assert!(
             buckets.estimated_bytes() < 3 * std::mem::size_of::<super::StandardMfsPlannedSample>(),
             "bucket records should stay smaller than retained planned samples"
+        );
+    }
+
+    #[test]
+    fn fixed_tile_partition_supports_center_boundary_origin() {
+        let partition =
+            StandardMfsFixedTilePartition::new_with_origin([65, 65], [16, 16], 3, [1, 1], "test")
+                .unwrap();
+
+        assert_eq!(partition.tile_origin(), [1, 1]);
+        assert_eq!(partition.tile_count(), 25);
+        assert_eq!(partition.owner(0, 0), Some(StandardMfsTileId(0)));
+        assert_eq!(partition.owner(1, 1), Some(StandardMfsTileId(6)));
+        assert_eq!(partition.owner(16, 16), Some(StandardMfsTileId(6)));
+        assert_eq!(partition.owner(17, 17), Some(StandardMfsTileId(12)));
+        assert_eq!(partition.owner(64, 64), Some(StandardMfsTileId(24)));
+
+        let first = partition.tile(StandardMfsTileId(0)).unwrap();
+        assert_eq!(first.interior.x0, 0);
+        assert_eq!(first.interior.x1, 1);
+        assert_eq!(first.interior.y0, 0);
+        assert_eq!(first.interior.y1, 1);
+
+        let center = partition.tile(StandardMfsTileId(12)).unwrap();
+        assert_eq!(center.interior.x0, 17);
+        assert_eq!(center.interior.x1, 33);
+        assert_eq!(center.interior.y0, 17);
+        assert_eq!(center.interior.y1, 33);
+    }
+
+    #[test]
+    fn fixed_tile_partition_origin_zero_has_no_empty_leading_tile() {
+        let partition =
+            StandardMfsFixedTilePartition::new_with_origin([64, 64], [16, 16], 3, [0, 0], "test")
+                .unwrap();
+
+        assert_eq!(partition.tile_count(), 16);
+        assert_eq!(partition.owner(0, 0), Some(StandardMfsTileId(0)));
+        assert_eq!(partition.owner(15, 15), Some(StandardMfsTileId(0)));
+        assert_eq!(partition.owner(16, 0), Some(StandardMfsTileId(4)));
+        assert_eq!(partition.owner(0, 16), Some(StandardMfsTileId(1)));
+
+        let first = partition.tile(StandardMfsTileId(0)).unwrap();
+        assert_eq!(first.interior.x0, 0);
+        assert_eq!(first.interior.x1, 16);
+        assert_eq!(first.interior.y0, 0);
+        assert_eq!(first.interior.y1, 16);
+    }
+
+    #[test]
+    fn center_boundary_partition_uses_gridder_tap_center() {
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let gridder = StandardGridder::new_unpadded(geometry).unwrap();
+        let center = gridder.positive_tap_grid_center();
+        let partition =
+            StandardMfsFixedTilePartition::new_center_boundary(&gridder, [16, 16], 3).unwrap();
+
+        assert_eq!(center, [16, 16]);
+        assert_eq!(partition.tile_origin(), [0, 0]);
+        assert_eq!(
+            partition.owner(center[0], center[1]),
+            Some(StandardMfsTileId(3))
         );
     }
 

@@ -138,6 +138,17 @@ pub struct StandardMfsExecutionConfig {
     /// halo geometry. `CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT` remains an
     /// explicit debug override.
     pub fixed_tile_resident_bytes: Option<usize>,
+    /// Optional fixed-tile interior edge selected by the frontend memory planner.
+    ///
+    /// `CASA_RS_STANDARD_MFS_TILE_EDGE` remains the explicit debug override.
+    pub fixed_tile_edge: Option<usize>,
+    /// Use the gridder-center boundary anchor when no tile-anchor env override is set.
+    pub fixed_tile_center_boundary: bool,
+    /// Maximum prepared row blocks the tiled scheduler may keep live.
+    ///
+    /// The first bounded scheduler uses one live row block; later read-ahead
+    /// must be explicitly represented here and in the memory plan.
+    pub fixed_tile_max_live_row_blocks: usize,
 }
 
 /// Metadata for streaming natural-weighted standard MFS dirty accumulation.
@@ -5562,10 +5573,8 @@ fn compute_psf_standard_tiled(
     let mut timings = PsfComputationTimings::default();
     let [nx, ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
-    let executor = StandardMfsTiledCpuExecutor::new_with_resident_bytes(
-        gridder,
-        execution_config.fixed_tile_resident_bytes,
-    )?;
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
 
     let grid_started = Instant::now();
     let accumulation = executor.accumulate_psf_grid(batches, &mut psf_grid)?;
@@ -5818,10 +5827,8 @@ fn compute_dirty_psf_and_residual_standard_tiled(
     let [nx, ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
     let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
-    let executor = StandardMfsTiledCpuExecutor::new_with_resident_bytes(
-        gridder,
-        execution_config.fixed_tile_resident_bytes,
-    )?;
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
 
     let grid_started = Instant::now();
     let accumulation =
@@ -6405,10 +6412,8 @@ fn compute_residual_standard_tiled(
     };
 
     let degrid_grid_started = Instant::now();
-    let executor = StandardMfsTiledCpuExecutor::new_with_resident_bytes(
-        gridder,
-        execution_config.fixed_tile_resident_bytes,
-    )?;
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
     let counts =
         executor.accumulate_residual_grid(batches, model_grid.as_ref(), &mut residual_grid)?;
     timings.degrid_grid = degrid_grid_started.elapsed();

@@ -33,6 +33,9 @@ Implementation checkpoint:
 Environment flag: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
 Resident tile budget: central standard-MFS memory plan, with optional CASA_RS_STANDARD_MFS_TILE_RESIDENT_MB override
 Debug resident tile limit: CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=<count>
+Tile edge override: CASA_RS_STANDARD_MFS_TILE_EDGE=<pixels>
+Tile anchor override: CASA_RS_STANDARD_MFS_TILE_ANCHOR=zero|center_boundary
+Debug flush override: CASA_RS_STANDARD_MFS_TILE_FLUSH=per_block
 Status: core backend correctness checkpoint, not a performance claim
 Coverage: standard-MFS PSF/dirty and residual refresh through fixed halo tiles
 Fallback: default standard-MFS executor and streaming paths remain unchanged
@@ -131,17 +134,24 @@ The default lifecycle is:
 1. Read one bounded row block.
 2. Prepare only that block.
 3. Route accepted samples into per-block tile buckets.
-4. Acquire each touched tile from a memory-bounded resident tile cache.
-5. Grid the bucket into the resident halo-padded tile buffer.
-6. Drop the bucket and row block.
-7. Keep tile buffers resident across row blocks while budget permits.
-8. On deterministic eviction, stage boundary, or memory pressure, merge the full
+4. Build one task per nonempty tile and sort by estimated tap visits.
+5. Dispatch tasks to a bounded worker pool for the current row block.
+6. Merge task-local tile buffers into resident halo-padded tile buffers.
+7. Drop the bucket and row block.
+8. Keep tile buffers resident across row blocks while budget permits.
+9. On deterministic eviction, stage boundary, or memory pressure, merge the full
    halo-padded tile buffer into the global grid and clear or free it.
 ```
 
 For MFS, the scheduler may choose all fixed tiles resident for a stage when the
 central memory plan allows it. For cubes, the same abstraction must become a
 bounded tile/slab working set.
+
+The first scheduler uses `max_live_row_blocks=1`. Any read-ahead greater than
+one must first reserve memory credits for live row blocks, bucket records,
+queued task metadata, active-tile bookkeeping, and oldest-block drain behavior.
+Workers must skip or postpone active-tile tasks rather than blocking behind
+them; queue depth two and hot-tile splitting remain data-gated follow-ups.
 
 ## Exactness Policy
 
@@ -171,6 +181,22 @@ convolution footprint into its halo-padded local buffer. Flushes must add every
 valid cell in the halo-padded extent into the global stage grid, clipped to the
 global grid bounds. Merging only tile interiors is incorrect because a sample
 owned by tile A may write taps into cells that lie inside tile B's interior.
+
+The center-boundary anchor is a load-balance heuristic, not a correctness
+requirement. When enabled, the tile origin is computed from the standard
+gridder's actual integer zero/tap-center coordinate modulo the tile edge. If
+that modulo is zero, the partition does not create an empty leading tile. The
+diagnostic path records the gridder center, tile origin, near-origin integer
+tap-center counts, UV-quadrant owner distribution, and per-row-block tile
+distribution so the heuristic is verified against the discrete gridder
+convention rather than inferred from physical UV arguments alone.
+
+The memory planner owns the default tile-size choice. Explicit
+`CASA_RS_STANDARD_MFS_TILE_EDGE` still wins, but the planner may prefer `64`
+when image size or memory budget makes all-resident `32` tiles too expensive.
+For smaller standard-MFS fixed-tile runs, `32` is the first serious scheduling
+candidate because it splits the central UV concentration into many more ready
+tasks than the previous coarse `256` decomposition.
 
 ## Bucket Contract
 
