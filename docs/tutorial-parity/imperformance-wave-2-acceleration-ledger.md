@@ -58,6 +58,33 @@ CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT
 cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib
 ```
 
+Full-shape fixed-tile timing was not accepted as a candidate result. The first
+low-overhead edge-64 center-boundary run completed but regressed enough to make
+the next action instrumentation rather than tile-size experimentation:
+
+```text
+Artifact: target/imperformance-wave2/fine-tile-full-shape-20260521/full-shape-10w-edge64-center-timing.log
+Workload: 512 channels, imsize 2048, niter=2, minor-cycle-length=2, 10 workers
+Frontend total: 1560.380s
+Core total: 1465.817s
+Weighting: 111.100s
+PSF grid: 418.877s
+Residual degrid/grid: 819.805s
+Major-cycle refresh: 401.599s
+Decision: rejected as a performance candidate; use only as evidence that tiled scheduler attribution was missing
+```
+
+Two profiling attempts before this were also rejected as evidence: the
+full-stage tile-bucket probe is too large for the full-shape run, and
+`CASA_RS_STANDARD_MFS_PROFILE_DETAIL=1` emitted one tiled scheduler line per row
+block, producing more than 16,000 block lines for the full-shape workload. The
+profile contract is now changed so `CASA_RS_STANDARD_MFS_PROFILE_DETAIL=1`
+emits aggregate `standard_mfs_tile_scheduler_summary` lines, while per-block
+lines require `CASA_RS_STANDARD_MFS_PROFILE_BLOCK_DETAIL=1`. The aggregate
+summary records task count, per-block task/sample/tap quantiles, bucket build
+time, tile-buffer zero time, worker replan/grid time, merge time, flush and
+eviction counts, resident tile limit, and stage wall time.
+
 ## Metal Preview Backend Track
 
 The Metal gridding experiment from `codex/metal-experiments` is now part of the

@@ -4,7 +4,7 @@
 use std::{
     collections::BTreeMap,
     sync::atomic::{AtomicUsize, Ordering},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use ndarray::Array2;
@@ -996,6 +996,36 @@ fn stats_triplet(values: &[usize]) -> String {
     )
 }
 
+fn percentile_sorted_duration(sorted: &[Duration], percentile: f64) -> Duration {
+    debug_assert!(!sorted.is_empty());
+    let rank = ((sorted.len() - 1) as f64 * percentile).ceil() as usize;
+    sorted[rank.min(sorted.len() - 1)]
+}
+
+fn duration_stats_triplet(values: &[Duration]) -> String {
+    if values.is_empty() {
+        return "p50_ms:0.000,p90_ms:0.000,p99_ms:0.000,max_ms:0.000".to_string();
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    format!(
+        "p50_ms:{:.3},p90_ms:{:.3},p99_ms:{:.3},max_ms:{:.3}",
+        profile::millis(percentile_sorted_duration(&sorted, 0.50)),
+        profile::millis(percentile_sorted_duration(&sorted, 0.90)),
+        profile::millis(percentile_sorted_duration(&sorted, 0.99)),
+        profile::millis(sorted.last().copied().unwrap_or(Duration::ZERO))
+    )
+}
+
+fn duration_total_ms(values: &[Duration]) -> f64 {
+    profile::millis(
+        values
+            .iter()
+            .copied()
+            .fold(Duration::ZERO, |total, value| total + value),
+    )
+}
+
 fn gini_sorted_usize(sorted: &[usize], total: usize) -> f64 {
     if sorted.is_empty() || total == 0 {
         return 0.0;
@@ -1183,6 +1213,222 @@ impl StandardMfsTiledResidualAccumulation {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct StandardMfsTileTaskTiming {
+    local_alloc_zero: Duration,
+    worker_replan_grid: Duration,
+}
+
+impl StandardMfsTileTaskTiming {
+    fn add(&mut self, other: Self) {
+        self.local_alloc_zero += other.local_alloc_zero;
+        self.worker_replan_grid += other.worker_replan_grid;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct StandardMfsTileSchedulerBlockProfile {
+    requested_threads: usize,
+    actual_threads: usize,
+    task_count: usize,
+    sample_count: usize,
+    tap_visits: usize,
+    largest_task_samples: usize,
+    largest_task_tap_visits: usize,
+    bucket_bytes: usize,
+    bucket_build: Duration,
+    local_alloc_zero: Duration,
+    worker_replan_grid: Duration,
+    block_wall: Duration,
+    merge: Duration,
+    merged_tiles: usize,
+}
+
+struct StandardMfsTileSchedulerBlockInputs<'a> {
+    worker_count: usize,
+    tasks: &'a [StandardMfsTileTask],
+    buckets: &'a StandardMfsBlockTileBuckets,
+    bucket_build: Duration,
+    task_timing: StandardMfsTileTaskTiming,
+    block_wall: Duration,
+    merge: Duration,
+    merged_tiles: usize,
+}
+
+#[derive(Debug)]
+struct StandardMfsTileSchedulerStageProfile {
+    stage: &'static str,
+    tile_count: usize,
+    tile_shape: [usize; 2],
+    tile_origin: [usize; 2],
+    tile_anchor: &'static str,
+    resident_tile_limit: usize,
+    blocks: Vec<StandardMfsTileSchedulerBlockProfile>,
+    flush_duration: Duration,
+    tile_flush_count: usize,
+    tile_eviction_count: usize,
+    started_at: Instant,
+}
+
+impl StandardMfsTileSchedulerStageProfile {
+    fn new(
+        stage: &'static str,
+        partition: &StandardMfsFixedTilePartition,
+        resident_tile_limit: usize,
+    ) -> Self {
+        Self {
+            stage,
+            tile_count: partition.tile_count(),
+            tile_shape: partition.tile_shape(),
+            tile_origin: partition.tile_origin(),
+            tile_anchor: partition.anchor_label(),
+            resident_tile_limit,
+            blocks: Vec::new(),
+            flush_duration: Duration::ZERO,
+            tile_flush_count: 0,
+            tile_eviction_count: 0,
+            started_at: Instant::now(),
+        }
+    }
+
+    fn record(&mut self, block: StandardMfsTileSchedulerBlockProfile) {
+        if profile::standard_mfs_profile_block_detail_enabled() {
+            log_tiled_scheduler_block(self.stage, block);
+        }
+        self.blocks.push(block);
+    }
+
+    fn add_flush_duration(&mut self, duration: Duration) {
+        self.flush_duration += duration;
+    }
+
+    fn set_cache_counters(&mut self, tile_flush_count: usize, tile_eviction_count: usize) {
+        self.tile_flush_count = tile_flush_count;
+        self.tile_eviction_count = tile_eviction_count;
+    }
+
+    fn log(&self) {
+        if !profile::standard_mfs_profile_detail_enabled() {
+            return;
+        }
+        let requested_threads = self
+            .blocks
+            .iter()
+            .map(|block| block.requested_threads)
+            .max()
+            .unwrap_or_else(standard_mfs_grid_threads);
+        let actual_threads = self
+            .blocks
+            .iter()
+            .map(|block| block.actual_threads)
+            .collect::<Vec<_>>();
+        let task_counts = self
+            .blocks
+            .iter()
+            .map(|block| block.task_count)
+            .collect::<Vec<_>>();
+        let sample_counts = self
+            .blocks
+            .iter()
+            .map(|block| block.sample_count)
+            .collect::<Vec<_>>();
+        let tap_visits = self
+            .blocks
+            .iter()
+            .map(|block| block.tap_visits)
+            .collect::<Vec<_>>();
+        let largest_task_samples = self
+            .blocks
+            .iter()
+            .map(|block| block.largest_task_samples)
+            .collect::<Vec<_>>();
+        let largest_task_tap_visits = self
+            .blocks
+            .iter()
+            .map(|block| block.largest_task_tap_visits)
+            .collect::<Vec<_>>();
+        let bucket_build = self
+            .blocks
+            .iter()
+            .map(|block| block.bucket_build)
+            .collect::<Vec<_>>();
+        let local_alloc_zero = self
+            .blocks
+            .iter()
+            .map(|block| block.local_alloc_zero)
+            .collect::<Vec<_>>();
+        let worker_replan_grid = self
+            .blocks
+            .iter()
+            .map(|block| block.worker_replan_grid)
+            .collect::<Vec<_>>();
+        let block_wall = self
+            .blocks
+            .iter()
+            .map(|block| block.block_wall)
+            .collect::<Vec<_>>();
+        let merge = self
+            .blocks
+            .iter()
+            .map(|block| block.merge)
+            .collect::<Vec<_>>();
+        let samples_total = sample_counts.iter().sum::<usize>();
+        let tap_visits_total = tap_visits.iter().sum::<usize>();
+        let bucket_bytes_max = self
+            .blocks
+            .iter()
+            .map(|block| block.bucket_bytes)
+            .max()
+            .unwrap_or(0);
+        let bucket_bytes_total = self
+            .blocks
+            .iter()
+            .map(|block| block.bucket_bytes)
+            .sum::<usize>();
+        eprintln!(
+            "standard_mfs_tile_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} resident_tile_limit={} max_live_row_blocks=1 block_count={} task_count={} samples_total={} tap_visits_total={} task_samples={} task_tap_visits={} largest_task_samples={} largest_task_tap_visits={} bucket_bytes_total={} bucket_bytes_max={} bucket_build_total_ms={:.3} bucket_build={} local_alloc_zero_total_ms={:.3} local_alloc_zero={} worker_replan_grid_total_ms={:.3} worker_replan_grid={} block_wall_total_ms={:.3} block_wall={} merge_total_ms={:.3} merge={} tile_flush_ms={:.3} tile_flush_count={} tile_eviction_count={} merged_tiles={} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0 stage_total_ms={:.3}",
+            self.stage,
+            requested_threads,
+            stats_triplet(&actual_threads),
+            self.tile_shape[0],
+            self.tile_shape[1],
+            self.tile_anchor,
+            self.tile_origin[0],
+            self.tile_origin[1],
+            self.tile_count,
+            self.resident_tile_limit,
+            self.blocks.len(),
+            task_counts.iter().sum::<usize>(),
+            samples_total,
+            tap_visits_total,
+            stats_triplet(&sample_counts),
+            stats_triplet(&tap_visits),
+            stats_triplet(&largest_task_samples),
+            stats_triplet(&largest_task_tap_visits),
+            bucket_bytes_total,
+            bucket_bytes_max,
+            duration_total_ms(&bucket_build),
+            duration_stats_triplet(&bucket_build),
+            duration_total_ms(&local_alloc_zero),
+            duration_stats_triplet(&local_alloc_zero),
+            duration_total_ms(&worker_replan_grid),
+            duration_stats_triplet(&worker_replan_grid),
+            duration_total_ms(&block_wall),
+            duration_stats_triplet(&block_wall),
+            duration_total_ms(&merge),
+            duration_stats_triplet(&merge),
+            profile::millis(self.flush_duration),
+            self.tile_flush_count,
+            self.tile_eviction_count,
+            self.blocks
+                .iter()
+                .map(|block| block.merged_tiles)
+                .sum::<usize>(),
+            profile::millis(self.started_at.elapsed()),
+        );
+    }
+}
+
 impl<'a> StandardMfsTiledCpuExecutor<'a> {
     pub(crate) fn new_with_execution_config(
         gridder: &'a StandardGridder,
@@ -1222,6 +1468,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             psf_grid,
             residual_grid,
         );
+        let mut scheduler_profile = StandardMfsTileSchedulerStageProfile::new(
+            "dirty",
+            &self.partition,
+            self.resident_tile_limit,
+        );
 
         for batch in batches {
             batch.validate()?;
@@ -1231,18 +1482,33 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 .fold(accumulation.max_abs_w_lambda, |max_value, value| {
                     max_value.max(value.abs())
                 });
+            let bucket_started = Instant::now();
             let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
                 self.gridder,
                 &self.partition,
                 std::slice::from_ref(batch),
             )?;
+            let bucket_build = bucket_started.elapsed();
             accumulation.skipped_samples += buckets.skipped_samples();
-            self.accumulate_dirty_block(batch, &buckets, &mut cache, &mut accumulation)?;
+            let block_profile = self.accumulate_dirty_block(
+                batch,
+                &buckets,
+                &mut cache,
+                &mut accumulation,
+                bucket_build,
+            )?;
+            scheduler_profile.record(block_profile);
             if standard_mfs_per_block_flush_enabled() {
+                let flush_started = Instant::now();
                 cache.flush_all();
+                scheduler_profile.add_flush_duration(flush_started.elapsed());
             }
         }
+        let flush_started = Instant::now();
         cache.flush_all();
+        scheduler_profile.add_flush_duration(flush_started.elapsed());
+        scheduler_profile.set_cache_counters(cache.flushed_tiles(), cache.evicted_tiles());
+        scheduler_profile.log();
         Ok(accumulation)
     }
 
@@ -1260,6 +1526,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             max_abs_w_lambda: 0.0,
         };
         let mut cache = PsfTileCache::new(&self.partition, self.resident_tile_limit, psf_grid);
+        let mut scheduler_profile = StandardMfsTileSchedulerStageProfile::new(
+            "psf",
+            &self.partition,
+            self.resident_tile_limit,
+        );
 
         for batch in batches {
             batch.validate()?;
@@ -1269,18 +1540,33 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 .fold(accumulation.max_abs_w_lambda, |max_value, value| {
                     max_value.max(value.abs())
                 });
+            let bucket_started = Instant::now();
             let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
                 self.gridder,
                 &self.partition,
                 std::slice::from_ref(batch),
             )?;
+            let bucket_build = bucket_started.elapsed();
             accumulation.skipped_samples += buckets.skipped_samples();
-            self.accumulate_psf_block(batch, &buckets, &mut cache, &mut accumulation)?;
+            let block_profile = self.accumulate_psf_block(
+                batch,
+                &buckets,
+                &mut cache,
+                &mut accumulation,
+                bucket_build,
+            )?;
+            scheduler_profile.record(block_profile);
             if standard_mfs_per_block_flush_enabled() {
+                let flush_started = Instant::now();
                 cache.flush_all();
+                scheduler_profile.add_flush_duration(flush_started.elapsed());
             }
         }
+        let flush_started = Instant::now();
         cache.flush_all();
+        scheduler_profile.add_flush_duration(flush_started.elapsed());
+        scheduler_profile.set_cache_counters(cache.flushed_tiles(), cache.evicted_tiles());
+        scheduler_profile.log();
         Ok(accumulation)
     }
 
@@ -1290,29 +1576,56 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         buckets: &StandardMfsBlockTileBuckets,
         cache: &mut DirtyTileCache<'_, '_>,
         accumulation: &mut StandardMfsDirtyAccumulation,
-    ) -> Result<(), ImagingError> {
+        bucket_build: Duration,
+    ) -> Result<StandardMfsTileSchedulerBlockProfile, ImagingError> {
         let tasks = buckets.tile_tasks_descending();
         let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
         let started = Instant::now();
         if worker_count <= 1 || tasks.len() <= 1 {
+            let mut task_timing = StandardMfsTileTaskTiming::default();
+            let mut merge_duration = Duration::ZERO;
+            let mut merged_count = 0usize;
             for task in &tasks {
-                let (buffer, task_accumulation) =
+                let (buffer, task_accumulation, timing) =
                     self.grid_dirty_tile_task(batch, buckets, task.tile_id)?;
+                let merge_started = Instant::now();
                 merge_dirty_tile_buffer_into_cache(cache, buffer)?;
+                merge_duration += merge_started.elapsed();
                 accumulation.add(task_accumulation);
+                task_timing.add(timing);
+                merged_count += 1;
             }
-            log_tiled_scheduler_block("dirty", worker_count, &tasks, started.elapsed(), 0, 0);
-            return Ok(());
+            return Ok(tiled_scheduler_block_profile(
+                StandardMfsTileSchedulerBlockInputs {
+                    worker_count,
+                    tasks: &tasks,
+                    buckets,
+                    bucket_build,
+                    task_timing,
+                    block_wall: started.elapsed(),
+                    merge: merge_duration,
+                    merged_tiles: merged_count,
+                },
+            ));
         }
 
         let next_task = AtomicUsize::new(0);
-        let mut outputs = Vec::<Vec<(DirtyTileBuffer, StandardMfsDirtyAccumulation)>>::new();
+        let mut outputs = Vec::<
+            Vec<(
+                DirtyTileBuffer,
+                StandardMfsDirtyAccumulation,
+                StandardMfsTileTaskTiming,
+            )>,
+        >::new();
         std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(worker_count);
             for _ in 0..worker_count {
                 handles.push(scope.spawn(|| {
-                    let mut worker_outputs =
-                        Vec::<(DirtyTileBuffer, StandardMfsDirtyAccumulation)>::new();
+                    let mut worker_outputs = Vec::<(
+                        DirtyTileBuffer,
+                        StandardMfsDirtyAccumulation,
+                        StandardMfsTileTaskTiming,
+                    )>::new();
                     loop {
                         let task_index = next_task.fetch_add(1, Ordering::Relaxed);
                         let Some(task) = tasks.get(task_index) else {
@@ -1339,21 +1652,27 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
 
         let merge_started = Instant::now();
         let mut merged = outputs.into_iter().flatten().collect::<Vec<_>>();
-        merged.sort_unstable_by_key(|(buffer, _)| buffer.id);
+        merged.sort_unstable_by_key(|(buffer, _, _)| buffer.id);
         let merged_count = merged.len();
-        for (buffer, task_accumulation) in merged {
+        let mut task_timing = StandardMfsTileTaskTiming::default();
+        for (buffer, task_accumulation, timing) in merged {
             merge_dirty_tile_buffer_into_cache(cache, buffer)?;
             accumulation.add(task_accumulation);
+            task_timing.add(timing);
         }
-        log_tiled_scheduler_block(
-            "dirty",
-            worker_count,
-            &tasks,
-            started.elapsed(),
-            merge_started.elapsed().as_micros() as u64,
-            merged_count,
-        );
-        Ok(())
+        let merge_duration = merge_started.elapsed();
+        Ok(tiled_scheduler_block_profile(
+            StandardMfsTileSchedulerBlockInputs {
+                worker_count,
+                tasks: &tasks,
+                buckets,
+                bucket_build,
+                task_timing,
+                block_wall: started.elapsed(),
+                merge: merge_duration,
+                merged_tiles: merged_count,
+            },
+        ))
     }
 
     fn grid_dirty_tile_task(
@@ -1361,7 +1680,14 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         batch: &VisibilityBatch,
         buckets: &StandardMfsBlockTileBuckets,
         tile_id: StandardMfsTileId,
-    ) -> Result<(DirtyTileBuffer, StandardMfsDirtyAccumulation), ImagingError> {
+    ) -> Result<
+        (
+            DirtyTileBuffer,
+            StandardMfsDirtyAccumulation,
+            StandardMfsTileTaskTiming,
+        ),
+        ImagingError,
+    > {
         let tile = self.partition.tile(tile_id).ok_or_else(|| {
             ImagingError::InvalidRequest(format!(
                 "standard MFS tile id {} is out of range",
@@ -1370,11 +1696,14 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         })?;
         let shape = (tile.halo.width(), tile.halo.height());
         let offset = tile_offset(tile);
+        let alloc_started = profile::maybe_profile_now();
         let mut buffer = DirtyTileBuffer {
             id: tile_id,
             psf_grid: Array2::zeros(shape),
             residual_grid: Array2::zeros(shape),
         };
+        let local_alloc_zero = profile::elapsed_since(alloc_started);
+        let worker_started = profile::maybe_profile_now();
         let mut accumulation = StandardMfsDirtyAccumulation {
             normalization_sumwt: 0.0,
             reported_sumwt: 0.0,
@@ -1424,7 +1753,14 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 );
             }
         }
-        Ok((buffer, accumulation))
+        Ok((
+            buffer,
+            accumulation,
+            StandardMfsTileTaskTiming {
+                local_alloc_zero,
+                worker_replan_grid: profile::elapsed_since(worker_started),
+            },
+        ))
     }
 
     fn accumulate_psf_block(
@@ -1433,29 +1769,56 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         buckets: &StandardMfsBlockTileBuckets,
         cache: &mut PsfTileCache<'_, '_>,
         accumulation: &mut StandardMfsDirtyAccumulation,
-    ) -> Result<(), ImagingError> {
+        bucket_build: Duration,
+    ) -> Result<StandardMfsTileSchedulerBlockProfile, ImagingError> {
         let tasks = buckets.tile_tasks_descending();
         let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
         let started = Instant::now();
         if worker_count <= 1 || tasks.len() <= 1 {
+            let mut task_timing = StandardMfsTileTaskTiming::default();
+            let mut merge_duration = Duration::ZERO;
+            let mut merged_count = 0usize;
             for task in &tasks {
-                let (buffer, task_accumulation) =
+                let (buffer, task_accumulation, timing) =
                     self.grid_psf_tile_task(batch, buckets, task.tile_id)?;
+                let merge_started = Instant::now();
                 merge_psf_tile_buffer_into_cache(cache, buffer)?;
+                merge_duration += merge_started.elapsed();
                 accumulation.add(task_accumulation);
+                task_timing.add(timing);
+                merged_count += 1;
             }
-            log_tiled_scheduler_block("psf", worker_count, &tasks, started.elapsed(), 0, 0);
-            return Ok(());
+            return Ok(tiled_scheduler_block_profile(
+                StandardMfsTileSchedulerBlockInputs {
+                    worker_count,
+                    tasks: &tasks,
+                    buckets,
+                    bucket_build,
+                    task_timing,
+                    block_wall: started.elapsed(),
+                    merge: merge_duration,
+                    merged_tiles: merged_count,
+                },
+            ));
         }
 
         let next_task = AtomicUsize::new(0);
-        let mut outputs = Vec::<Vec<(PsfTileBuffer, StandardMfsDirtyAccumulation)>>::new();
+        let mut outputs = Vec::<
+            Vec<(
+                PsfTileBuffer,
+                StandardMfsDirtyAccumulation,
+                StandardMfsTileTaskTiming,
+            )>,
+        >::new();
         std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(worker_count);
             for _ in 0..worker_count {
                 handles.push(scope.spawn(|| {
-                    let mut worker_outputs =
-                        Vec::<(PsfTileBuffer, StandardMfsDirtyAccumulation)>::new();
+                    let mut worker_outputs = Vec::<(
+                        PsfTileBuffer,
+                        StandardMfsDirtyAccumulation,
+                        StandardMfsTileTaskTiming,
+                    )>::new();
                     loop {
                         let task_index = next_task.fetch_add(1, Ordering::Relaxed);
                         let Some(task) = tasks.get(task_index) else {
@@ -1482,21 +1845,27 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
 
         let merge_started = Instant::now();
         let mut merged = outputs.into_iter().flatten().collect::<Vec<_>>();
-        merged.sort_unstable_by_key(|(buffer, _)| buffer.id);
+        merged.sort_unstable_by_key(|(buffer, _, _)| buffer.id);
         let merged_count = merged.len();
-        for (buffer, task_accumulation) in merged {
+        let mut task_timing = StandardMfsTileTaskTiming::default();
+        for (buffer, task_accumulation, timing) in merged {
             merge_psf_tile_buffer_into_cache(cache, buffer)?;
             accumulation.add(task_accumulation);
+            task_timing.add(timing);
         }
-        log_tiled_scheduler_block(
-            "psf",
-            worker_count,
-            &tasks,
-            started.elapsed(),
-            merge_started.elapsed().as_micros() as u64,
-            merged_count,
-        );
-        Ok(())
+        let merge_duration = merge_started.elapsed();
+        Ok(tiled_scheduler_block_profile(
+            StandardMfsTileSchedulerBlockInputs {
+                worker_count,
+                tasks: &tasks,
+                buckets,
+                bucket_build,
+                task_timing,
+                block_wall: started.elapsed(),
+                merge: merge_duration,
+                merged_tiles: merged_count,
+            },
+        ))
     }
 
     fn grid_psf_tile_task(
@@ -1504,7 +1873,14 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         batch: &VisibilityBatch,
         buckets: &StandardMfsBlockTileBuckets,
         tile_id: StandardMfsTileId,
-    ) -> Result<(PsfTileBuffer, StandardMfsDirtyAccumulation), ImagingError> {
+    ) -> Result<
+        (
+            PsfTileBuffer,
+            StandardMfsDirtyAccumulation,
+            StandardMfsTileTaskTiming,
+        ),
+        ImagingError,
+    > {
         let tile = self.partition.tile(tile_id).ok_or_else(|| {
             ImagingError::InvalidRequest(format!(
                 "standard MFS tile id {} is out of range",
@@ -1512,10 +1888,13 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             ))
         })?;
         let offset = tile_offset(tile);
+        let alloc_started = profile::maybe_profile_now();
         let mut buffer = PsfTileBuffer {
             id: tile_id,
             psf_grid: Array2::zeros((tile.halo.width(), tile.halo.height())),
         };
+        let local_alloc_zero = profile::elapsed_since(alloc_started);
+        let worker_started = profile::maybe_profile_now();
         let mut accumulation = StandardMfsDirtyAccumulation {
             normalization_sumwt: 0.0,
             reported_sumwt: 0.0,
@@ -1548,7 +1927,14 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 offset,
             );
         }
-        Ok((buffer, accumulation))
+        Ok((
+            buffer,
+            accumulation,
+            StandardMfsTileTaskTiming {
+                local_alloc_zero,
+                worker_replan_grid: profile::elapsed_since(worker_started),
+            },
+        ))
     }
 
     /// Accumulate a residual-refresh grid through resident halo tiles.
@@ -1561,28 +1947,43 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
         let mut cache =
             ResidualTileCache::new(&self.partition, self.resident_tile_limit, residual_grid);
+        let mut scheduler_profile = StandardMfsTileSchedulerStageProfile::new(
+            "residual",
+            &self.partition,
+            self.resident_tile_limit,
+        );
 
         for batch in batches {
             batch.validate()?;
+            let bucket_started = Instant::now();
             let (buckets, block_accumulation) =
                 StandardMfsBlockTileBuckets::build_for_residual_refresh(
                     self.gridder,
                     &self.partition,
                     batch,
                 )?;
+            let bucket_build = bucket_started.elapsed();
             accumulation.add_residual(block_accumulation);
-            self.accumulate_residual_block(
+            let block_profile = self.accumulate_residual_block(
                 batch,
                 &buckets,
                 model_grid,
                 &mut cache,
                 &mut accumulation,
+                bucket_build,
             )?;
+            scheduler_profile.record(block_profile);
             if standard_mfs_per_block_flush_enabled() {
+                let flush_started = Instant::now();
                 cache.flush_all();
+                scheduler_profile.add_flush_duration(flush_started.elapsed());
             }
         }
+        let flush_started = Instant::now();
         cache.flush_all();
+        scheduler_profile.add_flush_duration(flush_started.elapsed());
+        scheduler_profile.set_cache_counters(cache.flushed_tiles(), cache.evicted_tiles());
+        scheduler_profile.log();
         Ok(accumulation)
     }
 
@@ -1593,28 +1994,47 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         model_grid: Option<&Array2<Complex32>>,
         cache: &mut ResidualTileCache<'_, '_>,
         accumulation: &mut StandardMfsTiledResidualAccumulation,
-    ) -> Result<(), ImagingError> {
+        bucket_build: Duration,
+    ) -> Result<StandardMfsTileSchedulerBlockProfile, ImagingError> {
         let tasks = buckets.tile_tasks_descending();
         let worker_count = standard_mfs_grid_threads().min(tasks.len().max(1));
         let started = Instant::now();
         if worker_count <= 1 || tasks.len() <= 1 {
+            let mut task_timing = StandardMfsTileTaskTiming::default();
+            let mut merge_duration = Duration::ZERO;
+            let mut merged_count = 0usize;
             for task in &tasks {
-                let (buffer, gridded_samples) =
+                let (buffer, gridded_samples, timing) =
                     self.grid_residual_tile_task(batch, buckets, model_grid, task.tile_id)?;
+                let merge_started = Instant::now();
                 merge_residual_tile_buffer_into_cache(cache, buffer)?;
+                merge_duration += merge_started.elapsed();
                 accumulation.gridded_residual_samples += gridded_samples;
+                task_timing.add(timing);
+                merged_count += 1;
             }
-            log_tiled_scheduler_block("residual", worker_count, &tasks, started.elapsed(), 0, 0);
-            return Ok(());
+            return Ok(tiled_scheduler_block_profile(
+                StandardMfsTileSchedulerBlockInputs {
+                    worker_count,
+                    tasks: &tasks,
+                    buckets,
+                    bucket_build,
+                    task_timing,
+                    block_wall: started.elapsed(),
+                    merge: merge_duration,
+                    merged_tiles: merged_count,
+                },
+            ));
         }
 
         let next_task = AtomicUsize::new(0);
-        let mut outputs = Vec::<Vec<(ResidualTileBuffer, usize)>>::new();
+        let mut outputs = Vec::<Vec<(ResidualTileBuffer, usize, StandardMfsTileTaskTiming)>>::new();
         std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(worker_count);
             for _ in 0..worker_count {
                 handles.push(scope.spawn(|| {
-                    let mut worker_outputs = Vec::<(ResidualTileBuffer, usize)>::new();
+                    let mut worker_outputs =
+                        Vec::<(ResidualTileBuffer, usize, StandardMfsTileTaskTiming)>::new();
                     loop {
                         let task_index = next_task.fetch_add(1, Ordering::Relaxed);
                         let Some(task) = tasks.get(task_index) else {
@@ -1642,21 +2062,27 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
 
         let merge_started = Instant::now();
         let mut merged = outputs.into_iter().flatten().collect::<Vec<_>>();
-        merged.sort_unstable_by_key(|(buffer, _)| buffer.id);
+        merged.sort_unstable_by_key(|(buffer, _, _)| buffer.id);
         let merged_count = merged.len();
-        for (buffer, gridded_samples) in merged {
+        let mut task_timing = StandardMfsTileTaskTiming::default();
+        for (buffer, gridded_samples, timing) in merged {
             merge_residual_tile_buffer_into_cache(cache, buffer)?;
             accumulation.gridded_residual_samples += gridded_samples;
+            task_timing.add(timing);
         }
-        log_tiled_scheduler_block(
-            "residual",
-            worker_count,
-            &tasks,
-            started.elapsed(),
-            merge_started.elapsed().as_micros() as u64,
-            merged_count,
-        );
-        Ok(())
+        let merge_duration = merge_started.elapsed();
+        Ok(tiled_scheduler_block_profile(
+            StandardMfsTileSchedulerBlockInputs {
+                worker_count,
+                tasks: &tasks,
+                buckets,
+                bucket_build,
+                task_timing,
+                block_wall: started.elapsed(),
+                merge: merge_duration,
+                merged_tiles: merged_count,
+            },
+        ))
     }
 
     fn grid_residual_tile_task(
@@ -1665,7 +2091,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         buckets: &StandardMfsBlockTileBuckets,
         model_grid: Option<&Array2<Complex32>>,
         tile_id: StandardMfsTileId,
-    ) -> Result<(ResidualTileBuffer, usize), ImagingError> {
+    ) -> Result<(ResidualTileBuffer, usize, StandardMfsTileTaskTiming), ImagingError> {
         let tile = self.partition.tile(tile_id).ok_or_else(|| {
             ImagingError::InvalidRequest(format!(
                 "standard MFS tile id {} is out of range",
@@ -1673,10 +2099,13 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             ))
         })?;
         let offset = tile_offset(tile);
+        let alloc_started = profile::maybe_profile_now();
         let mut buffer = ResidualTileBuffer {
             id: tile_id,
             residual_grid: Array2::zeros((tile.halo.width(), tile.halo.height())),
         };
+        let local_alloc_zero = profile::elapsed_since(alloc_started);
+        let worker_started = profile::maybe_profile_now();
         let mut gridded_samples = 0usize;
         for sample in buckets.tile_samples(tile_id) {
             let sample_index = sample.sample_index as usize;
@@ -1718,7 +2147,14 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             }
             gridded_samples += 1;
         }
-        Ok((buffer, gridded_samples))
+        Ok((
+            buffer,
+            gridded_samples,
+            StandardMfsTileTaskTiming {
+                local_alloc_zero,
+                worker_replan_grid: profile::elapsed_since(worker_started),
+            },
+        ))
     }
 }
 
@@ -2225,6 +2661,8 @@ struct PsfTileCache<'a, 'g> {
     resident_limit: usize,
     global_psf_grid: &'g mut Array2<Complex64>,
     buffers: BTreeMap<StandardMfsTileId, PsfTileBuffer>,
+    flushed_tiles: usize,
+    evicted_tiles: usize,
 }
 
 impl<'a, 'g> PsfTileCache<'a, 'g> {
@@ -2238,6 +2676,8 @@ impl<'a, 'g> PsfTileCache<'a, 'g> {
             resident_limit,
             global_psf_grid,
             buffers: BTreeMap::new(),
+            flushed_tiles: 0,
+            evicted_tiles: 0,
         }
     }
 
@@ -2245,6 +2685,7 @@ impl<'a, 'g> PsfTileCache<'a, 'g> {
         if !self.buffers.contains_key(&id) {
             while self.buffers.len() >= self.resident_limit {
                 self.flush_first();
+                self.evicted_tiles += 1;
             }
             let tile = self.partition.tile(id).ok_or_else(|| {
                 ImagingError::InvalidRequest(format!(
@@ -2272,13 +2713,24 @@ impl<'a, 'g> PsfTileCache<'a, 'g> {
         if let Some((id, buffer)) = self.buffers.pop_first() {
             debug_assert_eq!(id, buffer.id);
             flush_psf_tile(self.partition, buffer, self.global_psf_grid);
+            self.flushed_tiles += 1;
         }
     }
 
-    fn flush_all(&mut self) {
+    fn flush_all(&mut self) -> usize {
+        let before = self.flushed_tiles;
         while !self.buffers.is_empty() {
             self.flush_first();
         }
+        self.flushed_tiles - before
+    }
+
+    fn flushed_tiles(&self) -> usize {
+        self.flushed_tiles
+    }
+
+    fn evicted_tiles(&self) -> usize {
+        self.evicted_tiles
     }
 }
 
@@ -2294,6 +2746,8 @@ struct DirtyTileCache<'a, 'g> {
     global_psf_grid: &'g mut Array2<Complex64>,
     global_residual_grid: &'g mut Array2<Complex64>,
     buffers: BTreeMap<StandardMfsTileId, DirtyTileBuffer>,
+    flushed_tiles: usize,
+    evicted_tiles: usize,
 }
 
 impl<'a, 'g> DirtyTileCache<'a, 'g> {
@@ -2309,6 +2763,8 @@ impl<'a, 'g> DirtyTileCache<'a, 'g> {
             global_psf_grid,
             global_residual_grid,
             buffers: BTreeMap::new(),
+            flushed_tiles: 0,
+            evicted_tiles: 0,
         }
     }
 
@@ -2316,6 +2772,7 @@ impl<'a, 'g> DirtyTileCache<'a, 'g> {
         if !self.buffers.contains_key(&id) {
             while self.buffers.len() >= self.resident_limit {
                 self.flush_first();
+                self.evicted_tiles += 1;
             }
             let tile = self.partition.tile(id).ok_or_else(|| {
                 ImagingError::InvalidRequest(format!(
@@ -2350,13 +2807,24 @@ impl<'a, 'g> DirtyTileCache<'a, 'g> {
                 self.global_psf_grid,
                 self.global_residual_grid,
             );
+            self.flushed_tiles += 1;
         }
     }
 
-    fn flush_all(&mut self) {
+    fn flush_all(&mut self) -> usize {
+        let before = self.flushed_tiles;
         while !self.buffers.is_empty() {
             self.flush_first();
         }
+        self.flushed_tiles - before
+    }
+
+    fn flushed_tiles(&self) -> usize {
+        self.flushed_tiles
+    }
+
+    fn evicted_tiles(&self) -> usize {
+        self.evicted_tiles
     }
 }
 
@@ -2370,6 +2838,8 @@ struct ResidualTileCache<'a, 'g> {
     resident_limit: usize,
     global_residual_grid: &'g mut Array2<Complex64>,
     buffers: BTreeMap<StandardMfsTileId, ResidualTileBuffer>,
+    flushed_tiles: usize,
+    evicted_tiles: usize,
 }
 
 impl<'a, 'g> ResidualTileCache<'a, 'g> {
@@ -2383,6 +2853,8 @@ impl<'a, 'g> ResidualTileCache<'a, 'g> {
             resident_limit,
             global_residual_grid,
             buffers: BTreeMap::new(),
+            flushed_tiles: 0,
+            evicted_tiles: 0,
         }
     }
 
@@ -2390,6 +2862,7 @@ impl<'a, 'g> ResidualTileCache<'a, 'g> {
         if !self.buffers.contains_key(&id) {
             while self.buffers.len() >= self.resident_limit {
                 self.flush_first();
+                self.evicted_tiles += 1;
             }
             let tile = self.partition.tile(id).ok_or_else(|| {
                 ImagingError::InvalidRequest(format!(
@@ -2417,13 +2890,24 @@ impl<'a, 'g> ResidualTileCache<'a, 'g> {
         if let Some((id, buffer)) = self.buffers.pop_first() {
             debug_assert_eq!(id, buffer.id);
             flush_residual_tile(self.partition, buffer, self.global_residual_grid);
+            self.flushed_tiles += 1;
         }
     }
 
-    fn flush_all(&mut self) {
+    fn flush_all(&mut self) -> usize {
+        let before = self.flushed_tiles;
         while !self.buffers.is_empty() {
             self.flush_first();
         }
+        self.flushed_tiles - before
+    }
+
+    fn flushed_tiles(&self) -> usize {
+        self.flushed_tiles
+    }
+
+    fn evicted_tiles(&self) -> usize {
+        self.evicted_tiles
     }
 }
 
@@ -2515,38 +2999,63 @@ fn add_same_shape_grid(source: &Array2<Complex64>, target: &mut Array2<Complex64
     }
 }
 
-fn log_tiled_scheduler_block(
-    stage: &str,
-    worker_count: usize,
-    tasks: &[StandardMfsTileTask],
-    elapsed: std::time::Duration,
-    merge_us: u64,
-    merged_tiles: usize,
-) {
-    if !profile::standard_mfs_profile_detail_enabled() {
-        return;
+fn tiled_scheduler_block_profile(
+    input: StandardMfsTileSchedulerBlockInputs<'_>,
+) -> StandardMfsTileSchedulerBlockProfile {
+    StandardMfsTileSchedulerBlockProfile {
+        requested_threads: standard_mfs_grid_threads(),
+        actual_threads: input.worker_count,
+        task_count: input.tasks.len(),
+        sample_count: input
+            .tasks
+            .iter()
+            .map(|task| task.sample_count)
+            .sum::<usize>(),
+        tap_visits: input
+            .tasks
+            .iter()
+            .map(|task| task.estimated_tap_visits)
+            .sum::<usize>(),
+        largest_task_samples: input
+            .tasks
+            .iter()
+            .map(|task| task.sample_count)
+            .max()
+            .unwrap_or(0),
+        largest_task_tap_visits: input
+            .tasks
+            .iter()
+            .map(|task| task.estimated_tap_visits)
+            .max()
+            .unwrap_or(0),
+        bucket_bytes: input.buckets.estimated_bytes(),
+        bucket_build: input.bucket_build,
+        local_alloc_zero: input.task_timing.local_alloc_zero,
+        worker_replan_grid: input.task_timing.worker_replan_grid,
+        block_wall: input.block_wall,
+        merge: input.merge,
+        merged_tiles: input.merged_tiles,
     }
-    let sample_counts = tasks
-        .iter()
-        .map(|task| task.sample_count)
-        .collect::<Vec<_>>();
-    let tap_visits = tasks
-        .iter()
-        .map(|task| task.estimated_tap_visits)
-        .collect::<Vec<_>>();
+}
+
+fn log_tiled_scheduler_block(stage: &str, block: StandardMfsTileSchedulerBlockProfile) {
     eprintln!(
-        "standard_mfs_parallel_stage stage={} requested_threads={} actual_threads={} max_live_row_blocks=1 task_count={} samples={} tap_visits={} task_samples={} task_tap_visits={} worker_compute_ms={:.3} merge_ms={:.3} merged_tiles={} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0",
+        "standard_mfs_tile_scheduler_block stage={} requested_threads={} actual_threads={} max_live_row_blocks=1 task_count={} samples={} tap_visits={} largest_task_samples={} largest_task_tap_visits={} bucket_bytes={} bucket_build_ms={:.3} local_alloc_zero_ms={:.3} worker_replan_grid_ms={:.3} block_wall_ms={:.3} merge_ms={:.3} merged_tiles={} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0",
         stage,
-        standard_mfs_grid_threads(),
-        worker_count,
-        tasks.len(),
-        sample_counts.iter().sum::<usize>(),
-        tap_visits.iter().sum::<usize>(),
-        stats_triplet(&sample_counts),
-        stats_triplet(&tap_visits),
-        profile::millis(elapsed),
-        merge_us as f64 / 1000.0,
-        merged_tiles,
+        block.requested_threads,
+        block.actual_threads,
+        block.task_count,
+        block.sample_count,
+        block.tap_visits,
+        block.largest_task_samples,
+        block.largest_task_tap_visits,
+        block.bucket_bytes,
+        profile::millis(block.bucket_build),
+        profile::millis(block.local_alloc_zero),
+        profile::millis(block.worker_replan_grid),
+        profile::millis(block.block_wall),
+        profile::millis(block.merge),
+        block.merged_tiles,
     );
 }
 

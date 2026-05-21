@@ -7138,13 +7138,18 @@ fn prepare_standard_mfs_input_in_row_blocks(
             .saturating_mul(strategy.selected_channel_count)
             .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES);
         eprintln!(
-            "standard_mfs_memory_plan_actual rows_total={} selected_channels={} row_block_rows={} worker_buffers={} total_budget_bytes={} planned_reserved_bytes={} prepare_buffer_bytes={} image_working_set_bytes={} weighting_density_bytes={} gridded_visibility_bytes={} output_image_bytes={} fixed_tile_resident_bytes={} fixed_tile_resident_limit={} fixed_tile_edge={} fixed_tile_anchor={} max_live_row_blocks={} live_row_block_bytes={} live_bucket_bytes={} queued_task_bytes={} resident_tile_buffer_bytes={} global_grid_bytes={} tile_cell_bin_bytes={} worker_staging_bytes={} gpu_staging_bytes={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} peak_rss_bytes=0 product_status={}",
+            "standard_mfs_memory_plan_actual rows_total={} selected_channels={} row_block_rows={} row_block_rows_source={} heuristic_row_block_rows={} worker_buffers={} total_budget_bytes={} planned_reserved_bytes={} planned_active_bytes={} reserve_over_budget_bytes={} prepare_buffer_floor_applied={} prepare_buffer_bytes={} image_working_set_bytes={} weighting_density_bytes={} gridded_visibility_bytes={} output_image_bytes={} fixed_tile_resident_bytes={} fixed_tile_resident_limit={} fixed_tile_edge={} fixed_tile_anchor={} max_live_row_blocks={} live_row_block_bytes={} live_bucket_bytes={} queued_task_bytes={} resident_tile_buffer_bytes={} global_grid_bytes={} tile_cell_bin_bytes={} worker_staging_bytes={} gpu_staging_bytes={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} peak_rss_bytes=0 product_status={}",
             active_selected_rows.len(),
             strategy.selected_channel_count,
             strategy.row_block_rows,
+            strategy.row_block_rows_source,
+            strategy.heuristic_row_block_rows,
             strategy.worker_buffers,
             strategy.total_budget_bytes,
             strategy.reserved_buffer_bytes,
+            strategy.planned_active_bytes,
+            strategy.reserve_over_budget_bytes,
+            strategy.prepare_buffer_floor_applied,
             strategy.prepare_buffer_bytes,
             strategy.image_working_set_bytes,
             strategy.weighting_density_bytes,
@@ -7626,11 +7631,16 @@ fn can_prepare_standard_mfs_without_trace(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StandardMfsMemoryPlan {
     row_block_rows: usize,
+    row_block_rows_source: &'static str,
+    heuristic_row_block_rows: usize,
     worker_buffers: usize,
     per_worker_buffer_bytes: usize,
     prepare_buffer_bytes: usize,
     total_budget_bytes: usize,
     reserved_buffer_bytes: usize,
+    planned_active_bytes: usize,
+    reserve_over_budget_bytes: usize,
+    prepare_buffer_floor_applied: bool,
     image_working_set_bytes: usize,
     weighting_density_bytes: usize,
     gridded_visibility_bytes: usize,
@@ -7698,30 +7708,47 @@ fn standard_mfs_memory_plan(
         .saturating_add(tile_cell_bin_bytes)
         .saturating_add(worker_staging_bytes)
         .saturating_add(gpu_staging_bytes);
-    let prepare_buffer_bytes = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
+    let reserve_over_budget_bytes = reserved_buffer_bytes.saturating_sub(total_budget_bytes);
+    let prepare_buffer_floor_bytes = 64 * 1024 * 1024;
+    let prepare_buffer_override = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
         .filter(|value| *value > 0)
-        .map(|value| value.saturating_mul(1024 * 1024))
-        .unwrap_or_else(|| {
-            total_budget_bytes
-                .saturating_sub(reserved_buffer_bytes)
-                .max(64 * 1024 * 1024)
-        });
+        .map(|value| value.saturating_mul(1024 * 1024));
+    let prepare_buffer_floor_applied = prepare_buffer_override.is_none()
+        && total_budget_bytes.saturating_sub(reserved_buffer_bytes) < prepare_buffer_floor_bytes;
+    let prepare_buffer_bytes = prepare_buffer_override.unwrap_or_else(|| {
+        total_budget_bytes
+            .saturating_sub(reserved_buffer_bytes)
+            .max(prepare_buffer_floor_bytes)
+    });
     let per_worker_buffer_bytes = (prepare_buffer_bytes / worker_buffers).max(1024 * 1024);
     let samples_per_worker =
         (per_worker_buffer_bytes / ESTIMATED_STANDARD_MFS_SAMPLE_BYTES).max(selected_channel_count);
     let heuristic_rows = (samples_per_worker / selected_channel_count)
         .clamp(MIN_PREPARE_ROW_BLOCK_ROWS, MAX_PREPARE_ROW_BLOCK_ROWS);
-    let row_block_rows = env_usize("CASA_RS_IMAGING_PREPARE_ROW_BLOCK")
-        .filter(|value| *value > 0)
-        .unwrap_or(heuristic_rows);
+    let row_block_override =
+        env_usize("CASA_RS_IMAGING_PREPARE_ROW_BLOCK").filter(|value| *value > 0);
+    let row_block_rows_source = if row_block_override.is_some() {
+        "env"
+    } else {
+        "heuristic"
+    };
+    let row_block_rows = row_block_override.unwrap_or(heuristic_rows);
+    let planned_active_bytes = reserved_buffer_bytes
+        .saturating_add(prepare_buffer_bytes)
+        .saturating_add(live_row_block_bytes);
 
     StandardMfsMemoryPlan {
         row_block_rows,
+        row_block_rows_source,
+        heuristic_row_block_rows: heuristic_rows,
         worker_buffers,
         per_worker_buffer_bytes,
         prepare_buffer_bytes,
         total_budget_bytes,
         reserved_buffer_bytes,
+        planned_active_bytes,
+        reserve_over_budget_bytes,
+        prepare_buffer_floor_applied,
         image_working_set_bytes,
         weighting_density_bytes,
         gridded_visibility_bytes,

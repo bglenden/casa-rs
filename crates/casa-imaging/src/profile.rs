@@ -7,10 +7,17 @@ use std::{
 };
 
 const STANDARD_MFS_PROFILE_DETAIL_ENV: &str = "CASA_RS_STANDARD_MFS_PROFILE_DETAIL";
+const STANDARD_MFS_PROFILE_BLOCK_DETAIL_ENV: &str = "CASA_RS_STANDARD_MFS_PROFILE_BLOCK_DETAIL";
 
 /// Return true when detailed standard-MFS profiling lines should be emitted.
 pub(crate) fn standard_mfs_profile_detail_enabled() -> bool {
     env::var_os(STANDARD_MFS_PROFILE_DETAIL_ENV).is_some()
+}
+
+/// Return true when row-block level standard-MFS profiling lines should be emitted.
+pub(crate) fn standard_mfs_profile_block_detail_enabled() -> bool {
+    standard_mfs_profile_detail_enabled()
+        && env::var_os(STANDARD_MFS_PROFILE_BLOCK_DETAIL_ENV).is_some()
 }
 
 /// Return a timestamp only when detailed profiling is enabled.
