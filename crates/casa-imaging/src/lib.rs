@@ -116,6 +116,21 @@ pub struct StandardMfsModelPredictor {
     model_grid: Option<Array2<Complex32>>,
 }
 
+/// Runtime execution knobs for standard-MFS backends.
+///
+/// These values are deliberately separate from [`ImagingRequest`] so callers
+/// can tune memory residency without changing the imaging contract itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StandardMfsExecutionConfig {
+    /// Optional byte budget for resident fixed-tile stage grids.
+    ///
+    /// When the fixed-tile backend is enabled, the backend converts this budget
+    /// into a deterministic resident tile count from the actual padded grid and
+    /// halo geometry. `CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT` remains an
+    /// explicit debug override.
+    pub fixed_tile_resident_bytes: Option<usize>,
+}
+
 /// Metadata for streaming natural-weighted standard MFS dirty accumulation.
 ///
 /// This request mirrors the dirty-only subset of [`ImagingRequest`] but leaves
@@ -446,6 +461,7 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
         request,
         &weighted_batches,
         &gridder,
+        StandardMfsExecutionConfig::default(),
         stage_timings,
         total_started,
     )
@@ -456,7 +472,15 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
 /// This preserves the borrowed [`run_imaging`] API for general callers, but
 /// lets frontend owners pass prepared batches through weighting without
 /// cloning the full visibility payload.
-pub fn run_imaging_owned(mut request: ImagingRequest) -> Result<ImagingResult, ImagingError> {
+pub fn run_imaging_owned(request: ImagingRequest) -> Result<ImagingResult, ImagingError> {
+    run_imaging_owned_with_execution_config(request, StandardMfsExecutionConfig::default())
+}
+
+/// Run CASA-style standard MFS imaging with caller-supplied backend execution knobs.
+pub fn run_imaging_owned_with_execution_config(
+    mut request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+) -> Result<ImagingResult, ImagingError> {
     let total_started = Instant::now();
     request.validate()?;
     if request.compatibility != CompatibilityMode::CasaStandardMfs {
@@ -484,6 +508,7 @@ pub fn run_imaging_owned(mut request: ImagingRequest) -> Result<ImagingResult, I
         &request,
         &request.visibility_batches,
         &gridder,
+        execution_config,
         stage_timings,
         total_started,
     )
@@ -493,6 +518,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
     request: &ImagingRequest,
     weighted_batches: &[VisibilityBatch],
     gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
     mut stage_timings: ImagingStageTimings,
     total_started: Instant,
 ) -> Result<ImagingResult, ImagingError> {
@@ -514,6 +540,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
             compute_dirty_psf_and_residual_standard_tiled(
                 weighted_batches,
                 gridder,
+                execution_config,
                 &mut stage_timings,
             )?
         } else if let Some(executor) = standard_executor.as_mut() {
@@ -527,7 +554,12 @@ fn run_standard_mfs_imaging_with_weighted_batches(
         }
     } else {
         let psf_state = if use_tiled_executor {
-            compute_psf_standard_tiled(weighted_batches, gridder, &mut stage_timings)?
+            compute_psf_standard_tiled(
+                weighted_batches,
+                gridder,
+                execution_config,
+                &mut stage_timings,
+            )?
         } else if let Some(executor) = standard_executor.as_mut() {
             compute_psf_standard(executor, &mut stage_timings)?
         } else {
@@ -539,6 +571,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
                 gridder,
                 &model,
                 &psf_state,
+                execution_config,
                 &mut stage_timings,
             )?
         } else if let Some(executor) = standard_executor.as_mut() {
@@ -581,6 +614,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
         &mut standard_executor,
         gridder,
         &psf_state,
+        execution_config,
         &mut stage_timings,
         &mut model,
         residual,
@@ -2701,6 +2735,7 @@ fn run_cotton_schwab_controller(
     standard_executor: &mut Option<StandardMfsCpuExecutor<'_>>,
     gridder: &StandardGridder,
     psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
     model: &mut Array2<f32>,
     residual: Array2<f32>,
@@ -2715,6 +2750,7 @@ fn run_cotton_schwab_controller(
             standard_executor,
             gridder,
             psf_state,
+            execution_config,
             stage_timings,
             model,
             residual,
@@ -2728,6 +2764,7 @@ fn run_cotton_schwab_controller(
             standard_executor,
             gridder,
             psf_state,
+            execution_config,
             stage_timings,
             model,
             residual,
@@ -2741,6 +2778,7 @@ fn run_cotton_schwab_controller(
             standard_executor,
             gridder,
             psf_state,
+            execution_config,
             stage_timings,
             model,
             residual,
@@ -3013,6 +3051,7 @@ fn run_hogbom_cotton_schwab(
     standard_executor: &mut Option<StandardMfsCpuExecutor<'_>>,
     gridder: &StandardGridder,
     psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
@@ -3122,6 +3161,7 @@ fn run_hogbom_cotton_schwab(
             gridder,
             model,
             psf_state,
+            execution_config,
             stage_timings,
         )?;
         major_cycles += 1;
@@ -3152,6 +3192,7 @@ fn run_hogbom_cotton_schwab(
             gridder,
             model,
             psf_state,
+            execution_config,
             stage_timings,
         )?;
     }
@@ -3506,6 +3547,7 @@ fn run_clark_cotton_schwab(
     standard_executor: &mut Option<StandardMfsCpuExecutor<'_>>,
     gridder: &StandardGridder,
     psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
@@ -3612,6 +3654,7 @@ fn run_clark_cotton_schwab(
             gridder,
             model,
             psf_state,
+            execution_config,
             stage_timings,
         )?;
         major_cycles += 1;
@@ -3639,6 +3682,7 @@ fn run_clark_cotton_schwab(
             gridder,
             model,
             psf_state,
+            execution_config,
             stage_timings,
         )?;
     }
@@ -3660,6 +3704,7 @@ fn run_multiscale_cotton_schwab(
     standard_executor: &mut Option<StandardMfsCpuExecutor<'_>>,
     gridder: &StandardGridder,
     psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
@@ -3827,6 +3872,7 @@ fn run_multiscale_cotton_schwab(
             gridder,
             model,
             psf_state,
+            execution_config,
             stage_timings,
         )?;
         let multiscale_refresh_started = Instant::now();
@@ -3863,6 +3909,7 @@ fn run_multiscale_cotton_schwab(
             gridder,
             model,
             psf_state,
+            execution_config,
             stage_timings,
         )?;
         let multiscale_refresh_started = Instant::now();
@@ -5280,7 +5327,12 @@ fn compute_psf(
         WTermMode::None => {}
     }
     if standard_mfs_fixed_tile_backend_enabled() {
-        return compute_psf_standard_tiled(batches, gridder, stage_timings);
+        return compute_psf_standard_tiled(
+            batches,
+            gridder,
+            StandardMfsExecutionConfig::default(),
+            stage_timings,
+        );
     }
     if standard_mfs_sample_count(batches) > standard_mfs_executor_max_samples() {
         return compute_psf_standard_streaming(batches, gridder, stage_timings);
@@ -5421,12 +5473,16 @@ fn compute_psf_standard_streaming(
 fn compute_psf_standard_tiled(
     batches: &[VisibilityBatch],
     gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<PsfState, ImagingError> {
     let mut timings = PsfComputationTimings::default();
     let [nx, ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
-    let executor = StandardMfsTiledCpuExecutor::new(gridder)?;
+    let executor = StandardMfsTiledCpuExecutor::new_with_resident_bytes(
+        gridder,
+        execution_config.fixed_tile_resident_bytes,
+    )?;
 
     let grid_started = Instant::now();
     let accumulation = executor.accumulate_psf_grid(batches, &mut psf_grid)?;
@@ -5612,12 +5668,16 @@ fn compute_dirty_psf_and_residual_standard_streaming(
 fn compute_dirty_psf_and_residual_standard_tiled(
     batches: &[VisibilityBatch],
     gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<(PsfState, Array2<f32>), ImagingError> {
     let [nx, ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
     let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
-    let executor = StandardMfsTiledCpuExecutor::new(gridder)?;
+    let executor = StandardMfsTiledCpuExecutor::new_with_resident_bytes(
+        gridder,
+        execution_config.fixed_tile_resident_bytes,
+    )?;
 
     let grid_started = Instant::now();
     let accumulation =
@@ -5900,6 +5960,7 @@ fn compute_residual(
     gridder: &StandardGridder,
     model: &Array2<f32>,
     psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
     match request.w_term_mode {
@@ -5932,6 +5993,7 @@ fn compute_residual(
         model,
         psf_state,
         false,
+        execution_config,
         stage_timings,
     )
 }
@@ -5979,6 +6041,7 @@ fn refresh_standard_mfs_residual(
     gridder: &StandardGridder,
     model: &Array2<f32>,
     psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
     let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
@@ -5986,7 +6049,15 @@ fn refresh_standard_mfs_residual(
     let residual = if let Some(executor) = standard_executor.as_mut() {
         compute_residual_standard_with_executor(executor, model, psf_state, stage_timings)?
     } else {
-        compute_residual(request, batches, gridder, model, psf_state, stage_timings)?
+        compute_residual(
+            request,
+            batches,
+            gridder,
+            model,
+            psf_state,
+            execution_config,
+            stage_timings,
+        )?
     };
     let refresh_elapsed = refresh_started.elapsed();
     let accounted = before.accounted_delta(stage_timings);
@@ -6035,10 +6106,18 @@ fn compute_residual_standard(
     model: &Array2<f32>,
     psf_state: &PsfState,
     use_direct_point_predict: bool,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
     if !use_direct_point_predict && standard_mfs_fixed_tile_backend_enabled() {
-        return compute_residual_standard_tiled(batches, gridder, model, psf_state, stage_timings);
+        return compute_residual_standard_tiled(
+            batches,
+            gridder,
+            model,
+            psf_state,
+            execution_config,
+            stage_timings,
+        );
     }
     if !use_direct_point_predict
         && standard_mfs_sample_count(batches) <= standard_mfs_executor_max_samples()
@@ -6089,6 +6168,7 @@ fn compute_residual_standard_tiled(
     gridder: &StandardGridder,
     model: &Array2<f32>,
     psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
     let [nx, ny] = gridder.grid_shape();
@@ -6104,7 +6184,10 @@ fn compute_residual_standard_tiled(
     };
 
     let degrid_grid_started = Instant::now();
-    let executor = StandardMfsTiledCpuExecutor::new(gridder)?;
+    let executor = StandardMfsTiledCpuExecutor::new_with_resident_bytes(
+        gridder,
+        execution_config.fixed_tile_resident_bytes,
+    )?;
     let counts =
         executor.accumulate_residual_grid(batches, model_grid.as_ref(), &mut residual_grid)?;
     timings.degrid_grid = degrid_grid_started.elapsed();
@@ -8158,13 +8241,13 @@ mod tests {
         HogbomIterationMode, ImageGeometry, ImagingRequest, ImagingStageTimings,
         MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
         PsfState, RestoringBeamMode, StandardGridder, StandardMfsDirtyAccumulator,
-        StandardMfsDirtyAccumulatorRequest, StandardMfsModelPredictor, VisibilityBatch,
-        VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
-        add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
-        build_direct_pixel_coordinates, build_multiscale_scale_masks, compute_cycle_threshold,
-        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
-        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
-        make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
+        StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig, StandardMfsModelPredictor,
+        VisibilityBatch, VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode,
+        WeightingMode, add_shifted_kernel, apply_chauvenet_clipping, apply_weighting,
+        build_direct_components, build_direct_pixel_coordinates, build_multiscale_scale_masks,
+        compute_cycle_threshold, compute_dirty_psf_and_residual_standard, compute_psf,
+        compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
+        dirty_clean_config, make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
         mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
         mosaic_projector_sampling, parse_standard_mfs_thread_count, peak_abs_value,
         peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle, run_imaging,
@@ -8798,6 +8881,7 @@ mod tests {
             &gridder,
             &model,
             &separate_psf,
+            StandardMfsExecutionConfig::default(),
             &mut separate_timings,
         )
         .unwrap();
@@ -9308,6 +9392,7 @@ mod tests {
             &gridder,
             &model,
             &psf_state,
+            StandardMfsExecutionConfig::default(),
             &mut stage_timings,
         )
         .unwrap();
@@ -9600,6 +9685,7 @@ mod tests {
             &gridder,
             &model,
             &psf_state,
+            StandardMfsExecutionConfig::default(),
             &mut stage_timings,
         )
         .unwrap();
@@ -9735,6 +9821,7 @@ mod tests {
             &gridder,
             &model,
             &psf_state,
+            StandardMfsExecutionConfig::default(),
             &mut stage_timings,
         )
         .unwrap();
@@ -9917,6 +10004,7 @@ mod tests {
             &gridder,
             &model,
             &psf_state,
+            StandardMfsExecutionConfig::default(),
             &mut stage_timings,
         )
         .unwrap();
@@ -11568,6 +11656,7 @@ mod tests {
                 &gridder,
                 &Array2::<f32>::zeros((geometry.nx(), geometry.ny())),
                 &psf,
+                StandardMfsExecutionConfig::default(),
                 &mut timings,
             )
             .unwrap();

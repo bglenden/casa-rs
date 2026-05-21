@@ -2,7 +2,7 @@
 
 Truth class: current design contract
 Last reality check: 2026-05-21
-Verification: External Oracle-style review in Chrome conversation `Bundle review request`; `cargo check -p casa-imaging`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`
+Verification: External Oracle-style review in Chrome conversation `Bundle review request`; `cargo check -p casa-imaging -p casars-imager`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib`
 
 Wave issue: #263
 
@@ -31,7 +31,8 @@ Implementation checkpoint:
 
 ```text
 Environment flag: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
-Resident tile limit: CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=<count>
+Resident tile budget: central standard-MFS memory plan, with optional CASA_RS_STANDARD_MFS_TILE_RESIDENT_MB override
+Debug resident tile limit: CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=<count>
 Status: core backend correctness checkpoint, not a performance claim
 Coverage: standard-MFS PSF/dirty and residual refresh through fixed halo tiles
 Fallback: default standard-MFS executor and streaming paths remain unchanged
@@ -67,6 +68,11 @@ explicit tile/slab residency limits
 stage-local grid/density/model buffers owned by the memory plan
 backend-reported host and device staging bytes
 ```
+
+The first implementation reserves fixed-tile residency in
+`standard_mfs_memory_plan` and passes a byte budget into the imaging core via
+`StandardMfsExecutionConfig`. The backend still honors
+`CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT` as an explicit debug override.
 
 That boundary lets future backends choose CPU, CUDA/Kokkos, LibRA-derived, or
 Metal implementations without reviving the whole-MeasurementSet visibility plan

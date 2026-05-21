@@ -502,11 +502,27 @@ fn standard_mfs_tile_edge() -> usize {
         .unwrap_or(DEFAULT_STANDARD_MFS_TILE_EDGE)
 }
 
-fn standard_mfs_tile_resident_limit(tile_count: usize) -> usize {
-    std::env::var(STANDARD_MFS_TILE_RESIDENT_LIMIT_ENV)
+fn standard_mfs_tile_resident_limit(
+    partition: &StandardMfsFixedTilePartition,
+    resident_bytes: Option<usize>,
+) -> usize {
+    let tile_count = partition.tile_count();
+    if let Some(limit) = std::env::var(STANDARD_MFS_TILE_RESIDENT_LIMIT_ENV)
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|limit| *limit > 0)
+    {
+        return limit.min(tile_count).max(1);
+    }
+    resident_bytes
+        .and_then(|bytes| {
+            let max_tile_bytes = partition
+                .tiles
+                .iter()
+                .filter_map(|tile| partition.resident_tile_bytes(tile.id, 2))
+                .max()?;
+            Some((bytes / max_tile_bytes).max(1))
+        })
         .unwrap_or(tile_count)
         .min(tile_count)
         .max(1)
@@ -544,8 +560,11 @@ pub(crate) struct StandardMfsTiledResidualAccumulation {
 }
 
 impl<'a> StandardMfsTiledCpuExecutor<'a> {
-    /// Build a fixed-tile executor over the supplied standard gridder.
-    pub(crate) fn new(gridder: &'a StandardGridder) -> Result<Self, ImagingError> {
+    /// Build a fixed-tile executor with an optional resident tile byte budget.
+    pub(crate) fn new_with_resident_bytes(
+        gridder: &'a StandardGridder,
+        resident_bytes: Option<usize>,
+    ) -> Result<Self, ImagingError> {
         let grid_shape = gridder.grid_shape();
         let tile_edge = standard_mfs_tile_edge().min(grid_shape[0].max(grid_shape[1]));
         let partition = StandardMfsFixedTilePartition::new(
@@ -553,7 +572,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             [tile_edge, tile_edge],
             gridder.positive_tap_halo(),
         )?;
-        let resident_tile_limit = standard_mfs_tile_resident_limit(partition.tile_count());
+        let resident_tile_limit = standard_mfs_tile_resident_limit(&partition, resident_bytes);
         Ok(Self {
             gridder,
             partition,

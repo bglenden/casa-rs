@@ -17,7 +17,9 @@ environment-gated correctness checkpoint, not as a performance claim:
 
 ```text
 Backend flag: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
-Resident limit: CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=<count>
+Resident budget: standard_mfs_memory_plan fixed_tile_resident_bytes
+Budget override: CASA_RS_STANDARD_MFS_TILE_RESIDENT_MB=<MiB>
+Debug resident limit: CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=<count>
 Timing artifact: none accepted yet
 Decision: retain for bounded streaming backend development
 ```
@@ -30,6 +32,21 @@ eviction and full-halo merge behavior. The current core API still receives
 weighted batches, so frontend streaming and two-pass weighting remain future
 work before making a full memory-scaling claim.
 
+Follow-up planner checkpoint:
+
+```text
+Core handoff: StandardMfsExecutionConfig.fixed_tile_resident_bytes
+Default budget: 512 MiB when CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
+Timing artifact: none accepted yet
+Decision: retain; tile residency is now planned centrally instead of defaulting to all tiles resident
+```
+
+The frontend profile output now includes `fixed_tile_resident_bytes` and
+`fixed_tile_resident_limit` in `standard_mfs_memory_plan_actual`. The fixed-tile
+core converts the byte budget into a deterministic tile count from the actual
+padded grid and halo geometry, with `CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT`
+kept only as a direct debug/correctness override.
+
 Correctness checks recorded for this checkpoint:
 
 ```text
@@ -38,6 +55,7 @@ CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standar
 CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib
 CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib
 CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib
+cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib
 ```
 
 The measured dataset is:
