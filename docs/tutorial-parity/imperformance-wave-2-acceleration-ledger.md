@@ -1,7 +1,7 @@
 # ImPerformance Wave 2 Acceleration Ledger
 
 Truth class: current descriptive
-Last reality check: 2026-05-20
+Last reality check: 2026-05-21
 Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging positive_tap_span_reconstructs_legacy_positive_taps --lib`; `cargo test -p casa-imaging compact_positive_tap_grid_and_degrid_match_product_taps --lib`; `cargo test -p casa-imaging fused_residual_refresh_matches_separate_degrid_grid --lib`; `cargo test -p casa-imaging standard_mfs_plan_buckets_gridder_accepted_samples --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile, bounded serial attribution probes, and final full-shape one-worker profiles on 2026-05-20
 
 Wave issue: #263
@@ -9,6 +9,36 @@ Child issues: #264, #265, #266, #267
 
 This note records the first ImPerformance Wave 2 acceleration pass on the
 correctness-green full-medium VLA standard-MFS target from Wave 1.
+
+## Fixed-Tile Backend Checkpoint
+
+The first bounded standard-MFS fixed-tile backend is retained as an
+environment-gated correctness checkpoint, not as a performance claim:
+
+```text
+Backend flag: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
+Resident limit: CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=<count>
+Timing artifact: none accepted yet
+Decision: retain for bounded streaming backend development
+```
+
+The implementation routes standard-MFS PSF/dirty and exact residual refresh
+through fixed rectangular halo tiles. It avoids the retained
+`StandardMfsVisibilityPlan` executor when the fixed-tile backend flag is set,
+and `CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1` exercises deterministic tile
+eviction and full-halo merge behavior. The current core API still receives
+weighted batches, so frontend streaming and two-pass weighting remain future
+work before making a full memory-scaling claim.
+
+Correctness checks recorded for this checkpoint:
+
+```text
+cargo check -p casa-imaging
+CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib
+CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib
+CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib
+CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib
+```
 
 The measured dataset is:
 

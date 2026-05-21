@@ -1,8 +1,8 @@
 # ImPerformance Wave 2 Streaming Tile Contract
 
 Truth class: current design contract
-Last reality check: 2026-05-20
-Verification: External Oracle-style review in Chrome conversation `Bundle review request`; implementation verification pending
+Last reality check: 2026-05-21
+Verification: External Oracle-style review in Chrome conversation `Bundle review request`; `cargo check -p casa-imaging`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`
 
 Wave issue: #263
 
@@ -25,6 +25,16 @@ Grid precision: Complex64 accumulation, matching current standard-MFS grids
 Numerical contract: CASA-compatible tolerance, not bitwise identity
 Tile geometry: fixed rectangular interiors plus fixed halo
 Tile scheduler: deterministic bounded residency cache
+```
+
+Implementation checkpoint:
+
+```text
+Environment flag: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
+Resident tile limit: CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=<count>
+Status: core backend correctness checkpoint, not a performance claim
+Coverage: standard-MFS PSF/dirty and residual refresh through fixed halo tiles
+Fallback: default standard-MFS executor and streaming paths remain unchanged
 ```
 
 Out of scope for this first backend:

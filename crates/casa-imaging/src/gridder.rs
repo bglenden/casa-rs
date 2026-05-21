@@ -516,6 +516,46 @@ impl StandardGridder {
         }
     }
 
+    #[allow(clippy::needless_range_loop)]
+    pub(crate) fn grid_sample_taps_planned_f64_with_offset(
+        &self,
+        grid: &mut Array2<Complex64>,
+        taps: &PositiveTapSet,
+        value: Complex64,
+        offset: [usize; 2],
+    ) {
+        let x_weights = &self.normalized_tap_weights[taps.x.weight_index];
+        let y_weights = &self.normalized_tap_weights[taps.y.weight_index];
+        let local_stride = grid.shape()[1];
+        if let Some(storage) = grid.as_slice_memory_order_mut() {
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = taps.x.start + x_tap - offset[0];
+                let x_weight = x_weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    let y_index = taps.y.start + y_tap - offset[1];
+                    let weight = f64::from(x_weight * y_weights[y_tap]);
+                    let index = x_index * local_stride + y_index;
+                    debug_assert!(index < storage.len());
+                    let cell = unsafe { storage.get_unchecked_mut(index) };
+                    cell.re += value.re * weight;
+                    cell.im += value.im * weight;
+                }
+            }
+            return;
+        }
+        for x_tap in 0..GRIDDER_TAP_COUNT {
+            let x_index = taps.x.start + x_tap - offset[0];
+            let x_weight = x_weights[x_tap];
+            for y_tap in 0..GRIDDER_TAP_COUNT {
+                let y_index = taps.y.start + y_tap - offset[1];
+                let weight = f64::from(x_weight * y_weights[y_tap]);
+                let cell = &mut grid[(x_index, y_index)];
+                cell.re += value.re * weight;
+                cell.im += value.im * weight;
+            }
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn grid_sample_product_real_planned_f64(
         &self,
@@ -573,6 +613,43 @@ impl StandardGridder {
             for y_tap in 0..GRIDDER_TAP_COUNT {
                 grid[(x_index, taps.y.start + y_tap)].re +=
                     value * f64::from(x_weight * y_weights[y_tap]);
+            }
+        }
+    }
+
+    #[allow(clippy::needless_range_loop)]
+    pub(crate) fn grid_sample_taps_real_planned_f64_with_offset(
+        &self,
+        grid: &mut Array2<Complex64>,
+        taps: &PositiveTapSet,
+        value: f64,
+        offset: [usize; 2],
+    ) {
+        let x_weights = &self.normalized_tap_weights[taps.x.weight_index];
+        let y_weights = &self.normalized_tap_weights[taps.y.weight_index];
+        let local_stride = grid.shape()[1];
+        if let Some(storage) = grid.as_slice_memory_order_mut() {
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = taps.x.start + x_tap - offset[0];
+                let x_weight = x_weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    let y_index = taps.y.start + y_tap - offset[1];
+                    let index = x_index * local_stride + y_index;
+                    debug_assert!(index < storage.len());
+                    unsafe {
+                        storage.get_unchecked_mut(index).re +=
+                            value * f64::from(x_weight * y_weights[y_tap]);
+                    }
+                }
+            }
+            return;
+        }
+        for x_tap in 0..GRIDDER_TAP_COUNT {
+            let x_index = taps.x.start + x_tap - offset[0];
+            let x_weight = x_weights[x_tap];
+            for y_tap in 0..GRIDDER_TAP_COUNT {
+                let y_index = taps.y.start + y_tap - offset[1];
+                grid[(x_index, y_index)].re += value * f64::from(x_weight * y_weights[y_tap]);
             }
         }
     }
@@ -663,6 +740,56 @@ impl StandardGridder {
                 let index = (x_index, taps.y.start + y_tap);
                 real_grid[index].re += real_value * weight;
                 let complex_cell = &mut complex_grid[index];
+                complex_cell.re += complex_value.re * weight;
+                complex_cell.im += complex_value.im * weight;
+            }
+        }
+    }
+
+    #[allow(clippy::needless_range_loop)]
+    pub(crate) fn grid_sample_taps_real_complex_pair_planned_f64_with_offset(
+        &self,
+        real_grid: &mut Array2<Complex64>,
+        real_value: f64,
+        complex_grid: &mut Array2<Complex64>,
+        complex_value: Complex64,
+        taps: &PositiveTapSet,
+        offset: [usize; 2],
+    ) {
+        let x_weights = &self.normalized_tap_weights[taps.x.weight_index];
+        let y_weights = &self.normalized_tap_weights[taps.y.weight_index];
+        let local_stride = real_grid.shape()[1];
+        if let (Some(real_storage), Some(complex_storage)) = (
+            real_grid.as_slice_memory_order_mut(),
+            complex_grid.as_slice_memory_order_mut(),
+        ) {
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = taps.x.start + x_tap - offset[0];
+                let x_weight = x_weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    let y_index = taps.y.start + y_tap - offset[1];
+                    let weight = f64::from(x_weight * y_weights[y_tap]);
+                    let index = x_index * local_stride + y_index;
+                    debug_assert!(index < real_storage.len());
+                    debug_assert!(index < complex_storage.len());
+                    unsafe {
+                        real_storage.get_unchecked_mut(index).re += real_value * weight;
+                        let complex_cell = complex_storage.get_unchecked_mut(index);
+                        complex_cell.re += complex_value.re * weight;
+                        complex_cell.im += complex_value.im * weight;
+                    }
+                }
+            }
+            return;
+        }
+        for x_tap in 0..GRIDDER_TAP_COUNT {
+            let x_index = taps.x.start + x_tap - offset[0];
+            let x_weight = x_weights[x_tap];
+            for y_tap in 0..GRIDDER_TAP_COUNT {
+                let y_index = taps.y.start + y_tap - offset[1];
+                let weight = f64::from(x_weight * y_weights[y_tap]);
+                real_grid[(x_index, y_index)].re += real_value * weight;
+                let complex_cell = &mut complex_grid[(x_index, y_index)];
                 complex_cell.re += complex_value.re * weight;
                 complex_cell.im += complex_value.im * weight;
             }
@@ -874,6 +1001,59 @@ impl StandardGridder {
             }
         }
 
+        predicted_visibility
+    }
+
+    #[allow(clippy::needless_range_loop)]
+    pub(crate) fn degrid_model_and_grid_residual_taps_planned_f64_with_residual_offset(
+        &self,
+        model_grid: &Array2<Complex32>,
+        residual_grid: &mut Array2<Complex64>,
+        taps: &PositiveTapSet,
+        observed_visibility: Complex32,
+        residual_weight: f64,
+        residual_offset: [usize; 2],
+    ) -> Complex32 {
+        debug_assert_eq!(model_grid.shape(), self.grid_shape.as_slice());
+
+        let x_weights = &self.normalized_tap_weights[taps.x.weight_index];
+        let y_weights = &self.normalized_tap_weights[taps.y.weight_index];
+        let mut predicted_visibility = Complex32::new(0.0, 0.0);
+
+        if let Some(model_storage) = model_grid.as_slice_memory_order() {
+            let grid_stride = self.grid_shape[1];
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = (taps.x.start + x_tap) * grid_stride;
+                let x_weight = x_weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    let index = x_index + taps.y.start + y_tap;
+                    debug_assert!(index < model_storage.len());
+                    predicted_visibility += unsafe { *model_storage.get_unchecked(index) }
+                        * (x_weight * y_weights[y_tap]);
+                }
+            }
+        } else {
+            for x_tap in 0..GRIDDER_TAP_COUNT {
+                let x_index = taps.x.start + x_tap;
+                let x_weight = x_weights[x_tap];
+                for y_tap in 0..GRIDDER_TAP_COUNT {
+                    predicted_visibility +=
+                        model_grid[(x_index, taps.y.start + y_tap)] * (x_weight * y_weights[y_tap]);
+                }
+            }
+        }
+
+        let residual_visibility = observed_visibility - predicted_visibility;
+        let residual = Complex64::new(
+            f64::from(residual_visibility.re) * residual_weight,
+            f64::from(residual_visibility.im) * residual_weight,
+        );
+        self.grid_sample_taps_planned_f64_with_offset(
+            residual_grid,
+            taps,
+            residual,
+            residual_offset,
+        );
         predicted_visibility
     }
 

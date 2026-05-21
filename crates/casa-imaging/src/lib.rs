@@ -57,7 +57,7 @@ use beam::{
 };
 use execution::{
     StandardMfsCpuExecutor, StandardMfsDirtyCpuExecutor, StandardMfsPlannedSample,
-    StandardMfsVisibilityPlan, finite_visibility,
+    StandardMfsTiledCpuExecutor, StandardMfsVisibilityPlan, finite_visibility,
 };
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{
@@ -80,6 +80,7 @@ type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
 type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
 const DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES: usize = 8_000_000;
 const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
+const STANDARD_MFS_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_BACKEND";
 
 pub(crate) use cube::{HogbomMinorCycleOutcome, MinorCycleProbe};
 pub use cube::{run_cube, run_dirty_cube};
@@ -495,9 +496,11 @@ fn run_standard_mfs_imaging_with_weighted_batches(
     mut stage_timings: ImagingStageTimings,
     total_started: Instant,
 ) -> Result<ImagingResult, ImagingError> {
-    let mut standard_executor = should_use_standard_mfs_executor(request, weighted_batches)
-        .then(|| StandardMfsCpuExecutor::new(gridder, weighted_batches))
-        .transpose()?;
+    let use_tiled_executor = should_use_standard_mfs_tiled_backend(request);
+    let mut standard_executor = (!use_tiled_executor
+        && should_use_standard_mfs_executor(request, weighted_batches))
+    .then(|| StandardMfsCpuExecutor::new(gridder, weighted_batches))
+    .transpose()?;
     let [nx, ny] = request.geometry.image_shape;
     let mut model = request
         .initial_model
@@ -507,7 +510,13 @@ fn run_standard_mfs_imaging_with_weighted_batches(
     let can_start_from_combined_dirty_pass =
         !has_initial_model && matches!(request.w_term_mode, WTermMode::None);
     let (psf_state, mut residual) = if can_start_from_combined_dirty_pass {
-        if let Some(executor) = standard_executor.as_mut() {
+        if use_tiled_executor {
+            compute_dirty_psf_and_residual_standard_tiled(
+                weighted_batches,
+                gridder,
+                &mut stage_timings,
+            )?
+        } else if let Some(executor) = standard_executor.as_mut() {
             compute_dirty_psf_and_residual_standard_with_executor(executor, &mut stage_timings)?
         } else {
             compute_dirty_psf_and_residual_standard_streaming(
@@ -517,12 +526,22 @@ fn run_standard_mfs_imaging_with_weighted_batches(
             )?
         }
     } else {
-        let psf_state = if let Some(executor) = standard_executor.as_mut() {
+        let psf_state = if use_tiled_executor {
+            compute_psf_standard_tiled(weighted_batches, gridder, &mut stage_timings)?
+        } else if let Some(executor) = standard_executor.as_mut() {
             compute_psf_standard(executor, &mut stage_timings)?
         } else {
             compute_psf_standard_streaming(weighted_batches, gridder, &mut stage_timings)?
         };
-        let residual = if let Some(executor) = standard_executor.as_mut() {
+        let residual = if use_tiled_executor {
+            compute_residual_standard_tiled(
+                weighted_batches,
+                gridder,
+                &model,
+                &psf_state,
+                &mut stage_timings,
+            )?
+        } else if let Some(executor) = standard_executor.as_mut() {
             compute_residual_standard_with_executor(
                 executor,
                 &model,
@@ -674,6 +693,21 @@ fn should_use_standard_mfs_executor(
         return false;
     }
     standard_mfs_sample_count(weighted_batches) <= standard_mfs_executor_max_samples()
+}
+
+fn should_use_standard_mfs_tiled_backend(request: &ImagingRequest) -> bool {
+    matches!(request.w_term_mode, WTermMode::None) && standard_mfs_fixed_tile_backend_enabled()
+}
+
+fn standard_mfs_fixed_tile_backend_enabled() -> bool {
+    env::var(STANDARD_MFS_BACKEND_ENV)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "fixed_tile" | "fixed-tile" | "tile" | "tiled" | "streaming_fixed_tile"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn standard_mfs_executor_max_samples() -> usize {
@@ -5245,6 +5279,9 @@ fn compute_psf(
         }
         WTermMode::None => {}
     }
+    if standard_mfs_fixed_tile_backend_enabled() {
+        return compute_psf_standard_tiled(batches, gridder, stage_timings);
+    }
     if standard_mfs_sample_count(batches) > standard_mfs_executor_max_samples() {
         return compute_psf_standard_streaming(batches, gridder, stage_timings);
     }
@@ -5378,6 +5415,52 @@ fn compute_psf_standard_streaming(
         psf_peak,
         gridded_samples,
         skipped_samples,
+    })
+}
+
+fn compute_psf_standard_tiled(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    let mut timings = PsfComputationTimings::default();
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+    let executor = StandardMfsTiledCpuExecutor::new(gridder)?;
+
+    let grid_started = Instant::now();
+    let accumulation = executor.accumulate_psf_grid(batches, &mut psf_grid)?;
+    timings.grid = grid_started.elapsed();
+
+    if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let fft_started = Instant::now();
+    let raw_psf = centered_ifft2_f64(&psf_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+    psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+
+    Ok(PsfState {
+        psf,
+        normalization_sumwt: accumulation.normalization_sumwt as f32,
+        reported_sumwt: accumulation.reported_sumwt as f32,
+        psf_peak,
+        gridded_samples: accumulation.gridded_samples,
+        skipped_samples: accumulation.skipped_samples,
     })
 }
 
@@ -5521,6 +5604,64 @@ fn compute_dirty_psf_and_residual_standard_streaming(
             psf_peak,
             gridded_samples,
             skipped_samples,
+        },
+        residual,
+    ))
+}
+
+fn compute_dirty_psf_and_residual_standard_tiled(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
+    let executor = StandardMfsTiledCpuExecutor::new(gridder)?;
+
+    let grid_started = Instant::now();
+    let accumulation =
+        executor.accumulate_dirty_grids(batches, &mut psf_grid, &mut residual_grid)?;
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    stage_timings.psf_grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let psf_fft_started = Instant::now();
+    let raw_psf = centered_ifft2_f64(&psf_grid);
+    stage_timings.psf_fft += psf_fft_started.elapsed();
+    let psf_normalize_started = Instant::now();
+    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+    psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    stage_timings.psf_normalize += psf_normalize_started.elapsed();
+
+    let residual_fft_started = Instant::now();
+    let raw_residual = centered_ifft2_f64(&residual_grid);
+    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let residual_normalize_started = Instant::now();
+    let mut residual = gridder.corrected_image_from_grid_f64(&raw_residual);
+    residual.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32 / psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    Ok((
+        PsfState {
+            psf,
+            normalization_sumwt: accumulation.normalization_sumwt as f32,
+            reported_sumwt: accumulation.reported_sumwt as f32,
+            psf_peak,
+            gridded_samples: accumulation.gridded_samples,
+            skipped_samples: accumulation.skipped_samples,
         },
         residual,
     ))
@@ -5896,6 +6037,9 @@ fn compute_residual_standard(
     use_direct_point_predict: bool,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
+    if !use_direct_point_predict && standard_mfs_fixed_tile_backend_enabled() {
+        return compute_residual_standard_tiled(batches, gridder, model, psf_state, stage_timings);
+    }
     if !use_direct_point_predict
         && standard_mfs_sample_count(batches) <= standard_mfs_executor_max_samples()
     {
@@ -5938,6 +6082,71 @@ fn compute_residual_standard_streaming(
         stage_timings,
     )?
     .residual_image)
+}
+
+fn compute_residual_standard_tiled(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
+    let mut timings = ResidualComputationTimings::default();
+    let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        let model_fft_started = Instant::now();
+        let transformed = centered_fft2(&gridder.apodize_model(model));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+
+    let degrid_grid_started = Instant::now();
+    let executor = StandardMfsTiledCpuExecutor::new(gridder)?;
+    let counts =
+        executor.accumulate_residual_grid(batches, model_grid.as_ref(), &mut residual_grid)?;
+    timings.degrid_grid = degrid_grid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2_f64(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image = gridder.corrected_image_from_grid_f64(&raw);
+    image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+
+    profile::log_serial_stage(profile::SerialStageProfile {
+        stage: "tiled_residual_refresh",
+        samples_total: standard_mfs_sample_count(batches),
+        finite_visibility_samples: counts.valid_samples,
+        nonfinite_visibility_samples: counts.skipped_nonfinite_visibility,
+        planned_samples: counts.planned_samples,
+        model_grid_present_samples: if model_grid.is_some() {
+            counts.gridded_residual_samples
+        } else {
+            0
+        },
+        model_grid_absent_samples: if model_grid.is_some() {
+            0
+        } else {
+            counts.gridded_residual_samples
+        },
+        degrid_tap_visits: if model_grid.is_some() {
+            counts.gridded_residual_samples.saturating_mul(49)
+        } else {
+            0
+        },
+        grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+        stage_duration: timings.degrid_grid,
+    });
+
+    Ok(image)
 }
 
 fn compute_residual_standard_with_executor(
