@@ -2,7 +2,7 @@
 
 Truth class: current descriptive
 Last reality check: 2026-05-21
-Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging positive_tap_span_reconstructs_legacy_positive_taps --lib`; `cargo test -p casa-imaging compact_positive_tap_grid_and_degrid_match_product_taps --lib`; `cargo test -p casa-imaging fused_residual_refresh_matches_separate_degrid_grid --lib`; `cargo test -p casa-imaging standard_mfs_plan_buckets_gridder_accepted_samples --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile, bounded serial attribution probes, and final full-shape one-worker profiles on 2026-05-20
+Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging positive_tap_span_reconstructs_legacy_positive_taps --lib`; `cargo test -p casa-imaging compact_positive_tap_grid_and_degrid_match_product_taps --lib`; `cargo test -p casa-imaging fused_residual_refresh_matches_separate_degrid_grid --lib`; `cargo test -p casa-imaging standard_mfs_plan_buckets_gridder_accepted_samples --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile, bounded serial attribution probes, and final full-shape one-worker profiles on 2026-05-20
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -71,15 +71,28 @@ Current selector contract:
 CPU default: unset CASA_RS_STANDARD_MFS_BACKEND
 CPU fixed tile: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
 Metal preview: CASA_RS_STANDARD_MFS_BACKEND=metal
-Production status: explicit preview selection, clear pre-execution failure until the Rust executor is wired
+Production status: macOS-only preview; dirty/PSF tile gridding runs on Metal,
+                   residual refresh falls back to CPU fixed-tile
 Rust integration direction: objc2-metal
 ```
 
-The prototype evidence shows that global atomics are useful as a microbenchmark
-but are not the production shape: central UV clustering increases contention and
-numerical drift. CPU-expanded sorted tap-contribution lists are also rejected as
-a production contract because they move too much memory and rebuild too much
-per-sample state before the GPU can run.
+The current Rust backend uses the bounded fixed-tile bucket contract and a
+cell-owner tile shader for dirty/PSF gridding. The prototype evidence still
+rules out global atomics as the production shape: central UV clustering
+increases contention and numerical drift. CPU-expanded sorted tap-contribution
+lists are also rejected as a production contract because they move too much
+memory and rebuild too much per-sample state before the GPU can run.
+
+Validation on 2026-05-21:
+
+- `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`
+  passes and compares a small Metal dirty/PSF run against the CPU reference
+  when the process can open a default Metal device.
+- `CASA_RS_STANDARD_MFS_BACKEND=metal cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`
+  passes when run outside the shell sandbox so macOS exposes the default Metal
+  device; the sandboxed shell reports no default Metal device.
+- `swift run -c release MetalGridExperiment --samples 2000 --imsize 128 --distribution uniform --tile-edge 32 --skip-slow-baselines`
+  still passes in `tools/experiments/metal`.
 
 The promising direction is bounded tile-cell grouping and reduction over compact
 row-block/tile work units. Residual refresh can be fused on device, but it
@@ -571,18 +584,19 @@ targeted tests listed in the verification line.
 ## GPU Feasibility Checkpoint
 
 The local profiler host reports an Apple M4 GPU with 10 cores and Metal
-support. The repo does not currently carry a Metal, wgpu, CUDA, or other GPU
-runtime dependency. The standard-MFS execution layer already has a reserved
-backend marker that fails before execution for names such as `gpu`, and the
-central memory planner already exposes a named GPU staging reserve through
+support. The repo now carries an optional macOS `objc2-metal` dependency for
+the standard-MFS Metal preview backend. Other GPU runtime families such as wgpu
+or CUDA are still absent, and the standard-MFS execution layer still rejects
+unimplemented backend names before execution. The central memory planner
+already exposes a named GPU staging reserve through
 `CASA_RS_IMAGING_GPU_STAGING_MB`.
 
 The Wave 2 conclusion so far is that a GPU implementation should plug in behind
 the existing standard-MFS backend/planner boundary, not inside task routing or
-frontend row preparation. Adding a real Metal/wgpu dependency is a substantial
-runtime/dependency decision and was not done silently in this CPU optimization
-pass. The current retained CPU work keeps the GPU path prepared at the resource
-planning seam while deferring the dependency choice for explicit review.
+frontend row preparation. The first retained Metal path is deliberately limited
+to dirty/PSF tile gridding and keeps residual refresh on CPU fixed tiles until
+the residual work-unit contract is hardened enough to move without reintroducing
+retained full-MS visibility plans.
 
 Earlier stopped clean attempts wrote failed result records only:
 

@@ -10,8 +10,10 @@ use crate::{
     fft::{centered_fft2_f64, fft2},
 };
 
-const GRIDDER_SUPPORT: usize = 3;
-const GRIDDER_TAP_COUNT: usize = GRIDDER_SUPPORT * 2 + 1;
+pub(crate) const STANDARD_GRIDDER_SUPPORT: usize = 3;
+pub(crate) const STANDARD_GRIDDER_TAP_COUNT: usize = STANDARD_GRIDDER_SUPPORT * 2 + 1;
+const GRIDDER_SUPPORT: usize = STANDARD_GRIDDER_SUPPORT;
+const GRIDDER_TAP_COUNT: usize = STANDARD_GRIDDER_TAP_COUNT;
 const GRIDDER_PRODUCT_TAP_COUNT: usize = GRIDDER_TAP_COUNT * GRIDDER_TAP_COUNT;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -401,6 +403,19 @@ impl StandardGridder {
             x: self.sample_tap_span(self.grid_coordinate_x(u_lambda), self.grid_shape[0])?,
             y: self.sample_tap_span(self.grid_coordinate_y(v_lambda), self.grid_shape[1])?,
         })
+    }
+
+    pub(crate) fn positive_tap_axis_weights(
+        &self,
+        taps: &PositiveTapSet,
+    ) -> (
+        [f32; STANDARD_GRIDDER_TAP_COUNT],
+        [f32; STANDARD_GRIDDER_TAP_COUNT],
+    ) {
+        (
+            self.normalized_tap_weights[taps.x.weight_index],
+            self.normalized_tap_weights[taps.y.weight_index],
+        )
     }
 
     #[allow(dead_code)]

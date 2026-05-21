@@ -7771,7 +7771,7 @@ fn standard_mfs_fixed_tile_backend_enabled_for_frontend() -> bool {
         .map(|value| {
             matches!(
                 value.trim().to_ascii_lowercase().as_str(),
-                "fixed_tile" | "fixed-tile" | "tile" | "tiled" | "streaming_fixed_tile"
+                "fixed_tile" | "fixed-tile" | "tile" | "tiled" | "streaming_fixed_tile" | "metal"
             )
         })
         .unwrap_or(false)
@@ -7781,7 +7781,7 @@ fn standard_mfs_product_status_for_frontend() -> &'static str {
     env::var("CASA_RS_STANDARD_MFS_BACKEND")
         .map(|value| match value.trim().to_ascii_lowercase().as_str() {
             "fixed_tile" | "fixed-tile" | "tile" | "tiled" | "streaming_fixed_tile" => "fixed_tile",
-            "metal" => "metal_preview",
+            "metal" => "metal_dirty_psf_preview",
             _ => "cpu",
         })
         .unwrap_or("cpu")

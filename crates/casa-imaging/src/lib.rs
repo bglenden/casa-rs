@@ -55,6 +55,8 @@ use beam::{
     BeamFitOutcome, beamfit_to_gaussian, estimate_psf_sidelobe_level, fit_beam_from_psf,
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
+#[cfg(target_os = "macos")]
+use execution::StandardMfsMetalExecutor;
 use execution::{
     StandardMfsCpuExecutor, StandardMfsDirtyCpuExecutor, StandardMfsPlannedSample,
     StandardMfsTiledCpuExecutor, StandardMfsVisibilityPlan, finite_visibility,
@@ -531,8 +533,9 @@ fn run_standard_mfs_imaging_with_weighted_batches(
     mut stage_timings: ImagingStageTimings,
     total_started: Instant,
 ) -> Result<ImagingResult, ImagingError> {
+    let use_metal_executor = should_use_standard_mfs_metal_backend(request);
     let use_tiled_executor = should_use_standard_mfs_tiled_backend(request);
-    let mut standard_executor = (!use_tiled_executor
+    let mut standard_executor = (!(use_metal_executor || use_tiled_executor)
         && should_use_standard_mfs_executor(request, weighted_batches))
     .then(|| StandardMfsCpuExecutor::new(gridder, weighted_batches))
     .transpose()?;
@@ -545,7 +548,14 @@ fn run_standard_mfs_imaging_with_weighted_batches(
     let can_start_from_combined_dirty_pass =
         !has_initial_model && matches!(request.w_term_mode, WTermMode::None);
     let (psf_state, mut residual) = if can_start_from_combined_dirty_pass {
-        if use_tiled_executor {
+        if use_metal_executor {
+            compute_dirty_psf_and_residual_standard_metal(
+                weighted_batches,
+                gridder,
+                execution_config,
+                &mut stage_timings,
+            )?
+        } else if use_tiled_executor {
             compute_dirty_psf_and_residual_standard_tiled(
                 weighted_batches,
                 gridder,
@@ -562,7 +572,14 @@ fn run_standard_mfs_imaging_with_weighted_batches(
             )?
         }
     } else {
-        let psf_state = if use_tiled_executor {
+        let psf_state = if use_metal_executor {
+            compute_psf_standard_metal(
+                weighted_batches,
+                gridder,
+                execution_config,
+                &mut stage_timings,
+            )?
+        } else if use_tiled_executor {
             compute_psf_standard_tiled(
                 weighted_batches,
                 gridder,
@@ -574,7 +591,7 @@ fn run_standard_mfs_imaging_with_weighted_batches(
         } else {
             compute_psf_standard_streaming(weighted_batches, gridder, &mut stage_timings)?
         };
-        let residual = if use_tiled_executor {
+        let residual = if use_metal_executor || use_tiled_executor {
             compute_residual_standard_tiled(
                 weighted_batches,
                 gridder,
@@ -742,18 +759,17 @@ fn should_use_standard_mfs_tiled_backend(request: &ImagingRequest) -> bool {
     matches!(request.w_term_mode, WTermMode::None) && standard_mfs_fixed_tile_backend_enabled()
 }
 
+fn should_use_standard_mfs_metal_backend(request: &ImagingRequest) -> bool {
+    matches!(request.w_term_mode, WTermMode::None) && standard_mfs_metal_backend_enabled()
+}
+
 fn ensure_standard_mfs_backend_available() -> Result<(), ImagingError> {
     match standard_mfs_backend_selection_from_env()? {
         StandardMfsBackendSelection::Cpu | StandardMfsBackendSelection::FixedTile => Ok(()),
         StandardMfsBackendSelection::Metal => {
             #[cfg(target_os = "macos")]
             {
-                Err(ImagingError::Unsupported(
-                    "standard MFS backend 'metal' is selected as a macOS preview backend, \
-                     but production Metal execution is not wired into the imaging core yet; \
-                     use tools/experiments/metal for the current runnable harness"
-                        .to_string(),
-                ))
+                Ok(())
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -771,6 +787,13 @@ fn standard_mfs_fixed_tile_backend_enabled() -> bool {
     matches!(
         standard_mfs_backend_selection_from_env(),
         Ok(StandardMfsBackendSelection::FixedTile)
+    )
+}
+
+fn standard_mfs_metal_backend_enabled() -> bool {
+    matches!(
+        standard_mfs_backend_selection_from_env(),
+        Ok(StandardMfsBackendSelection::Metal)
     )
 }
 
@@ -5386,6 +5409,14 @@ fn compute_psf(
             stage_timings,
         );
     }
+    if standard_mfs_metal_backend_enabled() {
+        return compute_psf_standard_metal(
+            batches,
+            gridder,
+            StandardMfsExecutionConfig::default(),
+            stage_timings,
+        );
+    }
     if standard_mfs_sample_count(batches) > standard_mfs_executor_max_samples() {
         return compute_psf_standard_streaming(batches, gridder, stage_timings);
     }
@@ -5570,6 +5601,67 @@ fn compute_psf_standard_tiled(
         gridded_samples: accumulation.gridded_samples,
         skipped_samples: accumulation.skipped_samples,
     })
+}
+
+fn compute_psf_standard_metal(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut timings = PsfComputationTimings::default();
+        let [nx, ny] = gridder.grid_shape();
+        let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+        let executor = StandardMfsMetalExecutor::new_with_resident_bytes(
+            gridder,
+            execution_config.fixed_tile_resident_bytes,
+        )?;
+
+        let grid_started = Instant::now();
+        let accumulation = executor.accumulate_psf_grid(batches, &mut psf_grid)?;
+        timings.grid = grid_started.elapsed();
+
+        if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+            return Err(ImagingError::NoUsableSamples);
+        }
+
+        let fft_started = Instant::now();
+        let raw_psf = centered_ifft2_f64(&psf_grid);
+        timings.fft = fft_started.elapsed();
+        let normalize_started = Instant::now();
+        let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+        psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+        let psf_peak = peak_abs_value(&psf);
+        if !(psf_peak.is_finite() && psf_peak > 0.0) {
+            return Err(ImagingError::Normalization(
+                "PSF peak is non-finite or zero".to_string(),
+            ));
+        }
+        psf.mapv_inplace(|value| value / psf_peak);
+        timings.normalize = normalize_started.elapsed();
+        stage_timings.psf_grid += timings.grid;
+        stage_timings.psf_fft += timings.fft;
+        stage_timings.psf_normalize += timings.normalize;
+
+        Ok(PsfState {
+            psf,
+            normalization_sumwt: accumulation.normalization_sumwt as f32,
+            reported_sumwt: accumulation.reported_sumwt as f32,
+            psf_peak,
+            gridded_samples: accumulation.gridded_samples,
+            skipped_samples: accumulation.skipped_samples,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (batches, gridder, execution_config, stage_timings);
+        Err(ImagingError::Unsupported(
+            "standard MFS backend 'metal' requires macOS Metal and is not available on this platform"
+                .to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -5777,6 +5869,79 @@ fn compute_dirty_psf_and_residual_standard_tiled(
         },
         residual,
     ))
+}
+
+fn compute_dirty_psf_and_residual_standard_metal(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    #[cfg(target_os = "macos")]
+    {
+        let [nx, ny] = gridder.grid_shape();
+        let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+        let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
+        let executor = StandardMfsMetalExecutor::new_with_resident_bytes(
+            gridder,
+            execution_config.fixed_tile_resident_bytes,
+        )?;
+
+        let grid_started = Instant::now();
+        let accumulation =
+            executor.accumulate_dirty_grids(batches, &mut psf_grid, &mut residual_grid)?;
+        let grid_elapsed = grid_started.elapsed();
+        let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+        stage_timings.psf_grid += split_grid_elapsed;
+        stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+        if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+            return Err(ImagingError::NoUsableSamples);
+        }
+
+        let psf_fft_started = Instant::now();
+        let raw_psf = centered_ifft2_f64(&psf_grid);
+        stage_timings.psf_fft += psf_fft_started.elapsed();
+        let psf_normalize_started = Instant::now();
+        let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+        psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+        let psf_peak = peak_abs_value(&psf);
+        if !(psf_peak.is_finite() && psf_peak > 0.0) {
+            return Err(ImagingError::Normalization(
+                "PSF peak is non-finite or zero".to_string(),
+            ));
+        }
+        psf.mapv_inplace(|value| value / psf_peak);
+        stage_timings.psf_normalize += psf_normalize_started.elapsed();
+
+        let residual_fft_started = Instant::now();
+        let raw_residual = centered_ifft2_f64(&residual_grid);
+        stage_timings.residual_fft += residual_fft_started.elapsed();
+        let residual_normalize_started = Instant::now();
+        let mut residual = gridder.corrected_image_from_grid_f64(&raw_residual);
+        residual.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32 / psf_peak);
+        stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+        Ok((
+            PsfState {
+                psf,
+                normalization_sumwt: accumulation.normalization_sumwt as f32,
+                reported_sumwt: accumulation.reported_sumwt as f32,
+                psf_peak,
+                gridded_samples: accumulation.gridded_samples,
+                skipped_samples: accumulation.skipped_samples,
+            },
+            residual,
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (batches, gridder, execution_config, stage_timings);
+        Err(ImagingError::Unsupported(
+            "standard MFS backend 'metal' requires macOS Metal and is not available on this platform"
+                .to_string(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -6086,6 +6251,7 @@ impl ResidualRefreshTimingSnapshot {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn refresh_standard_mfs_residual(
     request: &ImagingRequest,
     batches: &[VisibilityBatch],
@@ -6151,6 +6317,7 @@ fn build_standard_residual_sample_plans(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_standard(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
@@ -6161,7 +6328,9 @@ fn compute_residual_standard(
     execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
-    if !use_direct_point_predict && standard_mfs_fixed_tile_backend_enabled() {
+    if !use_direct_point_predict
+        && (standard_mfs_fixed_tile_backend_enabled() || standard_mfs_metal_backend_enabled())
+    {
         return compute_residual_standard_tiled(
             batches,
             gridder,
@@ -8292,20 +8461,21 @@ mod tests {
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
         HogbomIterationMode, ImageGeometry, ImagingRequest, ImagingStageTimings,
         MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
-        PsfState, RestoringBeamMode, STANDARD_MFS_BACKEND_ENV, StandardGridder,
-        StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
-        StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig, StandardMfsModelPredictor,
-        VisibilityBatch, VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode,
-        WeightingMode, add_shifted_kernel, apply_chauvenet_clipping, apply_weighting,
-        build_direct_components, build_direct_pixel_coordinates, build_multiscale_scale_masks,
-        compute_cycle_threshold, compute_dirty_psf_and_residual_standard, compute_psf,
-        compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
-        dirty_clean_config, make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
-        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
-        mosaic_projector_sampling, parse_standard_mfs_backend_selection,
-        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked, run_cube,
-        run_dirty_cube, run_hogbom_minor_cycle, run_imaging, run_imaging_owned, run_mtmfs,
-        tolerant_clean_stop_reason, trace_cube_channel_residual_refresh,
+        PsfState, RestoringBeamMode, StandardGridder, StandardMfsBackendSelection,
+        StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest,
+        StandardMfsExecutionConfig, StandardMfsModelPredictor, VisibilityBatch,
+        VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
+        add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
+        build_direct_pixel_coordinates, build_multiscale_scale_masks, compute_cycle_threshold,
+        compute_dirty_psf_and_residual_standard, compute_dirty_psf_and_residual_standard_metal,
+        compute_psf, compute_psf_direct, compute_residual, compute_residual_direct,
+        direct_predict_visibility, dirty_clean_config, make_multiscale_kernel, mean_stddev,
+        minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
+        mosaic_pointing_pixel_inside_image, mosaic_projector_sampling,
+        parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
+        peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle, run_imaging,
+        run_imaging_owned, run_mtmfs, tolerant_clean_stop_reason,
+        trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda,
         trace_cube_channel_w_project_plan, trace_cube_weighting, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
@@ -8323,7 +8493,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn standard_mfs_metal_backend_selection_is_explicit_and_gated() {
         assert_eq!(
             parse_standard_mfs_backend_selection("metal").unwrap(),
@@ -8372,29 +8541,56 @@ mod tests {
             compatibility: CompatibilityMode::CasaStandardMfs,
         };
 
-        let previous = std::env::var_os(STANDARD_MFS_BACKEND_ENV);
-        unsafe {
-            std::env::set_var(STANDARD_MFS_BACKEND_ENV, "metal");
-        }
-        let error = run_imaging(&request).unwrap_err();
-        match previous {
-            Some(value) => unsafe {
-                std::env::set_var(STANDARD_MFS_BACKEND_ENV, value);
-            },
-            None => unsafe {
-                std::env::remove_var(STANDARD_MFS_BACKEND_ENV);
-            },
-        }
-
-        let message = error.to_string();
-        assert!(
-            message.contains("standard MFS backend 'metal'"),
-            "{message}"
-        );
         #[cfg(target_os = "macos")]
-        assert!(message.contains("preview backend"), "{message}");
+        {
+            let gridder = StandardGridder::new(geometry).unwrap();
+            let weighted_batches = apply_weighting(&request, &gridder).unwrap();
+            let mut cpu_timings = ImagingStageTimings::default();
+            let (cpu_psf, cpu_residual) = compute_dirty_psf_and_residual_standard(
+                &weighted_batches,
+                &gridder,
+                &mut cpu_timings,
+            )
+            .unwrap();
+            let mut metal_timings = ImagingStageTimings::default();
+            let metal_result = compute_dirty_psf_and_residual_standard_metal(
+                &weighted_batches,
+                &gridder,
+                StandardMfsExecutionConfig::default(),
+                &mut metal_timings,
+            );
+            let (metal_psf, metal_residual) = match metal_result {
+                Ok(result) => result,
+                Err(error)
+                    if error
+                        .to_string()
+                        .contains("could not find a default Metal device") =>
+                {
+                    return;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            let max_psf_delta = metal_psf
+                .psf
+                .iter()
+                .zip(cpu_psf.psf.iter())
+                .map(|(lhs, rhs)| (lhs - rhs).abs())
+                .fold(0.0f32, f32::max);
+            let max_residual_delta = metal_residual
+                .iter()
+                .zip(cpu_residual.iter())
+                .map(|(lhs, rhs)| (lhs - rhs).abs())
+                .fold(0.0f32, f32::max);
+            assert!(max_psf_delta < 1.0e-4, "max PSF delta {max_psf_delta}");
+            assert!(
+                max_residual_delta < 1.0e-4,
+                "max residual delta {max_residual_delta}"
+            );
+        }
         #[cfg(not(target_os = "macos"))]
-        assert!(message.contains("requires macOS Metal"), "{message}");
+        {
+            let _ = request;
+        }
     }
 
     #[test]

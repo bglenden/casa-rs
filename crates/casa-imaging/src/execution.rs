@@ -8,7 +8,10 @@ use num_complex::{Complex32, Complex64};
 
 use crate::{
     ImageGeometry, ImagingError, VisibilityBatch,
-    gridder::{PositiveTapSet, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason},
+    gridder::{
+        PositiveTapSet, STANDARD_GRIDDER_SUPPORT, STANDARD_GRIDDER_TAP_COUNT, StandardGridder,
+        StandardMfsTapCensus, StandardMfsTapSkipReason,
+    },
     profile,
 };
 
@@ -840,6 +843,505 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         Ok(accumulation)
     }
 }
+
+#[cfg(target_os = "macos")]
+pub(crate) struct StandardMfsMetalExecutor<'a> {
+    gridder: &'a StandardGridder,
+    partition: StandardMfsFixedTilePartition,
+    backend: MetalDirtyBackend,
+}
+
+#[cfg(target_os = "macos")]
+const _: () = {
+    assert!(STANDARD_GRIDDER_SUPPORT == 3);
+    assert!(STANDARD_GRIDDER_TAP_COUNT == 7);
+};
+
+#[cfg(target_os = "macos")]
+impl<'a> StandardMfsMetalExecutor<'a> {
+    pub(crate) fn new_with_resident_bytes(
+        gridder: &'a StandardGridder,
+        _resident_bytes: Option<usize>,
+    ) -> Result<Self, ImagingError> {
+        let grid_shape = gridder.grid_shape();
+        let tile_edge = standard_mfs_tile_edge().min(grid_shape[0].max(grid_shape[1]));
+        let partition = StandardMfsFixedTilePartition::new(
+            grid_shape,
+            [tile_edge, tile_edge],
+            gridder.positive_tap_halo(),
+        )?;
+        Ok(Self {
+            gridder,
+            partition,
+            backend: MetalDirtyBackend::new()?,
+        })
+    }
+
+    pub(crate) fn accumulate_dirty_grids(
+        &self,
+        batches: &[VisibilityBatch],
+        psf_grid: &mut Array2<Complex64>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
+        let mut accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 0.0,
+            reported_sumwt: 0.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+            max_abs_w_lambda: 0.0,
+        };
+
+        for batch in batches {
+            batch.validate()?;
+            accumulation.max_abs_w_lambda = batch
+                .w_lambda
+                .iter()
+                .fold(accumulation.max_abs_w_lambda, |max_value, value| {
+                    max_value.max(value.abs())
+                });
+            let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
+                self.gridder,
+                &self.partition,
+                std::slice::from_ref(batch),
+            )?;
+            accumulation.skipped_samples += buckets.skipped_samples();
+            for &tile_id in buckets.nonempty_tiles() {
+                let tile = self.partition.tile(tile_id).ok_or_else(|| {
+                    ImagingError::InvalidRequest(format!(
+                        "standard MFS tile id {} is out of range",
+                        tile_id.index()
+                    ))
+                })?;
+                let tile_bucket_samples = buckets.tile_samples(tile_id);
+                for sample in tile_bucket_samples {
+                    let grid_weight = f64::from(sample.grid_weight);
+                    accumulation.normalization_sumwt += grid_weight;
+                    accumulation.reported_sumwt += grid_weight;
+                    accumulation.gridded_samples += 1;
+                }
+                let samples = self.metal_dirty_samples(batch, tile_bucket_samples)?;
+                let (tile_psf_grid, tile_residual_grid) =
+                    self.backend.grid_dirty_tile(tile, &samples)?;
+                add_tile_grid(tile, &tile_psf_grid, psf_grid);
+                add_tile_grid(tile, &tile_residual_grid, residual_grid);
+            }
+        }
+
+        Ok(accumulation)
+    }
+
+    pub(crate) fn accumulate_psf_grid(
+        &self,
+        batches: &[VisibilityBatch],
+        psf_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
+        let mut residual_grid = Array2::<Complex64>::zeros(psf_grid.raw_dim());
+        self.accumulate_dirty_grids(batches, psf_grid, &mut residual_grid)
+    }
+
+    fn metal_dirty_samples(
+        &self,
+        batch: &VisibilityBatch,
+        tile_bucket_samples: &[StandardMfsTileBucketSample],
+    ) -> Result<Vec<MetalDirtySample>, ImagingError> {
+        let mut samples = Vec::with_capacity(tile_bucket_samples.len());
+        for sample in tile_bucket_samples {
+            let sample_index = sample.sample_index as usize;
+            let taps = self
+                .gridder
+                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS Metal dirty bucket lost its tap plan".to_string(),
+                    )
+                })?;
+            debug_assert_eq!(
+                taps.center(),
+                [sample.center_x as usize, sample.center_y as usize]
+            );
+            let visibility = batch.visibility[sample_index];
+            let (x_weights, y_weights) = self.gridder.positive_tap_axis_weights(&taps);
+            samples.push(MetalDirtySample {
+                center_x: sample.center_x,
+                center_y: sample.center_y,
+                flags: u32::from(sample.flags),
+                _pad0: 0,
+                grid_weight: sample.grid_weight,
+                visibility_re: visibility.re,
+                visibility_im: visibility.im,
+                _pad1: 0.0,
+                x_weights,
+                y_weights,
+            });
+        }
+        Ok(samples)
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct MetalDirtySample {
+    center_x: u32,
+    center_y: u32,
+    flags: u32,
+    _pad0: u32,
+    grid_weight: f32,
+    visibility_re: f32,
+    visibility_im: f32,
+    _pad1: f32,
+    x_weights: [f32; STANDARD_GRIDDER_TAP_COUNT],
+    y_weights: [f32; STANDARD_GRIDDER_TAP_COUNT],
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct MetalTileParams {
+    sample_count: u32,
+    halo_x0: u32,
+    halo_y0: u32,
+    halo_width: u32,
+    halo_height: u32,
+    _pad0: [u32; 3],
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct MetalComplex32 {
+    re: f32,
+    im: f32,
+}
+
+#[cfg(target_os = "macos")]
+struct MetalDirtyBackend {
+    device: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>>,
+    queue: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandQueue>>,
+    pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
+}
+
+#[cfg(target_os = "macos")]
+impl MetalDirtyBackend {
+    fn new() -> Result<Self, ImagingError> {
+        use objc2_metal::{
+            MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary, MTLResourceOptions,
+        };
+
+        let device = MTLCreateSystemDefaultDevice().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' could not find a default Metal device".to_string(),
+            )
+        })?;
+        let queue = device.newCommandQueue().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' could not create a Metal command queue".to_string(),
+            )
+        })?;
+        let source = objc2_foundation::NSString::from_str(METAL_DIRTY_SHADER);
+        let library = device
+            .newLibraryWithSource_options_error(&source, None)
+            .map_err(|error| metal_error("compile dirty tile shader", error))?;
+        let function_name = objc2_foundation::NSString::from_str("grid_dirty_tile_cell_owner");
+        let function = library.newFunctionWithName(&function_name).ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' dirty tile shader entry point was not found"
+                    .to_string(),
+            )
+        })?;
+        let pipeline = device
+            .newComputePipelineStateWithFunction_error(&function)
+            .map_err(|error| metal_error("create dirty tile pipeline", error))?;
+        let _ = MTLResourceOptions::StorageModeShared;
+        Ok(Self {
+            device,
+            queue,
+            pipeline,
+        })
+    }
+
+    fn grid_dirty_tile(
+        &self,
+        tile: &StandardMfsFixedTile,
+        samples: &[MetalDirtySample],
+    ) -> Result<(Array2<Complex64>, Array2<Complex64>), ImagingError> {
+        use std::{mem, slice};
+
+        use objc2_metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
+            MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice,
+            MTLResourceOptions, MTLSize,
+        };
+
+        let width = tile.halo.width();
+        let height = tile.halo.height();
+        let cell_count = width.checked_mul(height).ok_or_else(|| {
+            ImagingError::InvalidRequest("standard MFS Metal tile is too large".to_string())
+        })?;
+        if cell_count == 0 {
+            return Ok((
+                Array2::<Complex64>::zeros((width, height)),
+                Array2::<Complex64>::zeros((width, height)),
+            ));
+        }
+        let sample_count = u32::try_from(samples.len()).map_err(|_| {
+            ImagingError::InvalidRequest("standard MFS Metal tile has too many samples".to_string())
+        })?;
+        let params = MetalTileParams {
+            sample_count,
+            halo_x0: u32::try_from(tile.halo.x0).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal tile x origin exceeds u32".to_string(),
+                )
+            })?,
+            halo_y0: u32::try_from(tile.halo.y0).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal tile y origin exceeds u32".to_string(),
+                )
+            })?,
+            halo_width: u32::try_from(width).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal tile width exceeds u32".to_string(),
+                )
+            })?,
+            halo_height: u32::try_from(height).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal tile height exceeds u32".to_string(),
+                )
+            })?,
+            _pad0: [0; 3],
+        };
+
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let sample_buffer = self.buffer_from_slice(samples, storage_options)?;
+        let params_buffer = self.buffer_from_slice(slice::from_ref(&params), storage_options)?;
+        let output_bytes = cell_count
+            .checked_mul(mem::size_of::<MetalComplex32>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal tile output is too large".to_string(),
+                )
+            })?;
+        let psf_buffer = self
+            .device
+            .newBufferWithLength_options(output_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' could not allocate PSF tile buffer".to_string(),
+                )
+            })?;
+        let residual_buffer = self
+            .device
+            .newBufferWithLength_options(output_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' could not allocate residual tile buffer"
+                        .to_string(),
+                )
+            })?;
+
+        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' could not create a command buffer".to_string(),
+            )
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' could not create a compute encoder".to_string(),
+            )
+        })?;
+        encoder.setComputePipelineState(&self.pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&sample_buffer), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&psf_buffer), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&residual_buffer), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 3);
+        }
+        let thread_count = cell_count.min(usize::try_from(u32::MAX).unwrap());
+        let thread_width = self.pipeline.threadExecutionWidth().max(1);
+        let max_threads = self.pipeline.maxTotalThreadsPerThreadgroup().max(1);
+        let threads_per_group = thread_width.min(max_threads).min(thread_count);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: thread_count,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: threads_per_group,
+                height: 1,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "standard MFS backend 'metal' dirty tile command failed: {message}"
+            )));
+        }
+
+        let psf_output = unsafe {
+            slice::from_raw_parts(
+                psf_buffer.contents().as_ptr().cast::<MetalComplex32>(),
+                cell_count,
+            )
+        };
+        let residual_output = unsafe {
+            slice::from_raw_parts(
+                residual_buffer.contents().as_ptr().cast::<MetalComplex32>(),
+                cell_count,
+            )
+        };
+        let mut psf_grid = Array2::<Complex64>::zeros((width, height));
+        let mut residual_grid = Array2::<Complex64>::zeros((width, height));
+        for (cell, value) in psf_grid
+            .as_slice_memory_order_mut()
+            .expect("fresh tile grid should be contiguous")
+            .iter_mut()
+            .zip(psf_output)
+        {
+            *cell = Complex64::new(f64::from(value.re), f64::from(value.im));
+        }
+        for (cell, value) in residual_grid
+            .as_slice_memory_order_mut()
+            .expect("fresh tile grid should be contiguous")
+            .iter_mut()
+            .zip(residual_output)
+        {
+            *cell = Complex64::new(f64::from(value.re), f64::from(value.im));
+        }
+
+        Ok((psf_grid, residual_grid))
+    }
+
+    fn buffer_from_slice<T>(
+        &self,
+        values: &[T],
+        options: objc2_metal::MTLResourceOptions,
+    ) -> Result<
+        objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>>,
+        ImagingError,
+    > {
+        use std::{ffi::c_void, mem, ptr::NonNull};
+
+        use objc2_metal::MTLDevice;
+
+        let byte_len = mem::size_of_val(values);
+        if byte_len == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS Metal buffers must be non-empty".to_string(),
+            ));
+        }
+        let pointer =
+            NonNull::new(values.as_ptr().cast::<c_void>() as *mut c_void).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal buffer pointer was null".to_string(),
+                )
+            })?;
+        unsafe {
+            self.device
+                .newBufferWithBytes_length_options(pointer, byte_len, options)
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "standard MFS backend 'metal' could not allocate an input buffer"
+                            .to_string(),
+                    )
+                })
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn metal_error(
+    context: &str,
+    error: objc2::rc::Retained<objc2_foundation::NSError>,
+) -> ImagingError {
+    ImagingError::Unsupported(format!(
+        "standard MFS backend 'metal' failed to {context}: {error:?}"
+    ))
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {}
+
+#[cfg(target_os = "macos")]
+const METAL_DIRTY_SHADER: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+#define STANDARD_MFS_TAP_COUNT 7u
+#define STANDARD_MFS_SUPPORT 3
+#define STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY 1u
+
+struct DirtySample {
+    uint center_x;
+    uint center_y;
+    uint flags;
+    uint _pad0;
+    float grid_weight;
+    float visibility_re;
+    float visibility_im;
+    float _pad1;
+    float x_weights[STANDARD_MFS_TAP_COUNT];
+    float y_weights[STANDARD_MFS_TAP_COUNT];
+};
+
+struct TileParams {
+    uint sample_count;
+    uint halo_x0;
+    uint halo_y0;
+    uint halo_width;
+    uint halo_height;
+    uint _pad0[3];
+};
+
+kernel void grid_dirty_tile_cell_owner(
+    device const DirtySample *samples [[buffer(0)]],
+    device float2 *psf_grid [[buffer(1)]],
+    device float2 *residual_grid [[buffer(2)]],
+    constant TileParams &params [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    const uint cell_count = params.halo_width * params.halo_height;
+    if (gid >= cell_count) {
+        return;
+    }
+    const uint local_x = gid / params.halo_height;
+    const uint local_y = gid - local_x * params.halo_height;
+    const int global_x = int(params.halo_x0 + local_x);
+    const int global_y = int(params.halo_y0 + local_y);
+    float psf = 0.0f;
+    float residual_re = 0.0f;
+    float residual_im = 0.0f;
+    for (uint index = 0; index < params.sample_count; ++index) {
+        const DirtySample sample = samples[index];
+        const int tap_x = global_x - (int(sample.center_x) - STANDARD_MFS_SUPPORT);
+        const int tap_y = global_y - (int(sample.center_y) - STANDARD_MFS_SUPPORT);
+        if (tap_x < 0 || tap_x >= int(STANDARD_MFS_TAP_COUNT) ||
+            tap_y < 0 || tap_y >= int(STANDARD_MFS_TAP_COUNT)) {
+            continue;
+        }
+        const float weight =
+            sample.x_weights[tap_x] * sample.y_weights[tap_y] * sample.grid_weight;
+        psf += weight;
+        if ((sample.flags & STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY) != 0u) {
+            residual_re += sample.visibility_re * weight;
+            residual_im += sample.visibility_im * weight;
+        }
+    }
+    psf_grid[gid] = float2(psf, 0.0f);
+    residual_grid[gid] = float2(residual_re, residual_im);
+}
+"#;
 
 struct PsfTileBuffer {
     id: StandardMfsTileId,

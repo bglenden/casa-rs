@@ -2,7 +2,7 @@
 
 Truth class: current design contract
 Last reality check: 2026-05-21
-Verification: External Oracle-style review in Chrome conversation `Bundle review request`; `cargo check -p casa-imaging -p casars-imager`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib`
+Verification: External Oracle-style review in Chrome conversation `Bundle review request`; `cargo check -p casa-imaging -p casars-imager`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib`
 
 Wave issue: #263
 
@@ -83,8 +83,8 @@ or worker-local full-grid strategy.
 Apple Metal is now an intended optional backend track for modern macOS, not a
 detached side experiment. The production Rust integration direction is
 `objc2-metal`; the Swift harness under `tools/experiments/metal/` remains the
-runnable benchmark and shader-shape workbench while the Rust work-unit boundary
-is hardened.
+benchmark and shader-shape workbench while the Rust work-unit boundary is
+hardened.
 
 Metal must consume the same standard-MFS work-unit contract as the CPU
 fixed-tile backend:
@@ -111,10 +111,12 @@ CPU fixed tile: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
 Metal preview: CASA_RS_STANDARD_MFS_BACKEND=metal
 ```
 
-Until a production Metal executor is wired into the imaging core,
-`CASA_RS_STANDARD_MFS_BACKEND=metal` is expected to fail before imaging
-execution with a clear preview-backend message. The CPU fixed-tile backend
-remains the correctness/reference path.
+The first Rust Metal backend is intentionally narrow:
+`CASA_RS_STANDARD_MFS_BACKEND=metal` runs the initial standard-MFS dirty/PSF
+tile gridding work unit on Metal on macOS, using the compact current-block tile
+buckets. Residual refresh still falls back to the CPU fixed-tile executor, so
+bounded fixed-tile residency remains part of the selected execution plan. The
+CPU fixed-tile backend remains the correctness/reference path.
 
 ## Merge Policy
 
