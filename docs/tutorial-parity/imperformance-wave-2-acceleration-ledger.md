@@ -85,6 +85,58 @@ summary records task count, per-block task/sample/tap quantiles, bucket build
 time, tile-buffer zero time, worker replan/grid time, merge time, flush and
 eviction counts, resident tile limit, and stage wall time.
 
+The first full-shape aggregate-instrumented run was intentionally stopped after
+it produced enough attribution to reject the current fixed-tile scheduler shape:
+
+```text
+Artifact: target/imperformance-wave2/fine-tile-full-shape-20260521/full-shape-10w-edge64-center-instrumented.log
+Sample: target/imperformance-wave2/fine-tile-full-shape-20260521/profile_imager-edge64-center-sample.txt
+Workload: 512 channels, imsize 2048, niter=2, minor-cycle-length=2, 10 workers
+Tile geometry: edge=64, anchor=center_boundary, origin=34x34, tiles=1600
+Memory plan: planned_reserved_bytes=804604928, planned_active_bytes=1945455616, reserve_over_budget_bytes=267734016
+Weighting density: 54.030s
+Weighting reweight: 79.793s
+Weighting total: 133.837s
+Dirty tiled stage total before interruption: 948.798s
+Dirty blocks: 24112
+Dirty tasks: 6630802
+Dirty samples: 1548245185
+Dirty tap visits: 75864014065
+Dirty bucket build total: 715.662s
+Dirty local tile alloc/zero total: 148.109s
+Dirty worker replan/grid total: 145.588s
+Dirty merge total: 82.001s
+Dirty flush total: 0.302s
+Dirty cumulative transient bucket bytes: 43542833500
+Live sample physical footprint: 62.4 GiB, peak 63.1 GiB
+Decision: rejected as a performance candidate and stopped before final wall time
+```
+
+This result changes the next action. The current fixed-tile scheduler is not
+limited by tile load balance in this run; it is dominated by materialization and
+memory traffic. The dirty stage spends far more time building transient tile
+buckets and allocating/zeroing/merging per-task tile buffers than applying grid
+taps. The live residual-refresh sample was in
+`StandardMfsTiledCpuExecutor::accumulate_residual_grid`, with the main thread
+mostly merging residual tile buffers through `add_same_shape_grid` and allocator
+reallocation/free paths visible in the stack. The memory planner also reports an
+over-budget plan before execution, and the prepared batch shape does not match
+the planned row-block shape: the scheduler saw 24,112 batches of up to 65,536
+samples rather than large 2,048-row work units.
+
+Retained next steps are therefore instrumentation and shape repair, not another
+tile-edge sweep:
+
+- split bucket construction timing into count/plan, allocation, and fill phases;
+- report actual prepared batch count and sample quantiles in
+  `standard_mfs_memory_plan_actual`;
+- add live progress summaries for long tiled stages so residual-refresh stalls
+  are visible before stage end;
+- remove per-task tile-buffer materialization as the default path by updating
+  resident tile buffers directly under the single-live-block scheduler, or by
+  using bounded scratch only when hot-tile splitting is explicitly enabled;
+- align prepared row-block/batch sizing with the centralized memory planner.
+
 ## Metal Preview Backend Track
 
 The Metal gridding experiment from `codex/metal-experiments` is now part of the
