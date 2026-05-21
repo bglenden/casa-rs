@@ -62,6 +62,16 @@ impl PositiveTapSet {
             y_weight_index: self.y.weight_index,
         }
     }
+
+    pub(crate) fn center(&self) -> [usize; 2] {
+        [self.x.center(), self.y.center()]
+    }
+}
+
+impl TapAxisSpan {
+    pub(crate) fn center(&self) -> usize {
+        self.start + GRIDDER_SUPPORT
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -330,6 +340,10 @@ impl StandardGridder {
 
     pub(crate) fn grid_spacing_lambda(&self) -> [f64; 2] {
         [self.du_lambda, self.dv_lambda]
+    }
+
+    pub(crate) fn positive_tap_halo(&self) -> usize {
+        GRIDDER_SUPPORT
     }
 
     pub(crate) fn density_grid_shape(&self) -> [usize; 2] {
