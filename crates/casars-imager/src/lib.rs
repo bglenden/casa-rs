@@ -7116,7 +7116,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
             .saturating_mul(strategy.selected_channel_count)
             .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES);
         eprintln!(
-            "standard_mfs_memory_plan_actual rows_total={} selected_channels={} row_block_rows={} worker_buffers={} total_budget_bytes={} planned_reserved_bytes={} prepare_buffer_bytes={} image_working_set_bytes={} weighting_density_bytes={} gridded_visibility_bytes={} output_image_bytes={} fixed_tile_resident_bytes={} fixed_tile_resident_limit={} worker_staging_bytes={} gpu_staging_bytes={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} peak_rss_bytes=0 product_status=cpu",
+            "standard_mfs_memory_plan_actual rows_total={} selected_channels={} row_block_rows={} worker_buffers={} total_budget_bytes={} planned_reserved_bytes={} prepare_buffer_bytes={} image_working_set_bytes={} weighting_density_bytes={} gridded_visibility_bytes={} output_image_bytes={} fixed_tile_resident_bytes={} fixed_tile_resident_limit={} worker_staging_bytes={} gpu_staging_bytes={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} peak_rss_bytes=0 product_status={}",
             active_selected_rows.len(),
             strategy.selected_channel_count,
             strategy.row_block_rows,
@@ -7134,6 +7134,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
             strategy.gpu_staging_bytes,
             executor_plan_bytes_estimate,
             strategy.worker_staging_bytes,
+            standard_mfs_product_status_for_frontend(),
         );
     }
 
@@ -7774,6 +7775,16 @@ fn standard_mfs_fixed_tile_backend_enabled_for_frontend() -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn standard_mfs_product_status_for_frontend() -> &'static str {
+    env::var("CASA_RS_STANDARD_MFS_BACKEND")
+        .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "fixed_tile" | "fixed-tile" | "tile" | "tiled" | "streaming_fixed_tile" => "fixed_tile",
+            "metal" => "metal_preview",
+            _ => "cpu",
+        })
+        .unwrap_or("cpu")
 }
 
 fn casa_composite_padded_len_estimate(image_len: usize, padding_factor: f64) -> usize {

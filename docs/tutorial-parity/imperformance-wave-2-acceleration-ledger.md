@@ -58,6 +58,36 @@ CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT
 cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib
 ```
 
+## Metal Preview Backend Track
+
+The Metal gridding experiment from `codex/metal-experiments` is now part of the
+Wave 2 branch under `tools/experiments/metal/`. It is retained as feasibility
+evidence and as the runnable shader/work-unit harness for a future optional
+macOS backend, not as the current correctness/default path.
+
+Current selector contract:
+
+```text
+CPU default: unset CASA_RS_STANDARD_MFS_BACKEND
+CPU fixed tile: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
+Metal preview: CASA_RS_STANDARD_MFS_BACKEND=metal
+Production status: explicit preview selection, clear pre-execution failure until the Rust executor is wired
+Rust integration direction: objc2-metal
+```
+
+The prototype evidence shows that global atomics are useful as a microbenchmark
+but are not the production shape: central UV clustering increases contention and
+numerical drift. CPU-expanded sorted tap-contribution lists are also rejected as
+a production contract because they move too much memory and rebuild too much
+per-sample state before the GPU can run.
+
+The promising direction is bounded tile-cell grouping and reduction over compact
+row-block/tile work units. Residual refresh can be fused on device, but it
+should use the same grouped tile path and the same bounded resident tile/slab
+ownership as CPU fixed-tile. Future device staging, resident device grids,
+tile-cell reference buffers, and host readback buffers must be budgeted through
+the existing standard-MFS memory planner before execution.
+
 The measured dataset is:
 
 ```text

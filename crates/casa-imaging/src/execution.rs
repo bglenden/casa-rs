@@ -17,9 +17,16 @@ use crate::{
 pub(crate) enum StandardMfsBackend {
     /// Synchronous CPU execution using the native Rust gridder.
     Cpu,
+    /// Preview marker for the future macOS Metal standard-MFS backend.
+    #[allow(dead_code)]
+    Metal,
     /// Reserved marker for future backends that must fail before execution.
     #[allow(dead_code)]
     Reserved(&'static str),
+}
+
+fn unsupported_standard_mfs_backend(name: &str) -> ImagingError {
+    ImagingError::Unsupported(format!("standard MFS backend '{name}' is not implemented"))
 }
 
 /// CPU-only executor for standard MFS imaging.
@@ -1120,9 +1127,8 @@ impl<'a> StandardMfsCpuExecutor<'a> {
                 plan: StandardMfsVisibilityPlan::new(gridder, batches),
                 workspace: StandardMfsWorkspace::new(gridder),
             }),
-            StandardMfsBackend::Reserved(name) => Err(ImagingError::Unsupported(format!(
-                "standard MFS backend '{name}' is not implemented"
-            ))),
+            StandardMfsBackend::Metal => Err(unsupported_standard_mfs_backend("metal")),
+            StandardMfsBackend::Reserved(name) => Err(unsupported_standard_mfs_backend(name)),
         }
     }
 
@@ -1164,9 +1170,8 @@ impl StandardMfsDirtyCpuExecutor {
                     max_abs_w_lambda: 0.0,
                 })
             }
-            StandardMfsBackend::Reserved(name) => Err(ImagingError::Unsupported(format!(
-                "standard MFS backend '{name}' is not implemented"
-            ))),
+            StandardMfsBackend::Metal => Err(unsupported_standard_mfs_backend("metal")),
+            StandardMfsBackend::Reserved(name) => Err(unsupported_standard_mfs_backend(name)),
         }
     }
 
@@ -1523,7 +1528,7 @@ mod tests {
         let gridder = StandardGridder::new(geometry).unwrap();
         let batches = Vec::new();
         let error = match StandardMfsCpuExecutor::for_backend(
-            StandardMfsBackend::Reserved("gpu"),
+            StandardMfsBackend::Metal,
             &gridder,
             &batches,
         ) {
@@ -1534,7 +1539,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("standard MFS backend 'gpu' is not implemented"),
+                .contains("standard MFS backend 'metal' is not implemented"),
             "{error}"
         );
     }
@@ -1679,18 +1684,16 @@ mod tests {
             image_shape: [32, 32],
             cell_size_rad: [1.0e-4, 1.0e-4],
         };
-        let error = match StandardMfsDirtyCpuExecutor::for_backend(
-            StandardMfsBackend::Reserved("gpu"),
-            geometry,
-        ) {
-            Ok(_) => panic!("reserved backend unexpectedly built a dirty executor"),
-            Err(error) => error,
-        };
+        let error =
+            match StandardMfsDirtyCpuExecutor::for_backend(StandardMfsBackend::Metal, geometry) {
+                Ok(_) => panic!("reserved backend unexpectedly built a dirty executor"),
+                Err(error) => error,
+            };
 
         assert!(
             error
                 .to_string()
-                .contains("standard MFS backend 'gpu' is not implemented"),
+                .contains("standard MFS backend 'metal' is not implemented"),
             "{error}"
         );
     }

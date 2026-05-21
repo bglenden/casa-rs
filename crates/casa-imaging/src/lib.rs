@@ -82,6 +82,13 @@ const DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES: usize = 8_000_000;
 const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
 const STANDARD_MFS_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_BACKEND";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StandardMfsBackendSelection {
+    Cpu,
+    FixedTile,
+    Metal,
+}
+
 pub(crate) use cube::{HogbomMinorCycleOutcome, MinorCycleProbe};
 pub use cube::{run_cube, run_dirty_cube};
 pub(crate) use trace::{ResidualRefreshTraceInternal, ResidualSampleTraceInternal};
@@ -448,6 +455,7 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
             "deconvolver='mtmfs' requires the dedicated run_mtmfs() entrypoint".to_string(),
         ));
     }
+    ensure_standard_mfs_backend_available()?;
     if let GridderMode::Mosaic(config) = &request.gridder_mode {
         return run_mosaic_dirty_imaging(request, config, total_started);
     }
@@ -493,6 +501,7 @@ pub fn run_imaging_owned_with_execution_config(
             "deconvolver='mtmfs' requires the dedicated run_mtmfs() entrypoint".to_string(),
         ));
     }
+    ensure_standard_mfs_backend_available()?;
     if let GridderMode::Mosaic(config) = &request.gridder_mode {
         return run_mosaic_dirty_imaging(&request, config, total_started);
     }
@@ -733,15 +742,58 @@ fn should_use_standard_mfs_tiled_backend(request: &ImagingRequest) -> bool {
     matches!(request.w_term_mode, WTermMode::None) && standard_mfs_fixed_tile_backend_enabled()
 }
 
+fn ensure_standard_mfs_backend_available() -> Result<(), ImagingError> {
+    match standard_mfs_backend_selection_from_env()? {
+        StandardMfsBackendSelection::Cpu | StandardMfsBackendSelection::FixedTile => Ok(()),
+        StandardMfsBackendSelection::Metal => {
+            #[cfg(target_os = "macos")]
+            {
+                Err(ImagingError::Unsupported(
+                    "standard MFS backend 'metal' is selected as a macOS preview backend, \
+                     but production Metal execution is not wired into the imaging core yet; \
+                     use tools/experiments/metal for the current runnable harness"
+                        .to_string(),
+                ))
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Err(ImagingError::Unsupported(
+                    "standard MFS backend 'metal' requires macOS Metal and is not available \
+                     on this platform"
+                        .to_string(),
+                ))
+            }
+        }
+    }
+}
+
 fn standard_mfs_fixed_tile_backend_enabled() -> bool {
+    matches!(
+        standard_mfs_backend_selection_from_env(),
+        Ok(StandardMfsBackendSelection::FixedTile)
+    )
+}
+
+fn standard_mfs_backend_selection_from_env() -> Result<StandardMfsBackendSelection, ImagingError> {
     env::var(STANDARD_MFS_BACKEND_ENV)
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "fixed_tile" | "fixed-tile" | "tile" | "tiled" | "streaming_fixed_tile"
-            )
-        })
-        .unwrap_or(false)
+        .map(|value| parse_standard_mfs_backend_selection(&value))
+        .unwrap_or(Ok(StandardMfsBackendSelection::Cpu))
+}
+
+fn parse_standard_mfs_backend_selection(
+    value: &str,
+) -> Result<StandardMfsBackendSelection, ImagingError> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "cpu" | "default" => Ok(StandardMfsBackendSelection::Cpu),
+        "fixed_tile" | "fixed-tile" | "tile" | "tiled" | "streaming_fixed_tile" => {
+            Ok(StandardMfsBackendSelection::FixedTile)
+        }
+        "metal" => Ok(StandardMfsBackendSelection::Metal),
+        _ => Err(ImagingError::Unsupported(format!(
+            "standard MFS backend '{value}' is not recognized; expected cpu, fixed_tile, or metal"
+        ))),
+    }
 }
 
 fn standard_mfs_executor_max_samples() -> usize {
@@ -8240,7 +8292,8 @@ mod tests {
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
         HogbomIterationMode, ImageGeometry, ImagingRequest, ImagingStageTimings,
         MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
-        PsfState, RestoringBeamMode, StandardGridder, StandardMfsDirtyAccumulator,
+        PsfState, RestoringBeamMode, STANDARD_MFS_BACKEND_ENV, StandardGridder,
+        StandardMfsBackendSelection, StandardMfsDirtyAccumulator,
         StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig, StandardMfsModelPredictor,
         VisibilityBatch, VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode,
         WeightingMode, add_shifted_kernel, apply_chauvenet_clipping, apply_weighting,
@@ -8249,10 +8302,10 @@ mod tests {
         compute_psf_direct, compute_residual, compute_residual_direct, direct_predict_visibility,
         dirty_clean_config, make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
         mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
-        mosaic_projector_sampling, parse_standard_mfs_thread_count, peak_abs_value,
-        peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle, run_imaging,
-        run_imaging_owned, run_mtmfs, tolerant_clean_stop_reason,
-        trace_cube_channel_residual_refresh,
+        mosaic_projector_sampling, parse_standard_mfs_backend_selection,
+        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked, run_cube,
+        run_dirty_cube, run_hogbom_minor_cycle, run_imaging, run_imaging_owned, run_mtmfs,
+        tolerant_clean_stop_reason, trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda,
         trace_cube_channel_w_project_plan, trace_cube_weighting, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
@@ -8267,6 +8320,81 @@ mod tests {
         assert_eq!(parse_standard_mfs_thread_count("not-a-count"), None);
         assert!(parse_standard_mfs_thread_count("auto").is_some_and(|value| value >= 1));
         assert!(parse_standard_mfs_thread_count("AUTO").is_some_and(|value| value >= 1));
+    }
+
+    #[test]
+    #[serial]
+    fn standard_mfs_metal_backend_selection_is_explicit_and_gated() {
+        assert_eq!(
+            parse_standard_mfs_backend_selection("metal").unwrap(),
+            StandardMfsBackendSelection::Metal
+        );
+        assert_eq!(
+            parse_standard_mfs_backend_selection("fixed_tile").unwrap(),
+            StandardMfsBackendSelection::FixedTile
+        );
+        assert!(
+            parse_standard_mfs_backend_selection("not-a-backend")
+                .unwrap_err()
+                .to_string()
+                .contains("expected cpu, fixed_tile, or metal")
+        );
+
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![point_source_visibilities(
+                &[(0.0, 0.0, 0.0)],
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (16.0, 16.0),
+                1.0,
+            )],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.4e9, 1.4e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 0,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+
+        let previous = std::env::var_os(STANDARD_MFS_BACKEND_ENV);
+        unsafe {
+            std::env::set_var(STANDARD_MFS_BACKEND_ENV, "metal");
+        }
+        let error = run_imaging(&request).unwrap_err();
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var(STANDARD_MFS_BACKEND_ENV, value);
+            },
+            None => unsafe {
+                std::env::remove_var(STANDARD_MFS_BACKEND_ENV);
+            },
+        }
+
+        let message = error.to_string();
+        assert!(
+            message.contains("standard MFS backend 'metal'"),
+            "{message}"
+        );
+        #[cfg(target_os = "macos")]
+        assert!(message.contains("preview backend"), "{message}");
+        #[cfg(not(target_os = "macos"))]
+        assert!(message.contains("requires macOS Metal"), "{message}");
     }
 
     #[test]

@@ -6,10 +6,11 @@ Verification: `swift run -c release MetalGridExperiment --samples 2000 --imsize 
 
 ## Purpose
 
-This directory is an isolated feasibility track for a possible future Apple
-Metal backend for casa-rs standard-MFS gridding/degridding. It is not the Wave 2
-CPU implementation path and does not replace the bounded streaming fixed-halo
-tile work.
+This directory is the runnable feasibility and benchmark track for a future
+optional Apple Metal backend for casa-rs standard-MFS gridding/degridding. It is
+not the Wave 2 CPU correctness path and does not replace the bounded streaming
+fixed-halo tile backend, but it is now intended backend-track evidence rather
+than an unrelated side experiment.
 
 The experiment branch was resynced to
 `484d1c409 Add standard MFS fixed tile backend` from
@@ -19,6 +20,10 @@ partitions, compact tile bucket records, bounded resident tile caches, and a
 fixed-tile backend flag live in `crates/casa-imaging/src/execution.rs`. The
 experiment should consume that shape rather than requiring persistent per-sample
 tap plans.
+
+Production Rust integration should use `objc2-metal`. This Swift harness remains
+useful for shader iteration, fixtures, and timing evidence while the Rust backend
+selector and memory planner grow the production execution seam.
 
 ## Running
 

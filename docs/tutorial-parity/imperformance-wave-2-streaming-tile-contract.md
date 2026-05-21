@@ -44,7 +44,7 @@ Out of scope for this first backend:
 variable rectangular tiling
 on-disk visibility or tap cache
 bitwise reproducibility mode
-GPU implementation or device staging
+production GPU implementation or device staging
 whole-cube all-plane residency
 persistent per-sample PositiveTapSet plans
 per-tile MeasurementSet reread scheduling
@@ -77,6 +77,44 @@ The first implementation reserves fixed-tile residency in
 That boundary lets future backends choose CPU, CUDA/Kokkos, LibRA-derived, or
 Metal implementations without reviving the whole-MeasurementSet visibility plan
 or worker-local full-grid strategy.
+
+## Metal Preview Backend Track
+
+Apple Metal is now an intended optional backend track for modern macOS, not a
+detached side experiment. The production Rust integration direction is
+`objc2-metal`; the Swift harness under `tools/experiments/metal/` remains the
+runnable benchmark and shader-shape workbench while the Rust work-unit boundary
+is hardened.
+
+Metal must consume the same standard-MFS work-unit contract as the CPU
+fixed-tile backend:
+
+```text
+bounded prepared row blocks
+compact current-block tile buckets
+integer tap centers from the standard gridder path
+bounded resident tile or slab buffers
+global density and stage grids only where explicitly planned
+```
+
+Metal must not introduce a full-MeasurementSet visibility plan, persistent
+per-sample tap plans, or CPU-expanded full tap-contribution lists as a
+production contract. Any device staging, tile-cell reference buffers, resident
+device grids, and host readback buffers must be represented in the central
+standard-MFS memory plan before execution.
+
+Backend selection must be explicit and platform-gated:
+
+```text
+Default: CPU standard-MFS path
+CPU fixed tile: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
+Metal preview: CASA_RS_STANDARD_MFS_BACKEND=metal
+```
+
+Until a production Metal executor is wired into the imaging core,
+`CASA_RS_STANDARD_MFS_BACKEND=metal` is expected to fail before imaging
+execution with a clear preview-backend message. The CPU fixed-tile backend
+remains the correctness/reference path.
 
 ## Merge Policy
 
