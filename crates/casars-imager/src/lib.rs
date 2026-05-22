@@ -10670,6 +10670,7 @@ impl PreparedSelection {
         } else {
             1.0
         };
+        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let casa_cube_briggs_density_uvw_m = gridft_density_uvw_m(
             raw_uvw_m,
             geometry_row.field_phase_center_direction_rad,
@@ -10739,7 +10740,7 @@ impl PreparedSelection {
                     if !(weight.is_finite() && weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     batch.u_lambda.push(uvw_m[0] * lambda_scale);
                     batch.v_lambda.push(uvw_m[1] * lambda_scale);
                     batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -11108,7 +11109,7 @@ impl PreparedSelection {
                     if !(combined_weight.is_finite() && combined_weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     batch.u_lambda.push(uvw_m[0] * lambda_scale);
                     batch.v_lambda.push(uvw_m[1] * lambda_scale);
                     batch.w_lambda.push(uvw_m[2] * lambda_scale);
@@ -11130,7 +11131,7 @@ impl PreparedSelection {
                     .enumerate()
                 {
                     let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                    let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     let local_channel = data_2d.local_channel(channel_index)?;
                     let first_visibility = phase_rotate_visibility(
                         data_2d.get_local(pair.0, local_channel, channel_index)?,
@@ -11864,6 +11865,7 @@ impl PreparedSelection {
         let uvw_m = geometry_row.transform.uvw_m;
         let mfs_frequency_scale =
             self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let mut accepted_samples = 0usize;
         match &self.state {
             PreparedState::ExplicitMfs { corr_index, .. } => {
@@ -11873,7 +11875,6 @@ impl PreparedSelection {
                     .copied()
                     .zip(self.source_channel_frequencies_hz.iter().copied())
                 {
-                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                     let local_channel = data_2d.local_channel(channel_index)?;
                     if flags_2d.get_local(*corr_index, local_channel, channel_index)? {
                         continue;
@@ -11882,7 +11883,7 @@ impl PreparedSelection {
                     if !(weight.is_finite() && weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     weighting_plan.accumulate_density_sample(
                         uvw_m[0] * lambda_scale,
                         uvw_m[1] * lambda_scale,
@@ -11938,7 +11939,7 @@ impl PreparedSelection {
                     if !(combined_weight.is_finite() && combined_weight > 0.0) {
                         continue;
                     }
-                    let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
                     weighting_plan.accumulate_density_sample(
                         uvw_m[0] * lambda_scale,
                         uvw_m[1] * lambda_scale,

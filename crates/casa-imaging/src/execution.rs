@@ -2252,14 +2252,36 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                     .fold(accumulation.max_abs_w_lambda, |max_value, value| {
                         max_value.max(value.abs())
                     });
-                for sample_index in 0..batch.len() {
-                    let Some(taps) =
-                        self.plan_dirty_sample_taps(batch, sample_index, &mut accumulation)
-                    else {
+                let samples = batch
+                    .gridable
+                    .iter()
+                    .copied()
+                    .zip(batch.weight.iter().copied())
+                    .zip(batch.sumwt_factor.iter().copied())
+                    .zip(batch.u_lambda.iter().copied())
+                    .zip(batch.v_lambda.iter().copied())
+                    .zip(batch.visibility.iter().copied());
+                for (
+                    ((((gridable, weight), sumwt_factor), u_lambda), v_lambda),
+                    observed_visibility,
+                ) in samples
+                {
+                    if !gridable {
+                        accumulation.skipped_samples += 1;
+                        continue;
+                    }
+                    if !(weight.is_finite()
+                        && weight > 0.0
+                        && sumwt_factor.is_finite()
+                        && sumwt_factor > 0.0)
+                    {
+                        accumulation.skipped_samples += 1;
+                        continue;
+                    }
+                    let Some(taps) = self.gridder.plan_positive_taps(u_lambda, v_lambda) else {
+                        accumulation.skipped_samples += 1;
                         continue;
                     };
-                    let weight = batch.weight[sample_index];
-                    let sumwt_factor = batch.sumwt_factor[sample_index];
                     let grid_weight = weight * sumwt_factor;
                     if !(grid_weight.is_finite() && grid_weight > 0.0) {
                         accumulation.skipped_samples += 1;
@@ -2269,7 +2291,6 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                     accumulation.normalization_sumwt += grid_weight;
                     accumulation.reported_sumwt += grid_weight;
                     accumulation.gridded_samples += 1;
-                    let observed_visibility = batch.visibility[sample_index];
                     if finite_visibility(observed_visibility) {
                         finite_visibility_samples += 1;
                         let residual = Complex64::new(
@@ -3231,10 +3252,21 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         replay_weighted_batches(&mut |batches| {
             for batch in batches {
                 batch.validate()?;
-                for sample_index in 0..batch.len() {
-                    let weight = batch.weight[sample_index];
-                    let observed_visibility = batch.visibility[sample_index];
-                    if !batch.gridable[sample_index] {
+                let samples = batch
+                    .gridable
+                    .iter()
+                    .copied()
+                    .zip(batch.weight.iter().copied())
+                    .zip(batch.sumwt_factor.iter().copied())
+                    .zip(batch.u_lambda.iter().copied())
+                    .zip(batch.v_lambda.iter().copied())
+                    .zip(batch.visibility.iter().copied());
+                for (
+                    ((((gridable, weight), sumwt_factor), u_lambda), v_lambda),
+                    observed_visibility,
+                ) in samples
+                {
+                    if !gridable {
                         accumulation.skipped_not_gridable += 1;
                         continue;
                     }
@@ -3247,15 +3279,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                         continue;
                     }
                     accumulation.valid_samples += 1;
-                    let Some(taps) = self.gridder.plan_positive_taps(
-                        batch.u_lambda[sample_index],
-                        batch.v_lambda[sample_index],
-                    ) else {
+                    let Some(taps) = self.gridder.plan_positive_taps(u_lambda, v_lambda) else {
                         accumulation.skipped_out_of_grid += 1;
                         continue;
                     };
                     accumulation.planned_samples += 1;
-                    let sumwt_factor = batch.sumwt_factor[sample_index];
                     if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
                         accumulation.skipped_invalid_sumwt += 1;
                         continue;

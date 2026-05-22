@@ -318,6 +318,29 @@ Core total: 41.412s -> 41.189s
 Peak RSS: 9.55 GiB -> 9.55 GiB
 ```
 
+Follow-up single-worker micro-cleanups:
+
+```text
+Artifacts:
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-slice-iteration.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-slice-iteration-rerun.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-slice-lambda.log
+Change:
+  fixed-tile one-worker global dirty/residual loops iterate over validated batch slices directly;
+  standard-MFS row preparation hoists per-row wavelength scaling so per-channel samples multiply by a row-local scale instead of dividing by c.
+Best bounded rerun:
+  Frontend total: 60.220s -> 59.714s
+  Prepare plane input: 37.491s -> 37.271s
+  Core total: 41.189s -> 40.962s
+  Initial replay consumer: 7.484s -> 7.301s
+  Residual replay consumer: 7.717s -> 7.672s
+  Peak RSS: 9.55 GiB -> 9.55 GiB
+Decision:
+  retained as a small, low-risk serial cleanup but not counted as a Wave 2 serial gate;
+  the movement is under 1%, so the next real serial lever remains eliminating
+  per-block VisibilityBatch materialization and repeated row-block adaptation.
+```
+
 Validation recorded for this retained serial step:
 
 ```text
