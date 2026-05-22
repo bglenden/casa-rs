@@ -247,6 +247,47 @@ time. For this smoke, `initial_replay` reported `get_ms_values_ms=2264.338`,
 `consumer_ms=111.056`, while the aggregate dirty scheduler line captured the
 tile-task work and final stage flush.
 
+Full-shape follow-up with the same instrumentation:
+
+```text
+Artifact: target/imperformance-wave2/streaming-pass-attribution-20260521/full-shape-10w-pass-attribution.log
+Workload: 512 channels, imsize 2048, niter=2, minor-cycle-length=2, 10 workers
+Peak RSS: 10947215360 bytes (10.20 GiB), below the 16 GiB target
+Frontend total: 313.099s
+Core total: 231.507s
+Prepare plane input: 205.674s
+PSF grid: 57.279s
+Residual degrid/grid: 166.655s
+Major-cycle refresh: 109.544s
+Decision: retained as attribution evidence; performance is effectively flat versus the prior 315.290s memory-control run
+```
+
+The full-shape timing is not a meaningful speedup claim. It is a small
+`2.191s` frontend improvement over the previous memory-control checkpoint, well
+inside the range where one run is not enough to claim an optimization win. The
+result does confirm the memory target remains controlled and the resident-stage
+shape is correct: the dirty and residual scheduler summaries each have one
+aggregate stage record, `tile_eviction_count=0`, and `tile_flush_count=5105`.
+
+The new attribution shows where the fixed-tile streaming path is actually
+spending time:
+
+```text
+metadata_probe: 0.934s total, 16.8M samples
+density: 72.742s total, get_ms_values=39.644s, prepare_processing=27.462s, weighting=5.622s
+initial_replay: 114.541s total, get_ms_values=39.068s, prepare_processing=27.512s, weighting=1.346s, consumer=46.598s
+residual_replay: 109.366s total, get_ms_values=39.498s, prepare_processing=28.209s, weighting=1.354s, consumer=40.290s
+```
+
+The next high-leverage work is therefore not another tile-edge experiment. The
+frontend still rereads and re-prepares the full selected data for each logical
+pass, and the core sees `24,112` prepared batches per replay instead of the
+planner's intended larger row-block work units. The scheduler repair removed
+default merge and allocation costs for all-resident tiles, but bucket
+construction remains large: `21.166s` dirty and `15.004s` residual, with
+cumulative transient bucket bytes of `44.079 GiB` and `62.073 GiB`
+respectively.
+
 ## Metal Preview Backend Track
 
 The Metal gridding experiment from `codex/metal-experiments` is now part of the
