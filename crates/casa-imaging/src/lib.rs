@@ -138,6 +138,35 @@ pub struct StandardMfsPlannedSampleBuilder {
     gridder: StandardGridder,
 }
 
+/// Replayable source of bounded standard-MFS planned sample blocks.
+///
+/// This is the core streaming input boundary for standard-MFS backends. A
+/// frontend may read MeasurementSet rows, apply weighting, and plan compact tap
+/// identities however it chooses, but it must be able to replay the same
+/// bounded blocks for the initial dirty/PSF pass and every exact residual
+/// refresh pass.
+pub trait StandardMfsPlannedSampleBlockSource {
+    /// Replay planned samples in stable input order.
+    fn replay_planned_sample_blocks(
+        &mut self,
+        consumer: &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>;
+}
+
+impl<F> StandardMfsPlannedSampleBlockSource for F
+where
+    F: FnMut(
+        &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    fn replay_planned_sample_blocks(
+        &mut self,
+        consumer: &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError> {
+        self(consumer)
+    }
+}
+
 impl StandardMfsPlannedSampleBuilder {
     /// Build a planner for standard-MFS image geometry.
     pub fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
@@ -1144,8 +1173,8 @@ where
 /// shape: they are bounded to row-block lifetime and already carry compact
 /// standard-gridder tap identity.
 pub fn run_standard_mfs_planned_sample_block_streaming_with_execution_config<F>(
-    mut request: ImagingRequest,
-    _execution_config: StandardMfsExecutionConfig,
+    request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
     mut replay_weighted_samples: F,
 ) -> Result<ImagingResult, ImagingError>
 where
@@ -1153,6 +1182,19 @@ where
         &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>,
 {
+    run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
+        request,
+        execution_config,
+        &mut replay_weighted_samples,
+    )
+}
+
+/// Run standard-MFS CLEAN from a replayable planned-sample block source.
+pub fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
+    mut request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
+) -> Result<ImagingResult, ImagingError> {
     let total_started = Instant::now();
     request.geometry.validate()?;
     request.clean.validate()?;
@@ -1183,13 +1225,15 @@ where
     let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
         compute_dirty_psf_and_residual_standard_sample_replay(
             &gridder,
-            &mut replay_weighted_samples,
+            execution_config,
+            replay_weighted_samples,
             &mut stage_timings,
         )?
     } else {
         let psf_state = compute_psf_standard_sample_replay(
             &gridder,
-            &mut replay_weighted_samples,
+            execution_config,
+            replay_weighted_samples,
             &mut stage_timings,
         )?;
         let residual = compute_residual_standard_sample_replay(
@@ -1197,7 +1241,8 @@ where
             &gridder,
             &model,
             &psf_state,
-            &mut replay_weighted_samples,
+            execution_config,
+            replay_weighted_samples,
             &mut stage_timings,
         )?;
         (psf_state, residual, 0.0)
@@ -1225,7 +1270,8 @@ where
             &gridder,
             model,
             &psf_state,
-            &mut replay_weighted_samples,
+            execution_config,
+            replay_weighted_samples,
             stage_timings,
         )?;
         let refresh_elapsed = refresh_started.elapsed();
@@ -1492,19 +1538,42 @@ fn planned_sample_compact_taps(
     })
 }
 
-fn compute_dirty_psf_and_residual_standard_sample_replay<F>(
+fn compute_dirty_psf_and_residual_standard_sample_replay(
     gridder: &StandardGridder,
-    replay_weighted_samples: &mut F,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
     stage_timings: &mut ImagingStageTimings,
-) -> Result<(PsfState, Array2<f32>, f64), ImagingError>
-where
-    F: FnMut(
-        &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
-    ) -> Result<(), ImagingError>,
-{
+) -> Result<(PsfState, Array2<f32>, f64), ImagingError> {
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    if standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1 {
+        let executor =
+            StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        let grid_started = Instant::now();
+        let mut replay = |consumer: &mut dyn FnMut(
+            &[StandardMfsPlannedWeightedSample],
+        ) -> Result<(), ImagingError>| {
+            replay_weighted_samples.replay_planned_sample_blocks(consumer)
+        };
+        let accumulation = executor.accumulate_dirty_grids_direct_planned_replay(
+            &mut replay,
+            &mut psf_grid,
+            &mut residual_grid,
+        )?;
+        let grid_elapsed = grid_started.elapsed();
+        let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+        stage_timings.psf_grid += split_grid_elapsed;
+        stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+        return dirty_grids_to_psf_and_residual(
+            gridder,
+            &psf_grid,
+            &residual_grid,
+            accumulation,
+            stage_timings,
+        )
+        .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda));
+    }
     let mut accumulation = StandardMfsDirtyAccumulation {
         normalization_sumwt: 0.0,
         reported_sumwt: 0.0,
@@ -1518,7 +1587,7 @@ where
         psf_grid.as_slice_memory_order_mut(),
         residual_grid.as_slice_memory_order_mut(),
     ) {
-        replay_weighted_samples(&mut |samples| {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
@@ -1557,7 +1626,7 @@ where
             Ok(())
         })?;
     } else {
-        replay_weighted_samples(&mut |samples| {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
@@ -1642,18 +1711,28 @@ where
     psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings)
 }
 
-fn compute_psf_standard_sample_replay<F>(
+fn compute_psf_standard_sample_replay(
     gridder: &StandardGridder,
-    replay_weighted_samples: &mut F,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
     stage_timings: &mut ImagingStageTimings,
-) -> Result<PsfState, ImagingError>
-where
-    F: FnMut(
-        &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
-    ) -> Result<(), ImagingError>,
-{
+) -> Result<PsfState, ImagingError> {
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    if standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1 {
+        let executor =
+            StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        let grid_started = Instant::now();
+        let mut replay = |consumer: &mut dyn FnMut(
+            &[StandardMfsPlannedWeightedSample],
+        ) -> Result<(), ImagingError>| {
+            replay_weighted_samples.replay_planned_sample_blocks(consumer)
+        };
+        let accumulation =
+            executor.accumulate_psf_grid_direct_planned_replay(&mut replay, &mut psf_grid)?;
+        stage_timings.psf_grid += grid_started.elapsed();
+        return psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings);
+    }
     let mut accumulation = StandardMfsDirtyAccumulation {
         normalization_sumwt: 0.0,
         reported_sumwt: 0.0,
@@ -1664,7 +1743,7 @@ where
 
     let grid_started = Instant::now();
     if let Some(psf_storage) = psf_grid.as_slice_memory_order_mut() {
-        replay_weighted_samples(&mut |samples| {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
@@ -1686,7 +1765,7 @@ where
             Ok(())
         })?;
     } else {
-        replay_weighted_samples(&mut |samples| {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
@@ -1798,19 +1877,15 @@ where
     Ok(image)
 }
 
-fn compute_residual_standard_sample_replay<F>(
+fn compute_residual_standard_sample_replay(
     _geometry: ImageGeometry,
     gridder: &StandardGridder,
     model: &Array2<f32>,
     psf_state: &PsfState,
-    replay_weighted_samples: &mut F,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
     stage_timings: &mut ImagingStageTimings,
-) -> Result<Array2<f32>, ImagingError>
-where
-    F: FnMut(
-        &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
-    ) -> Result<(), ImagingError>,
-{
+) -> Result<Array2<f32>, ImagingError> {
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mut timings = ResidualComputationTimings::default();
@@ -1823,6 +1898,64 @@ where
         None
     };
 
+    if standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1 {
+        let executor =
+            StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        let degrid_grid_started = Instant::now();
+        let mut replay = |consumer: &mut dyn FnMut(
+            &[StandardMfsPlannedWeightedSample],
+        ) -> Result<(), ImagingError>| {
+            replay_weighted_samples.replay_planned_sample_blocks(consumer)
+        };
+        let counts = executor.accumulate_residual_grid_direct_planned_replay(
+            &mut replay,
+            model_grid.as_ref(),
+            &mut residual_grid,
+        )?;
+        timings.degrid_grid = degrid_grid_started.elapsed();
+
+        let fft_started = Instant::now();
+        let raw = centered_ifft2_f64(&residual_grid);
+        timings.fft = fft_started.elapsed();
+        let normalize_started = Instant::now();
+        let mut image = gridder.corrected_image_from_grid_f64(&raw);
+        image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
+        timings.normalize = normalize_started.elapsed();
+        stage_timings.model_fft += timings.model_fft;
+        stage_timings.residual_degrid_grid += timings.degrid_grid;
+        stage_timings.residual_fft += timings.fft;
+        stage_timings.residual_normalize += timings.normalize;
+
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "streaming_tiled_planned_residual_refresh",
+            samples_total: counts.valid_samples
+                + counts.skipped_not_gridable
+                + counts.skipped_invalid_weight
+                + counts.skipped_nonfinite_visibility,
+            finite_visibility_samples: counts.valid_samples,
+            nonfinite_visibility_samples: counts.skipped_nonfinite_visibility,
+            planned_samples: counts.planned_samples,
+            model_grid_present_samples: if model_grid.is_some() {
+                counts.gridded_residual_samples
+            } else {
+                0
+            },
+            model_grid_absent_samples: if model_grid.is_some() {
+                0
+            } else {
+                counts.gridded_residual_samples
+            },
+            degrid_tap_visits: if model_grid.is_some() {
+                counts.gridded_residual_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+            stage_duration: timings.degrid_grid,
+        });
+        return Ok(image);
+    }
+
     let mut counts = StandardMfsTiledResidualAccumulation::default();
     let degrid_grid_started = Instant::now();
     if let (Some(model_storage), Some(residual_storage)) = (
@@ -1831,7 +1964,7 @@ where
             .and_then(|grid| grid.as_slice_memory_order()),
         residual_grid.as_slice_memory_order_mut(),
     ) {
-        replay_weighted_samples(&mut |samples| {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
             for &sample in samples {
                 accumulate_weighted_residual_sample_storage(
                     gridder,
@@ -1846,7 +1979,7 @@ where
     } else if model_grid.is_none()
         && let Some(residual_storage) = residual_grid.as_slice_memory_order_mut()
     {
-        replay_weighted_samples(&mut |samples| {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
             for &sample in samples {
                 accumulate_weighted_residual_sample_storage(
                     gridder,
@@ -1859,7 +1992,7 @@ where
             Ok(())
         })?;
     } else {
-        replay_weighted_samples(&mut |samples| {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
             for &sample in samples {
                 accumulate_weighted_residual_sample_array(
                     gridder,

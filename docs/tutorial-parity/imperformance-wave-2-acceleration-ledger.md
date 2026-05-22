@@ -1557,6 +1557,53 @@ materially improve throughput, so the existing 32k row-block scale is acceptable
 for this read path. The next step is to connect this row-shaped payload to the
 standard-MFS tile router without reintroducing per-scalar frontend objects.
 
+Core input trait and planned tile-inbox checkpoint:
+
+```text
+Smoke artifact: target/imperformance-wave2/ms-reader-core-trait-20260522/vla-bounded-2w-planned-smoke-summary.log
+Output prefix: target/imperformance-wave2/ms-reader-core-trait-20260522/vla-bounded-2w-planned
+Dataset: wave1-vla-single-medium, field 0, SPW 0, 64 channels, imsize 1024
+Backend: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile, CASA_RS_STANDARD_MFS_GRID_THREADS=2
+Scheduler stage: planned_dirty
+Gridded samples: 188,889,033
+Planned candidates: 197,519,040
+Planning rejected: 8,630,007
+Stage total: 11.421s
+Queued bytes high-water: 39,493,200
+Worker utilization: 29.808%
+Correctness: targeted tests below
+Decision: retained; the fixed-tile producer/router now consumes planned sample blocks through the core input trait
+```
+
+This checkpoint moves the real fixed-tile CLI path from the older
+`VisibilityBatch` replay shape to `StandardMfsPlannedSampleBlockSource`.
+The frontend now reads `MsImagingEssentials` row blocks, applies streaming
+standard-MFS weighting, plans compact tap identities, and passes bounded planned
+sample blocks to the core scheduler. The core fixed-tile dirty/PSF/residual
+paths enqueue those planned samples directly into tile-local inboxes without
+reconstructing a retained full-MS visibility plan or persistent `PositiveTapSet`
+state.
+
+The same command shape accidentally exercised the previous batch-backed inbox
+route before the frontend guard was fixed. That smoke logged `stage=dirty` and
+`stage_total_ms=15125.357`; the retained planned route logs
+`stage=planned_dirty` and `stage_total_ms=11421.287`. Treat this as structural
+smoke evidence only, not a formal performance comparison, because it was a
+single warm-cache bounded run.
+
+Validation checks for this checkpoint:
+
+```text
+cargo check -p casa-imaging -p casars-imager
+cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib
+cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib
+cargo test -p casa-imaging tile_inbox_planned_replay_matches_direct_dirty_and_residual --lib
+cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib
+cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib
+cargo build --release -p casars-imager
+git diff --check
+```
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
