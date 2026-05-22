@@ -1694,6 +1694,9 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         psf_grid: &mut Array2<Complex64>,
         residual_grid: &mut Array2<Complex64>,
     ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
+        if standard_mfs_grid_threads() <= 1 {
+            return self.accumulate_dirty_grids_global_serial(batches, psf_grid, residual_grid);
+        }
         let mut accumulation = StandardMfsDirtyAccumulation {
             normalization_sumwt: 0.0,
             reported_sumwt: 0.0,
@@ -1752,6 +1755,13 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
+        if standard_mfs_grid_threads() <= 1 {
+            return self.accumulate_dirty_grids_global_serial_replay(
+                replay_weighted_batches,
+                psf_grid,
+                residual_grid,
+            );
+        }
         let mut accumulation = StandardMfsDirtyAccumulation {
             normalization_sumwt: 0.0,
             reported_sumwt: 0.0,
@@ -1808,6 +1818,9 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         batches: &[VisibilityBatch],
         psf_grid: &mut Array2<Complex64>,
     ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
+        if standard_mfs_grid_threads() <= 1 {
+            return self.accumulate_psf_grid_global_serial(batches, psf_grid);
+        }
         let mut accumulation = StandardMfsDirtyAccumulation {
             normalization_sumwt: 0.0,
             reported_sumwt: 0.0,
@@ -1865,6 +1878,10 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
+        if standard_mfs_grid_threads() <= 1 {
+            return self
+                .accumulate_psf_grid_global_serial_replay(replay_weighted_batches, psf_grid);
+        }
         let mut accumulation = StandardMfsDirtyAccumulation {
             normalization_sumwt: 0.0,
             reported_sumwt: 0.0,
@@ -2165,6 +2182,217 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 worker_replan_grid: profile::elapsed_since(worker_started),
             },
         ))
+    }
+
+    fn plan_dirty_sample_taps(
+        &self,
+        batch: &VisibilityBatch,
+        sample_index: usize,
+        accumulation: &mut StandardMfsDirtyAccumulation,
+    ) -> Option<PositiveTapSet> {
+        if !batch.gridable[sample_index] {
+            accumulation.skipped_samples += 1;
+            return None;
+        }
+        let weight = batch.weight[sample_index];
+        let sumwt_factor = batch.sumwt_factor[sample_index];
+        if !(weight.is_finite() && weight > 0.0 && sumwt_factor.is_finite() && sumwt_factor > 0.0) {
+            accumulation.skipped_samples += 1;
+            return None;
+        }
+        self.gridder
+            .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+            .or_else(|| {
+                accumulation.skipped_samples += 1;
+                None
+            })
+    }
+
+    fn accumulate_dirty_grids_global_serial(
+        &self,
+        batches: &[VisibilityBatch],
+        psf_grid: &mut Array2<Complex64>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
+        let mut replay =
+            |consume: &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>| {
+                consume(batches)
+            };
+        self.accumulate_dirty_grids_global_serial_replay(&mut replay, psf_grid, residual_grid)
+    }
+
+    fn accumulate_dirty_grids_global_serial_replay<F>(
+        &self,
+        replay_weighted_batches: &mut F,
+        psf_grid: &mut Array2<Complex64>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        let stage_started = profile::maybe_profile_now();
+        let mut accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 0.0,
+            reported_sumwt: 0.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+            max_abs_w_lambda: 0.0,
+        };
+        let mut finite_visibility_samples = 0usize;
+        let mut psf_only_samples = 0usize;
+
+        replay_weighted_batches(&mut |batches| {
+            for batch in batches {
+                batch.validate()?;
+                accumulation.max_abs_w_lambda = batch
+                    .w_lambda
+                    .iter()
+                    .fold(accumulation.max_abs_w_lambda, |max_value, value| {
+                        max_value.max(value.abs())
+                    });
+                for sample_index in 0..batch.len() {
+                    let Some(taps) =
+                        self.plan_dirty_sample_taps(batch, sample_index, &mut accumulation)
+                    else {
+                        continue;
+                    };
+                    let weight = batch.weight[sample_index];
+                    let sumwt_factor = batch.sumwt_factor[sample_index];
+                    let grid_weight = weight * sumwt_factor;
+                    if !(grid_weight.is_finite() && grid_weight > 0.0) {
+                        accumulation.skipped_samples += 1;
+                        continue;
+                    }
+                    let grid_weight = f64::from(grid_weight);
+                    accumulation.normalization_sumwt += grid_weight;
+                    accumulation.reported_sumwt += grid_weight;
+                    accumulation.gridded_samples += 1;
+                    let observed_visibility = batch.visibility[sample_index];
+                    if finite_visibility(observed_visibility) {
+                        finite_visibility_samples += 1;
+                        let residual = Complex64::new(
+                            f64::from(observed_visibility.re) * grid_weight,
+                            f64::from(observed_visibility.im) * grid_weight,
+                        );
+                        self.gridder.grid_sample_taps_real_complex_pair_planned_f64(
+                            psf_grid,
+                            grid_weight,
+                            residual_grid,
+                            residual,
+                            &taps,
+                        );
+                    } else {
+                        psf_only_samples += 1;
+                        self.gridder.grid_sample_taps_real_planned_f64(
+                            psf_grid,
+                            &taps,
+                            grid_weight,
+                        );
+                    }
+                }
+            }
+            Ok(())
+        })?;
+
+        let stage_duration = profile::elapsed_since(stage_started);
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "fixed_tile_one_worker_global_dirty",
+            samples_total: accumulation
+                .gridded_samples
+                .saturating_add(accumulation.skipped_samples),
+            finite_visibility_samples,
+            nonfinite_visibility_samples: psf_only_samples,
+            planned_samples: accumulation.gridded_samples,
+            model_grid_present_samples: 0,
+            model_grid_absent_samples: 0,
+            degrid_tap_visits: 0,
+            grid_tap_visits: accumulation.gridded_samples.saturating_mul(49),
+            stage_duration,
+        });
+        Ok(accumulation)
+    }
+
+    fn accumulate_psf_grid_global_serial(
+        &self,
+        batches: &[VisibilityBatch],
+        psf_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
+        let mut replay =
+            |consume: &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>| {
+                consume(batches)
+            };
+        self.accumulate_psf_grid_global_serial_replay(&mut replay, psf_grid)
+    }
+
+    fn accumulate_psf_grid_global_serial_replay<F>(
+        &self,
+        replay_weighted_batches: &mut F,
+        psf_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        let stage_started = profile::maybe_profile_now();
+        let mut accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 0.0,
+            reported_sumwt: 0.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+            max_abs_w_lambda: 0.0,
+        };
+        replay_weighted_batches(&mut |batches| {
+            for batch in batches {
+                batch.validate()?;
+                accumulation.max_abs_w_lambda = batch
+                    .w_lambda
+                    .iter()
+                    .fold(accumulation.max_abs_w_lambda, |max_value, value| {
+                        max_value.max(value.abs())
+                    });
+                for sample_index in 0..batch.len() {
+                    let Some(taps) =
+                        self.plan_dirty_sample_taps(batch, sample_index, &mut accumulation)
+                    else {
+                        continue;
+                    };
+                    let weight = batch.weight[sample_index];
+                    let sumwt_factor = batch.sumwt_factor[sample_index];
+                    let grid_weight = weight * sumwt_factor;
+                    if !(grid_weight.is_finite() && grid_weight > 0.0) {
+                        accumulation.skipped_samples += 1;
+                        continue;
+                    }
+                    let grid_weight = f64::from(grid_weight);
+                    accumulation.normalization_sumwt += grid_weight;
+                    accumulation.reported_sumwt += grid_weight;
+                    accumulation.gridded_samples += 1;
+                    self.gridder
+                        .grid_sample_taps_real_planned_f64(psf_grid, &taps, grid_weight);
+                }
+            }
+            Ok(())
+        })?;
+
+        let stage_duration = profile::elapsed_since(stage_started);
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "fixed_tile_one_worker_global_psf",
+            samples_total: accumulation
+                .gridded_samples
+                .saturating_add(accumulation.skipped_samples),
+            finite_visibility_samples: accumulation.gridded_samples,
+            nonfinite_visibility_samples: 0,
+            planned_samples: accumulation.gridded_samples,
+            model_grid_present_samples: 0,
+            model_grid_absent_samples: 0,
+            degrid_tap_visits: 0,
+            grid_tap_visits: accumulation.gridded_samples.saturating_mul(49),
+            stage_duration,
+        });
+        Ok(accumulation)
     }
 
     fn accumulate_psf_block(
@@ -2714,6 +2942,9 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         model_grid: Option<&Array2<Complex32>>,
         residual_grid: &mut Array2<Complex64>,
     ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError> {
+        if standard_mfs_grid_threads() <= 1 {
+            return self.accumulate_residual_grid_global_serial(batches, model_grid, residual_grid);
+        }
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
         let store = DirectResidualTileStore::new(&self.partition);
         let mut scheduler_profile = StandardMfsTileSchedulerStageProfile::new(
@@ -2762,6 +2993,13 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
+        if standard_mfs_grid_threads() <= 1 {
+            return self.accumulate_residual_grid_global_serial_replay(
+                replay_weighted_batches,
+                model_grid,
+                residual_grid,
+            );
+        }
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
         let store = DirectResidualTileStore::new(&self.partition);
         let mut scheduler_profile = StandardMfsTileSchedulerStageProfile::new(
@@ -2962,6 +3200,124 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 worker_replan_grid: profile::elapsed_since(worker_started),
             },
         ))
+    }
+
+    fn accumulate_residual_grid_global_serial(
+        &self,
+        batches: &[VisibilityBatch],
+        model_grid: Option<&Array2<Complex32>>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError> {
+        let mut replay =
+            |consume: &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>| {
+                consume(batches)
+            };
+        self.accumulate_residual_grid_global_serial_replay(&mut replay, model_grid, residual_grid)
+    }
+
+    fn accumulate_residual_grid_global_serial_replay<F>(
+        &self,
+        replay_weighted_batches: &mut F,
+        model_grid: Option<&Array2<Complex32>>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        let stage_started = profile::maybe_profile_now();
+        let mut accumulation = StandardMfsTiledResidualAccumulation::default();
+        replay_weighted_batches(&mut |batches| {
+            for batch in batches {
+                batch.validate()?;
+                for sample_index in 0..batch.len() {
+                    let weight = batch.weight[sample_index];
+                    let observed_visibility = batch.visibility[sample_index];
+                    if !batch.gridable[sample_index] {
+                        accumulation.skipped_not_gridable += 1;
+                        continue;
+                    }
+                    if !(weight.is_finite() && weight > 0.0) {
+                        accumulation.skipped_invalid_weight += 1;
+                        continue;
+                    }
+                    if !finite_visibility(observed_visibility) {
+                        accumulation.skipped_nonfinite_visibility += 1;
+                        continue;
+                    }
+                    accumulation.valid_samples += 1;
+                    let Some(taps) = self.gridder.plan_positive_taps(
+                        batch.u_lambda[sample_index],
+                        batch.v_lambda[sample_index],
+                    ) else {
+                        accumulation.skipped_out_of_grid += 1;
+                        continue;
+                    };
+                    accumulation.planned_samples += 1;
+                    let sumwt_factor = batch.sumwt_factor[sample_index];
+                    if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
+                        accumulation.skipped_invalid_sumwt += 1;
+                        continue;
+                    }
+                    let residual_weight = weight * sumwt_factor;
+                    if !(residual_weight.is_finite() && residual_weight > 0.0) {
+                        accumulation.skipped_invalid_sumwt += 1;
+                        continue;
+                    }
+                    let residual_weight = f64::from(residual_weight);
+                    if let Some(model_grid) = model_grid {
+                        self.gridder
+                            .degrid_model_and_grid_residual_taps_planned_f64(
+                                model_grid,
+                                residual_grid,
+                                &taps,
+                                observed_visibility,
+                                residual_weight,
+                            );
+                    } else {
+                        let residual = Complex64::new(
+                            f64::from(observed_visibility.re) * residual_weight,
+                            f64::from(observed_visibility.im) * residual_weight,
+                        );
+                        self.gridder
+                            .grid_sample_taps_planned_f64(residual_grid, &taps, residual);
+                    }
+                    accumulation.gridded_residual_samples += 1;
+                }
+            }
+            Ok(())
+        })?;
+
+        let stage_duration = profile::elapsed_since(stage_started);
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "fixed_tile_one_worker_global_residual_refresh",
+            samples_total: accumulation.valid_samples
+                + accumulation.skipped_not_gridable
+                + accumulation.skipped_invalid_weight
+                + accumulation.skipped_nonfinite_visibility,
+            finite_visibility_samples: accumulation.valid_samples,
+            nonfinite_visibility_samples: accumulation.skipped_nonfinite_visibility,
+            planned_samples: accumulation.planned_samples,
+            model_grid_present_samples: if model_grid.is_some() {
+                accumulation.gridded_residual_samples
+            } else {
+                0
+            },
+            model_grid_absent_samples: if model_grid.is_some() {
+                0
+            } else {
+                accumulation.gridded_residual_samples
+            },
+            degrid_tap_visits: if model_grid.is_some() {
+                accumulation.gridded_residual_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: accumulation.gridded_residual_samples.saturating_mul(49),
+            stage_duration,
+        });
+        Ok(accumulation)
     }
 }
 

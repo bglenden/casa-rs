@@ -894,6 +894,36 @@ coarse diagnostic and exposes enough per-row-block tile tasks to feed a
 large-image or tighter-memory fallback because it has less tile metadata and
 halo residency, while still removing the single central-tile bottleneck.
 
+## Single-Worker Fixed-Tile Repair
+
+After the fixed-tile memory repair, bounded one-worker profiling showed that
+using the tiled scheduler with only one worker still paid bucket/task overhead
+and duplicated tap planning. A direct resident-tile serial experiment removed
+bucket allocation but was rejected because sample-order tile updates destroyed
+locality: frontend regressed to 102.588s and core to 82.123s. The retained
+single-worker path instead bypasses tile buffers entirely and streams directly
+into the global standard-MFS stage grids. This keeps the bounded streaming
+passes and avoids full-MS visibility retention while removing tile scheduler
+overhead when no parallelism is available.
+
+Bounded diagnostic workload: 64-channel, 1024-image, Briggs,
+multiscale-clean `niter=50`, direct external-disk MS, fixed-tile backend,
+`CASA_RS_STANDARD_MFS_GRID_THREADS=1`, `CASA_RS_STANDARD_MFS_TILE_EDGE=32`,
+`CASA_RS_STANDARD_MFS_TILE_ANCHOR=center_boundary`, one repeat, no warmup.
+
+| Step | Artifact | Threads | Frontend | Core | Prepare | PSF grid | Residual grid/degrid | Major refresh | Peak RSS | Correctness | Decision |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| fixed-tile one-worker baseline | `target/imperformance-wave2/single-worker-current-20260522/bounded-one-worker-fixed-tile-baseline.log` | 1 | 66.422s | 45.305s | 39.456s | 10.973s | 32.623s | 21.702s | 9.55GB | GREEN targeted tests | baseline for serial high-nail pass |
+| serial resident-tile experiment | `target/imperformance-wave2/single-worker-current-20260522/bounded-one-worker-fixed-tile-serial-direct.log` | 1 | 102.588s | 82.123s | 38.613s | 19.810s | 60.605s | 40.847s | 9.55GB | GREEN targeted tests | rejected: removed buckets but lost tile-local processing order |
+| one-worker global-grid bypass | `target/imperformance-wave2/single-worker-current-20260522/bounded-one-worker-fixed-tile-global-serial.log` | 1 | 61.552s | 41.284s | 38.293s | 9.808s | 29.751s | 19.994s | 9.55GB | GREEN targeted tests | retained: avoids tile scheduler when one worker cannot exploit it |
+
+The retained one-worker bypass improves the bounded fixed-tile baseline by
+4.870s frontend (7.3%) and 4.021s core (8.9%). Stage movement is concentrated
+where expected: PSF gridding improves by 1.165s (10.6%) and residual
+grid/degrid by 2.872s (8.8%). The result also rejects a tempting but wrong
+serial shortcut: avoiding buckets is not enough if the resulting sample order
+causes random updates across hundreds of tile buffers.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
