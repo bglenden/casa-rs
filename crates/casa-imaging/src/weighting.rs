@@ -6,8 +6,8 @@ use std::thread;
 use ndarray::{Array2, Zip};
 
 use crate::{
-    GaussianUvTaper, ImagingRequest, UvTaperSize, VisibilityBatch, WeightDensityMode,
-    WeightingMode,
+    GaussianUvTaper, ImageGeometry, ImagingRequest, UvTaperSize, VisibilityBatch,
+    WeightDensityMode, WeightingMode,
     gridder::{DensityCellConvention, StandardGridder},
     profile,
 };
@@ -46,6 +46,143 @@ enum DensityReweightMode {
         use_bandwidth_taper: bool,
         fractional_bandwidth: f64,
     },
+}
+
+/// Streaming standard-MFS weighting state for bounded row-block execution.
+///
+/// Natural weighting is a single pass. Uniform and Briggs variants use an
+/// explicit density pass followed by bounded row-block reweighting with the
+/// same density conventions as the retained-batch weighting path.
+pub struct StandardMfsStreamingWeightingPlan {
+    gridder: StandardGridder,
+    weighting: WeightingMode,
+    density_convention: DensityCellConvention,
+    density_build_convention: DensityCellConvention,
+    fractional_bandwidth: f64,
+    density: Option<Array2<f32>>,
+    mode: Option<DensityReweightMode>,
+}
+
+impl StandardMfsStreamingWeightingPlan {
+    /// Create an empty streaming weighting plan for one standard-MFS image.
+    pub fn new(
+        geometry: ImageGeometry,
+        weighting: WeightingMode,
+        selected_frequency_range_hz: [f64; 2],
+    ) -> Result<Self, crate::ImagingError> {
+        let gridder = StandardGridder::new(geometry)?;
+        let density_convention = density_cell_convention(weighting, WeightDensityMode::Combined);
+        let density_build_convention =
+            density_build_cell_convention(weighting, WeightDensityMode::Combined);
+        let density = match weighting {
+            WeightingMode::Natural => None,
+            WeightingMode::Uniform
+            | WeightingMode::Briggs { .. }
+            | WeightingMode::BriggsBwTaper { .. } => {
+                let [nx, ny] = gridder.density_grid_shape();
+                Some(Array2::<f32>::zeros((nx, ny)))
+            }
+        };
+        Ok(Self {
+            gridder,
+            weighting,
+            density_convention,
+            density_build_convention,
+            fractional_bandwidth: fractional_bandwidth_from_frequency_range(
+                selected_frequency_range_hz,
+            ),
+            density,
+            mode: None,
+        })
+    }
+
+    /// Return true when the selected weighting requires a first density pass.
+    pub fn needs_density_pass(&self) -> bool {
+        self.density.is_some()
+    }
+
+    /// Accumulate density from one bounded row block.
+    pub fn accumulate_density_batches(&mut self, batches: &[VisibilityBatch]) {
+        let Some(density) = self.density.as_mut() else {
+            return;
+        };
+        accumulate_density_grid_serial(
+            batches,
+            &self.gridder,
+            density_includes_conjugates(self.density_build_convention),
+            self.density_build_convention,
+            density,
+            profile::standard_mfs_profile_detail_enabled(),
+        );
+    }
+
+    /// Finalize robust statistics after the density pass.
+    pub fn finish_density_pass(&mut self) {
+        self.mode = match self.weighting {
+            WeightingMode::Natural => None,
+            WeightingMode::Uniform => Some(DensityReweightMode::Uniform),
+            WeightingMode::Briggs { robust } | WeightingMode::BriggsBwTaper { robust } => {
+                let Some(density) = self.density.as_ref() else {
+                    return;
+                };
+                let total_density_weight =
+                    density.iter().map(|value| f64::from(*value)).sum::<f64>();
+                let sumlocwt = density
+                    .iter()
+                    .filter(|value| **value > 0.0)
+                    .map(|value| f64::from(*value) * f64::from(*value))
+                    .sum::<f64>();
+                let f2 = if sumlocwt > 0.0 && total_density_weight > 0.0 {
+                    (5.0f64 * 10f64.powf(-(robust as f64))).powi(2)
+                        / (sumlocwt / total_density_weight)
+                } else {
+                    0.0
+                } as f32;
+                Some(DensityReweightMode::Briggs {
+                    f2,
+                    use_bandwidth_taper: matches!(
+                        self.weighting,
+                        WeightingMode::BriggsBwTaper { .. }
+                    ),
+                    fractional_bandwidth: self.fractional_bandwidth,
+                })
+            }
+        };
+    }
+
+    /// Apply final imaging weights to one owned row block and return it.
+    pub fn weight_owned_batches(
+        &self,
+        batches: Vec<VisibilityBatch>,
+    ) -> Result<Vec<VisibilityBatch>, crate::ImagingError> {
+        match self.weighting {
+            WeightingMode::Natural => Ok(batches),
+            WeightingMode::Uniform
+            | WeightingMode::Briggs { .. }
+            | WeightingMode::BriggsBwTaper { .. } => {
+                let density = self.density.as_ref().ok_or_else(|| {
+                    crate::ImagingError::InvalidRequest(
+                        "streaming standard MFS weighting density pass was not initialized"
+                            .to_string(),
+                    )
+                })?;
+                let mode = self.mode.ok_or_else(|| {
+                    crate::ImagingError::InvalidRequest(
+                        "streaming standard MFS weighting density pass was not finalized"
+                            .to_string(),
+                    )
+                })?;
+                Ok(reweight_owned_batches(
+                    batches,
+                    &self.gridder,
+                    density,
+                    self.density_convention,
+                    trace_weighting_enabled(),
+                    mode,
+                ))
+            }
+        }
+    }
 }
 
 fn standard_mfs_worker_threads() -> usize {

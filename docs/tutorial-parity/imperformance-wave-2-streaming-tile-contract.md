@@ -31,13 +31,15 @@ Implementation checkpoint:
 
 ```text
 Environment flag: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
+Active memory target: total physical memory / 2, with optional CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB override
 Resident tile budget: central standard-MFS memory plan, with optional CASA_RS_STANDARD_MFS_TILE_RESIDENT_MB override
 Debug resident tile limit: CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=<count>
 Tile edge override: CASA_RS_STANDARD_MFS_TILE_EDGE=<pixels>
 Tile anchor override: CASA_RS_STANDARD_MFS_TILE_ANCHOR=zero|center_boundary
 Debug flush override: CASA_RS_STANDARD_MFS_TILE_FLUSH=per_block
-Status: core backend correctness checkpoint, not a performance claim
-Coverage: standard-MFS PSF/dirty and residual refresh through fixed halo tiles
+Status: memory-control repair checkpoint, not a performance claim
+Coverage: standard-MFS PSF/dirty and residual refresh through fixed halo tiles,
+          plus fixed-tile streaming clean row-block replay
 Fallback: default standard-MFS executor and streaming paths remain unchanged
 ```
 
@@ -76,6 +78,11 @@ The first implementation reserves fixed-tile residency in
 `standard_mfs_memory_plan` and passes a byte budget into the imaging core via
 `StandardMfsExecutionConfig`. The backend still honors
 `CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT` as an explicit debug override.
+The planner must account for live prepared row blocks, current-block bucket
+records, queued task metadata, resident tile buffers, global grids, density
+grids, FFT/deconvolution scratch, and future device staging before execution.
+When no legal bounded plan fits the active target, the frontend fails clearly
+instead of falling back to the old retained full-MeasurementSet shape.
 
 That boundary lets future backends choose CPU, CUDA/Kokkos, LibRA-derived, or
 Metal implementations without reviving the whole-MeasurementSet visibility plan
@@ -136,7 +143,7 @@ The default lifecycle is:
 3. Route accepted samples into per-block tile buckets.
 4. Build one task per nonempty tile and sort by estimated tap visits.
 5. Dispatch tasks to a bounded worker pool for the current row block.
-6. Merge task-local tile buffers into resident halo-padded tile buffers.
+6. Update resident halo-padded tile buffers directly when all stage tiles are resident.
 7. Drop the bucket and row block.
 8. Keep tile buffers resident across row blocks while budget permits.
 9. On deterministic eviction, stage boundary, or memory pressure, merge the full
@@ -144,8 +151,12 @@ The default lifecycle is:
 ```
 
 For MFS, the scheduler may choose all fixed tiles resident for a stage when the
-central memory plan allows it. For cubes, the same abstraction must become a
-bounded tile/slab working set.
+central memory plan allows it. That all-resident MFS case is the default
+memory-control path because it avoids per-task scratch tile arrays and main
+thread scratch-buffer merges. When the resident limit is lower than the full
+tile count, the older scratch/merge path remains a correctness fallback and a
+future hot-tile-splitting building block. For cubes, the same abstraction must
+become a bounded tile/slab working set.
 
 The first scheduler uses `max_live_row_blocks=1`. Any read-ahead greater than
 one must first reserve memory credits for live row blocks, bucket records,

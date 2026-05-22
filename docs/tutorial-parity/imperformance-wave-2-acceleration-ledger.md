@@ -58,6 +58,81 @@ CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT
 cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib
 ```
 
+Memory-control repair checkpoint:
+
+```text
+Full-shape artifact: target/imperformance-wave2/memory-control-repair-20260521/full-shape-10w-memory-target-16g.log
+Plan-log smoke artifact: target/imperformance-wave2/memory-control-repair-20260521/plan-log-smoke.log
+Default memory target: total physical memory / 2
+Override: CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB=<MiB>
+Tile residency default: planner-selected all-resident fine tiles when they fit the active target
+Streaming status: fixed-tile standard-MFS clean now replays bounded row blocks through the core runner
+Correctness: targeted tests below
+Decision: retained as the current fixed-tile memory-control shape
+```
+
+The memory planner now queries physical RAM (`hw.memsize` on macOS, `sysconf`
+on Unix) and defaults the standard-MFS active-memory target to half of that
+value, with `CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB` as the explicit benchmark
+override. The `standard_mfs_memory_plan_actual` record includes
+`system_memory_bytes`, `memory_target_bytes`, and `memory_target_source`.
+Planner accounting now subtracts live row-block and bucket bytes before sizing
+the prepare buffer, and fixed-tile runs reject plans that exceed the target
+instead of silently overcommitting.
+
+The default fixed-tile CPU path no longer allocates per-task dirty/PSF/residual
+tile arrays when the planner can keep all stage tiles resident. Workers update
+resident halo-padded tile buffers directly and flush once at stage end. The old
+scratch tile-buffer path remains available only when the resident tile limit is
+below the full tile count, which keeps deterministic eviction coverage and a
+future hot-tile-splitting fallback.
+
+The frontend fixed-tile standard-MFS clean path now uses a replayable bounded
+row-block runner. Natural weighting streams directly; Uniform, Briggs, and
+BriggsBwTaper do a density pass first and then replay weighted row blocks for
+the initial dirty/PSF pass and exact residual refreshes. This removes the
+default full-MS `VisibilityBatch` retention shape for fixed-tile clean. The
+retained non-streaming prepare shape is guarded so an over-target fixed-tile run
+fails with an explicit memory-plan error rather than reproducing the rejected
+63 GiB footprint.
+
+Additional validation recorded for this repair:
+
+```text
+cargo check -p casa-imaging -p casars-imager
+cargo test -p casa-imaging direct_resident_tiles_match_scratch_tile_dirty_and_residual_paths --lib
+cargo test -p casa-imaging streaming_weighted_standard_mfs_clean_matches_retained_batches --lib
+cargo test -p casars-imager standard_mfs_memory --lib
+cargo test -p casars-imager standard_mfs_retained_prepare_guard --lib
+```
+
+The full-shape memory-control gate completed on the 512-channel, imsize 2048,
+Briggs, multiscale, `niter=2`, 10-worker workload:
+
+```text
+Artifact: target/imperformance-wave2/memory-control-repair-20260521/full-shape-10w-memory-target-16g.log
+Workload: 512 channels, imsize 2048, niter=2, minor-cycle-length=2, 10 workers
+Memory target: 16384 MiB explicit override for this sandboxed gate
+Peak RSS: 10955767808 bytes (10.20 GiB), below the 16 GiB target
+Tile geometry: edge=32, anchor=center_boundary, origin=2x2, tiles=6400
+Resident tiles: 6400, max_live_row_blocks=1, tile evictions=0
+Frontend total: 315.290s
+Core total: 233.049s
+Prepare plane input: 207.409s
+PSF grid: 58.059s
+Residual degrid/grid: 167.395s
+Major-cycle refresh: 109.507s
+Decision: retained; memory footprint is under control and the rejected transient tile-buffer shape is removed
+```
+
+The outer `/usr/bin/time -l` wrapper exited nonzero after the imaging run
+because the sandbox denied its `sysctl kern.clockrate` query. The
+`profile_imager` process itself completed and wrote products, and the in-process
+profile line reported the peak RSS above. A follow-up smoke run after the
+streaming path's plan-log patch verified that fixed-tile streaming emits
+`standard_mfs_memory_plan_actual` with `system_memory_bytes=34359738368`,
+`memory_target_bytes=17179869184`, and `memory_target_source=env`.
+
 Full-shape fixed-tile timing was not accepted as a candidate result. The first
 low-overhead edge-64 center-boundary run completed but regressed enough to make
 the next action instrumentation rather than tile-size experimentation:

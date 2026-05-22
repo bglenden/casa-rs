@@ -30,10 +30,11 @@ use casa_imaging::{
     ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch,
     PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
     StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
-    StandardMfsModelPredictor, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
-    estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern, restore_standard_mfs_model,
-    run_cube, run_imaging, run_imaging_owned_with_execution_config, run_mtmfs,
+    StandardMfsModelPredictor, StandardMfsStreamingWeightingPlan, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
+    WeightingMode, estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern,
+    restore_standard_mfs_model, run_cube, run_imaging, run_imaging_owned_with_execution_config,
+    run_mtmfs, run_standard_mfs_weighted_streaming_with_execution_config,
     trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
     trace_cube_channel_w_project_plan, trace_w_project_plan, trace_weighting,
 };
@@ -91,10 +92,11 @@ pub use task_contract::{
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const DEFAULT_BATCH_SIZE: usize = 65_536;
-const DEFAULT_PREPARE_BUFFER_TOTAL_BYTES: usize = 512 * 1024 * 1024;
+const DEFAULT_STANDARD_MFS_MEMORY_TARGET_FALLBACK_BYTES: usize = 8 * 1024 * 1024 * 1024;
 const MIN_PREPARE_ROW_BLOCK_ROWS: usize = 128;
 const MAX_PREPARE_ROW_BLOCK_ROWS: usize = 32_768;
 const ESTIMATED_STANDARD_MFS_SAMPLE_BYTES: usize = 64;
+const ESTIMATED_STANDARD_MFS_BUCKET_SAMPLE_BYTES: usize = 32;
 const JOINT_HOGBOM_PEAK_RELATIVE_TOLERANCE: f32 = 1.0e-3;
 const OUTLIER_IMAGE_FIELDS: &[&str] = &[
     "imagename",
@@ -1361,6 +1363,19 @@ fn run_single_image_from_config_with_gridder_override(
     );
     let stage_start = Instant::now();
     let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
+    if can_run_standard_mfs_fixed_tile_streaming_clean(
+        config,
+        force_standard_gridder,
+        ms_paths.len(),
+    ) {
+        return run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
+            &ms,
+            config,
+            data_column,
+            open_measurement_set,
+            total_start,
+        );
+    }
     if can_run_standard_mfs_dirty_streaming(config, force_standard_gridder, ms_paths.len()) {
         return run_standard_mfs_dirty_streaming_from_open_ms(
             &ms,
@@ -1713,6 +1728,25 @@ fn run_single_image_from_config_with_gridder_override(
     })
 }
 
+fn can_run_standard_mfs_fixed_tile_streaming_clean(
+    config: &CliConfig,
+    force_standard_gridder: bool,
+    ms_count: usize,
+) -> bool {
+    ms_count == 1
+        && standard_mfs_fixed_tile_backend_enabled_for_frontend()
+        && matches!(config.spectral_mode, SpectralMode::Mfs)
+        && (force_standard_gridder || config.force_standard_gridder)
+        && !config.use_pointing
+        && config.deconvolver != Deconvolver::Mtmfs
+        && config.save_model == SaveModelMode::None
+        && config.outlier_file.is_none()
+        && config.use_mask == CleanMaskMode::User
+        && config.uv_taper.is_none()
+        && matches!(config.w_term_mode, WTermMode::None)
+        && !needs_single_field_primary_beam_products(config)
+}
+
 fn can_run_standard_mfs_dirty_streaming(
     config: &CliConfig,
     force_standard_gridder: bool,
@@ -1732,6 +1766,327 @@ fn can_run_standard_mfs_dirty_streaming(
         && matches!(config.w_term_mode, WTermMode::None)
         && !needs_single_field_primary_beam_products(config)
         && (config.dirty_only || config.niter == 0)
+}
+
+fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column: VisibilityDataColumn,
+    open_measurement_set: Duration,
+    total_start: Instant,
+) -> Result<RunSummary, String> {
+    let geometry = ImageGeometry {
+        image_shape: [config.imsize, config.imsize],
+        cell_size_rad: [
+            config.cell_arcsec * arcsec_to_rad(),
+            config.cell_arcsec * arcsec_to_rad(),
+        ],
+    };
+    let clean = CleanConfig {
+        niter: if config.dirty_only { 0 } else { config.niter },
+        major_cycle_limit: config.nmajor,
+        gain: config.gain,
+        threshold_jy_per_beam: config.threshold_jy,
+        nsigma: config.nsigma,
+        psf_cutoff: config.psf_cutoff,
+        minor_cycle_length: config.minor_cycle_length,
+        cyclefactor: config.cyclefactor,
+        min_psf_fraction: config.min_psf_fraction,
+        max_psf_fraction: config.max_psf_fraction,
+        hogbom_iteration_mode: config.hogbom_iteration_mode,
+    };
+    let clean_mask = build_clean_mask(
+        config.imsize,
+        &config.mask_boxes,
+        config.mask_image.as_deref(),
+        true,
+    )?;
+
+    let prepare_started_at = Instant::now();
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let ddid_info = data_description_index(&data_description)?;
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let polarization = ms
+        .polarization()
+        .map_err(|error| format!("open POLARIZATION: {error}"))?;
+    let selection = select_main_rows(ms, config, &ddid_info)?;
+    maybe_log_frontend_progress(
+        "prepare_plane_input/select_main_rows",
+        prepare_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+    if !can_prepare_standard_mfs_without_trace(config, &selection) {
+        return Err(
+            "internal error: streaming fixed-tile standard MFS path selected for an ineligible row selection"
+                .to_string(),
+        );
+    }
+
+    let stage_started_at = Instant::now();
+    let flag_row = load_bool_main_column_owned(ms, "FLAG_ROW")?;
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .map(|flagged| !flagged)
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if active_selected_rows.is_empty() {
+        return Err("selection resolved to no active rows".to_string());
+    }
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_flag_row_column",
+        stage_started_at.elapsed(),
+        prepare_started_at.elapsed(),
+    );
+
+    let selected_spw_id = ddid_info
+        .get(selection.selected_ddid)
+        .copied()
+        .flatten()
+        .map(|(spw_id, _)| spw_id)
+        .ok_or_else(|| {
+            format!(
+                "map selected DDID {} to SPW/POLARIZATION",
+                selection.selected_ddid
+            )
+        })?;
+    let selected_freq_ref = FrequencyRef::from_casacore_code(
+        spectral_window
+            .meas_freq_ref(selected_spw_id)
+            .map_err(|error| format!("read MEAS_FREQ_REF: {error}"))?,
+    )
+    .unwrap_or(FrequencyRef::TOPO);
+    let derived_engine =
+        if selection.needs_geometry_engine || selected_freq_ref != FrequencyRef::LSRK {
+            Some(MsCalEngine::new(ms).map_err(|error| format!("build derived engine: {error}"))?)
+        } else {
+            None
+        };
+    let table_values = load_prepared_selection_table_values(
+        selection.selected_ddid,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+    )?;
+    let selected_channel_count =
+        selected_channel_count_estimate_from_table_values(config, &table_values);
+    let channel_read_range = selected_channel_read_range_for_standard_mfs(config, &table_values)?;
+    let strategy = standard_mfs_memory_plan(config, selected_channel_count);
+    validate_standard_mfs_memory_plan(&strategy)?;
+    log_standard_mfs_memory_plan_actual(
+        &strategy,
+        active_selected_rows.len(),
+        strategy.live_row_block_bytes,
+        strategy.worker_staging_bytes,
+        "fixed_tile_streaming",
+    );
+
+    let mut prepare_stage_timings = PreparePlaneInputStageTimings::default();
+    let stage_started_at = Instant::now();
+    let geometry_columns = PreparedGeometryColumnCache::load(ms, config.use_pointing)?;
+    prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+    let mut accumulate_timings = AccumulateRowTimings {
+        rows_skipped_by_flag_row: selection.selected_rows.len() - active_selected_rows.len(),
+        ..Default::default()
+    };
+
+    let first_rows =
+        &active_selected_rows[..strategy.row_block_rows.min(active_selected_rows.len())];
+    let mut first_plane = None::<PlaneInput>;
+    stream_standard_mfs_prepared_row_blocks(
+        ms,
+        config,
+        data_column,
+        &selection,
+        &table_values,
+        &flag_row,
+        first_rows,
+        derived_engine.as_ref(),
+        channel_read_range,
+        &geometry_columns,
+        strategy.row_block_rows,
+        prepare_started_at,
+        &mut prepare_stage_timings,
+        &mut accumulate_timings,
+        |plane| {
+            first_plane = Some(plane);
+            Ok(())
+        },
+    )?;
+    let first_plane =
+        first_plane.ok_or_else(|| "selection resolved to no prepared row block".to_string())?;
+    let phase_center = first_plane.phase_center.clone();
+    let prepared_freq_ref = first_plane.freq_ref;
+    let start_model = load_start_model_image(config, geometry, &first_plane.gridder_mode)?;
+    let request = ImagingRequest {
+        geometry,
+        visibility_batches: Vec::new(),
+        gridder_mode: first_plane.gridder_mode.clone(),
+        plane_stokes: first_plane.plane_stokes,
+        weighting: config.weighting,
+        reffreq_hz: first_plane.reffreq_hz,
+        selected_frequency_range_hz: first_plane.selected_frequency_range_hz,
+        deconvolver: config.deconvolver,
+        multiscale_scales: config.multiscale_scales.clone(),
+        small_scale_bias: config.small_scale_bias,
+        clean,
+        clean_mask: clean_mask.clone(),
+        initial_model: start_model,
+        w_term_mode: config.w_term_mode,
+        w_project_planes: config.w_project_planes,
+        compatibility: CompatibilityMode::CasaStandardMfs,
+    };
+    drop(first_plane);
+
+    let mut weighting_plan = StandardMfsStreamingWeightingPlan::new(
+        geometry,
+        config.weighting,
+        request.selected_frequency_range_hz,
+    )
+    .map_err(|error| error.to_string())?;
+    if weighting_plan.needs_density_pass() {
+        let mut density_pass = |plane: PlaneInput| {
+            weighting_plan.accumulate_density_batches(&plane.batches);
+            Ok(())
+        };
+        stream_standard_mfs_prepared_row_blocks(
+            ms,
+            config,
+            data_column,
+            &selection,
+            &table_values,
+            &flag_row,
+            &active_selected_rows,
+            derived_engine.as_ref(),
+            channel_read_range,
+            &geometry_columns,
+            strategy.row_block_rows,
+            prepare_started_at,
+            &mut prepare_stage_timings,
+            &mut accumulate_timings,
+            &mut density_pass,
+        )?;
+    }
+    weighting_plan.finish_density_pass();
+
+    let execution_config = standard_mfs_execution_config(config);
+    let run_started_at = Instant::now();
+    let mut replay_weighted_batches = |consumer: &mut dyn FnMut(
+        &[VisibilityBatch],
+    )
+        -> Result<(), ImagingError>|
+     -> Result<(), ImagingError> {
+        let mut stream_error = None::<ImagingError>;
+        let mut pass = |mut plane: PlaneInput| {
+            let weighted = weighting_plan
+                .weight_owned_batches(std::mem::take(&mut plane.batches))
+                .map_err(|error| error.to_string())?;
+            if let Err(error) = consumer(&weighted) {
+                stream_error = Some(error);
+                return Err("streaming standard MFS weighted consumer failed".to_string());
+            }
+            Ok(())
+        };
+        let stream_result = stream_standard_mfs_prepared_row_blocks(
+            ms,
+            config,
+            data_column,
+            &selection,
+            &table_values,
+            &flag_row,
+            &active_selected_rows,
+            derived_engine.as_ref(),
+            channel_read_range,
+            &geometry_columns,
+            strategy.row_block_rows,
+            prepare_started_at,
+            &mut prepare_stage_timings,
+            &mut accumulate_timings,
+            &mut pass,
+        );
+        if let Some(error) = stream_error {
+            return Err(error);
+        }
+        stream_result
+            .map(|_| ())
+            .map_err(ImagingError::InvalidRequest)
+    };
+    let result = run_standard_mfs_weighted_streaming_with_execution_config(
+        request,
+        execution_config,
+        &mut replay_weighted_batches,
+    )
+    .map_err(|error| error.to_string())?;
+    let run_imaging_time = run_started_at.elapsed();
+    accumulate_timings.log(prepare_started_at.elapsed());
+    maybe_log_frontend_progress("run_imaging", run_imaging_time, total_start.elapsed());
+
+    let stage_start = Instant::now();
+    let run_result = RunProducts::Mfs(result);
+    let coords = build_coordinate_system(CoordinateSystemBuild {
+        imsize: config.imsize,
+        phase_center: phase_center.angles_rad,
+        cell_arcsec: config.cell_arcsec,
+        freq_ref: prepared_freq_ref,
+        direction_ref: phase_center.reference,
+        plane_stokes: run_result.plane_stokes(),
+        channel_frequencies_hz: run_result.channel_frequencies_hz(),
+        spectral_delta_hz: run_result.spectral_delta_hz(),
+        requested_rest_frequency_hz: config.cube_axis.rest_frequency_hz,
+    });
+    let build_coordinate_system = stage_start.elapsed();
+    maybe_log_frontend_progress(
+        "build_coordinate_system",
+        build_coordinate_system,
+        total_start.elapsed(),
+    );
+
+    let stage_start = Instant::now();
+    let effective_clean_mask = clean_mask.map(EffectiveCleanMask::Plane);
+    write_products(
+        config,
+        &coords,
+        &run_result,
+        effective_clean_mask.as_ref(),
+        None,
+    )?;
+    let write_products_time = stage_start.elapsed();
+    maybe_log_frontend_progress("write_products", write_products_time, total_start.elapsed());
+
+    Ok(RunSummary {
+        warnings: run_result.warnings(),
+        gridded_samples: run_result.gridded_samples(),
+        major_cycles: run_result.major_cycles(),
+        minor_iterations: run_result.minor_iterations(),
+        clean_stop_reason: run_result.clean_stop_reason(),
+        minor_cycle_traces: run_result.minor_cycle_traces(),
+        channel_summaries: run_result.channel_summaries(),
+        stage_timings: run_result.stage_timings(),
+        frontend_timings: FrontendStageTimings {
+            open_measurement_set,
+            prepare_plane_input: prepare_stage_timings
+                .get_ms_values_into_processing_buffer
+                .saturating_add(prepare_stage_timings.prepare_processing_buffer),
+            get_ms_values_into_processing_buffer: prepare_stage_timings
+                .get_ms_values_into_processing_buffer,
+            prepare_processing_buffer: prepare_stage_timings.prepare_processing_buffer,
+            extract_phase_center: Duration::ZERO,
+            run_imaging: run_imaging_time,
+            build_coordinate_system,
+            write_products: write_products_time,
+            total: total_start.elapsed(),
+        },
+    })
 }
 
 fn run_standard_mfs_dirty_streaming_from_open_ms(
@@ -1855,14 +2210,23 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
         selected_channel_count_estimate_from_table_values(config, &table_values);
     let channel_read_range = selected_channel_read_range_for_standard_mfs(config, &table_values)?;
     let strategy = standard_mfs_memory_plan(config, selected_channel_count);
+    validate_standard_mfs_memory_plan(&strategy)?;
+    validate_standard_mfs_retained_prepare_shape(
+        &strategy,
+        active_selected_rows.len(),
+        selected_channel_count,
+    )?;
     if frontend_progress_enabled() {
         eprintln!(
-            "frontend stage=prepare_plane_input/buffer_strategy rows_total={} row_block_rows={} selected_channels={} worker_buffers={} per_worker_buffer_mib={:.1}",
+            "frontend stage=prepare_plane_input/buffer_strategy rows_total={} row_block_rows={} selected_channels={} worker_buffers={} per_worker_buffer_mib={:.1} system_memory_mib={:.1} memory_target_mib={:.1} memory_target_source={}",
             active_selected_rows.len(),
             strategy.row_block_rows,
             strategy.selected_channel_count,
             strategy.worker_buffers,
             strategy.per_worker_buffer_bytes as f64 / (1024.0 * 1024.0),
+            strategy.system_memory_bytes as f64 / (1024.0 * 1024.0),
+            strategy.memory_target_bytes as f64 / (1024.0 * 1024.0),
+            strategy.memory_target_source,
         );
         eprintln!(
             "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} reserved_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} gridded_visibility_reserve_mib={:.1} output_image_reserve_mib={:.1} fixed_tile_resident_mib={:.1} fixed_tile_resident_limit={} fixed_tile_edge={} fixed_tile_anchor={} max_live_row_blocks={} live_bucket_mib={:.1} queued_task_mib={:.1} global_grid_mib={:.1} tile_cell_bin_mib={:.1} worker_staging_reserve_mib={:.1} gpu_staging_reserve_mib={:.1} prepare_buffer_mib={:.1}",
@@ -7097,14 +7461,18 @@ fn prepare_standard_mfs_input_in_row_blocks(
         selected_channel_count_estimate_from_table_values(config, &table_values);
     let channel_read_range = selected_channel_read_range_for_standard_mfs(config, &table_values)?;
     let strategy = standard_mfs_memory_plan(config, selected_channel_count);
+    validate_standard_mfs_memory_plan(&strategy)?;
     if frontend_progress_enabled() {
         eprintln!(
-            "frontend stage=prepare_plane_input/buffer_strategy rows_total={} row_block_rows={} selected_channels={} worker_buffers={} per_worker_buffer_mib={:.1}",
+            "frontend stage=prepare_plane_input/buffer_strategy rows_total={} row_block_rows={} selected_channels={} worker_buffers={} per_worker_buffer_mib={:.1} system_memory_mib={:.1} memory_target_mib={:.1} memory_target_source={}",
             active_selected_rows.len(),
             strategy.row_block_rows,
             strategy.selected_channel_count,
             strategy.worker_buffers,
             strategy.per_worker_buffer_bytes as f64 / (1024.0 * 1024.0),
+            strategy.system_memory_bytes as f64 / (1024.0 * 1024.0),
+            strategy.memory_target_bytes as f64 / (1024.0 * 1024.0),
+            strategy.memory_target_source,
         );
         eprintln!(
             "frontend stage=prepare_plane_input/buffer_plan total_budget_mib={:.1} reserved_mib={:.1} image_reserve_mib={:.1} weighting_density_reserve_mib={:.1} gridded_visibility_reserve_mib={:.1} output_image_reserve_mib={:.1} fixed_tile_resident_mib={:.1} fixed_tile_resident_limit={} fixed_tile_edge={} fixed_tile_anchor={} max_live_row_blocks={} live_bucket_mib={:.1} queued_task_mib={:.1} global_grid_mib={:.1} tile_cell_bin_mib={:.1} worker_staging_reserve_mib={:.1} gpu_staging_reserve_mib={:.1} prepare_buffer_mib={:.1}",
@@ -7138,13 +7506,16 @@ fn prepare_standard_mfs_input_in_row_blocks(
             .saturating_mul(strategy.selected_channel_count)
             .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES);
         eprintln!(
-            "standard_mfs_memory_plan_actual rows_total={} selected_channels={} row_block_rows={} row_block_rows_source={} heuristic_row_block_rows={} worker_buffers={} total_budget_bytes={} planned_reserved_bytes={} planned_active_bytes={} reserve_over_budget_bytes={} prepare_buffer_floor_applied={} prepare_buffer_bytes={} image_working_set_bytes={} weighting_density_bytes={} gridded_visibility_bytes={} output_image_bytes={} fixed_tile_resident_bytes={} fixed_tile_resident_limit={} fixed_tile_edge={} fixed_tile_anchor={} max_live_row_blocks={} live_row_block_bytes={} live_bucket_bytes={} queued_task_bytes={} resident_tile_buffer_bytes={} global_grid_bytes={} tile_cell_bin_bytes={} worker_staging_bytes={} gpu_staging_bytes={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} peak_rss_bytes=0 product_status={}",
+            "standard_mfs_memory_plan_actual rows_total={} selected_channels={} row_block_rows={} row_block_rows_source={} heuristic_row_block_rows={} worker_buffers={} system_memory_bytes={} memory_target_bytes={} memory_target_source={} total_budget_bytes={} planned_reserved_bytes={} planned_active_bytes={} reserve_over_budget_bytes={} prepare_buffer_floor_applied={} prepare_buffer_bytes={} image_working_set_bytes={} weighting_density_bytes={} gridded_visibility_bytes={} output_image_bytes={} fixed_tile_resident_bytes={} fixed_tile_resident_limit={} fixed_tile_edge={} fixed_tile_anchor={} max_live_row_blocks={} live_row_block_bytes={} live_bucket_bytes={} queued_task_bytes={} resident_tile_buffer_bytes={} global_grid_bytes={} tile_cell_bin_bytes={} worker_staging_bytes={} gpu_staging_bytes={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} peak_rss_bytes=0 product_status={}",
             active_selected_rows.len(),
             strategy.selected_channel_count,
             strategy.row_block_rows,
             strategy.row_block_rows_source,
             strategy.heuristic_row_block_rows,
             strategy.worker_buffers,
+            strategy.system_memory_bytes,
+            strategy.memory_target_bytes,
+            strategy.memory_target_source,
             strategy.total_budget_bytes,
             strategy.reserved_buffer_bytes,
             strategy.planned_active_bytes,
@@ -7233,6 +7604,69 @@ fn prepare_standard_mfs_input_in_row_blocks(
     accumulate_timings.log(prepare_started_at.elapsed());
     merge_prepared_inputs_for_same_measurement_set(prepared_blocks)
         .map(|prepared| (prepared, stage_timings))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stream_standard_mfs_prepared_row_blocks<F>(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    flag_row: &[bool],
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+    mut on_plane: F,
+) -> Result<usize, String>
+where
+    F: FnMut(PlaneInput) -> Result<(), String>,
+{
+    let mut prepared_batch_count = 0usize;
+    for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let stage_started_at = Instant::now();
+        let processing_buffer = get_ms_values_into_processing_buffer(
+            ms,
+            data_column_kind,
+            selection,
+            row_chunk,
+            derived_engine,
+            uvw_reprojection_mode_for_selection(config, selection),
+            channel_read_range,
+            geometry_columns,
+            prepare_started_at,
+        )?;
+        prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+
+        let stage_started_at = Instant::now();
+        let plane = prepare_processing_buffer(
+            config,
+            table_values,
+            &selection.phase_center,
+            flag_row,
+            processing_buffer,
+            derived_engine,
+            accumulate_timings,
+        )?;
+        prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
+        prepared_batch_count += plane.batches.len();
+        on_plane(plane)?;
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/row_block rows_done={} rows_total={} batches={} total_elapsed_s={:.3}",
+                accumulate_timings.rows_seen,
+                active_selected_rows.len(),
+                prepared_batch_count,
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    Ok(prepared_batch_count)
 }
 
 fn merge_prepared_inputs_with_trace(
@@ -7636,6 +8070,9 @@ struct StandardMfsMemoryPlan {
     worker_buffers: usize,
     per_worker_buffer_bytes: usize,
     prepare_buffer_bytes: usize,
+    system_memory_bytes: usize,
+    memory_target_bytes: usize,
+    memory_target_source: &'static str,
     total_budget_bytes: usize,
     reserved_buffer_bytes: usize,
     planned_active_bytes: usize,
@@ -7670,7 +8107,8 @@ fn standard_mfs_memory_plan(
     let worker_buffers = env_usize("CASA_RS_IMAGING_PREPARE_WORKERS")
         .filter(|value| *value > 0)
         .unwrap_or(1);
-    let total_budget_bytes = DEFAULT_PREPARE_BUFFER_TOTAL_BYTES;
+    let memory_target = standard_mfs_memory_target();
+    let total_budget_bytes = memory_target.target_bytes;
     let image_working_set_bytes = estimated_image_working_set_bytes(config);
     let weighting_density_bytes = estimated_weighting_density_working_set_bytes(config);
     let gridded_visibility_bytes = estimated_gridded_visibility_working_set_bytes(config);
@@ -7681,11 +8119,6 @@ fn standard_mfs_memory_plan(
         .filter(|value| *value > 0)
         .map(|value| value.min(2))
         .unwrap_or(1);
-    let live_row_block_bytes = selected_channel_count
-        .saturating_mul(MAX_PREPARE_ROW_BLOCK_ROWS)
-        .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES)
-        .saturating_mul(max_live_row_blocks);
-    let live_bucket_bytes = live_row_block_bytes / 4;
     let queued_task_bytes = fixed_tile_resident
         .tile_limit
         .saturating_mul(max_live_row_blocks)
@@ -7698,29 +8131,25 @@ fn standard_mfs_memory_plan(
         estimated_worker_staging_bytes(config)
     };
     let gpu_staging_bytes = estimated_gpu_staging_bytes();
-    let reserved_buffer_bytes = image_working_set_bytes
+    let fixed_reserved_buffer_bytes = image_working_set_bytes
         .saturating_add(weighting_density_bytes)
         .saturating_add(gridded_visibility_bytes)
         .saturating_add(output_image_bytes)
         .saturating_add(fixed_tile_resident.bytes)
-        .saturating_add(live_bucket_bytes)
         .saturating_add(queued_task_bytes)
         .saturating_add(tile_cell_bin_bytes)
         .saturating_add(worker_staging_bytes)
         .saturating_add(gpu_staging_bytes);
-    let reserve_over_budget_bytes = reserved_buffer_bytes.saturating_sub(total_budget_bytes);
     let prepare_buffer_floor_bytes = 64 * 1024 * 1024;
     let prepare_buffer_override = env_usize("CASA_RS_IMAGING_PREPARE_BUFFER_MB")
         .filter(|value| *value > 0)
         .map(|value| value.saturating_mul(1024 * 1024));
-    let prepare_buffer_floor_applied = prepare_buffer_override.is_none()
-        && total_budget_bytes.saturating_sub(reserved_buffer_bytes) < prepare_buffer_floor_bytes;
-    let prepare_buffer_bytes = prepare_buffer_override.unwrap_or_else(|| {
+    let heuristic_prepare_budget = prepare_buffer_override.unwrap_or_else(|| {
         total_budget_bytes
-            .saturating_sub(reserved_buffer_bytes)
+            .saturating_sub(fixed_reserved_buffer_bytes)
             .max(prepare_buffer_floor_bytes)
     });
-    let per_worker_buffer_bytes = (prepare_buffer_bytes / worker_buffers).max(1024 * 1024);
+    let per_worker_buffer_bytes = (heuristic_prepare_budget / worker_buffers).max(1024 * 1024);
     let samples_per_worker =
         (per_worker_buffer_bytes / ESTIMATED_STANDARD_MFS_SAMPLE_BYTES).max(selected_channel_count);
     let heuristic_rows = (samples_per_worker / selected_channel_count)
@@ -7732,7 +8161,60 @@ fn standard_mfs_memory_plan(
     } else {
         "heuristic"
     };
-    let row_block_rows = row_block_override.unwrap_or(heuristic_rows);
+    let mut row_block_rows = row_block_override.unwrap_or(heuristic_rows);
+    if row_block_override.is_none() {
+        while row_block_rows > MIN_PREPARE_ROW_BLOCK_ROWS {
+            let live_row_block_bytes = estimated_standard_mfs_live_row_block_bytes(
+                selected_channel_count,
+                row_block_rows,
+                max_live_row_blocks,
+            );
+            let live_bucket_bytes = estimated_standard_mfs_live_bucket_bytes(
+                selected_channel_count,
+                row_block_rows,
+                max_live_row_blocks,
+            );
+            let prepare_buffer_bytes = planned_prepare_buffer_bytes(
+                total_budget_bytes,
+                fixed_reserved_buffer_bytes,
+                live_bucket_bytes,
+                live_row_block_bytes,
+                prepare_buffer_floor_bytes,
+                prepare_buffer_override,
+            );
+            let planned_active_bytes = fixed_reserved_buffer_bytes
+                .saturating_add(live_bucket_bytes)
+                .saturating_add(live_row_block_bytes)
+                .saturating_add(prepare_buffer_bytes);
+            if planned_active_bytes <= total_budget_bytes {
+                break;
+            }
+            row_block_rows = (row_block_rows / 2).max(MIN_PREPARE_ROW_BLOCK_ROWS);
+        }
+    }
+    let live_row_block_bytes = estimated_standard_mfs_live_row_block_bytes(
+        selected_channel_count,
+        row_block_rows,
+        max_live_row_blocks,
+    );
+    let live_bucket_bytes = estimated_standard_mfs_live_bucket_bytes(
+        selected_channel_count,
+        row_block_rows,
+        max_live_row_blocks,
+    );
+    let prepare_buffer_bytes = planned_prepare_buffer_bytes(
+        total_budget_bytes,
+        fixed_reserved_buffer_bytes,
+        live_bucket_bytes,
+        live_row_block_bytes,
+        prepare_buffer_floor_bytes,
+        prepare_buffer_override,
+    );
+    let prepare_buffer_floor_applied =
+        prepare_buffer_override.is_none() && prepare_buffer_bytes >= prepare_buffer_floor_bytes;
+    let per_worker_buffer_bytes = (prepare_buffer_bytes / worker_buffers).max(1024 * 1024);
+    let reserved_buffer_bytes = fixed_reserved_buffer_bytes.saturating_add(live_bucket_bytes);
+    let reserve_over_budget_bytes = reserved_buffer_bytes.saturating_sub(total_budget_bytes);
     let planned_active_bytes = reserved_buffer_bytes
         .saturating_add(prepare_buffer_bytes)
         .saturating_add(live_row_block_bytes);
@@ -7744,6 +8226,9 @@ fn standard_mfs_memory_plan(
         worker_buffers,
         per_worker_buffer_bytes,
         prepare_buffer_bytes,
+        system_memory_bytes: memory_target.system_memory_bytes.unwrap_or(0),
+        memory_target_bytes: memory_target.target_bytes,
+        memory_target_source: memory_target.source,
         total_budget_bytes,
         reserved_buffer_bytes,
         planned_active_bytes,
@@ -7768,6 +8253,214 @@ fn standard_mfs_memory_plan(
         gpu_staging_bytes,
         selected_channel_count,
     }
+}
+
+fn planned_prepare_buffer_bytes(
+    total_budget_bytes: usize,
+    fixed_reserved_buffer_bytes: usize,
+    live_bucket_bytes: usize,
+    live_row_block_bytes: usize,
+    _prepare_buffer_floor_bytes: usize,
+    prepare_buffer_override: Option<usize>,
+) -> usize {
+    if let Some(prepare_buffer_override) = prepare_buffer_override {
+        return prepare_buffer_override;
+    }
+    total_budget_bytes
+        .saturating_sub(fixed_reserved_buffer_bytes)
+        .saturating_sub(live_bucket_bytes)
+        .saturating_sub(live_row_block_bytes)
+}
+
+fn validate_standard_mfs_memory_plan(strategy: &StandardMfsMemoryPlan) -> Result<(), String> {
+    if strategy.planned_active_bytes <= strategy.memory_target_bytes {
+        return Ok(());
+    }
+    Err(format!(
+        "standard MFS memory plan exceeds target: planned_active_bytes={} memory_target_bytes={} \
+         source={} row_block_rows={} fixed_tile_resident_bytes={} live_row_block_bytes={} \
+         live_bucket_bytes={} prepare_buffer_bytes={}; raise \
+         CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB or reduce image/channel/work-queue size",
+        strategy.planned_active_bytes,
+        strategy.memory_target_bytes,
+        strategy.memory_target_source,
+        strategy.row_block_rows,
+        strategy.fixed_tile_resident_bytes,
+        strategy.live_row_block_bytes,
+        strategy.live_bucket_bytes,
+        strategy.prepare_buffer_bytes,
+    ))
+}
+
+fn log_standard_mfs_memory_plan_actual(
+    strategy: &StandardMfsMemoryPlan,
+    rows_total: usize,
+    executor_plan_bytes_estimate: usize,
+    local_grid_bytes_estimate: usize,
+    execution_mode: &'static str,
+) {
+    if !standard_mfs_profile_detail_enabled() {
+        return;
+    }
+    eprintln!(
+        "standard_mfs_memory_plan_actual execution_mode={} rows_total={} selected_channels={} row_block_rows={} row_block_rows_source={} heuristic_row_block_rows={} worker_buffers={} system_memory_bytes={} memory_target_bytes={} memory_target_source={} total_budget_bytes={} planned_reserved_bytes={} planned_active_bytes={} reserve_over_budget_bytes={} prepare_buffer_floor_applied={} prepare_buffer_bytes={} image_working_set_bytes={} weighting_density_bytes={} gridded_visibility_bytes={} output_image_bytes={} fixed_tile_resident_bytes={} fixed_tile_resident_limit={} fixed_tile_edge={} fixed_tile_anchor={} max_live_row_blocks={} live_row_block_bytes={} live_bucket_bytes={} queued_task_bytes={} resident_tile_buffer_bytes={} global_grid_bytes={} tile_cell_bin_bytes={} worker_staging_bytes={} gpu_staging_bytes={} executor_plan_bytes_estimate={} local_grid_bytes_estimate={} peak_rss_bytes=0 product_status={}",
+        execution_mode,
+        rows_total,
+        strategy.selected_channel_count,
+        strategy.row_block_rows,
+        strategy.row_block_rows_source,
+        strategy.heuristic_row_block_rows,
+        strategy.worker_buffers,
+        strategy.system_memory_bytes,
+        strategy.memory_target_bytes,
+        strategy.memory_target_source,
+        strategy.total_budget_bytes,
+        strategy.reserved_buffer_bytes,
+        strategy.planned_active_bytes,
+        strategy.reserve_over_budget_bytes,
+        strategy.prepare_buffer_floor_applied,
+        strategy.prepare_buffer_bytes,
+        strategy.image_working_set_bytes,
+        strategy.weighting_density_bytes,
+        strategy.gridded_visibility_bytes,
+        strategy.output_image_bytes,
+        strategy.fixed_tile_resident_bytes,
+        strategy.fixed_tile_resident_limit_estimate,
+        strategy.fixed_tile_edge,
+        if strategy.fixed_tile_anchor_center_boundary {
+            "center_boundary"
+        } else {
+            "zero"
+        },
+        strategy.max_live_row_blocks,
+        strategy.live_row_block_bytes,
+        strategy.live_bucket_bytes,
+        strategy.queued_task_bytes,
+        strategy.resident_tile_buffer_bytes,
+        strategy.global_grid_bytes,
+        strategy.tile_cell_bin_bytes,
+        strategy.worker_staging_bytes,
+        strategy.gpu_staging_bytes,
+        executor_plan_bytes_estimate,
+        local_grid_bytes_estimate,
+        standard_mfs_product_status_for_frontend(),
+    );
+}
+
+fn validate_standard_mfs_retained_prepare_shape(
+    strategy: &StandardMfsMemoryPlan,
+    active_row_count: usize,
+    selected_channel_count: usize,
+) -> Result<(), String> {
+    if !standard_mfs_fixed_tile_backend_enabled_for_frontend() {
+        return Ok(());
+    }
+    let retained_visibility_bytes = active_row_count
+        .saturating_mul(selected_channel_count.max(1))
+        .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES);
+    let estimated_active_bytes = strategy
+        .planned_active_bytes
+        .saturating_add(retained_visibility_bytes);
+    if estimated_active_bytes <= strategy.memory_target_bytes {
+        return Ok(());
+    }
+    Err(format!(
+        "standard MFS fixed-tile non-streaming prepare would retain an estimated \
+         {} visibility bytes and exceed the active memory target: estimated_active_bytes={} \
+         memory_target_bytes={} source={}. The fixed-tile clean streaming runner must be used \
+         for this workload; raise CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB only for dedicated \
+         benchmark machines.",
+        retained_visibility_bytes,
+        estimated_active_bytes,
+        strategy.memory_target_bytes,
+        strategy.memory_target_source,
+    ))
+}
+
+fn estimated_standard_mfs_live_row_block_bytes(
+    selected_channel_count: usize,
+    row_block_rows: usize,
+    max_live_row_blocks: usize,
+) -> usize {
+    selected_channel_count
+        .saturating_mul(row_block_rows)
+        .saturating_mul(ESTIMATED_STANDARD_MFS_SAMPLE_BYTES)
+        .saturating_mul(max_live_row_blocks)
+}
+
+fn estimated_standard_mfs_live_bucket_bytes(
+    selected_channel_count: usize,
+    row_block_rows: usize,
+    max_live_row_blocks: usize,
+) -> usize {
+    selected_channel_count
+        .saturating_mul(row_block_rows)
+        .saturating_mul(ESTIMATED_STANDARD_MFS_BUCKET_SAMPLE_BYTES)
+        .saturating_mul(max_live_row_blocks)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StandardMfsMemoryTarget {
+    system_memory_bytes: Option<usize>,
+    target_bytes: usize,
+    source: &'static str,
+}
+
+fn standard_mfs_memory_target() -> StandardMfsMemoryTarget {
+    let system_memory_bytes = system_physical_memory_bytes();
+    if let Some(target_mb) =
+        env_usize("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB").filter(|value| *value > 0)
+    {
+        return StandardMfsMemoryTarget {
+            system_memory_bytes,
+            target_bytes: target_mb.saturating_mul(1024 * 1024),
+            source: "env",
+        };
+    }
+    if let Some(system_memory_bytes) = system_memory_bytes {
+        return StandardMfsMemoryTarget {
+            system_memory_bytes: Some(system_memory_bytes),
+            target_bytes: system_memory_bytes / 2,
+            source: "system_half",
+        };
+    }
+    StandardMfsMemoryTarget {
+        system_memory_bytes: None,
+        target_bytes: DEFAULT_STANDARD_MFS_MEMORY_TARGET_FALLBACK_BYTES,
+        source: "fallback",
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn system_physical_memory_bytes() -> Option<usize> {
+    let mut value = 0u64;
+    let mut size = std::mem::size_of::<u64>() as libc::size_t;
+    let name = b"hw.memsize\0";
+    let result = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr().cast(),
+            (&mut value as *mut u64).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (result == 0 && value > 0).then_some(value as usize)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn system_physical_memory_bytes() -> Option<usize> {
+    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if pages <= 0 || page_size <= 0 {
+        return None;
+    }
+    (pages as usize).checked_mul(page_size as usize)
+}
+
+#[cfg(not(unix))]
+fn system_physical_memory_bytes() -> Option<usize> {
+    None
 }
 
 fn env_usize(name: &str) -> Option<usize> {
@@ -7863,29 +8556,89 @@ fn estimated_fixed_tile_residency_with_backend(
     if !fixed_tile_backend_enabled {
         return FixedTileResidencyEstimate::default();
     }
+    let center_boundary_anchor = standard_mfs_center_boundary_anchor_for_frontend();
+    let memory_target = standard_mfs_memory_target();
+    let default_tile_budget_bytes = memory_target
+        .target_bytes
+        .checked_div(4)
+        .unwrap_or(0)
+        .max(256 * 1024 * 1024);
     let tile_budget_bytes = env_usize("CASA_RS_STANDARD_MFS_TILE_RESIDENT_MB")
         .filter(|value| *value > 0)
         .map(|value| value.saturating_mul(1024 * 1024))
-        .unwrap_or(512 * 1024 * 1024);
+        .unwrap_or(default_tile_budget_bytes);
     let tile_edge = env_usize("CASA_RS_STANDARD_MFS_TILE_EDGE")
         .filter(|value| *value > 0)
-        .unwrap_or(if config.imsize >= 2048 { 64 } else { 32 });
-    let center_boundary_anchor = standard_mfs_center_boundary_anchor_for_frontend();
+        .unwrap_or_else(|| {
+            let edge32 = estimate_fixed_tile_residency_for_edge(config, 32, center_boundary_anchor);
+            if edge32.bytes <= tile_budget_bytes {
+                32
+            } else {
+                64
+            }
+        });
+    estimate_fixed_tile_residency_for_edge(config, tile_edge, center_boundary_anchor)
+        .with_budget(tile_budget_bytes)
+}
+
+fn estimate_fixed_tile_residency_for_edge(
+    config: &CliConfig,
+    tile_edge: usize,
+    center_boundary_anchor: bool,
+) -> FixedTileResidencyEstimate {
     let halo = 3usize;
     let grid_side = casa_composite_padded_len_estimate(config.imsize, 1.2);
-    let tiles_per_axis = grid_side.div_ceil(tile_edge);
+    let tiles_per_axis =
+        estimated_fixed_tile_axis_count(grid_side, tile_edge, center_boundary_anchor);
     let tile_count = tiles_per_axis.saturating_mul(tiles_per_axis).max(1);
     let padded_tile_side = tile_edge.saturating_add(2 * halo).min(grid_side);
     let two_grid_tile_bytes = padded_tile_side
         .saturating_mul(padded_tile_side)
         .saturating_mul(2)
         .saturating_mul(std::mem::size_of::<Complex64>());
-    let tile_limit = (tile_budget_bytes / two_grid_tile_bytes).clamp(1, tile_count);
     FixedTileResidencyEstimate {
-        bytes: tile_limit.saturating_mul(two_grid_tile_bytes),
-        tile_limit,
+        bytes: tile_count.saturating_mul(two_grid_tile_bytes),
+        tile_limit: tile_count,
         tile_edge,
         center_boundary_anchor,
+    }
+}
+
+impl FixedTileResidencyEstimate {
+    fn with_budget(self, budget_bytes: usize) -> Self {
+        if self.tile_limit == 0 || self.bytes <= budget_bytes {
+            return self;
+        }
+        let per_tile_bytes = self.bytes.div_ceil(self.tile_limit);
+        let tile_limit = (budget_bytes / per_tile_bytes).clamp(1, self.tile_limit);
+        Self {
+            bytes: tile_limit.saturating_mul(per_tile_bytes),
+            tile_limit,
+            tile_edge: self.tile_edge,
+            center_boundary_anchor: self.center_boundary_anchor,
+        }
+    }
+}
+
+fn estimated_fixed_tile_axis_count(
+    grid_len: usize,
+    tile_edge: usize,
+    center_boundary_anchor: bool,
+) -> usize {
+    if grid_len == 0 || tile_edge == 0 {
+        return 0;
+    }
+    let origin = if center_boundary_anchor {
+        (grid_len / 2) % tile_edge
+    } else {
+        0
+    };
+    if origin == 0 {
+        grid_len.div_ceil(tile_edge)
+    } else if grid_len <= origin {
+        1
+    } else {
+        1 + (grid_len - origin).div_ceil(tile_edge)
     }
 }
 
@@ -16146,8 +16899,39 @@ mod tests {
     }
 
     #[test]
+    fn standard_mfs_memory_target_uses_explicit_override() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "123");
+
+        let target = standard_mfs_memory_target();
+
+        assert_eq!(target.target_bytes, 123 * 1024 * 1024);
+        assert_eq!(target.source, "env");
+    }
+
+    #[test]
+    fn standard_mfs_memory_target_defaults_to_system_half_or_fallback() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _target = EnvGuard::unset("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB");
+
+        let target = standard_mfs_memory_target();
+
+        if let Some(system_memory_bytes) = target.system_memory_bytes {
+            assert_eq!(target.target_bytes, system_memory_bytes / 2);
+            assert_eq!(target.source, "system_half");
+        } else {
+            assert_eq!(
+                target.target_bytes,
+                DEFAULT_STANDARD_MFS_MEMORY_TARGET_FALLBACK_BYTES
+            );
+            assert_eq!(target.source, "fallback");
+        }
+    }
+
+    #[test]
     fn standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled() {
         let _env_lock = ENV_LOCK.lock().unwrap();
+        let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
         let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
         let _tile_anchor = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_ANCHOR");
         let mut config =
@@ -16177,6 +16961,7 @@ mod tests {
     #[test]
     fn standard_mfs_memory_planner_respects_fixed_tile_overrides() {
         let _env_lock = ENV_LOCK.lock().unwrap();
+        let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
         let _tile_edge = EnvGuard::set("CASA_RS_STANDARD_MFS_TILE_EDGE", "64");
         let _tile_anchor = EnvGuard::set("CASA_RS_STANDARD_MFS_TILE_ANCHOR", "zero");
         let mut config =
@@ -16195,6 +16980,72 @@ mod tests {
         assert!(!plan.fixed_tile_anchor_center_boundary);
         assert_eq!(plan.worker_staging_bytes, 0);
         assert!(plan.resident_tile_buffer_bytes > 0);
+    }
+
+    #[test]
+    fn standard_mfs_memory_planner_selects_tile_edge_from_memory_target() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
+        let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
+        let _tile_resident = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_RESIDENT_MB");
+        let _tile_anchor = EnvGuard::set("CASA_RS_STANDARD_MFS_TILE_ANCHOR", "center_boundary");
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imsize = 2048;
+        config.weighting = WeightingMode::Briggs { robust: 0.5 };
+
+        let _tight_target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
+        let tight = estimated_fixed_tile_residency_with_backend(&config, true);
+        assert_eq!(tight.tile_edge, 64);
+
+        drop(_tight_target);
+        let _larger_target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "4096");
+        let larger = estimated_fixed_tile_residency_with_backend(&config, true);
+        assert_eq!(larger.tile_edge, 32);
+        assert!(larger.tile_limit > tight.tile_limit);
+    }
+
+    #[test]
+    fn standard_mfs_memory_planner_rejects_plan_over_target() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
+        let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "1");
+        let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
+        let _tile_resident = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_RESIDENT_MB");
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imsize = 2048;
+        config.weighting = WeightingMode::Briggs { robust: 0.5 };
+
+        let plan = standard_mfs_memory_plan(&config, 512);
+        let error = validate_standard_mfs_memory_plan(&plan).unwrap_err();
+
+        assert!(
+            error.contains("standard MFS memory plan exceeds target"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn standard_mfs_retained_prepare_guard_rejects_over_target_fixed_tile_shape() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
+        let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
+        let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
+        let _tile_resident = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_RESIDENT_MB");
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imsize = 2048;
+        config.weighting = WeightingMode::Briggs { robust: 0.5 };
+        let plan = standard_mfs_memory_plan(&config, 512);
+
+        let error = validate_standard_mfs_retained_prepare_shape(&plan, 2_000_000, 512)
+            .expect_err("large retained prepare should exceed the memory target");
+
+        assert!(
+            error.contains("fixed-tile non-streaming prepare would retain"),
+            "{error}"
+        );
     }
 
     fn test_phase_center() -> PhaseCenter {
