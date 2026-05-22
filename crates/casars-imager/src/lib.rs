@@ -8223,6 +8223,12 @@ where
     F: FnMut(StandardMfsWeightedSample) -> Result<(), ImagingError>,
 {
     let mut streamed_samples = 0usize;
+    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+        config,
+        table_values,
+        selection.phase_center.clone(),
+        false,
+    )?;
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
         let mut get_ms_values_detail = GetMsValuesTimings::default();
         let stage_started_at = Instant::now();
@@ -8244,12 +8250,6 @@ where
 
         let stage_started_at = Instant::now();
         let before_accumulate = *accumulate_timings;
-        let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
-            config,
-            table_values,
-            selection.phase_center.clone(),
-            false,
-        )?;
         let mut block_samples = 0usize;
         for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
             block_samples += prepared.stream_standard_mfs_weighted_row_samples(

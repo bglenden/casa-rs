@@ -1180,6 +1180,62 @@ grid/degrid by 2.872s (8.8%). The result also rejects a tempting but wrong
 serial shortcut: avoiding buckets is not enough if the resulting sample order
 causes random updates across hundreds of tile buffers.
 
+## Single-Worker Sample-Streaming Gate
+
+The memory-controlled fixed-tile backend now has a successful full-shape
+one-worker gate on the 512-channel, 2048-image, Briggs, multiscale `niter=2`
+standard-MFS workload. The first attempted full-shape command accidentally
+omitted `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile` and immediately exposed the
+legacy retained executor plan estimate (`101.130GB`); that artifact is kept only
+as an invocation guard. The corrected fixed-tile streaming run stayed below the
+16GiB target and matched the saved CASA products at the same tolerance as the
+previous paired comparison.
+
+Full-shape artifact:
+`target/imperformance-wave2/single-worker-full-shape-20260522/full-shape-one-worker-fixed-tile-sample-stream.log`.
+Product comparison artifact:
+`target/imperformance-wave2/single-worker-full-shape-20260522/product-check/current-rust-vs-saved-casa-comparison.json`.
+
+| Workload | Threads | Frontend | Core | Prepare | PSF grid | Residual grid/degrid | Major refresh | Peak RSS | Correctness | Decision |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| retained old one-worker reference | 1 | 1167.428s | 1075.047s | n/a | 177.577s | 508.367s | n/a | n/a | prior GREEN | replaced by streaming fixed-tile path |
+| fixed-tile streaming full-shape gate | 1 | 328.937s | 294.998s | 315.845s | 69.104s | 218.544s | 149.613s | 10.27GB | GREEN vs saved CASA products | retained: memory-controlled full-shape path |
+
+The product check compared `.image`, `.residual`, `.psf`, and `.model` against
+the saved CASA full-shape products. Max absolute normalized deltas remained
+small: `.image` `1.85e-5` of CASA peak, `.residual` `3.26e-6`, `.psf`
+`2.10e-6`, and `.model` `3.00e-7`.
+
+## Single-Worker Serial High-Nail Pass
+
+After the sample-streaming gate, the bounded one-worker profile moved the
+remaining high nails into row-block replay and standard grid/degrid work. The
+retained change in this pass reuses the standard-MFS `PreparedSelection` across
+row blocks inside each streaming pass, preserving any row/frequency conversion
+cache and removing repeated per-block setup. A narrower direct row fast path was
+rejected because it moved work into the adapter and regressed the current path.
+Core helper inlining and a hand-fused residual storage write were also rejected
+as noise: they did not improve frontend wall time.
+
+Bounded diagnostic workload: 64-channel, 1024-image, Briggs,
+multiscale-clean `niter=50`, direct external-disk MS, fixed-tile backend,
+`CASA_RS_STANDARD_MFS_GRID_THREADS=1`, one repeat, no warmup.
+
+| Step | Artifact | Frontend | Core | Prepare | PSF grid | Residual grid/degrid | Major refresh | Peak RSS | Correctness | Decision |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|
+| sample-stream typed decode reference | `target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-weight-hoist.log` | 52.951s | 38.883s | 30.645s | 9.192s | 27.984s | 18.845s | 9.43GB | GREEN targeted tests | previous retained serial point |
+| rejected direct row fast path | `target/imperformance-wave2/single-worker-fast-row-stream-20260522/bounded-one-worker-fixed-tile-fast-row-stream.log` | 50.656s | 37.172s | 44.550s | 8.239s | 27.260s | 19.073s | 9.47GB | GREEN targeted tests | rejected: slower than prepared reuse and worsened replay attribution |
+| prepared-state reuse | `target/imperformance-wave2/single-worker-prepared-reuse-20260522/bounded-one-worker-prepared-reuse.log` | 49.465s | 36.017s | 43.344s | 7.793s | 26.536s | 18.797s | 9.47GB | GREEN targeted tests | retained: small but real setup/cache cleanup |
+| inline-only/core helper check | `target/imperformance-wave2/single-worker-prepared-inline-20260522/bounded-one-worker-prepared-inline.log` | 49.469s | 35.919s | 43.330s | 7.530s | 26.699s | 19.221s | 9.42GB | GREEN targeted tests | rejected as net noise |
+
+The retained prepared-state reuse improves the previous retained bounded serial
+point by 3.486s frontend (6.6%) and 2.866s core (7.4%). The latest profile still
+shows the remaining work is structural: replay preparation is about 43.3s
+wall-attributed and the gridding/degridding stages are about 34.2s combined.
+Further single-worker wins likely require changing how weighted samples are
+represented across the frontend/core boundary or reducing tap planning/grid
+application cost, not more wrapper-level cleanup.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
