@@ -2097,7 +2097,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     } else {
         let mut replay_invocation = 0usize;
         let mut replay_weighted_batches = |consumer: &mut dyn FnMut(
-            &[VisibilityBatch],
+            Vec<VisibilityBatch>,
         )
             -> Result<(), ImagingError>|
          -> Result<(), ImagingError> {
@@ -2118,7 +2118,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                         .map_err(|error| error.to_string())?;
                     pass_stats.add_weighting(weighting_started_at.elapsed());
                     let consumer_started_at = Instant::now();
-                    if let Err(error) = consumer(&weighted) {
+                    if let Err(error) = consumer(weighted) {
                         pass_stats.add_consumer(consumer_started_at.elapsed());
                         stream_error = Some(error);
                         return Err("streaming standard MFS weighted consumer failed".to_string());

@@ -879,8 +879,8 @@ fn run_standard_mfs_imaging_with_weighted_batches(
 ///
 /// The callback is invoked once for the initial dirty/PSF pass and once for
 /// each exact residual-refresh pass. Each invocation must stream batches in a
-/// stable MeasurementSet order and may drop each row block immediately after
-/// the supplied consumer returns.
+/// stable MeasurementSet order and pass ownership of each bounded row block to
+/// the supplied consumer.
 pub fn run_standard_mfs_weighted_streaming_with_execution_config<F>(
     mut request: ImagingRequest,
     execution_config: StandardMfsExecutionConfig,
@@ -888,7 +888,7 @@ pub fn run_standard_mfs_weighted_streaming_with_execution_config<F>(
 ) -> Result<ImagingResult, ImagingError>
 where
     F: FnMut(
-        &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>,
 {
     let total_started = Instant::now();
@@ -1373,7 +1373,7 @@ fn compute_dirty_psf_and_residual_standard_tiled_replay<F>(
 ) -> Result<(PsfState, Array2<f32>, f64), ImagingError>
 where
     F: FnMut(
-        &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>,
 {
     let [grid_nx, grid_ny] = gridder.grid_shape();
@@ -1391,15 +1391,16 @@ where
 
     let grid_started = Instant::now();
     if executor.has_all_resident_tiles() {
-        accumulation = executor.accumulate_dirty_grids_direct_replay(
+        accumulation = executor.accumulate_dirty_grids_direct_owned_replay(
             replay_weighted_batches,
             &mut psf_grid,
             &mut residual_grid,
+            execution_config.fixed_tile_max_live_row_blocks,
         )?;
     } else {
         replay_weighted_batches(&mut |batches| {
             let block_accumulation =
-                executor.accumulate_dirty_grids(batches, &mut psf_grid, &mut residual_grid)?;
+                executor.accumulate_dirty_grids(&batches, &mut psf_grid, &mut residual_grid)?;
             accumulate_dirty_accumulation(&mut accumulation, block_accumulation);
             Ok(())
         })?;
@@ -1608,7 +1609,7 @@ fn compute_psf_standard_tiled_replay<F>(
 ) -> Result<PsfState, ImagingError>
 where
     F: FnMut(
-        &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>,
 {
     let [grid_nx, grid_ny] = gridder.grid_shape();
@@ -1625,11 +1626,14 @@ where
 
     let grid_started = Instant::now();
     if executor.has_all_resident_tiles() {
-        accumulation =
-            executor.accumulate_psf_grid_direct_replay(replay_weighted_batches, &mut psf_grid)?;
+        accumulation = executor.accumulate_psf_grid_direct_owned_replay(
+            replay_weighted_batches,
+            &mut psf_grid,
+            execution_config.fixed_tile_max_live_row_blocks,
+        )?;
     } else {
         replay_weighted_batches(&mut |batches| {
-            let block_accumulation = executor.accumulate_psf_grid(batches, &mut psf_grid)?;
+            let block_accumulation = executor.accumulate_psf_grid(&batches, &mut psf_grid)?;
             accumulate_dirty_accumulation(&mut accumulation, block_accumulation);
             Ok(())
         })?;
@@ -1712,7 +1716,7 @@ fn compute_residual_standard_tiled_replay<F>(
 ) -> Result<Array2<f32>, ImagingError>
 where
     F: FnMut(
-        &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>,
 {
     let [grid_nx, grid_ny] = gridder.grid_shape();
@@ -1732,15 +1736,16 @@ where
     let mut counts = StandardMfsTiledResidualAccumulation::default();
     let degrid_grid_started = Instant::now();
     if executor.has_all_resident_tiles() {
-        counts = executor.accumulate_residual_grid_direct_replay(
+        counts = executor.accumulate_residual_grid_direct_owned_replay(
             replay_weighted_batches,
             model_grid.as_ref(),
             &mut residual_grid,
+            execution_config.fixed_tile_max_live_row_blocks,
         )?;
     } else {
         replay_weighted_batches(&mut |batches| {
             let block_counts = executor.accumulate_residual_grid(
-                batches,
+                &batches,
                 model_grid.as_ref(),
                 &mut residual_grid,
             )?;
@@ -10355,7 +10360,7 @@ mod tests {
             },
             |consumer| {
                 for batch in &weighted_batches {
-                    consumer(std::slice::from_ref(batch))?;
+                    consumer(vec![batch.clone()])?;
                 }
                 Ok(())
             },
@@ -10431,7 +10436,7 @@ mod tests {
             execution_config,
             |consumer| {
                 for batch in &weighted_batches {
-                    consumer(std::slice::from_ref(batch))?;
+                    consumer(vec![batch.clone()])?;
                 }
                 Ok(())
             },

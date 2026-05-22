@@ -1348,6 +1348,165 @@ Decision: retained as the next multi-worker implementation plan. Phase A is a
 measured compatibility/data-model checkpoint, not a performance claim; Phase C
 is the first phase allowed to claim producer/worker overlap.
 
+### Implementation Checkpoint: Row-Block Scheduler Foundation
+
+Date: 2026-05-22.
+
+Retained changes:
+
+- Phase 0 row-block identity/accounting landed in
+  `crates/casa-imaging/src/execution.rs`: compact bucket samples now carry a
+  row-block-local `sample_id`, multi-batch sample references resolve through a
+  shared row-block access trait, owned `PreparedTileRowBlock` publication has a
+  batch-backed storage variant, and row-block byte accounting covers sample
+  refs, bucket records, task/range metadata, scalar records, and owned batch
+  storage capacity.
+- The shared standard-MFS classifier now separates density/PSF eligibility from
+  dirty/residual finite-visibility eligibility, preserving the existing
+  nonfinite rule: PSF can still receive the sample while dirty/residual
+  visibility contribution is skipped.
+- Phase A coalescing is implemented for fixed-tile dirty/PSF/residual paths:
+  the scheduler now builds one tile-bucket block for the full frontend callback
+  slice instead of rebuilding per `VisibilityBatch`, including the
+  non-all-resident fallback path.
+- Phase B/C owned publication is wired into the production all-resident
+  fixed-tile replay path: `run_standard_mfs_weighted_streaming_with_execution_config`
+  now receives owned weighted row-block batches, `casars-imager` hands off its
+  owned weighted block without cloning, and dirty/PSF/residual direct replay use
+  persistent workers over `Arc<PreparedTileRowBlock>` tasks. The persistent
+  scheduler uses a global ready heap with oldest-block priority, active-tile
+  exclusion, a live-row-block cap clamped to one or two, and deterministic
+  task-output reduction order.
+
+Validation artifacts:
+
+```text
+cargo check -p casa-imaging
+cargo test -p casa-imaging block_tile_buckets --lib
+cargo test -p casa-imaging prepared_tile_row_block --lib
+cargo test -p casa-imaging standard_mfs_sample_classifier --lib
+cargo test -p casa-imaging direct_resident_tiles_match_scratch_tile_dirty_and_residual_paths --lib
+cargo test -p casa-imaging persistent_tile_scheduler_matches_direct_dirty_and_residual --lib
+cargo check -p casa-imaging -p casars-imager
+```
+
+Correctness status: targeted core tests pass. No timing claim is made at this
+checkpoint; the next run must collect the required worker-wait and
+producer-overlap metrics before accepting Phase C performance.
+
+Decision: retain Phase 0 and Phase A immediately. Retain the persistent
+scheduler production handoff as architecture, but do not claim Phase B/C
+performance until the required worker-wait/producer-overlap metrics are present
+and bounded/full-shape timings show a material improvement.
+
+### Producer/Consumer Scheduler Bounded Gate
+
+Date: 2026-05-22.
+
+Artifact:
+`target/imperformance-wave2/producer-consumer-20260522/bounded-10w-queue2-persistent-overlap.log`.
+
+Workload: bounded 64-channel, 1024-pixel, Briggs, multiscale `niter=50`,
+`CASA_RS_STANDARD_MFS_BACKEND=fixed_tile`,
+`CASA_RS_STANDARD_MFS_GRID_THREADS=10`,
+`CASA_RS_STANDARD_MFS_QUEUE_BLOCKS=2`,
+`CASA_RS_STANDARD_MFS_TILE_EDGE=32`,
+`CASA_RS_STANDARD_MFS_TILE_ANCHOR=center_boundary`, one repeat, no warmup.
+
+| Metric | Dirty | Residual |
+|---|---:|---:|
+| Stage wall | 14.299s | 12.835s |
+| Producer active | 14.293s | 12.830s |
+| Worker active union | 1.352s | 1.675s |
+| Producer/worker overlap | 1.350s | 1.672s |
+| Producer only | 12.944s | 11.158s |
+| Worker only | 0.002s | 0.003s |
+| Max live row blocks observed | 1 | 1 |
+| Producer memory blocked | 0.000s | 0.000s |
+| Active tile skips / stale heap entries | 0 / 0 | 0 / 0 |
+| Worker utilization, full capacity | 8.85% | 12.16% |
+
+Run totals: `frontend_total=42.977s`, `core_total=28.925s`,
+`prepare_plane_input=30.028s`, `psf_grid=7.150s`,
+`residual_degrid_grid=19.985s`, `major_cycle_refresh=12.892s`,
+`peak_rss_bytes=9548103680`.
+
+Decision: retain the row-block work-unit model, row-block coalescing, owned
+publication seam, and overlap instrumentation as architectural progress. Do
+not accept Phase C as a performance win: queue depth 2 did not become resident,
+because producer read/prepare/bucket work remains slower than the tile work it
+feeds. The old replay/input gap is now directly attributed as producer-only
+time rather than inferred from worker utilization. A full-shape run is deferred
+until the bounded gate shows material producer/worker overlap; otherwise it
+would only amplify the same producer bottleneck.
+
+### Implementation Checkpoint: Direct Per-Tile Inbox Scheduler
+
+Date: 2026-05-22.
+
+Retained changes:
+
+- The all-resident fixed-tile dirty, PSF, and residual replay paths now use a
+  direct per-tile inbox scheduler instead of publishing central
+  `PreparedTileRowBlock` tasks. The producer pushes accepted compact samples to
+  that tile's inbox, and workers are scheduled by tile id, drain a bounded
+  chunk, release the queue mutex, and update only the resident tile buffer for
+  that tile.
+- The queue publication unit is now a compact columnar tile chunk: center cells,
+  compact tap keys, stage flags, raw weights, sumwt factors, `u/v/w`
+  wavelengths, and visibilities are arrays inside one chunk. Workers loop by
+  index over the chunk, so flags and weights no longer cross the scheduler
+  boundary as isolated scalar queue records.
+- The producer carries compact tap identity (`center_x/y`, `kernel_u/v`,
+  `support_id`) into the tile chunk. Workers reconstruct the positive tap spans
+  from that identity and no longer call `plan_positive_taps()` again for queued
+  samples. The chunk does not retain a `VisibilityBatch`, `PreparedTileRowBlock`,
+  sample id, `PositiveTapSet`, or expanded tap arrays.
+- `StandardMfsTileSampleRouter` now gives the fixed-tile producer explicit
+  `DensityNoData`, `PsfNoData`, `DirtyWithData`, and `ResidualWithData` modes.
+  This is deliberately named as a standard-MFS tile router, not the future
+  MeasurementSet reader. The next MS-facing cursor should be mode-agnostic
+  enough to serve MFS, cubes, and mosaics before mode-specific routing.
+  The PSF replay path uses `PsfNoData`, so the tile inbox no longer carries
+  visibility payloads for PSF-only gridding.
+- The ready scheduler uses one global heap of ready tile ids, generation checks,
+  per-tile `active` and `ready_enqueued` invariants, bounded worker drains, and
+  high-water queued-byte accounting. A unit-test deadlock exposed a byte-credit
+  publication race; queued bytes are now charged before samples become visible
+  in a tile queue.
+- New instrumentation emits `standard_mfs_tile_inbox_scheduler_summary` with
+  first-order scheduler accounting: enqueued samples/bytes, queued-byte
+  high-water, ready-head count, worker drains, worker tap visits, producer
+  active time, worker active union, producer/worker overlap, wait-with-queued
+  events, active-tile skips, stale heap entries, and worker sample/tap balance.
+
+Validation artifacts:
+
+```text
+cargo check -p casa-imaging -p casars-imager
+cargo test -p casa-imaging tile_inbox --lib
+cargo test -p casa-imaging standard_mfs_tile_sample_router_modes_preserve_stage_semantics --lib
+cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib
+cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib
+cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib
+cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib
+```
+
+Correctness status: targeted scheduler, residual-refresh, and standard-MFS
+Briggs clean tests pass. No timing claim is made at this checkpoint; the next
+bounded run must show whether early per-tile publication converts the prior
+producer-only time into useful producer/worker overlap.
+
+Decision: retain as the new fixed-tile multi-worker architecture. The previous
+central row-block scheduler remains only as reference/test scaffolding while
+the direct inbox path is measured. Full low-memory blocking credits and a
+storage-manager-native MS cursor are still follow-up tightening work; the
+current implementation records queue high-water and keeps bounded
+`VisibilityBatch` chunks as the frontend cursor output. The next boundary repair
+is to make that frontend cursor emit row/visibility-group columnar samples
+directly from the MeasurementSet reader, so original per-row flag/weight/data
+arrays are traversed once before routing to tile chunks.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
