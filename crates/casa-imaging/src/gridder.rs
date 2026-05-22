@@ -961,7 +961,8 @@ impl StandardGridder {
 
         let x_weights = &self.normalized_tap_weights[taps.x.weight_index];
         let y_weights = &self.normalized_tap_weights[taps.y.weight_index];
-        let mut predicted_visibility = Complex32::new(0.0, 0.0);
+        let mut predicted_re = 0.0f32;
+        let mut predicted_im = 0.0f32;
 
         if let Some(model_storage) = model_grid.as_slice_memory_order() {
             let grid_stride = self.grid_shape[1];
@@ -972,8 +973,10 @@ impl StandardGridder {
                     let index = x_index + taps.y.start + y_tap;
                     debug_assert!(index < model_storage.len());
                     // `sample_taps` only produces in-bounds grid coordinates.
-                    predicted_visibility += unsafe { *model_storage.get_unchecked(index) }
-                        * (x_weight * y_weights[y_tap]);
+                    let weight = x_weight * y_weights[y_tap];
+                    let cell = unsafe { *model_storage.get_unchecked(index) };
+                    predicted_re += cell.re * weight;
+                    predicted_im += cell.im * weight;
                 }
             }
         } else {
@@ -981,11 +984,14 @@ impl StandardGridder {
                 let x_index = taps.x.start + x_tap;
                 let x_weight = x_weights[x_tap];
                 for y_tap in 0..GRIDDER_TAP_COUNT {
-                    predicted_visibility +=
-                        model_grid[(x_index, taps.y.start + y_tap)] * (x_weight * y_weights[y_tap]);
+                    let weight = x_weight * y_weights[y_tap];
+                    let cell = model_grid[(x_index, taps.y.start + y_tap)];
+                    predicted_re += cell.re * weight;
+                    predicted_im += cell.im * weight;
                 }
             }
         }
+        let predicted_visibility = Complex32::new(predicted_re, predicted_im);
 
         let residual_visibility = observed_visibility - predicted_visibility;
         let residual = Complex64::new(
@@ -1039,7 +1045,8 @@ impl StandardGridder {
 
         let x_weights = &self.normalized_tap_weights[taps.x.weight_index];
         let y_weights = &self.normalized_tap_weights[taps.y.weight_index];
-        let mut predicted_visibility = Complex32::new(0.0, 0.0);
+        let mut predicted_re = 0.0f32;
+        let mut predicted_im = 0.0f32;
 
         if let Some(model_storage) = model_grid.as_slice_memory_order() {
             let grid_stride = self.grid_shape[1];
@@ -1049,8 +1056,10 @@ impl StandardGridder {
                 for y_tap in 0..GRIDDER_TAP_COUNT {
                     let index = x_index + taps.y.start + y_tap;
                     debug_assert!(index < model_storage.len());
-                    predicted_visibility += unsafe { *model_storage.get_unchecked(index) }
-                        * (x_weight * y_weights[y_tap]);
+                    let weight = x_weight * y_weights[y_tap];
+                    let cell = unsafe { *model_storage.get_unchecked(index) };
+                    predicted_re += cell.re * weight;
+                    predicted_im += cell.im * weight;
                 }
             }
         } else {
@@ -1058,11 +1067,14 @@ impl StandardGridder {
                 let x_index = taps.x.start + x_tap;
                 let x_weight = x_weights[x_tap];
                 for y_tap in 0..GRIDDER_TAP_COUNT {
-                    predicted_visibility +=
-                        model_grid[(x_index, taps.y.start + y_tap)] * (x_weight * y_weights[y_tap]);
+                    let weight = x_weight * y_weights[y_tap];
+                    let cell = model_grid[(x_index, taps.y.start + y_tap)];
+                    predicted_re += cell.re * weight;
+                    predicted_im += cell.im * weight;
                 }
             }
         }
+        let predicted_visibility = Complex32::new(predicted_re, predicted_im);
 
         let residual_visibility = observed_visibility - predicted_visibility;
         let residual = Complex64::new(

@@ -341,6 +341,40 @@ Decision:
   per-block VisibilityBatch materialization and repeated row-block adaptation.
 ```
 
+Single-worker density pass DATA removal:
+
+```text
+Artifacts:
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-fixed-tile-no-batch-split-rerun.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-density-skip-data.log
+CASA source check:
+  /Users/brianglendenning/SoftwareProjects/casa/casatools/src/code/msvis/MSVis/VisImagingWeight.cc
+  VisImagingWeight density construction uses flagCube, uvw, frequency, and
+  unpolarized weights; it does not inspect DATA values.
+Change:
+  fixed-tile one-worker streaming keeps each row block as one VisibilityBatch
+  when CASA_RS_STANDARD_MFS_GRID_THREADS=1, reducing replay batches from 3014
+  to 95 per pass;
+  Briggs/Uniform standard-MFS density streaming now uses a DATA-free row buffer
+  for explicit/collapsed/paired MFS, matching CASA's weighting-density inputs
+  and avoiding the density pass visibility column read.
+Best bounded rerun:
+  Frontend total: 59.620s -> 55.748s
+  Prepare plane input: 37.310s -> 33.410s
+  get_ms_values: 22.771s -> 19.537s
+  prepare_processing_buffer: 14.539s -> 13.874s
+  Density pass: 11.368s -> 7.399s
+  Density get_data_ms: 3.215s -> 0.000s
+  Core total: 40.760s -> 40.801s
+  Peak RSS: 9.43 GiB -> 9.47 GiB
+Decision:
+  retained as a real serial frontend win; the core grid/degrid high nails remain.
+  A scalar degrid inner-loop cleanup was also tested in
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-scalar-degrid.log
+  but moved only noise-level timing, so it is retained only as a low-risk exact
+  arithmetic cleanup, not as a claimed performance step.
+```
+
 Validation recorded for this retained serial step:
 
 ```text

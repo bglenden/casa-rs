@@ -2334,6 +2334,7 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
             processing_buffer,
             derived_engine.as_ref(),
             &mut accumulate_timings,
+            standard_mfs_streaming_batch_size(),
         )?;
         prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
         prepared_batch_count += plane.batches.len();
@@ -6701,6 +6702,14 @@ struct StandardMfsProcessingBuffer {
     weight_spectrum: Option<SelectedMainArrayColumn>,
 }
 
+#[derive(Debug, Clone)]
+struct StandardMfsDensityProcessingBuffer {
+    geometry_rows: Vec<PreparedGeometryRow>,
+    flag_column: SelectedMainArrayColumn,
+    weight_column: SelectedMainArrayColumn,
+    weight_spectrum: Option<SelectedMainArrayColumn>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ResolvedPointingDirection {
     source_row_index: Option<usize>,
@@ -7519,6 +7528,107 @@ fn get_ms_values_into_processing_buffer(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn get_ms_values_into_density_processing_buffer(
+    ms: &MeasurementSet,
+    selection: &SelectedRowsContext,
+    row_chunk: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    reprojection_mode: UvwReprojectionMode,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    prepare_started_at: Instant,
+    mut timings: Option<&mut GetMsValuesTimings>,
+) -> Result<StandardMfsDensityProcessingBuffer, String> {
+    let selected_row_indices = row_chunk
+        .iter()
+        .map(|selected_row| selected_row.row_index)
+        .collect::<Vec<_>>();
+    let stage_started_at = Instant::now();
+    let flag_column = match channel_read_range {
+        Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+            ms,
+            "FLAG",
+            &selected_row_indices,
+            range.start,
+            range.count,
+        )?,
+        None => SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?,
+    };
+    let elapsed = stage_started_at.elapsed();
+    if let Some(timings) = &mut timings {
+        timings.flag_column += elapsed;
+    }
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_flag_column",
+        elapsed,
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
+    let weight_column =
+        SelectedMainArrayColumn::load_uncached(ms, "WEIGHT", &selected_row_indices)?;
+    let elapsed = stage_started_at.elapsed();
+    if let Some(timings) = &mut timings {
+        timings.weight_column += elapsed;
+    }
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_weight_column",
+        elapsed,
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
+    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
+        .ok()
+        .map(|_| match channel_read_range {
+            Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                ms,
+                "WEIGHT_SPECTRUM",
+                &selected_row_indices,
+                range.start,
+                range.count,
+            ),
+            None => {
+                SelectedMainArrayColumn::load_uncached(ms, "WEIGHT_SPECTRUM", &selected_row_indices)
+            }
+        })
+        .transpose()?;
+    let elapsed = stage_started_at.elapsed();
+    if let Some(timings) = &mut timings {
+        timings.weight_spectrum += elapsed;
+    }
+    maybe_log_frontend_progress(
+        "prepare_plane_input/load_weight_spectrum_column",
+        elapsed,
+        prepare_started_at.elapsed(),
+    );
+    let stage_started_at = Instant::now();
+    let geometry_rows = build_prepared_geometry_rows(
+        ms,
+        row_chunk,
+        &selection.phase_center,
+        geometry_columns,
+        derived_engine,
+        reprojection_mode,
+    )?;
+    let elapsed = stage_started_at.elapsed();
+    if let Some(timings) = &mut timings {
+        timings.geometry_rows += elapsed;
+    }
+    maybe_log_frontend_progress(
+        "prepare_plane_input/build_prepared_geometry_rows",
+        elapsed,
+        prepare_started_at.elapsed(),
+    );
+
+    Ok(StandardMfsDensityProcessingBuffer {
+        geometry_rows,
+        flag_column,
+        weight_column,
+        weight_spectrum,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn prepare_processing_buffer(
     config: &CliConfig,
     table_values: &PreparedSelectionTableValues,
@@ -7527,6 +7637,7 @@ fn prepare_processing_buffer(
     buffer: StandardMfsProcessingBuffer,
     derived_engine: Option<&MsCalEngine>,
     accumulate_timings: &mut AccumulateRowTimings,
+    mfs_batch_size: usize,
 ) -> Result<PlaneInput, String> {
     let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
         config,
@@ -7548,7 +7659,9 @@ fn prepare_processing_buffer(
             accumulate_timings,
         )?;
     }
-    let PreparedInput::Mfs(plane) = prepared.finish_standard_mfs_without_trace()? else {
+    let PreparedInput::Mfs(plane) =
+        prepared.finish_standard_mfs_without_trace_with_batch_size(mfs_batch_size)?
+    else {
         return Err("internal error: standard MFS row block produced non-MFS input".to_string());
     };
     Ok(plane)
@@ -7575,50 +7688,90 @@ fn stream_standard_mfs_density_row_blocks(
 ) -> Result<usize, String> {
     let mut accepted_samples = 0usize;
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
-        let mut get_ms_values_detail = GetMsValuesTimings::default();
-        let stage_started_at = Instant::now();
-        let processing_buffer = get_ms_values_into_processing_buffer(
-            ms,
-            data_column_kind,
-            selection,
-            row_chunk,
-            derived_engine,
-            uvw_reprojection_mode_for_selection(config, selection),
-            channel_read_range,
-            geometry_columns,
-            prepare_started_at,
-            Some(&mut get_ms_values_detail),
-        )?;
-        let get_ms_values_elapsed = stage_started_at.elapsed();
-        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
-        pass_stats.add_get_ms_values_detail(get_ms_values_detail);
-
-        let stage_started_at = Instant::now();
-        let before_accumulate = *accumulate_timings;
         let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
             config,
             table_values,
             selection.phase_center.clone(),
             false,
         )?;
+        let mut get_ms_values_detail = GetMsValuesTimings::default();
+        let stage_started_at = Instant::now();
         let mut block_samples = 0usize;
-        for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
-            block_samples += prepared.accumulate_standard_mfs_density_row(
-                row,
-                &processing_buffer.data_column,
-                &processing_buffer.flag_column,
-                flag_row,
-                &processing_buffer.weight_column,
-                processing_buffer.weight_spectrum.as_ref(),
+        let get_ms_values_elapsed;
+        let prepare_processing_elapsed;
+        if prepared.standard_mfs_density_can_skip_data() {
+            let processing_buffer = get_ms_values_into_density_processing_buffer(
+                ms,
+                selection,
+                row_chunk,
                 derived_engine,
-                row_slot,
-                weighting_plan,
-                accumulate_timings,
+                uvw_reprojection_mode_for_selection(config, selection),
+                channel_read_range,
+                geometry_columns,
+                prepare_started_at,
+                Some(&mut get_ms_values_detail),
             )?;
+            get_ms_values_elapsed = stage_started_at.elapsed();
+            prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+            pass_stats.add_get_ms_values_detail(get_ms_values_detail);
+
+            let stage_started_at = Instant::now();
+            let before_accumulate = *accumulate_timings;
+            for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
+                block_samples += prepared.accumulate_standard_mfs_density_row_without_data(
+                    row,
+                    &processing_buffer.flag_column,
+                    flag_row,
+                    &processing_buffer.weight_column,
+                    processing_buffer.weight_spectrum.as_ref(),
+                    derived_engine,
+                    row_slot,
+                    weighting_plan,
+                    accumulate_timings,
+                )?;
+            }
+            prepare_processing_elapsed = stage_started_at.elapsed();
+            prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
+            pass_stats
+                .add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
+        } else {
+            let processing_buffer = get_ms_values_into_processing_buffer(
+                ms,
+                data_column_kind,
+                selection,
+                row_chunk,
+                derived_engine,
+                uvw_reprojection_mode_for_selection(config, selection),
+                channel_read_range,
+                geometry_columns,
+                prepare_started_at,
+                Some(&mut get_ms_values_detail),
+            )?;
+            get_ms_values_elapsed = stage_started_at.elapsed();
+            prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+            pass_stats.add_get_ms_values_detail(get_ms_values_detail);
+
+            let stage_started_at = Instant::now();
+            let before_accumulate = *accumulate_timings;
+            for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
+                block_samples += prepared.accumulate_standard_mfs_density_row(
+                    row,
+                    &processing_buffer.data_column,
+                    &processing_buffer.flag_column,
+                    flag_row,
+                    &processing_buffer.weight_column,
+                    processing_buffer.weight_spectrum.as_ref(),
+                    derived_engine,
+                    row_slot,
+                    weighting_plan,
+                    accumulate_timings,
+                )?;
+            }
+            prepare_processing_elapsed = stage_started_at.elapsed();
+            prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
+            pass_stats
+                .add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
         }
-        let prepare_processing_elapsed = stage_started_at.elapsed();
-        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
-        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
         pass_stats.record_density_block(
             block_samples,
             get_ms_values_elapsed,
@@ -7860,6 +8013,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
             processing_buffer,
             derived_engine,
             &mut accumulate_timings,
+            DEFAULT_BATCH_SIZE,
         )?;
         stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
         prepared_batch_count += plane.batches.len();
@@ -7931,6 +8085,7 @@ where
             processing_buffer,
             derived_engine,
             accumulate_timings,
+            standard_mfs_streaming_batch_size(),
         )?;
         let prepare_processing_elapsed = stage_started_at.elapsed();
         prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
@@ -8755,6 +8910,19 @@ fn env_standard_mfs_grid_threads() -> Option<usize> {
     env::var("CASA_RS_STANDARD_MFS_GRID_THREADS")
         .ok()
         .and_then(|value| parse_standard_mfs_grid_threads(&value))
+}
+
+fn standard_mfs_streaming_batch_size() -> usize {
+    if let Some(value) =
+        env_usize("CASA_RS_STANDARD_MFS_STREAMING_BATCH_SIZE").filter(|value| *value > 0)
+    {
+        return value;
+    }
+    if env_standard_mfs_grid_threads() == Some(1) {
+        usize::MAX
+    } else {
+        DEFAULT_BATCH_SIZE
+    }
 }
 
 fn parse_standard_mfs_grid_threads(value: &str) -> Option<usize> {
@@ -11804,6 +11972,139 @@ impl PreparedSelection {
         Ok(())
     }
 
+    fn standard_mfs_density_can_skip_data(&self) -> bool {
+        matches!(
+            self.state,
+            PreparedState::ExplicitMfs { .. }
+                | PreparedState::CollapsedMfs { .. }
+                | PreparedState::PairedMfs { .. }
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_standard_mfs_density_row_without_data(
+        &mut self,
+        geometry_row: &PreparedGeometryRow,
+        flag_column: &SelectedMainArrayColumn,
+        flag_row: &[bool],
+        weight_column: &SelectedMainArrayColumn,
+        weight_spectrum: Option<&SelectedMainArrayColumn>,
+        derived_engine: Option<&MsCalEngine>,
+        row_slot: usize,
+        weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+        timings: &mut AccumulateRowTimings,
+    ) -> Result<usize, String> {
+        timings.rows_seen += 1;
+        let selected_row = &geometry_row.selected_row;
+        let row = selected_row.row_index;
+        let stage_started_at = Instant::now();
+        if *flag_row
+            .get(row)
+            .ok_or_else(|| format!("read FLAG_ROW row {row}: row is out of bounds"))?
+        {
+            timings.flag_row += stage_started_at.elapsed();
+            timings.rows_flagged += 1;
+            return Ok(0);
+        }
+        timings.flag_row += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let flags = flag_column
+            .get(row_slot)
+            .map_err(|error| format!("read FLAG row {row}: {error}"))?;
+        timings.flag_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let row_weights = weight_column
+            .get(row_slot)
+            .map_err(|error| format!("read WEIGHT row {row}: {error}"))?;
+        timings.weight_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let weight_spectrum_row = weight_spectrum
+            .map(|column| column.get_optional(row_slot))
+            .transpose()
+            .map(|row| row.flatten())
+            .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
+        timings.weight_spectrum += stage_started_at.elapsed();
+
+        let adapt_started_at = Instant::now();
+        let flags_2d = BoolRow2d::new_with_channel_origin(flags, flag_column.channel_origin())?;
+        let weights = WeightRow::new(
+            row_weights,
+            weight_spectrum_row,
+            weight_spectrum.map_or(0, |column| column.channel_origin()),
+        )?;
+        let uvw_m = geometry_row.transform.uvw_m;
+        let mfs_frequency_scale =
+            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
+        let mut accepted_samples = 0usize;
+        match &self.state {
+            PreparedState::ExplicitMfs { corr_index, .. } => {
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    if flags_2d.get(*corr_index, channel_index)? {
+                        continue;
+                    }
+                    let (weight, _) = weights.get(*corr_index, channel_index)?;
+                    if !(weight.is_finite() && weight > 0.0) {
+                        continue;
+                    }
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
+                    weighting_plan.accumulate_density_sample(
+                        uvw_m[0] * lambda_scale,
+                        uvw_m[1] * lambda_scale,
+                        weight,
+                    );
+                    accepted_samples += 1;
+                }
+            }
+            PreparedState::CollapsedMfs { pair, .. } | PreparedState::PairedMfs { pair, .. } => {
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    if flags_2d.get(pair.0, channel_index)?
+                        || flags_2d.get(pair.1, channel_index)?
+                    {
+                        continue;
+                    }
+                    let (first_weight, _) = weights.get(pair.0, channel_index)?;
+                    let (second_weight, _) = weights.get(pair.1, channel_index)?;
+                    if !(first_weight.is_finite()
+                        && first_weight > 0.0
+                        && second_weight.is_finite()
+                        && second_weight > 0.0)
+                    {
+                        continue;
+                    }
+                    let combined_weight = 0.5 * (first_weight + second_weight);
+                    if !(combined_weight.is_finite() && combined_weight > 0.0) {
+                        continue;
+                    }
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
+                    weighting_plan.accumulate_density_sample(
+                        uvw_m[0] * lambda_scale,
+                        uvw_m[1] * lambda_scale,
+                        combined_weight,
+                    );
+                    accepted_samples += 1;
+                }
+            }
+            _ => {
+                return Err(
+                    "internal error: DATA-free density preparation requires MFS state".to_string(),
+                );
+            }
+        }
+        timings.adapt_samples += adapt_started_at.elapsed();
+        Ok(accepted_samples)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn accumulate_standard_mfs_density_row(
         &mut self,
@@ -11904,8 +12205,8 @@ impl PreparedSelection {
                     .copied()
                     .zip(self.source_channel_frequencies_hz.iter().copied())
                 {
-                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                     let local_channel = data_2d.local_channel(channel_index)?;
+                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
                     let first_visibility = phase_rotate_visibility(
                         data_2d.get_local(pair.0, local_channel, channel_index)?,
                         geometry_row.transform.phase_shift_m,
@@ -12027,6 +12328,13 @@ impl PreparedSelection {
     }
 
     fn finish_standard_mfs_without_trace(self) -> Result<PreparedInput, String> {
+        self.finish_standard_mfs_without_trace_with_batch_size(DEFAULT_BATCH_SIZE)
+    }
+
+    fn finish_standard_mfs_without_trace_with_batch_size(
+        self,
+        max_batch_size: usize,
+    ) -> Result<PreparedInput, String> {
         let PreparedSelection {
             initialization_error: _,
             source_channel_indices: _,
@@ -12064,7 +12372,7 @@ impl PreparedSelection {
                 spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
                     .or(Some(selected_frequency_edge_range_hz)),
                 plane_stokes,
-                batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                batches: chunk_visibility_batch(batch, max_batch_size),
                 sample_frequency_batches_hz: Vec::new(),
                 gridder_mode: GridderMode::Standard,
             })),
@@ -12084,7 +12392,7 @@ impl PreparedSelection {
                     spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
                         .or(Some(selected_frequency_edge_range_hz)),
                     plane_stokes,
-                    batches: chunk_visibility_batch(collapsed, DEFAULT_BATCH_SIZE),
+                    batches: chunk_visibility_batch(collapsed, max_batch_size),
                     sample_frequency_batches_hz: Vec::new(),
                     gridder_mode: GridderMode::Standard,
                 }))
@@ -12101,7 +12409,7 @@ impl PreparedSelection {
                 spectral_frequency_edge_range_hz: mfs_output_frequency_edge_range_hz
                     .or(Some(selected_frequency_edge_range_hz)),
                 plane_stokes,
-                batches: chunk_visibility_batch(batch, DEFAULT_BATCH_SIZE),
+                batches: chunk_visibility_batch(batch, max_batch_size),
                 sample_frequency_batches_hz: Vec::new(),
                 gridder_mode: GridderMode::Standard,
             })),
@@ -15318,6 +15626,7 @@ fn reserve_parallel_hand_batch(batch: &mut ParallelHandBatch, additional: usize)
 }
 
 fn chunk_visibility_batch(batch: VisibilityBatch, max_batch_size: usize) -> Vec<VisibilityBatch> {
+    let max_batch_size = max_batch_size.max(1);
     if batch.len() <= max_batch_size {
         return vec![batch];
     }
@@ -19693,6 +20002,14 @@ mod tests {
         assert_eq!(chunks.len(), 3);
         assert_eq!(chunks[1].u_lambda, vec![2.0, 3.0]);
         assert_eq!(chunks[2].visibility, vec![Complex32::new(4.0, 0.0)]);
+        assert_eq!(
+            chunk_visibility_batch(test_visibility_batch(1.0), 0).len(),
+            1
+        );
+        assert_eq!(
+            chunk_visibility_batch(test_visibility_batch(1.0), usize::MAX).len(),
+            1
+        );
         assert!(chunk_density_batch(test_visibility_batch(1.0), false).is_empty());
         assert_eq!(
             chunk_density_batch(test_visibility_batch(1.0), true).len(),
