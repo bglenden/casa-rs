@@ -1406,10 +1406,13 @@ struct StandardMfsTileSchedulerStageProfile {
     tile_anchor: &'static str,
     resident_tile_limit: usize,
     blocks: Vec<StandardMfsTileSchedulerBlockProfile>,
+    replay_gap_duration: Duration,
+    batch_preprocess_duration: Duration,
     flush_duration: Duration,
     tile_flush_count: usize,
     tile_eviction_count: usize,
     started_at: Instant,
+    last_event_at: Instant,
 }
 
 impl StandardMfsTileSchedulerStageProfile {
@@ -1418,6 +1421,7 @@ impl StandardMfsTileSchedulerStageProfile {
         partition: &StandardMfsFixedTilePartition,
         resident_tile_limit: usize,
     ) -> Self {
+        let started_at = Instant::now();
         Self {
             stage,
             tile_count: partition.tile_count(),
@@ -1426,11 +1430,25 @@ impl StandardMfsTileSchedulerStageProfile {
             tile_anchor: partition.anchor_label(),
             resident_tile_limit,
             blocks: Vec::new(),
+            replay_gap_duration: Duration::ZERO,
+            batch_preprocess_duration: Duration::ZERO,
             flush_duration: Duration::ZERO,
             tile_flush_count: 0,
             tile_eviction_count: 0,
-            started_at: Instant::now(),
+            started_at,
+            last_event_at: started_at,
         }
+    }
+
+    fn record_replay_gap_now(&mut self) {
+        let now = Instant::now();
+        self.replay_gap_duration += now.saturating_duration_since(self.last_event_at);
+        self.last_event_at = now;
+    }
+
+    fn add_batch_preprocess_duration(&mut self, duration: Duration) {
+        self.batch_preprocess_duration += duration;
+        self.last_event_at = Instant::now();
     }
 
     fn record(&mut self, block: StandardMfsTileSchedulerBlockProfile) {
@@ -1438,10 +1456,12 @@ impl StandardMfsTileSchedulerStageProfile {
             log_tiled_scheduler_block(self.stage, &block);
         }
         self.blocks.push(block);
+        self.last_event_at = Instant::now();
     }
 
     fn add_flush_duration(&mut self, duration: Duration) {
         self.flush_duration += duration;
+        self.last_event_at = Instant::now();
     }
 
     fn set_cache_counters(&mut self, tile_flush_count: usize, tile_eviction_count: usize) {
@@ -1589,6 +1609,14 @@ impl StandardMfsTileSchedulerStageProfile {
         let stage_total_ms = profile::millis(stage_total);
         let block_wall_total_ms = duration_total_ms(&block_wall);
         let stage_nonworker_wall_ms = (stage_total_ms - block_wall_total_ms).max(0.0);
+        let replay_gap_total_ms = profile::millis(self.replay_gap_duration);
+        let batch_preprocess_total_ms = profile::millis(self.batch_preprocess_duration);
+        let accounted_stage_ms = replay_gap_total_ms
+            + batch_preprocess_total_ms
+            + duration_total_ms(&bucket_build)
+            + block_wall_total_ms
+            + profile::millis(self.flush_duration);
+        let stage_unaccounted_ms = (stage_total_ms - accounted_stage_ms).max(0.0);
         let stage_worker_capacity_ms = stage_total_ms * requested_threads.max(1) as f64;
         let stage_worker_utilization_pct =
             percent_or_zero(worker_active_total_ms, stage_worker_capacity_ms);
@@ -1606,7 +1634,7 @@ impl StandardMfsTileSchedulerStageProfile {
             0.0
         };
         eprintln!(
-            "standard_mfs_tile_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} resident_tile_limit={} max_live_row_blocks=1 block_count={} task_count={} samples_total={} tap_visits_total={} task_samples={} task_tap_visits={} largest_task_samples={} largest_task_tap_visits={} bucket_bytes_total={} bucket_bytes_max={} bucket_build_total_ms={:.3} bucket_build={} local_alloc_zero_total_ms={:.3} local_alloc_zero={} worker_replan_grid_total_ms={:.3} worker_replan_grid={} block_wall_total_ms={:.3} block_wall={} stage_nonworker_wall_ms={:.3} merge_total_ms={:.3} merge={} worker_task_count={} worker_samples={} worker_tap_visits={} worker_tap_visits_per_s={} worker_samples_per_s={} worker_active_total_ms={:.3} worker_active={} worker_elapsed={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} stage_worker_capacity_ms={:.3} stage_worker_utilization_pct={:.3} stage_worker_idle_ms={:.3} stage_tap_visits_per_s={:.3} stage_samples_per_s={:.3} active_weighted_tap_visits_per_s={:.3} active_weighted_samples_per_s={:.3} tile_flush_ms={:.3} tile_flush_count={} tile_eviction_count={} merged_tiles={} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0 stage_total_ms={:.3}",
+            "standard_mfs_tile_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} resident_tile_limit={} max_live_row_blocks=1 block_count={} task_count={} samples_total={} tap_visits_total={} task_samples={} task_tap_visits={} largest_task_samples={} largest_task_tap_visits={} replay_gap_total_ms={:.3} batch_preprocess_total_ms={:.3} bucket_bytes_total={} bucket_bytes_max={} bucket_build_total_ms={:.3} bucket_build={} local_alloc_zero_total_ms={:.3} local_alloc_zero={} worker_replan_grid_total_ms={:.3} worker_replan_grid={} block_wall_total_ms={:.3} block_wall={} stage_nonworker_wall_ms={:.3} stage_accounted_ms={:.3} stage_unaccounted_ms={:.3} merge_total_ms={:.3} merge={} worker_task_count={} worker_samples={} worker_tap_visits={} worker_tap_visits_per_s={} worker_samples_per_s={} worker_active_total_ms={:.3} worker_active={} worker_elapsed={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} stage_worker_capacity_ms={:.3} stage_worker_utilization_pct={:.3} stage_worker_idle_ms={:.3} stage_tap_visits_per_s={:.3} stage_samples_per_s={:.3} active_weighted_tap_visits_per_s={:.3} active_weighted_samples_per_s={:.3} tile_flush_ms={:.3} tile_flush_count={} tile_eviction_count={} merged_tiles={} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0 stage_total_ms={:.3}",
             self.stage,
             requested_threads,
             stats_triplet(&actual_threads),
@@ -1625,6 +1653,8 @@ impl StandardMfsTileSchedulerStageProfile {
             stats_triplet(&tap_visits),
             stats_triplet(&largest_task_samples),
             stats_triplet(&largest_task_tap_visits),
+            replay_gap_total_ms,
+            batch_preprocess_total_ms,
             bucket_bytes_total,
             bucket_bytes_max,
             duration_total_ms(&bucket_build),
@@ -1636,6 +1666,8 @@ impl StandardMfsTileSchedulerStageProfile {
             block_wall_total_ms,
             duration_stats_triplet(&block_wall),
             stage_nonworker_wall_ms,
+            accounted_stage_ms,
+            stage_unaccounted_ms,
             duration_total_ms(&merge),
             duration_stats_triplet(&merge),
             stats_triplet(&worker_task_counts),
@@ -1721,6 +1753,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         );
 
         for batch in batches {
+            scheduler_profile.record_replay_gap_now();
+            let preprocess_started = Instant::now();
             batch.validate()?;
             accumulation.max_abs_w_lambda = batch
                 .w_lambda
@@ -1728,6 +1762,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 .fold(accumulation.max_abs_w_lambda, |max_value, value| {
                     max_value.max(value.abs())
                 });
+            scheduler_profile.add_batch_preprocess_duration(preprocess_started.elapsed());
             let bucket_started = Instant::now();
             let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
                 self.gridder,
@@ -1782,6 +1817,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         );
 
         for batch in batches {
+            scheduler_profile.record_replay_gap_now();
+            let preprocess_started = Instant::now();
             batch.validate()?;
             accumulation.max_abs_w_lambda = batch
                 .w_lambda
@@ -1789,6 +1826,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 .fold(accumulation.max_abs_w_lambda, |max_value, value| {
                     max_value.max(value.abs())
                 });
+            scheduler_profile.add_batch_preprocess_duration(preprocess_started.elapsed());
             let bucket_started = Instant::now();
             let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
                 self.gridder,
@@ -1956,6 +1994,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         );
 
         for batch in batches {
+            scheduler_profile.record_replay_gap_now();
+            let preprocess_started = Instant::now();
             batch.validate()?;
             accumulation.max_abs_w_lambda = batch
                 .w_lambda
@@ -1963,6 +2003,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 .fold(accumulation.max_abs_w_lambda, |max_value, value| {
                     max_value.max(value.abs())
                 });
+            scheduler_profile.add_batch_preprocess_duration(preprocess_started.elapsed());
             let bucket_started = Instant::now();
             let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
                 self.gridder,
@@ -2022,6 +2063,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
 
         replay_weighted_batches(&mut |batches| {
             for batch in batches {
+                scheduler_profile.record_replay_gap_now();
+                let preprocess_started = Instant::now();
                 batch.validate()?;
                 accumulation.max_abs_w_lambda = batch
                     .w_lambda
@@ -2029,6 +2072,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                     .fold(accumulation.max_abs_w_lambda, |max_value, value| {
                         max_value.max(value.abs())
                     });
+                scheduler_profile.add_batch_preprocess_duration(preprocess_started.elapsed());
                 let bucket_started = Instant::now();
                 let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
                     self.gridder,
@@ -2080,6 +2124,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         );
 
         for batch in batches {
+            scheduler_profile.record_replay_gap_now();
+            let preprocess_started = Instant::now();
             batch.validate()?;
             accumulation.max_abs_w_lambda = batch
                 .w_lambda
@@ -2087,6 +2133,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 .fold(accumulation.max_abs_w_lambda, |max_value, value| {
                     max_value.max(value.abs())
                 });
+            scheduler_profile.add_batch_preprocess_duration(preprocess_started.elapsed());
             let bucket_started = Instant::now();
             let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
                 self.gridder,
@@ -2142,6 +2189,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
 
         replay_weighted_batches(&mut |batches| {
             for batch in batches {
+                scheduler_profile.record_replay_gap_now();
+                let preprocess_started = Instant::now();
                 batch.validate()?;
                 accumulation.max_abs_w_lambda = batch
                     .w_lambda
@@ -2149,6 +2198,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                     .fold(accumulation.max_abs_w_lambda, |max_value, value| {
                         max_value.max(value.abs())
                     });
+                scheduler_profile.add_batch_preprocess_duration(preprocess_started.elapsed());
                 let bucket_started = Instant::now();
                 let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
                     self.gridder,
@@ -3072,7 +3122,10 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         );
 
         for batch in batches {
+            scheduler_profile.record_replay_gap_now();
+            let preprocess_started = Instant::now();
             batch.validate()?;
+            scheduler_profile.add_batch_preprocess_duration(preprocess_started.elapsed());
             let bucket_started = Instant::now();
             let (buckets, block_accumulation) =
                 StandardMfsBlockTileBuckets::build_for_residual_refresh(
@@ -3294,7 +3347,10 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         );
 
         for batch in batches {
+            scheduler_profile.record_replay_gap_now();
+            let preprocess_started = Instant::now();
             batch.validate()?;
+            scheduler_profile.add_batch_preprocess_duration(preprocess_started.elapsed());
             let bucket_started = Instant::now();
             let (buckets, block_accumulation) =
                 StandardMfsBlockTileBuckets::build_for_residual_refresh(
@@ -3350,7 +3406,10 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
 
         replay_weighted_batches(&mut |batches| {
             for batch in batches {
+                scheduler_profile.record_replay_gap_now();
+                let preprocess_started = Instant::now();
                 batch.validate()?;
+                scheduler_profile.add_batch_preprocess_duration(preprocess_started.elapsed());
                 let bucket_started = Instant::now();
                 let (buckets, block_accumulation) =
                     StandardMfsBlockTileBuckets::build_for_residual_refresh(

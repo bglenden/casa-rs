@@ -173,8 +173,11 @@ grid-loop utilization from full-stage utilization: `worker_utilization_pct`
 uses only the block wall time around dispatched tile tasks, while
 `stage_worker_utilization_pct` uses the whole stage wall time and the configured
 worker count. Full-stage utilization is the metric that must reconcile with
-end-to-end speedup. Those counters are required evidence before accepting or
-rejecting multi-worker scheduler changes. For diagnostic apples-to-apples
+end-to-end speedup. The stage summary also records direct line attribution for
+the non-worker path: `replay_gap_total_ms`, `batch_preprocess_total_ms`,
+`bucket_build_total_ms`, `block_wall_total_ms`, `tile_flush_ms`, and
+`stage_unaccounted_ms`. Those counters are required evidence before accepting
+or rejecting multi-worker scheduler changes. For diagnostic apples-to-apples
 scaling tests,
 `CASA_RS_STANDARD_MFS_FORCE_TILED_ONE_WORKER=1` forces the tiled scheduler even
 when `CASA_RS_STANDARD_MFS_GRID_THREADS=1`; the default one-worker path may

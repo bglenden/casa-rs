@@ -1283,6 +1283,17 @@ one-worker tiled path sees 95 blocks. The next structural target is
 row-block-level bucket coalescing across the batch slice, which requires bucket
 samples to carry enough batch identity to index more than one `VisibilityBatch`.
 
+Follow-up line-attribution artifact:
+`target/imperformance-wave2/multi-worker-throughput-20260522/bounded-10w-fixed-tile-line-attribution.log`.
+The 10-worker dirty scheduler stage spent 14.281s total: 9.300s replay/input
+gap, 0.035s batch validation/accounting, 3.312s bucket build, 1.571s block
+worker wall, 0.002s flush, and 0.062s unaccounted. The 10-worker residual
+stage spent 11.827s total: 8.337s replay/input gap, 0.000s batch
+validation/accounting, 1.633s bucket build, 1.782s block worker wall, 0.001s
+flush, and 0.074s unaccounted. This directly confirms that the worker pool is
+mostly starved by replay/input gaps and excessive small-batch scheduling, not
+by tile merge or tile flush.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
