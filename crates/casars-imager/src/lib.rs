@@ -2019,25 +2019,20 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                         .map_err(|error| ImagingError::InvalidRequest(error.to_string()))?;
                     replay_stats.add_weighting(weighting_started_at.elapsed());
                     let consumer_started_at = Instant::now();
-                    let mut weighted_sample_block = Vec::<StandardMfsWeightedSample>::new();
                     let mut sample_block = Vec::<StandardMfsPlannedWeightedSample>::new();
                     for batch in &weighted {
-                        weighted_sample_block.clear();
-                        weighted_sample_block.reserve(batch.len());
                         sample_block.clear();
-                        for sample_index in 0..batch.len() {
-                            weighted_sample_block.push(StandardMfsWeightedSample {
-                                u_lambda: batch.u_lambda[sample_index],
-                                v_lambda: batch.v_lambda[sample_index],
-                                w_lambda: batch.w_lambda[sample_index],
-                                weight: batch.weight[sample_index],
-                                sumwt_factor: batch.sumwt_factor[sample_index],
-                                gridable: batch.gridable[sample_index],
-                                visibility: batch.visibility[sample_index],
-                            });
-                        }
-                        planned_sample_builder
-                            .plan_samples_into(&weighted_sample_block, &mut sample_block)?;
+                        let planned_count = planned_sample_builder
+                            .plan_visibility_batch_into(batch, &mut sample_block)?;
+                        let tap_visits = sample_block
+                            .iter()
+                            .map(|sample| usize::from(sample.tap_count))
+                            .sum();
+                        replay_stats.add_planned_sample_counts(
+                            batch.len(),
+                            planned_count,
+                            tap_visits,
+                        );
                         consumer(&sample_block)?;
                     }
                     replay_stats.add_consumer(consumer_started_at.elapsed());
@@ -2049,7 +2044,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 &active_selected_rows
             };
             let mut stream_error = None::<ImagingError>;
-            let stream_result = stream_standard_mfs_weighted_sample_row_blocks(
+            let stream_result = stream_standard_mfs_planned_sample_row_blocks(
                 ms,
                 config,
                 data_column,
@@ -5070,12 +5065,21 @@ struct StandardMfsStreamingPassStats {
     cached_row_blocks: usize,
     batches: usize,
     samples: usize,
+    planned_sample_candidates: usize,
+    planned_samples: usize,
+    planned_tap_visits: usize,
     get_ms_values_into_processing_buffer: Duration,
     get_ms_values_detail: GetMsValuesTimings,
     prepare_processing_buffer: Duration,
     accumulate_rows_detail: AccumulateRowTimings,
     weighting: Duration,
     consumer: Duration,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct StandardMfsPlannedRowSampleCounts {
+    candidate_samples: usize,
+    planned_samples: usize,
 }
 
 impl StandardMfsStreamingPassStats {
@@ -5088,6 +5092,9 @@ impl StandardMfsStreamingPassStats {
             cached_row_blocks: 0,
             batches: 0,
             samples: 0,
+            planned_sample_candidates: 0,
+            planned_samples: 0,
+            planned_tap_visits: 0,
             get_ms_values_into_processing_buffer: Duration::ZERO,
             get_ms_values_detail: GetMsValuesTimings::default(),
             prepare_processing_buffer: Duration::ZERO,
@@ -5141,6 +5148,12 @@ impl StandardMfsStreamingPassStats {
         self.weighting += elapsed;
     }
 
+    fn add_planned_sample_counts(&mut self, candidates: usize, samples: usize, tap_visits: usize) {
+        self.planned_sample_candidates += candidates;
+        self.planned_samples += samples;
+        self.planned_tap_visits += tap_visits;
+    }
+
     fn add_consumer(&mut self, elapsed: Duration) {
         self.consumer += elapsed;
     }
@@ -5150,13 +5163,18 @@ impl StandardMfsStreamingPassStats {
             return;
         }
         eprintln!(
-            "standard_mfs_streaming_pass pass={} ordinal={} row_blocks={} cached_row_blocks={} batches={} samples={} get_ms_values_ms={:.3} get_data_ms={:.3} get_flag_ms={:.3} get_weight_ms={:.3} get_weight_spectrum_ms={:.3} get_geometry_ms={:.3} prepare_processing_ms={:.3} prepare_rows_seen={} prepare_rows_flagged={} prepare_flag_row_ms={:.3} prepare_data_ms={:.3} prepare_flag_ms={:.3} prepare_weight_ms={:.3} prepare_weight_spectrum_ms={:.3} prepare_adapt_samples_ms={:.3} weighting_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
+            "standard_mfs_streaming_pass pass={} ordinal={} row_blocks={} cached_row_blocks={} batches={} samples={} planned_candidates={} planned_samples={} planning_rejected={} planned_tap_visits={} get_ms_values_ms={:.3} get_data_ms={:.3} get_flag_ms={:.3} get_weight_ms={:.3} get_weight_spectrum_ms={:.3} get_geometry_ms={:.3} prepare_processing_ms={:.3} prepare_rows_seen={} prepare_rows_flagged={} prepare_flag_row_ms={:.3} prepare_data_ms={:.3} prepare_flag_ms={:.3} prepare_weight_ms={:.3} prepare_weight_spectrum_ms={:.3} prepare_adapt_samples_ms={:.3} weighting_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
             self.pass,
             self.ordinal,
             self.row_blocks,
             self.cached_row_blocks,
             self.batches,
             self.samples,
+            self.planned_sample_candidates,
+            self.planned_samples,
+            self.planned_sample_candidates
+                .saturating_sub(self.planned_samples),
+            self.planned_tap_visits,
             duration_ms(self.get_ms_values_into_processing_buffer),
             duration_ms(self.get_ms_values_detail.data_column),
             duration_ms(self.get_ms_values_detail.flag_column),
@@ -8211,7 +8229,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn stream_standard_mfs_weighted_sample_row_blocks<F>(
+fn stream_standard_mfs_planned_sample_row_blocks<F>(
     ms: &MeasurementSet,
     config: &CliConfig,
     data_column_kind: VisibilityDataColumn,
@@ -8262,11 +8280,10 @@ where
 
         let stage_started_at = Instant::now();
         let before_accumulate = *accumulate_timings;
-        let mut weighted_samples = Vec::<StandardMfsWeightedSample>::new();
         let mut planned_samples = Vec::<StandardMfsPlannedWeightedSample>::new();
-        let mut weighted_block_samples = 0usize;
+        let mut block_candidate_samples = 0usize;
         for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
-            weighted_block_samples += prepared.stream_standard_mfs_weighted_row_samples(
+            let counts = prepared.stream_standard_mfs_planned_row_samples(
                 row,
                 &processing_buffer.data_column,
                 &processing_buffer.flag_column,
@@ -8276,21 +8293,28 @@ where
                 derived_engine,
                 row_slot,
                 weighting_plan,
+                planned_sample_builder,
                 &mut |sample| {
-                    weighted_samples.push(sample);
+                    planned_samples.push(sample);
                     Ok(())
                 },
                 accumulate_timings,
             )?;
+            block_candidate_samples += counts.candidate_samples;
         }
-        planned_samples.reserve(weighted_block_samples);
-        planned_sample_builder
-            .plan_samples_into(&weighted_samples, &mut planned_samples)
-            .map_err(|error| error.to_string())?;
         consume(&planned_samples).map_err(|error| error.to_string())?;
         let prepare_processing_elapsed = stage_started_at.elapsed();
         prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
         pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
+        let planned_tap_visits = planned_samples
+            .iter()
+            .map(|sample| usize::from(sample.tap_count))
+            .sum();
+        pass_stats.add_planned_sample_counts(
+            block_candidate_samples,
+            planned_samples.len(),
+            planned_tap_visits,
+        );
         pass_stats.record_density_block(
             planned_samples.len(),
             get_ms_values_elapsed,
@@ -12589,7 +12613,7 @@ impl PreparedSelection {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn stream_standard_mfs_weighted_row_samples(
+    fn stream_standard_mfs_planned_row_samples(
         &mut self,
         geometry_row: &PreparedGeometryRow,
         data_column: &SelectedMainDataSource,
@@ -12600,9 +12624,10 @@ impl PreparedSelection {
         derived_engine: Option<&MsCalEngine>,
         row_slot: usize,
         weighting_plan: &StandardMfsStreamingWeightingPlan,
-        consume: &mut dyn FnMut(StandardMfsWeightedSample) -> Result<(), ImagingError>,
+        planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+        consume: &mut dyn FnMut(StandardMfsPlannedWeightedSample) -> Result<(), ImagingError>,
         timings: &mut AccumulateRowTimings,
-    ) -> Result<usize, String> {
+    ) -> Result<StandardMfsPlannedRowSampleCounts, String> {
         timings.rows_seen += 1;
         let selected_row = &geometry_row.selected_row;
         let row = selected_row.row_index;
@@ -12613,7 +12638,7 @@ impl PreparedSelection {
         {
             timings.flag_row += stage_started_at.elapsed();
             timings.rows_flagged += 1;
-            return Ok(0);
+            return Ok(StandardMfsPlannedRowSampleCounts::default());
         }
         timings.flag_row += stage_started_at.elapsed();
         let stage_started_at = Instant::now();
@@ -12657,7 +12682,7 @@ impl PreparedSelection {
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
         let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
-        let mut accepted_samples = 0usize;
+        let mut counts = StandardMfsPlannedRowSampleCounts::default();
         match &self.state {
             PreparedState::ExplicitMfs { corr_index, .. } => {
                 let channel_invariant_weight = weights.channel_invariant_weight(*corr_index)?;
@@ -12690,7 +12715,8 @@ impl PreparedSelection {
                     let weight = weighting_plan
                         .weight_sample(u_lambda, v_lambda, natural_weight)
                         .map_err(|error| error.to_string())?;
-                    consume(StandardMfsWeightedSample {
+                    counts.candidate_samples += 1;
+                    let sample = StandardMfsWeightedSample {
                         u_lambda,
                         v_lambda,
                         w_lambda: uvw_m[2] * lambda_scale,
@@ -12698,9 +12724,14 @@ impl PreparedSelection {
                         sumwt_factor: 1.0,
                         gridable: is_cross,
                         visibility,
-                    })
-                    .map_err(|error| error.to_string())?;
-                    accepted_samples += 1;
+                    };
+                    if let Some(planned_sample) = planned_sample_builder
+                        .plan_sample(sample)
+                        .map_err(|error| error.to_string())?
+                    {
+                        consume(planned_sample).map_err(|error| error.to_string())?;
+                        counts.planned_samples += 1;
+                    }
                 }
             }
             PreparedState::CollapsedMfs {
@@ -12767,7 +12798,8 @@ impl PreparedSelection {
                     let weight = weighting_plan
                         .weight_sample(u_lambda, v_lambda, natural_weight)
                         .map_err(|error| error.to_string())?;
-                    consume(StandardMfsWeightedSample {
+                    counts.candidate_samples += 1;
+                    let sample = StandardMfsWeightedSample {
                         u_lambda,
                         v_lambda,
                         w_lambda: uvw_m[2] * lambda_scale,
@@ -12775,9 +12807,14 @@ impl PreparedSelection {
                         sumwt_factor,
                         gridable: is_cross,
                         visibility,
-                    })
-                    .map_err(|error| error.to_string())?;
-                    accepted_samples += 1;
+                    };
+                    if let Some(planned_sample) = planned_sample_builder
+                        .plan_sample(sample)
+                        .map_err(|error| error.to_string())?
+                    {
+                        consume(planned_sample).map_err(|error| error.to_string())?;
+                        counts.planned_samples += 1;
+                    }
                 }
             }
             _ => {
@@ -12788,7 +12825,7 @@ impl PreparedSelection {
             }
         }
         timings.adapt_samples += adapt_started_at.elapsed();
-        Ok(accepted_samples)
+        Ok(counts)
     }
 
     fn mfs_imaging_frequency_scale_for_row(

@@ -216,6 +216,32 @@ impl StandardMfsPlannedSampleBuilder {
         }
         Ok(planned.len() - initial_len)
     }
+
+    /// Plan an owned visibility batch into a caller-provided output buffer.
+    pub fn plan_visibility_batch_into(
+        &self,
+        batch: &VisibilityBatch,
+        planned: &mut Vec<StandardMfsPlannedWeightedSample>,
+    ) -> Result<usize, ImagingError> {
+        batch.validate()?;
+        let initial_len = planned.len();
+        planned.reserve(batch.len());
+        for sample_index in 0..batch.len() {
+            let sample = StandardMfsWeightedSample {
+                u_lambda: batch.u_lambda[sample_index],
+                v_lambda: batch.v_lambda[sample_index],
+                w_lambda: batch.w_lambda[sample_index],
+                weight: batch.weight[sample_index],
+                sumwt_factor: batch.sumwt_factor[sample_index],
+                gridable: batch.gridable[sample_index],
+                visibility: batch.visibility[sample_index],
+            };
+            if let Some(planned_sample) = self.plan_sample(sample)? {
+                planned.push(planned_sample);
+            }
+        }
+        Ok(planned.len() - initial_len)
+    }
 }
 
 /// Runtime execution knobs for standard-MFS backends.
@@ -1427,6 +1453,44 @@ fn planned_sample_positive_taps(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlannedCompactTaps {
+    x_start: usize,
+    y_start: usize,
+    x_weight_index: usize,
+    y_weight_index: usize,
+}
+
+#[inline(always)]
+fn planned_sample_compact_taps(
+    sample: StandardMfsPlannedWeightedSample,
+) -> Result<PlannedCompactTaps, ImagingError> {
+    if sample.support_id != 0 {
+        return Err(ImagingError::InvalidRequest(format!(
+            "standard MFS planned sample has unsupported tap support id {}",
+            sample.support_id
+        )));
+    }
+    let center_x = sample.center_x as usize;
+    let center_y = sample.center_y as usize;
+    if center_x < STANDARD_GRIDDER_SUPPORT {
+        return Err(ImagingError::InvalidRequest(
+            "standard MFS planned sample has invalid x tap center".to_string(),
+        ));
+    }
+    if center_y < STANDARD_GRIDDER_SUPPORT {
+        return Err(ImagingError::InvalidRequest(
+            "standard MFS planned sample has invalid y tap center".to_string(),
+        ));
+    }
+    Ok(PlannedCompactTaps {
+        x_start: center_x - STANDARD_GRIDDER_SUPPORT,
+        y_start: center_y - STANDARD_GRIDDER_SUPPORT,
+        x_weight_index: usize::from(sample.kernel_u),
+        y_weight_index: usize::from(sample.kernel_v),
+    })
+}
+
 fn compute_dirty_psf_and_residual_standard_sample_replay<F>(
     gridder: &StandardGridder,
     replay_weighted_samples: &mut F,
@@ -1457,7 +1521,7 @@ where
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
-                let taps = planned_sample_positive_taps(sample)?;
+                let taps = planned_sample_compact_taps(sample)?;
                 let grid_weight = sample.grid_weight;
                 let grid_weight = f64::from(grid_weight);
                 accumulation.normalization_sumwt += grid_weight;
@@ -1468,18 +1532,24 @@ where
                         f64::from(sample.visibility.re) * grid_weight,
                         f64::from(sample.visibility.im) * grid_weight,
                     );
-                    gridder.grid_sample_taps_real_complex_pair_planned_f64_storage(
+                    gridder.grid_compact_taps_real_complex_pair_planned_f64_storage(
                         psf_storage,
                         grid_weight,
                         residual_storage,
                         residual,
-                        &taps,
+                        taps.x_start,
+                        taps.y_start,
+                        taps.x_weight_index,
+                        taps.y_weight_index,
                     );
                 } else {
-                    gridder.grid_sample_taps_real_planned_f64_storage(
+                    gridder.grid_compact_taps_real_planned_f64_storage(
                         psf_storage,
-                        &taps,
                         grid_weight,
+                        taps.x_start,
+                        taps.y_start,
+                        taps.x_weight_index,
+                        taps.y_weight_index,
                     );
                 }
             }
@@ -1594,13 +1664,20 @@ where
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
-                let taps = planned_sample_positive_taps(sample)?;
+                let taps = planned_sample_compact_taps(sample)?;
                 let grid_weight = sample.grid_weight;
                 let grid_weight = f64::from(grid_weight);
                 accumulation.normalization_sumwt += grid_weight;
                 accumulation.reported_sumwt += grid_weight;
                 accumulation.gridded_samples += 1;
-                gridder.grid_sample_taps_real_planned_f64_storage(psf_storage, &taps, grid_weight);
+                gridder.grid_compact_taps_real_planned_f64_storage(
+                    psf_storage,
+                    grid_weight,
+                    taps.x_start,
+                    taps.y_start,
+                    taps.x_weight_index,
+                    taps.y_weight_index,
+                );
             }
             Ok(())
         })?;
@@ -1847,24 +1924,34 @@ fn accumulate_weighted_residual_sample_storage(
         return Ok(());
     }
     counts.valid_samples += 1;
-    let taps = planned_sample_positive_taps(sample)?;
+    let taps = planned_sample_compact_taps(sample)?;
     counts.planned_samples += 1;
     let residual_weight = sample.grid_weight;
     let residual_weight = f64::from(residual_weight);
     if let Some(model_storage) = model_storage {
-        gridder.degrid_model_and_grid_residual_taps_planned_f64_storage(
+        gridder.degrid_model_and_grid_residual_compact_taps_planned_f64_storage(
             model_storage,
             residual_storage,
-            &taps,
             sample.visibility,
             residual_weight,
+            taps.x_start,
+            taps.y_start,
+            taps.x_weight_index,
+            taps.y_weight_index,
         );
     } else {
         let residual = Complex64::new(
             f64::from(sample.visibility.re) * residual_weight,
             f64::from(sample.visibility.im) * residual_weight,
         );
-        gridder.grid_sample_taps_planned_f64_storage(residual_storage, &taps, residual);
+        gridder.grid_compact_taps_planned_f64_storage(
+            residual_storage,
+            residual,
+            taps.x_start,
+            taps.y_start,
+            taps.x_weight_index,
+            taps.y_weight_index,
+        );
     }
     counts.gridded_residual_samples += 1;
     Ok(())
