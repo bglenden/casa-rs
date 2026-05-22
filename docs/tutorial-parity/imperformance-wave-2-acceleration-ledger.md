@@ -1227,6 +1227,9 @@ multiscale-clean `niter=50`, direct external-disk MS, fixed-tile backend,
 | rejected direct row fast path | `target/imperformance-wave2/single-worker-fast-row-stream-20260522/bounded-one-worker-fixed-tile-fast-row-stream.log` | 50.656s | 37.172s | 44.550s | 8.239s | 27.260s | 19.073s | 9.47GB | GREEN targeted tests | rejected: slower than prepared reuse and worsened replay attribution |
 | prepared-state reuse | `target/imperformance-wave2/single-worker-prepared-reuse-20260522/bounded-one-worker-prepared-reuse.log` | 49.465s | 36.017s | 43.344s | 7.793s | 26.536s | 18.797s | 9.47GB | GREEN targeted tests | retained: small but real setup/cache cleanup |
 | inline-only/core helper check | `target/imperformance-wave2/single-worker-prepared-inline-20260522/bounded-one-worker-prepared-inline.log` | 49.469s | 35.919s | 43.330s | 7.530s | 26.699s | 19.221s | 9.42GB | GREEN targeted tests | rejected as net noise |
+| weighted sample block boundary | `target/imperformance-wave2/single-worker-block-sample-20260522/bounded-one-worker-block-sample.log`; rerun `target/imperformance-wave2/single-worker-block-sample-20260522/bounded-one-worker-block-sample-rerun.log` | 49.780s / 47.468s | 35.947s / 33.787s | 43.378s / 41.267s | 8.688s / 7.995s | 25.488s / 24.059s | 16.854s / 16.118s | n/a | GREEN targeted tests | screened: average frontend 48.624s is only 1.7% better than prepared-state reuse, so treat as noise-level pending more evidence |
+| rejected scalar-callback planned tap handoff | `target/imperformance-wave2/single-worker-planned-sample-20260522/bounded-one-worker-planned-sample-rerun.log`; `target/imperformance-wave2/single-worker-planned-sample-20260522/bounded-one-worker-planned-sample-block-plan.log` | 52.410s / 52.832s | 38.644s / 38.995s | 46.050s / 46.453s | 8.312s / 8.555s | 28.581s / 28.716s | 20.325s / 20.216s | n/a | GREEN targeted tests | rejected: planning inside the row-sample callback moved work into slower frontend replay shape |
+| planned weighted tap handoff | `target/imperformance-wave2/single-worker-planned-sample-20260522/bounded-one-worker-planned-sample-fast-taps.log`; rerun `target/imperformance-wave2/single-worker-planned-sample-20260522/bounded-one-worker-planned-sample-fast-taps-rerun.log` | 48.273s / 48.234s | 34.372s / 33.371s | 41.752s / 41.837s | 7.963s / 7.412s | 24.656s / 24.223s | 16.749s / 16.865s | n/a | GREEN targeted tests | retained for shared work-unit structure; not claimed as a standalone speed win because average frontend delta vs block boundary is under 1% |
 
 The retained prepared-state reuse improves the previous retained bounded serial
 point by 3.486s frontend (6.6%) and 2.866s core (7.4%). The latest profile still
@@ -1235,6 +1238,19 @@ wall-attributed and the gridding/degridding stages are about 34.2s combined.
 Further single-worker wins likely require changing how weighted samples are
 represented across the frontend/core boundary or reducing tap planning/grid
 application cost, not more wrapper-level cleanup.
+
+Follow-up implementation note: the trace-free one-worker frontend/core handoff
+now has a planned weighted-sample block API. Frontends can convert bounded
+`StandardMfsWeightedSample` row blocks into compact tap-span records once per
+replay, and core gridding/degridding loops reconstruct positive tap spans instead
+of calling `plan_positive_taps` from the hot apply path. Fixed-tile bucket
+records also carry the compact positive tap span/key needed for worker
+application, so tiled dirty/PSF/residual workers do not re-plan taps from
+`u_lambda/v_lambda` after bucket construction. The scalar-callback form was
+explicitly rejected after a 52s frontend regression. The retained block-planned
+form averaged 48.254s frontend and 33.871s core, which is structurally useful
+and better than the prepared-state baseline, but still below the threshold for a
+standalone performance claim over the prior block-boundary result.
 
 ## Reproduction
 

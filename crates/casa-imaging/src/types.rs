@@ -594,6 +594,53 @@ pub struct StandardMfsWeightedSample {
     pub visibility: Complex32,
 }
 
+/// Already weighted and gridder-planned scalar standard-MFS sample.
+///
+/// This is the bounded row-block handoff used by streaming frontends that want
+/// to avoid re-planning prolate-spheroidal taps inside the core gridding loops.
+/// It stores only the compact positive-tap span identity, not expanded tap
+/// coordinates or weights.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandardMfsPlannedWeightedSample {
+    /// Positive-tap center x cell in the padded standard grid.
+    pub center_x: u32,
+    /// Positive-tap center y cell in the padded standard grid.
+    pub center_y: u32,
+    /// Compact x-axis kernel/weight-table index.
+    pub kernel_u: u16,
+    /// Compact y-axis kernel/weight-table index.
+    pub kernel_v: u16,
+    /// Support/kernel-family identifier. Current standard-MFS support is `0`.
+    pub support_id: u16,
+    /// Planned-sample flags; use [`Self::finite_visibility`] and [`Self::psf_only`].
+    pub flags: u16,
+    /// Number of 2-D tap visits expected for work attribution.
+    pub tap_count: u8,
+    /// Product of final imaging weight and CASA-style `sumwt` factor.
+    pub grid_weight: f32,
+    /// Baseline `w` coordinate in wavelengths, retained for diagnostics.
+    pub w_lambda: f64,
+    /// Complex scalar visibility.
+    pub visibility: Complex32,
+}
+
+impl StandardMfsPlannedWeightedSample {
+    /// Visibility is finite and contributes to dirty/residual grids.
+    pub const FINITE_VISIBILITY: u16 = 1 << 0;
+    /// Visibility is nonfinite and contributes only to the PSF.
+    pub const PSF_ONLY: u16 = 1 << 1;
+
+    /// Returns true when the sample visibility can contribute to dirty/residual grids.
+    pub fn finite_visibility(self) -> bool {
+        self.flags & Self::FINITE_VISIBILITY != 0
+    }
+
+    /// Returns true when the sample should contribute to the PSF only.
+    pub fn psf_only(self) -> bool {
+        self.flags & Self::PSF_ONLY != 0
+    }
+}
+
 impl VisibilityBatch {
     /// Returns the number of scalar samples in the batch.
     pub fn len(&self) -> usize {

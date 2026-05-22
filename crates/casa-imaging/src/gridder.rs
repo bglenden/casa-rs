@@ -35,13 +35,13 @@ pub(crate) struct ProductTapSet {
     pub(crate) weights: [f32; GRIDDER_PRODUCT_TAP_COUNT],
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TapAxisSpan {
     pub(crate) start: usize,
     pub(crate) weight_index: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PositiveTapSet {
     pub(crate) x: TapAxisSpan,
     pub(crate) y: TapAxisSpan,

@@ -30,12 +30,12 @@ use casa_imaging::{
     ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch,
     PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
     StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
-    StandardMfsModelPredictor, StandardMfsStreamingWeightingPlan, StandardMfsWeightedSample,
-    UvTaperSize, VisibilityBatch, VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason,
-    WTermMode, WeightDensityMode, WeightingMode, estimate_psf_sidelobe_from_psf,
-    primary_beam_voltage_pattern, restore_standard_mfs_model, run_cube, run_imaging,
-    run_imaging_owned_with_execution_config, run_mtmfs,
-    run_standard_mfs_weighted_sample_streaming_with_execution_config,
+    StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
+    StandardMfsStreamingWeightingPlan, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
+    VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
+    WeightingMode, estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern,
+    restore_standard_mfs_model, run_cube, run_imaging, run_imaging_owned_with_execution_config,
+    run_mtmfs, run_standard_mfs_planned_sample_block_streaming_with_execution_config,
     run_standard_mfs_weighted_streaming_with_execution_config, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
     trace_w_project_plan, trace_weighting,
@@ -1990,13 +1990,15 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     weighting_plan.finish_density_pass();
 
     let execution_config = standard_mfs_execution_config(config);
+    let planned_sample_builder = StandardMfsPlannedSampleBuilder::new(request.geometry)
+        .map_err(|error| error.to_string())?;
     let run_started_at = Instant::now();
     let use_sample_streaming = env_standard_mfs_grid_threads() == Some(1)
         && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_SAMPLE_STREAM").is_none();
     let result = if use_sample_streaming {
         let mut replay_invocation = 0usize;
         let mut replay_weighted_samples = |consumer: &mut dyn FnMut(
-            StandardMfsWeightedSample,
+            &[StandardMfsPlannedWeightedSample],
         )
             -> Result<(), ImagingError>|
          -> Result<(), ImagingError> {
@@ -2017,9 +2019,14 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                         .map_err(|error| ImagingError::InvalidRequest(error.to_string()))?;
                     replay_stats.add_weighting(weighting_started_at.elapsed());
                     let consumer_started_at = Instant::now();
+                    let mut weighted_sample_block = Vec::<StandardMfsWeightedSample>::new();
+                    let mut sample_block = Vec::<StandardMfsPlannedWeightedSample>::new();
                     for batch in &weighted {
+                        weighted_sample_block.clear();
+                        weighted_sample_block.reserve(batch.len());
+                        sample_block.clear();
                         for sample_index in 0..batch.len() {
-                            consumer(StandardMfsWeightedSample {
+                            weighted_sample_block.push(StandardMfsWeightedSample {
                                 u_lambda: batch.u_lambda[sample_index],
                                 v_lambda: batch.v_lambda[sample_index],
                                 w_lambda: batch.w_lambda[sample_index],
@@ -2027,8 +2034,11 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                                 sumwt_factor: batch.sumwt_factor[sample_index],
                                 gridable: batch.gridable[sample_index],
                                 visibility: batch.visibility[sample_index],
-                            })?;
+                            });
                         }
+                        planned_sample_builder
+                            .plan_samples_into(&weighted_sample_block, &mut sample_block)?;
+                        consumer(&sample_block)?;
                     }
                     replay_stats.add_consumer(consumer_started_at.elapsed());
                     &active_selected_rows[first_rows_len..]
@@ -2056,8 +2066,9 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 &mut accumulate_timings,
                 &mut replay_stats,
                 &weighting_plan,
-                |sample| {
-                    if let Err(error) = consumer(sample) {
+                &planned_sample_builder,
+                |samples| {
+                    if let Err(error) = consumer(samples) {
                         stream_error = Some(error);
                         return Err(ImagingError::InvalidRequest(
                             "sample streaming standard MFS weighted consumer failed".to_string(),
@@ -2074,7 +2085,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                 .map(|_| ())
                 .map_err(ImagingError::InvalidRequest)
         };
-        run_standard_mfs_weighted_sample_streaming_with_execution_config(
+        run_standard_mfs_planned_sample_block_streaming_with_execution_config(
             request,
             execution_config,
             &mut replay_weighted_samples,
@@ -8217,10 +8228,11 @@ fn stream_standard_mfs_weighted_sample_row_blocks<F>(
     accumulate_timings: &mut AccumulateRowTimings,
     pass_stats: &mut StandardMfsStreamingPassStats,
     weighting_plan: &StandardMfsStreamingWeightingPlan,
+    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
     mut consume: F,
 ) -> Result<usize, String>
 where
-    F: FnMut(StandardMfsWeightedSample) -> Result<(), ImagingError>,
+    F: FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
 {
     let mut streamed_samples = 0usize;
     let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
@@ -8250,9 +8262,11 @@ where
 
         let stage_started_at = Instant::now();
         let before_accumulate = *accumulate_timings;
-        let mut block_samples = 0usize;
+        let mut weighted_samples = Vec::<StandardMfsWeightedSample>::new();
+        let mut planned_samples = Vec::<StandardMfsPlannedWeightedSample>::new();
+        let mut weighted_block_samples = 0usize;
         for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
-            block_samples += prepared.stream_standard_mfs_weighted_row_samples(
+            weighted_block_samples += prepared.stream_standard_mfs_weighted_row_samples(
                 row,
                 &processing_buffer.data_column,
                 &processing_buffer.flag_column,
@@ -8262,19 +8276,27 @@ where
                 derived_engine,
                 row_slot,
                 weighting_plan,
-                &mut consume,
+                &mut |sample| {
+                    weighted_samples.push(sample);
+                    Ok(())
+                },
                 accumulate_timings,
             )?;
         }
+        planned_samples.reserve(weighted_block_samples);
+        planned_sample_builder
+            .plan_samples_into(&weighted_samples, &mut planned_samples)
+            .map_err(|error| error.to_string())?;
+        consume(&planned_samples).map_err(|error| error.to_string())?;
         let prepare_processing_elapsed = stage_started_at.elapsed();
         prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
         pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
         pass_stats.record_density_block(
-            block_samples,
+            planned_samples.len(),
             get_ms_values_elapsed,
             prepare_processing_elapsed,
         );
-        streamed_samples += block_samples;
+        streamed_samples += planned_samples.len();
         if frontend_progress_enabled() {
             eprintln!(
                 "frontend stage=prepare_plane_input/sample_row_block rows_done={} rows_total={} samples={} total_elapsed_s={:.3}",

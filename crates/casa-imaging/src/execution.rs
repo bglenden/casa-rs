@@ -17,7 +17,7 @@ use crate::{
     ImageGeometry, ImagingError, StandardMfsExecutionConfig, VisibilityBatch,
     gridder::{
         PositiveTapSet, STANDARD_GRIDDER_SUPPORT, STANDARD_GRIDDER_TAP_COUNT, StandardGridder,
-        StandardMfsTapCensus, StandardMfsTapSkipReason,
+        StandardMfsTapCensus, StandardMfsTapSkipReason, TapAxisSpan,
     },
     profile,
 };
@@ -355,6 +355,37 @@ impl StandardMfsTileBucketSample {
     pub(crate) fn psf_only(self) -> bool {
         self.flags & STANDARD_MFS_TILE_FLAG_PSF_ONLY != 0
     }
+
+    pub(crate) fn positive_taps(self) -> Result<PositiveTapSet, ImagingError> {
+        if self.support_id != 0 {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS tile bucket sample has unsupported tap support id {}",
+                self.support_id
+            )));
+        }
+        let center_x = self.center_x as usize;
+        let center_y = self.center_y as usize;
+        let Some(x_start) = center_x.checked_sub(STANDARD_GRIDDER_SUPPORT) else {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS tile bucket sample has invalid x tap center".to_string(),
+            ));
+        };
+        let Some(y_start) = center_y.checked_sub(STANDARD_GRIDDER_SUPPORT) else {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS tile bucket sample has invalid y tap center".to_string(),
+            ));
+        };
+        Ok(PositiveTapSet {
+            x: TapAxisSpan {
+                start: x_start,
+                weight_index: usize::from(self.kernel_u),
+            },
+            y: TapAxisSpan {
+                start: y_start,
+                weight_index: usize::from(self.kernel_v),
+            },
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -389,13 +420,12 @@ impl StandardMfsBlockTileBuckets {
 
         for batch in batches {
             for sample_index in 0..batch.len() {
-                let Some((tile_id, _center, _flags, _grid_weight, _tap_count)) =
-                    plan_dirty_tile_sample(gridder, partition, batch, sample_index)
+                let Some(planned) = plan_dirty_tile_sample(gridder, partition, batch, sample_index)
                 else {
                     skipped_samples += 1;
                     continue;
                 };
-                counts[tile_id.index()] += 1;
+                counts[planned.tile_id.index()] += 1;
                 accepted_samples += 1;
             }
         }
@@ -429,24 +459,23 @@ impl StandardMfsBlockTileBuckets {
         let mut flat_sample_index = 0usize;
         for batch in batches {
             for sample_index in 0..batch.len() {
-                let Some((tile_id, center, flags, grid_weight, tap_count)) =
-                    plan_dirty_tile_sample(gridder, partition, batch, sample_index)
+                let Some(planned) = plan_dirty_tile_sample(gridder, partition, batch, sample_index)
                 else {
                     flat_sample_index += 1;
                     continue;
                 };
-                let output_index = fill_offsets[tile_id.index()];
-                fill_offsets[tile_id.index()] += 1;
+                let output_index = fill_offsets[planned.tile_id.index()];
+                fill_offsets[planned.tile_id.index()] += 1;
                 samples[output_index] = StandardMfsTileBucketSample {
                     sample_index: flat_sample_index as u32,
-                    center_x: center[0] as u32,
-                    center_y: center[1] as u32,
-                    kernel_u: 0,
-                    kernel_v: 0,
+                    center_x: planned.center[0] as u32,
+                    center_y: planned.center[1] as u32,
+                    kernel_u: planned.kernel[0],
+                    kernel_v: planned.kernel[1],
                     support_id: 0,
-                    flags,
-                    grid_weight,
-                    tap_count,
+                    flags: planned.flags,
+                    grid_weight: planned.grid_weight,
+                    tap_count: planned.tap_count,
                 };
                 flat_sample_index += 1;
             }
@@ -518,12 +547,22 @@ impl StandardMfsBlockTileBuckets {
                 accumulation.skipped_out_of_grid += 1;
                 continue;
             };
+            let kernel_u = u16::try_from(taps.x.weight_index).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS residual tile bucket tap weight index exceeds u16".to_string(),
+                )
+            })?;
+            let kernel_v = u16::try_from(taps.y.weight_index).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS residual tile bucket tap weight index exceeds u16".to_string(),
+                )
+            })?;
             per_tile[tile_id.index()].push(StandardMfsTileBucketSample {
                 sample_index: sample_index as u32,
                 center_x: center[0] as u32,
                 center_y: center[1] as u32,
-                kernel_u: 0,
-                kernel_v: 0,
+                kernel_u,
+                kernel_v,
                 support_id: 0,
                 flags: STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
                 grid_weight: residual_weight,
@@ -635,12 +674,22 @@ pub(crate) struct StandardMfsTileTask {
     pub(crate) estimated_tap_visits: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PlannedDirtyTileSample {
+    tile_id: StandardMfsTileId,
+    center: [usize; 2],
+    kernel: [u16; 2],
+    flags: u16,
+    grid_weight: f32,
+    tap_count: u8,
+}
+
 fn plan_dirty_tile_sample(
     gridder: &StandardGridder,
     partition: &StandardMfsFixedTilePartition,
     batch: &VisibilityBatch,
     sample_index: usize,
-) -> Option<(StandardMfsTileId, [usize; 2], u16, f32, u8)> {
+) -> Option<PlannedDirtyTileSample> {
     if !batch.gridable[sample_index] {
         return None;
     }
@@ -662,13 +711,16 @@ fn plan_dirty_tile_sample(
     } else {
         STANDARD_MFS_TILE_FLAG_PSF_ONLY
     };
-    Some((
+    let kernel_u = u16::try_from(taps.x.weight_index).ok()?;
+    let kernel_v = u16::try_from(taps.y.weight_index).ok()?;
+    Some(PlannedDirtyTileSample {
         tile_id,
         center,
+        kernel: [kernel_u, kernel_v],
         flags,
         grid_weight,
-        STANDARD_GRIDDER_TAP_COUNT.saturating_mul(STANDARD_GRIDDER_TAP_COUNT) as u8,
-    ))
+        tap_count: STANDARD_GRIDDER_TAP_COUNT.saturating_mul(STANDARD_GRIDDER_TAP_COUNT) as u8,
+    })
 }
 
 fn maybe_probe_standard_mfs_tile_buckets(
@@ -880,11 +932,12 @@ fn near_origin_tile_probe_summary(
 
     for batch in batches {
         for sample_index in 0..batch.len() {
-            let Some((tile_id, sample_center, _flags, _grid_weight, _tap_count)) =
-                plan_dirty_tile_sample(gridder, partition, batch, sample_index)
+            let Some(planned) = plan_dirty_tile_sample(gridder, partition, batch, sample_index)
             else {
                 continue;
             };
+            let tile_id = planned.tile_id;
+            let sample_center = planned.center;
             let dx = sample_center[0] as isize - center[0] as isize;
             let dy = sample_center[1] as isize - center[1] as isize;
             if !((-2..=2).contains(&dx) && (-2..=2).contains(&dy)) {
@@ -909,8 +962,8 @@ fn near_origin_tile_probe_summary(
     }
 
     let mut window = Vec::new();
-    for dx in -2..=2 {
-        for dy in -2..=2 {
+    for dx in -2isize..=2 {
+        for dy in -2isize..=2 {
             let count = window_counts[((dx + 2) as usize) * 5 + (dy + 2) as usize];
             if count > 0 {
                 window.push(format!("{dx}:{dy}:{count}"));
@@ -1971,14 +2024,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         };
         for sample in buckets.tile_samples(tile_id) {
             let sample_index = sample.sample_index as usize;
-            let taps = self
-                .gridder
-                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-                .ok_or_else(|| {
-                    ImagingError::InvalidRequest(
-                        "standard MFS tiled dirty bucket lost its tap plan".to_string(),
-                    )
-                })?;
+            let taps = sample.positive_taps()?;
             debug_assert_eq!(
                 taps.center(),
                 [sample.center_x as usize, sample.center_y as usize]
@@ -2135,14 +2181,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         };
         for sample in buckets.tile_samples(tile_id) {
             let sample_index = sample.sample_index as usize;
-            let taps = self
-                .gridder
-                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-                .ok_or_else(|| {
-                    ImagingError::InvalidRequest(
-                        "standard MFS direct tiled dirty bucket lost its tap plan".to_string(),
-                    )
-                })?;
+            let taps = sample.positive_taps()?;
             debug_assert_eq!(
                 taps.center(),
                 [sample.center_x as usize, sample.center_y as usize]
@@ -2603,7 +2642,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
 
     fn grid_psf_tile_task(
         &self,
-        batch: &VisibilityBatch,
+        _batch: &VisibilityBatch,
         buckets: &StandardMfsBlockTileBuckets,
         tile_id: StandardMfsTileId,
     ) -> Result<
@@ -2636,15 +2675,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             max_abs_w_lambda: 0.0,
         };
         for sample in buckets.tile_samples(tile_id) {
-            let sample_index = sample.sample_index as usize;
-            let taps = self
-                .gridder
-                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-                .ok_or_else(|| {
-                    ImagingError::InvalidRequest(
-                        "standard MFS tiled PSF bucket lost its tap plan".to_string(),
-                    )
-                })?;
+            let taps = sample.positive_taps()?;
             debug_assert_eq!(
                 taps.center(),
                 [sample.center_x as usize, sample.center_y as usize]
@@ -2758,7 +2789,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
 
     fn grid_psf_tile_task_direct(
         &self,
-        batch: &VisibilityBatch,
+        _batch: &VisibilityBatch,
         buckets: &StandardMfsBlockTileBuckets,
         tile_id: StandardMfsTileId,
         store: &DirectPsfTileStore<'_>,
@@ -2781,15 +2812,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             max_abs_w_lambda: 0.0,
         };
         for sample in buckets.tile_samples(tile_id) {
-            let sample_index = sample.sample_index as usize;
-            let taps = self
-                .gridder
-                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-                .ok_or_else(|| {
-                    ImagingError::InvalidRequest(
-                        "standard MFS direct tiled PSF bucket lost its tap plan".to_string(),
-                    )
-                })?;
+            let taps = sample.positive_taps()?;
             debug_assert_eq!(
                 taps.center(),
                 [sample.center_x as usize, sample.center_y as usize]
@@ -2989,14 +3012,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut gridded_samples = 0usize;
         for sample in buckets.tile_samples(tile_id) {
             let sample_index = sample.sample_index as usize;
-            let taps = self
-                .gridder
-                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-                .ok_or_else(|| {
-                    ImagingError::InvalidRequest(
-                        "standard MFS tiled residual bucket lost its tap plan".to_string(),
-                    )
-                })?;
+            let taps = sample.positive_taps()?;
             debug_assert_eq!(
                 taps.center(),
                 [sample.center_x as usize, sample.center_y as usize]
@@ -3256,14 +3272,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut gridded_samples = 0usize;
         for sample in buckets.tile_samples(tile_id) {
             let sample_index = sample.sample_index as usize;
-            let taps = self
-                .gridder
-                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-                .ok_or_else(|| {
-                    ImagingError::InvalidRequest(
-                        "standard MFS direct tiled residual bucket lost its tap plan".to_string(),
-                    )
-                })?;
+            let taps = sample.positive_taps()?;
             debug_assert_eq!(
                 taps.center(),
                 [sample.center_x as usize, sample.center_y as usize]
@@ -3654,14 +3663,7 @@ impl<'a> StandardMfsMetalExecutor<'a> {
         let mut samples = Vec::with_capacity(tile_bucket_samples.len());
         for sample in tile_bucket_samples {
             let sample_index = sample.sample_index as usize;
-            let taps = self
-                .gridder
-                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-                .ok_or_else(|| {
-                    ImagingError::InvalidRequest(
-                        "standard MFS Metal dirty bucket lost its tap plan".to_string(),
-                    )
-                })?;
+            let taps = sample.positive_taps()?;
             debug_assert_eq!(
                 taps.center(),
                 [sample.center_x as usize, sample.center_y as usize]
@@ -5153,8 +5155,12 @@ mod tests {
             ],
         };
 
-        let buckets =
-            StandardMfsBlockTileBuckets::build_for_dirty(&gridder, &partition, &[batch]).unwrap();
+        let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
+            &gridder,
+            &partition,
+            std::slice::from_ref(&batch),
+        )
+        .unwrap();
 
         assert_eq!(buckets.accepted_samples(), 3);
         assert_eq!(buckets.skipped_samples(), 1);
@@ -5172,6 +5178,12 @@ mod tests {
         assert!(!tile0[0].psf_only());
         assert_eq!(tile0[0].grid_weight, 1.0);
         assert_eq!(tile0[0].tap_count, 49);
+        assert_eq!(
+            tile0[0].positive_taps().unwrap(),
+            gridder
+                .plan_positive_taps(batch.u_lambda[0], batch.v_lambda[0])
+                .unwrap()
+        );
 
         let tile3 = buckets.tile_samples(StandardMfsTileId(3));
         assert_eq!(tile3.len(), 2);
@@ -5182,10 +5194,22 @@ mod tests {
         assert!(tile3[0].psf_only());
         assert_eq!(tile3[0].grid_weight, 4.0);
         assert_eq!(tile3[0].tap_count, 49);
+        assert_eq!(
+            tile3[0].positive_taps().unwrap(),
+            gridder
+                .plan_positive_taps(batch.u_lambda[1], batch.v_lambda[1])
+                .unwrap()
+        );
         assert_eq!(tile3[1].sample_index, 3);
         assert_eq!((tile3[1].center_x, tile3[1].center_y), (24, 24));
         assert_eq!(tile3[1].grid_weight, 12.0);
         assert_eq!(tile3[1].tap_count, 49);
+        assert_eq!(
+            tile3[1].positive_taps().unwrap(),
+            gridder
+                .plan_positive_taps(batch.u_lambda[3], batch.v_lambda[3])
+                .unwrap()
+        );
 
         assert!(
             buckets.estimated_bytes() < 3 * std::mem::size_of::<super::StandardMfsPlannedSample>(),
