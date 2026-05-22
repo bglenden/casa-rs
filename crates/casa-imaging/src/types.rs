@@ -571,6 +571,29 @@ pub struct VisibilityBatch {
     pub visibility: Vec<Complex32>,
 }
 
+/// Already weighted scalar standard-MFS sample streamed directly to gridding.
+///
+/// This is the single-sample equivalent of one row in [`VisibilityBatch`]. It
+/// lets frontends feed bounded row blocks to the standard-MFS replay path
+/// without first materializing a full owned batch for every major-cycle replay.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandardMfsWeightedSample {
+    /// Baseline `u` coordinate in wavelengths.
+    pub u_lambda: f64,
+    /// Baseline `v` coordinate in wavelengths.
+    pub v_lambda: f64,
+    /// Baseline `w` coordinate in wavelengths.
+    pub w_lambda: f64,
+    /// Final imaging weight after natural/uniform/Briggs weighting.
+    pub weight: f32,
+    /// Logical multiplicity factor for CASA-style reported `sumwt`.
+    pub sumwt_factor: f32,
+    /// Whether this sample participates in image/PSF gridding.
+    pub gridable: bool,
+    /// Complex scalar visibility.
+    pub visibility: Complex32,
+}
+
 impl VisibilityBatch {
     /// Returns the number of scalar samples in the batch.
     pub fn len(&self) -> usize {

@@ -30,13 +30,15 @@ use casa_imaging::{
     ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch,
     PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
     StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
-    StandardMfsModelPredictor, StandardMfsStreamingWeightingPlan, UvTaperSize, VisibilityBatch,
-    VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
-    WeightingMode, estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern,
-    restore_standard_mfs_model, run_cube, run_imaging, run_imaging_owned_with_execution_config,
-    run_mtmfs, run_standard_mfs_weighted_streaming_with_execution_config,
-    trace_cube_channel_residual_refresh, trace_cube_channel_residual_refresh_model_channel_lambda,
-    trace_cube_channel_w_project_plan, trace_w_project_plan, trace_weighting,
+    StandardMfsModelPredictor, StandardMfsStreamingWeightingPlan, StandardMfsWeightedSample,
+    UvTaperSize, VisibilityBatch, VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason,
+    WTermMode, WeightDensityMode, WeightingMode, estimate_psf_sidelobe_from_psf,
+    primary_beam_voltage_pattern, restore_standard_mfs_model, run_cube, run_imaging,
+    run_imaging_owned_with_execution_config, run_mtmfs,
+    run_standard_mfs_weighted_sample_streaming_with_execution_config,
+    run_standard_mfs_weighted_streaming_with_execution_config, trace_cube_channel_residual_refresh,
+    trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
+    trace_w_project_plan, trace_weighting,
 };
 use casa_ms::MeasurementSet;
 #[cfg(test)]
@@ -1989,83 +1991,174 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
 
     let execution_config = standard_mfs_execution_config(config);
     let run_started_at = Instant::now();
-    let mut replay_invocation = 0usize;
-    let mut replay_weighted_batches = |consumer: &mut dyn FnMut(
-        &[VisibilityBatch],
-    )
-        -> Result<(), ImagingError>|
-     -> Result<(), ImagingError> {
-        let replay_pass = if replay_invocation == 0 {
-            "initial_replay"
-        } else {
-            "residual_replay"
-        };
-        let replay_ordinal = replay_invocation;
-        replay_invocation += 1;
-        let mut replay_stats = StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
-        let mut stream_error = None::<ImagingError>;
-        let mut pass = |mut plane: PlaneInput, pass_stats: &mut StandardMfsStreamingPassStats| {
-            let weighting_started_at = Instant::now();
-            let weighted = weighting_plan
-                .weight_owned_batches(std::mem::take(&mut plane.batches))
-                .map_err(|error| error.to_string())?;
-            pass_stats.add_weighting(weighting_started_at.elapsed());
-            let consumer_started_at = Instant::now();
-            if let Err(error) = consumer(&weighted) {
-                pass_stats.add_consumer(consumer_started_at.elapsed());
-                stream_error = Some(error);
-                return Err("streaming standard MFS weighted consumer failed".to_string());
-            }
-            pass_stats.add_consumer(consumer_started_at.elapsed());
-            Ok(())
-        };
-        let stream_rows = if replay_ordinal == 0 {
-            if let Some(plane) = first_plane_for_initial_replay.take() {
-                replay_stats.record_cached_plane(&plane);
-                if let Err(error) = pass(plane, &mut replay_stats) {
-                    if let Some(error) = stream_error {
-                        return Err(error);
+    let use_sample_streaming = env_standard_mfs_grid_threads() == Some(1)
+        && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_SAMPLE_STREAM").is_none();
+    let result = if use_sample_streaming {
+        let mut replay_invocation = 0usize;
+        let mut replay_weighted_samples = |consumer: &mut dyn FnMut(
+            StandardMfsWeightedSample,
+        )
+            -> Result<(), ImagingError>|
+         -> Result<(), ImagingError> {
+            let replay_pass = if replay_invocation == 0 {
+                "initial_sample_replay"
+            } else {
+                "residual_sample_replay"
+            };
+            let replay_ordinal = replay_invocation;
+            replay_invocation += 1;
+            let mut replay_stats = StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
+            let stream_rows = if replay_ordinal == 0 {
+                if let Some(mut plane) = first_plane_for_initial_replay.take() {
+                    replay_stats.record_cached_plane(&plane);
+                    let weighting_started_at = Instant::now();
+                    let weighted = weighting_plan
+                        .weight_owned_batches(std::mem::take(&mut plane.batches))
+                        .map_err(|error| ImagingError::InvalidRequest(error.to_string()))?;
+                    replay_stats.add_weighting(weighting_started_at.elapsed());
+                    let consumer_started_at = Instant::now();
+                    for batch in &weighted {
+                        for sample_index in 0..batch.len() {
+                            consumer(StandardMfsWeightedSample {
+                                u_lambda: batch.u_lambda[sample_index],
+                                v_lambda: batch.v_lambda[sample_index],
+                                w_lambda: batch.w_lambda[sample_index],
+                                weight: batch.weight[sample_index],
+                                sumwt_factor: batch.sumwt_factor[sample_index],
+                                gridable: batch.gridable[sample_index],
+                                visibility: batch.visibility[sample_index],
+                            })?;
+                        }
                     }
-                    return Err(ImagingError::InvalidRequest(error));
+                    replay_stats.add_consumer(consumer_started_at.elapsed());
+                    &active_selected_rows[first_rows_len..]
+                } else {
+                    &active_selected_rows
                 }
-                &active_selected_rows[first_rows_len..]
             } else {
                 &active_selected_rows
+            };
+            let mut stream_error = None::<ImagingError>;
+            let stream_result = stream_standard_mfs_weighted_sample_row_blocks(
+                ms,
+                config,
+                data_column,
+                &selection,
+                &table_values,
+                &flag_row,
+                stream_rows,
+                derived_engine.as_ref(),
+                channel_read_range,
+                &geometry_columns,
+                strategy.row_block_rows,
+                prepare_started_at,
+                &mut prepare_stage_timings,
+                &mut accumulate_timings,
+                &mut replay_stats,
+                &weighting_plan,
+                |sample| {
+                    if let Err(error) = consumer(sample) {
+                        stream_error = Some(error);
+                        return Err(ImagingError::InvalidRequest(
+                            "sample streaming standard MFS weighted consumer failed".to_string(),
+                        ));
+                    }
+                    Ok(())
+                },
+            );
+            replay_stats.log();
+            if let Some(error) = stream_error {
+                return Err(error);
             }
-        } else {
-            &active_selected_rows
+            stream_result
+                .map(|_| ())
+                .map_err(ImagingError::InvalidRequest)
         };
-        let stream_result = stream_standard_mfs_prepared_row_blocks(
-            ms,
-            config,
-            data_column,
-            &selection,
-            &table_values,
-            &flag_row,
-            stream_rows,
-            derived_engine.as_ref(),
-            channel_read_range,
-            &geometry_columns,
-            strategy.row_block_rows,
-            prepare_started_at,
-            &mut prepare_stage_timings,
-            &mut accumulate_timings,
-            &mut replay_stats,
-            &mut pass,
-        );
-        replay_stats.log();
-        if let Some(error) = stream_error {
-            return Err(error);
-        }
-        stream_result
-            .map(|_| ())
-            .map_err(ImagingError::InvalidRequest)
-    };
-    let result = run_standard_mfs_weighted_streaming_with_execution_config(
-        request,
-        execution_config,
-        &mut replay_weighted_batches,
-    )
+        run_standard_mfs_weighted_sample_streaming_with_execution_config(
+            request,
+            execution_config,
+            &mut replay_weighted_samples,
+        )
+    } else {
+        let mut replay_invocation = 0usize;
+        let mut replay_weighted_batches = |consumer: &mut dyn FnMut(
+            &[VisibilityBatch],
+        )
+            -> Result<(), ImagingError>|
+         -> Result<(), ImagingError> {
+            let replay_pass = if replay_invocation == 0 {
+                "initial_replay"
+            } else {
+                "residual_replay"
+            };
+            let replay_ordinal = replay_invocation;
+            replay_invocation += 1;
+            let mut replay_stats = StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
+            let mut stream_error = None::<ImagingError>;
+            let mut pass =
+                |mut plane: PlaneInput, pass_stats: &mut StandardMfsStreamingPassStats| {
+                    let weighting_started_at = Instant::now();
+                    let weighted = weighting_plan
+                        .weight_owned_batches(std::mem::take(&mut plane.batches))
+                        .map_err(|error| error.to_string())?;
+                    pass_stats.add_weighting(weighting_started_at.elapsed());
+                    let consumer_started_at = Instant::now();
+                    if let Err(error) = consumer(&weighted) {
+                        pass_stats.add_consumer(consumer_started_at.elapsed());
+                        stream_error = Some(error);
+                        return Err("streaming standard MFS weighted consumer failed".to_string());
+                    }
+                    pass_stats.add_consumer(consumer_started_at.elapsed());
+                    Ok(())
+                };
+            let stream_rows = if replay_ordinal == 0 {
+                if let Some(plane) = first_plane_for_initial_replay.take() {
+                    replay_stats.record_cached_plane(&plane);
+                    if let Err(error) = pass(plane, &mut replay_stats) {
+                        if let Some(error) = stream_error {
+                            return Err(error);
+                        }
+                        return Err(ImagingError::InvalidRequest(error));
+                    }
+                    &active_selected_rows[first_rows_len..]
+                } else {
+                    &active_selected_rows
+                }
+            } else {
+                &active_selected_rows
+            };
+            let stream_result = stream_standard_mfs_prepared_row_blocks(
+                ms,
+                config,
+                data_column,
+                &selection,
+                &table_values,
+                &flag_row,
+                stream_rows,
+                derived_engine.as_ref(),
+                channel_read_range,
+                &geometry_columns,
+                strategy.row_block_rows,
+                prepare_started_at,
+                &mut prepare_stage_timings,
+                &mut accumulate_timings,
+                &mut replay_stats,
+                &mut pass,
+            );
+            replay_stats.log();
+            if let Some(error) = stream_error {
+                return Err(error);
+            }
+            stream_result
+                .map(|_| ())
+                .map_err(ImagingError::InvalidRequest)
+        };
+        run_standard_mfs_weighted_streaming_with_execution_config(
+            request,
+            execution_config,
+            &mut replay_weighted_batches,
+        )
+    }
     .map_err(|error| error.to_string())?;
     let run_imaging_time = run_started_at.elapsed();
     accumulate_timings.log(prepare_started_at.elapsed());
@@ -8106,6 +8199,95 @@ where
     Ok(prepared_batch_count)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn stream_standard_mfs_weighted_sample_row_blocks<F>(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    flag_row: &[bool],
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+    pass_stats: &mut StandardMfsStreamingPassStats,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    mut consume: F,
+) -> Result<usize, String>
+where
+    F: FnMut(StandardMfsWeightedSample) -> Result<(), ImagingError>,
+{
+    let mut streamed_samples = 0usize;
+    for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let mut get_ms_values_detail = GetMsValuesTimings::default();
+        let stage_started_at = Instant::now();
+        let processing_buffer = get_ms_values_into_processing_buffer(
+            ms,
+            data_column_kind,
+            selection,
+            row_chunk,
+            derived_engine,
+            uvw_reprojection_mode_for_selection(config, selection),
+            channel_read_range,
+            geometry_columns,
+            prepare_started_at,
+            Some(&mut get_ms_values_detail),
+        )?;
+        let get_ms_values_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+        pass_stats.add_get_ms_values_detail(get_ms_values_detail);
+
+        let stage_started_at = Instant::now();
+        let before_accumulate = *accumulate_timings;
+        let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+            config,
+            table_values,
+            selection.phase_center.clone(),
+            false,
+        )?;
+        let mut block_samples = 0usize;
+        for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
+            block_samples += prepared.stream_standard_mfs_weighted_row_samples(
+                row,
+                &processing_buffer.data_column,
+                &processing_buffer.flag_column,
+                flag_row,
+                &processing_buffer.weight_column,
+                processing_buffer.weight_spectrum.as_ref(),
+                derived_engine,
+                row_slot,
+                weighting_plan,
+                &mut consume,
+                accumulate_timings,
+            )?;
+        }
+        let prepare_processing_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
+        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
+        pass_stats.record_density_block(
+            block_samples,
+            get_ms_values_elapsed,
+            prepare_processing_elapsed,
+        );
+        streamed_samples += block_samples;
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/sample_row_block rows_done={} rows_total={} samples={} total_elapsed_s={:.3}",
+                accumulate_timings.rows_seen,
+                active_selected_rows.len(),
+                streamed_samples,
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    Ok(streamed_samples)
+}
+
 fn merge_prepared_inputs_with_trace(
     prepared_with_traces: Vec<(PreparedInput, PreparedVisibilityTraceBundle)>,
 ) -> Result<(PreparedInput, PreparedVisibilityTraceBundle), String> {
@@ -12376,6 +12558,209 @@ impl PreparedSelection {
             _ => {
                 return Err(
                     "internal error: density-only standard MFS preparation used for non-MFS state"
+                        .to_string(),
+                );
+            }
+        }
+        timings.adapt_samples += adapt_started_at.elapsed();
+        Ok(accepted_samples)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn stream_standard_mfs_weighted_row_samples(
+        &mut self,
+        geometry_row: &PreparedGeometryRow,
+        data_column: &SelectedMainDataSource,
+        flag_column: &SelectedMainArrayColumn,
+        flag_row: &[bool],
+        weight_column: &SelectedMainArrayColumn,
+        weight_spectrum: Option<&SelectedMainArrayColumn>,
+        derived_engine: Option<&MsCalEngine>,
+        row_slot: usize,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        consume: &mut dyn FnMut(StandardMfsWeightedSample) -> Result<(), ImagingError>,
+        timings: &mut AccumulateRowTimings,
+    ) -> Result<usize, String> {
+        timings.rows_seen += 1;
+        let selected_row = &geometry_row.selected_row;
+        let row = selected_row.row_index;
+        let stage_started_at = Instant::now();
+        if *flag_row
+            .get(row)
+            .ok_or_else(|| format!("read FLAG_ROW row {row}: row is out of bounds"))?
+        {
+            timings.flag_row += stage_started_at.elapsed();
+            timings.rows_flagged += 1;
+            return Ok(0);
+        }
+        timings.flag_row += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let data = data_column
+            .get(row_slot)
+            .map_err(|error| format!("read data row {row}: {error}"))?;
+        timings.data_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let flags = flag_column
+            .get(row_slot)
+            .map_err(|error| format!("read FLAG row {row}: {error}"))?;
+        timings.flag_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let row_weights = weight_column
+            .get(row_slot)
+            .map_err(|error| format!("read WEIGHT row {row}: {error}"))?;
+        timings.weight_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let weight_spectrum_row = weight_spectrum
+            .map(|column| column.get_optional(row_slot))
+            .transpose()
+            .map(|row| row.flatten())
+            .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
+        timings.weight_spectrum += stage_started_at.elapsed();
+
+        let adapt_started_at = Instant::now();
+        let data_2d = ComplexRow2d::new_with_channel_origin(data, data_column.channel_origin())?;
+        let flags_2d = BoolRow2d::new_with_channel_origin(flags, flag_column.channel_origin())?;
+        let weights = WeightRow::new(
+            row_weights,
+            weight_spectrum_row,
+            weight_spectrum.map_or(0, |column| column.channel_origin()),
+        )?;
+        let uvw_m = geometry_row.transform.uvw_m;
+        let is_cross = geometry_row.is_cross;
+        let transform = geometry_row.transform;
+        let mfs_frequency_scale =
+            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        if self.mfs_output_frequency_edge_range_hz.is_none() {
+            self.mfs_output_frequency_edge_range_hz =
+                Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
+        }
+        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
+        let mut accepted_samples = 0usize;
+        match &self.state {
+            PreparedState::ExplicitMfs { corr_index, .. } => {
+                let channel_invariant_weight = weights.channel_invariant_weight(*corr_index)?;
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    let local_channel = data_2d.local_channel(channel_index)?;
+                    if flags_2d.get_local(*corr_index, local_channel, channel_index)? {
+                        continue;
+                    }
+                    let visibility = phase_rotate_visibility(
+                        data_2d.get_local(*corr_index, local_channel, channel_index)?,
+                        transform.phase_shift_m,
+                        frequency_hz * mfs_frequency_scale,
+                    );
+                    let natural_weight = if let Some(weight) = channel_invariant_weight {
+                        weight
+                    } else {
+                        weights.get_local(*corr_index, local_channel)?.0
+                    };
+                    if !(natural_weight.is_finite() && natural_weight > 0.0) {
+                        continue;
+                    }
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
+                    let u_lambda = uvw_m[0] * lambda_scale;
+                    let v_lambda = uvw_m[1] * lambda_scale;
+                    let weight = weighting_plan
+                        .weight_sample(u_lambda, v_lambda, natural_weight)
+                        .map_err(|error| error.to_string())?;
+                    consume(StandardMfsWeightedSample {
+                        u_lambda,
+                        v_lambda,
+                        w_lambda: uvw_m[2] * lambda_scale,
+                        weight,
+                        sumwt_factor: 1.0,
+                        gridable: is_cross,
+                        visibility,
+                    })
+                    .map_err(|error| error.to_string())?;
+                    accepted_samples += 1;
+                }
+            }
+            PreparedState::CollapsedMfs {
+                plane_stokes,
+                transform: pair_transform,
+                pair,
+                ..
+            } => {
+                let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
+                let channel_invariant_pair_weights =
+                    weights.channel_invariant_pair_weights(pair.0, pair.1)?;
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    let local_channel = data_2d.local_channel(channel_index)?;
+                    if flags_2d.get_local(pair.0, local_channel, channel_index)?
+                        || flags_2d.get_local(pair.1, local_channel, channel_index)?
+                    {
+                        continue;
+                    }
+                    let first_visibility =
+                        data_2d.get_local(pair.0, local_channel, channel_index)?;
+                    let second_visibility =
+                        data_2d.get_local(pair.1, local_channel, channel_index)?;
+                    let (first_weight, second_weight) = if let Some((first_weight, second_weight)) =
+                        channel_invariant_pair_weights
+                    {
+                        (first_weight, second_weight)
+                    } else {
+                        (
+                            weights.get_local(pair.0, local_channel)?.0,
+                            weights.get_local(pair.1, local_channel)?.0,
+                        )
+                    };
+                    if !(first_weight.is_finite()
+                        && first_weight > 0.0
+                        && second_weight.is_finite()
+                        && second_weight > 0.0)
+                    {
+                        continue;
+                    }
+                    let natural_weight = 0.5 * (first_weight + second_weight);
+                    if !(natural_weight.is_finite() && natural_weight > 0.0) {
+                        continue;
+                    }
+                    let visibility = phase_rotate_visibility(
+                        collapse_paired_visibility(
+                            first_visibility,
+                            second_visibility,
+                            *pair_transform,
+                        ),
+                        transform.phase_shift_m,
+                        frequency_hz * mfs_frequency_scale,
+                    );
+                    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                        continue;
+                    }
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
+                    let u_lambda = uvw_m[0] * lambda_scale;
+                    let v_lambda = uvw_m[1] * lambda_scale;
+                    let weight = weighting_plan
+                        .weight_sample(u_lambda, v_lambda, natural_weight)
+                        .map_err(|error| error.to_string())?;
+                    consume(StandardMfsWeightedSample {
+                        u_lambda,
+                        v_lambda,
+                        w_lambda: uvw_m[2] * lambda_scale,
+                        weight,
+                        sumwt_factor,
+                        gridable: is_cross,
+                        visibility,
+                    })
+                    .map_err(|error| error.to_string())?;
+                    accepted_samples += 1;
+                }
+            }
+            _ => {
+                return Err(
+                    "internal error: sample-stream standard MFS preparation requires MFS state"
                         .to_string(),
                 );
             }

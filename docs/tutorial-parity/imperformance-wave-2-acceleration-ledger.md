@@ -505,6 +505,45 @@ Decision:
   overhead.
 ```
 
+Single-worker typed tile decode plus sample-stream replay:
+
+```text
+Artifacts:
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-complex-decode-rerun.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-sample-stream-typed-decode.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-sample-stream-typed-decode-detail.log
+Change:
+  tiled selected-channel DATA and FLAG reads now use typed shared-tile decoders
+  for Complex32 and Bool instead of staging raw per-row bytes through generic
+  ArrayValue decode. The one-worker standard-MFS fixed-tile streaming path now
+  replays weighted samples directly after row-block adaptation instead of
+  rebuilding full PlaneInput/VisibilityBatch objects for every replay block.
+  The sample-stream replay is gated to
+  CASA_RS_STANDARD_MFS_GRID_THREADS=1 and can be disabled with
+  CASA_RS_STANDARD_MFS_DISABLE_SAMPLE_STREAM=1.
+Best bounded detail run:
+  Frontend total: 50.254s -> 35.376s
+  Prepare plane input: 28.664s -> 16.561s
+  get_ms_values: 17.938s -> 8.284s
+  prepare_processing_buffer: 10.725s -> 4.382s
+  Core total: 36.280s -> 18.740s
+  Weighting: 0.000s -> 1.469s
+  PSF grid: 8.393s -> 3.481s
+  residual_degrid_grid: 26.139s -> 12.059s
+  major_cycle_refresh: 17.801s -> 8.629s
+  Peak RSS: 9.47 GiB -> 10.32 GiB
+Second bounded run without detail:
+  Frontend total: 37.091s
+  Core total: 18.651s
+Decision:
+  retained. This is the first recent single-worker structural win rather than
+  a few-percent kernel cleanup. The core weighting timer is no longer zero
+  because the direct sample path keeps the Briggs weighting stage visible in
+  core attribution; frontend wall time still improves by 29.6% against the
+  prior retained complex-decode run. Peak RSS increased by about 0.85 GiB and
+  remains below the 16 GiB dynamic target.
+```
+
 ## Metal Preview Backend Track
 
 The Metal gridding experiment from `codex/metal-experiments` is now part of the

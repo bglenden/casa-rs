@@ -200,6 +200,62 @@ impl StandardMfsStreamingWeightingPlan {
             }
         }
     }
+
+    /// Return the final standard-MFS imaging weight for one sample.
+    ///
+    /// This mirrors [`Self::weight_owned_batches`] for frontends that stream
+    /// accepted row-block samples directly to the standard-MFS gridders instead
+    /// of materializing an owned [`VisibilityBatch`] for each replay.
+    #[inline]
+    pub fn weight_sample(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+        input_weight: f32,
+    ) -> Result<f32, crate::ImagingError> {
+        match self.weighting {
+            WeightingMode::Natural => Ok(input_weight),
+            WeightingMode::Uniform
+            | WeightingMode::Briggs { .. }
+            | WeightingMode::BriggsBwTaper { .. } => {
+                let density = self.density.as_ref().ok_or_else(|| {
+                    crate::ImagingError::InvalidRequest(
+                        "streaming standard MFS weighting density pass was not initialized"
+                            .to_string(),
+                    )
+                })?;
+                let mode = self.mode.ok_or_else(|| {
+                    crate::ImagingError::InvalidRequest(
+                        "streaming standard MFS weighting density pass was not finalized"
+                            .to_string(),
+                    )
+                })?;
+                let Some(cell_density) = self.gridder.density_at_with_convention(
+                    density,
+                    u_lambda,
+                    v_lambda,
+                    self.density_convention,
+                ) else {
+                    return Ok(0.0);
+                };
+                if !(input_weight.is_finite()
+                    && input_weight > 0.0
+                    && cell_density.is_finite()
+                    && cell_density > 0.0)
+                {
+                    return Ok(0.0);
+                }
+                Ok(reweight_density_sample(
+                    input_weight,
+                    cell_density,
+                    u_lambda,
+                    v_lambda,
+                    &self.gridder,
+                    mode,
+                ))
+            }
+        }
+    }
 }
 
 fn standard_mfs_worker_threads() -> usize {
