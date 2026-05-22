@@ -1253,6 +1253,37 @@ regression. The retained direct-planned form averaged 47.614s frontend and
 33.968s core, so it remains an architectural cleanup and attribution hook rather
 than a standalone performance claim.
 
+## Fixed-Tile Multi-Worker Attribution
+
+2026-05-22 bounded fixed-tile sweep, 64-channel, 1024-pixel, Briggs,
+multiscale-clean `niter=50`, direct external-disk MS,
+`CASA_RS_STANDARD_MFS_BACKEND=fixed_tile`,
+`CASA_RS_STANDARD_MFS_TILE_EDGE=32`,
+`CASA_RS_STANDARD_MFS_TILE_ANCHOR=center_boundary`, one repeat, no warmup.
+The one-worker row uses `CASA_RS_STANDARD_MFS_FORCE_TILED_ONE_WORKER=1` so it
+measures the same tiled scheduler instead of the normal global-grid one-worker
+bypass.
+
+| Workers | Artifact | Frontend | Core | PSF grid | Residual grid/degrid | Dirty stage Gtap/s | Residual stage Gtap/s | Dirty active-weighted Gtap/s | Residual active-weighted Gtap/s | Decision |
+|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1 | `target/imperformance-wave2/multi-worker-throughput-20260522/bounded-1w-fixed-tile-throughput-rerun.log` | 53.894s | 39.630s | 9.129s | 28.777s | 0.530 | 0.493 | 1.472 | 1.070 | diagnostic baseline |
+| 2 | `target/imperformance-wave2/multi-worker-throughput-20260522/bounded-2w-fixed-tile-throughput-rerun.log` | 45.179s | 31.505s | 7.442s | 22.349s | 0.650 | 0.649 | 1.485 | 1.055 | retained as best low-risk worker count |
+| 4 | `target/imperformance-wave2/multi-worker-throughput-20260522/bounded-4w-fixed-tile-throughput-rerun.log` | 42.954s | 29.264s | 7.068s | 20.473s | 0.685 | 0.722 | 1.352 | 0.977 | best bounded result in this sweep |
+| 6 | `target/imperformance-wave2/multi-worker-throughput-20260522/bounded-6w-fixed-tile-throughput-rerun.log` | 43.055s | 29.069s | 7.134s | 20.166s | 0.678 | 0.743 | 1.060 | 0.826 | no material win over 4 workers |
+| 8 | `target/imperformance-wave2/multi-worker-throughput-20260522/bounded-8w-fixed-tile-throughput-rerun.log` | 45.534s | 31.454s | 7.376s | 22.148s | 0.656 | 0.655 | 0.918 | 0.680 | rejected: useful throughput collapses |
+| 10 | `target/imperformance-wave2/multi-worker-throughput-20260522/bounded-10w-fixed-tile-throughput-rerun.log` | 50.869s | 35.532s | 8.211s | 25.161s | 0.589 | 0.571 | 0.788 | 0.580 | rejected: overhead dominates |
+
+Interpretation: utilization alone was misleading. The scheduler keeps workers
+mostly non-idle at 2-4 workers, but useful tap throughput plateaus and then
+falls. The unweighted p50 per-worker throughput counters are diagnostic only
+and must not be multiplied by worker count; the active-weighted throughput
+above is the aggregate check that reconciles with wall time. The multi-worker
+direct tiled path also fragments the same bounded work into 3014 scheduler
+blocks, while the forced one-worker tiled path sees 95 blocks. The next
+structural target is row-block-level bucket coalescing across the batch slice,
+which requires bucket samples to carry enough batch identity to index more than
+one `VisibilityBatch`.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:

@@ -92,6 +92,7 @@ const STANDARD_MFS_TILE_ANCHOR_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_ANCHOR";
 const STANDARD_MFS_TILE_FLUSH_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_FLUSH";
 const STANDARD_MFS_TILE_RESIDENT_LIMIT_ENV: &str = "CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT";
 const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
+const STANDARD_MFS_FORCE_TILED_ONE_WORKER_ENV: &str = "CASA_RS_STANDARD_MFS_FORCE_TILED_ONE_WORKER";
 const DEFAULT_STANDARD_MFS_TILE_EDGE: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1052,6 +1053,34 @@ fn stats_triplet(values: &[usize]) -> String {
     )
 }
 
+fn percentile_sorted_f64(sorted: &[f64], percentile: f64) -> f64 {
+    debug_assert!(!sorted.is_empty());
+    let rank = ((sorted.len() - 1) as f64 * percentile).ceil() as usize;
+    sorted[rank.min(sorted.len() - 1)]
+}
+
+fn f64_stats_triplet(values: &[f64], unit: &str) -> String {
+    if values.is_empty() {
+        return format!("p50_{unit}:0.000,p90_{unit}:0.000,p99_{unit}:0.000,max_{unit}:0.000");
+    }
+    let mut sorted = values
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+    if sorted.is_empty() {
+        return format!("p50_{unit}:0.000,p90_{unit}:0.000,p99_{unit}:0.000,max_{unit}:0.000");
+    }
+    sorted.sort_by(|left, right| left.total_cmp(right));
+    format!(
+        "p50_{unit}:{:.3},p90_{unit}:{:.3},p99_{unit}:{:.3},max_{unit}:{:.3}",
+        percentile_sorted_f64(&sorted, 0.50),
+        percentile_sorted_f64(&sorted, 0.90),
+        percentile_sorted_f64(&sorted, 0.99),
+        sorted.last().copied().unwrap_or(0.0)
+    )
+}
+
 fn percentile_sorted_duration(sorted: &[Duration], percentile: f64) -> Duration {
     debug_assert!(!sorted.is_empty());
     let rank = ((sorted.len() - 1) as f64 * percentile).ceil() as usize;
@@ -1085,6 +1114,15 @@ fn duration_total_ms(values: &[Duration]) -> f64 {
 fn percent_or_zero(numerator: f64, denominator: f64) -> f64 {
     if denominator > 0.0 {
         numerator / denominator * 100.0
+    } else {
+        0.0
+    }
+}
+
+fn per_second_or_zero(count: usize, duration: Duration) -> f64 {
+    let seconds = duration.as_secs_f64();
+    if seconds > 0.0 {
+        count as f64 / seconds
     } else {
         0.0
     }
@@ -1222,6 +1260,18 @@ fn standard_mfs_grid_threads() -> usize {
         })
         .filter(|threads| *threads > 0)
         .unwrap_or(1)
+}
+
+fn standard_mfs_force_tiled_one_worker() -> bool {
+    std::env::var(STANDARD_MFS_FORCE_TILED_ONE_WORKER_ENV)
+        .map(|value| {
+            let value = value.trim();
+            value == "1"
+                || value.eq_ignore_ascii_case("true")
+                || value.eq_ignore_ascii_case("yes")
+                || value.eq_ignore_ascii_case("on")
+        })
+        .unwrap_or(false)
 }
 
 fn standard_mfs_per_block_flush_enabled() -> bool {
@@ -1497,6 +1547,26 @@ impl StandardMfsTileSchedulerStageProfile {
             .iter()
             .flat_map(|block| block.worker_profiles.iter().map(|worker| worker.tap_visits))
             .collect::<Vec<_>>();
+        let worker_tap_visits_per_s = self
+            .blocks
+            .iter()
+            .flat_map(|block| {
+                block
+                    .worker_profiles
+                    .iter()
+                    .map(|worker| per_second_or_zero(worker.tap_visits, worker.active))
+            })
+            .collect::<Vec<_>>();
+        let worker_samples_per_s = self
+            .blocks
+            .iter()
+            .flat_map(|block| {
+                block
+                    .worker_profiles
+                    .iter()
+                    .map(|worker| per_second_or_zero(worker.sample_count, worker.active))
+            })
+            .collect::<Vec<_>>();
         let worker_active = self
             .blocks
             .iter()
@@ -1515,8 +1585,21 @@ impl StandardMfsTileSchedulerStageProfile {
             .sum::<f64>();
         let worker_utilization_pct = percent_or_zero(worker_active_total_ms, worker_capacity_ms);
         let worker_tail_idle_ms = (worker_capacity_ms - worker_active_total_ms).max(0.0);
+        let stage_total = self.started_at.elapsed();
+        let stage_tap_visits_per_s = per_second_or_zero(tap_visits_total, stage_total);
+        let stage_samples_per_s = per_second_or_zero(samples_total, stage_total);
+        let active_weighted_tap_visits_per_s = if worker_active_total_ms > 0.0 {
+            tap_visits_total as f64 / (worker_active_total_ms / 1000.0)
+        } else {
+            0.0
+        };
+        let active_weighted_samples_per_s = if worker_active_total_ms > 0.0 {
+            samples_total as f64 / (worker_active_total_ms / 1000.0)
+        } else {
+            0.0
+        };
         eprintln!(
-            "standard_mfs_tile_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} resident_tile_limit={} max_live_row_blocks=1 block_count={} task_count={} samples_total={} tap_visits_total={} task_samples={} task_tap_visits={} largest_task_samples={} largest_task_tap_visits={} bucket_bytes_total={} bucket_bytes_max={} bucket_build_total_ms={:.3} bucket_build={} local_alloc_zero_total_ms={:.3} local_alloc_zero={} worker_replan_grid_total_ms={:.3} worker_replan_grid={} block_wall_total_ms={:.3} block_wall={} merge_total_ms={:.3} merge={} worker_task_count={} worker_samples={} worker_tap_visits={} worker_active_total_ms={:.3} worker_active={} worker_elapsed={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} tile_flush_ms={:.3} tile_flush_count={} tile_eviction_count={} merged_tiles={} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0 stage_total_ms={:.3}",
+            "standard_mfs_tile_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} resident_tile_limit={} max_live_row_blocks=1 block_count={} task_count={} samples_total={} tap_visits_total={} task_samples={} task_tap_visits={} largest_task_samples={} largest_task_tap_visits={} bucket_bytes_total={} bucket_bytes_max={} bucket_build_total_ms={:.3} bucket_build={} local_alloc_zero_total_ms={:.3} local_alloc_zero={} worker_replan_grid_total_ms={:.3} worker_replan_grid={} block_wall_total_ms={:.3} block_wall={} merge_total_ms={:.3} merge={} worker_task_count={} worker_samples={} worker_tap_visits={} worker_tap_visits_per_s={} worker_samples_per_s={} worker_active_total_ms={:.3} worker_active={} worker_elapsed={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} stage_tap_visits_per_s={:.3} stage_samples_per_s={:.3} active_weighted_tap_visits_per_s={:.3} active_weighted_samples_per_s={:.3} tile_flush_ms={:.3} tile_flush_count={} tile_eviction_count={} merged_tiles={} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0 stage_total_ms={:.3}",
             self.stage,
             requested_threads,
             stats_triplet(&actual_threads),
@@ -1550,12 +1633,18 @@ impl StandardMfsTileSchedulerStageProfile {
             stats_triplet(&worker_task_counts),
             stats_triplet(&worker_sample_counts),
             stats_triplet(&worker_tap_visits),
+            f64_stats_triplet(&worker_tap_visits_per_s, "per_s"),
+            f64_stats_triplet(&worker_samples_per_s, "per_s"),
             worker_active_total_ms,
             duration_stats_triplet(&worker_active),
             duration_stats_triplet(&worker_elapsed),
             worker_capacity_ms,
             worker_utilization_pct,
             worker_tail_idle_ms,
+            stage_tap_visits_per_s,
+            stage_samples_per_s,
+            active_weighted_tap_visits_per_s,
+            active_weighted_samples_per_s,
             profile::millis(self.flush_duration),
             self.tile_flush_count,
             self.tile_eviction_count,
@@ -1563,7 +1652,7 @@ impl StandardMfsTileSchedulerStageProfile {
                 .iter()
                 .map(|block| block.merged_tiles)
                 .sum::<usize>(),
-            profile::millis(self.started_at.elapsed()),
+            profile::millis(stage_total),
         );
     }
 }
@@ -1838,7 +1927,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         psf_grid: &mut Array2<Complex64>,
         residual_grid: &mut Array2<Complex64>,
     ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
-        if standard_mfs_grid_threads() <= 1 {
+        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
             return self.accumulate_dirty_grids_global_serial(batches, psf_grid, residual_grid);
         }
         let mut accumulation = StandardMfsDirtyAccumulation {
@@ -1899,7 +1988,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
-        if standard_mfs_grid_threads() <= 1 {
+        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
             return self.accumulate_dirty_grids_global_serial_replay(
                 replay_weighted_batches,
                 psf_grid,
@@ -1962,7 +2051,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         batches: &[VisibilityBatch],
         psf_grid: &mut Array2<Complex64>,
     ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
-        if standard_mfs_grid_threads() <= 1 {
+        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
             return self.accumulate_psf_grid_global_serial(batches, psf_grid);
         }
         let mut accumulation = StandardMfsDirtyAccumulation {
@@ -2022,7 +2111,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
-        if standard_mfs_grid_threads() <= 1 {
+        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
             return self
                 .accumulate_psf_grid_global_serial_replay(replay_weighted_batches, psf_grid);
         }
@@ -3182,7 +3271,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         model_grid: Option<&Array2<Complex32>>,
         residual_grid: &mut Array2<Complex64>,
     ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError> {
-        if standard_mfs_grid_threads() <= 1 {
+        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
             return self.accumulate_residual_grid_global_serial(batches, model_grid, residual_grid);
         }
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
@@ -3233,7 +3322,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
         ) -> Result<(), ImagingError>,
     {
-        if standard_mfs_grid_threads() <= 1 {
+        if standard_mfs_grid_threads() <= 1 && !standard_mfs_force_tiled_one_worker() {
             return self.accumulate_residual_grid_global_serial_replay(
                 replay_weighted_batches,
                 model_grid,
@@ -4799,6 +4888,16 @@ fn log_tiled_scheduler_block(stage: &str, block: &StandardMfsTileSchedulerBlockP
         .iter()
         .map(|worker| worker.tap_visits)
         .collect::<Vec<_>>();
+    let worker_tap_visits_per_s = block
+        .worker_profiles
+        .iter()
+        .map(|worker| per_second_or_zero(worker.tap_visits, worker.active))
+        .collect::<Vec<_>>();
+    let worker_samples_per_s = block
+        .worker_profiles
+        .iter()
+        .map(|worker| per_second_or_zero(worker.sample_count, worker.active))
+        .collect::<Vec<_>>();
     let worker_active = block
         .worker_profiles
         .iter()
@@ -4813,8 +4912,10 @@ fn log_tiled_scheduler_block(stage: &str, block: &StandardMfsTileSchedulerBlockP
     let worker_capacity_ms = profile::millis(block.block_wall) * block.actual_threads.max(1) as f64;
     let worker_utilization_pct = percent_or_zero(worker_active_total_ms, worker_capacity_ms);
     let worker_tail_idle_ms = (worker_capacity_ms - worker_active_total_ms).max(0.0);
+    let block_tap_visits_per_s = per_second_or_zero(block.tap_visits, block.block_wall);
+    let block_samples_per_s = per_second_or_zero(block.sample_count, block.block_wall);
     eprintln!(
-        "standard_mfs_tile_scheduler_block stage={} requested_threads={} actual_threads={} max_live_row_blocks=1 task_count={} samples={} tap_visits={} largest_task_samples={} largest_task_tap_visits={} bucket_bytes={} bucket_build_ms={:.3} local_alloc_zero_ms={:.3} worker_replan_grid_ms={:.3} block_wall_ms={:.3} merge_ms={:.3} merged_tiles={} worker_task_count={} worker_samples={} worker_tap_visits={} worker_active_total_ms={:.3} worker_active={} worker_elapsed={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0",
+        "standard_mfs_tile_scheduler_block stage={} requested_threads={} actual_threads={} max_live_row_blocks=1 task_count={} samples={} tap_visits={} largest_task_samples={} largest_task_tap_visits={} bucket_bytes={} bucket_build_ms={:.3} local_alloc_zero_ms={:.3} worker_replan_grid_ms={:.3} block_wall_ms={:.3} merge_ms={:.3} merged_tiles={} worker_task_count={} worker_samples={} worker_tap_visits={} worker_tap_visits_per_s={} worker_samples_per_s={} worker_active_total_ms={:.3} worker_active={} worker_elapsed={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} block_tap_visits_per_s={:.3} block_samples_per_s={:.3} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0",
         stage,
         block.requested_threads,
         block.actual_threads,
@@ -4833,12 +4934,16 @@ fn log_tiled_scheduler_block(stage: &str, block: &StandardMfsTileSchedulerBlockP
         stats_triplet(&worker_task_counts),
         stats_triplet(&worker_sample_counts),
         stats_triplet(&worker_tap_visits),
+        f64_stats_triplet(&worker_tap_visits_per_s, "per_s"),
+        f64_stats_triplet(&worker_samples_per_s, "per_s"),
         worker_active_total_ms,
         duration_stats_triplet(&worker_active),
         duration_stats_triplet(&worker_elapsed),
         worker_capacity_ms,
         worker_utilization_pct,
         worker_tail_idle_ms,
+        block_tap_visits_per_s,
+        block_samples_per_s,
     );
 }
 

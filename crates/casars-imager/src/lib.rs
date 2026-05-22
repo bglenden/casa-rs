@@ -1993,8 +1993,17 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     let planned_sample_builder = StandardMfsPlannedSampleBuilder::new(request.geometry)
         .map_err(|error| error.to_string())?;
     let run_started_at = Instant::now();
+    let force_tiled_one_worker = env::var("CASA_RS_STANDARD_MFS_FORCE_TILED_ONE_WORKER")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false);
     let use_sample_streaming = env_standard_mfs_grid_threads() == Some(1)
-        && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_SAMPLE_STREAM").is_none();
+        && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_SAMPLE_STREAM").is_none()
+        && !force_tiled_one_worker;
     let result = if use_sample_streaming {
         let mut replay_invocation = 0usize;
         let mut replay_weighted_samples = |consumer: &mut dyn FnMut(
