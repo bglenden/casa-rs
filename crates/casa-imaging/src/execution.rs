@@ -1450,6 +1450,10 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         })
     }
 
+    pub(crate) fn has_all_resident_tiles(&self) -> bool {
+        self.resident_tile_limit >= self.partition.tile_count()
+    }
+
     /// Accumulate dirty PSF and residual grids through resident halo tiles.
     pub(crate) fn accumulate_dirty_grids(
         &self,
@@ -1737,6 +1741,68 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         Ok(accumulation)
     }
 
+    pub(crate) fn accumulate_dirty_grids_direct_replay<F>(
+        &self,
+        replay_weighted_batches: &mut F,
+        psf_grid: &mut Array2<Complex64>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        let mut accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 0.0,
+            reported_sumwt: 0.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+            max_abs_w_lambda: 0.0,
+        };
+        let store = DirectDirtyTileStore::new(&self.partition);
+        let mut scheduler_profile = StandardMfsTileSchedulerStageProfile::new(
+            "dirty",
+            &self.partition,
+            self.resident_tile_limit,
+        );
+
+        replay_weighted_batches(&mut |batches| {
+            for batch in batches {
+                batch.validate()?;
+                accumulation.max_abs_w_lambda = batch
+                    .w_lambda
+                    .iter()
+                    .fold(accumulation.max_abs_w_lambda, |max_value, value| {
+                        max_value.max(value.abs())
+                    });
+                let bucket_started = Instant::now();
+                let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
+                    self.gridder,
+                    &self.partition,
+                    std::slice::from_ref(batch),
+                )?;
+                let bucket_build = bucket_started.elapsed();
+                accumulation.skipped_samples += buckets.skipped_samples();
+                let block_profile = self.accumulate_dirty_block_direct(
+                    batch,
+                    &buckets,
+                    &store,
+                    &mut accumulation,
+                    bucket_build,
+                )?;
+                scheduler_profile.record(block_profile);
+            }
+            Ok(())
+        })?;
+
+        let flush_started = Instant::now();
+        let flushed_tiles = store.flush_all(psf_grid, residual_grid)?;
+        scheduler_profile.add_flush_duration(flush_started.elapsed());
+        scheduler_profile.set_cache_counters(flushed_tiles, 0);
+        scheduler_profile.log();
+        Ok(accumulation)
+    }
+
     fn accumulate_psf_grid_direct(
         &self,
         batches: &[VisibilityBatch],
@@ -1781,6 +1847,67 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             )?;
             scheduler_profile.record(block_profile);
         }
+        let flush_started = Instant::now();
+        let flushed_tiles = store.flush_all(psf_grid)?;
+        scheduler_profile.add_flush_duration(flush_started.elapsed());
+        scheduler_profile.set_cache_counters(flushed_tiles, 0);
+        scheduler_profile.log();
+        Ok(accumulation)
+    }
+
+    pub(crate) fn accumulate_psf_grid_direct_replay<F>(
+        &self,
+        replay_weighted_batches: &mut F,
+        psf_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        let mut accumulation = StandardMfsDirtyAccumulation {
+            normalization_sumwt: 0.0,
+            reported_sumwt: 0.0,
+            gridded_samples: 0,
+            skipped_samples: 0,
+            max_abs_w_lambda: 0.0,
+        };
+        let store = DirectPsfTileStore::new(&self.partition);
+        let mut scheduler_profile = StandardMfsTileSchedulerStageProfile::new(
+            "psf",
+            &self.partition,
+            self.resident_tile_limit,
+        );
+
+        replay_weighted_batches(&mut |batches| {
+            for batch in batches {
+                batch.validate()?;
+                accumulation.max_abs_w_lambda = batch
+                    .w_lambda
+                    .iter()
+                    .fold(accumulation.max_abs_w_lambda, |max_value, value| {
+                        max_value.max(value.abs())
+                    });
+                let bucket_started = Instant::now();
+                let buckets = StandardMfsBlockTileBuckets::build_for_dirty(
+                    self.gridder,
+                    &self.partition,
+                    std::slice::from_ref(batch),
+                )?;
+                let bucket_build = bucket_started.elapsed();
+                accumulation.skipped_samples += buckets.skipped_samples();
+                let block_profile = self.accumulate_psf_block_direct(
+                    batch,
+                    &buckets,
+                    &store,
+                    &mut accumulation,
+                    bucket_build,
+                )?;
+                scheduler_profile.record(block_profile);
+            }
+            Ok(())
+        })?;
+
         let flush_started = Instant::now();
         let flushed_tiles = store.flush_all(psf_grid)?;
         scheduler_profile.add_flush_duration(flush_started.elapsed());
@@ -2616,6 +2743,58 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             )?;
             scheduler_profile.record(block_profile);
         }
+        let flush_started = Instant::now();
+        let flushed_tiles = store.flush_all(residual_grid)?;
+        scheduler_profile.add_flush_duration(flush_started.elapsed());
+        scheduler_profile.set_cache_counters(flushed_tiles, 0);
+        scheduler_profile.log();
+        Ok(accumulation)
+    }
+
+    pub(crate) fn accumulate_residual_grid_direct_replay<F>(
+        &self,
+        replay_weighted_batches: &mut F,
+        model_grid: Option<&Array2<Complex32>>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&[VisibilityBatch]) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        let mut accumulation = StandardMfsTiledResidualAccumulation::default();
+        let store = DirectResidualTileStore::new(&self.partition);
+        let mut scheduler_profile = StandardMfsTileSchedulerStageProfile::new(
+            "residual",
+            &self.partition,
+            self.resident_tile_limit,
+        );
+
+        replay_weighted_batches(&mut |batches| {
+            for batch in batches {
+                batch.validate()?;
+                let bucket_started = Instant::now();
+                let (buckets, block_accumulation) =
+                    StandardMfsBlockTileBuckets::build_for_residual_refresh(
+                        self.gridder,
+                        &self.partition,
+                        batch,
+                    )?;
+                let bucket_build = bucket_started.elapsed();
+                accumulation.add_residual(block_accumulation);
+                let block_profile = self.accumulate_residual_block_direct(
+                    batch,
+                    &buckets,
+                    model_grid,
+                    &store,
+                    &mut accumulation,
+                    bucket_build,
+                )?;
+                scheduler_profile.record(block_profile);
+            }
+            Ok(())
+        })?;
+
         let flush_started = Instant::now();
         let flushed_tiles = store.flush_all(residual_grid)?;
         scheduler_profile.add_flush_duration(flush_started.elapsed());

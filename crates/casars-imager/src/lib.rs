@@ -1900,9 +1900,10 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         ..Default::default()
     };
 
-    let first_rows =
-        &active_selected_rows[..strategy.row_block_rows.min(active_selected_rows.len())];
+    let first_rows_len = strategy.row_block_rows.min(active_selected_rows.len());
+    let first_rows = &active_selected_rows[..first_rows_len];
     let mut first_plane = None::<PlaneInput>;
+    let mut metadata_pass_stats = StandardMfsStreamingPassStats::new("metadata_probe", 0);
     stream_standard_mfs_prepared_row_blocks(
         ms,
         config,
@@ -1918,11 +1919,13 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         prepare_started_at,
         &mut prepare_stage_timings,
         &mut accumulate_timings,
-        |plane| {
+        &mut metadata_pass_stats,
+        |plane, _pass_stats| {
             first_plane = Some(plane);
             Ok(())
         },
     )?;
+    metadata_pass_stats.log();
     let first_plane =
         first_plane.ok_or_else(|| "selection resolved to no prepared row block".to_string())?;
     let phase_center = first_plane.phase_center.clone();
@@ -1946,7 +1949,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
         w_project_planes: config.w_project_planes,
         compatibility: CompatibilityMode::CasaStandardMfs,
     };
-    drop(first_plane);
+    let mut first_plane_for_initial_replay = Some(first_plane);
 
     let mut weighting_plan = StandardMfsStreamingWeightingPlan::new(
         geometry,
@@ -1955,10 +1958,20 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     )
     .map_err(|error| error.to_string())?;
     if weighting_plan.needs_density_pass() {
-        let mut density_pass = |plane: PlaneInput| {
+        let mut density_stats = StandardMfsStreamingPassStats::new("density", 0);
+        if let Some(plane) = first_plane_for_initial_replay.as_ref() {
+            density_stats.record_cached_plane(plane);
+            let weighting_started_at = Instant::now();
             weighting_plan.accumulate_density_batches(&plane.batches);
-            Ok(())
-        };
+            density_stats.add_weighting(weighting_started_at.elapsed());
+        }
+        let mut density_pass =
+            |plane: PlaneInput, pass_stats: &mut StandardMfsStreamingPassStats| {
+                let weighting_started_at = Instant::now();
+                weighting_plan.accumulate_density_batches(&plane.batches);
+                pass_stats.add_weighting(weighting_started_at.elapsed());
+                Ok(())
+            };
         stream_standard_mfs_prepared_row_blocks(
             ms,
             config,
@@ -1966,7 +1979,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             &selection,
             &table_values,
             &flag_row,
-            &active_selected_rows,
+            &active_selected_rows[first_rows_len..],
             derived_engine.as_ref(),
             channel_read_range,
             &geometry_columns,
@@ -1974,28 +1987,60 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             prepare_started_at,
             &mut prepare_stage_timings,
             &mut accumulate_timings,
+            &mut density_stats,
             &mut density_pass,
         )?;
+        density_stats.log();
     }
     weighting_plan.finish_density_pass();
 
     let execution_config = standard_mfs_execution_config(config);
     let run_started_at = Instant::now();
+    let mut replay_invocation = 0usize;
     let mut replay_weighted_batches = |consumer: &mut dyn FnMut(
         &[VisibilityBatch],
     )
         -> Result<(), ImagingError>|
      -> Result<(), ImagingError> {
+        let replay_pass = if replay_invocation == 0 {
+            "initial_replay"
+        } else {
+            "residual_replay"
+        };
+        let replay_ordinal = replay_invocation;
+        replay_invocation += 1;
+        let mut replay_stats = StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
         let mut stream_error = None::<ImagingError>;
-        let mut pass = |mut plane: PlaneInput| {
+        let mut pass = |mut plane: PlaneInput, pass_stats: &mut StandardMfsStreamingPassStats| {
+            let weighting_started_at = Instant::now();
             let weighted = weighting_plan
                 .weight_owned_batches(std::mem::take(&mut plane.batches))
                 .map_err(|error| error.to_string())?;
+            pass_stats.add_weighting(weighting_started_at.elapsed());
+            let consumer_started_at = Instant::now();
             if let Err(error) = consumer(&weighted) {
+                pass_stats.add_consumer(consumer_started_at.elapsed());
                 stream_error = Some(error);
                 return Err("streaming standard MFS weighted consumer failed".to_string());
             }
+            pass_stats.add_consumer(consumer_started_at.elapsed());
             Ok(())
+        };
+        let stream_rows = if replay_ordinal == 0 {
+            if let Some(plane) = first_plane_for_initial_replay.take() {
+                replay_stats.record_cached_plane(&plane);
+                if let Err(error) = pass(plane, &mut replay_stats) {
+                    if let Some(error) = stream_error {
+                        return Err(error);
+                    }
+                    return Err(ImagingError::InvalidRequest(error));
+                }
+                &active_selected_rows[first_rows_len..]
+            } else {
+                &active_selected_rows
+            }
+        } else {
+            &active_selected_rows
         };
         let stream_result = stream_standard_mfs_prepared_row_blocks(
             ms,
@@ -2004,7 +2049,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             &selection,
             &table_values,
             &flag_row,
-            &active_selected_rows,
+            stream_rows,
             derived_engine.as_ref(),
             channel_read_range,
             &geometry_columns,
@@ -2012,8 +2057,10 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             prepare_started_at,
             &mut prepare_stage_timings,
             &mut accumulate_timings,
+            &mut replay_stats,
             &mut pass,
         );
+        replay_stats.log();
         if let Some(error) = stream_error {
             return Err(error);
         }
@@ -4915,6 +4962,95 @@ impl PreparePlaneInputStageTimings {
     }
 }
 
+#[derive(Debug)]
+struct StandardMfsStreamingPassStats {
+    pass: &'static str,
+    ordinal: usize,
+    started_at: Instant,
+    row_blocks: usize,
+    cached_row_blocks: usize,
+    batches: usize,
+    samples: usize,
+    get_ms_values_into_processing_buffer: Duration,
+    prepare_processing_buffer: Duration,
+    weighting: Duration,
+    consumer: Duration,
+}
+
+impl StandardMfsStreamingPassStats {
+    fn new(pass: &'static str, ordinal: usize) -> Self {
+        Self {
+            pass,
+            ordinal,
+            started_at: Instant::now(),
+            row_blocks: 0,
+            cached_row_blocks: 0,
+            batches: 0,
+            samples: 0,
+            get_ms_values_into_processing_buffer: Duration::ZERO,
+            prepare_processing_buffer: Duration::ZERO,
+            weighting: Duration::ZERO,
+            consumer: Duration::ZERO,
+        }
+    }
+
+    fn record_prepared_plane(
+        &mut self,
+        plane: &PlaneInput,
+        get_ms_values_into_processing_buffer: Duration,
+        prepare_processing_buffer: Duration,
+    ) {
+        self.row_blocks += 1;
+        self.batches += plane.batches.len();
+        self.samples += plane_input_sample_count(plane);
+        self.get_ms_values_into_processing_buffer += get_ms_values_into_processing_buffer;
+        self.prepare_processing_buffer += prepare_processing_buffer;
+    }
+
+    fn record_cached_plane(&mut self, plane: &PlaneInput) {
+        self.row_blocks += 1;
+        self.cached_row_blocks += 1;
+        self.batches += plane.batches.len();
+        self.samples += plane_input_sample_count(plane);
+    }
+
+    fn add_weighting(&mut self, elapsed: Duration) {
+        self.weighting += elapsed;
+    }
+
+    fn add_consumer(&mut self, elapsed: Duration) {
+        self.consumer += elapsed;
+    }
+
+    fn log(&self) {
+        if !standard_mfs_profile_detail_enabled() {
+            return;
+        }
+        eprintln!(
+            "standard_mfs_streaming_pass pass={} ordinal={} row_blocks={} cached_row_blocks={} batches={} samples={} get_ms_values_ms={:.3} prepare_processing_ms={:.3} weighting_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
+            self.pass,
+            self.ordinal,
+            self.row_blocks,
+            self.cached_row_blocks,
+            self.batches,
+            self.samples,
+            duration_ms(self.get_ms_values_into_processing_buffer),
+            duration_ms(self.prepare_processing_buffer),
+            duration_ms(self.weighting),
+            duration_ms(self.consumer),
+            duration_ms(self.started_at.elapsed()),
+        );
+    }
+}
+
+fn plane_input_sample_count(plane: &PlaneInput) -> usize {
+    plane.batches.iter().map(VisibilityBatch::len).sum()
+}
+
+fn duration_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
+
 struct PlaneInput {
     phase_center: PhaseCenter,
     freq_ref: FrequencyRef,
@@ -7622,10 +7758,11 @@ fn stream_standard_mfs_prepared_row_blocks<F>(
     prepare_started_at: Instant,
     prepare_stage_timings: &mut PreparePlaneInputStageTimings,
     accumulate_timings: &mut AccumulateRowTimings,
+    pass_stats: &mut StandardMfsStreamingPassStats,
     mut on_plane: F,
 ) -> Result<usize, String>
 where
-    F: FnMut(PlaneInput) -> Result<(), String>,
+    F: FnMut(PlaneInput, &mut StandardMfsStreamingPassStats) -> Result<(), String>,
 {
     let mut prepared_batch_count = 0usize;
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
@@ -7641,7 +7778,8 @@ where
             geometry_columns,
             prepare_started_at,
         )?;
-        prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
+        let get_ms_values_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
 
         let stage_started_at = Instant::now();
         let plane = prepare_processing_buffer(
@@ -7653,9 +7791,11 @@ where
             derived_engine,
             accumulate_timings,
         )?;
-        prepare_stage_timings.prepare_processing_buffer += stage_started_at.elapsed();
+        let prepare_processing_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
         prepared_batch_count += plane.batches.len();
-        on_plane(plane)?;
+        pass_stats.record_prepared_plane(&plane, get_ms_values_elapsed, prepare_processing_elapsed);
+        on_plane(plane, pass_stats)?;
         if frontend_progress_enabled() {
             eprintln!(
                 "frontend stage=prepare_plane_input/row_block rows_done={} rows_total={} batches={} total_elapsed_s={:.3}",

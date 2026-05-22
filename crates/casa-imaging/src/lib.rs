@@ -1015,12 +1015,20 @@ where
     };
 
     let grid_started = Instant::now();
-    replay_weighted_batches(&mut |batches| {
-        let block_accumulation =
-            executor.accumulate_dirty_grids(batches, &mut psf_grid, &mut residual_grid)?;
-        accumulate_dirty_accumulation(&mut accumulation, block_accumulation);
-        Ok(())
-    })?;
+    if executor.has_all_resident_tiles() {
+        accumulation = executor.accumulate_dirty_grids_direct_replay(
+            replay_weighted_batches,
+            &mut psf_grid,
+            &mut residual_grid,
+        )?;
+    } else {
+        replay_weighted_batches(&mut |batches| {
+            let block_accumulation =
+                executor.accumulate_dirty_grids(batches, &mut psf_grid, &mut residual_grid)?;
+            accumulate_dirty_accumulation(&mut accumulation, block_accumulation);
+            Ok(())
+        })?;
+    }
     let grid_elapsed = grid_started.elapsed();
     let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
     stage_timings.psf_grid += split_grid_elapsed;
@@ -1060,11 +1068,16 @@ where
     };
 
     let grid_started = Instant::now();
-    replay_weighted_batches(&mut |batches| {
-        let block_accumulation = executor.accumulate_psf_grid(batches, &mut psf_grid)?;
-        accumulate_dirty_accumulation(&mut accumulation, block_accumulation);
-        Ok(())
-    })?;
+    if executor.has_all_resident_tiles() {
+        accumulation =
+            executor.accumulate_psf_grid_direct_replay(replay_weighted_batches, &mut psf_grid)?;
+    } else {
+        replay_weighted_batches(&mut |batches| {
+            let block_accumulation = executor.accumulate_psf_grid(batches, &mut psf_grid)?;
+            accumulate_dirty_accumulation(&mut accumulation, block_accumulation);
+            Ok(())
+        })?;
+    }
     stage_timings.psf_grid += grid_started.elapsed();
     psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings)
 }
@@ -1099,12 +1112,23 @@ where
         StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
     let mut counts = StandardMfsTiledResidualAccumulation::default();
     let degrid_grid_started = Instant::now();
-    replay_weighted_batches(&mut |batches| {
-        let block_counts =
-            executor.accumulate_residual_grid(batches, model_grid.as_ref(), &mut residual_grid)?;
-        accumulate_residual_accumulation(&mut counts, block_counts);
-        Ok(())
-    })?;
+    if executor.has_all_resident_tiles() {
+        counts = executor.accumulate_residual_grid_direct_replay(
+            replay_weighted_batches,
+            model_grid.as_ref(),
+            &mut residual_grid,
+        )?;
+    } else {
+        replay_weighted_batches(&mut |batches| {
+            let block_counts = executor.accumulate_residual_grid(
+                batches,
+                model_grid.as_ref(),
+                &mut residual_grid,
+            )?;
+            accumulate_residual_accumulation(&mut counts, block_counts);
+            Ok(())
+        })?;
+    }
     timings.degrid_grid = degrid_grid_started.elapsed();
 
     let fft_started = Instant::now();

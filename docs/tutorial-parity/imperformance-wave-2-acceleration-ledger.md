@@ -212,6 +212,41 @@ tile-edge sweep:
   using bounded scratch only when hot-tile splitting is explicitly enabled;
 - align prepared row-block/batch sizing with the centralized memory planner.
 
+Follow-up streaming attribution and resident-stage repair checkpoint:
+
+```text
+Artifact: target/imperformance-wave2/streaming-pass-attribution-20260521/fixed-tile-stage-resident-smoke.log
+Workload: one-channel imsize 64 Briggs smoke on the medium MS, fixed-tile backend, 2 workers
+Correctness: targeted core/frontend tests below
+Decision: retained; this is instrumentation and a scheduler data-flow repair, not a timing claim for the full-shape benchmark
+```
+
+The fixed-tile frontend now emits `standard_mfs_streaming_pass` records when
+`CASA_RS_STANDARD_MFS_PROFILE_DETAIL=1` is set. The records split each streaming
+pass into row blocks, cached first blocks, batches, samples, MS-value loading,
+buffer preparation, weighting, consumer time, and pass wall time. The first
+prepared row block is no longer discarded after metadata discovery: Briggs,
+Uniform, and BriggsBwTaper reuse it for the density pass and the initial
+weighted replay, then stream only the remaining row blocks for those passes.
+Residual refreshes still replay the full row range because the first block has
+been consumed and the design still avoids full-MS prepared-batch retention.
+
+The all-resident fixed-tile core path now keeps the direct tile store alive
+across the whole replayed dirty/PSF/residual stage. Before this repair, the
+streaming callback shape caused one direct store and one flush per row block
+even when the planner had all tiles resident. The smoke artifact now has one
+aggregate dirty scheduler summary with `block_count=95`, `tile_flush_count=4`,
+and `tile_eviction_count=0`; the per-row-block tasks are still visible through
+the aggregate quantiles rather than as separate stage summaries.
+
+The smoke also demonstrates why the next full-shape run must use the new pass
+records rather than only the old `core_total`: in the streaming path the core
+replay callback necessarily includes frontend row-block loading/preparation
+time. For this smoke, `initial_replay` reported `get_ms_values_ms=2264.338`,
+`prepare_processing_ms=1890.816`, `weighting_ms=13.294`, and
+`consumer_ms=111.056`, while the aggregate dirty scheduler line captured the
+tile-task work and final stage flush.
+
 ## Metal Preview Backend Track
 
 The Metal gridding experiment from `codex/metal-experiments` is now part of the
