@@ -164,6 +164,12 @@ queued task metadata, active-tile bookkeeping, and oldest-block drain behavior.
 Workers must skip or postpone active-tile tasks rather than blocking behind
 them; queue depth two and hot-tile splitting remain data-gated follow-ups.
 
+Fixed-tile scheduler profiles must report whether the configured workers are
+actually being used. The summary and optional block-detail records include
+per-worker task, sample, tap-visit, active-time, elapsed-time, capacity,
+utilization percentage, and tail-idle fields. Those counters are required
+evidence before accepting or rejecting multi-worker scheduler changes.
+
 ## Exactness Policy
 
 The tiled backend must be deterministic, but it does not need to be bitwise
