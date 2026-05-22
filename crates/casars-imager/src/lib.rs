@@ -11232,59 +11232,111 @@ impl PreparedSelection {
                 PreparedTraceState::PairedMfs { .. },
             ) => {
                 let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
-                for (channel_index, frequency_hz) in self
-                    .source_channel_indices
-                    .iter()
-                    .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                if let Some((first_weight, second_weight)) =
+                    weights.channel_invariant_pair_weights(pair.0, pair.1)?
                 {
-                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
-                    let local_channel = data_2d.local_channel(channel_index)?;
-                    let first_visibility = phase_rotate_visibility(
-                        data_2d.get_local(pair.0, local_channel, channel_index)?,
-                        transform.phase_shift_m,
-                        imaging_frequency_hz,
-                    );
-                    let second_visibility = phase_rotate_visibility(
-                        data_2d.get_local(pair.1, local_channel, channel_index)?,
-                        transform.phase_shift_m,
-                        imaging_frequency_hz,
-                    );
-                    let (first_weight, _) = weights.get_local(pair.0, local_channel)?;
-                    let (second_weight, _) = weights.get_local(pair.1, local_channel)?;
-                    let first_flagged = flags_2d.get_local(pair.0, local_channel, channel_index)?;
-                    let second_flagged =
-                        flags_2d.get_local(pair.1, local_channel, channel_index)?;
-                    if first_flagged || second_flagged {
-                        continue;
-                    }
-                    if !(first_weight.is_finite()
+                    if first_weight.is_finite()
                         && first_weight > 0.0
                         && second_weight.is_finite()
-                        && second_weight > 0.0)
+                        && second_weight > 0.0
                     {
-                        continue;
+                        let combined_weight = 0.5 * (first_weight + second_weight);
+                        if combined_weight.is_finite() && combined_weight > 0.0 {
+                            for (channel_index, frequency_hz) in self
+                                .source_channel_indices
+                                .iter()
+                                .copied()
+                                .zip(self.source_channel_frequencies_hz.iter().copied())
+                            {
+                                let local_channel = data_2d.local_channel(channel_index)?;
+                                let first_flagged =
+                                    flags_2d.get_local(pair.0, local_channel, channel_index)?;
+                                let second_flagged =
+                                    flags_2d.get_local(pair.1, local_channel, channel_index)?;
+                                if first_flagged || second_flagged {
+                                    continue;
+                                }
+                                let first_visibility =
+                                    data_2d.get_local(pair.0, local_channel, channel_index)?;
+                                let second_visibility =
+                                    data_2d.get_local(pair.1, local_channel, channel_index)?;
+                                let visibility = phase_rotate_visibility(
+                                    collapse_paired_visibility(
+                                        first_visibility,
+                                        second_visibility,
+                                        *pair_transform,
+                                    ),
+                                    transform.phase_shift_m,
+                                    frequency_hz * mfs_frequency_scale,
+                                );
+                                if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                                    continue;
+                                }
+                                let lambda_scale = frequency_hz * mfs_lambda_scale;
+                                batch.u_lambda.push(uvw_m[0] * lambda_scale);
+                                batch.v_lambda.push(uvw_m[1] * lambda_scale);
+                                batch.w_lambda.push(uvw_m[2] * lambda_scale);
+                                batch.weight.push(combined_weight);
+                                batch.sumwt_factor.push(sumwt_factor);
+                                batch.gridable.push(is_cross);
+                                batch.visibility.push(visibility);
+                            }
+                        }
                     }
-                    let visibility = collapse_paired_visibility(
-                        first_visibility,
-                        second_visibility,
-                        *pair_transform,
-                    );
-                    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
-                        continue;
+                } else {
+                    for (channel_index, frequency_hz) in self
+                        .source_channel_indices
+                        .iter()
+                        .copied()
+                        .zip(self.source_channel_frequencies_hz.iter().copied())
+                    {
+                        let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
+                        let local_channel = data_2d.local_channel(channel_index)?;
+                        let first_flagged =
+                            flags_2d.get_local(pair.0, local_channel, channel_index)?;
+                        let second_flagged =
+                            flags_2d.get_local(pair.1, local_channel, channel_index)?;
+                        if first_flagged || second_flagged {
+                            continue;
+                        }
+                        let first_visibility =
+                            data_2d.get_local(pair.0, local_channel, channel_index)?;
+                        let second_visibility =
+                            data_2d.get_local(pair.1, local_channel, channel_index)?;
+                        let (first_weight, _) = weights.get_local(pair.0, local_channel)?;
+                        let (second_weight, _) = weights.get_local(pair.1, local_channel)?;
+                        if !(first_weight.is_finite()
+                            && first_weight > 0.0
+                            && second_weight.is_finite()
+                            && second_weight > 0.0)
+                        {
+                            continue;
+                        }
+                        let combined_weight = 0.5 * (first_weight + second_weight);
+                        if !(combined_weight.is_finite() && combined_weight > 0.0) {
+                            continue;
+                        }
+                        let visibility = phase_rotate_visibility(
+                            collapse_paired_visibility(
+                                first_visibility,
+                                second_visibility,
+                                *pair_transform,
+                            ),
+                            transform.phase_shift_m,
+                            imaging_frequency_hz,
+                        );
+                        if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                            continue;
+                        }
+                        let lambda_scale = frequency_hz * mfs_lambda_scale;
+                        batch.u_lambda.push(uvw_m[0] * lambda_scale);
+                        batch.v_lambda.push(uvw_m[1] * lambda_scale);
+                        batch.w_lambda.push(uvw_m[2] * lambda_scale);
+                        batch.weight.push(combined_weight);
+                        batch.sumwt_factor.push(sumwt_factor);
+                        batch.gridable.push(is_cross);
+                        batch.visibility.push(visibility);
                     }
-                    let combined_weight = 0.5 * (first_weight + second_weight);
-                    if !(combined_weight.is_finite() && combined_weight > 0.0) {
-                        continue;
-                    }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
-                    batch.u_lambda.push(uvw_m[0] * lambda_scale);
-                    batch.v_lambda.push(uvw_m[1] * lambda_scale);
-                    batch.w_lambda.push(uvw_m[2] * lambda_scale);
-                    batch.weight.push(combined_weight);
-                    batch.sumwt_factor.push(sumwt_factor);
-                    batch.gridable.push(is_cross);
-                    batch.visibility.push(visibility);
                 }
             }
             (
@@ -12039,60 +12091,117 @@ impl PreparedSelection {
         let mut accepted_samples = 0usize;
         match &self.state {
             PreparedState::ExplicitMfs { corr_index, .. } => {
-                for (channel_index, frequency_hz) in self
-                    .source_channel_indices
-                    .iter()
-                    .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
-                {
-                    if flags_2d.get(*corr_index, channel_index)? {
-                        continue;
+                if let Some(weight) = weights.channel_invariant_weight(*corr_index)? {
+                    if weight.is_finite() && weight > 0.0 {
+                        for (channel_index, frequency_hz) in self
+                            .source_channel_indices
+                            .iter()
+                            .copied()
+                            .zip(self.source_channel_frequencies_hz.iter().copied())
+                        {
+                            if flags_2d.get(*corr_index, channel_index)? {
+                                continue;
+                            }
+                            let lambda_scale = frequency_hz * mfs_lambda_scale;
+                            weighting_plan.accumulate_density_sample(
+                                uvw_m[0] * lambda_scale,
+                                uvw_m[1] * lambda_scale,
+                                weight,
+                            );
+                            accepted_samples += 1;
+                        }
                     }
-                    let (weight, _) = weights.get(*corr_index, channel_index)?;
-                    if !(weight.is_finite() && weight > 0.0) {
-                        continue;
+                } else {
+                    for (channel_index, frequency_hz) in self
+                        .source_channel_indices
+                        .iter()
+                        .copied()
+                        .zip(self.source_channel_frequencies_hz.iter().copied())
+                    {
+                        if flags_2d.get(*corr_index, channel_index)? {
+                            continue;
+                        }
+                        let weight = weights.get(*corr_index, channel_index)?.0;
+                        if !(weight.is_finite() && weight > 0.0) {
+                            continue;
+                        }
+                        let lambda_scale = frequency_hz * mfs_lambda_scale;
+                        weighting_plan.accumulate_density_sample(
+                            uvw_m[0] * lambda_scale,
+                            uvw_m[1] * lambda_scale,
+                            weight,
+                        );
+                        accepted_samples += 1;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
-                    weighting_plan.accumulate_density_sample(
-                        uvw_m[0] * lambda_scale,
-                        uvw_m[1] * lambda_scale,
-                        weight,
-                    );
-                    accepted_samples += 1;
                 }
             }
             PreparedState::CollapsedMfs { pair, .. } | PreparedState::PairedMfs { pair, .. } => {
-                for (channel_index, frequency_hz) in self
-                    .source_channel_indices
-                    .iter()
-                    .copied()
-                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                if let Some((first_weight, second_weight)) =
+                    weights.channel_invariant_pair_weights(pair.0, pair.1)?
                 {
-                    if flags_2d.get(pair.0, channel_index)?
-                        || flags_2d.get(pair.1, channel_index)?
-                    {
-                        continue;
-                    }
-                    let (first_weight, _) = weights.get(pair.0, channel_index)?;
-                    let (second_weight, _) = weights.get(pair.1, channel_index)?;
-                    if !(first_weight.is_finite()
+                    if first_weight.is_finite()
                         && first_weight > 0.0
                         && second_weight.is_finite()
-                        && second_weight > 0.0)
+                        && second_weight > 0.0
                     {
-                        continue;
+                        let combined_weight = 0.5 * (first_weight + second_weight);
+                        if combined_weight.is_finite() && combined_weight > 0.0 {
+                            for (channel_index, frequency_hz) in self
+                                .source_channel_indices
+                                .iter()
+                                .copied()
+                                .zip(self.source_channel_frequencies_hz.iter().copied())
+                            {
+                                if flags_2d.get(pair.0, channel_index)?
+                                    || flags_2d.get(pair.1, channel_index)?
+                                {
+                                    continue;
+                                }
+                                let lambda_scale = frequency_hz * mfs_lambda_scale;
+                                weighting_plan.accumulate_density_sample(
+                                    uvw_m[0] * lambda_scale,
+                                    uvw_m[1] * lambda_scale,
+                                    combined_weight,
+                                );
+                                accepted_samples += 1;
+                            }
+                        }
                     }
-                    let combined_weight = 0.5 * (first_weight + second_weight);
-                    if !(combined_weight.is_finite() && combined_weight > 0.0) {
-                        continue;
+                } else {
+                    for (channel_index, frequency_hz) in self
+                        .source_channel_indices
+                        .iter()
+                        .copied()
+                        .zip(self.source_channel_frequencies_hz.iter().copied())
+                    {
+                        if flags_2d.get(pair.0, channel_index)?
+                            || flags_2d.get(pair.1, channel_index)?
+                        {
+                            continue;
+                        }
+                        let (first_weight, second_weight) = (
+                            weights.get(pair.0, channel_index)?.0,
+                            weights.get(pair.1, channel_index)?.0,
+                        );
+                        if !(first_weight.is_finite()
+                            && first_weight > 0.0
+                            && second_weight.is_finite()
+                            && second_weight > 0.0)
+                        {
+                            continue;
+                        }
+                        let combined_weight = 0.5 * (first_weight + second_weight);
+                        if !(combined_weight.is_finite() && combined_weight > 0.0) {
+                            continue;
+                        }
+                        let lambda_scale = frequency_hz * mfs_lambda_scale;
+                        weighting_plan.accumulate_density_sample(
+                            uvw_m[0] * lambda_scale,
+                            uvw_m[1] * lambda_scale,
+                            combined_weight,
+                        );
+                        accepted_samples += 1;
                     }
-                    let lambda_scale = frequency_hz * mfs_lambda_scale;
-                    weighting_plan.accumulate_density_sample(
-                        uvw_m[0] * lambda_scale,
-                        uvw_m[1] * lambda_scale,
-                        combined_weight,
-                    );
-                    accepted_samples += 1;
                 }
             }
             _ => {
@@ -12170,6 +12279,7 @@ impl PreparedSelection {
         let mut accepted_samples = 0usize;
         match &self.state {
             PreparedState::ExplicitMfs { corr_index, .. } => {
+                let channel_invariant_weight = weights.channel_invariant_weight(*corr_index)?;
                 for (channel_index, frequency_hz) in self
                     .source_channel_indices
                     .iter()
@@ -12180,7 +12290,11 @@ impl PreparedSelection {
                     if flags_2d.get_local(*corr_index, local_channel, channel_index)? {
                         continue;
                     }
-                    let (weight, _) = weights.get_local(*corr_index, local_channel)?;
+                    let weight = if let Some(weight) = channel_invariant_weight {
+                        weight
+                    } else {
+                        weights.get_local(*corr_index, local_channel)?.0
+                    };
                     if !(weight.is_finite() && weight > 0.0) {
                         continue;
                     }
@@ -12199,6 +12313,8 @@ impl PreparedSelection {
             | PreparedState::PairedMfs {
                 transform, pair, ..
             } => {
+                let channel_invariant_pair_weights =
+                    weights.channel_invariant_pair_weights(pair.0, pair.1)?;
                 for (channel_index, frequency_hz) in self
                     .source_channel_indices
                     .iter()
@@ -12222,8 +12338,16 @@ impl PreparedSelection {
                     {
                         continue;
                     }
-                    let (first_weight, _) = weights.get_local(pair.0, local_channel)?;
-                    let (second_weight, _) = weights.get_local(pair.1, local_channel)?;
+                    let (first_weight, second_weight) = if let Some((first_weight, second_weight)) =
+                        channel_invariant_pair_weights
+                    {
+                        (first_weight, second_weight)
+                    } else {
+                        (
+                            weights.get_local(pair.0, local_channel)?.0,
+                            weights.get_local(pair.1, local_channel)?.0,
+                        )
+                    };
                     if !(first_weight.is_finite()
                         && first_weight > 0.0
                         && second_weight.is_finite()
@@ -16586,6 +16710,27 @@ impl<'a> WeightRow<'a> {
         self.weights
             .get(corr, "WEIGHT")
             .map(|weight| (weight, WeightSourceKind::Weight))
+    }
+
+    fn channel_invariant_weight(&self, corr: usize) -> Result<Option<f32>, String> {
+        if self.spectrum.is_some() {
+            return Ok(None);
+        }
+        self.weights.get(corr, "WEIGHT").map(Some)
+    }
+
+    fn channel_invariant_pair_weights(
+        &self,
+        first_corr: usize,
+        second_corr: usize,
+    ) -> Result<Option<(f32, f32)>, String> {
+        if self.spectrum.is_some() {
+            return Ok(None);
+        }
+        Ok(Some((
+            self.weights.get(first_corr, "WEIGHT")?,
+            self.weights.get(second_corr, "WEIGHT")?,
+        )))
     }
 }
 

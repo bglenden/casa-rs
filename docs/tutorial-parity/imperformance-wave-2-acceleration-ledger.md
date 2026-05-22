@@ -386,6 +386,59 @@ cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_co
 cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib
 ```
 
+Single-worker paired sample preparation cleanup:
+
+```text
+Artifacts:
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-density-skip-data.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-collapse-before-phase-rerun.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-weight-hoist-rerun.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-weight-hoist-split.log
+Change:
+  collapsed paired standard-MFS samples now collapse the two hands first and
+  apply the common row phase rotation once to the collapsed visibility;
+  standard-MFS density and collapsed paired preparation also reuse row-invariant
+  WEIGHT values when WEIGHT_SPECTRUM is absent, split the invariant path outside
+  the channel loop, and keep the existing per-channel path for spectral weights.
+Best bounded rerun:
+  Frontend total: 55.748s -> 52.604s
+  Prepare plane input: 33.410s -> 30.329s
+  get_ms_values: 19.537s -> 19.535s
+  prepare_processing_buffer: 13.874s -> 10.794s
+  Core total: 40.801s -> 38.643s
+  PSF grid: 9.648s -> 9.136s
+  residual_degrid_grid: 29.457s -> 27.808s
+  major_cycle_refresh: 19.860s -> 18.725s
+  Peak RSS: 9.47 GiB -> 9.47 GiB
+Decision:
+  retained. The phase-collapse-only rerun moved under 1%, but the row-invariant
+  weight hoist repeated as a roughly 5.6% bounded frontend improvement, with the
+  gain concentrated in preparation/adaptation. This is still a serial cleanup,
+  not a solution for the remaining grid/degrid high nails.
+```
+
+Single-worker call-tree checkpoint after paired preparation cleanup:
+
+```text
+Artifacts:
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-samply.json.gz
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-apple-sample.txt
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-apple-sample-run.log
+Summary:
+  Apple sample captured the density/initial replay window with 1668 samples.
+  The largest symbolicated buckets were:
+    525 samples in StandardGridder::grid_sample_taps_real_complex_pair_planned_f64
+    273 + 180 samples in get_ms_values_into_processing_buffer through tiled
+      column row-block loading, decode, memcpy, and shared-tile cache lookups
+     64 samples in StandardMfsStreamingWeightingPlan::weight_owned_batches
+     27 samples in StandardGridder::plan_positive_taps
+Decision:
+  next single-worker work should target the tap-application kernel and then the
+  tiled table row-block loader/copy/decode path. The sample argues against
+  spending more Wave 2 time on broad preparation rewrites before those two
+  call-tree hotspots are addressed.
+```
+
 ## Metal Preview Backend Track
 
 The Metal gridding experiment from `codex/metal-experiments` is now part of the
