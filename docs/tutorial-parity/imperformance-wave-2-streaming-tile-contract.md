@@ -1,8 +1,8 @@
 # ImPerformance Wave 2 Streaming Tile Contract
 
 Truth class: current design contract
-Last reality check: 2026-05-21
-Verification: External Oracle-style review in Chrome conversation `Bundle review request`; `cargo check -p casa-imaging -p casars-imager`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib`
+Last reality check: 2026-05-22
+Verification: External Oracle-style review in Chrome conversation `Bundle review request`; producer/consumer scheduler review in Chrome conversation `Revised design proposal`; `cargo check -p casa-imaging -p casars-imager`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib`
 
 Wave issue: #263
 
@@ -12,6 +12,13 @@ backend is a bounded standard-MFS streaming tile backend that keeps only a
 planner-approved row block, compact current-block tile buckets, a bounded set of
 resident halo-padded tile buffers, and the global stage grids needed by FFT and
 deconvolution.
+
+The concrete producer/consumer scheduler design is recorded in
+`docs/tutorial-parity/imperformance-wave-2-producer-consumer-scheduler-design.md`.
+That design is the plan of record for replacing the current synchronous
+batch-at-a-time fixed-tile worker feed with owned row-block work units,
+per-tile FIFO queues, persistent workers, memory leases, and stage overlap
+instrumentation.
 
 ## Backend Contract
 

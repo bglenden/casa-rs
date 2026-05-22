@@ -1294,6 +1294,60 @@ flush, and 0.074s unaccounted. This directly confirms that the worker pool is
 mostly starved by replay/input gaps and excessive small-batch scheduling, not
 by tile merge or tile flush.
 
+## Producer/Consumer Scheduler Design
+
+The line-attribution result above led to a design review rather than another
+tile-edge or worker-count experiment. The current fixed-tile scheduler does not
+match the intended producer/consumer shape: it synchronously replays one
+`VisibilityBatch` into one scoped worker block at a time, so workers see many
+small isolated task lists instead of persistent tile queues fed by bounded
+prepared row blocks.
+
+Design artifact:
+`docs/tutorial-parity/imperformance-wave-2-producer-consumer-scheduler-design.md`.
+
+Review artifact: Chrome Oracle conversation `Revised design proposal`, including
+one follow-up iteration focused on implementation order, memory ownership, and
+acceptance gates.
+
+Retained design decisions:
+
+- add Phase 0 data/lifetime scaffolding before concurrency changes:
+  `PreparedTileRowBlock`, sample IDs, row-block accessors, aggregate memory
+  leases, shared sample classification, and deterministic scalar records;
+- do Phase A row-block coalescing before persistent workers, so one frontend
+  row block becomes one scheduler block and the sample-indexing change is
+  tested without asynchronous lifetime risk;
+- implement persistent workers with per-tile FIFO queues plus a global ready
+  heap, with one valid heap head per inactive nonempty tile;
+- treat oldest-block-first as a priority policy for memory drainage, not a
+  global block barrier;
+- split memory accounting into stage, build/scratch, and published-row-block
+  lease lifetimes;
+- require overlap attribution before claiming the multi-worker structure is
+  fixed.
+
+Mandatory proof before accepting the new scheduler shape:
+
+```text
+worker_waiting_for_work_time / (worker_count * stage_wall_time)
+producer_active_time
+worker_active_union_time
+producer_worker_overlap_time
+producer_only_time
+worker_only_time
+neither_active_time
+producer_blocked_on_memory
+live row-block bytes and RSS high water
+scheduler and tile lock wait
+active tile skip/stale heap counts
+dirty/PSF/residual correctness across 1, 2, and 10 workers
+```
+
+Decision: retained as the next multi-worker implementation plan. Phase A is a
+measured compatibility/data-model checkpoint, not a performance claim; Phase C
+is the first phase allowed to claim producer/worker overlap.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
