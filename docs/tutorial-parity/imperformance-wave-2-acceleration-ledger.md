@@ -439,6 +439,38 @@ Decision:
   call-tree hotspots are addressed.
 ```
 
+Single-worker tap-application storage-slice cleanup:
+
+```text
+Artifacts:
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-weight-hoist-split.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-grid-storage.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-grid-storage-rerun.log
+Change:
+  standard-MFS serial fixed-tile dirty/PSF and residual refresh now select
+  contiguous grid storage once per stage replay and use storage-slice tap
+  application kernels. The array-indexed kernels remain as fallbacks for
+  non-contiguous grids and other callers.
+Best bounded rerun:
+  Frontend total: 52.604s -> 51.900s
+  Prepare plane input: 30.329s -> 30.336s
+  get_ms_values: 19.535s -> 19.553s
+  prepare_processing_buffer: 10.794s -> 10.783s
+  Core total: 38.643s -> 37.910s
+  PSF grid: 9.136s -> 8.783s
+  residual_degrid_grid: 27.808s -> 27.416s
+  major_cycle_refresh: 18.725s -> 18.688s
+  Peak RSS: 9.47 GiB -> 9.43 GiB
+Noisy first run:
+  Frontend total: 52.604s -> 53.906s
+  Core total: 38.643s -> 39.377s
+Decision:
+  retained as a small exact kernel cleanup because the rerun improves the
+  sampled tap-application hotspots directly, but not counted as a major Wave 2
+  breakthrough. The next serial high nail remains the row-block loader/copy/
+  decode path and residual refresh tap planning/application attribution.
+```
+
 ## Metal Preview Backend Track
 
 The Metal gridding experiment from `codex/metal-experiments` is now part of the

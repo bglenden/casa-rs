@@ -2243,79 +2243,159 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut finite_visibility_samples = 0usize;
         let mut psf_only_samples = 0usize;
 
-        replay_weighted_batches(&mut |batches| {
-            for batch in batches {
-                batch.validate()?;
-                accumulation.max_abs_w_lambda = batch
-                    .w_lambda
-                    .iter()
-                    .fold(accumulation.max_abs_w_lambda, |max_value, value| {
-                        max_value.max(value.abs())
-                    });
-                let samples = batch
-                    .gridable
-                    .iter()
-                    .copied()
-                    .zip(batch.weight.iter().copied())
-                    .zip(batch.sumwt_factor.iter().copied())
-                    .zip(batch.u_lambda.iter().copied())
-                    .zip(batch.v_lambda.iter().copied())
-                    .zip(batch.visibility.iter().copied());
-                for (
-                    ((((gridable, weight), sumwt_factor), u_lambda), v_lambda),
-                    observed_visibility,
-                ) in samples
-                {
-                    if !gridable {
-                        accumulation.skipped_samples += 1;
-                        continue;
-                    }
-                    if !(weight.is_finite()
-                        && weight > 0.0
-                        && sumwt_factor.is_finite()
-                        && sumwt_factor > 0.0)
+        if let (Some(psf_storage), Some(residual_storage)) = (
+            psf_grid.as_slice_memory_order_mut(),
+            residual_grid.as_slice_memory_order_mut(),
+        ) {
+            replay_weighted_batches(&mut |batches| {
+                for batch in batches {
+                    batch.validate()?;
+                    accumulation.max_abs_w_lambda = batch
+                        .w_lambda
+                        .iter()
+                        .fold(accumulation.max_abs_w_lambda, |max_value, value| {
+                            max_value.max(value.abs())
+                        });
+                    let samples = batch
+                        .gridable
+                        .iter()
+                        .copied()
+                        .zip(batch.weight.iter().copied())
+                        .zip(batch.sumwt_factor.iter().copied())
+                        .zip(batch.u_lambda.iter().copied())
+                        .zip(batch.v_lambda.iter().copied())
+                        .zip(batch.visibility.iter().copied());
+                    for (
+                        ((((gridable, weight), sumwt_factor), u_lambda), v_lambda),
+                        observed_visibility,
+                    ) in samples
                     {
-                        accumulation.skipped_samples += 1;
-                        continue;
-                    }
-                    let Some(taps) = self.gridder.plan_positive_taps(u_lambda, v_lambda) else {
-                        accumulation.skipped_samples += 1;
-                        continue;
-                    };
-                    let grid_weight = weight * sumwt_factor;
-                    if !(grid_weight.is_finite() && grid_weight > 0.0) {
-                        accumulation.skipped_samples += 1;
-                        continue;
-                    }
-                    let grid_weight = f64::from(grid_weight);
-                    accumulation.normalization_sumwt += grid_weight;
-                    accumulation.reported_sumwt += grid_weight;
-                    accumulation.gridded_samples += 1;
-                    if finite_visibility(observed_visibility) {
-                        finite_visibility_samples += 1;
-                        let residual = Complex64::new(
-                            f64::from(observed_visibility.re) * grid_weight,
-                            f64::from(observed_visibility.im) * grid_weight,
-                        );
-                        self.gridder.grid_sample_taps_real_complex_pair_planned_f64(
-                            psf_grid,
-                            grid_weight,
-                            residual_grid,
-                            residual,
-                            &taps,
-                        );
-                    } else {
-                        psf_only_samples += 1;
-                        self.gridder.grid_sample_taps_real_planned_f64(
-                            psf_grid,
-                            &taps,
-                            grid_weight,
-                        );
+                        if !gridable {
+                            accumulation.skipped_samples += 1;
+                            continue;
+                        }
+                        if !(weight.is_finite()
+                            && weight > 0.0
+                            && sumwt_factor.is_finite()
+                            && sumwt_factor > 0.0)
+                        {
+                            accumulation.skipped_samples += 1;
+                            continue;
+                        }
+                        let Some(taps) = self.gridder.plan_positive_taps(u_lambda, v_lambda) else {
+                            accumulation.skipped_samples += 1;
+                            continue;
+                        };
+                        let grid_weight = weight * sumwt_factor;
+                        if !(grid_weight.is_finite() && grid_weight > 0.0) {
+                            accumulation.skipped_samples += 1;
+                            continue;
+                        }
+                        let grid_weight = f64::from(grid_weight);
+                        accumulation.normalization_sumwt += grid_weight;
+                        accumulation.reported_sumwt += grid_weight;
+                        accumulation.gridded_samples += 1;
+                        if finite_visibility(observed_visibility) {
+                            finite_visibility_samples += 1;
+                            let residual = Complex64::new(
+                                f64::from(observed_visibility.re) * grid_weight,
+                                f64::from(observed_visibility.im) * grid_weight,
+                            );
+                            self.gridder
+                                .grid_sample_taps_real_complex_pair_planned_f64_storage(
+                                    psf_storage,
+                                    grid_weight,
+                                    residual_storage,
+                                    residual,
+                                    &taps,
+                                );
+                        } else {
+                            psf_only_samples += 1;
+                            self.gridder.grid_sample_taps_real_planned_f64_storage(
+                                psf_storage,
+                                &taps,
+                                grid_weight,
+                            );
+                        }
                     }
                 }
-            }
-            Ok(())
-        })?;
+                Ok(())
+            })?;
+        } else {
+            replay_weighted_batches(&mut |batches| {
+                for batch in batches {
+                    batch.validate()?;
+                    accumulation.max_abs_w_lambda = batch
+                        .w_lambda
+                        .iter()
+                        .fold(accumulation.max_abs_w_lambda, |max_value, value| {
+                            max_value.max(value.abs())
+                        });
+                    let samples = batch
+                        .gridable
+                        .iter()
+                        .copied()
+                        .zip(batch.weight.iter().copied())
+                        .zip(batch.sumwt_factor.iter().copied())
+                        .zip(batch.u_lambda.iter().copied())
+                        .zip(batch.v_lambda.iter().copied())
+                        .zip(batch.visibility.iter().copied());
+                    for (
+                        ((((gridable, weight), sumwt_factor), u_lambda), v_lambda),
+                        observed_visibility,
+                    ) in samples
+                    {
+                        if !gridable {
+                            accumulation.skipped_samples += 1;
+                            continue;
+                        }
+                        if !(weight.is_finite()
+                            && weight > 0.0
+                            && sumwt_factor.is_finite()
+                            && sumwt_factor > 0.0)
+                        {
+                            accumulation.skipped_samples += 1;
+                            continue;
+                        }
+                        let Some(taps) = self.gridder.plan_positive_taps(u_lambda, v_lambda) else {
+                            accumulation.skipped_samples += 1;
+                            continue;
+                        };
+                        let grid_weight = weight * sumwt_factor;
+                        if !(grid_weight.is_finite() && grid_weight > 0.0) {
+                            accumulation.skipped_samples += 1;
+                            continue;
+                        }
+                        let grid_weight = f64::from(grid_weight);
+                        accumulation.normalization_sumwt += grid_weight;
+                        accumulation.reported_sumwt += grid_weight;
+                        accumulation.gridded_samples += 1;
+                        if finite_visibility(observed_visibility) {
+                            finite_visibility_samples += 1;
+                            let residual = Complex64::new(
+                                f64::from(observed_visibility.re) * grid_weight,
+                                f64::from(observed_visibility.im) * grid_weight,
+                            );
+                            self.gridder.grid_sample_taps_real_complex_pair_planned_f64(
+                                psf_grid,
+                                grid_weight,
+                                residual_grid,
+                                residual,
+                                &taps,
+                            );
+                        } else {
+                            psf_only_samples += 1;
+                            self.gridder.grid_sample_taps_real_planned_f64(
+                                psf_grid,
+                                &taps,
+                                grid_weight,
+                            );
+                        }
+                    }
+                }
+                Ok(())
+            })?;
+        }
 
         let stage_duration = profile::elapsed_since(stage_started);
         profile::log_serial_stage(profile::SerialStageProfile {
@@ -3249,73 +3329,201 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
     {
         let stage_started = profile::maybe_profile_now();
         let mut accumulation = StandardMfsTiledResidualAccumulation::default();
-        replay_weighted_batches(&mut |batches| {
-            for batch in batches {
-                batch.validate()?;
-                let samples = batch
-                    .gridable
-                    .iter()
-                    .copied()
-                    .zip(batch.weight.iter().copied())
-                    .zip(batch.sumwt_factor.iter().copied())
-                    .zip(batch.u_lambda.iter().copied())
-                    .zip(batch.v_lambda.iter().copied())
-                    .zip(batch.visibility.iter().copied());
-                for (
-                    ((((gridable, weight), sumwt_factor), u_lambda), v_lambda),
-                    observed_visibility,
-                ) in samples
-                {
-                    if !gridable {
-                        accumulation.skipped_not_gridable += 1;
-                        continue;
-                    }
-                    if !(weight.is_finite() && weight > 0.0) {
-                        accumulation.skipped_invalid_weight += 1;
-                        continue;
-                    }
-                    if !finite_visibility(observed_visibility) {
-                        accumulation.skipped_nonfinite_visibility += 1;
-                        continue;
-                    }
-                    accumulation.valid_samples += 1;
-                    let Some(taps) = self.gridder.plan_positive_taps(u_lambda, v_lambda) else {
-                        accumulation.skipped_out_of_grid += 1;
-                        continue;
-                    };
-                    accumulation.planned_samples += 1;
-                    if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
-                        accumulation.skipped_invalid_sumwt += 1;
-                        continue;
-                    }
-                    let residual_weight = weight * sumwt_factor;
-                    if !(residual_weight.is_finite() && residual_weight > 0.0) {
-                        accumulation.skipped_invalid_sumwt += 1;
-                        continue;
-                    }
-                    let residual_weight = f64::from(residual_weight);
-                    if let Some(model_grid) = model_grid {
+        if let (Some(model_storage), Some(residual_storage)) = (
+            model_grid.and_then(|grid| grid.as_slice_memory_order()),
+            residual_grid.as_slice_memory_order_mut(),
+        ) {
+            replay_weighted_batches(&mut |batches| {
+                for batch in batches {
+                    batch.validate()?;
+                    let samples = batch
+                        .gridable
+                        .iter()
+                        .copied()
+                        .zip(batch.weight.iter().copied())
+                        .zip(batch.sumwt_factor.iter().copied())
+                        .zip(batch.u_lambda.iter().copied())
+                        .zip(batch.v_lambda.iter().copied())
+                        .zip(batch.visibility.iter().copied());
+                    for (
+                        ((((gridable, weight), sumwt_factor), u_lambda), v_lambda),
+                        observed_visibility,
+                    ) in samples
+                    {
+                        if !gridable {
+                            accumulation.skipped_not_gridable += 1;
+                            continue;
+                        }
+                        if !(weight.is_finite() && weight > 0.0) {
+                            accumulation.skipped_invalid_weight += 1;
+                            continue;
+                        }
+                        if !finite_visibility(observed_visibility) {
+                            accumulation.skipped_nonfinite_visibility += 1;
+                            continue;
+                        }
+                        accumulation.valid_samples += 1;
+                        let Some(taps) = self.gridder.plan_positive_taps(u_lambda, v_lambda) else {
+                            accumulation.skipped_out_of_grid += 1;
+                            continue;
+                        };
+                        accumulation.planned_samples += 1;
+                        if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
+                            accumulation.skipped_invalid_sumwt += 1;
+                            continue;
+                        }
+                        let residual_weight = weight * sumwt_factor;
+                        if !(residual_weight.is_finite() && residual_weight > 0.0) {
+                            accumulation.skipped_invalid_sumwt += 1;
+                            continue;
+                        }
                         self.gridder
-                            .degrid_model_and_grid_residual_taps_planned_f64(
-                                model_grid,
-                                residual_grid,
+                            .degrid_model_and_grid_residual_taps_planned_f64_storage(
+                                model_storage,
+                                residual_storage,
                                 &taps,
                                 observed_visibility,
-                                residual_weight,
+                                f64::from(residual_weight),
                             );
-                    } else {
+                        accumulation.gridded_residual_samples += 1;
+                    }
+                }
+                Ok(())
+            })?;
+        } else if model_grid.is_none()
+            && let Some(residual_storage) = residual_grid.as_slice_memory_order_mut()
+        {
+            replay_weighted_batches(&mut |batches| {
+                for batch in batches {
+                    batch.validate()?;
+                    let samples = batch
+                        .gridable
+                        .iter()
+                        .copied()
+                        .zip(batch.weight.iter().copied())
+                        .zip(batch.sumwt_factor.iter().copied())
+                        .zip(batch.u_lambda.iter().copied())
+                        .zip(batch.v_lambda.iter().copied())
+                        .zip(batch.visibility.iter().copied());
+                    for (
+                        ((((gridable, weight), sumwt_factor), u_lambda), v_lambda),
+                        observed_visibility,
+                    ) in samples
+                    {
+                        if !gridable {
+                            accumulation.skipped_not_gridable += 1;
+                            continue;
+                        }
+                        if !(weight.is_finite() && weight > 0.0) {
+                            accumulation.skipped_invalid_weight += 1;
+                            continue;
+                        }
+                        if !finite_visibility(observed_visibility) {
+                            accumulation.skipped_nonfinite_visibility += 1;
+                            continue;
+                        }
+                        accumulation.valid_samples += 1;
+                        let Some(taps) = self.gridder.plan_positive_taps(u_lambda, v_lambda) else {
+                            accumulation.skipped_out_of_grid += 1;
+                            continue;
+                        };
+                        accumulation.planned_samples += 1;
+                        if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
+                            accumulation.skipped_invalid_sumwt += 1;
+                            continue;
+                        }
+                        let residual_weight = weight * sumwt_factor;
+                        if !(residual_weight.is_finite() && residual_weight > 0.0) {
+                            accumulation.skipped_invalid_sumwt += 1;
+                            continue;
+                        }
+                        let residual_weight = f64::from(residual_weight);
                         let residual = Complex64::new(
                             f64::from(observed_visibility.re) * residual_weight,
                             f64::from(observed_visibility.im) * residual_weight,
                         );
-                        self.gridder
-                            .grid_sample_taps_planned_f64(residual_grid, &taps, residual);
+                        self.gridder.grid_sample_taps_planned_f64_storage(
+                            residual_storage,
+                            &taps,
+                            residual,
+                        );
+                        accumulation.gridded_residual_samples += 1;
                     }
-                    accumulation.gridded_residual_samples += 1;
                 }
-            }
-            Ok(())
-        })?;
+                Ok(())
+            })?;
+        } else {
+            replay_weighted_batches(&mut |batches| {
+                for batch in batches {
+                    batch.validate()?;
+                    let samples = batch
+                        .gridable
+                        .iter()
+                        .copied()
+                        .zip(batch.weight.iter().copied())
+                        .zip(batch.sumwt_factor.iter().copied())
+                        .zip(batch.u_lambda.iter().copied())
+                        .zip(batch.v_lambda.iter().copied())
+                        .zip(batch.visibility.iter().copied());
+                    for (
+                        ((((gridable, weight), sumwt_factor), u_lambda), v_lambda),
+                        observed_visibility,
+                    ) in samples
+                    {
+                        if !gridable {
+                            accumulation.skipped_not_gridable += 1;
+                            continue;
+                        }
+                        if !(weight.is_finite() && weight > 0.0) {
+                            accumulation.skipped_invalid_weight += 1;
+                            continue;
+                        }
+                        if !finite_visibility(observed_visibility) {
+                            accumulation.skipped_nonfinite_visibility += 1;
+                            continue;
+                        }
+                        accumulation.valid_samples += 1;
+                        let Some(taps) = self.gridder.plan_positive_taps(u_lambda, v_lambda) else {
+                            accumulation.skipped_out_of_grid += 1;
+                            continue;
+                        };
+                        accumulation.planned_samples += 1;
+                        if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
+                            accumulation.skipped_invalid_sumwt += 1;
+                            continue;
+                        }
+                        let residual_weight = weight * sumwt_factor;
+                        if !(residual_weight.is_finite() && residual_weight > 0.0) {
+                            accumulation.skipped_invalid_sumwt += 1;
+                            continue;
+                        }
+                        let residual_weight = f64::from(residual_weight);
+                        if let Some(model_grid) = model_grid {
+                            self.gridder
+                                .degrid_model_and_grid_residual_taps_planned_f64(
+                                    model_grid,
+                                    residual_grid,
+                                    &taps,
+                                    observed_visibility,
+                                    residual_weight,
+                                );
+                        } else {
+                            let residual = Complex64::new(
+                                f64::from(observed_visibility.re) * residual_weight,
+                                f64::from(observed_visibility.im) * residual_weight,
+                            );
+                            self.gridder.grid_sample_taps_planned_f64(
+                                residual_grid,
+                                &taps,
+                                residual,
+                            );
+                        }
+                        accumulation.gridded_residual_samples += 1;
+                    }
+                }
+                Ok(())
+            })?;
+        }
 
         let stage_duration = profile::elapsed_since(stage_started);
         profile::log_serial_stage(profile::SerialStageProfile {
