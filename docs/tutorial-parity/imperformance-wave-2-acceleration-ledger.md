@@ -1,8 +1,8 @@
 # ImPerformance Wave 2 Acceleration Ledger
 
 Truth class: current descriptive
-Last reality check: 2026-05-21
-Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging positive_tap_span_reconstructs_legacy_positive_taps --lib`; `cargo test -p casa-imaging compact_positive_tap_grid_and_degrid_match_product_taps --lib`; `cargo test -p casa-imaging fused_residual_refresh_matches_separate_degrid_grid --lib`; `cargo test -p casa-imaging standard_mfs_plan_buckets_gridder_accepted_samples --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile, bounded serial attribution probes, and final full-shape one-worker profiles on 2026-05-20
+Last reality check: 2026-05-22
+Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging streaming_density_samples_match_batch_density_weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging positive_tap_span_reconstructs_legacy_positive_taps --lib`; `cargo test -p casa-imaging compact_positive_tap_grid_and_degrid_match_product_taps --lib`; `cargo test -p casa-imaging fused_residual_refresh_matches_separate_degrid_grid --lib`; `cargo test -p casa-imaging standard_mfs_plan_buckets_gridder_accepted_samples --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile, bounded serial attribution probes, final full-shape one-worker profiles on 2026-05-20, and bounded fixed-tile single-worker density-direct profiles on 2026-05-22
 
 Wave issue: #263
 Child issues: #264, #265, #266, #267
@@ -287,6 +287,47 @@ default merge and allocation costs for all-resident tiles, but bucket
 construction remains large: `21.166s` dirty and `15.004s` residual, with
 cumulative transient bucket bytes of `44.079 GiB` and `62.073 GiB`
 respectively.
+
+Bounded single-worker serial attribution and the first retained density-pass
+repair:
+
+```text
+Pre-change artifact: target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-serial-attribution.log
+Post-change artifact: target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-density-direct.log
+Workload: 64 channels, imsize 1024, Briggs robust 0.5, multiscale, niter=50, one worker
+Change: density pass accumulates directly into the streaming density grid instead of materializing full row-block VisibilityBatch values
+Correctness: targeted tests below
+Decision: retained as a modest serial frontend improvement; continue serial work on repeated replay preparation and grid/degrid consumers
+```
+
+The profile now splits `standard_mfs_streaming_pass` records into MS column
+loads, geometry loading, row adapter access, and sample adaptation. That
+attribution confirmed the density pass was doing full visibility preparation
+even though density only needs the accepted sample's UV coordinate and weight.
+The direct density path still reads the visibility row so the existing
+nonfinite visibility behavior is preserved, but it avoids building full
+`PlaneInput` batches and avoids phase-rotated model-ready sample storage for
+density rows.
+
+```text
+Pre-change density pass: 12.543s total, get_ms_values=6.747s, prepare_processing=5.133s, weighting=0.662s
+Post-change density pass: 11.377s total, get_ms_values=6.841s, prepare_processing=4.382s, weighting=0.007s
+Frontend total: 61.440s -> 60.220s
+Prepare plane input: 38.262s -> 37.491s
+Core total: 41.412s -> 41.189s
+Peak RSS: 9.55 GiB -> 9.55 GiB
+```
+
+Validation recorded for this retained serial step:
+
+```text
+cargo check -p casa-imaging -p casars-imager
+cargo test -p casa-imaging streaming_density_samples_match_batch_density_weighting --lib
+cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib
+cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib
+cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib
+cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib
+```
 
 ## Metal Preview Backend Track
 

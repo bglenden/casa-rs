@@ -116,6 +116,23 @@ impl StandardMfsStreamingWeightingPlan {
         );
     }
 
+    /// Accumulate one already-filtered standard-MFS density sample.
+    #[inline]
+    pub fn accumulate_density_sample(&mut self, u_lambda: f64, v_lambda: f64, weight: f32) {
+        let Some(density) = self.density.as_mut() else {
+            return;
+        };
+        accumulate_density_sample_serial(
+            &self.gridder,
+            density_includes_conjugates(self.density_build_convention),
+            self.density_build_convention,
+            density,
+            u_lambda,
+            v_lambda,
+            weight,
+        );
+    }
+
     /// Finalize robust statistics after the density pass.
     pub fn finish_density_pass(&mut self) {
         self.mode = match self.weighting {
@@ -778,21 +795,15 @@ fn accumulate_density_grid_serial(
             }
             let u_lambda = batch.u_lambda[index];
             let v_lambda = batch.v_lambda[index];
-            let mut hits = 0usize;
-            if let Some((x, y)) =
-                gridder.density_cell_index_with_convention(u_lambda, v_lambda, convention)
-            {
-                density_grid[(x, y)] += weight;
-                hits += 1;
-            }
-            if mirror_hermitian {
-                if let Some((x, y)) =
-                    gridder.density_cell_index_with_convention(-u_lambda, -v_lambda, convention)
-                {
-                    density_grid[(x, y)] += weight;
-                    hits += 1;
-                }
-            }
+            let hits = accumulate_density_sample_serial(
+                gridder,
+                mirror_hermitian,
+                convention,
+                density_grid,
+                u_lambda,
+                v_lambda,
+                weight,
+            );
             if !collect_stats {
                 continue;
             }
@@ -805,6 +816,32 @@ fn accumulate_density_grid_serial(
         }
     }
     stats
+}
+
+#[inline]
+fn accumulate_density_sample_serial(
+    gridder: &StandardGridder,
+    mirror_hermitian: bool,
+    convention: DensityCellConvention,
+    density_grid: &mut Array2<f32>,
+    u_lambda: f64,
+    v_lambda: f64,
+    weight: f32,
+) -> usize {
+    let mut hits = 0usize;
+    if let Some((x, y)) = gridder.density_cell_index_with_convention(u_lambda, v_lambda, convention)
+    {
+        density_grid[(x, y)] += weight;
+        hits += 1;
+    }
+    if mirror_hermitian
+        && let Some((x, y)) =
+            gridder.density_cell_index_with_convention(-u_lambda, -v_lambda, convention)
+    {
+        density_grid[(x, y)] += weight;
+        hits += 1;
+    }
+    hits
 }
 
 fn build_density_grid_parallel(
@@ -1575,6 +1612,55 @@ mod tests {
         .unwrap();
 
         assert_eq!(owned, borrowed);
+    }
+
+    #[test]
+    fn streaming_density_samples_match_batch_density_weighting() {
+        for mode in [
+            WeightingMode::Uniform,
+            WeightingMode::Briggs { robust: 0.5 },
+            WeightingMode::BriggsBwTaper { robust: 0.5 },
+        ] {
+            let request = request_for(mode);
+            let mut batch_plan = StandardMfsStreamingWeightingPlan::new(
+                request.geometry,
+                mode,
+                request.selected_frequency_range_hz,
+            )
+            .unwrap();
+            batch_plan.accumulate_density_batches(&request.visibility_batches);
+            batch_plan.finish_density_pass();
+            let batch_weighted = batch_plan
+                .weight_owned_batches(request.visibility_batches.clone())
+                .unwrap();
+
+            let mut sample_plan = StandardMfsStreamingWeightingPlan::new(
+                request.geometry,
+                mode,
+                request.selected_frequency_range_hz,
+            )
+            .unwrap();
+            for batch in &request.visibility_batches {
+                for index in 0..batch.len() {
+                    sample_plan.accumulate_density_sample(
+                        batch.u_lambda[index],
+                        batch.v_lambda[index],
+                        batch.weight[index],
+                    );
+                }
+            }
+            sample_plan.finish_density_pass();
+            let sample_weighted = sample_plan
+                .weight_owned_batches(request.visibility_batches.clone())
+                .unwrap();
+
+            for (batch, sample) in batch_weighted.iter().zip(&sample_weighted) {
+                assert_eq!(batch.len(), sample.len());
+                for index in 0..batch.len() {
+                    assert!((batch.weight[index] - sample.weight[index]).abs() < 1.0e-6);
+                }
+            }
+        }
     }
 
     #[test]

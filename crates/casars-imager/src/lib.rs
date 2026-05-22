@@ -1965,14 +1965,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             weighting_plan.accumulate_density_batches(&plane.batches);
             density_stats.add_weighting(weighting_started_at.elapsed());
         }
-        let mut density_pass =
-            |plane: PlaneInput, pass_stats: &mut StandardMfsStreamingPassStats| {
-                let weighting_started_at = Instant::now();
-                weighting_plan.accumulate_density_batches(&plane.batches);
-                pass_stats.add_weighting(weighting_started_at.elapsed());
-                Ok(())
-            };
-        stream_standard_mfs_prepared_row_blocks(
+        stream_standard_mfs_density_row_blocks(
             ms,
             config,
             data_column,
@@ -1988,7 +1981,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             &mut prepare_stage_timings,
             &mut accumulate_timings,
             &mut density_stats,
-            &mut density_pass,
+            &mut weighting_plan,
         )?;
         density_stats.log();
     }
@@ -2328,6 +2321,7 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
             channel_read_range,
             &geometry_columns,
             prepare_started_at,
+            None,
         )?;
         prepare_stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
 
@@ -4972,7 +4966,9 @@ struct StandardMfsStreamingPassStats {
     batches: usize,
     samples: usize,
     get_ms_values_into_processing_buffer: Duration,
+    get_ms_values_detail: GetMsValuesTimings,
     prepare_processing_buffer: Duration,
+    accumulate_rows_detail: AccumulateRowTimings,
     weighting: Duration,
     consumer: Duration,
 }
@@ -4988,7 +4984,9 @@ impl StandardMfsStreamingPassStats {
             batches: 0,
             samples: 0,
             get_ms_values_into_processing_buffer: Duration::ZERO,
+            get_ms_values_detail: GetMsValuesTimings::default(),
             prepare_processing_buffer: Duration::ZERO,
+            accumulate_rows_detail: AccumulateRowTimings::default(),
             weighting: Duration::ZERO,
             consumer: Duration::ZERO,
         }
@@ -5007,11 +5005,31 @@ impl StandardMfsStreamingPassStats {
         self.prepare_processing_buffer += prepare_processing_buffer;
     }
 
+    fn add_get_ms_values_detail(&mut self, detail: GetMsValuesTimings) {
+        self.get_ms_values_detail += detail;
+    }
+
+    fn add_accumulate_rows_detail(&mut self, detail: AccumulateRowTimings) {
+        self.accumulate_rows_detail += detail;
+    }
+
     fn record_cached_plane(&mut self, plane: &PlaneInput) {
         self.row_blocks += 1;
         self.cached_row_blocks += 1;
         self.batches += plane.batches.len();
         self.samples += plane_input_sample_count(plane);
+    }
+
+    fn record_density_block(
+        &mut self,
+        samples: usize,
+        get_ms_values_into_processing_buffer: Duration,
+        prepare_processing_buffer: Duration,
+    ) {
+        self.row_blocks += 1;
+        self.samples += samples;
+        self.get_ms_values_into_processing_buffer += get_ms_values_into_processing_buffer;
+        self.prepare_processing_buffer += prepare_processing_buffer;
     }
 
     fn add_weighting(&mut self, elapsed: Duration) {
@@ -5027,7 +5045,7 @@ impl StandardMfsStreamingPassStats {
             return;
         }
         eprintln!(
-            "standard_mfs_streaming_pass pass={} ordinal={} row_blocks={} cached_row_blocks={} batches={} samples={} get_ms_values_ms={:.3} prepare_processing_ms={:.3} weighting_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
+            "standard_mfs_streaming_pass pass={} ordinal={} row_blocks={} cached_row_blocks={} batches={} samples={} get_ms_values_ms={:.3} get_data_ms={:.3} get_flag_ms={:.3} get_weight_ms={:.3} get_weight_spectrum_ms={:.3} get_geometry_ms={:.3} prepare_processing_ms={:.3} prepare_rows_seen={} prepare_rows_flagged={} prepare_flag_row_ms={:.3} prepare_data_ms={:.3} prepare_flag_ms={:.3} prepare_weight_ms={:.3} prepare_weight_spectrum_ms={:.3} prepare_adapt_samples_ms={:.3} weighting_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
             self.pass,
             self.ordinal,
             self.row_blocks,
@@ -5035,7 +5053,20 @@ impl StandardMfsStreamingPassStats {
             self.batches,
             self.samples,
             duration_ms(self.get_ms_values_into_processing_buffer),
+            duration_ms(self.get_ms_values_detail.data_column),
+            duration_ms(self.get_ms_values_detail.flag_column),
+            duration_ms(self.get_ms_values_detail.weight_column),
+            duration_ms(self.get_ms_values_detail.weight_spectrum),
+            duration_ms(self.get_ms_values_detail.geometry_rows),
             duration_ms(self.prepare_processing_buffer),
+            self.accumulate_rows_detail.rows_seen,
+            self.accumulate_rows_detail.rows_flagged,
+            duration_ms(self.accumulate_rows_detail.flag_row),
+            duration_ms(self.accumulate_rows_detail.data_column),
+            duration_ms(self.accumulate_rows_detail.flag_column),
+            duration_ms(self.accumulate_rows_detail.weight_column),
+            duration_ms(self.accumulate_rows_detail.weight_spectrum),
+            duration_ms(self.accumulate_rows_detail.adapt_samples),
             duration_ms(self.weighting),
             duration_ms(self.consumer),
             duration_ms(self.started_at.elapsed()),
@@ -7377,6 +7408,7 @@ fn get_ms_values_into_processing_buffer(
     channel_read_range: Option<SelectedChannelReadRange>,
     geometry_columns: &PreparedGeometryColumnCache,
     prepare_started_at: Instant,
+    mut timings: Option<&mut GetMsValuesTimings>,
 ) -> Result<StandardMfsProcessingBuffer, String> {
     let selected_row_indices = row_chunk
         .iter()
@@ -7393,9 +7425,13 @@ fn get_ms_values_into_processing_buffer(
         )?,
         None => SelectedMainDataSource::load_uncached(ms, data_column_kind, &selected_row_indices)?,
     };
+    let elapsed = stage_started_at.elapsed();
+    if let Some(timings) = &mut timings {
+        timings.data_column += elapsed;
+    }
     maybe_log_frontend_progress(
         "prepare_plane_input/load_data_column",
-        stage_started_at.elapsed(),
+        elapsed,
         prepare_started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
@@ -7409,17 +7445,25 @@ fn get_ms_values_into_processing_buffer(
         )?,
         None => SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?,
     };
+    let elapsed = stage_started_at.elapsed();
+    if let Some(timings) = &mut timings {
+        timings.flag_column += elapsed;
+    }
     maybe_log_frontend_progress(
         "prepare_plane_input/load_flag_column",
-        stage_started_at.elapsed(),
+        elapsed,
         prepare_started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
     let weight_column =
         SelectedMainArrayColumn::load_uncached(ms, "WEIGHT", &selected_row_indices)?;
+    let elapsed = stage_started_at.elapsed();
+    if let Some(timings) = &mut timings {
+        timings.weight_column += elapsed;
+    }
     maybe_log_frontend_progress(
         "prepare_plane_input/load_weight_column",
-        stage_started_at.elapsed(),
+        elapsed,
         prepare_started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
@@ -7438,9 +7482,13 @@ fn get_ms_values_into_processing_buffer(
             }
         })
         .transpose()?;
+    let elapsed = stage_started_at.elapsed();
+    if let Some(timings) = &mut timings {
+        timings.weight_spectrum += elapsed;
+    }
     maybe_log_frontend_progress(
         "prepare_plane_input/load_weight_spectrum_column",
-        stage_started_at.elapsed(),
+        elapsed,
         prepare_started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
@@ -7452,9 +7500,13 @@ fn get_ms_values_into_processing_buffer(
         derived_engine,
         reprojection_mode,
     )?;
+    let elapsed = stage_started_at.elapsed();
+    if let Some(timings) = &mut timings {
+        timings.geometry_rows += elapsed;
+    }
     maybe_log_frontend_progress(
         "prepare_plane_input/build_prepared_geometry_rows",
-        stage_started_at.elapsed(),
+        elapsed,
         prepare_started_at.elapsed(),
     );
 
@@ -7500,6 +7552,90 @@ fn prepare_processing_buffer(
         return Err("internal error: standard MFS row block produced non-MFS input".to_string());
     };
     Ok(plane)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stream_standard_mfs_density_row_blocks(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    flag_row: &[bool],
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+    pass_stats: &mut StandardMfsStreamingPassStats,
+    weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+) -> Result<usize, String> {
+    let mut accepted_samples = 0usize;
+    for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let mut get_ms_values_detail = GetMsValuesTimings::default();
+        let stage_started_at = Instant::now();
+        let processing_buffer = get_ms_values_into_processing_buffer(
+            ms,
+            data_column_kind,
+            selection,
+            row_chunk,
+            derived_engine,
+            uvw_reprojection_mode_for_selection(config, selection),
+            channel_read_range,
+            geometry_columns,
+            prepare_started_at,
+            Some(&mut get_ms_values_detail),
+        )?;
+        let get_ms_values_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+        pass_stats.add_get_ms_values_detail(get_ms_values_detail);
+
+        let stage_started_at = Instant::now();
+        let before_accumulate = *accumulate_timings;
+        let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+            config,
+            table_values,
+            selection.phase_center.clone(),
+            false,
+        )?;
+        let mut block_samples = 0usize;
+        for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
+            block_samples += prepared.accumulate_standard_mfs_density_row(
+                row,
+                &processing_buffer.data_column,
+                &processing_buffer.flag_column,
+                flag_row,
+                &processing_buffer.weight_column,
+                processing_buffer.weight_spectrum.as_ref(),
+                derived_engine,
+                row_slot,
+                weighting_plan,
+                accumulate_timings,
+            )?;
+        }
+        let prepare_processing_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
+        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
+        pass_stats.record_density_block(
+            block_samples,
+            get_ms_values_elapsed,
+            prepare_processing_elapsed,
+        );
+        accepted_samples += block_samples;
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/density_row_block rows_done={} rows_total={} accepted_samples={} total_elapsed_s={:.3}",
+                accumulate_timings.rows_seen,
+                active_selected_rows.len(),
+                accepted_samples,
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    Ok(accepted_samples)
 }
 
 fn prepare_plane_input(
@@ -7711,6 +7847,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
             channel_read_range,
             &geometry_columns,
             prepare_started_at,
+            None,
         )?;
         stage_timings.get_ms_values_into_processing_buffer += stage_started_at.elapsed();
 
@@ -7766,6 +7903,7 @@ where
 {
     let mut prepared_batch_count = 0usize;
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let mut get_ms_values_detail = GetMsValuesTimings::default();
         let stage_started_at = Instant::now();
         let processing_buffer = get_ms_values_into_processing_buffer(
             ms,
@@ -7777,11 +7915,14 @@ where
             channel_read_range,
             geometry_columns,
             prepare_started_at,
+            Some(&mut get_ms_values_detail),
         )?;
         let get_ms_values_elapsed = stage_started_at.elapsed();
         prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+        pass_stats.add_get_ms_values_detail(get_ms_values_detail);
 
         let stage_started_at = Instant::now();
+        let before_accumulate = *accumulate_timings;
         let plane = prepare_processing_buffer(
             config,
             table_values,
@@ -7793,6 +7934,7 @@ where
         )?;
         let prepare_processing_elapsed = stage_started_at.elapsed();
         prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
+        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
         prepared_batch_count += plane.batches.len();
         pass_stats.record_prepared_plane(&plane, get_ms_values_elapsed, prepare_processing_elapsed);
         on_plane(plane, pass_stats)?;
@@ -9354,7 +9496,26 @@ struct PreparedSelection {
     trace_enabled: bool,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Clone, Copy, Default, Debug)]
+struct GetMsValuesTimings {
+    data_column: Duration,
+    flag_column: Duration,
+    weight_column: Duration,
+    weight_spectrum: Duration,
+    geometry_rows: Duration,
+}
+
+impl std::ops::AddAssign for GetMsValuesTimings {
+    fn add_assign(&mut self, extra: Self) {
+        self.data_column += extra.data_column;
+        self.flag_column += extra.flag_column;
+        self.weight_column += extra.weight_column;
+        self.weight_spectrum += extra.weight_spectrum;
+        self.geometry_rows += extra.geometry_rows;
+    }
+}
+
+#[derive(Clone, Copy, Default, Debug)]
 struct AccumulateRowTimings {
     flag_row: Duration,
     data_column: Duration,
@@ -9365,6 +9526,38 @@ struct AccumulateRowTimings {
     rows_seen: usize,
     rows_flagged: usize,
     rows_skipped_by_flag_row: usize,
+}
+
+impl AccumulateRowTimings {
+    fn delta_since(self, before: Self) -> Self {
+        Self {
+            flag_row: self.flag_row.saturating_sub(before.flag_row),
+            data_column: self.data_column.saturating_sub(before.data_column),
+            flag_column: self.flag_column.saturating_sub(before.flag_column),
+            weight_column: self.weight_column.saturating_sub(before.weight_column),
+            weight_spectrum: self.weight_spectrum.saturating_sub(before.weight_spectrum),
+            adapt_samples: self.adapt_samples.saturating_sub(before.adapt_samples),
+            rows_seen: self.rows_seen.saturating_sub(before.rows_seen),
+            rows_flagged: self.rows_flagged.saturating_sub(before.rows_flagged),
+            rows_skipped_by_flag_row: self
+                .rows_skipped_by_flag_row
+                .saturating_sub(before.rows_skipped_by_flag_row),
+        }
+    }
+}
+
+impl std::ops::AddAssign for AccumulateRowTimings {
+    fn add_assign(&mut self, extra: Self) {
+        self.flag_row += extra.flag_row;
+        self.data_column += extra.data_column;
+        self.flag_column += extra.flag_column;
+        self.weight_column += extra.weight_column;
+        self.weight_spectrum += extra.weight_spectrum;
+        self.adapt_samples += extra.adapt_samples;
+        self.rows_seen += extra.rows_seen;
+        self.rows_flagged += extra.rows_flagged;
+        self.rows_skipped_by_flag_row += extra.rows_skipped_by_flag_row;
+    }
 }
 
 impl AccumulateRowTimings {
@@ -11608,6 +11801,161 @@ impl PreparedSelection {
         }
         timings.adapt_samples += adapt_started_at.elapsed();
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_standard_mfs_density_row(
+        &mut self,
+        geometry_row: &PreparedGeometryRow,
+        data_column: &SelectedMainDataSource,
+        flag_column: &SelectedMainArrayColumn,
+        flag_row: &[bool],
+        weight_column: &SelectedMainArrayColumn,
+        weight_spectrum: Option<&SelectedMainArrayColumn>,
+        derived_engine: Option<&MsCalEngine>,
+        row_slot: usize,
+        weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+        timings: &mut AccumulateRowTimings,
+    ) -> Result<usize, String> {
+        timings.rows_seen += 1;
+        let selected_row = &geometry_row.selected_row;
+        let row = selected_row.row_index;
+        let stage_started_at = Instant::now();
+        if *flag_row
+            .get(row)
+            .ok_or_else(|| format!("read FLAG_ROW row {row}: row is out of bounds"))?
+        {
+            timings.flag_row += stage_started_at.elapsed();
+            timings.rows_flagged += 1;
+            return Ok(0);
+        }
+        timings.flag_row += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let data = data_column
+            .get(row_slot)
+            .map_err(|error| format!("read data row {row}: {error}"))?;
+        timings.data_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let flags = flag_column
+            .get(row_slot)
+            .map_err(|error| format!("read FLAG row {row}: {error}"))?;
+        timings.flag_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let row_weights = weight_column
+            .get(row_slot)
+            .map_err(|error| format!("read WEIGHT row {row}: {error}"))?;
+        timings.weight_column += stage_started_at.elapsed();
+        let stage_started_at = Instant::now();
+        let weight_spectrum_row = weight_spectrum
+            .map(|column| column.get_optional(row_slot))
+            .transpose()
+            .map(|row| row.flatten())
+            .map_err(|error| format!("read WEIGHT_SPECTRUM row {row}: {error}"))?;
+        timings.weight_spectrum += stage_started_at.elapsed();
+
+        let adapt_started_at = Instant::now();
+        let data_2d = ComplexRow2d::new_with_channel_origin(data, data_column.channel_origin())?;
+        let flags_2d = BoolRow2d::new_with_channel_origin(flags, flag_column.channel_origin())?;
+        let weights = WeightRow::new(
+            row_weights,
+            weight_spectrum_row,
+            weight_spectrum.map_or(0, |column| column.channel_origin()),
+        )?;
+        let uvw_m = geometry_row.transform.uvw_m;
+        let mfs_frequency_scale =
+            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mut accepted_samples = 0usize;
+        match &self.state {
+            PreparedState::ExplicitMfs { corr_index, .. } => {
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
+                    let local_channel = data_2d.local_channel(channel_index)?;
+                    if flags_2d.get_local(*corr_index, local_channel, channel_index)? {
+                        continue;
+                    }
+                    let (weight, _) = weights.get_local(*corr_index, local_channel)?;
+                    if !(weight.is_finite() && weight > 0.0) {
+                        continue;
+                    }
+                    let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    weighting_plan.accumulate_density_sample(
+                        uvw_m[0] * lambda_scale,
+                        uvw_m[1] * lambda_scale,
+                        weight,
+                    );
+                    accepted_samples += 1;
+                }
+            }
+            PreparedState::CollapsedMfs {
+                transform, pair, ..
+            }
+            | PreparedState::PairedMfs {
+                transform, pair, ..
+            } => {
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    let imaging_frequency_hz = frequency_hz * mfs_frequency_scale;
+                    let local_channel = data_2d.local_channel(channel_index)?;
+                    let first_visibility = phase_rotate_visibility(
+                        data_2d.get_local(pair.0, local_channel, channel_index)?,
+                        geometry_row.transform.phase_shift_m,
+                        imaging_frequency_hz,
+                    );
+                    let second_visibility = phase_rotate_visibility(
+                        data_2d.get_local(pair.1, local_channel, channel_index)?,
+                        geometry_row.transform.phase_shift_m,
+                        imaging_frequency_hz,
+                    );
+                    if flags_2d.get_local(pair.0, local_channel, channel_index)?
+                        || flags_2d.get_local(pair.1, local_channel, channel_index)?
+                    {
+                        continue;
+                    }
+                    let (first_weight, _) = weights.get_local(pair.0, local_channel)?;
+                    let (second_weight, _) = weights.get_local(pair.1, local_channel)?;
+                    if !(first_weight.is_finite()
+                        && first_weight > 0.0
+                        && second_weight.is_finite()
+                        && second_weight > 0.0)
+                    {
+                        continue;
+                    }
+                    let visibility =
+                        collapse_paired_visibility(first_visibility, second_visibility, *transform);
+                    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                        continue;
+                    }
+                    let combined_weight = 0.5 * (first_weight + second_weight);
+                    if !(combined_weight.is_finite() && combined_weight > 0.0) {
+                        continue;
+                    }
+                    let lambda_scale = imaging_frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                    weighting_plan.accumulate_density_sample(
+                        uvw_m[0] * lambda_scale,
+                        uvw_m[1] * lambda_scale,
+                        combined_weight,
+                    );
+                    accepted_samples += 1;
+                }
+            }
+            _ => {
+                return Err(
+                    "internal error: density-only standard MFS preparation used for non-MFS state"
+                        .to_string(),
+                );
+            }
+        }
+        timings.adapt_samples += adapt_started_at.elapsed();
+        Ok(accepted_samples)
     }
 
     fn mfs_imaging_frequency_scale_for_row(
