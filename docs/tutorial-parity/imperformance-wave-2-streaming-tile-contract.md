@@ -168,9 +168,14 @@ Fixed-tile scheduler profiles must report whether the configured workers are
 actually being used. The summary and optional block-detail records include
 per-worker task, sample, tap-visit, active-time, elapsed-time, capacity,
 utilization percentage, tail-idle, and useful-throughput fields such as
-tap-visits per second and samples per second. Those counters are required
-evidence before accepting or rejecting multi-worker scheduler changes. For
-diagnostic apples-to-apples scaling tests,
+tap-visits per second and samples per second. The summary distinguishes
+grid-loop utilization from full-stage utilization: `worker_utilization_pct`
+uses only the block wall time around dispatched tile tasks, while
+`stage_worker_utilization_pct` uses the whole stage wall time and the configured
+worker count. Full-stage utilization is the metric that must reconcile with
+end-to-end speedup. Those counters are required evidence before accepting or
+rejecting multi-worker scheduler changes. For diagnostic apples-to-apples
+scaling tests,
 `CASA_RS_STANDARD_MFS_FORCE_TILED_ONE_WORKER=1` forces the tiled scheduler even
 when `CASA_RS_STANDARD_MFS_GRID_THREADS=1`; the default one-worker path may
 still use the global-grid bypass when memory permits.

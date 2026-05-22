@@ -1586,6 +1586,13 @@ impl StandardMfsTileSchedulerStageProfile {
         let worker_utilization_pct = percent_or_zero(worker_active_total_ms, worker_capacity_ms);
         let worker_tail_idle_ms = (worker_capacity_ms - worker_active_total_ms).max(0.0);
         let stage_total = self.started_at.elapsed();
+        let stage_total_ms = profile::millis(stage_total);
+        let block_wall_total_ms = duration_total_ms(&block_wall);
+        let stage_nonworker_wall_ms = (stage_total_ms - block_wall_total_ms).max(0.0);
+        let stage_worker_capacity_ms = stage_total_ms * requested_threads.max(1) as f64;
+        let stage_worker_utilization_pct =
+            percent_or_zero(worker_active_total_ms, stage_worker_capacity_ms);
+        let stage_worker_idle_ms = (stage_worker_capacity_ms - worker_active_total_ms).max(0.0);
         let stage_tap_visits_per_s = per_second_or_zero(tap_visits_total, stage_total);
         let stage_samples_per_s = per_second_or_zero(samples_total, stage_total);
         let active_weighted_tap_visits_per_s = if worker_active_total_ms > 0.0 {
@@ -1599,7 +1606,7 @@ impl StandardMfsTileSchedulerStageProfile {
             0.0
         };
         eprintln!(
-            "standard_mfs_tile_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} resident_tile_limit={} max_live_row_blocks=1 block_count={} task_count={} samples_total={} tap_visits_total={} task_samples={} task_tap_visits={} largest_task_samples={} largest_task_tap_visits={} bucket_bytes_total={} bucket_bytes_max={} bucket_build_total_ms={:.3} bucket_build={} local_alloc_zero_total_ms={:.3} local_alloc_zero={} worker_replan_grid_total_ms={:.3} worker_replan_grid={} block_wall_total_ms={:.3} block_wall={} merge_total_ms={:.3} merge={} worker_task_count={} worker_samples={} worker_tap_visits={} worker_tap_visits_per_s={} worker_samples_per_s={} worker_active_total_ms={:.3} worker_active={} worker_elapsed={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} stage_tap_visits_per_s={:.3} stage_samples_per_s={:.3} active_weighted_tap_visits_per_s={:.3} active_weighted_samples_per_s={:.3} tile_flush_ms={:.3} tile_flush_count={} tile_eviction_count={} merged_tiles={} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0 stage_total_ms={:.3}",
+            "standard_mfs_tile_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} resident_tile_limit={} max_live_row_blocks=1 block_count={} task_count={} samples_total={} tap_visits_total={} task_samples={} task_tap_visits={} largest_task_samples={} largest_task_tap_visits={} bucket_bytes_total={} bucket_bytes_max={} bucket_build_total_ms={:.3} bucket_build={} local_alloc_zero_total_ms={:.3} local_alloc_zero={} worker_replan_grid_total_ms={:.3} worker_replan_grid={} block_wall_total_ms={:.3} block_wall={} stage_nonworker_wall_ms={:.3} merge_total_ms={:.3} merge={} worker_task_count={} worker_samples={} worker_tap_visits={} worker_tap_visits_per_s={} worker_samples_per_s={} worker_active_total_ms={:.3} worker_active={} worker_elapsed={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} stage_worker_capacity_ms={:.3} stage_worker_utilization_pct={:.3} stage_worker_idle_ms={:.3} stage_tap_visits_per_s={:.3} stage_samples_per_s={:.3} active_weighted_tap_visits_per_s={:.3} active_weighted_samples_per_s={:.3} tile_flush_ms={:.3} tile_flush_count={} tile_eviction_count={} merged_tiles={} active_tile_wait_events=0 tasks_skipped_due_to_active_tile=0 stage_total_ms={:.3}",
             self.stage,
             requested_threads,
             stats_triplet(&actual_threads),
@@ -1626,8 +1633,9 @@ impl StandardMfsTileSchedulerStageProfile {
             duration_stats_triplet(&local_alloc_zero),
             duration_total_ms(&worker_replan_grid),
             duration_stats_triplet(&worker_replan_grid),
-            duration_total_ms(&block_wall),
+            block_wall_total_ms,
             duration_stats_triplet(&block_wall),
+            stage_nonworker_wall_ms,
             duration_total_ms(&merge),
             duration_stats_triplet(&merge),
             stats_triplet(&worker_task_counts),
@@ -1641,6 +1649,9 @@ impl StandardMfsTileSchedulerStageProfile {
             worker_capacity_ms,
             worker_utilization_pct,
             worker_tail_idle_ms,
+            stage_worker_capacity_ms,
+            stage_worker_utilization_pct,
+            stage_worker_idle_ms,
             stage_tap_visits_per_s,
             stage_samples_per_s,
             active_weighted_tap_visits_per_s,
@@ -1652,7 +1663,7 @@ impl StandardMfsTileSchedulerStageProfile {
                 .iter()
                 .map(|block| block.merged_tiles)
                 .sum::<usize>(),
-            profile::millis(stage_total),
+            stage_total_ms,
         );
     }
 }
