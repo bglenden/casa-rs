@@ -471,6 +471,40 @@ Decision:
   decode path and residual refresh tap planning/application attribution.
 ```
 
+Single-worker tiled complex decode cleanup:
+
+```text
+Artifacts:
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-grid-storage-rerun.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-complex-decode.log
+  target/imperformance-wave2/single-worker-serial-20260522/bounded-one-worker-complex-decode-rerun.log
+Change:
+  tiled storage complex array decoding now builds Complex32/Complex64 values
+  directly from component byte pairs instead of first allocating a temporary
+  scalar component vector and then mapping pairs into complex values. This
+  targets the sampled tiled 2-D channel-range DATA decode path used by bounded
+  standard-MFS streaming.
+Best bounded rerun:
+  Frontend total: 51.900s -> 50.254s
+  Prepare plane input: 30.336s -> 28.664s
+  get_ms_values: 19.553s -> 17.938s
+  prepare_processing_buffer: 10.783s -> 10.725s
+  Core total: 37.910s -> 36.280s
+  PSF grid: 8.783s -> 8.393s
+  residual_degrid_grid: 27.416s -> 26.139s
+  major_cycle_refresh: 18.688s -> 17.801s
+  Peak RSS: 9.43 GiB -> 9.47 GiB
+Noisy first run:
+  Frontend total: 51.900s -> 52.572s
+  Core total: 37.910s -> 38.098s
+Decision:
+  retained. The first run was noise-level mixed, but the rerun shows a
+  meaningful get-MS/decode improvement and a 4-6% bounded single-worker
+  improvement against the previous retained state. The remaining serial high
+  nails are still tap planning/application and tiled row-block memcpy/cache
+  overhead.
+```
+
 ## Metal Preview Backend Track
 
 The Metal gridding experiment from `codex/metal-experiments` is now part of the

@@ -1118,28 +1118,14 @@ fn decode_array_value(
         }
         CasacoreDataType::TpComplex => {
             // Complex = (float, float) pairs
-            let floats = if big_endian {
-                read_f32_slice_be(raw, nelem * 2)
-            } else {
-                read_f32_slice_le(raw, nelem * 2)
-            };
-            let vals: Vec<Complex32> = (0..nelem)
-                .map(|i| Complex32::new(floats[2 * i], floats[2 * i + 1]))
-                .collect();
+            let vals = decode_complex32_values(raw, nelem, big_endian);
             ArrayValue::Complex32(
                 ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
             )
         }
         CasacoreDataType::TpDComplex => {
-            let doubles = if big_endian {
-                read_f64_slice_be(raw, nelem * 2)
-            } else {
-                read_f64_slice_le(raw, nelem * 2)
-            };
-            let vals: Vec<Complex64> = (0..nelem)
-                .map(|i| Complex64::new(doubles[2 * i], doubles[2 * i + 1]))
-                .collect();
+            let vals = decode_complex64_values(raw, nelem, big_endian);
             ArrayValue::Complex64(
                 ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
@@ -1152,6 +1138,42 @@ fn decode_array_value(
         }
     };
     Ok(Value::Array(av))
+}
+
+fn decode_complex32_values(raw: &[u8], nelem: usize, big_endian: bool) -> Vec<Complex32> {
+    let mut values = Vec::with_capacity(nelem);
+    for chunk in raw[..nelem * 8].chunks_exact(8) {
+        let re = if big_endian {
+            f32::from_be_bytes(chunk[0..4].try_into().expect("exact f32 bytes"))
+        } else {
+            f32::from_le_bytes(chunk[0..4].try_into().expect("exact f32 bytes"))
+        };
+        let im = if big_endian {
+            f32::from_be_bytes(chunk[4..8].try_into().expect("exact f32 bytes"))
+        } else {
+            f32::from_le_bytes(chunk[4..8].try_into().expect("exact f32 bytes"))
+        };
+        values.push(Complex32::new(re, im));
+    }
+    values
+}
+
+fn decode_complex64_values(raw: &[u8], nelem: usize, big_endian: bool) -> Vec<Complex64> {
+    let mut values = Vec::with_capacity(nelem);
+    for chunk in raw[..nelem * 16].chunks_exact(16) {
+        let re = if big_endian {
+            f64::from_be_bytes(chunk[0..8].try_into().expect("exact f64 bytes"))
+        } else {
+            f64::from_le_bytes(chunk[0..8].try_into().expect("exact f64 bytes"))
+        };
+        let im = if big_endian {
+            f64::from_be_bytes(chunk[8..16].try_into().expect("exact f64 bytes"))
+        } else {
+            f64::from_le_bytes(chunk[8..16].try_into().expect("exact f64 bytes"))
+        };
+        values.push(Complex64::new(re, im));
+    }
+    values
 }
 
 /// Encode a `Value::Array` into raw bytes in the specified byte order.
