@@ -1234,7 +1234,9 @@ impl<'a> StandardMfsTileSampleRouter<'a> {
                 StandardMfsTileSampleRouteSkip::OutOfGrid,
             ));
         };
-        Ok(StandardMfsTileSampleRouteDecision::Density(location.tile_id))
+        Ok(StandardMfsTileSampleRouteDecision::Density(
+            location.tile_id,
+        ))
     }
 
     fn route_psf_sample(

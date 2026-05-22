@@ -14,6 +14,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use casa_coordinates::{
@@ -61,7 +62,7 @@ use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use image::{ImageBuffer, Rgb};
-use ndarray::{Array2, Array4, ArrayD, IxDyn, Zip, s};
+use ndarray::{Array2, Array4, ArrayD, Ix1, Ix2, IxDyn, Zip, s};
 use num_complex::{Complex32, Complex64};
 
 pub use managed_output::{
@@ -749,8 +750,14 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         return Ok(());
     }
 
+    let (read_essentials_probe, filtered_args) =
+        extract_option_value(&filtered_args, "--ms-imaging-read-probe")?;
     let (managed_output, filtered_args) = extract_option_value(&filtered_args, "--managed-output")?;
     let config = CliConfig::parse(filtered_args)?;
+    if read_essentials_probe {
+        run_ms_imaging_essentials_read_probe_from_config(&config)?;
+        return Ok(());
+    }
     let request = ImagerRunTaskRequest::from_cli_config(&config);
     let summary = run_from_config(&config)?;
     let result = ImagerRunTaskResult::from_run(request, &summary);
@@ -894,6 +901,112 @@ pub fn build_prepare_spectral_axis_trace(
             )
             .collect(),
     }
+}
+
+/// Read selected MeasurementSet imaging essentials and print raw frontend throughput.
+///
+/// This is intentionally a probe-only path: it stops at row-shaped MS payloads
+/// (`UVW`, `DATA`, `FLAG`, `WEIGHT`, optional `WEIGHT_SPECTRUM`, and shared
+/// spectral-window channel axes) and does not collapse polarizations or route
+/// samples to any imaging backend.
+pub fn run_ms_imaging_essentials_read_probe_from_config(config: &CliConfig) -> Result<(), String> {
+    let total_started = Instant::now();
+    let ms = MeasurementSet::open(&config.ms).map_err(|error| format!("open MS: {error}"))?;
+    let data_column = resolve_data_column(&ms, config.datacolumn.as_deref())?;
+    let data_description = ms
+        .data_description()
+        .map_err(|error| format!("open DATA_DESCRIPTION: {error}"))?;
+    let ddid_info = data_description_index(&data_description)?;
+    let selection = select_main_rows(&ms, config, &ddid_info)?;
+    let spectral_window = ms
+        .spectral_window()
+        .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+    let polarization = ms
+        .polarization()
+        .map_err(|error| format!("open POLARIZATION: {error}"))?;
+    let table_values = load_prepared_selection_table_values(
+        selection.selected_ddid,
+        &ddid_info,
+        &spectral_window,
+        &polarization,
+    )?;
+    let channel_read_range = selected_channel_read_range_for_standard_mfs(config, &table_values)?;
+    let flag_row = load_bool_main_column_owned(&ms, "FLAG_ROW")?;
+    let active_selected_rows = selection
+        .selected_rows
+        .iter()
+        .filter(|selected_row| {
+            flag_row
+                .get(selected_row.row_index)
+                .copied()
+                .map(|flagged| !flagged)
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let channel_axes = Arc::new(MsImagingChannelAxisCatalog::load(&ms)?);
+    let block_rows = env_usize("CASA_RS_MS_IMAGING_READ_PROBE_ROWS")
+        .filter(|value| *value > 0)
+        .unwrap_or(MAX_PREPARE_ROW_BLOCK_ROWS);
+
+    let mut timings = MsImagingEssentialsReadTimings::default();
+    let mut rows_read = 0usize;
+    let mut samples_read = 0usize;
+    let mut logical_bytes = 0usize;
+    let mut blocks_read = 0usize;
+    for row_chunk in active_selected_rows.chunks(block_rows) {
+        let (block, block_timings) = read_ms_imaging_essentials_block(
+            &ms,
+            data_column,
+            Arc::clone(&channel_axes),
+            row_chunk,
+            channel_read_range,
+        )?;
+        rows_read = rows_read.saturating_add(block.rows.len());
+        samples_read = samples_read.saturating_add(block.sample_count());
+        logical_bytes = logical_bytes.saturating_add(block.logical_bytes());
+        timings.add(block_timings);
+        blocks_read = blocks_read.saturating_add(1);
+    }
+
+    let total_elapsed = total_started.elapsed();
+    let read_elapsed = timings.total();
+    let total_seconds = total_elapsed.as_secs_f64().max(f64::EPSILON);
+    let read_seconds = read_elapsed.as_secs_f64().max(f64::EPSILON);
+    let mib = logical_bytes as f64 / (1024.0 * 1024.0);
+    let result = serde_json::json!({
+        "probe": "ms_imaging_essentials_read",
+        "ms": config.ms.display().to_string(),
+        "data_column": data_column.name(),
+        "selected_rows": selection.selected_rows.len(),
+        "active_rows": active_selected_rows.len(),
+        "rows_read": rows_read,
+        "blocks_read": blocks_read,
+        "block_rows": block_rows,
+        "samples_read": samples_read,
+        "logical_bytes": logical_bytes,
+        "logical_mib": mib,
+        "total_ms": total_elapsed.as_secs_f64() * 1000.0,
+        "read_ms": read_elapsed.as_secs_f64() * 1000.0,
+        "total_mib_per_s": mib / total_seconds,
+        "read_mib_per_s": mib / read_seconds,
+        "rows_per_s": rows_read as f64 / total_seconds,
+        "samples_per_s": samples_read as f64 / total_seconds,
+        "timings_ms": {
+            "data_column": timings.data_column.as_secs_f64() * 1000.0,
+            "flag_column": timings.flag_column.as_secs_f64() * 1000.0,
+            "weight_column": timings.weight_column.as_secs_f64() * 1000.0,
+            "weight_spectrum": timings.weight_spectrum.as_secs_f64() * 1000.0,
+            "uvw_column": timings.uvw_column.as_secs_f64() * 1000.0,
+            "adapt_rows": timings.adapt_rows.as_secs_f64() * 1000.0,
+        }
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&result)
+            .map_err(|error| format!("serialize MS imaging read probe: {error}"))?
+    );
+    Ok(())
 }
 
 /// Build a frozen-oracle trace for the row-level geometric preparation seam.
@@ -6750,6 +6863,377 @@ impl SelectedMainDataSource {
             Self::Single(column) => column.channel_origin(),
         }
     }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct MsImagingChannelAxis {
+    spw_id: usize,
+    chan_freq_hz: Arc<[f64]>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct MsImagingChannelAxisCatalog {
+    axes_by_spw: HashMap<usize, MsImagingChannelAxis>,
+}
+
+#[allow(dead_code)]
+impl MsImagingChannelAxisCatalog {
+    fn load(ms: &MeasurementSet) -> Result<Self, String> {
+        let spectral_window = ms
+            .spectral_window()
+            .map_err(|error| format!("open SPECTRAL_WINDOW: {error}"))?;
+        let mut axes_by_spw = HashMap::with_capacity(spectral_window.row_count());
+        for spw_id in 0..spectral_window.row_count() {
+            let chan_freq_hz = spectral_window
+                .chan_freq(spw_id)
+                .map_err(|error| format!("read SPECTRAL_WINDOW.CHAN_FREQ row {spw_id}: {error}"))?
+                .into();
+            axes_by_spw.insert(
+                spw_id,
+                MsImagingChannelAxis {
+                    spw_id,
+                    chan_freq_hz,
+                },
+            );
+        }
+        Ok(Self { axes_by_spw })
+    }
+
+    fn get(&self, spw_id: usize) -> Option<&MsImagingChannelAxis> {
+        self.axes_by_spw.get(&spw_id)
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct MsImagingEssentials {
+    u_m: f64,
+    v_m: f64,
+    w_m: f64,
+    spw_id: usize,
+    channel_origin: usize,
+    data: Array2<Complex32>,
+    flag: Array2<bool>,
+    weight: Vec<f32>,
+    weight_spectrum: Option<Array2<f32>>,
+}
+
+#[allow(dead_code)]
+impl MsImagingEssentials {
+    fn logical_bytes(&self) -> usize {
+        (3 * std::mem::size_of::<f64>())
+            .saturating_add(std::mem::size_of::<usize>() * 2)
+            .saturating_add(
+                self.data
+                    .len()
+                    .saturating_mul(std::mem::size_of::<Complex32>()),
+            )
+            .saturating_add(self.flag.len().saturating_mul(std::mem::size_of::<bool>()))
+            .saturating_add(self.weight.len().saturating_mul(std::mem::size_of::<f32>()))
+            .saturating_add(
+                self.weight_spectrum
+                    .as_ref()
+                    .map(|values| values.len().saturating_mul(std::mem::size_of::<f32>()))
+                    .unwrap_or(0),
+            )
+    }
+
+    fn sample_count(&self) -> usize {
+        self.data.len()
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct MsImagingEssentialsBlock {
+    channel_axes: Arc<MsImagingChannelAxisCatalog>,
+    rows: Vec<MsImagingEssentials>,
+}
+
+#[allow(dead_code)]
+impl MsImagingEssentialsBlock {
+    fn logical_bytes(&self) -> usize {
+        self.rows
+            .iter()
+            .map(MsImagingEssentials::logical_bytes)
+            .sum()
+    }
+
+    fn sample_count(&self) -> usize {
+        self.rows
+            .iter()
+            .map(MsImagingEssentials::sample_count)
+            .sum()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct MsImagingEssentialsReadTimings {
+    data_column: Duration,
+    flag_column: Duration,
+    weight_column: Duration,
+    weight_spectrum: Duration,
+    uvw_column: Duration,
+    adapt_rows: Duration,
+}
+
+impl MsImagingEssentialsReadTimings {
+    fn total(self) -> Duration {
+        self.data_column
+            .saturating_add(self.flag_column)
+            .saturating_add(self.weight_column)
+            .saturating_add(self.weight_spectrum)
+            .saturating_add(self.uvw_column)
+            .saturating_add(self.adapt_rows)
+    }
+
+    fn add(&mut self, other: Self) {
+        self.data_column += other.data_column;
+        self.flag_column += other.flag_column;
+        self.weight_column += other.weight_column;
+        self.weight_spectrum += other.weight_spectrum;
+        self.uvw_column += other.uvw_column;
+        self.adapt_rows += other.adapt_rows;
+    }
+}
+
+fn complex_array2_owned(
+    value: ArrayValue,
+    column_name: &str,
+    row_index: usize,
+) -> Result<Array2<Complex32>, String> {
+    match value {
+        ArrayValue::Complex32(values) => values.into_dimensionality::<Ix2>().map_err(|error| {
+            format!("{column_name} row {row_index} must be rank-2 Complex32: {error}")
+        }),
+        ArrayValue::Complex64(values) => values
+            .into_dimensionality::<Ix2>()
+            .map_err(|error| {
+                format!("{column_name} row {row_index} must be rank-2 Complex64: {error}")
+            })
+            .map(|values| values.mapv(|value| Complex32::new(value.re as f32, value.im as f32))),
+        other => Err(format!(
+            "{column_name} row {row_index} must be Complex32/Complex64 array, found {:?}",
+            other.primitive_type()
+        )),
+    }
+}
+
+fn bool_array2_owned(
+    value: ArrayValue,
+    column_name: &str,
+    row_index: usize,
+) -> Result<Array2<bool>, String> {
+    match value {
+        ArrayValue::Bool(values) => values
+            .into_dimensionality::<Ix2>()
+            .map_err(|error| format!("{column_name} row {row_index} must be rank-2 Bool: {error}")),
+        other => Err(format!(
+            "{column_name} row {row_index} must be Bool array, found {:?}",
+            other.primitive_type()
+        )),
+    }
+}
+
+fn float_array1_owned(
+    value: ArrayValue,
+    column_name: &str,
+    row_index: usize,
+) -> Result<Vec<f32>, String> {
+    match value {
+        ArrayValue::Float32(values) => values
+            .into_dimensionality::<Ix1>()
+            .map_err(|error| {
+                format!("{column_name} row {row_index} must be rank-1 Float32: {error}")
+            })
+            .map(|values| values.iter().copied().collect()),
+        ArrayValue::Float64(values) => values
+            .into_dimensionality::<Ix1>()
+            .map_err(|error| {
+                format!("{column_name} row {row_index} must be rank-1 Float64: {error}")
+            })
+            .map(|values| values.iter().map(|value| *value as f32).collect()),
+        other => Err(format!(
+            "{column_name} row {row_index} must be Float32/Float64 array, found {:?}",
+            other.primitive_type()
+        )),
+    }
+}
+
+fn float_array2_owned(
+    value: ArrayValue,
+    column_name: &str,
+    row_index: usize,
+) -> Result<Array2<f32>, String> {
+    match value {
+        ArrayValue::Float32(values) => values.into_dimensionality::<Ix2>().map_err(|error| {
+            format!("{column_name} row {row_index} must be rank-2 Float32: {error}")
+        }),
+        ArrayValue::Float64(values) => values
+            .into_dimensionality::<Ix2>()
+            .map_err(|error| {
+                format!("{column_name} row {row_index} must be rank-2 Float64: {error}")
+            })
+            .map(|values| values.mapv(|value| value as f32)),
+        other => Err(format!(
+            "{column_name} row {row_index} must be Float32/Float64 array, found {:?}",
+            other.primitive_type()
+        )),
+    }
+}
+
+fn take_required_array(
+    values: &mut [Option<ArrayValue>],
+    row_slot: usize,
+    column_name: &str,
+    row_index: usize,
+) -> Result<ArrayValue, String> {
+    values
+        .get_mut(row_slot)
+        .and_then(Option::take)
+        .ok_or_else(|| format!("{column_name} data missing for selected row {row_index}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_ms_imaging_essentials_block(
+    ms: &MeasurementSet,
+    data_column_kind: VisibilityDataColumn,
+    channel_axes: Arc<MsImagingChannelAxisCatalog>,
+    row_chunk: &[SelectedMainRow],
+    channel_read_range: Option<SelectedChannelReadRange>,
+) -> Result<(MsImagingEssentialsBlock, MsImagingEssentialsReadTimings), String> {
+    let selected_row_indices = row_chunk
+        .iter()
+        .map(|selected_row| selected_row.row_index)
+        .collect::<Vec<_>>();
+    let mut timings = MsImagingEssentialsReadTimings::default();
+
+    let started = Instant::now();
+    let data_column = match channel_read_range {
+        Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
+            ms,
+            data_column_kind,
+            &selected_row_indices,
+            range.start,
+            range.count,
+        )?,
+        None => SelectedMainDataSource::load_uncached(ms, data_column_kind, &selected_row_indices)?,
+    };
+    timings.data_column = started.elapsed();
+
+    let started = Instant::now();
+    let flag_column = match channel_read_range {
+        Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+            ms,
+            "FLAG",
+            &selected_row_indices,
+            range.start,
+            range.count,
+        )?,
+        None => SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?,
+    };
+    timings.flag_column = started.elapsed();
+
+    let started = Instant::now();
+    let weight_column =
+        SelectedMainArrayColumn::load_uncached(ms, "WEIGHT", &selected_row_indices)?;
+    timings.weight_column = started.elapsed();
+
+    let started = Instant::now();
+    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
+        .ok()
+        .map(|_| match channel_read_range {
+            Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                ms,
+                "WEIGHT_SPECTRUM",
+                &selected_row_indices,
+                range.start,
+                range.count,
+            ),
+            None => {
+                SelectedMainArrayColumn::load_uncached(ms, "WEIGHT_SPECTRUM", &selected_row_indices)
+            }
+        })
+        .transpose()?;
+    timings.weight_spectrum = started.elapsed();
+
+    let started = Instant::now();
+    let selected_uvw = SelectedMainArrayColumn::load(ms, "UVW", &selected_row_indices)?;
+    timings.uvw_column = started.elapsed();
+
+    let started = Instant::now();
+    let SelectedMainDataSource::Single(data_column) = data_column;
+    let mut data_values = data_column.values;
+    let mut flag_values = flag_column.values;
+    let mut weight_values = weight_column.values;
+    let mut weight_spectrum_values = weight_spectrum.map(|column| column.values);
+    let mut uvw_values = selected_uvw.values;
+    let channel_origin = data_column.channel_origin;
+    let mut rows = Vec::with_capacity(row_chunk.len());
+    for (row_slot, selected_row) in row_chunk.iter().enumerate() {
+        let row_index = selected_row.row_index;
+        let uvw_value = take_required_array(&mut uvw_values, row_slot, "UVW", row_index)?;
+        let raw_uvw_m = extract_uvw_from_array(&uvw_value, row_index)?;
+        let data = complex_array2_owned(
+            take_required_array(
+                &mut data_values,
+                row_slot,
+                data_column.column_name,
+                row_index,
+            )?,
+            data_column.column_name,
+            row_index,
+        )?;
+        let flag = bool_array2_owned(
+            take_required_array(&mut flag_values, row_slot, "FLAG", row_index)?,
+            "FLAG",
+            row_index,
+        )?;
+        let weight = float_array1_owned(
+            take_required_array(&mut weight_values, row_slot, "WEIGHT", row_index)?,
+            "WEIGHT",
+            row_index,
+        )?;
+        let weight_spectrum = weight_spectrum_values
+            .as_mut()
+            .and_then(|values| values.get_mut(row_slot))
+            .and_then(Option::take)
+            .map(|value| float_array2_owned(value, "WEIGHT_SPECTRUM", row_index))
+            .transpose()?;
+        let axis = channel_axes.get(selected_row.spw_id).ok_or_else(|| {
+            format!(
+                "row {} references missing SPECTRAL_WINDOW {}",
+                selected_row.row_index, selected_row.spw_id
+            )
+        })?;
+        let channel_count = data.shape().get(1).copied().unwrap_or(0);
+        if channel_origin.saturating_add(channel_count) > axis.chan_freq_hz.len() {
+            return Err(format!(
+                "row {} selected channel range {}..{} exceeds SPW {} channel count {}",
+                selected_row.row_index,
+                channel_origin,
+                channel_origin + channel_count,
+                selected_row.spw_id,
+                axis.chan_freq_hz.len()
+            ));
+        }
+        rows.push(MsImagingEssentials {
+            u_m: raw_uvw_m[0],
+            v_m: raw_uvw_m[1],
+            w_m: raw_uvw_m[2],
+            spw_id: selected_row.spw_id,
+            channel_origin,
+            data,
+            flag,
+            weight,
+            weight_spectrum,
+        });
+    }
+    timings.adapt_rows = started.elapsed();
+
+    Ok((MsImagingEssentialsBlock { channel_axes, rows }, timings))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18204,6 +18688,8 @@ Options:
   --json-schema             emit the canonical imager task JSON schema
   --protocol-info           emit the imager task protocol descriptor
   --json-run <SOURCE>       execute one JSON ImagerTaskRequest from SOURCE or - for stdin
+  --ms-imaging-read-probe true|false
+                            read selected MS imaging row blocks and report raw throughput only
   -h, --help                show this help
 "
     .to_string()

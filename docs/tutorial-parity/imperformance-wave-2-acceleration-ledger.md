@@ -1507,6 +1507,56 @@ is to make that frontend cursor emit row/visibility-group columnar samples
 directly from the MeasurementSet reader, so original per-row flag/weight/data
 arrays are traversed once before routing to tile chunks.
 
+### Implementation Checkpoint: MS Imaging Essentials Read Probe
+
+Date: 2026-05-22.
+
+Retained changes:
+
+- Added a probe-only MS reader boundary for row-shaped imaging essentials. The
+  row payload preserves native polarization/channel layout as `corr x chan`
+  `DATA`, `FLAG`, optional `WEIGHT_SPECTRUM`, per-correlation `WEIGHT`, per-row
+  `UVW`, and `spw_id`. It does not collapse polarizations and does not perform
+  MFS-specific routing.
+- Added a shared read-only `SPECTRAL_WINDOW.CHAN_FREQ` catalog keyed by SPW, so
+  channel axes are not copied per row or per sample.
+- Added `--ms-imaging-read-probe true` for `casars-imager`. The probe stops
+  after reading/adapting MS essentials and reports throughput as JSON; no
+  gridding or CLEAN work is run.
+
+Validation artifacts:
+
+```text
+cargo check -p casars-imager
+cargo run --release -p casars-imager -- \
+  --ms /Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms \
+  --imagename target/imperformance-wave2/read-probe/wave1-vla-single-medium \
+  --imsize 2048 --cell-arcsec 0.5 --field 0 --spw 0 \
+  --channel-start 0 --channel-count 512 --gridder standard --specmode mfs \
+  --weighting briggs --robust 0.5 --deconvolver multiscale --scales 0,5,15 \
+  --niter 2 --wterm none --ms-imaging-read-probe true
+CASA_RS_MS_IMAGING_READ_PROBE_ROWS=131072 target/release/casars-imager \
+  --ms /Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms \
+  --imagename target/imperformance-wave2/read-probe/wave1-vla-single-medium \
+  --imsize 2048 --cell-arcsec 0.5 --field 0 --spw 0 \
+  --channel-start 0 --channel-count 512 --gridder standard --specmode mfs \
+  --weighting briggs --robust 0.5 --deconvolver multiscale --scales 0,5,15 \
+  --niter 2 --wterm none --ms-imaging-read-probe true
+```
+
+Medium-dataset probe results:
+
+| block rows | blocks | rows read | samples read | logical GiB | total s | read s | total MiB/s | read MiB/s | DATA s | FLAG s | adapt s |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 32,768 | 95 | 3,086,235 | 3,160,304,640 | 26.63 | 28.878 | 24.408 | 944.2 | 1117.1 | 14.490 | 8.343 | 0.338 |
+| 131,072 | 24 | 3,086,235 | 3,160,304,640 | 26.63 | 29.071 | 24.320 | 937.9 | 1121.1 | 14.445 | 8.338 | 0.276 |
+
+Decision: retain the reader/probe seam. Throughput is dominated by bulk DATA and
+FLAG reads from the MS, not row-object adaptation. Larger blocks did not
+materially improve throughput, so the existing 32k row-block scale is acceptable
+for this read path. The next step is to connect this row-shaped payload to the
+standard-MFS tile router without reintroducing per-scalar frontend objects.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
