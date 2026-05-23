@@ -1903,6 +1903,46 @@ cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace
 cargo build --release -p casars-imager
 ```
 
+## Scalar Run Slowdown Attribution
+
+Date: 2026-05-23
+
+Workload: medium 64-channel, 1024-pixel, Briggs dirty-only,
+`CASA_RS_STANDARD_MFS_BACKEND=fixed_tile`,
+`CASA_RS_STANDARD_MFS_GRID_THREADS=10`,
+`CASA_RS_STANDARD_MFS_PROFILE_DETAIL=1`.
+
+Artifact directory:
+`target/imperformance-wave2/scalar-run-slowdown-20260523/`
+
+| candidate | timing artifact | sample artifact | frontend s | core s | stage s | sys s | decision |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| default scalar-run slowdown | terminal-captured profile | `profile-imager-default-10s.sample.txt` | 58.03 | 41.06 | 40.95 | n/a | rejected; sampled in `RawVec::grow_one` / `_realloc` while constructing runs |
+| same-tile preallocation only | `medium-briggs-runblock-prealloc-10w.log` | `profile-imager-prealloc-10s.sample.txt` | 54.34 | 40.77 | 40.67 | 16.29 | rejected; mixed-tile fragment path still hit scalar append allocation |
+| segment preallocation | `medium-briggs-runblock-segment-prealloc-10w.log` | `profile-imager-segment-prealloc-10s.sample.txt` | 40.22 | 26.81 | 26.69 | 15.75 | retained; restores run-block path to pre-slowdown range |
+| segment preallocation, sampled | `medium-briggs-runblock-segment-prealloc-sampled-10w.log` | `profile-imager-segment-prealloc-10s.sample.txt` | 45.56 | 28.33 | 28.22 | 15.72 | diagnostic only; sampling overhead/noise, still showed worker-side run concatenation |
+| no worker-side run concatenation | `medium-briggs-runblock-no-concat-unsampled-10w.log` | `profile-imager-no-concat-10s.sample.txt` | 39.23 | 26.10 | 25.99 | 15.58 | retained; removes worker drain copy/reallocation and is slightly faster unsampled |
+
+Observed root cause: the run-block path was not actually publishing large work
+units cheaply. The producer built most runs by repeated scalar appends, so the
+main thread sampled in `StandardMfsTileVisibilityRun::push_sample` and allocator
+growth (`RawVec::grow_one` / `_realloc`). After exact segment preallocation, the
+allocator hotspot moved out of the dominant stack and wall time returned to the
+pre-slowdown range.
+
+Second observed issue: workers drained tile queues by concatenating queued runs
+into one synthetic `StandardMfsTileVisibilityRun`, which copied every per-sample
+column vector and reallocated under `append_run`. The retained fix keeps drained
+work as `Vec<StandardMfsTileVisibilityRun>` and iterates the runs directly.
+
+Remaining hotspot: sampled current code still spends producer time in
+`push_planned_dirty_samples_to_run_accumulator` /
+`StandardMfsTileVisibilityRun::push_sample`. That is expected until the queue
+payload becomes a true row/channel visibility run instead of scalar-field vectors.
+The next candidate should avoid copying `u/v/w`, flags, weights, and visibility
+into per-lane vectors when an MS row or contiguous channel span belongs to one
+tile.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:

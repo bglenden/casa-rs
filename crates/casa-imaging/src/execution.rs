@@ -2120,7 +2120,44 @@ struct StandardMfsTileVisibilityRun {
     estimated_work: usize,
 }
 
-type StandardMfsTileQueueChunk = StandardMfsTileVisibilityRun;
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+struct StandardMfsTileQueueChunk {
+    runs: Vec<StandardMfsTileVisibilityRun>,
+    len: usize,
+    estimated_work: usize,
+}
+
+impl StandardMfsTileQueueChunk {
+    fn with_run_capacity(capacity: usize) -> Self {
+        Self {
+            runs: Vec::with_capacity(capacity),
+            len: 0,
+            estimated_work: 0,
+        }
+    }
+
+    fn push_run(&mut self, run: StandardMfsTileVisibilityRun) {
+        if run.is_empty() {
+            return;
+        }
+        self.len = self.len.saturating_add(run.len());
+        self.estimated_work = self.estimated_work.saturating_add(run.estimated_work);
+        self.runs.push(run);
+    }
+
+    fn runs(&self) -> &[StandardMfsTileVisibilityRun] {
+        &self.runs
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn estimated_work(&self) -> usize {
+        self.estimated_work
+    }
+}
 
 impl StandardMfsTileVisibilityRun {
     fn empty() -> Self {
@@ -2673,15 +2710,15 @@ impl StandardMfsTileInboxShared {
 
             queue.ready_enqueued = false;
             queue.active = true;
-            let mut samples = StandardMfsTileQueueChunk::empty();
+            let mut samples = StandardMfsTileQueueChunk::with_run_capacity(queue.runs.len());
             let mut run_count = 0usize;
             let mut bytes = 0usize;
             while let Some(run) = queue.runs.pop_front() {
                 run_count += 1;
                 bytes = bytes.saturating_add(run.queue_bytes());
-                samples.append_run(run);
+                samples.push_run(run);
             }
-            let estimated_work = samples.estimated_work;
+            let estimated_work = samples.estimated_work();
             queue.queued_samples = queue.queued_samples.saturating_sub(samples.len());
             queue.queued_bytes = queue.queued_bytes.saturating_sub(bytes);
             queue.queued_work_estimate = queue.queued_work_estimate.saturating_sub(estimated_work);
@@ -2919,6 +2956,24 @@ impl<'a> StandardMfsTileRunAccumulator<'a> {
         self.flush()?;
         let mut run = StandardMfsTileVisibilityRun::with_capacity(1, sample.input_seq);
         run.push_sample(sample);
+        self.current_tile = Some(tile_id);
+        self.current_run = run;
+        Ok(())
+    }
+
+    fn push_run(
+        &mut self,
+        tile_id: StandardMfsTileId,
+        run: StandardMfsTileVisibilityRun,
+    ) -> Result<(), ImagingError> {
+        if run.is_empty() {
+            return Ok(());
+        }
+        if self.current_tile == Some(tile_id) {
+            self.current_run.append_run(run);
+            return Ok(());
+        }
+        self.flush()?;
         self.current_tile = Some(tile_id);
         self.current_run = run;
         Ok(())
@@ -4632,6 +4687,8 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             return Ok(accumulation);
         }
         if let Some(tile_id) = self.planned_samples_single_owner_tile(samples, false) {
+            let mut run =
+                StandardMfsTileVisibilityRun::with_capacity(samples.len(), *next_input_seq);
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
@@ -4642,69 +4699,98 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 } else {
                     STANDARD_MFS_TILE_FLAG_PSF_ONLY
                 };
-                run_accumulator.push_sample(
-                    tile_id,
-                    StandardMfsTileQueueSample {
-                        center_x: sample.center_x,
-                        center_y: sample.center_y,
-                        flags,
-                        raw_weight: sample.grid_weight,
-                        sumwt_factor: 1.0,
-                        u_lambda: sample.u_lambda,
-                        v_lambda: sample.v_lambda,
-                        w_lambda: sample.w_lambda,
-                        visibility: if psf_only {
-                            Complex32::new(0.0, 0.0)
-                        } else {
-                            sample.visibility
-                        },
-                        input_seq: *next_input_seq,
+                run.push_sample(StandardMfsTileQueueSample {
+                    center_x: sample.center_x,
+                    center_y: sample.center_y,
+                    flags,
+                    raw_weight: sample.grid_weight,
+                    sumwt_factor: 1.0,
+                    u_lambda: sample.u_lambda,
+                    v_lambda: sample.v_lambda,
+                    w_lambda: sample.w_lambda,
+                    visibility: if psf_only {
+                        Complex32::new(0.0, 0.0)
+                    } else {
+                        sample.visibility
                     },
-                )?;
+                    input_seq: *next_input_seq,
+                });
                 *next_input_seq = (*next_input_seq).saturating_add(1);
             }
+            run_accumulator.push_run(tile_id, run)?;
             return Ok(accumulation);
         }
 
-        for &sample in samples {
+        let mut index = 0usize;
+        while index < samples.len() {
+            let sample = samples[index];
+            if !(sample.grid_weight.is_finite() && sample.grid_weight > 0.0) {
+                accumulation.skipped_samples += 1;
+                index += 1;
+                continue;
+            }
             let Some(tile_id) = self
                 .partition
                 .owner(sample.center_x as usize, sample.center_y as usize)
             else {
                 accumulation.skipped_samples += 1;
+                index += 1;
                 continue;
             };
-            if !(sample.grid_weight.is_finite() && sample.grid_weight > 0.0) {
-                accumulation.skipped_samples += 1;
-                continue;
+
+            let segment_start = index;
+            let mut segment_end = index + 1;
+            while segment_end < samples.len() {
+                let candidate = samples[segment_end];
+                if !(candidate.grid_weight.is_finite() && candidate.grid_weight > 0.0) {
+                    break;
+                }
+                let Some(candidate_tile_id) = self
+                    .partition
+                    .owner(candidate.center_x as usize, candidate.center_y as usize)
+                else {
+                    break;
+                };
+                if candidate_tile_id != tile_id {
+                    break;
+                }
+                segment_end += 1;
             }
-            accumulation.max_abs_w_lambda =
-                accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
-            let flags = if psf_only {
-                STANDARD_MFS_TILE_FLAG_PSF_ONLY
-            } else if sample.finite_visibility() {
-                STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY
-            } else {
-                STANDARD_MFS_TILE_FLAG_PSF_ONLY
-            };
-            let queued = StandardMfsTileQueueSample {
-                center_x: sample.center_x,
-                center_y: sample.center_y,
-                flags,
-                raw_weight: sample.grid_weight,
-                sumwt_factor: 1.0,
-                u_lambda: sample.u_lambda,
-                v_lambda: sample.v_lambda,
-                w_lambda: sample.w_lambda,
-                visibility: if psf_only {
-                    Complex32::new(0.0, 0.0)
+
+            let mut run = StandardMfsTileVisibilityRun::with_capacity(
+                segment_end - segment_start,
+                *next_input_seq,
+            );
+            for &sample in &samples[segment_start..segment_end] {
+                accumulation.max_abs_w_lambda =
+                    accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
+                let flags = if psf_only {
+                    STANDARD_MFS_TILE_FLAG_PSF_ONLY
+                } else if sample.finite_visibility() {
+                    STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY
                 } else {
-                    sample.visibility
-                },
-                input_seq: *next_input_seq,
-            };
-            *next_input_seq = (*next_input_seq).saturating_add(1);
-            run_accumulator.push_sample(tile_id, queued)?;
+                    STANDARD_MFS_TILE_FLAG_PSF_ONLY
+                };
+                run.push_sample(StandardMfsTileQueueSample {
+                    center_x: sample.center_x,
+                    center_y: sample.center_y,
+                    flags,
+                    raw_weight: sample.grid_weight,
+                    sumwt_factor: 1.0,
+                    u_lambda: sample.u_lambda,
+                    v_lambda: sample.v_lambda,
+                    w_lambda: sample.w_lambda,
+                    visibility: if psf_only {
+                        Complex32::new(0.0, 0.0)
+                    } else {
+                        sample.visibility
+                    },
+                    input_seq: *next_input_seq,
+                });
+                *next_input_seq = (*next_input_seq).saturating_add(1);
+            }
+            run_accumulator.push_run(tile_id, run)?;
+            index = segment_end;
         }
         Ok(accumulation)
     }
@@ -4728,41 +4814,44 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             .expect("direct dirty tile should be resident");
         let worker_started = profile::maybe_profile_now();
         let mut accumulation = StandardMfsDirtyAccumulation::default();
-        for sample_index in 0..samples.len() {
-            let taps = samples.positive_taps_at(sample_index, self.gridder)?;
-            let grid_weight = samples.grid_weight_at(sample_index);
-            if !(grid_weight.is_finite() && grid_weight > 0.0) {
-                return Err(ImagingError::InvalidRequest(
-                    "standard MFS tile inbox dirty sample has invalid queued weight".to_string(),
-                ));
-            }
-            let grid_weight = f64::from(grid_weight);
-            accumulation.normalization_sumwt += grid_weight;
-            accumulation.reported_sumwt += grid_weight;
-            accumulation.gridded_samples += 1;
-            if samples.finite_visibility_at(sample_index) {
-                let visibility = samples.visibility_at(sample_index);
-                let residual = Complex64::new(
-                    f64::from(visibility.re) * grid_weight,
-                    f64::from(visibility.im) * grid_weight,
-                );
-                self.gridder
-                    .grid_sample_taps_real_complex_pair_planned_f64_with_offset(
+        for run in samples.runs() {
+            for sample_index in 0..run.len() {
+                let taps = run.positive_taps_at(sample_index, self.gridder)?;
+                let grid_weight = run.grid_weight_at(sample_index);
+                if !(grid_weight.is_finite() && grid_weight > 0.0) {
+                    return Err(ImagingError::InvalidRequest(
+                        "standard MFS tile inbox dirty sample has invalid queued weight"
+                            .to_string(),
+                    ));
+                }
+                let grid_weight = f64::from(grid_weight);
+                accumulation.normalization_sumwt += grid_weight;
+                accumulation.reported_sumwt += grid_weight;
+                accumulation.gridded_samples += 1;
+                if run.finite_visibility_at(sample_index) {
+                    let visibility = run.visibility_at(sample_index);
+                    let residual = Complex64::new(
+                        f64::from(visibility.re) * grid_weight,
+                        f64::from(visibility.im) * grid_weight,
+                    );
+                    self.gridder
+                        .grid_sample_taps_real_complex_pair_planned_f64_with_offset(
+                            &mut buffer.psf_grid,
+                            grid_weight,
+                            &mut buffer.residual_grid,
+                            residual,
+                            &taps,
+                            offset,
+                        );
+                } else {
+                    debug_assert!(run.psf_only_at(sample_index));
+                    self.gridder.grid_sample_taps_real_planned_f64_with_offset(
                         &mut buffer.psf_grid,
-                        grid_weight,
-                        &mut buffer.residual_grid,
-                        residual,
                         &taps,
+                        grid_weight,
                         offset,
                     );
-            } else {
-                debug_assert!(samples.psf_only_at(sample_index));
-                self.gridder.grid_sample_taps_real_planned_f64_with_offset(
-                    &mut buffer.psf_grid,
-                    &taps,
-                    grid_weight,
-                    offset,
-                );
+                }
             }
         }
         Ok((
@@ -5228,24 +5317,26 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let buffer = guard.as_mut().expect("direct PSF tile should be resident");
         let worker_started = profile::maybe_profile_now();
         let mut accumulation = StandardMfsDirtyAccumulation::default();
-        for sample_index in 0..samples.len() {
-            let taps = samples.positive_taps_at(sample_index, self.gridder)?;
-            let grid_weight = samples.grid_weight_at(sample_index);
-            if !(grid_weight.is_finite() && grid_weight > 0.0) {
-                return Err(ImagingError::InvalidRequest(
-                    "standard MFS tile inbox PSF sample has invalid queued weight".to_string(),
-                ));
+        for run in samples.runs() {
+            for sample_index in 0..run.len() {
+                let taps = run.positive_taps_at(sample_index, self.gridder)?;
+                let grid_weight = run.grid_weight_at(sample_index);
+                if !(grid_weight.is_finite() && grid_weight > 0.0) {
+                    return Err(ImagingError::InvalidRequest(
+                        "standard MFS tile inbox PSF sample has invalid queued weight".to_string(),
+                    ));
+                }
+                let grid_weight = f64::from(grid_weight);
+                accumulation.normalization_sumwt += grid_weight;
+                accumulation.reported_sumwt += grid_weight;
+                accumulation.gridded_samples += 1;
+                self.gridder.grid_sample_taps_real_planned_f64_with_offset(
+                    &mut buffer.psf_grid,
+                    &taps,
+                    grid_weight,
+                    offset,
+                );
             }
-            let grid_weight = f64::from(grid_weight);
-            accumulation.normalization_sumwt += grid_weight;
-            accumulation.reported_sumwt += grid_weight;
-            accumulation.gridded_samples += 1;
-            self.gridder.grid_sample_taps_real_planned_f64_with_offset(
-                &mut buffer.psf_grid,
-                &taps,
-                grid_weight,
-                offset,
-            );
         }
         Ok((
             accumulation,
@@ -6634,39 +6725,42 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             .expect("direct residual tile should be resident");
         let worker_started = profile::maybe_profile_now();
         let mut gridded_samples = 0usize;
-        for sample_index in 0..samples.len() {
-            let taps = samples.positive_taps_at(sample_index, self.gridder)?;
-            let residual_weight = samples.grid_weight_at(sample_index);
-            if !(residual_weight.is_finite() && residual_weight > 0.0) {
-                return Err(ImagingError::InvalidRequest(
-                    "standard MFS tile inbox residual sample has invalid queued weight".to_string(),
-                ));
-            }
-            let residual_weight = f64::from(residual_weight);
-            if let Some(model_grid) = model_grid {
-                self.gridder
-                    .degrid_model_and_grid_residual_taps_planned_f64_with_residual_offset(
-                        model_grid,
+        for run in samples.runs() {
+            for sample_index in 0..run.len() {
+                let taps = run.positive_taps_at(sample_index, self.gridder)?;
+                let residual_weight = run.grid_weight_at(sample_index);
+                if !(residual_weight.is_finite() && residual_weight > 0.0) {
+                    return Err(ImagingError::InvalidRequest(
+                        "standard MFS tile inbox residual sample has invalid queued weight"
+                            .to_string(),
+                    ));
+                }
+                let residual_weight = f64::from(residual_weight);
+                if let Some(model_grid) = model_grid {
+                    self.gridder
+                        .degrid_model_and_grid_residual_taps_planned_f64_with_residual_offset(
+                            model_grid,
+                            &mut buffer.residual_grid,
+                            &taps,
+                            run.visibility_at(sample_index),
+                            residual_weight,
+                            offset,
+                        );
+                } else {
+                    let visibility = run.visibility_at(sample_index);
+                    let residual = Complex64::new(
+                        f64::from(visibility.re) * residual_weight,
+                        f64::from(visibility.im) * residual_weight,
+                    );
+                    self.gridder.grid_sample_taps_planned_f64_with_offset(
                         &mut buffer.residual_grid,
                         &taps,
-                        samples.visibility_at(sample_index),
-                        residual_weight,
+                        residual,
                         offset,
                     );
-            } else {
-                let visibility = samples.visibility_at(sample_index);
-                let residual = Complex64::new(
-                    f64::from(visibility.re) * residual_weight,
-                    f64::from(visibility.im) * residual_weight,
-                );
-                self.gridder.grid_sample_taps_planned_f64_with_offset(
-                    &mut buffer.residual_grid,
-                    &taps,
-                    residual,
-                    offset,
-                );
+                }
+                gridded_samples += 1;
             }
-            gridded_samples += 1;
         }
         Ok((
             gridded_samples,
@@ -6958,36 +7052,40 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             return Ok(accumulation);
         }
         if let Some(tile_id) = self.planned_samples_single_owner_tile(samples, true) {
+            let mut run =
+                StandardMfsTileVisibilityRun::with_capacity(samples.len(), *next_input_seq);
             for &sample in samples {
                 accumulation.valid_samples += 1;
                 accumulation.planned_samples += 1;
-                run_accumulator.push_sample(
-                    tile_id,
-                    StandardMfsTileQueueSample {
-                        center_x: sample.center_x,
-                        center_y: sample.center_y,
-                        flags: STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
-                        raw_weight: sample.grid_weight,
-                        sumwt_factor: 1.0,
-                        u_lambda: sample.u_lambda,
-                        v_lambda: sample.v_lambda,
-                        w_lambda: sample.w_lambda,
-                        visibility: sample.visibility,
-                        input_seq: *next_input_seq,
-                    },
-                )?;
+                run.push_sample(StandardMfsTileQueueSample {
+                    center_x: sample.center_x,
+                    center_y: sample.center_y,
+                    flags: STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
+                    raw_weight: sample.grid_weight,
+                    sumwt_factor: 1.0,
+                    u_lambda: sample.u_lambda,
+                    v_lambda: sample.v_lambda,
+                    w_lambda: sample.w_lambda,
+                    visibility: sample.visibility,
+                    input_seq: *next_input_seq,
+                });
                 *next_input_seq = (*next_input_seq).saturating_add(1);
             }
+            run_accumulator.push_run(tile_id, run)?;
             return Ok(accumulation);
         }
 
-        for &sample in samples {
+        let mut index = 0usize;
+        while index < samples.len() {
+            let sample = samples[index];
             if !(sample.grid_weight.is_finite() && sample.grid_weight > 0.0) {
                 accumulation.skipped_invalid_weight += 1;
+                index += 1;
                 continue;
             }
             if !sample.finite_visibility() {
                 accumulation.skipped_nonfinite_visibility += 1;
+                index += 1;
                 continue;
             }
             let Some(tile_id) = self
@@ -6995,24 +7093,54 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 .owner(sample.center_x as usize, sample.center_y as usize)
             else {
                 accumulation.skipped_out_of_grid += 1;
+                index += 1;
                 continue;
             };
-            accumulation.valid_samples += 1;
-            accumulation.planned_samples += 1;
-            let queued = StandardMfsTileQueueSample {
-                center_x: sample.center_x,
-                center_y: sample.center_y,
-                flags: STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
-                raw_weight: sample.grid_weight,
-                sumwt_factor: 1.0,
-                u_lambda: sample.u_lambda,
-                v_lambda: sample.v_lambda,
-                w_lambda: sample.w_lambda,
-                visibility: sample.visibility,
-                input_seq: *next_input_seq,
-            };
-            *next_input_seq = (*next_input_seq).saturating_add(1);
-            run_accumulator.push_sample(tile_id, queued)?;
+
+            let segment_start = index;
+            let mut segment_end = index + 1;
+            while segment_end < samples.len() {
+                let candidate = samples[segment_end];
+                if !(candidate.grid_weight.is_finite() && candidate.grid_weight > 0.0)
+                    || !candidate.finite_visibility()
+                {
+                    break;
+                }
+                let Some(candidate_tile_id) = self
+                    .partition
+                    .owner(candidate.center_x as usize, candidate.center_y as usize)
+                else {
+                    break;
+                };
+                if candidate_tile_id != tile_id {
+                    break;
+                }
+                segment_end += 1;
+            }
+
+            let mut run = StandardMfsTileVisibilityRun::with_capacity(
+                segment_end - segment_start,
+                *next_input_seq,
+            );
+            for &sample in &samples[segment_start..segment_end] {
+                accumulation.valid_samples += 1;
+                accumulation.planned_samples += 1;
+                run.push_sample(StandardMfsTileQueueSample {
+                    center_x: sample.center_x,
+                    center_y: sample.center_y,
+                    flags: STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
+                    raw_weight: sample.grid_weight,
+                    sumwt_factor: 1.0,
+                    u_lambda: sample.u_lambda,
+                    v_lambda: sample.v_lambda,
+                    w_lambda: sample.w_lambda,
+                    visibility: sample.visibility,
+                    input_seq: *next_input_seq,
+                });
+                *next_input_seq = (*next_input_seq).saturating_add(1);
+            }
+            run_accumulator.push_run(tile_id, run)?;
+            index = segment_end;
         }
         Ok(accumulation)
     }
