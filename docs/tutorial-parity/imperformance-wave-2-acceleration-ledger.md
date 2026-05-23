@@ -544,6 +544,79 @@ Decision:
   remains below the 16 GiB dynamic target.
 ```
 
+Ten-worker tile-inbox scalar/run hot-path pass:
+
+```text
+Artifacts:
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-no-concat-unsampled-10w.log
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-aos-run-10w.log
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-aos-batched-publish-10w.log
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-reused-plan-block-10w.log
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-shared-eop-10w.log
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-tile-session-mru-10w.log
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-final-retained-10w.log
+Workload:
+  64 channels, imsize 1024, Briggs robust 0.5, Hogbom dirty-only,
+  CASA_RS_STANDARD_MFS_GRID_THREADS=10, fixed-tile backend,
+  tile_edge=32, center-boundary anchor
+Retained changes:
+  tile visibility runs now store queue samples in one AoS vector instead of
+  eight parallel scalar vectors;
+  tile-inbox publish statistics are batched on the producer fast path when no
+  ready-head notification is needed;
+  the frontend reuses the planned sample run-block allocation across row
+  chunks;
+  MeasFrame::with_standard_eop shares one process-wide EOP table allocation;
+  tiled storage read sessions keep a tiny MRU of shared tile Arc handles before
+  consulting the global shared-tile cache.
+Best retained timing:
+  Frontend total: 39.231s -> 29.770s
+  Prepare plane input: 34.834s -> 25.200s
+  get_ms_values: 12.862s -> 11.546s
+  prepare_processing_buffer: 21.972s -> 13.654s
+  Core total: 26.104s -> 17.005s
+  PSF grid: 12.998s -> 8.445s
+  residual_degrid_grid: 12.998s -> 8.445s
+  Peak RSS: 9.61 GiB
+Final retained verification run:
+  Frontend total: 31.326s
+  Core total: 17.816s
+  Prepare plane input: 26.672s
+  PSF grid: 8.850s
+  residual_degrid_grid: 8.850s
+  Peak RSS: 9.55 GiB
+Decision:
+  retained. The net bounded dirty-only improvement is about 24% frontend and
+  35% core versus the pre-pass scalar-run baseline, with the largest retained
+  movement coming from the storage-session MRU and producer/run allocation
+  shape. The scheduler remains producer-bound: the retained summary still has
+  producer_active=16.838s, worker_active_union=5.556s, and worker utilization
+  about 8.5%, so the next architectural win is moving the remaining
+  per-lane weighting/planning/routing work out of the producer and into
+  tile workers over row-shaped run payloads.
+```
+
+Rejected candidates in the same pass:
+
+```text
+Artifacts and decisions:
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-batched-publish-10w.log
+    rejected: publish batching before AoS regressed to 40.112s frontend.
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-inline-boundary-10w.log
+    rejected: inline-boundary hints were neutral/noisy versus the retained state.
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-single-pass-router-10w.log
+    rejected: single-pass tile router was slower than the retained two-step
+    row-run route.
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-worker-center-taps-10w.log
+    rejected: center-based worker tap planning did not beat the existing
+    exact positive-tap plan path.
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-product-weights-10w.log
+    rejected: compact product-weight lookup worsened the retained MRU timing.
+  target/imperformance-wave2/scalar-run-slowdown-20260523/medium-briggs-runblock-tile-session-mru32-cell1-10w.log
+    rejected: increasing the per-read-session MRU from 8 to 32 entries regressed
+    the comparable dirty-only timing to 33.802s frontend.
+```
+
 ## Metal Preview Backend Track
 
 The Metal gridding experiment from `codex/metal-experiments` is now part of the

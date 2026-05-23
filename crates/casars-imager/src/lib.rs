@@ -9016,6 +9016,7 @@ where
         selection.phase_center.clone(),
         false,
     )?;
+    let mut planned_runs = StandardMfsPlannedWeightedSampleRunBlock::default();
     for row_chunk in active_selected_rows.chunks(row_block_rows) {
         let stage_started_at = Instant::now();
         let (block, read_timings) = read_ms_imaging_essentials_block(
@@ -9038,7 +9039,7 @@ where
 
         let stage_started_at = Instant::now();
         let before_accumulate = *accumulate_timings;
-        let mut planned_runs = StandardMfsPlannedWeightedSampleRunBlock::default();
+        planned_runs.clear();
         let mut block_candidate_samples = 0usize;
         for (row_slot, (selected_row, row)) in row_chunk.iter().zip(block.rows.iter()).enumerate() {
             accumulate_timings.rows_seen += 1;

@@ -213,6 +213,7 @@ impl SharedTileCacheState {
 
 static SHARED_TILE_CACHE: LazyLock<Mutex<SharedTileCacheState>> =
     LazyLock::new(|| Mutex::new(SharedTileCacheState::new()));
+const TILE_READ_SESSION_RECENT_TILE_COUNT: usize = 8;
 
 fn table_cache_budget_from_env() -> usize {
     std::env::var(TABLE_CACHE_BUDGET_ENV)
@@ -6260,6 +6261,7 @@ fn write_tiled_file_tile(
 struct TileReadSession {
     table_id: Option<u64>,
     files: std::collections::HashMap<u32, std::fs::File>,
+    recent_tiles: Vec<(SharedTileKey, Arc<[u8]>)>,
 }
 
 impl TileReadSession {
@@ -6292,6 +6294,28 @@ impl TileReadSession {
             }
         }
     }
+
+    fn recent_tile(&self, key: &SharedTileKey) -> Option<Arc<[u8]>> {
+        self.recent_tiles
+            .iter()
+            .find_map(|(recent_key, data)| (recent_key == key).then(|| Arc::clone(data)))
+    }
+
+    fn remember_tile(&mut self, key: SharedTileKey, data: Arc<[u8]>) {
+        if let Some(position) = self
+            .recent_tiles
+            .iter()
+            .position(|(recent_key, _)| recent_key == &key)
+        {
+            let entry = self.recent_tiles.remove(position);
+            self.recent_tiles.push(entry);
+            return;
+        }
+        if self.recent_tiles.len() >= TILE_READ_SESSION_RECENT_TILE_COUNT {
+            self.recent_tiles.remove(0);
+        }
+        self.recent_tiles.push((key, data));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6316,11 +6340,15 @@ fn load_shared_column_tile(
         target_col_idx,
         tile_index,
     };
+    if let Some(hit) = session.recent_tile(&key) {
+        return Ok(hit);
+    }
     if let Some(hit) = SHARED_TILE_CACHE
         .lock()
         .expect("shared tile cache lock poisoned")
         .get(&key)
     {
+        session.remember_tile(key, Arc::clone(&hit));
         return Ok(hit);
     }
 
@@ -6352,9 +6380,12 @@ fn load_shared_column_tile(
         .lock()
         .expect("shared tile cache lock poisoned");
     if let Some(hit) = cache.get(&key) {
+        session.remember_tile(key, Arc::clone(&hit));
         return Ok(hit);
     }
-    Ok(cache.insert(key, data))
+    let cached = cache.insert(key.clone(), data);
+    session.remember_tile(key, Arc::clone(&cached));
+    Ok(cached)
 }
 
 #[allow(clippy::too_many_arguments)]

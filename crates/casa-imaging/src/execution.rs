@@ -2107,15 +2107,7 @@ struct StandardMfsTileVisibilityRun {
     selected_correlations: Arc<[usize]>,
     tap_centers: Arc<[[u32; 2]]>,
     first_input_seq: u64,
-    center_x: Vec<u32>,
-    center_y: Vec<u32>,
-    flags: Vec<u16>,
-    raw_weight: Vec<f32>,
-    sumwt_factor: Vec<f32>,
-    u_lambda: Vec<f64>,
-    v_lambda: Vec<f64>,
-    w_lambda: Vec<f64>,
-    visibility: Vec<Complex32>,
+    samples: Vec<StandardMfsTileQueueSample>,
     bytes: usize,
     estimated_work: usize,
 }
@@ -2171,15 +2163,7 @@ impl StandardMfsTileVisibilityRun {
             selected_correlations: Arc::from([]),
             tap_centers: Arc::from([]),
             first_input_seq,
-            center_x: Vec::with_capacity(capacity),
-            center_y: Vec::with_capacity(capacity),
-            flags: Vec::with_capacity(capacity),
-            raw_weight: Vec::with_capacity(capacity),
-            sumwt_factor: Vec::with_capacity(capacity),
-            u_lambda: Vec::with_capacity(capacity),
-            v_lambda: Vec::with_capacity(capacity),
-            w_lambda: Vec::with_capacity(capacity),
-            visibility: Vec::with_capacity(capacity),
+            samples: Vec::with_capacity(capacity),
             bytes: 0,
             estimated_work: 0,
         }
@@ -2189,19 +2173,12 @@ impl StandardMfsTileVisibilityRun {
         if self.is_empty() {
             self.first_input_seq = sample.input_seq;
         }
-        self.center_x.push(sample.center_x);
-        self.center_y.push(sample.center_y);
-        self.flags.push(sample.flags);
-        self.raw_weight.push(sample.raw_weight);
-        self.sumwt_factor.push(sample.sumwt_factor);
-        self.u_lambda.push(sample.u_lambda);
-        self.v_lambda.push(sample.v_lambda);
-        self.w_lambda.push(sample.w_lambda);
-        self.visibility.push(sample.visibility);
+        let estimated_work = sample.estimated_work();
+        self.samples.push(sample);
         self.bytes = self
             .bytes
             .saturating_add(StandardMfsTileQueueSample::queue_bytes());
-        self.estimated_work = self.estimated_work.saturating_add(sample.estimated_work());
+        self.estimated_work = self.estimated_work.saturating_add(estimated_work);
     }
 
     fn append_run(&mut self, mut run: StandardMfsTileVisibilityRun) {
@@ -2211,15 +2188,7 @@ impl StandardMfsTileVisibilityRun {
         if self.is_empty() {
             self.first_input_seq = run.first_input_seq;
         }
-        self.center_x.append(&mut run.center_x);
-        self.center_y.append(&mut run.center_y);
-        self.flags.append(&mut run.flags);
-        self.raw_weight.append(&mut run.raw_weight);
-        self.sumwt_factor.append(&mut run.sumwt_factor);
-        self.u_lambda.append(&mut run.u_lambda);
-        self.v_lambda.append(&mut run.v_lambda);
-        self.w_lambda.append(&mut run.w_lambda);
-        self.visibility.append(&mut run.visibility);
+        self.samples.append(&mut run.samples);
         self.bytes = self.bytes.saturating_add(run.bytes);
         self.estimated_work = self.estimated_work.saturating_add(run.estimated_work);
     }
@@ -2229,27 +2198,27 @@ impl StandardMfsTileVisibilityRun {
     }
 
     fn len(&self) -> usize {
-        self.visibility.len()
+        self.samples.len()
     }
 
     fn is_empty(&self) -> bool {
-        self.visibility.is_empty()
+        self.samples.is_empty()
     }
 
     fn finite_visibility_at(&self, sample_index: usize) -> bool {
-        self.flags[sample_index] & STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY != 0
+        self.samples[sample_index].finite_visibility()
     }
 
     fn psf_only_at(&self, sample_index: usize) -> bool {
-        self.flags[sample_index] & STANDARD_MFS_TILE_FLAG_PSF_ONLY != 0
+        self.samples[sample_index].psf_only()
     }
 
     fn grid_weight_at(&self, sample_index: usize) -> f32 {
-        self.raw_weight[sample_index] * self.sumwt_factor[sample_index]
+        self.samples[sample_index].grid_weight()
     }
 
     fn visibility_at(&self, sample_index: usize) -> Complex32 {
-        self.visibility[sample_index]
+        self.samples[sample_index].visibility
     }
 
     fn positive_taps_at(
@@ -2257,19 +2226,7 @@ impl StandardMfsTileVisibilityRun {
         sample_index: usize,
         gridder: &StandardGridder,
     ) -> Result<PositiveTapSet, ImagingError> {
-        let sample = StandardMfsTileQueueSample {
-            center_x: self.center_x[sample_index],
-            center_y: self.center_y[sample_index],
-            flags: self.flags[sample_index],
-            raw_weight: self.raw_weight[sample_index],
-            sumwt_factor: self.sumwt_factor[sample_index],
-            u_lambda: self.u_lambda[sample_index],
-            v_lambda: self.v_lambda[sample_index],
-            w_lambda: self.w_lambda[sample_index],
-            visibility: self.visibility[sample_index],
-            input_seq: 0,
-        };
-        sample.positive_taps(gridder)
+        self.samples[sample_index].positive_taps(gridder)
     }
 }
 
@@ -2476,6 +2433,16 @@ struct StandardMfsTileInboxPublishStats {
     ready_head: Option<StandardMfsTileInboxReadyHead>,
 }
 
+impl StandardMfsTileInboxPublishStats {
+    fn add_deferred(&mut self, other: Self) {
+        debug_assert!(other.ready_head.is_none());
+        self.runs = self.runs.saturating_add(other.runs);
+        self.samples = self.samples.saturating_add(other.samples);
+        self.bytes = self.bytes.saturating_add(other.bytes);
+        self.estimated_work = self.estimated_work.saturating_add(other.estimated_work);
+    }
+}
+
 #[allow(dead_code)]
 struct StandardMfsTileInboxShared {
     tiles: Vec<Arc<StandardMfsTileInboxRuntime>>,
@@ -2539,19 +2506,14 @@ impl StandardMfsTileInboxShared {
         stats
     }
 
-    fn record_published_runs(
+    fn record_published_runs_locked(
         &self,
+        ready: &mut StandardMfsTileInboxReadyState,
         published: StandardMfsTileInboxPublishStats,
-    ) -> Result<(), ImagingError> {
+    ) {
         if published.runs == 0 {
-            return Ok(());
+            return;
         }
-        let (lock, cvar) = &*self.ready;
-        let mut ready = lock.lock().map_err(|_| {
-            ImagingError::InvalidRequest(
-                "standard MFS tile inbox scheduler lock was poisoned".to_string(),
-            )
-        })?;
         ready.stats.enqueued_runs += published.runs;
         ready.stats.enqueued_samples += published.samples;
         ready.stats.enqueued_bytes += published.bytes;
@@ -2562,10 +2524,29 @@ impl StandardMfsTileInboxShared {
             .max(ready.stats.current_queued_bytes);
         if let Some(head) = published.ready_head {
             ready.push_ready_head(head);
-            cvar.notify_one();
         } else if published.runs > 0 {
             ready.stats.ready_deferred_runs += published.runs;
             ready.stats.ready_deferred_samples += published.samples;
+        }
+    }
+
+    fn record_published_runs(
+        &self,
+        published: StandardMfsTileInboxPublishStats,
+    ) -> Result<(), ImagingError> {
+        if published.runs == 0 {
+            return Ok(());
+        }
+        let notify = published.ready_head.is_some();
+        let (lock, cvar) = &*self.ready;
+        let mut ready = lock.lock().map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS tile inbox scheduler lock was poisoned".to_string(),
+            )
+        })?;
+        self.record_published_runs_locked(&mut ready, published);
+        if notify {
+            cvar.notify_one();
         }
         Ok(())
     }
@@ -2574,7 +2555,7 @@ impl StandardMfsTileInboxShared {
         &self,
         tile_id: StandardMfsTileId,
         runs: &mut VecDeque<StandardMfsTileVisibilityRun>,
-    ) -> Result<bool, ImagingError> {
+    ) -> Result<Option<StandardMfsTileInboxPublishStats>, ImagingError> {
         let tile = self.tiles.get(tile_id.index()).ok_or_else(|| {
             ImagingError::InvalidRequest(format!(
                 "standard MFS tile id {} is out of range",
@@ -2586,9 +2567,7 @@ impl StandardMfsTileInboxShared {
         match tile.queue.try_lock() {
             Ok(mut queue) => {
                 let published = self.publish_runs_locked(tile_id, &mut queue, runs, false);
-                drop(queue);
-                self.record_published_runs(published)?;
-                Ok(true)
+                Ok(Some(published))
             }
             Err(std::sync::TryLockError::WouldBlock) => {
                 let (lock, _) = &*self.ready;
@@ -2598,7 +2577,7 @@ impl StandardMfsTileInboxShared {
                     )
                 })?;
                 ready.stats.try_lock_misses += 1;
-                Ok(false)
+                Ok(None)
             }
             Err(std::sync::TryLockError::Poisoned(_)) => {
                 Err(ImagingError::InvalidRequest(format!(
@@ -2613,9 +2592,9 @@ impl StandardMfsTileInboxShared {
         &self,
         tile_id: StandardMfsTileId,
         runs: &mut VecDeque<StandardMfsTileVisibilityRun>,
-    ) -> Result<(), ImagingError> {
+    ) -> Result<StandardMfsTileInboxPublishStats, ImagingError> {
         if runs.is_empty() {
-            return Ok(());
+            return Ok(StandardMfsTileInboxPublishStats::default());
         }
         let tile = self.tiles.get(tile_id.index()).ok_or_else(|| {
             ImagingError::InvalidRequest(format!(
@@ -2633,7 +2612,7 @@ impl StandardMfsTileInboxShared {
             })?;
             self.publish_runs_locked(tile_id, &mut queue, runs, false)
         };
-        self.record_published_runs(published)
+        Ok(published)
     }
 
     fn pop_work(&self) -> Result<Option<StandardMfsDrainedTileWork>, ImagingError> {
@@ -2841,12 +2820,49 @@ impl StandardMfsTileInboxShared {
 struct StandardMfsTileInboxProducer {
     shared: Arc<StandardMfsTileInboxShared>,
     pending: Vec<VecDeque<StandardMfsTileVisibilityRun>>,
+    deferred_published: StandardMfsTileInboxPublishStats,
 }
 
 impl StandardMfsTileInboxProducer {
     fn new(shared: Arc<StandardMfsTileInboxShared>) -> Self {
         let pending = (0..shared.tiles.len()).map(|_| VecDeque::new()).collect();
-        Self { shared, pending }
+        Self {
+            shared,
+            pending,
+            deferred_published: StandardMfsTileInboxPublishStats::default(),
+        }
+    }
+
+    fn record_published_runs(
+        &mut self,
+        published: StandardMfsTileInboxPublishStats,
+    ) -> Result<(), ImagingError> {
+        if published.runs == 0 {
+            return Ok(());
+        }
+        if published.ready_head.is_none() {
+            self.deferred_published.add_deferred(published);
+            return Ok(());
+        }
+
+        let deferred = std::mem::take(&mut self.deferred_published);
+        let (lock, cvar) = &*self.shared.ready;
+        let mut ready = lock.lock().map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS tile inbox scheduler lock was poisoned".to_string(),
+            )
+        })?;
+        self.shared
+            .record_published_runs_locked(&mut ready, deferred);
+        self.shared
+            .record_published_runs_locked(&mut ready, published);
+        cvar.notify_one();
+        Ok(())
+    }
+
+    fn flush_deferred_published(&mut self) -> Result<(), ImagingError> {
+        let deferred = std::mem::take(&mut self.deferred_published);
+        self.shared.record_published_runs(deferred)
     }
 
     fn enqueue_run(
@@ -2866,7 +2882,7 @@ impl StandardMfsTileInboxProducer {
         let old_pending_bytes = pending.iter().map(|run| run.queue_bytes()).sum::<usize>();
         runs.append(pending);
         runs.push_back(run);
-        if self.shared.try_enqueue_runs(tile_id, &mut runs)? {
+        if let Some(published) = self.shared.try_enqueue_runs(tile_id, &mut runs)? {
             if old_pending_runs > 0 || old_pending_bytes > 0 {
                 let (lock, _) = &*self.shared.ready;
                 let mut ready = lock.lock().map_err(|_| {
@@ -2879,6 +2895,7 @@ impl StandardMfsTileInboxProducer {
                 ready.stats.pending_bytes =
                     ready.stats.pending_bytes.saturating_sub(old_pending_bytes);
             }
+            self.record_published_runs(published)?;
             return Ok(());
         }
         *pending = runs;
@@ -2906,7 +2923,8 @@ impl StandardMfsTileInboxProducer {
             std::mem::swap(&mut runs, &mut self.pending[tile_index]);
             let pending_bytes = runs.iter().map(|run| run.queue_bytes()).sum::<usize>();
             let pending_runs = runs.len();
-            self.shared
+            let published = self
+                .shared
                 .enqueue_runs_blocking(StandardMfsTileId(tile_index as u32), &mut runs)?;
             let (lock, _) = &*self.shared.ready;
             let mut ready = lock.lock().map_err(|_| {
@@ -2916,6 +2934,8 @@ impl StandardMfsTileInboxProducer {
             })?;
             ready.stats.pending_runs = ready.stats.pending_runs.saturating_sub(pending_runs);
             ready.stats.pending_bytes = ready.stats.pending_bytes.saturating_sub(pending_bytes);
+            drop(ready);
+            self.record_published_runs(published)?;
         }
         Ok(())
     }
@@ -3071,10 +3091,11 @@ where
             }
             let mut producer = StandardMfsTileInboxProducer::new(shared_for_producer);
             let result = produce_runs(&mut |tile_id, run| producer.enqueue_run(tile_id, run));
-            if result.is_ok() {
-                producer.flush_pending_blocking()
+            if let Err(error) = result {
+                Err(error)
             } else {
-                result
+                producer.flush_pending_blocking()?;
+                producer.flush_deferred_published()
             }
         };
 
@@ -7101,8 +7122,9 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             let mut segment_end = index + 1;
             while segment_end < samples.len() {
                 let candidate = samples[segment_end];
-                if !(candidate.grid_weight.is_finite() && candidate.grid_weight > 0.0)
-                    || !candidate.finite_visibility()
+                if !(candidate.grid_weight.is_finite()
+                    && candidate.grid_weight > 0.0
+                    && candidate.finite_visibility())
                 {
                     break;
                 }
