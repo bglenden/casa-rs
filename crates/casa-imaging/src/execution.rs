@@ -1133,9 +1133,6 @@ enum StandardMfsTileSampleRouteDecision {
 struct StandardMfsSampleLocation {
     tile_id: StandardMfsTileId,
     center: [usize; 2],
-    kernel_u: u16,
-    kernel_v: u16,
-    support_id: u16,
 }
 
 #[allow(dead_code)]
@@ -1186,33 +1183,16 @@ impl<'a> StandardMfsTileSampleRouter<'a> {
         batch: &VisibilityBatch,
         sample_index: usize,
     ) -> Result<Option<StandardMfsSampleLocation>, ImagingError> {
-        let Some(taps) = self
+        let Some(center) = self
             .gridder
-            .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+            .locate_positive_tap_center(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
         else {
             return Ok(None);
         };
-        let center = taps.center();
         let Some(tile_id) = self.partition.owner(center[0], center[1]) else {
             return Ok(None);
         };
-        let kernel_u = u16::try_from(taps.x.weight_index).map_err(|_| {
-            ImagingError::InvalidRequest(
-                "standard MFS tile inbox sample x tap weight index exceeds u16".to_string(),
-            )
-        })?;
-        let kernel_v = u16::try_from(taps.y.weight_index).map_err(|_| {
-            ImagingError::InvalidRequest(
-                "standard MFS tile inbox sample y tap weight index exceeds u16".to_string(),
-            )
-        })?;
-        Ok(Some(StandardMfsSampleLocation {
-            tile_id,
-            center,
-            kernel_u,
-            kernel_v,
-            support_id: 0,
-        }))
+        Ok(Some(StandardMfsSampleLocation { tile_id, center }))
     }
 
     fn route_density_sample(
@@ -1268,9 +1248,6 @@ impl<'a> StandardMfsTileSampleRouter<'a> {
             StandardMfsTileQueueSample {
                 center_x: location.center[0] as u32,
                 center_y: location.center[1] as u32,
-                kernel_u: location.kernel_u,
-                kernel_v: location.kernel_v,
-                support_id: location.support_id,
                 flags: STANDARD_MFS_TILE_FLAG_PSF_ONLY,
                 raw_weight: batch.weight[sample_index],
                 sumwt_factor: batch.sumwt_factor[sample_index],
@@ -1315,9 +1292,6 @@ impl<'a> StandardMfsTileSampleRouter<'a> {
             StandardMfsTileQueueSample {
                 center_x: location.center[0] as u32,
                 center_y: location.center[1] as u32,
-                kernel_u: location.kernel_u,
-                kernel_v: location.kernel_v,
-                support_id: location.support_id,
                 flags,
                 raw_weight: batch.weight[sample_index],
                 sumwt_factor: batch.sumwt_factor[sample_index],
@@ -1375,9 +1349,6 @@ impl<'a> StandardMfsTileSampleRouter<'a> {
             StandardMfsTileQueueSample {
                 center_x: location.center[0] as u32,
                 center_y: location.center[1] as u32,
-                kernel_u: location.kernel_u,
-                kernel_v: location.kernel_v,
-                support_id: location.support_id,
                 flags: STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
                 raw_weight: weight,
                 sumwt_factor,
@@ -2043,9 +2014,6 @@ const STANDARD_MFS_QUEUE_SAMPLE_SLOP_BYTES: usize = 16;
 struct StandardMfsTileQueueSample {
     center_x: u32,
     center_y: u32,
-    kernel_u: u16,
-    kernel_v: u16,
-    support_id: u16,
     flags: u16,
     raw_weight: f32,
     sumwt_factor: f32,
@@ -2084,30 +2052,21 @@ impl StandardMfsTileQueueSample {
         STANDARD_GRIDDER_TAP_COUNT.saturating_mul(STANDARD_GRIDDER_TAP_COUNT) as u8
     }
 
-    fn positive_taps(self) -> Result<PositiveTapSet, ImagingError> {
-        if self.support_id != 0 {
-            return Err(ImagingError::InvalidRequest(format!(
-                "standard MFS tile inbox sample has unsupported tap support id {}",
-                self.support_id
-            )));
-        }
-        let center_x = self.center_x as usize;
-        let center_y = self.center_y as usize;
-        if center_x < STANDARD_GRIDDER_SUPPORT || center_y < STANDARD_GRIDDER_SUPPORT {
+    fn positive_taps(self, gridder: &StandardGridder) -> Result<PositiveTapSet, ImagingError> {
+        let taps = gridder
+            .plan_positive_taps(self.u_lambda, self.v_lambda)
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS tile inbox sample no longer maps to positive taps".to_string(),
+                )
+            })?;
+        if taps.center() != [self.center_x as usize, self.center_y as usize] {
             return Err(ImagingError::InvalidRequest(
-                "standard MFS tile inbox sample has invalid tap center".to_string(),
+                "standard MFS tile inbox sample center changed during worker tap planning"
+                    .to_string(),
             ));
         }
-        Ok(PositiveTapSet {
-            x: TapAxisSpan {
-                start: center_x - STANDARD_GRIDDER_SUPPORT,
-                weight_index: usize::from(self.kernel_u),
-            },
-            y: TapAxisSpan {
-                start: center_y - STANDARD_GRIDDER_SUPPORT,
-                weight_index: usize::from(self.kernel_v),
-            },
-        })
+        Ok(taps)
     }
 }
 
@@ -2117,9 +2076,6 @@ struct StandardMfsTileQueueChunk {
     first_input_seq: u64,
     center_x: Vec<u32>,
     center_y: Vec<u32>,
-    kernel_u: Vec<u16>,
-    kernel_v: Vec<u16>,
-    support_id: Vec<u16>,
     flags: Vec<u16>,
     raw_weight: Vec<f32>,
     sumwt_factor: Vec<f32>,
@@ -2153,9 +2109,6 @@ impl StandardMfsTileQueueChunk {
             first_input_seq,
             center_x: Vec::with_capacity(capacity),
             center_y: Vec::with_capacity(capacity),
-            kernel_u: Vec::with_capacity(capacity),
-            kernel_v: Vec::with_capacity(capacity),
-            support_id: Vec::with_capacity(capacity),
             flags: Vec::with_capacity(capacity),
             raw_weight: Vec::with_capacity(capacity),
             sumwt_factor: Vec::with_capacity(capacity),
@@ -2174,9 +2127,6 @@ impl StandardMfsTileQueueChunk {
         }
         self.center_x.push(sample.center_x);
         self.center_y.push(sample.center_y);
-        self.kernel_u.push(sample.kernel_u);
-        self.kernel_v.push(sample.kernel_v);
-        self.support_id.push(sample.support_id);
         self.flags.push(sample.flags);
         self.raw_weight.push(sample.raw_weight);
         self.sumwt_factor.push(sample.sumwt_factor);
@@ -2196,9 +2146,6 @@ impl StandardMfsTileQueueChunk {
         }
         self.center_x.append(&mut other.center_x);
         self.center_y.append(&mut other.center_y);
-        self.kernel_u.append(&mut other.kernel_u);
-        self.kernel_v.append(&mut other.kernel_v);
-        self.support_id.append(&mut other.support_id);
         self.flags.append(&mut other.flags);
         self.raw_weight.append(&mut other.raw_weight);
         self.sumwt_factor.append(&mut other.sumwt_factor);
@@ -2234,13 +2181,14 @@ impl StandardMfsTileQueueChunk {
         self.visibility[sample_index]
     }
 
-    fn positive_taps_at(&self, sample_index: usize) -> Result<PositiveTapSet, ImagingError> {
+    fn positive_taps_at(
+        &self,
+        sample_index: usize,
+        gridder: &StandardGridder,
+    ) -> Result<PositiveTapSet, ImagingError> {
         let sample = StandardMfsTileQueueSample {
             center_x: self.center_x[sample_index],
             center_y: self.center_y[sample_index],
-            kernel_u: self.kernel_u[sample_index],
-            kernel_v: self.kernel_v[sample_index],
-            support_id: self.support_id[sample_index],
             flags: self.flags[sample_index],
             raw_weight: self.raw_weight[sample_index],
             sumwt_factor: self.sumwt_factor[sample_index],
@@ -2250,7 +2198,7 @@ impl StandardMfsTileQueueChunk {
             visibility: self.visibility[sample_index],
             input_seq: 0,
         };
-        sample.positive_taps()
+        sample.positive_taps(gridder)
     }
 }
 
@@ -4329,14 +4277,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
             let queued = StandardMfsTileQueueSample {
                 center_x: sample.center_x,
                 center_y: sample.center_y,
-                kernel_u: sample.kernel_u,
-                kernel_v: sample.kernel_v,
-                support_id: sample.support_id,
                 flags,
                 raw_weight: sample.grid_weight,
                 sumwt_factor: 1.0,
-                u_lambda: 0.0,
-                v_lambda: 0.0,
+                u_lambda: sample.u_lambda,
+                v_lambda: sample.v_lambda,
                 w_lambda: sample.w_lambda,
                 visibility: if psf_only {
                     Complex32::new(0.0, 0.0)
@@ -4372,7 +4317,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let worker_started = profile::maybe_profile_now();
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         for sample_index in 0..samples.len() {
-            let taps = samples.positive_taps_at(sample_index)?;
+            let taps = samples.positive_taps_at(sample_index, self.gridder)?;
             let grid_weight = samples.grid_weight_at(sample_index);
             if !(grid_weight.is_finite() && grid_weight > 0.0) {
                 return Err(ImagingError::InvalidRequest(
@@ -4749,7 +4694,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let worker_started = profile::maybe_profile_now();
         let mut accumulation = StandardMfsDirtyAccumulation::default();
         for sample_index in 0..samples.len() {
-            let taps = samples.positive_taps_at(sample_index)?;
+            let taps = samples.positive_taps_at(sample_index, self.gridder)?;
             let grid_weight = samples.grid_weight_at(sample_index);
             if !(grid_weight.is_finite() && grid_weight > 0.0) {
                 return Err(ImagingError::InvalidRequest(
@@ -6156,7 +6101,7 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let worker_started = profile::maybe_profile_now();
         let mut gridded_samples = 0usize;
         for sample_index in 0..samples.len() {
-            let taps = samples.positive_taps_at(sample_index)?;
+            let taps = samples.positive_taps_at(sample_index, self.gridder)?;
             let residual_weight = samples.grid_weight_at(sample_index);
             if !(residual_weight.is_finite() && residual_weight > 0.0) {
                 return Err(ImagingError::InvalidRequest(
@@ -6316,14 +6261,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                         let queued = StandardMfsTileQueueSample {
                             center_x: sample.center_x,
                             center_y: sample.center_y,
-                            kernel_u: sample.kernel_u,
-                            kernel_v: sample.kernel_v,
-                            support_id: sample.support_id,
                             flags: STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
                             raw_weight: sample.grid_weight,
                             sumwt_factor: 1.0,
-                            u_lambda: 0.0,
-                            v_lambda: 0.0,
+                            u_lambda: sample.u_lambda,
+                            v_lambda: sample.v_lambda,
                             w_lambda: sample.w_lambda,
                             visibility: sample.visibility,
                             input_seq: next_input_seq,
@@ -8979,9 +8921,6 @@ mod tests {
         super::StandardMfsTileQueueSample {
             center_x: 16,
             center_y: 16,
-            kernel_u: 0,
-            kernel_v: 0,
-            support_id: 0,
             flags: STANDARD_MFS_TILE_FLAG_FINITE_VISIBILITY,
             raw_weight: 1.0,
             sumwt_factor: 1.0,

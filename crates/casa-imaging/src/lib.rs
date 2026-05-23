@@ -64,9 +64,9 @@ use execution::{
 };
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{
-    PlannedSample, PositiveTapSet, STANDARD_GRIDDER_SUPPORT, STANDARD_GRIDDER_TAP_COUNT,
-    ScreenProjector, StandardGridder, StandardMfsTapCensus, StandardMfsTapSkipReason, TapAxisSpan,
-    WProjectSamplePlan, WProjector, hetarray_screen_conv_size_for_support,
+    PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder,
+    StandardMfsTapCensus, StandardMfsTapSkipReason, WProjectSamplePlan, WProjector,
+    hetarray_screen_conv_size_for_support,
 };
 pub use weighting::StandardMfsStreamingWeightingPlan;
 use weighting::{
@@ -194,34 +194,22 @@ impl StandardMfsPlannedSampleBuilder {
         if !(grid_weight.is_finite() && grid_weight > 0.0) {
             return Ok(None);
         }
-        let Some(taps) = self
+        let Some(center) = self
             .gridder
-            .plan_positive_taps(sample.u_lambda, sample.v_lambda)
+            .locate_positive_tap_center(sample.u_lambda, sample.v_lambda)
         else {
             return Ok(None);
         };
-        let center = taps.center();
-        let kernel_u = u16::try_from(taps.x.weight_index).map_err(|_| {
-            ImagingError::InvalidRequest(
-                "standard MFS planned sample x tap weight index exceeds u16".to_string(),
-            )
-        })?;
-        let kernel_v = u16::try_from(taps.y.weight_index).map_err(|_| {
-            ImagingError::InvalidRequest(
-                "standard MFS planned sample y tap weight index exceeds u16".to_string(),
-            )
-        })?;
         let flags = if finite_visibility(sample.visibility) {
             StandardMfsPlannedWeightedSample::FINITE_VISIBILITY
         } else {
             StandardMfsPlannedWeightedSample::PSF_ONLY
         };
         Ok(Some(StandardMfsPlannedWeightedSample {
+            u_lambda: sample.u_lambda,
+            v_lambda: sample.v_lambda,
             center_x: center[0] as u32,
             center_y: center[1] as u32,
-            kernel_u,
-            kernel_v,
-            support_id: 0,
             flags,
             tap_count: (STANDARD_GRIDDER_TAP_COUNT * STANDARD_GRIDDER_TAP_COUNT) as u8,
             grid_weight,
@@ -1468,36 +1456,22 @@ where
 
 #[inline(always)]
 fn planned_sample_positive_taps(
+    gridder: &StandardGridder,
     sample: StandardMfsPlannedWeightedSample,
 ) -> Result<PositiveTapSet, ImagingError> {
-    if sample.support_id != 0 {
-        return Err(ImagingError::InvalidRequest(format!(
-            "standard MFS planned sample has unsupported tap support id {}",
-            sample.support_id
-        )));
-    }
-    let center_x = sample.center_x as usize;
-    let center_y = sample.center_y as usize;
-    if center_x < STANDARD_GRIDDER_SUPPORT {
+    let taps = gridder
+        .plan_positive_taps(sample.u_lambda, sample.v_lambda)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "standard MFS planned sample no longer maps to positive taps".to_string(),
+            )
+        })?;
+    if taps.center() != [sample.center_x as usize, sample.center_y as usize] {
         return Err(ImagingError::InvalidRequest(
-            "standard MFS planned sample has invalid x tap center".to_string(),
+            "standard MFS planned sample center changed during worker tap planning".to_string(),
         ));
     }
-    if center_y < STANDARD_GRIDDER_SUPPORT {
-        return Err(ImagingError::InvalidRequest(
-            "standard MFS planned sample has invalid y tap center".to_string(),
-        ));
-    }
-    Ok(PositiveTapSet {
-        x: TapAxisSpan {
-            start: center_x - STANDARD_GRIDDER_SUPPORT,
-            weight_index: usize::from(sample.kernel_u),
-        },
-        y: TapAxisSpan {
-            start: center_y - STANDARD_GRIDDER_SUPPORT,
-            weight_index: usize::from(sample.kernel_v),
-        },
-    })
+    Ok(taps)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1510,31 +1484,15 @@ struct PlannedCompactTaps {
 
 #[inline(always)]
 fn planned_sample_compact_taps(
+    gridder: &StandardGridder,
     sample: StandardMfsPlannedWeightedSample,
 ) -> Result<PlannedCompactTaps, ImagingError> {
-    if sample.support_id != 0 {
-        return Err(ImagingError::InvalidRequest(format!(
-            "standard MFS planned sample has unsupported tap support id {}",
-            sample.support_id
-        )));
-    }
-    let center_x = sample.center_x as usize;
-    let center_y = sample.center_y as usize;
-    if center_x < STANDARD_GRIDDER_SUPPORT {
-        return Err(ImagingError::InvalidRequest(
-            "standard MFS planned sample has invalid x tap center".to_string(),
-        ));
-    }
-    if center_y < STANDARD_GRIDDER_SUPPORT {
-        return Err(ImagingError::InvalidRequest(
-            "standard MFS planned sample has invalid y tap center".to_string(),
-        ));
-    }
+    let taps = planned_sample_positive_taps(gridder, sample)?;
     Ok(PlannedCompactTaps {
-        x_start: center_x - STANDARD_GRIDDER_SUPPORT,
-        y_start: center_y - STANDARD_GRIDDER_SUPPORT,
-        x_weight_index: usize::from(sample.kernel_u),
-        y_weight_index: usize::from(sample.kernel_v),
+        x_start: taps.x.start,
+        y_start: taps.y.start,
+        x_weight_index: taps.x.weight_index,
+        y_weight_index: taps.y.weight_index,
     })
 }
 
@@ -1591,7 +1549,7 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
-                let taps = planned_sample_compact_taps(sample)?;
+                let taps = planned_sample_compact_taps(gridder, sample)?;
                 let grid_weight = sample.grid_weight;
                 let grid_weight = f64::from(grid_weight);
                 accumulation.normalization_sumwt += grid_weight;
@@ -1630,7 +1588,7 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
-                let taps = planned_sample_positive_taps(sample)?;
+                let taps = planned_sample_positive_taps(gridder, sample)?;
                 let grid_weight = sample.grid_weight;
                 let grid_weight = f64::from(grid_weight);
                 accumulation.normalization_sumwt += grid_weight;
@@ -1747,7 +1705,7 @@ fn compute_psf_standard_sample_replay(
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
-                let taps = planned_sample_compact_taps(sample)?;
+                let taps = planned_sample_compact_taps(gridder, sample)?;
                 let grid_weight = sample.grid_weight;
                 let grid_weight = f64::from(grid_weight);
                 accumulation.normalization_sumwt += grid_weight;
@@ -1769,7 +1727,7 @@ fn compute_psf_standard_sample_replay(
             for &sample in samples {
                 accumulation.max_abs_w_lambda =
                     accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
-                let taps = planned_sample_positive_taps(sample)?;
+                let taps = planned_sample_positive_taps(gridder, sample)?;
                 let grid_weight = sample.grid_weight;
                 let grid_weight = f64::from(grid_weight);
                 accumulation.normalization_sumwt += grid_weight;
@@ -2062,7 +2020,7 @@ fn accumulate_weighted_residual_sample_storage(
         return Ok(());
     }
     counts.valid_samples += 1;
-    let taps = planned_sample_compact_taps(sample)?;
+    let taps = planned_sample_compact_taps(gridder, sample)?;
     counts.planned_samples += 1;
     let residual_weight = sample.grid_weight;
     let residual_weight = f64::from(residual_weight);
@@ -2107,7 +2065,7 @@ fn accumulate_weighted_residual_sample_array(
         return Ok(());
     }
     counts.valid_samples += 1;
-    let taps = planned_sample_positive_taps(sample)?;
+    let taps = planned_sample_positive_taps(gridder, sample)?;
     counts.planned_samples += 1;
     let residual_weight = sample.grid_weight;
     let residual_weight = f64::from(residual_weight);

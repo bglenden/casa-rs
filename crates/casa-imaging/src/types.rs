@@ -594,24 +594,22 @@ pub struct StandardMfsWeightedSample {
     pub visibility: Complex32,
 }
 
-/// Already weighted and gridder-planned scalar standard-MFS sample.
+/// Already weighted and grid-center-located scalar standard-MFS sample.
 ///
 /// This is the bounded row-block handoff used by streaming frontends that want
-/// to avoid re-planning prolate-spheroidal taps inside the core gridding loops.
-/// It stores only the compact positive-tap span identity, not expanded tap
-/// coordinates or weights.
+/// to route samples to fixed tiles without retaining full visibility batches.
+/// It stores the deterministic positive-tap center for tile ownership, while
+/// core workers re-plan the prolate-spheroidal taps immediately before gridding.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StandardMfsPlannedWeightedSample {
+    /// Baseline `u` coordinate in wavelengths.
+    pub u_lambda: f64,
+    /// Baseline `v` coordinate in wavelengths.
+    pub v_lambda: f64,
     /// Positive-tap center x cell in the padded standard grid.
     pub center_x: u32,
     /// Positive-tap center y cell in the padded standard grid.
     pub center_y: u32,
-    /// Compact x-axis kernel/weight-table index.
-    pub kernel_u: u16,
-    /// Compact y-axis kernel/weight-table index.
-    pub kernel_v: u16,
-    /// Support/kernel-family identifier. Current standard-MFS support is `0`.
-    pub support_id: u16,
     /// Planned-sample flags; use [`Self::finite_visibility`] and [`Self::psf_only`].
     pub flags: u16,
     /// Number of 2-D tap visits expected for work attribution.

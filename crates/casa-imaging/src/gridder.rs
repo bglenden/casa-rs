@@ -341,8 +341,7 @@ impl StandardGridder {
     }
 
     pub(crate) fn positive_tap_grid_center(&self) -> [usize; 2] {
-        self.plan_positive_taps(0.0, 0.0)
-            .map(|taps| taps.center())
+        self.locate_positive_tap_center(0.0, 0.0)
             .unwrap_or([self.grid_shape[0] / 2, self.grid_shape[1] / 2])
     }
 
@@ -409,6 +408,17 @@ impl StandardGridder {
             x: self.sample_tap_span(self.grid_coordinate_x(u_lambda), self.grid_shape[0])?,
             y: self.sample_tap_span(self.grid_coordinate_y(v_lambda), self.grid_shape[1])?,
         })
+    }
+
+    pub(crate) fn locate_positive_tap_center(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+    ) -> Option<[usize; 2]> {
+        Some([
+            self.sample_tap_center(self.grid_coordinate_x(u_lambda), self.grid_shape[0])?,
+            self.sample_tap_center(self.grid_coordinate_y(v_lambda), self.grid_shape[1])?,
+        ])
     }
 
     pub(crate) fn positive_tap_axis_weights(
@@ -1620,6 +1630,21 @@ impl StandardGridder {
             start: start as usize,
             weight_index,
         })
+    }
+
+    fn sample_tap_center(&self, coordinate: f64, size: usize) -> Option<usize> {
+        if !coordinate.is_finite() {
+            return None;
+        }
+        let anchor = coordinate.round() as isize;
+        let offset = ((anchor as f64 - coordinate) * self.oversampling as f64).round() as isize;
+        let start = anchor - GRIDDER_SUPPORT as isize;
+        let end = anchor + GRIDDER_SUPPORT as isize;
+        if start < 0 || end >= size as isize {
+            return None;
+        }
+        self.normalized_tap_weight_index(offset)?;
+        Some(anchor as usize)
     }
 
     fn normalized_tap_weight_index(&self, offset: isize) -> Option<usize> {
@@ -2930,6 +2955,29 @@ mod tests {
                 assert_eq!(span.y.start + tap, legacy_y.indices[tap]);
             }
         }
+    }
+
+    #[test]
+    fn positive_tap_center_locator_matches_positive_tap_plan() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0 / 206_264.806_247, 1.0 / 206_264.806_247],
+        };
+        let gridder = StandardGridder::new(geometry).unwrap();
+        let samples = [(0.0, 0.0), (12.25, -18.75), (-9.5, 7.125), (1.0, 2.0)];
+
+        for (u, v) in samples {
+            let center = gridder
+                .locate_positive_tap_center(u, v)
+                .expect("center should locate");
+            let taps = gridder
+                .plan_positive_taps(u, v)
+                .expect("full tap plan should locate");
+            assert_eq!(center, taps.center());
+        }
+
+        assert_eq!(gridder.locate_positive_tap_center(f64::NAN, 0.0), None);
+        assert_eq!(gridder.locate_positive_tap_center(1.0e12, 0.0), None);
     }
 
     #[test]

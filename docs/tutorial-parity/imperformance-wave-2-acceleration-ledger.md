@@ -1604,6 +1604,40 @@ cargo build --release -p casars-imager
 git diff --check
 ```
 
+## 2026-05-22 Worker-Side Tap Planning Split
+
+Status: retained as architectural repair.
+
+Artifact path:
+`target/imperformance-wave2/worker-tap-planning-20260522/vla-bounded-2w-worker-taps.log`
+
+This checkpoint splits fixed-tile ownership from full tap planning. The
+frontend/planned-sample producer now locates only the deterministic
+positive-tap center and keeps `u_lambda`/`v_lambda` in the compact handoff. The
+direct tile inbox no longer carries `kernel_u`, `kernel_v`, or support id
+fields. Tile workers call the standard gridder's full positive-tap planner when
+they drain a chunk and immediately apply the sample to the resident tile buffer.
+
+The split keeps exact tile ownership in the producer while moving
+prolate-spheroidal weight lookup and full tap-span construction to the gridding
+side of the producer/worker boundary. Runtime comparison was not completed in
+this checkpoint because the smoke dataset path
+`/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms`
+was not mounted in this session.
+
+Validation checks for this checkpoint:
+
+```text
+cargo check -p casa-imaging -p casars-imager
+cargo test -p casa-imaging positive_tap_center_locator_matches_positive_tap_plan --lib
+cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib
+cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib
+cargo test -p casa-imaging tile_inbox_planned_replay_matches_direct_dirty_and_residual --lib
+cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib
+cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib
+cargo build --release -p casars-imager
+```
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
