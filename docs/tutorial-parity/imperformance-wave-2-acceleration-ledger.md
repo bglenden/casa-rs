@@ -1642,6 +1642,27 @@ stage=planned_dirty enqueued_samples=119632 stage_total_ms=52.107 worker_utiliza
 These local fixtures validate the planned fixed-tile path with worker-side tap
 planning, but they are too small for meaningful scheduler-speed claims.
 
+Gross product comparison against the CPU reference path:
+
+```text
+artifact=target/imperformance-wave2/worker-tap-planning-20260522/gross-smoke/small-fixture-fixed-tile-vs-cpu-products.json
+fixtures=ngc5921.ms field0/spw0/channel0 imsize128 cell30arcsec; refim_twopoints_twochan.ms field0/spw0/channels0-1 imsize128 cell1arcsec
+weighting=natural and briggs robust=0.5
+fixed_tile_variants=1,2,10 workers
+products=image,residual,psf,sumwt
+failures=0
+worst_fixed_tile_vs_cpu_difference=1.1641532182693481e-10
+```
+
+The small-fixture matrix found no gross product problems. Natural runs matched
+the CPU reference exactly for both fixtures and all fixed-tile worker counts.
+Briggs runs matched exactly on `ngc5921.ms`; `refim_twopoints_twochan.ms`
+differed from the CPU reference only at about `1.2e-10` in image/residual,
+with finite image, residual, PSF, and sumwt products throughout. The measured
+worker utilization remains intentionally ignored as performance evidence here:
+these fixtures carry only 4,042 and 119,632 gridded samples, so scheduler
+startup and artifact overhead dominate.
+
 Validation checks for this checkpoint:
 
 ```text
