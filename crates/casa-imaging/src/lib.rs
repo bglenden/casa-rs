@@ -112,10 +112,10 @@ pub use types::{
     MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, MtmfsResult, ParallelHandBatch,
     PlaneStokes, PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics,
     ResidualSampleDiagnostics, RestoringBeamMode, StandardMfsPlannedWeightedSample,
-    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
-    WProjectDiagnostics, WProjectKernelDiagnostics, WProjectSamplePlanDiagnostics,
-    WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode, WeightDensityMode,
-    WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
+    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsWeightedSample, UvTaperSize,
+    VisibilityBatch, VisibilityMetadataBatch, WProjectDiagnostics, WProjectKernelDiagnostics,
+    WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
+    WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
 };
 
 /// FFT-backed predictor for a standard MFS component model.
@@ -151,6 +151,21 @@ pub trait StandardMfsPlannedSampleBlockSource {
         &mut self,
         consumer: &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
     ) -> Result<(), ImagingError>;
+
+    /// Replay planned samples with explicit scalar-run ranges when available.
+    fn replay_planned_sample_run_blocks(
+        &mut self,
+        consumer: &mut dyn FnMut(
+            &StandardMfsPlannedWeightedSampleRunBlock,
+        ) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError> {
+        let mut run_block = StandardMfsPlannedWeightedSampleRunBlock::default();
+        self.replay_planned_sample_blocks(&mut |samples| {
+            run_block.clear();
+            run_block.push_run_from_slice(samples);
+            consumer(&run_block)
+        })
+    }
 }
 
 impl<F> StandardMfsPlannedSampleBlockSource for F
@@ -285,6 +300,12 @@ pub struct StandardMfsExecutionConfig {
     /// The first bounded scheduler uses one live row block; later read-ahead
     /// must be explicitly represented here and in the memory plan.
     pub fixed_tile_max_live_row_blocks: usize,
+    /// Route fixed-tile sample replay through planned run blocks.
+    ///
+    /// This is an experimental scalar-run interface. The default remains the
+    /// thresholded scalar inbox path until run-shaped work units improve wall
+    /// time or carry row-shaped worker semantics.
+    pub fixed_tile_use_planned_run_blocks: bool,
 }
 
 /// Metadata for streaming natural-weighted standard MFS dirty accumulation.
@@ -1177,6 +1198,60 @@ where
     )
 }
 
+/// Run standard-MFS CLEAN from replayable blocks of planned scalar runs.
+///
+/// This keeps row/channel run boundaries available to fixed-tile backends while
+/// retaining the scalar planned-sample payload used by the existing gridders.
+pub fn run_standard_mfs_planned_sample_run_block_streaming_with_execution_config<F>(
+    request: ImagingRequest,
+    mut execution_config: StandardMfsExecutionConfig,
+    replay_planned_runs: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    execution_config.fixed_tile_use_planned_run_blocks = true;
+    struct RunBlockSource<F> {
+        replay: F,
+    }
+
+    impl<F> StandardMfsPlannedSampleBlockSource for RunBlockSource<F>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        fn replay_planned_sample_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(
+                &[StandardMfsPlannedWeightedSample],
+            ) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(&mut |run_block| consumer(run_block.samples()))
+        }
+
+        fn replay_planned_sample_run_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(
+                &StandardMfsPlannedWeightedSampleRunBlock,
+            ) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(consumer)
+        }
+    }
+
+    let mut source = RunBlockSource {
+        replay: replay_planned_runs,
+    };
+    run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
+        request,
+        execution_config,
+        &mut source,
+    )
+}
+
 /// Run standard-MFS CLEAN from a replayable planned-sample block source.
 pub fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
     mut request: ImagingRequest,
@@ -1509,16 +1584,29 @@ fn compute_dirty_psf_and_residual_standard_sample_replay(
         let executor =
             StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
         let grid_started = Instant::now();
-        let mut replay = |consumer: &mut dyn FnMut(
-            &[StandardMfsPlannedWeightedSample],
-        ) -> Result<(), ImagingError>| {
-            replay_weighted_samples.replay_planned_sample_blocks(consumer)
+        let accumulation = if execution_config.fixed_tile_use_planned_run_blocks {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &StandardMfsPlannedWeightedSampleRunBlock,
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_run_blocks(consumer)
+            };
+            executor.accumulate_dirty_grids_direct_planned_run_replay(
+                &mut replay,
+                &mut psf_grid,
+                &mut residual_grid,
+            )?
+        } else {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &[StandardMfsPlannedWeightedSample],
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_blocks(consumer)
+            };
+            executor.accumulate_dirty_grids_direct_planned_replay(
+                &mut replay,
+                &mut psf_grid,
+                &mut residual_grid,
+            )?
         };
-        let accumulation = executor.accumulate_dirty_grids_direct_planned_replay(
-            &mut replay,
-            &mut psf_grid,
-            &mut residual_grid,
-        )?;
         let grid_elapsed = grid_started.elapsed();
         let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
         stage_timings.psf_grid += split_grid_elapsed;
@@ -1681,13 +1769,21 @@ fn compute_psf_standard_sample_replay(
         let executor =
             StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
         let grid_started = Instant::now();
-        let mut replay = |consumer: &mut dyn FnMut(
-            &[StandardMfsPlannedWeightedSample],
-        ) -> Result<(), ImagingError>| {
-            replay_weighted_samples.replay_planned_sample_blocks(consumer)
+        let accumulation = if execution_config.fixed_tile_use_planned_run_blocks {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &StandardMfsPlannedWeightedSampleRunBlock,
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_run_blocks(consumer)
+            };
+            executor.accumulate_psf_grid_direct_planned_run_replay(&mut replay, &mut psf_grid)?
+        } else {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &[StandardMfsPlannedWeightedSample],
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_blocks(consumer)
+            };
+            executor.accumulate_psf_grid_direct_planned_replay(&mut replay, &mut psf_grid)?
         };
-        let accumulation =
-            executor.accumulate_psf_grid_direct_planned_replay(&mut replay, &mut psf_grid)?;
         stage_timings.psf_grid += grid_started.elapsed();
         return psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings);
     }
@@ -1860,16 +1956,29 @@ fn compute_residual_standard_sample_replay(
         let executor =
             StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
         let degrid_grid_started = Instant::now();
-        let mut replay = |consumer: &mut dyn FnMut(
-            &[StandardMfsPlannedWeightedSample],
-        ) -> Result<(), ImagingError>| {
-            replay_weighted_samples.replay_planned_sample_blocks(consumer)
+        let counts = if execution_config.fixed_tile_use_planned_run_blocks {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &StandardMfsPlannedWeightedSampleRunBlock,
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_run_blocks(consumer)
+            };
+            executor.accumulate_residual_grid_direct_planned_run_replay(
+                &mut replay,
+                model_grid.as_ref(),
+                &mut residual_grid,
+            )?
+        } else {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &[StandardMfsPlannedWeightedSample],
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_blocks(consumer)
+            };
+            executor.accumulate_residual_grid_direct_planned_replay(
+                &mut replay,
+                model_grid.as_ref(),
+                &mut residual_grid,
+            )?
         };
-        let counts = executor.accumulate_residual_grid_direct_planned_replay(
-            &mut replay,
-            model_grid.as_ref(),
-            &mut residual_grid,
-        )?;
         timings.degrid_grid = degrid_grid_started.elapsed();
 
         let fft_started = Instant::now();
@@ -10448,6 +10557,7 @@ mod tests {
                 fixed_tile_edge: Some(16),
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 1,
+                fixed_tile_use_planned_run_blocks: false,
             },
             |consumer| {
                 for batch in &weighted_batches {
@@ -10521,6 +10631,7 @@ mod tests {
             fixed_tile_edge: Some(16),
             fixed_tile_center_boundary: false,
             fixed_tile_max_live_row_blocks: 1,
+            fixed_tile_use_planned_run_blocks: false,
         };
         let batch_streaming = run_standard_mfs_weighted_streaming_with_execution_config(
             request.clone(),

@@ -1,8 +1,8 @@
 # ImPerformance Wave 2 Streaming Tile Contract
 
 Truth class: current design contract
-Last reality check: 2026-05-22
-Verification: External Oracle-style review in Chrome conversation `Bundle review request`; producer/consumer scheduler review in Chrome conversation `Revised design proposal`; `cargo check -p casa-imaging -p casars-imager`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib`
+Last reality check: 2026-05-23
+Verification: External Oracle-style review in Chrome conversation `Bundle review request`; producer/consumer scheduler review in Chrome conversation `Revised design proposal`; `cargo check -p casa-imaging -p casars-imager`; `cargo test -p casa-imaging planned_same_tile_samples_enqueue_as_one_visibility_run --lib`; `cargo test -p casa-imaging tile_inbox_planned_replay_matches_direct_dirty_and_residual --lib`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=1 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_reserves_fixed_tile_residency_when_enabled --lib`
 
 Wave issue: #263
 
@@ -44,6 +44,7 @@ Debug resident tile limit: CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT=<count>
 Tile edge override: CASA_RS_STANDARD_MFS_TILE_EDGE=<pixels>
 Tile anchor override: CASA_RS_STANDARD_MFS_TILE_ANCHOR=zero|center_boundary
 Debug flush override: CASA_RS_STANDARD_MFS_TILE_FLUSH=per_block
+Scalar-run fallback override: CASA_RS_STANDARD_MFS_PLANNED_RUN_BLOCKS=0 disables planned run blocks
 Status: memory-control repair checkpoint, not a performance claim
 Coverage: standard-MFS PSF/dirty and residual refresh through fixed halo tiles,
           plus fixed-tile streaming clean row-block replay
@@ -90,6 +91,16 @@ records, queued task metadata, resident tile buffers, global grids, density
 grids, FFT/deconvolution scratch, and future device staging before execution.
 When no legal bounded plan fits the active target, the frontend fails clearly
 instead of falling back to the old retained full-MeasurementSet shape.
+
+Planned scalar-run replay is now the default fixed-tile streaming handoff. It
+preserves row/channel run ranges around compact scalar planned samples, has a
+same-tile fast path for runs whose tap centers all land in one tile, and pushes
+one vector-valued `StandardMfsTileVisibilityRun` into the owning tile inbox
+where possible. `CASA_RS_STANDARD_MFS_PLANNED_RUN_BLOCKS=0` remains only as an
+emergency comparison override. The current implementation still performs scalar
+planning in the producer; moving lane-level flagging, weighting, tap planning,
+and gridding fully into tile workers remains the next row-shaped visibility-run
+boundary.
 
 That boundary lets future backends choose CPU, CUDA/Kokkos, LibRA-derived, or
 Metal implementations without reviving the whole-MeasurementSet visibility plan

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Public request/result types for the pure imaging core.
 
-use std::time::Duration;
+use std::{ops::Range, time::Duration};
 
 use ndarray::{Array2, Array4};
 use num_complex::Complex32;
@@ -636,6 +636,71 @@ impl StandardMfsPlannedWeightedSample {
     /// Returns true when the sample should contribute to the PSF only.
     pub fn psf_only(self) -> bool {
         self.flags & Self::PSF_ONLY != 0
+    }
+}
+
+/// Bounded planned standard-MFS samples with explicit scalar-run ranges.
+///
+/// Frontends use this when they can preserve row/channel run boundaries while
+/// still streaming compact scalar planned samples. The samples remain the
+/// canonical gridding payload; `runs` only describes contiguous slices that
+/// should be considered together for tile routing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StandardMfsPlannedWeightedSampleRunBlock {
+    samples: Vec<StandardMfsPlannedWeightedSample>,
+    runs: Vec<Range<usize>>,
+}
+
+impl StandardMfsPlannedWeightedSampleRunBlock {
+    /// Remove all samples and run ranges while retaining allocated capacity.
+    pub fn clear(&mut self) {
+        self.samples.clear();
+        self.runs.clear();
+    }
+
+    /// Return the planned scalar samples in stable input order.
+    pub fn samples(&self) -> &[StandardMfsPlannedWeightedSample] {
+        &self.samples
+    }
+
+    /// Return contiguous run ranges into [`Self::samples`].
+    pub fn runs(&self) -> &[Range<usize>] {
+        &self.runs
+    }
+
+    /// Start a new run, returning the current sample offset.
+    pub fn begin_run(&self) -> usize {
+        self.samples.len()
+    }
+
+    /// Append one planned scalar sample to the current run under construction.
+    pub fn push_sample(&mut self, sample: StandardMfsPlannedWeightedSample) {
+        self.samples.push(sample);
+    }
+
+    /// Finish a run that began at `start`, recording it if it is non-empty.
+    pub fn finish_run(&mut self, start: usize) {
+        let end = self.samples.len();
+        if start < end {
+            self.runs.push(start..end);
+        }
+    }
+
+    /// Append one run by copying the provided planned samples.
+    pub fn push_run_from_slice(&mut self, samples: &[StandardMfsPlannedWeightedSample]) {
+        let start = self.begin_run();
+        self.samples.extend_from_slice(samples);
+        self.finish_run(start);
+    }
+
+    /// Return the total number of planned scalar samples.
+    pub fn len(&self) -> usize {
+        self.samples.len()
+    }
+
+    /// Return true when there are no planned scalar samples.
+    pub fn is_empty(&self) -> bool {
+        self.samples.is_empty()
     }
 }
 

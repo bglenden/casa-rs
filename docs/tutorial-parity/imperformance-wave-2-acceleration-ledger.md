@@ -1831,6 +1831,62 @@ unchanged because the current feed still wraps scalar planned samples rather
 than publishing true row/channel visibility runs. Worker utilization remains
 low on 10 workers because producer/preprocessing dominates the stage.
 
+## 2026-05-23: Planned scalar-run replay seam
+
+Artifact directory:
+`target/imperformance-wave2/scalar-run-fastpath-20260523/`
+
+Workload:
+
+```text
+Medium 64-channel, 1024-pixel, field 0, spw 0, Briggs robust 0.5,
+dirty-only standard-MFS fixed-tile streaming profile, 10 workers.
+Command shape: CASA_RS_STANDARD_MFS_BACKEND=fixed_tile
+               CASA_RS_STANDARD_MFS_GRID_THREADS=10
+               CASA_RS_STANDARD_MFS_PROFILE_DETAIL=1
+               target/release/examples/profile_imager ... --gridder standard
+               --channel-count 64 --imsize 1024 --cell-arcsec 1 --dirty-only
+```
+
+Implemented a planned scalar-run block interface and promoted it to the default
+fixed-tile streaming handoff. When an entire run's planned tap centers belong
+to one tile, the producer emits one vector-valued tile run rather than
+re-routing each scalar through the run accumulator. When a run crosses tile
+boundaries, it is split into consecutive same-tile run fragments in input
+order. `CASA_RS_STANDARD_MFS_PLANNED_RUN_BLOCKS=0` is retained only as an
+emergency comparison override.
+
+The first scalar-run implementation does not improve the current workload. It
+mostly preserves row boundaries around scalar planned samples while the producer
+still performs scalar planning, so it does not yet move lane-level work into the
+workers. It is nevertheless the default now because the fixed-tile inbox
+contract is run-shaped: push visibility lanes as runs, schedule by tile, and
+let workers drain vector-valued tile runs.
+
+| variant | artifact | wall s | sys s | scheduler stage | frontend ms | core ms | enqueued runs | worker drains | decision |
+|---|---|---:|---:|---|---:|---:|---:|---:|---|
+| per-row callback scalar-run experiment | `medium-briggs-10w.log` | 42.26 | 13.18 | `planned_run_dirty` | n/a | 27,384 | 8,822,351 | 182,237 | rejected, row callbacks split adjacent same-tile runs |
+| run-block replay before accumulator coalescing | `medium-briggs-runblock-10w.log` | 42.84 | 14.87 | `planned_run_dirty` | n/a | 28,166 | 8,822,351 | 182,187 | rejected |
+| run-block replay with shared accumulator | `medium-briggs-runblock-accum-10w.log` | 42.77 | 15.03 | `planned_run_dirty` | n/a | 27,924 | 8,433,539 | 182,176 | rejected as performance claim |
+| restored scalar-block comparison before default flip | `medium-briggs-default-restored-profile-10w.log` | 39.49 | 13.90 | `planned_dirty` | 39,430 | 26,380 | 8,433,552 | 182,179 | comparison only |
+| run-block seam after gating | `medium-briggs-runblock-gated-profile-10w.log` | 40.15 | 14.19 | `planned_run_dirty` | 40,090 | 26,930 | 8,433,539 | 182,176 | promoted to default for architecture, not speed |
+| run-block default after default flip | `medium-briggs-runblock-default-profile-10w.log` | 54.66 | 17.53 | `planned_run_dirty` | 53,670 | 39,924 | 8,433,539 | 182,187 | confirms default path; timing rejected as noisy |
+| scalar fallback after default flip | `medium-briggs-scalar-fallback-profile-10w.log` | 54.57 | 17.28 | `planned_dirty` | 54,470 | 38,364 | 8,433,552 | 182,182 | comparison only; same slowdown implies system/run noise |
+
+Correctness status: `cargo test -p casa-imaging
+tile_inbox_planned_replay_matches_direct_dirty_and_residual --lib` covers the
+planned run-block dirty/residual replay against the direct tiled path.
+`cargo test -p casa-imaging
+planned_same_tile_samples_enqueue_as_one_visibility_run --lib` covers the
+same-tile short circuit. Broader standard-MFS correctness gates remain required
+before this branch is closed.
+
+Decision: keep the scalar-run block type and executor entry points as the
+default fixed-tile streaming handoff. The old scalar-block path is only an
+explicit fallback via `CASA_RS_STANDARD_MFS_PLANNED_RUN_BLOCKS=0`. The next
+performance step remains true row/channel visibility runs that move lane-level
+flagging, weighting, tap planning, and gridding work into tile workers.
+
 Validation checks for this checkpoint:
 
 ```text
@@ -1840,6 +1896,7 @@ cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_predi
 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib
 cargo test -p casa-imaging tile_inbox_scheduler_schedules_tiles_and_drains_all_runs --lib
 cargo test -p casa-imaging tile_inbox_producer_pending_retries_fifo_after_try_lock_miss --lib
+cargo test -p casa-imaging planned_same_tile_samples_enqueue_as_one_visibility_run --lib
 cargo test -p casa-imaging tile_inbox_planned_replay_matches_direct_dirty_and_residual --lib
 cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib
 cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib

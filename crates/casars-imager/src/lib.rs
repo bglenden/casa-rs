@@ -32,11 +32,13 @@ use casa_imaging::{
     PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
     StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
     StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
-    StandardMfsStreamingWeightingPlan, StandardMfsWeightedSample, UvTaperSize, VisibilityBatch,
-    VisibilityMetadataBatch, WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode,
-    WeightingMode, estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern,
-    restore_standard_mfs_model, run_cube, run_imaging, run_imaging_owned_with_execution_config,
-    run_mtmfs, run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
+    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsStreamingWeightingPlan,
+    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
+    WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
+    estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern, restore_standard_mfs_model,
+    run_cube, run_imaging, run_imaging_owned_with_execution_config, run_mtmfs,
+    run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
+    run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
     run_standard_mfs_weighted_streaming_with_execution_config, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
     trace_w_project_plan, trace_weighting,
@@ -2123,61 +2125,123 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     let result = if use_sample_streaming {
         let channel_axes = Arc::new(MsImagingChannelAxisCatalog::load(ms)?);
         let mut replay_invocation = 0usize;
-        let mut replay_weighted_samples = |consumer: &mut dyn FnMut(
-            &[StandardMfsPlannedWeightedSample],
-        )
-            -> Result<(), ImagingError>|
-         -> Result<(), ImagingError> {
-            let replay_pass = if replay_invocation == 0 {
-                "initial_sample_replay"
-            } else {
-                "residual_sample_replay"
-            };
-            let replay_ordinal = replay_invocation;
-            replay_invocation += 1;
-            let mut replay_stats = StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
-            let mut stream_error = None::<ImagingError>;
-            let stream_result = stream_standard_mfs_planned_sample_essentials_blocks(
-                ms,
-                config,
-                data_column,
-                &selection,
-                &table_values,
-                &active_selected_rows,
-                derived_engine.as_ref(),
-                Arc::clone(&channel_axes),
-                channel_read_range,
-                &geometry_columns,
-                strategy.row_block_rows,
-                prepare_started_at,
-                &mut prepare_stage_timings,
-                &mut accumulate_timings,
-                &mut replay_stats,
-                &weighting_plan,
-                &planned_sample_builder,
-                |samples| {
-                    if let Err(error) = consumer(samples) {
-                        stream_error = Some(error);
-                        return Err(ImagingError::InvalidRequest(
-                            "sample streaming standard MFS weighted consumer failed".to_string(),
-                        ));
+        if standard_mfs_planned_run_blocks_enabled() {
+            let mut replay_weighted_samples =
+                |consumer: &mut dyn FnMut(
+                    &StandardMfsPlannedWeightedSampleRunBlock,
+                ) -> Result<(), ImagingError>|
+                 -> Result<(), ImagingError> {
+                    let replay_pass = if replay_invocation == 0 {
+                        "initial_sample_run_replay"
+                    } else {
+                        "residual_sample_run_replay"
+                    };
+                    let replay_ordinal = replay_invocation;
+                    replay_invocation += 1;
+                    let mut replay_stats =
+                        StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
+                    let mut stream_error = None::<ImagingError>;
+                    let stream_result = stream_standard_mfs_planned_sample_essentials_run_blocks(
+                        ms,
+                        config,
+                        data_column,
+                        &selection,
+                        &table_values,
+                        &active_selected_rows,
+                        derived_engine.as_ref(),
+                        Arc::clone(&channel_axes),
+                        channel_read_range,
+                        &geometry_columns,
+                        strategy.row_block_rows,
+                        prepare_started_at,
+                        &mut prepare_stage_timings,
+                        &mut accumulate_timings,
+                        &mut replay_stats,
+                        &weighting_plan,
+                        &planned_sample_builder,
+                        |samples| {
+                            if let Err(error) = consumer(samples) {
+                                stream_error = Some(error);
+                                return Err(ImagingError::InvalidRequest(
+                                    "sample streaming standard MFS weighted consumer failed"
+                                        .to_string(),
+                                ));
+                            }
+                            Ok(())
+                        },
+                    );
+                    replay_stats.log();
+                    if let Some(error) = stream_error {
+                        return Err(error);
                     }
-                    Ok(())
-                },
-            );
-            replay_stats.log();
-            if let Some(error) = stream_error {
-                return Err(error);
-            }
-            stream_result
-                .map(|_| ())
-                .map_err(ImagingError::InvalidRequest)
-        };
-        run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
-            request,
-            execution_config,
-            &mut replay_weighted_samples,
-        )
+                    stream_result
+                        .map(|_| ())
+                        .map_err(ImagingError::InvalidRequest)
+                };
+            run_standard_mfs_planned_sample_run_block_streaming_with_execution_config(
+                request,
+                execution_config,
+                &mut replay_weighted_samples,
+            )
+        } else {
+            let mut replay_weighted_samples =
+                |consumer: &mut dyn FnMut(
+                    &[StandardMfsPlannedWeightedSample],
+                ) -> Result<(), ImagingError>|
+                 -> Result<(), ImagingError> {
+                    let replay_pass = if replay_invocation == 0 {
+                        "initial_sample_replay"
+                    } else {
+                        "residual_sample_replay"
+                    };
+                    let replay_ordinal = replay_invocation;
+                    replay_invocation += 1;
+                    let mut replay_stats =
+                        StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
+                    let mut stream_error = None::<ImagingError>;
+                    let stream_result = stream_standard_mfs_planned_sample_essentials_blocks(
+                        ms,
+                        config,
+                        data_column,
+                        &selection,
+                        &table_values,
+                        &active_selected_rows,
+                        derived_engine.as_ref(),
+                        Arc::clone(&channel_axes),
+                        channel_read_range,
+                        &geometry_columns,
+                        strategy.row_block_rows,
+                        prepare_started_at,
+                        &mut prepare_stage_timings,
+                        &mut accumulate_timings,
+                        &mut replay_stats,
+                        &weighting_plan,
+                        &planned_sample_builder,
+                        |samples| {
+                            if let Err(error) = consumer(samples) {
+                                stream_error = Some(error);
+                                return Err(ImagingError::InvalidRequest(
+                                    "sample streaming standard MFS weighted consumer failed"
+                                        .to_string(),
+                                ));
+                            }
+                            Ok(())
+                        },
+                    );
+                    replay_stats.log();
+                    if let Some(error) = stream_error {
+                        return Err(error);
+                    }
+                    stream_result
+                        .map(|_| ())
+                        .map_err(ImagingError::InvalidRequest)
+                };
+            run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
+                request,
+                execution_config,
+                &mut replay_weighted_samples,
+            )
+        }
     } else {
         let mut replay_invocation = 0usize;
         let mut replay_weighted_batches = |consumer: &mut dyn FnMut(
@@ -8921,6 +8985,120 @@ where
     Ok(streamed_samples)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn stream_standard_mfs_planned_sample_essentials_run_blocks<F>(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_axes: Arc<MsImagingChannelAxisCatalog>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+    pass_stats: &mut StandardMfsStreamingPassStats,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+    mut consume: F,
+) -> Result<usize, String>
+where
+    F: FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+{
+    let mut streamed_samples = 0usize;
+    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+        config,
+        table_values,
+        selection.phase_center.clone(),
+        false,
+    )?;
+    for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let stage_started_at = Instant::now();
+        let (block, read_timings) = read_ms_imaging_essentials_block(
+            ms,
+            data_column_kind,
+            Arc::clone(&channel_axes),
+            geometry_columns,
+            row_chunk,
+            channel_read_range,
+        )?;
+        let get_ms_values_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+        pass_stats.add_get_ms_values_detail(GetMsValuesTimings {
+            data_column: read_timings.data_column,
+            flag_column: read_timings.flag_column,
+            weight_column: read_timings.weight_column,
+            weight_spectrum: read_timings.weight_spectrum,
+            geometry_rows: read_timings.uvw_column,
+        });
+
+        let stage_started_at = Instant::now();
+        let before_accumulate = *accumulate_timings;
+        let mut planned_runs = StandardMfsPlannedWeightedSampleRunBlock::default();
+        let mut block_candidate_samples = 0usize;
+        for (row_slot, (selected_row, row)) in row_chunk.iter().zip(block.rows.iter()).enumerate() {
+            accumulate_timings.rows_seen += 1;
+            if row.spw_id != selected_row.spw_id {
+                return Err(format!(
+                    "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                    selected_row.row_index, selected_row.spw_id, row.spw_id
+                ));
+            }
+            let run_start = planned_runs.begin_run();
+            let counts = prepared.stream_standard_mfs_planned_essentials_row_samples(
+                selected_row,
+                row,
+                derived_engine,
+                weighting_plan,
+                planned_sample_builder,
+                &mut |sample| {
+                    planned_runs.push_sample(sample);
+                    Ok(())
+                },
+            )?;
+            planned_runs.finish_run(run_start);
+            let _ = row_slot;
+            block_candidate_samples += counts.candidate_samples;
+        }
+        let consumer_started_at = Instant::now();
+        consume(&planned_runs).map_err(|error| error.to_string())?;
+        pass_stats.add_consumer(consumer_started_at.elapsed());
+        let prepare_processing_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
+        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
+        let planned_tap_visits = planned_runs
+            .samples()
+            .iter()
+            .map(|sample| usize::from(sample.tap_count))
+            .sum();
+        pass_stats.add_planned_sample_counts(
+            block_candidate_samples,
+            planned_runs.len(),
+            planned_tap_visits,
+        );
+        pass_stats.record_density_block(
+            planned_runs.len(),
+            get_ms_values_elapsed,
+            prepare_processing_elapsed,
+        );
+        streamed_samples += planned_runs.len();
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/ms_essentials_sample_block rows_done={} rows_total={} samples={} total_elapsed_s={:.3}",
+                accumulate_timings.rows_seen,
+                active_selected_rows.len(),
+                streamed_samples,
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    Ok(streamed_samples)
+}
+
 fn merge_prepared_inputs_with_trace(
     prepared_with_traces: Vec<(PreparedInput, PreparedVisibilityTraceBundle)>,
 ) -> Result<(PreparedInput, PreparedVisibilityTraceBundle), String> {
@@ -9727,6 +9905,17 @@ fn env_standard_mfs_grid_threads() -> Option<usize> {
         .and_then(|value| parse_standard_mfs_grid_threads(&value))
 }
 
+fn standard_mfs_planned_run_blocks_enabled() -> bool {
+    env::var("CASA_RS_STANDARD_MFS_PLANNED_RUN_BLOCKS")
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(true)
+}
+
 fn standard_mfs_streaming_batch_size() -> usize {
     if let Some(value) =
         env_usize("CASA_RS_STANDARD_MFS_STREAMING_BATCH_SIZE").filter(|value| *value > 0)
@@ -9804,6 +9993,7 @@ fn standard_mfs_execution_config(config: &CliConfig) -> StandardMfsExecutionConf
             .filter(|value| *value > 0)
             .map(|value| value.min(2))
             .unwrap_or(1),
+        fixed_tile_use_planned_run_blocks: false,
     }
 }
 
@@ -19161,6 +19351,7 @@ mod tests {
             fixed_tile_edge: Some(enabled.tile_edge),
             fixed_tile_center_boundary: enabled.center_boundary_anchor,
             fixed_tile_max_live_row_blocks: 1,
+            fixed_tile_use_planned_run_blocks: false,
         };
         assert_eq!(execution.fixed_tile_resident_bytes, Some(enabled.bytes));
         assert_eq!(execution.fixed_tile_edge, Some(32));
