@@ -2004,10 +2004,39 @@ impl StandardMfsTileWorkerProfile {
     }
 }
 
-const STANDARD_MFS_INBOX_DRAIN_SAMPLE_CAP: usize = 1024;
-const STANDARD_MFS_INBOX_DRAIN_WORK_CAP: usize = 49 * 1024;
-const STANDARD_MFS_INBOX_PRODUCER_CHUNK_SAMPLE_CAP: usize = 256;
+const STANDARD_MFS_INBOX_LOW_WORKER_DRAIN_SAMPLE_CAP: usize = 1024;
+const STANDARD_MFS_INBOX_LOW_WORKER_PRODUCER_CHUNK_SAMPLE_CAP: usize = 256;
+const STANDARD_MFS_INBOX_HIGH_WORKER_DRAIN_SAMPLE_CAP: usize = 4096;
+const STANDARD_MFS_INBOX_HIGH_WORKER_PRODUCER_CHUNK_SAMPLE_CAP: usize = 4096;
 const STANDARD_MFS_QUEUE_SAMPLE_SLOP_BYTES: usize = 16;
+
+#[derive(Clone, Copy, Debug)]
+struct StandardMfsTileInboxCaps {
+    producer_chunk_sample_cap: usize,
+    drain_sample_cap: usize,
+    drain_work_cap: usize,
+}
+
+fn standard_mfs_tile_inbox_caps(worker_count: usize) -> StandardMfsTileInboxCaps {
+    let (producer_chunk_sample_cap, drain_sample_cap) = if worker_count <= 2 {
+        (
+            STANDARD_MFS_INBOX_LOW_WORKER_PRODUCER_CHUNK_SAMPLE_CAP,
+            STANDARD_MFS_INBOX_LOW_WORKER_DRAIN_SAMPLE_CAP,
+        )
+    } else {
+        (
+            STANDARD_MFS_INBOX_HIGH_WORKER_PRODUCER_CHUNK_SAMPLE_CAP,
+            STANDARD_MFS_INBOX_HIGH_WORKER_DRAIN_SAMPLE_CAP,
+        )
+    };
+    StandardMfsTileInboxCaps {
+        producer_chunk_sample_cap,
+        drain_sample_cap,
+        drain_work_cap: STANDARD_GRIDDER_TAP_COUNT
+            .saturating_mul(STANDARD_GRIDDER_TAP_COUNT)
+            .saturating_mul(drain_sample_cap),
+    }
+}
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2088,18 +2117,6 @@ struct StandardMfsTileQueueChunk {
 }
 
 impl StandardMfsTileQueueChunk {
-    fn new(samples: Vec<StandardMfsTileQueueSample>) -> Self {
-        let first_input_seq = samples
-            .first()
-            .map(|sample| sample.input_seq)
-            .unwrap_or(u64::MAX);
-        let mut chunk = Self::with_capacity(samples.len(), first_input_seq);
-        for sample in samples {
-            chunk.push_sample(sample);
-        }
-        chunk
-    }
-
     fn empty() -> Self {
         Self::with_capacity(0, u64::MAX)
     }
@@ -2241,7 +2258,7 @@ impl StandardMfsTileInboxQueueState {
 
 #[allow(dead_code)]
 struct StandardMfsTileInboxProducerBuffer {
-    open: Vec<Vec<StandardMfsTileQueueSample>>,
+    open: Vec<StandardMfsTileQueueChunk>,
     touched: Vec<StandardMfsTileId>,
     touched_flags: Vec<bool>,
     chunk_sample_cap: usize,
@@ -2250,11 +2267,18 @@ struct StandardMfsTileInboxProducerBuffer {
 #[allow(dead_code)]
 impl StandardMfsTileInboxProducerBuffer {
     fn new(tile_count: usize) -> Self {
+        let caps = standard_mfs_tile_inbox_caps(standard_mfs_grid_threads());
+        Self::new_with_chunk_sample_cap(tile_count, caps.producer_chunk_sample_cap)
+    }
+
+    fn new_with_chunk_sample_cap(tile_count: usize, chunk_sample_cap: usize) -> Self {
         Self {
-            open: (0..tile_count).map(|_| Vec::new()).collect(),
+            open: (0..tile_count)
+                .map(|_| StandardMfsTileQueueChunk::empty())
+                .collect(),
             touched: Vec::new(),
             touched_flags: vec![false; tile_count],
-            chunk_sample_cap: STANDARD_MFS_INBOX_PRODUCER_CHUNK_SAMPLE_CAP,
+            chunk_sample_cap: chunk_sample_cap.max(1),
         }
     }
 
@@ -2278,7 +2302,7 @@ impl StandardMfsTileInboxProducerBuffer {
             self.touched_flags[tile_index] = true;
             self.touched.push(tile_id);
         }
-        tile_buffer.push(sample);
+        tile_buffer.push_sample(sample);
         if tile_buffer.len() >= self.chunk_sample_cap {
             self.flush_tile(tile_id, enqueue)?;
         }
@@ -2302,8 +2326,8 @@ impl StandardMfsTileInboxProducerBuffer {
         if tile_buffer.is_empty() {
             return Ok(());
         }
-        let samples = std::mem::take(tile_buffer);
-        enqueue(tile_id, StandardMfsTileQueueChunk::new(samples))
+        let chunk = std::mem::replace(tile_buffer, StandardMfsTileQueueChunk::empty());
+        enqueue(tile_id, chunk)
     }
 
     fn flush_all(
@@ -2472,10 +2496,11 @@ struct StandardMfsTileInboxSchedulerOutput<T> {
 struct StandardMfsTileInboxShared {
     tiles: Vec<Arc<StandardMfsTileInboxRuntime>>,
     ready: Arc<(Mutex<StandardMfsTileInboxReadyState>, Condvar)>,
+    caps: StandardMfsTileInboxCaps,
 }
 
 impl StandardMfsTileInboxShared {
-    fn new(tile_count: usize) -> Self {
+    fn new(tile_count: usize, caps: StandardMfsTileInboxCaps) -> Self {
         Self {
             tiles: (0..tile_count)
                 .map(|index| {
@@ -2488,6 +2513,7 @@ impl StandardMfsTileInboxShared {
                 Mutex::new(StandardMfsTileInboxReadyState::new()),
                 Condvar::new(),
             )),
+            caps,
         }
     }
 
@@ -2628,8 +2654,8 @@ impl StandardMfsTileInboxShared {
             queue.ready_enqueued = false;
             queue.active = true;
             let mut samples = StandardMfsTileQueueChunk::empty();
-            while samples.len() < STANDARD_MFS_INBOX_DRAIN_SAMPLE_CAP
-                && samples.estimated_work < STANDARD_MFS_INBOX_DRAIN_WORK_CAP
+            while samples.len() < self.caps.drain_sample_cap
+                && samples.estimated_work < self.caps.drain_work_cap
             {
                 let Some(chunk) = queue.chunks.pop_front() else {
                     break;
@@ -2738,7 +2764,11 @@ where
         + Sync,
 {
     let worker_count = worker_count.max(1);
-    let shared = Arc::new(StandardMfsTileInboxShared::new(partition.tile_count()));
+    let caps = standard_mfs_tile_inbox_caps(worker_count);
+    let shared = Arc::new(StandardMfsTileInboxShared::new(
+        partition.tile_count(),
+        caps,
+    ));
     let mut all_outputs = Vec::<StandardMfsTileInboxTaskOutput<T>>::new();
     let mut all_worker_profiles = Vec::<StandardMfsTileWorkerProfile>::new();
 
@@ -3413,6 +3443,7 @@ fn log_tile_inbox_scheduler_summary<T>(inputs: StandardMfsTileInboxSchedulerLogI
     let worker_active_total_ms = duration_total_ms(&worker_active);
     let stage_total_ms = profile::millis(inputs.stage_total);
     let worker_capacity_ms = stage_total_ms * inputs.requested_threads.max(1) as f64;
+    let caps = standard_mfs_tile_inbox_caps(inputs.requested_threads);
     let producer_active = inputs.output.stats.producer_active;
     let worker_active_union = inputs.output.stats.worker_active_union;
     let producer_worker_overlap = inputs.output.stats.producer_worker_overlap;
@@ -3424,7 +3455,7 @@ fn log_tile_inbox_scheduler_summary<T>(inputs: StandardMfsTileInboxSchedulerLogI
         .saturating_sub(producer_only)
         .saturating_sub(worker_only);
     eprintln!(
-        "standard_mfs_tile_inbox_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} enqueued_samples={} enqueued_bytes={} queued_bytes_high_water={} ready_heads_pushed={} worker_drains={} worker_samples={} worker_tap_visits={} producer_active_ms={:.3} worker_active_union_ms={:.3} producer_worker_overlap_ms={:.3} producer_only_ms={:.3} worker_only_ms={:.3} neither_active_ms={:.3} producer_preprocess_total_ms={:.3} worker_task_count={} worker_samples_by_worker={} worker_tap_visits_by_worker={} worker_active_total_ms={:.3} worker_active={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} active_tile_skips={} stale_heap_entries={} wait_with_queued_bytes_events={} task_outputs={} stage_total_ms={:.3}",
+        "standard_mfs_tile_inbox_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} producer_chunk_sample_cap={} drain_sample_cap={} drain_work_cap={} enqueued_samples={} enqueued_bytes={} queued_bytes_high_water={} ready_heads_pushed={} worker_drains={} worker_samples={} worker_tap_visits={} producer_active_ms={:.3} worker_active_union_ms={:.3} producer_worker_overlap_ms={:.3} producer_only_ms={:.3} worker_only_ms={:.3} neither_active_ms={:.3} producer_preprocess_total_ms={:.3} worker_task_count={} worker_samples_by_worker={} worker_tap_visits_by_worker={} worker_active_total_ms={:.3} worker_active={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} active_tile_skips={} stale_heap_entries={} wait_with_queued_bytes_events={} task_outputs={} stage_total_ms={:.3}",
         inputs.stage,
         inputs.requested_threads,
         inputs.output.worker_profiles.len(),
@@ -3434,6 +3465,9 @@ fn log_tile_inbox_scheduler_summary<T>(inputs: StandardMfsTileInboxSchedulerLogI
         inputs.partition.tile_origin()[0],
         inputs.partition.tile_origin()[1],
         inputs.partition.tile_count(),
+        caps.producer_chunk_sample_cap,
+        caps.drain_sample_cap,
+        caps.drain_work_cap,
         inputs.output.stats.enqueued_samples,
         inputs.output.stats.enqueued_bytes,
         inputs.output.stats.queued_bytes_high_water,
@@ -8933,17 +8967,56 @@ mod tests {
     }
 
     #[test]
+    fn tile_inbox_caps_keep_low_worker_chunks_small_and_high_worker_chunks_coarse() {
+        let low = super::standard_mfs_tile_inbox_caps(2);
+        assert_eq!(
+            low.producer_chunk_sample_cap,
+            super::STANDARD_MFS_INBOX_LOW_WORKER_PRODUCER_CHUNK_SAMPLE_CAP
+        );
+        assert_eq!(
+            low.drain_sample_cap,
+            super::STANDARD_MFS_INBOX_LOW_WORKER_DRAIN_SAMPLE_CAP
+        );
+        assert_eq!(
+            low.drain_work_cap,
+            super::STANDARD_GRIDDER_TAP_COUNT
+                * super::STANDARD_GRIDDER_TAP_COUNT
+                * low.drain_sample_cap
+        );
+
+        let high = super::standard_mfs_tile_inbox_caps(10);
+        assert_eq!(
+            high.producer_chunk_sample_cap,
+            super::STANDARD_MFS_INBOX_HIGH_WORKER_PRODUCER_CHUNK_SAMPLE_CAP
+        );
+        assert_eq!(
+            high.drain_sample_cap,
+            super::STANDARD_MFS_INBOX_HIGH_WORKER_DRAIN_SAMPLE_CAP
+        );
+        assert_eq!(
+            high.drain_work_cap,
+            super::STANDARD_GRIDDER_TAP_COUNT
+                * super::STANDARD_GRIDDER_TAP_COUNT
+                * high.drain_sample_cap
+        );
+    }
+
+    #[test]
     fn tile_inbox_scheduler_schedules_tiles_and_drains_bounded_chunks() {
         let partition = StandardMfsFixedTilePartition::new([64, 64], [32, 32], 3).unwrap();
         let hot_tile = StandardMfsTileId(0);
         let cold_tile = StandardMfsTileId(3);
+        let caps = super::standard_mfs_tile_inbox_caps(2);
         let output = super::run_standard_mfs_tile_inbox_scheduler(
             &partition,
             2,
             |enqueue| {
                 let mut producer_buffer =
-                    super::StandardMfsTileInboxProducerBuffer::new(partition.tile_count());
-                for input_seq in 0..(super::STANDARD_MFS_INBOX_DRAIN_SAMPLE_CAP as u64 + 7) {
+                    super::StandardMfsTileInboxProducerBuffer::new_with_chunk_sample_cap(
+                        partition.tile_count(),
+                        caps.producer_chunk_sample_cap,
+                    );
+                for input_seq in 0..(caps.drain_sample_cap as u64 + 7) {
                     producer_buffer.push(hot_tile, test_tile_queue_sample(input_seq), enqueue)?;
                 }
                 producer_buffer.push(cold_tile, test_tile_queue_sample(10_000), enqueue)?;
@@ -8967,14 +9040,8 @@ mod tests {
             .iter()
             .map(|task| task.output)
             .sum::<usize>();
-        assert_eq!(
-            processed_samples,
-            super::STANDARD_MFS_INBOX_DRAIN_SAMPLE_CAP + 8
-        );
-        assert_eq!(
-            output.stats.enqueued_samples,
-            super::STANDARD_MFS_INBOX_DRAIN_SAMPLE_CAP + 8
-        );
+        assert_eq!(processed_samples, caps.drain_sample_cap + 8);
+        assert_eq!(output.stats.enqueued_samples, caps.drain_sample_cap + 8);
         assert_eq!(output.stats.current_queued_bytes, 0);
         assert!(output.stats.worker_drains >= 2);
         assert!(output.stats.ready_heads_pushed >= 2);

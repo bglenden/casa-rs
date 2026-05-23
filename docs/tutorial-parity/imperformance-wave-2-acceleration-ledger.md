@@ -1597,6 +1597,8 @@ Validation checks for this checkpoint:
 cargo check -p casa-imaging -p casars-imager
 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib
 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib
+cargo test -p casa-imaging tile_inbox_caps_keep_low_worker_chunks_small_and_high_worker_chunks_coarse --lib
+cargo test -p casa-imaging tile_inbox_scheduler_schedules_tiles_and_drains_bounded_chunks --lib
 cargo test -p casa-imaging tile_inbox_planned_replay_matches_direct_dirty_and_residual --lib
 cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib
 cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib
@@ -1691,6 +1693,35 @@ wait-with-queued-byte events, and system time jumps to about 41 seconds. The
 next structural target remains the producer/core handoff representation:
 preserve row/channel/correlation visibility runs instead of expanding the
 handoff into scalar queued samples and many small scheduler chunks.
+
+Tile-inbox chunk handoff checkpoint:
+
+```text
+artifact=target/imperformance-wave2/tile-run-handoff-20260523/medium-briggs-adaptive-chunk-vs-cpu-products.json
+profile_artifacts=target/imperformance-wave2/tile-run-handoff-20260523/medium-briggs-fixed-2w-adaptive-chunk.log; target/imperformance-wave2/tile-run-handoff-20260523/medium-briggs-fixed-10w-adaptive-chunk.log
+shape=field0 spw0 channel_count=64 imsize=1024 cell1arcsec briggs robust=0.5 dirty-only
+products=image,residual,psf,sumwt
+failures=0
+worst_fixed_tile_vs_cpu_difference=1.4901161193847656e-08
+```
+
+| variant | producer chunk cap | drain cap | wall s | sys s | scheduler stage s | worker drains | wait-with-queued events | decision |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| previous fixed tile 2 workers | 256 | 1024 | 26.42 | 3.08 | 11.491 | 301,644 | 1,745 | still the low-worker timing reference |
+| adaptive chunk 2 workers | 256 | 1024 | 29.23 | 3.35 | 13.697 | 753,525 | 60,435 | inconclusive/regressed in this run |
+| previous fixed tile 10 workers | 256 | 1024 | 34.09 | 42.93 | 19.063 | 761,555 | 2,946,763 | rejected high-worker shape |
+| adaptive chunk 10 workers | 4096 | 4096 | 26.88 | 4.81 | 12.593 | 75,252 | 153,926 | retained as high-worker scheduler repair |
+
+The retained code changes the producer-side tile inbox from
+`Vec<StandardMfsTileQueueSample>` staging into direct SoA
+`StandardMfsTileQueueChunk` staging, avoiding the extra scalar-vector to chunk
+conversion when publishing tile work. It also uses worker-count-aware chunking:
+1-2 worker runs keep the old small caps, while 4+ worker runs use 4096-sample
+tile chunks/drains to avoid the high-worker scheduler storm. This is not yet
+the final row/channel/correlation visibility-run interface, but it is a
+measured step in that direction and removes the gross 10-worker system-time
+pathology. The 2-worker timing did not improve in this single measurement and
+needs another pass after the broader run-shaped handoff.
 
 Validation checks for this checkpoint:
 
