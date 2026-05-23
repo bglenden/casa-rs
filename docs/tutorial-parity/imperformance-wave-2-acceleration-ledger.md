@@ -1625,6 +1625,23 @@ this checkpoint because the smoke dataset path
 `/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms`
 was not mounted in this session.
 
+Small local fixture smoke, after the commit:
+
+```text
+artifact=target/imperformance-wave2/worker-tap-planning-20260522/small-ms/ngc5921-fixed-tile-worker-taps.log
+dataset=/Users/brianglendenning/SoftwareProjects/casatestdata/measurementset/vla/ngc5921.ms
+shape=field0 spw0 channel_count=1 imsize=128 natural dirty
+stage=planned_dirty enqueued_samples=4042 stage_total_ms=4.951 worker_utilization_pct=2.663
+
+artifact=target/imperformance-wave2/worker-tap-planning-20260522/small-ms/refim-twopoints-twochan-fixed-tile-worker-taps.log
+dataset=/Users/brianglendenning/SoftwareProjects/casatestdata/measurementset/vla/refim_twopoints_twochan.ms
+shape=field0 spw0 channel_count=2 imsize=128 natural dirty
+stage=planned_dirty enqueued_samples=119632 stage_total_ms=52.107 worker_utilization_pct=4.731
+```
+
+These local fixtures validate the planned fixed-tile path with worker-side tap
+planning, but they are too small for meaningful scheduler-speed claims.
+
 Validation checks for this checkpoint:
 
 ```text
