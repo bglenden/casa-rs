@@ -1,7 +1,7 @@
 # ImPerformance Wave 2 Acceleration Ledger
 
 Truth class: current descriptive
-Last reality check: 2026-05-22
+Last reality check: 2026-05-23
 Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging streaming_density_samples_match_batch_density_weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging positive_tap_span_reconstructs_legacy_positive_taps --lib`; `cargo test -p casa-imaging compact_positive_tap_grid_and_degrid_match_product_taps --lib`; `cargo test -p casa-imaging fused_residual_refresh_matches_separate_degrid_grid --lib`; `cargo test -p casa-imaging standard_mfs_plan_buckets_gridder_accepted_samples --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile, bounded serial attribution probes, final full-shape one-worker profiles on 2026-05-20, and bounded fixed-tile single-worker density-direct profiles on 2026-05-22
 
 Wave issue: #263
@@ -1784,6 +1784,52 @@ the inbox: `enqueued_runs=8,433,552` for `188,889,033` lanes means only about
 retained target must feed the inbox with real row/channel visibility runs or add
 a measured ready-threshold policy without returning to producer-owned imaging
 chunks.
+
+Run-inbox ready-threshold repair:
+
+```text
+source_checkpoint=tile inbox queues StandardMfsTileVisibilityRun work units with thresholded ready-head publication
+queue_shape=Mutex<VecDeque<StandardMfsTileVisibilityRun>>
+producer_shape=routes lanes/runs into the tile inbox immediately; ready-head wakeup waits for queued-sample threshold or stage close
+override=CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN=<samples>
+artifact_dir=target/imperformance-wave2/run-inbox-threshold-20260523/
+decision=retained as scheduler repair; still not a full performance win versus previous fixed tile
+```
+
+The threshold does not reintroduce producer-owned chunks. Runs are still pushed
+to the owning tile inbox immediately, and only tile IDs are scheduled globally.
+The change defers the ready-head transition until a tile has enough queued lane
+samples to keep a worker busy, or until stage close forces remaining below-
+threshold queues to drain. With the default threshold of 1024 samples, scheduler
+traffic drops by about 45x on the medium dirty-only run.
+
+Run-inbox ready-threshold timing:
+
+```text
+shape=field0 spw0 channel_count=64 imsize=1024 cell1arcsec briggs robust=0.5 dirty-only
+env=CASA_RS_STANDARD_MFS_BACKEND=fixed_tile CASA_RS_STANDARD_MFS_TILE_EDGE=32 CASA_RS_STANDARD_MFS_TILE_ANCHOR=center_boundary
+artifact_2w=target/imperformance-wave2/run-inbox-threshold-20260523/medium-briggs-threshold-2w.log
+artifact_10w=target/imperformance-wave2/run-inbox-threshold-20260523/medium-briggs-threshold-10w.log
+correctness=targeted scheduler tests pass; parity gates listed below
+decision=retain the threshold; next bottleneck remains scalar planned-sample replay into run wrappers
+```
+
+| variant | wall s | sys s | scheduler stage s | ready sample min | enqueued runs | worker drains | avg runs/drain | wait-with-queued events | decision |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| previous fixed tile 2 workers | 26.42 | 3.08 | 11.491 | n/a | n/a | 301,644 | n/a | 1,745 | still faster |
+| run inbox 2 workers | 49.01 | 18.57 | 34.065 | 1 | 8,433,552 | 8,331,616 | 1.012 | 4,407,043 | rejected |
+| threshold run inbox 2 workers | 39.26 | 3.54 | 25.545 | 1024 | 8,433,552 | 182,121 | 46.307 | 236,264 | retained scheduler repair |
+| previous fixed tile 10 workers | 34.09 | 42.93 | 19.063 | n/a | n/a | 761,555 | n/a | 2,946,763 | still faster |
+| run inbox 10 workers | 158.63 | 625.34 | 144.778 | 1 | 8,433,552 | 8,353,403 | 1.010 | 40,979,758 | rejected |
+| threshold run inbox 10 workers | 38.45 | 11.30 | 25.001 | 1024 | 8,433,552 | 182,168 | 46.295 | 1,608,711 | retained scheduler repair |
+
+This is a real repair to the run-inbox scheduler shape: the 10-worker wall time
+falls from `158.63s` to `38.45s`, system time falls from `625.34s` to `11.30s`,
+and drains fall from `8,353,403` to `182,168`. It is still not the final
+producer/worker boundary. The run count and average samples per run are
+unchanged because the current feed still wraps scalar planned samples rather
+than publishing true row/channel visibility runs. Worker utilization remains
+low on 10 workers because producer/preprocessing dominates the stage.
 
 Validation checks for this checkpoint:
 

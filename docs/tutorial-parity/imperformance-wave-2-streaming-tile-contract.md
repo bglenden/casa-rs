@@ -184,6 +184,15 @@ queue mutex. Small drain caps are not used to handle hot tiles; if a hot tile
 causes tail idle after run-based publication, the follow-up is explicit hot-tile
 splitting with private scratch/reduction buffers.
 
+Ready-head publication is thresholded, but inbox publication is not. The
+producer still pushes runs into the owning tile queue as soon as they are routed;
+only the global worker wakeup is deferred until the queue has at least
+`CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN` samples, or until stage close
+forces all remaining work ready. This preserves the direct inbox contract while
+avoiding one worker drain per tiny run when the current upstream feed still
+replays scalar planned samples into run wrappers. The default threshold is 1024
+queued lane samples.
+
 Fixed-tile scheduler profiles must report whether the configured workers are
 actually being used. The summary and optional block-detail records include
 per-worker task, sample, tap-visit, active-time, elapsed-time, capacity,

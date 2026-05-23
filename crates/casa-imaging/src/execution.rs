@@ -2015,6 +2015,15 @@ impl StandardMfsTileWorkerProfile {
 
 const STANDARD_MFS_QUEUE_SAMPLE_SLOP_BYTES: usize = 16;
 const STANDARD_MFS_QUEUE_RUN_SLOP_BYTES: usize = 64;
+const STANDARD_MFS_INBOX_READY_SAMPLE_MIN_DEFAULT: usize = 1024;
+
+fn standard_mfs_tile_inbox_ready_sample_min() -> usize {
+    std::env::var("CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(STANDARD_MFS_INBOX_READY_SAMPLE_MIN_DEFAULT)
+}
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2306,9 +2315,12 @@ impl Ord for StandardMfsTileInboxReadyHead {
 #[allow(dead_code)]
 #[derive(Debug, Default)]
 struct StandardMfsTileInboxSchedulerStats {
+    ready_sample_min: usize,
     enqueued_runs: usize,
     enqueued_samples: usize,
     enqueued_bytes: usize,
+    ready_deferred_runs: usize,
+    ready_deferred_samples: usize,
     pending_runs: usize,
     pending_bytes: usize,
     pending_bytes_high_water: usize,
@@ -2342,7 +2354,7 @@ struct StandardMfsTileInboxReadyState {
 }
 
 impl StandardMfsTileInboxReadyState {
-    fn new() -> Self {
+    fn new(ready_sample_min: usize) -> Self {
         Self {
             heap: BinaryHeap::new(),
             active_tasks: 0,
@@ -2350,7 +2362,10 @@ impl StandardMfsTileInboxReadyState {
             error: None,
             producer_active: false,
             last_activity_update: Instant::now(),
-            stats: StandardMfsTileInboxSchedulerStats::default(),
+            stats: StandardMfsTileInboxSchedulerStats {
+                ready_sample_min,
+                ..Default::default()
+            },
         }
     }
 
@@ -2428,10 +2443,11 @@ struct StandardMfsTileInboxPublishStats {
 struct StandardMfsTileInboxShared {
     tiles: Vec<Arc<StandardMfsTileInboxRuntime>>,
     ready: Arc<(Mutex<StandardMfsTileInboxReadyState>, Condvar)>,
+    ready_sample_min: usize,
 }
 
 impl StandardMfsTileInboxShared {
-    fn new(tile_count: usize) -> Self {
+    fn new(tile_count: usize, ready_sample_min: usize) -> Self {
         Self {
             tiles: (0..tile_count)
                 .map(|index| {
@@ -2441,10 +2457,15 @@ impl StandardMfsTileInboxShared {
                 })
                 .collect(),
             ready: Arc::new((
-                Mutex::new(StandardMfsTileInboxReadyState::new()),
+                Mutex::new(StandardMfsTileInboxReadyState::new(ready_sample_min)),
                 Condvar::new(),
             )),
+            ready_sample_min,
         }
+    }
+
+    fn queue_is_ready_for_workers(&self, queue: &StandardMfsTileInboxQueueState) -> bool {
+        queue.queued_samples >= self.ready_sample_min
     }
 
     fn publish_runs_locked(
@@ -2452,8 +2473,8 @@ impl StandardMfsTileInboxShared {
         tile_id: StandardMfsTileId,
         queue: &mut StandardMfsTileInboxQueueState,
         runs: &mut VecDeque<StandardMfsTileVisibilityRun>,
+        force_ready: bool,
     ) -> StandardMfsTileInboxPublishStats {
-        let was_empty = queue.runs.is_empty();
         let mut stats = StandardMfsTileInboxPublishStats::default();
         while let Some(run) = runs.pop_front() {
             let run_bytes = run.queue_bytes();
@@ -2466,7 +2487,11 @@ impl StandardMfsTileInboxShared {
             queue.queued_work_estimate += run.estimated_work;
             queue.runs.push_back(run);
         }
-        stats.ready_head = if stats.runs > 0 && was_empty && !queue.active && !queue.ready_enqueued
+        stats.ready_head = if stats.runs > 0
+            && !queue.active
+            && !queue.ready_enqueued
+            && !queue.runs.is_empty()
+            && (force_ready || self.queue_is_ready_for_workers(queue))
         {
             queue.ready_enqueued = true;
             queue.generation = queue.generation.saturating_add(1);
@@ -2501,6 +2526,9 @@ impl StandardMfsTileInboxShared {
         if let Some(head) = published.ready_head {
             ready.push_ready_head(head);
             cvar.notify_one();
+        } else if published.runs > 0 {
+            ready.stats.ready_deferred_runs += published.runs;
+            ready.stats.ready_deferred_samples += published.samples;
         }
         Ok(())
     }
@@ -2520,7 +2548,7 @@ impl StandardMfsTileInboxShared {
 
         match tile.queue.try_lock() {
             Ok(mut queue) => {
-                let published = self.publish_runs_locked(tile_id, &mut queue, runs);
+                let published = self.publish_runs_locked(tile_id, &mut queue, runs, false);
                 drop(queue);
                 self.record_published_runs(published)?;
                 Ok(true)
@@ -2566,7 +2594,7 @@ impl StandardMfsTileInboxShared {
                     tile_id.index()
                 ))
             })?;
-            self.publish_runs_locked(tile_id, &mut queue, runs)
+            self.publish_runs_locked(tile_id, &mut queue, runs, false)
         };
         self.record_published_runs(published)
     }
@@ -2731,7 +2759,10 @@ impl StandardMfsTileInboxShared {
                 ))
             })?;
             queue.active = false;
-            if !queue.runs.is_empty() && !queue.ready_enqueued {
+            if !queue.runs.is_empty()
+                && !queue.ready_enqueued
+                && self.queue_is_ready_for_workers(&queue)
+            {
                 queue.ready_enqueued = true;
                 queue.generation = queue.generation.saturating_add(1);
                 queue.ready_head(tile_id)
@@ -2924,7 +2955,11 @@ where
         + Sync,
 {
     let worker_count = worker_count.max(1);
-    let shared = Arc::new(StandardMfsTileInboxShared::new(partition.tile_count()));
+    let ready_sample_min = standard_mfs_tile_inbox_ready_sample_min();
+    let shared = Arc::new(StandardMfsTileInboxShared::new(
+        partition.tile_count(),
+        ready_sample_min,
+    ));
     let mut all_outputs = Vec::<StandardMfsTileInboxTaskOutput<T>>::new();
     let mut all_worker_profiles = Vec::<StandardMfsTileWorkerProfile>::new();
 
@@ -3024,9 +3059,12 @@ where
         return Err(ImagingError::InvalidRequest(error));
     }
     let stats = StandardMfsTileInboxSchedulerStats {
+        ready_sample_min: ready.stats.ready_sample_min,
         enqueued_runs: ready.stats.enqueued_runs,
         enqueued_samples: ready.stats.enqueued_samples,
         enqueued_bytes: ready.stats.enqueued_bytes,
+        ready_deferred_runs: ready.stats.ready_deferred_runs,
+        ready_deferred_samples: ready.stats.ready_deferred_samples,
         pending_runs: ready.stats.pending_runs,
         pending_bytes: ready.stats.pending_bytes,
         pending_bytes_high_water: ready.stats.pending_bytes_high_water,
@@ -3620,7 +3658,7 @@ fn log_tile_inbox_scheduler_summary<T>(inputs: StandardMfsTileInboxSchedulerLogI
         .saturating_sub(producer_only)
         .saturating_sub(worker_only);
     eprintln!(
-        "standard_mfs_tile_inbox_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} inbox_worker_count={} enqueued_runs={} enqueued_samples={} enqueued_bytes={} queued_bytes_high_water={} pending_runs={} pending_bytes={} pending_bytes_high_water={} try_lock_misses={} ready_heads_pushed={} worker_drains={} worker_runs={} worker_samples={} worker_tap_visits={} avg_runs_per_drain={:.3} avg_samples_per_run={:.3} producer_active_ms={:.3} worker_active_union_ms={:.3} producer_worker_overlap_ms={:.3} producer_only_ms={:.3} worker_only_ms={:.3} neither_active_ms={:.3} producer_preprocess_total_ms={:.3} worker_task_count={} worker_samples_by_worker={} worker_tap_visits_by_worker={} worker_active_total_ms={:.3} worker_active={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} active_tile_skips={} stale_heap_entries={} wait_with_queued_bytes_events={} task_outputs={} stage_total_ms={:.3}",
+        "standard_mfs_tile_inbox_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} inbox_worker_count={} ready_sample_min={} enqueued_runs={} enqueued_samples={} enqueued_bytes={} queued_bytes_high_water={} ready_deferred_runs={} ready_deferred_samples={} pending_runs={} pending_bytes={} pending_bytes_high_water={} try_lock_misses={} ready_heads_pushed={} worker_drains={} worker_runs={} worker_samples={} worker_tap_visits={} avg_runs_per_drain={:.3} avg_samples_per_run={:.3} producer_active_ms={:.3} worker_active_union_ms={:.3} producer_worker_overlap_ms={:.3} producer_only_ms={:.3} worker_only_ms={:.3} neither_active_ms={:.3} producer_preprocess_total_ms={:.3} worker_task_count={} worker_samples_by_worker={} worker_tap_visits_by_worker={} worker_active_total_ms={:.3} worker_active={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} active_tile_skips={} stale_heap_entries={} wait_with_queued_bytes_events={} task_outputs={} stage_total_ms={:.3}",
         inputs.stage,
         inputs.requested_threads,
         inputs.output.worker_profiles.len(),
@@ -3631,10 +3669,13 @@ fn log_tile_inbox_scheduler_summary<T>(inputs: StandardMfsTileInboxSchedulerLogI
         inputs.partition.tile_origin()[1],
         inputs.partition.tile_count(),
         inputs.requested_threads.max(1),
+        inputs.output.stats.ready_sample_min,
         inputs.output.stats.enqueued_runs,
         inputs.output.stats.enqueued_samples,
         inputs.output.stats.enqueued_bytes,
         inputs.output.stats.queued_bytes_high_water,
+        inputs.output.stats.ready_deferred_runs,
+        inputs.output.stats.ready_deferred_samples,
         inputs.output.stats.pending_runs,
         inputs.output.stats.pending_bytes,
         inputs.output.stats.pending_bytes_high_water,
@@ -9199,7 +9240,7 @@ mod tests {
 
     #[test]
     fn tile_inbox_producer_pending_retries_fifo_after_try_lock_miss() {
-        let shared = std::sync::Arc::new(super::StandardMfsTileInboxShared::new(1));
+        let shared = std::sync::Arc::new(super::StandardMfsTileInboxShared::new(1, 1));
         let tile_id = StandardMfsTileId(0);
         let held = shared.tiles[tile_id.index()].queue.lock().unwrap();
         let mut producer = super::StandardMfsTileInboxProducer::new(std::sync::Arc::clone(&shared));
