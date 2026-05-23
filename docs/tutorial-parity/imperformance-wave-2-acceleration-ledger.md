@@ -1738,6 +1738,53 @@ restores the intended separation: publish per visibility, schedule per tile,
 drain per worker chunk. A new timing artifact is required before making any
 performance claim about this corrected shape.
 
+Run-based direct tile-inbox correction:
+
+```text
+source_checkpoint=tile inbox queues StandardMfsTileVisibilityRun work units
+queue_shape=Mutex<VecDeque<StandardMfsTileVisibilityRun>>
+producer_shape=routes lanes into consecutive same-tile runs; try_lock miss goes to producer-local pending FIFO
+worker_shape=schedules tile IDs and drains all queued runs for the active tile before gridding
+performance_artifact=target/imperformance-wave2/run-inbox-20260523/medium-briggs-run-inbox-summary.md
+decision=retained as architecture correction only; rejected as performance improvement
+```
+
+This replaces the scalar direct inbox because scalar publication created too
+many drains and ready-head transitions in the 10-worker medium run
+(`258.34s wall`, `1020.53s sys`, `14,408,954 drains`). The run-based queue item
+keeps the direct per-tile inbox contract while reducing scheduler traffic:
+producer-owned imaging chunks remain rejected, but a visibility run is now the
+unit published to the tile inbox. New scheduler summaries report
+`enqueued_runs`, `worker_runs`, `avg_runs_per_drain`,
+`avg_samples_per_run`, `pending_runs`, `pending_bytes`,
+`pending_bytes_high_water`, and `try_lock_misses` so timing artifacts can
+distinguish routing, queue contention, and worker gridding.
+
+Run-based direct tile-inbox timing:
+
+```text
+artifact=target/imperformance-wave2/run-inbox-20260523/medium-briggs-run-inbox-summary.md
+shape=field0 spw0 channel_count=64 imsize=1024 cell1arcsec briggs robust=0.5 dirty-only
+products=written; correctness covered by unit/parity gates below
+decision=retain as architectural correction only; performance is not acceptable yet
+```
+
+| variant | wall s | sys s | scheduler stage s | enqueued runs | worker drains | avg samples/run | wait-with-queued events | decision |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| previous fixed tile 2 workers | 26.42 | 3.08 | 11.491 | n/a | 301,644 | n/a | 1,745 | still faster |
+| run inbox 2 workers | 49.01 | 18.57 | 34.065 | 8,433,552 | 8,331,616 | 22.397 | 4,407,043 | rejected for performance |
+| previous fixed tile 10 workers | 34.09 | 42.93 | 19.063 | n/a | 761,555 | n/a | 2,946,763 | still faster |
+| scalar direct inbox 10 workers | 258.34 | 1020.53 | 242.731 | n/a | 14,408,954 | ~13 | 58,541,341 | rejected |
+| run inbox 10 workers | 158.63 | 625.34 | 144.778 | 8,433,552 | 8,353,403 | 22.397 | 40,979,758 | better than scalar direct, still rejected |
+
+This confirms the direct run queue is not sufficient while the producer is fed
+by scalar planned-sample replay. The remaining handoff problem is upstream of
+the inbox: `enqueued_runs=8,433,552` for `188,889,033` lanes means only about
+`22.4` lanes per run, and workers still see nearly one drain per run. The next
+retained target must feed the inbox with real row/channel visibility runs or add
+a measured ready-threshold policy without returning to producer-owned imaging
+chunks.
+
 Validation checks for this checkpoint:
 
 ```text
@@ -1745,8 +1792,8 @@ cargo check -p casa-imaging -p casars-imager
 cargo test -p casa-imaging positive_tap_center_locator_matches_positive_tap_plan --lib
 cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib
 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib
-cargo test -p casa-imaging tile_inbox_caps_keep_low_worker_drains_small_and_high_worker_drains_coarse --lib
-cargo test -p casa-imaging tile_inbox_scheduler_schedules_tiles_and_drains_bounded_chunks --lib
+cargo test -p casa-imaging tile_inbox_scheduler_schedules_tiles_and_drains_all_runs --lib
+cargo test -p casa-imaging tile_inbox_producer_pending_retries_fifo_after_try_lock_miss --lib
 cargo test -p casa-imaging tile_inbox_planned_replay_matches_direct_dirty_and_residual --lib
 cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib
 cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib

@@ -171,6 +171,19 @@ queued task metadata, active-tile bookkeeping, and oldest-block drain behavior.
 Workers must skip or postpone active-tile tasks rather than blocking behind
 them; queue depth two and hot-tile splitting remain data-gated follow-ups.
 
+The direct inbox scheduler publishes work as tile-local visibility runs, not
+scalar visibility tasks and not producer-owned imaging chunks. The producer
+computes the owner tile, coalesces only consecutive same-tile visibility lanes
+into a `StandardMfsTileVisibilityRun`, and pushes that run into the owning
+tile's `Mutex<VecDeque<...>>`. If a tile queue is momentarily locked, the run is
+held in a bounded producer-local pending FIFO for that tile and retried before
+stage close. Workers are scheduled by tile ID, drain all currently queued runs
+for the active tile into a local vector/SoA work item, release the queue lock,
+and perform the lane-level tap planning and gridding work without holding the
+queue mutex. Small drain caps are not used to handle hot tiles; if a hot tile
+causes tail idle after run-based publication, the follow-up is explicit hot-tile
+splitting with private scratch/reduction buffers.
+
 Fixed-tile scheduler profiles must report whether the configured workers are
 actually being used. The summary and optional block-detail records include
 per-worker task, sample, tap-visit, active-time, elapsed-time, capacity,
