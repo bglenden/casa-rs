@@ -1663,6 +1663,35 @@ worker utilization remains intentionally ignored as performance evidence here:
 these fixtures carry only 4,042 and 119,632 gridded samples, so scheduler
 startup and artifact overhead dominate.
 
+Medium bounded gross check, after the external dataset became available:
+
+```text
+dataset=/Volumes/GLENDENNING/casa-rs-imperformance/wave1/vla/single/medium/ms/wave1-vla-single-medium.ms
+shape=field0 spw0 channel_count=64 imsize=1024 cell1arcsec briggs robust=0.5 dirty-only
+artifact=target/imperformance-wave2/worker-tap-planning-20260522/medium-gross-smoke/medium-briggs-fixed-tile-vs-cpu-products.json
+profile_artifacts=target/imperformance-wave2/worker-tap-planning-20260522/medium-gross-smoke/medium-briggs-fixed-2w-profiled.log; target/imperformance-wave2/worker-tap-planning-20260522/medium-gross-smoke/medium-briggs-fixed-10w-profiled.log
+products=image,residual,psf,sumwt
+gridded_samples=188889033
+failures=0
+worst_fixed_tile_vs_cpu_difference=1.4901161193847656e-08
+```
+
+| variant | wall s | user s | sys s | worst product diff | scheduler stage s | worker util | queued high-water | worker drains | wait-with-queued events | decision |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| CPU reference | 29.45 | 23.08 | 4.50 | reference | n/a | n/a | n/a | n/a | n/a | product reference |
+| fixed tile 1 worker | 28.20 | 34.55 | 2.56 | 1.49e-08 | n/a | n/a | n/a | n/a | n/a | correctness smoke only |
+| fixed tile 2 workers | 26.42 | 32.83 | 3.08 | 1.49e-08 | 11.491 | 34.3% | 59.3MB | 301,644 | 1,745 | retained as current low-risk worker count |
+| fixed tile 10 workers | 34.09 | 36.68 | 42.93 | 1.49e-08 | 19.063 | 5.4% | 10.9MB | 761,555 | 2,946,763 | rejected for current scheduler shape |
+
+The larger fixture confirms no gross product correctness issue from the
+worker-side tap-planning split. The performance signal is not favorable for the
+current high-worker inbox shape: 10 workers do not hit tile-lock contention
+(`active_tile_skips=0`), but the run creates far more scheduler drains and
+wait-with-queued-byte events, and system time jumps to about 41 seconds. The
+next structural target remains the producer/core handoff representation:
+preserve row/channel/correlation visibility runs instead of expanding the
+handoff into scalar queued samples and many small scheduler chunks.
+
 Validation checks for this checkpoint:
 
 ```text
