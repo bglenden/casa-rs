@@ -2150,6 +2150,30 @@ the low thousands across about `3.0M` enqueued runs, so queue mutex contention
 is not the first-order explanation. Hot splitting tile 3 is the next data-backed
 candidate.
 
+The temporal hot-split probe implemented an explicit diagnostic path behind
+`CASA_RS_STANDARD_MFS_TEMPORAL_SPLIT=forced`. In that mode multiple workers may
+drain separate chunks from the same hot tile, each worker grids into a private
+tile scratch buffer, and the task merges its scratch tile into the resident tile
+when it finishes. Correctness gates passed with forced temporal splitting, but
+the bounded medium timing rejects this shape as a retained optimization:
+
+| Candidate | Artifact | Frontend | Core | Scheduler | Split drains | Worker util | Peak RSS | Decision |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| retained center-quadrant 10w baseline | `target/imperformance-wave2/instrumented-producer-20260523/medium-briggs-center-quadrants-10w.log` | 21.20s | 7.85s | 7.77s | n/a | 16.3% | n/a | reference |
+| temporal split, default ready threshold | `target/imperformance-wave2/hot-split-20260524/medium-briggs-temporal-split-profile-imager-hogbom-10w.log` | 26.40s | 13.27s | 13.16s | 6,854 | 57.9% | 9.51GB | rejected |
+| temporal split, coarse ready threshold | `target/imperformance-wave2/hot-split-20260524/medium-briggs-temporal-split-coarse-ready-profile-imager-hogbom-10w.log` | 27.07s | 14.08s | 13.98s | 20 | 19.3% | 9.55GB | rejected |
+
+The default-ready run proves the scheduler can create more worker activity, but
+wall time regresses because scratch allocation, full-tile scratch writes, and
+scratch-to-resident merges add more work than the added parallelism removes. The
+coarse-ready run avoids thousands of scratch reductions, but it delays work
+publication and still regresses. This supports the earlier concern that
+temporal splitting is memory/bandwidth expensive. The next hot-tile direction,
+if pursued, should be spatial splitting or a lower-copy subtile/stripe
+reduction, not whole-tile temporal scratch. One accidental full-shape
+`run_workload.py` attempt during this probe was interrupted and is not used as
+evidence.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:

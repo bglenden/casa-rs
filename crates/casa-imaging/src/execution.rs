@@ -2140,6 +2140,7 @@ impl StandardMfsTileWorkerProfile {
 const STANDARD_MFS_QUEUE_SAMPLE_SLOP_BYTES: usize = 16;
 const STANDARD_MFS_QUEUE_RUN_SLOP_BYTES: usize = 64;
 const STANDARD_MFS_INBOX_READY_SAMPLE_MIN_DEFAULT: usize = 1024;
+const STANDARD_MFS_TEMPORAL_SPLIT_CHUNK_SAMPLE_CAP_DEFAULT: usize = 32 * 1024;
 
 fn standard_mfs_tile_inbox_ready_sample_min() -> usize {
     std::env::var("CASA_RS_STANDARD_MFS_TILE_INBOX_READY_SAMPLE_MIN")
@@ -2147,6 +2148,46 @@ fn standard_mfs_tile_inbox_ready_sample_min() -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(STANDARD_MFS_INBOX_READY_SAMPLE_MIN_DEFAULT)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StandardMfsTileInboxTemporalSplitConfig {
+    enabled: bool,
+    chunk_sample_cap: usize,
+}
+
+impl StandardMfsTileInboxTemporalSplitConfig {
+    fn disabled() -> Self {
+        Self {
+            enabled: false,
+            chunk_sample_cap: usize::MAX,
+        }
+    }
+}
+
+fn standard_mfs_tile_inbox_temporal_split_config() -> StandardMfsTileInboxTemporalSplitConfig {
+    let enabled = std::env::var("CASA_RS_STANDARD_MFS_TEMPORAL_SPLIT")
+        .ok()
+        .or_else(|| std::env::var("CASA_RS_STANDARD_MFS_HOT_SPLIT").ok())
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on" | "forced" | "force" | "temporal"
+            )
+        })
+        .unwrap_or(false);
+    if !enabled {
+        return StandardMfsTileInboxTemporalSplitConfig::disabled();
+    }
+    let chunk_sample_cap = std::env::var("CASA_RS_STANDARD_MFS_TEMPORAL_SPLIT_CHUNK_SAMPLES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(STANDARD_MFS_TEMPORAL_SPLIT_CHUNK_SAMPLE_CAP_DEFAULT);
+    StandardMfsTileInboxTemporalSplitConfig {
+        enabled: true,
+        chunk_sample_cap,
+    }
 }
 
 #[allow(dead_code)]
@@ -2352,6 +2393,13 @@ impl StandardMfsTileQueueChunk {
 
     fn estimated_work(&self) -> usize {
         self.estimated_work
+    }
+
+    fn first_input_seq(&self) -> u64 {
+        self.runs
+            .first()
+            .map(|run| run.first_input_seq)
+            .unwrap_or(u64::MAX)
     }
 }
 
@@ -2777,6 +2825,7 @@ struct StandardMfsTileInboxTileProfile {
     enqueued_tap_visits: usize,
     ready_heads: usize,
     drains: usize,
+    temporal_split_drains: usize,
     worker_runs: usize,
     worker_samples: usize,
     worker_tap_visits: usize,
@@ -2830,6 +2879,8 @@ impl Ord for StandardMfsTileInboxReadyHead {
 #[derive(Debug, Default)]
 struct StandardMfsTileInboxSchedulerStats {
     ready_sample_min: usize,
+    temporal_split_enabled: bool,
+    temporal_split_chunk_sample_cap: usize,
     enqueued_runs: usize,
     enqueued_samples: usize,
     enqueued_bytes: usize,
@@ -2843,6 +2894,9 @@ struct StandardMfsTileInboxSchedulerStats {
     queued_bytes_high_water: usize,
     ready_heads_pushed: usize,
     worker_drains: usize,
+    temporal_split_drains: usize,
+    temporal_split_samples: usize,
+    temporal_split_requeued_heads: usize,
     worker_runs: usize,
     worker_samples: usize,
     worker_tap_visits: usize,
@@ -2870,7 +2924,10 @@ struct StandardMfsTileInboxReadyState {
 }
 
 impl StandardMfsTileInboxReadyState {
-    fn new(ready_sample_min: usize) -> Self {
+    fn new(
+        ready_sample_min: usize,
+        temporal_split: StandardMfsTileInboxTemporalSplitConfig,
+    ) -> Self {
         Self {
             heap: BinaryHeap::new(),
             active_tasks: 0,
@@ -2881,6 +2938,8 @@ impl StandardMfsTileInboxReadyState {
             last_activity_update: Instant::now(),
             stats: StandardMfsTileInboxSchedulerStats {
                 ready_sample_min,
+                temporal_split_enabled: temporal_split.enabled,
+                temporal_split_chunk_sample_cap: temporal_split.chunk_sample_cap,
                 ..Default::default()
             },
         }
@@ -2917,10 +2976,12 @@ impl StandardMfsTileInboxReadyState {
 #[allow(dead_code)]
 struct StandardMfsDrainedTileWork {
     tile_id: StandardMfsTileId,
+    first_input_seq: u64,
     samples: StandardMfsTileQueueChunk,
     run_count: usize,
     estimated_work: usize,
     bytes: usize,
+    temporal_split: bool,
 }
 
 impl StandardMfsDrainedTileWork {
@@ -2936,6 +2997,8 @@ impl StandardMfsDrainedTileWork {
 #[allow(dead_code)]
 struct StandardMfsTileInboxTaskOutput<T> {
     tile_id: StandardMfsTileId,
+    first_input_seq: u64,
+    temporal_split: bool,
     output: T,
     timing: StandardMfsTileTaskTiming,
 }
@@ -2972,11 +3035,16 @@ struct StandardMfsTileInboxShared {
     tiles: Vec<Arc<StandardMfsTileInboxRuntime>>,
     ready: Arc<(Mutex<StandardMfsTileInboxReadyState>, Condvar)>,
     ready_sample_min: usize,
+    temporal_split: StandardMfsTileInboxTemporalSplitConfig,
     started_at: Instant,
 }
 
 impl StandardMfsTileInboxShared {
-    fn new(tile_count: usize, ready_sample_min: usize) -> Self {
+    fn new(
+        tile_count: usize,
+        ready_sample_min: usize,
+        temporal_split: StandardMfsTileInboxTemporalSplitConfig,
+    ) -> Self {
         Self {
             tiles: (0..tile_count)
                 .map(|index| {
@@ -2986,10 +3054,14 @@ impl StandardMfsTileInboxShared {
                 })
                 .collect(),
             ready: Arc::new((
-                Mutex::new(StandardMfsTileInboxReadyState::new(ready_sample_min)),
+                Mutex::new(StandardMfsTileInboxReadyState::new(
+                    ready_sample_min,
+                    temporal_split,
+                )),
                 Condvar::new(),
             )),
             ready_sample_min,
+            temporal_split,
             started_at: Instant::now(),
         }
     }
@@ -3028,7 +3100,7 @@ impl StandardMfsTileInboxShared {
             queue.runs.push_back(run);
         }
         stats.ready_head = if stats.runs > 0
-            && !queue.active
+            && (self.temporal_split.enabled || !queue.active)
             && !queue.ready_enqueued
             && !queue.runs.is_empty()
             && (force_ready || self.queue_is_ready_for_workers(queue))
@@ -3067,7 +3139,7 @@ impl StandardMfsTileInboxShared {
         queue.queued_work_estimate += estimated_work;
         queue.runs.push_back(run);
 
-        let ready_head = if !queue.active
+        let ready_head = if (self.temporal_split.enabled || !queue.active)
             && !queue.ready_enqueued
             && (force_ready || self.queue_is_ready_for_workers(queue))
         {
@@ -3251,9 +3323,10 @@ impl StandardMfsTileInboxShared {
                     head.tile_id.index()
                 ))
             })?;
+            let temporal_split = self.temporal_split.enabled;
             let valid = queue.ready_enqueued
                 && queue.generation == head.generation
-                && !queue.active
+                && (temporal_split || !queue.active)
                 && !queue.runs.is_empty();
             if !valid {
                 drop(queue);
@@ -3272,7 +3345,9 @@ impl StandardMfsTileInboxShared {
             }
 
             queue.ready_enqueued = false;
-            queue.active = true;
+            if !temporal_split {
+                queue.active = true;
+            }
             let mut samples = StandardMfsTileQueueChunk::with_run_capacity(queue.runs.len());
             let mut run_count = 0usize;
             let mut bytes = 0usize;
@@ -3280,9 +3355,16 @@ impl StandardMfsTileInboxShared {
                 run_count += 1;
                 bytes = bytes.saturating_add(run.queue_bytes());
                 samples.push_run(run);
+                if temporal_split && samples.len() >= self.temporal_split.chunk_sample_cap {
+                    break;
+                }
             }
+            let first_input_seq = samples.first_input_seq();
             let estimated_work = samples.estimated_work();
             queue.profile.drains += 1;
+            if temporal_split {
+                queue.profile.temporal_split_drains += 1;
+            }
             queue.profile.worker_runs += run_count;
             queue.profile.worker_samples += samples.len();
             queue.profile.worker_tap_visits = queue
@@ -3292,9 +3374,20 @@ impl StandardMfsTileInboxShared {
             queue.queued_samples = queue.queued_samples.saturating_sub(samples.len());
             queue.queued_bytes = queue.queued_bytes.saturating_sub(bytes);
             queue.queued_work_estimate = queue.queued_work_estimate.saturating_sub(estimated_work);
+            let maybe_requeued_head = if temporal_split
+                && !queue.runs.is_empty()
+                && !queue.ready_enqueued
+                && self.queue_is_ready_for_workers(&queue)
+            {
+                queue.ready_enqueued = true;
+                queue.generation = queue.generation.saturating_add(1);
+                queue.ready_head(head.tile_id, self.started_at)
+            } else {
+                None
+            };
             drop(queue);
 
-            let (lock, _) = &*self.ready;
+            let (lock, cvar) = &*self.ready;
             let mut ready = lock.lock().map_err(|_| {
                 ImagingError::InvalidRequest(
                     "standard MFS tile inbox scheduler lock was poisoned".to_string(),
@@ -3306,14 +3399,25 @@ impl StandardMfsTileInboxShared {
             ready.stats.worker_runs += run_count;
             ready.stats.worker_samples += samples.len();
             ready.stats.worker_tap_visits += estimated_work;
+            if temporal_split {
+                ready.stats.temporal_split_drains += 1;
+                ready.stats.temporal_split_samples += samples.len();
+            }
+            if let Some(requeued_head) = maybe_requeued_head {
+                ready.push_ready_head(requeued_head);
+                ready.stats.temporal_split_requeued_heads += 1;
+                cvar.notify_one();
+            }
             drop(ready);
 
             return Ok(Some(StandardMfsDrainedTileWork {
                 tile_id: head.tile_id,
+                first_input_seq,
                 samples,
                 run_count,
                 estimated_work,
                 bytes,
+                temporal_split,
             }));
         }
     }
@@ -3327,7 +3431,10 @@ impl StandardMfsTileInboxShared {
                     tile.tile_id.index()
                 ))
             })?;
-            if !queue.active && !queue.ready_enqueued && !queue.runs.is_empty() {
+            if (self.temporal_split.enabled || !queue.active)
+                && !queue.ready_enqueued
+                && !queue.runs.is_empty()
+            {
                 queue.ready_enqueued = true;
                 queue.generation = queue.generation.saturating_add(1);
                 if let Some(head) = queue.ready_head(tile.tile_id, self.started_at) {
@@ -3373,16 +3480,20 @@ impl StandardMfsTileInboxShared {
             })?;
             queue.profile.worker_active += timing.active();
             queue.profile.last_finish = Some(self.started_at.elapsed());
-            queue.active = false;
-            if !queue.runs.is_empty()
-                && !queue.ready_enqueued
-                && self.queue_is_ready_for_workers(&queue)
-            {
-                queue.ready_enqueued = true;
-                queue.generation = queue.generation.saturating_add(1);
-                queue.ready_head(tile_id, self.started_at)
-            } else {
+            if self.temporal_split.enabled {
                 None
+            } else {
+                queue.active = false;
+                if !queue.runs.is_empty()
+                    && !queue.ready_enqueued
+                    && self.queue_is_ready_for_workers(&queue)
+                {
+                    queue.ready_enqueued = true;
+                    queue.generation = queue.generation.saturating_add(1);
+                    queue.ready_head(tile_id, self.started_at)
+                } else {
+                    None
+                }
             }
         };
 
@@ -3656,6 +3767,34 @@ impl<'a> StandardMfsTileRunAccumulator<'a> {
 fn run_standard_mfs_tile_inbox_scheduler<T, P, E>(
     partition: &StandardMfsFixedTilePartition,
     worker_count: usize,
+    produce_runs: P,
+    execute_work: E,
+) -> Result<StandardMfsTileInboxSchedulerOutput<T>, ImagingError>
+where
+    T: Send,
+    P: FnMut(
+        &mut dyn FnMut(StandardMfsTileId, StandardMfsTileVisibilityRun) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+    E: Fn(
+            StandardMfsTileId,
+            &StandardMfsTileQueueChunk,
+        ) -> Result<(T, StandardMfsTileTaskTiming), ImagingError>
+        + Sync,
+{
+    run_standard_mfs_tile_inbox_scheduler_with_config(
+        partition,
+        worker_count,
+        StandardMfsTileInboxTemporalSplitConfig::disabled(),
+        produce_runs,
+        execute_work,
+    )
+}
+
+#[allow(dead_code)]
+fn run_standard_mfs_tile_inbox_scheduler_with_config<T, P, E>(
+    partition: &StandardMfsFixedTilePartition,
+    worker_count: usize,
+    temporal_split: StandardMfsTileInboxTemporalSplitConfig,
     mut produce_runs: P,
     execute_work: E,
 ) -> Result<StandardMfsTileInboxSchedulerOutput<T>, ImagingError>
@@ -3675,6 +3814,7 @@ where
     let shared = Arc::new(StandardMfsTileInboxShared::new(
         partition.tile_count(),
         ready_sample_min,
+        temporal_split,
     ));
     let mut all_outputs = Vec::<StandardMfsTileInboxTaskOutput<T>>::new();
     let mut all_worker_profiles = Vec::<StandardMfsTileWorkerProfile>::new();
@@ -3703,6 +3843,8 @@ where
                             shared.finish_work(task, timing, bytes)?;
                             outputs.push(StandardMfsTileInboxTaskOutput {
                                 tile_id: task.tile_id,
+                                first_input_seq: work.first_input_seq,
+                                temporal_split: work.temporal_split,
                                 output,
                                 timing,
                             });
@@ -3781,6 +3923,8 @@ where
     }
     let stats = StandardMfsTileInboxSchedulerStats {
         ready_sample_min: ready.stats.ready_sample_min,
+        temporal_split_enabled: ready.stats.temporal_split_enabled,
+        temporal_split_chunk_sample_cap: ready.stats.temporal_split_chunk_sample_cap,
         enqueued_runs: ready.stats.enqueued_runs,
         enqueued_samples: ready.stats.enqueued_samples,
         enqueued_bytes: ready.stats.enqueued_bytes,
@@ -3794,6 +3938,9 @@ where
         queued_bytes_high_water: ready.stats.queued_bytes_high_water,
         ready_heads_pushed: ready.stats.ready_heads_pushed,
         worker_drains: ready.stats.worker_drains,
+        temporal_split_drains: ready.stats.temporal_split_drains,
+        temporal_split_samples: ready.stats.temporal_split_samples,
+        temporal_split_requeued_heads: ready.stats.temporal_split_requeued_heads,
         worker_runs: ready.stats.worker_runs,
         worker_samples: ready.stats.worker_samples,
         worker_tap_visits: ready.stats.worker_tap_visits,
@@ -4416,7 +4563,7 @@ fn log_tile_inbox_scheduler_summary<T>(inputs: StandardMfsTileInboxSchedulerLogI
         .max()
         .unwrap_or(0);
     eprintln!(
-        "standard_mfs_tile_inbox_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} tile_interior_cells={} tile_halo_cells={} tile_halo_overhead_pct={:.3} inbox_worker_count={} ready_sample_min={} enqueued_runs={} enqueued_samples={} enqueued_bytes={} queued_bytes_high_water={} ready_deferred_runs={} ready_deferred_samples={} pending_runs={} pending_bytes={} pending_bytes_high_water={} try_lock_misses={} ready_heads_pushed={} worker_drains={} worker_runs={} worker_samples={} worker_tap_visits={} avg_runs_per_drain={:.3} avg_samples_per_run={:.3} producer_active_ms={:.3} worker_active_union_ms={:.3} producer_worker_overlap_ms={:.3} producer_only_ms={:.3} worker_only_ms={:.3} neither_active_ms={:.3} producer_preprocess_total_ms={:.3} worker_task_count={} worker_samples_by_worker={} worker_tap_visits_by_worker={} worker_active_total_ms={:.3} worker_active={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} tile_worker_active_total_ms={:.3} tile_worker_active_max_ms={:.3} tile_active_bound_pct={:.3} hot_tile_sample_share_pct={:.3} top_tile_enqueued_samples={} top_tile_worker_samples={} top_tile_worker_tap_visits={} top_tile_worker_active_ms={} top_tile_first_ready_ms={} top_tile_last_finish_ms={} active_tile_skips={} stale_heap_entries={} wait_with_queued_bytes_events={} wait_with_producer_active_events={} task_outputs={} stage_total_ms={:.3}",
+        "standard_mfs_tile_inbox_scheduler_summary stage={} requested_threads={} actual_threads={} tile_shape={}x{} tile_anchor={} tile_origin={}x{} tile_count={} tile_interior_cells={} tile_halo_cells={} tile_halo_overhead_pct={:.3} inbox_worker_count={} ready_sample_min={} temporal_split_enabled={} temporal_split_chunk_sample_cap={} temporal_split_drains={} temporal_split_samples={} temporal_split_requeued_heads={} enqueued_runs={} enqueued_samples={} enqueued_bytes={} queued_bytes_high_water={} ready_deferred_runs={} ready_deferred_samples={} pending_runs={} pending_bytes={} pending_bytes_high_water={} try_lock_misses={} ready_heads_pushed={} worker_drains={} worker_runs={} worker_samples={} worker_tap_visits={} avg_runs_per_drain={:.3} avg_samples_per_run={:.3} producer_active_ms={:.3} worker_active_union_ms={:.3} producer_worker_overlap_ms={:.3} producer_only_ms={:.3} worker_only_ms={:.3} neither_active_ms={:.3} producer_preprocess_total_ms={:.3} worker_task_count={} worker_samples_by_worker={} worker_tap_visits_by_worker={} worker_active_total_ms={:.3} worker_active={} worker_capacity_ms={:.3} worker_utilization_pct={:.3} worker_tail_idle_ms={:.3} tile_worker_active_total_ms={:.3} tile_worker_active_max_ms={:.3} tile_active_bound_pct={:.3} hot_tile_sample_share_pct={:.3} top_tile_enqueued_samples={} top_tile_worker_samples={} top_tile_worker_tap_visits={} top_tile_worker_active_ms={} top_tile_first_ready_ms={} top_tile_last_finish_ms={} active_tile_skips={} stale_heap_entries={} wait_with_queued_bytes_events={} wait_with_producer_active_events={} task_outputs={} stage_total_ms={:.3}",
         inputs.stage,
         inputs.requested_threads,
         inputs.output.worker_profiles.len(),
@@ -4437,6 +4584,11 @@ fn log_tile_inbox_scheduler_summary<T>(inputs: StandardMfsTileInboxSchedulerLogI
         ),
         inputs.requested_threads.max(1),
         inputs.output.stats.ready_sample_min,
+        inputs.output.stats.temporal_split_enabled,
+        inputs.output.stats.temporal_split_chunk_sample_cap,
+        inputs.output.stats.temporal_split_drains,
+        inputs.output.stats.temporal_split_samples,
+        inputs.output.stats.temporal_split_requeued_heads,
         inputs.output.stats.enqueued_runs,
         inputs.output.stats.enqueued_samples,
         inputs.output.stats.enqueued_bytes,
@@ -5857,6 +6009,76 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         ))
     }
 
+    fn grid_dirty_tile_queue_routed_samples_scratch(
+        &self,
+        tile_id: StandardMfsTileId,
+        samples: &StandardMfsTileQueueChunk,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        store: &DirectDirtyTileStore<'_>,
+    ) -> Result<(StandardMfsDirtyAccumulation, StandardMfsTileTaskTiming), ImagingError> {
+        let tile = self.partition.tile(tile_id).ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "standard MFS tile id {} is out of range",
+                tile_id.index()
+            ))
+        })?;
+        let offset = tile_offset(tile);
+        let (mut buffer, local_alloc_zero) = allocate_dirty_tile_buffer(&self.partition, tile_id)?;
+        let worker_started = profile::maybe_profile_now();
+        let mut accumulation = StandardMfsDirtyAccumulation::default();
+        for run in samples.runs() {
+            for sample_index in 0..run.len() {
+                let Some(sample) = run.routed_queue_sample_at(sample_index, true)? else {
+                    accumulation.skipped_samples += 1;
+                    continue;
+                };
+                let taps = sample.positive_taps(self.gridder)?;
+                let Some(grid_weight) = sample.weighted_grid_weight(weighting_plan)? else {
+                    accumulation.skipped_samples += 1;
+                    continue;
+                };
+                if !(grid_weight.is_finite() && grid_weight > 0.0) {
+                    accumulation.skipped_samples += 1;
+                    continue;
+                }
+                let grid_weight = f64::from(grid_weight);
+                accumulation.normalization_sumwt += grid_weight;
+                accumulation.reported_sumwt += grid_weight;
+                accumulation.gridded_samples += 1;
+                if let StandardMfsRoutedQueueVisibility::Finite(visibility) = sample.visibility {
+                    let residual = Complex64::new(
+                        f64::from(visibility.re) * grid_weight,
+                        f64::from(visibility.im) * grid_weight,
+                    );
+                    self.gridder
+                        .grid_sample_taps_real_complex_pair_planned_f64_with_offset(
+                            &mut buffer.psf_grid,
+                            grid_weight,
+                            &mut buffer.residual_grid,
+                            residual,
+                            &taps,
+                            offset,
+                        );
+                } else {
+                    self.gridder.grid_sample_taps_real_planned_f64_with_offset(
+                        &mut buffer.psf_grid,
+                        &taps,
+                        grid_weight,
+                        offset,
+                    );
+                }
+            }
+        }
+        let merge_alloc_zero = store.merge_buffer(buffer)?;
+        Ok((
+            accumulation,
+            StandardMfsTileTaskTiming {
+                local_alloc_zero: local_alloc_zero + merge_alloc_zero,
+                worker_replan_grid: profile::elapsed_since(worker_started),
+            },
+        ))
+    }
+
     #[allow(dead_code)]
     pub(crate) fn accumulate_dirty_grids_direct_owned_replay<F>(
         &self,
@@ -5887,9 +6109,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 replay_weighted_batches(&mut |batches| {
                     let started = Instant::now();
@@ -5945,9 +6169,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 replay_weighted_samples(&mut |samples| {
                     let started = Instant::now();
@@ -6002,9 +6228,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_weighted_runs(&mut |run_block| {
@@ -6064,9 +6292,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |run_block| {
@@ -6087,7 +6317,21 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 run_accumulator.flush()
             },
             |tile_id, samples| {
-                self.grid_dirty_tile_queue_routed_samples(tile_id, samples, weighting_plan, &store)
+                if temporal_split.enabled {
+                    self.grid_dirty_tile_queue_routed_samples_scratch(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        &store,
+                    )
+                } else {
+                    self.grid_dirty_tile_queue_routed_samples(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        &store,
+                    )
+                }
             },
         )?;
         for task_output in &output.task_outputs {
@@ -6128,9 +6372,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |routed_run| {
@@ -6147,7 +6393,21 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 run_accumulator.flush()
             },
             |tile_id, samples| {
-                self.grid_dirty_tile_queue_routed_samples(tile_id, samples, weighting_plan, &store)
+                if temporal_split.enabled {
+                    self.grid_dirty_tile_queue_routed_samples_scratch(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        &store,
+                    )
+                } else {
+                    self.grid_dirty_tile_queue_routed_samples(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        &store,
+                    )
+                }
             },
         )?;
         for task_output in &output.task_outputs {
@@ -6315,9 +6575,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 replay_weighted_samples(&mut |samples| {
                     let started = Instant::now();
@@ -6371,9 +6633,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_weighted_runs(&mut |run_block| {
@@ -6432,9 +6696,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |run_block| {
@@ -6455,7 +6721,21 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 run_accumulator.flush()
             },
             |tile_id, samples| {
-                self.grid_psf_tile_queue_routed_samples(tile_id, samples, weighting_plan, &store)
+                if temporal_split.enabled {
+                    self.grid_psf_tile_queue_routed_samples_scratch(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        &store,
+                    )
+                } else {
+                    self.grid_psf_tile_queue_routed_samples(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        &store,
+                    )
+                }
             },
         )?;
         for task_output in &output.task_outputs {
@@ -6495,9 +6775,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |routed_run| {
@@ -6514,7 +6796,21 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 run_accumulator.flush()
             },
             |tile_id, samples| {
-                self.grid_psf_tile_queue_routed_samples(tile_id, samples, weighting_plan, &store)
+                if temporal_split.enabled {
+                    self.grid_psf_tile_queue_routed_samples_scratch(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        &store,
+                    )
+                } else {
+                    self.grid_psf_tile_queue_routed_samples(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        &store,
+                    )
+                }
             },
         )?;
         for task_output in &output.task_outputs {
@@ -6641,6 +6937,60 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         ))
     }
 
+    fn grid_psf_tile_queue_routed_samples_scratch(
+        &self,
+        tile_id: StandardMfsTileId,
+        samples: &StandardMfsTileQueueChunk,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        store: &DirectPsfTileStore<'_>,
+    ) -> Result<(StandardMfsDirtyAccumulation, StandardMfsTileTaskTiming), ImagingError> {
+        let tile = self.partition.tile(tile_id).ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "standard MFS tile id {} is out of range",
+                tile_id.index()
+            ))
+        })?;
+        let offset = tile_offset(tile);
+        let (mut buffer, local_alloc_zero) = allocate_psf_tile_buffer(&self.partition, tile_id)?;
+        let worker_started = profile::maybe_profile_now();
+        let mut accumulation = StandardMfsDirtyAccumulation::default();
+        for run in samples.runs() {
+            for sample_index in 0..run.len() {
+                let Some(sample) = run.routed_queue_sample_at(sample_index, true)? else {
+                    accumulation.skipped_samples += 1;
+                    continue;
+                };
+                let taps = sample.positive_taps(self.gridder)?;
+                let Some(grid_weight) = sample.weighted_grid_weight(weighting_plan)? else {
+                    accumulation.skipped_samples += 1;
+                    continue;
+                };
+                if !(grid_weight.is_finite() && grid_weight > 0.0) {
+                    accumulation.skipped_samples += 1;
+                    continue;
+                }
+                let grid_weight = f64::from(grid_weight);
+                accumulation.normalization_sumwt += grid_weight;
+                accumulation.reported_sumwt += grid_weight;
+                accumulation.gridded_samples += 1;
+                self.gridder.grid_sample_taps_real_planned_f64_with_offset(
+                    &mut buffer.psf_grid,
+                    &taps,
+                    grid_weight,
+                    offset,
+                );
+            }
+        }
+        let merge_alloc_zero = store.merge_buffer(buffer)?;
+        Ok((
+            accumulation,
+            StandardMfsTileTaskTiming {
+                local_alloc_zero: local_alloc_zero + merge_alloc_zero,
+                worker_replan_grid: profile::elapsed_since(worker_started),
+            },
+        ))
+    }
+
     #[allow(dead_code)]
     pub(crate) fn accumulate_psf_grid_direct_owned_replay<F>(
         &self,
@@ -6666,9 +7016,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 replay_weighted_batches(&mut |batches| {
                     let started = Instant::now();
@@ -8142,6 +8494,82 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         ))
     }
 
+    fn grid_residual_tile_queue_routed_samples_scratch(
+        &self,
+        tile_id: StandardMfsTileId,
+        samples: &StandardMfsTileQueueChunk,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        model_grid: Option<&Array2<Complex32>>,
+        store: &DirectResidualTileStore<'_>,
+    ) -> Result<
+        (
+            StandardMfsTiledResidualAccumulation,
+            StandardMfsTileTaskTiming,
+        ),
+        ImagingError,
+    > {
+        let tile = self.partition.tile(tile_id).ok_or_else(|| {
+            ImagingError::InvalidRequest(format!(
+                "standard MFS tile id {} is out of range",
+                tile_id.index()
+            ))
+        })?;
+        let offset = tile_offset(tile);
+        let (mut buffer, local_alloc_zero) =
+            allocate_residual_tile_buffer(&self.partition, tile_id)?;
+        let worker_started = profile::maybe_profile_now();
+        let mut accumulation = StandardMfsTiledResidualAccumulation::default();
+        for run in samples.runs() {
+            for sample_index in 0..run.len() {
+                let Some(sample) = run.routed_queue_sample_at(sample_index, false)? else {
+                    accumulation.skipped_nonfinite_visibility += 1;
+                    continue;
+                };
+                let StandardMfsRoutedQueueVisibility::Finite(visibility) = sample.visibility else {
+                    accumulation.skipped_nonfinite_visibility += 1;
+                    continue;
+                };
+                let taps = sample.positive_taps(self.gridder)?;
+                let Some(residual_weight) = sample.weighted_grid_weight(weighting_plan)? else {
+                    accumulation.skipped_invalid_weight += 1;
+                    continue;
+                };
+                let residual_weight = f64::from(residual_weight);
+                if let Some(model_grid) = model_grid {
+                    self.gridder
+                        .degrid_model_and_grid_residual_taps_planned_f64_with_residual_offset(
+                            model_grid,
+                            &mut buffer.residual_grid,
+                            &taps,
+                            visibility,
+                            residual_weight,
+                            offset,
+                        );
+                } else {
+                    let residual = Complex64::new(
+                        f64::from(visibility.re) * residual_weight,
+                        f64::from(visibility.im) * residual_weight,
+                    );
+                    self.gridder.grid_sample_taps_planned_f64_with_offset(
+                        &mut buffer.residual_grid,
+                        &taps,
+                        residual,
+                        offset,
+                    );
+                }
+                accumulation.gridded_residual_samples += 1;
+            }
+        }
+        let merge_alloc_zero = store.merge_buffer(buffer)?;
+        Ok((
+            accumulation,
+            StandardMfsTileTaskTiming {
+                local_alloc_zero: local_alloc_zero + merge_alloc_zero,
+                worker_replan_grid: profile::elapsed_since(worker_started),
+            },
+        ))
+    }
+
     #[allow(dead_code)]
     pub(crate) fn accumulate_residual_grid_direct_owned_replay<F>(
         &self,
@@ -8172,9 +8600,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 replay_weighted_batches(&mut |batches| {
                     let started = Instant::now();
@@ -8231,9 +8661,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 replay_weighted_samples(&mut |samples| {
                     let started = Instant::now();
@@ -8352,9 +8784,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |run_block| {
@@ -8374,13 +8808,23 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 run_accumulator.flush()
             },
             |tile_id, samples| {
-                self.grid_residual_tile_queue_routed_samples(
-                    tile_id,
-                    samples,
-                    weighting_plan,
-                    model_grid,
-                    &store,
-                )
+                if temporal_split.enabled {
+                    self.grid_residual_tile_queue_routed_samples_scratch(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        model_grid,
+                        &store,
+                    )
+                } else {
+                    self.grid_residual_tile_queue_routed_samples(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        model_grid,
+                        &store,
+                    )
+                }
             },
         )?;
         for task_output in &output.task_outputs {
@@ -8421,9 +8865,11 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
         let mut next_input_seq = 0u64;
         let worker_count = standard_mfs_grid_threads();
         let stage_started = Instant::now();
-        let output = run_standard_mfs_tile_inbox_scheduler(
+        let temporal_split = standard_mfs_tile_inbox_temporal_split_config();
+        let output = run_standard_mfs_tile_inbox_scheduler_with_config(
             &self.partition,
             worker_count,
+            temporal_split,
             |enqueue| {
                 let mut run_accumulator = StandardMfsTileRunAccumulator::new(enqueue);
                 replay_routed_runs(&mut |routed_run| {
@@ -8441,13 +8887,23 @@ impl<'a> StandardMfsTiledCpuExecutor<'a> {
                 run_accumulator.flush()
             },
             |tile_id, samples| {
-                self.grid_residual_tile_queue_routed_samples(
-                    tile_id,
-                    samples,
-                    weighting_plan,
-                    model_grid,
-                    &store,
-                )
+                if temporal_split.enabled {
+                    self.grid_residual_tile_queue_routed_samples_scratch(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        model_grid,
+                        &store,
+                    )
+                } else {
+                    self.grid_residual_tile_queue_routed_samples(
+                        tile_id,
+                        samples,
+                        weighting_plan,
+                        model_grid,
+                        &store,
+                    )
+                }
             },
         )?;
         for task_output in &output.task_outputs {
@@ -9844,6 +10300,15 @@ impl<'a> DirectPsfTileStore<'a> {
         }
         Ok(flushed_tiles)
     }
+
+    fn merge_buffer(&self, buffer: PsfTileBuffer) -> Result<Duration, ImagingError> {
+        let (mut guard, alloc_zero) = self.lock_tile(buffer.id)?;
+        let target = guard
+            .as_mut()
+            .expect("direct PSF tile should be resident after merge acquire");
+        add_same_shape_grid(&buffer.psf_grid, &mut target.psf_grid);
+        Ok(alloc_zero)
+    }
 }
 
 struct DirtyTileBuffer {
@@ -10009,6 +10474,16 @@ impl<'a> DirectDirtyTileStore<'a> {
         }
         Ok(flushed_tiles)
     }
+
+    fn merge_buffer(&self, buffer: DirtyTileBuffer) -> Result<Duration, ImagingError> {
+        let (mut guard, alloc_zero) = self.lock_tile(buffer.id)?;
+        let target = guard
+            .as_mut()
+            .expect("direct dirty tile should be resident after merge acquire");
+        add_same_shape_grid(&buffer.psf_grid, &mut target.psf_grid);
+        add_same_shape_grid(&buffer.residual_grid, &mut target.residual_grid);
+        Ok(alloc_zero)
+    }
 }
 
 struct ResidualTileBuffer {
@@ -10155,10 +10630,75 @@ impl<'a> DirectResidualTileStore<'a> {
         }
         Ok(flushed_tiles)
     }
+
+    fn merge_buffer(&self, buffer: ResidualTileBuffer) -> Result<Duration, ImagingError> {
+        let (mut guard, alloc_zero) = self.lock_tile(buffer.id)?;
+        let target = guard
+            .as_mut()
+            .expect("direct residual tile should be resident after merge acquire");
+        add_same_shape_grid(&buffer.residual_grid, &mut target.residual_grid);
+        Ok(alloc_zero)
+    }
 }
 
 fn tile_offset(tile: &StandardMfsFixedTile) -> [usize; 2] {
     [tile.halo.x0, tile.halo.y0]
+}
+
+fn allocate_dirty_tile_buffer(
+    partition: &StandardMfsFixedTilePartition,
+    id: StandardMfsTileId,
+) -> Result<(DirtyTileBuffer, Duration), ImagingError> {
+    let tile = partition.tile(id).ok_or_else(|| {
+        ImagingError::InvalidRequest(format!(
+            "standard MFS tile id {} is out of range",
+            id.index()
+        ))
+    })?;
+    let alloc_started = profile::maybe_profile_now();
+    let shape = (tile.halo.width(), tile.halo.height());
+    let buffer = DirtyTileBuffer {
+        id,
+        psf_grid: Array2::zeros(shape),
+        residual_grid: Array2::zeros(shape),
+    };
+    Ok((buffer, profile::elapsed_since(alloc_started)))
+}
+
+fn allocate_psf_tile_buffer(
+    partition: &StandardMfsFixedTilePartition,
+    id: StandardMfsTileId,
+) -> Result<(PsfTileBuffer, Duration), ImagingError> {
+    let tile = partition.tile(id).ok_or_else(|| {
+        ImagingError::InvalidRequest(format!(
+            "standard MFS tile id {} is out of range",
+            id.index()
+        ))
+    })?;
+    let alloc_started = profile::maybe_profile_now();
+    let buffer = PsfTileBuffer {
+        id,
+        psf_grid: Array2::zeros((tile.halo.width(), tile.halo.height())),
+    };
+    Ok((buffer, profile::elapsed_since(alloc_started)))
+}
+
+fn allocate_residual_tile_buffer(
+    partition: &StandardMfsFixedTilePartition,
+    id: StandardMfsTileId,
+) -> Result<(ResidualTileBuffer, Duration), ImagingError> {
+    let tile = partition.tile(id).ok_or_else(|| {
+        ImagingError::InvalidRequest(format!(
+            "standard MFS tile id {} is out of range",
+            id.index()
+        ))
+    })?;
+    let alloc_started = profile::maybe_profile_now();
+    let buffer = ResidualTileBuffer {
+        id,
+        residual_grid: Array2::zeros((tile.halo.width(), tile.halo.height())),
+    };
+    Ok((buffer, profile::elapsed_since(alloc_started)))
 }
 
 fn flush_dirty_tile(
@@ -11621,8 +12161,61 @@ mod tests {
     }
 
     #[test]
+    fn tile_inbox_temporal_split_requeues_hot_tile_chunks() {
+        let partition = StandardMfsFixedTilePartition::new([64, 64], [32, 32], 3).unwrap();
+        let hot_tile = StandardMfsTileId(0);
+        let split_config = super::StandardMfsTileInboxTemporalSplitConfig {
+            enabled: true,
+            chunk_sample_cap: 1_000,
+        };
+        let output = super::run_standard_mfs_tile_inbox_scheduler_with_config(
+            &partition,
+            3,
+            split_config,
+            |enqueue| {
+                enqueue(hot_tile, test_tile_visibility_run(0, 600))?;
+                enqueue(hot_tile, test_tile_visibility_run(600, 600))?;
+                enqueue(hot_tile, test_tile_visibility_run(1_200, 600))?;
+                enqueue(hot_tile, test_tile_visibility_run(1_800, 600))?;
+                Ok(())
+            },
+            |_tile_id, samples| {
+                Ok((
+                    (samples.first_input_seq(), samples.len()),
+                    super::StandardMfsTileTaskTiming {
+                        local_alloc_zero: Duration::ZERO,
+                        worker_replan_grid: Duration::from_nanos(samples.len() as u64 + 1),
+                    },
+                ))
+            },
+        )
+        .unwrap();
+
+        let processed_samples = output
+            .task_outputs
+            .iter()
+            .map(|task| task.output.1)
+            .sum::<usize>();
+        let split_outputs = output
+            .task_outputs
+            .iter()
+            .filter(|task| task.temporal_split && task.tile_id == hot_tile)
+            .count();
+        assert_eq!(processed_samples, 2_400);
+        assert!(split_outputs >= 2);
+        assert!(output.stats.temporal_split_enabled);
+        assert!(output.stats.temporal_split_drains >= 2);
+        assert!(output.stats.temporal_split_samples >= 2_400);
+        assert!(output.stats.ready_heads_pushed >= 2);
+    }
+
+    #[test]
     fn tile_inbox_producer_pending_retries_fifo_after_try_lock_miss() {
-        let shared = std::sync::Arc::new(super::StandardMfsTileInboxShared::new(1, 1));
+        let shared = std::sync::Arc::new(super::StandardMfsTileInboxShared::new(
+            1,
+            1,
+            super::StandardMfsTileInboxTemporalSplitConfig::disabled(),
+        ));
         let tile_id = StandardMfsTileId(0);
         let held = shared.tiles[tile_id.index()].queue.lock().unwrap();
         let mut producer = super::StandardMfsTileInboxProducer::new(std::sync::Arc::clone(&shared));
