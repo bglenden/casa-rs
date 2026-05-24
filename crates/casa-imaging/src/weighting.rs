@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA-style imaging-weight preparation for the pure imaging core.
 
-use std::thread;
+use std::{sync::LazyLock, thread};
 
 use ndarray::{Array2, Zip};
 
@@ -529,7 +529,7 @@ pub(crate) fn apply_weighting_with_density_source(
             } else {
                 0.0
             } as f32;
-            if std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING").is_some() {
+            if trace_weighting_enabled() {
                 let density_nonzero = density.iter().filter(|value| **value > 0.0).count();
                 let density_max = density
                     .iter()
@@ -1500,7 +1500,9 @@ fn reweight_owned_batch_with_transform(
 }
 
 fn trace_weighting_enabled() -> bool {
-    std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING").is_some()
+    static ENABLED: LazyLock<bool> =
+        LazyLock::new(|| std::env::var_os("CASA_RS_TRACE_RUST_WEIGHTING").is_some());
+    *ENABLED
 }
 
 fn trace_weighting_sample(

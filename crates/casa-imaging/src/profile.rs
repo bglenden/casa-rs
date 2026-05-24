@@ -3,6 +3,7 @@
 
 use std::{
     env,
+    sync::LazyLock,
     time::{Duration, Instant},
 };
 
@@ -11,13 +12,29 @@ const STANDARD_MFS_PROFILE_BLOCK_DETAIL_ENV: &str = "CASA_RS_STANDARD_MFS_PROFIL
 
 /// Return true when detailed standard-MFS profiling lines should be emitted.
 pub(crate) fn standard_mfs_profile_detail_enabled() -> bool {
-    env::var_os(STANDARD_MFS_PROFILE_DETAIL_ENV).is_some()
+    static ENABLED: LazyLock<bool> =
+        LazyLock::new(|| env_flag_enabled(STANDARD_MFS_PROFILE_DETAIL_ENV));
+    *ENABLED
 }
 
 /// Return true when row-block level standard-MFS profiling lines should be emitted.
 pub(crate) fn standard_mfs_profile_block_detail_enabled() -> bool {
-    standard_mfs_profile_detail_enabled()
-        && env::var_os(STANDARD_MFS_PROFILE_BLOCK_DETAIL_ENV).is_some()
+    static ENABLED: LazyLock<bool> = LazyLock::new(|| {
+        standard_mfs_profile_detail_enabled()
+            && env_flag_enabled(STANDARD_MFS_PROFILE_BLOCK_DETAIL_ENV)
+    });
+    *ENABLED
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(false)
 }
 
 /// Return a timestamp only when detailed profiling is enabled.

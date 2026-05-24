@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Public request/result types for the pure imaging core.
 
-use std::{ops::Range, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
 
 use ndarray::{Array2, Array4};
 use num_complex::Complex32;
 
-use crate::ImagingError;
+use crate::{ImagingError, gridder::STANDARD_GRIDDER_TAP_COUNT};
 
 /// Fixed CASA-style axis ordering for persisted products.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -594,6 +594,224 @@ pub struct StandardMfsWeightedSample {
     pub visibility: Complex32,
 }
 
+/// Natural-weighted scalar standard-MFS sample ready for tile routing.
+///
+/// This is the producer-side handoff before final Uniform/Briggs weighting.
+/// It carries enough information to choose an owner tile from the standard
+/// gridder center convention while leaving final density-dependent weighting
+/// to the worker that applies the convolution taps.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandardMfsRoutableSample {
+    /// Baseline `u` coordinate in wavelengths.
+    pub u_lambda: f64,
+    /// Baseline `v` coordinate in wavelengths.
+    pub v_lambda: f64,
+    /// Baseline `w` coordinate in wavelengths.
+    pub w_lambda: f64,
+    /// Natural input weight before Uniform/Briggs reweighting.
+    pub natural_weight: f32,
+    /// Logical multiplicity factor for CASA-style reported `sumwt`.
+    pub sumwt_factor: f32,
+    /// Whether this sample participates in image/PSF gridding.
+    pub gridable: bool,
+    /// Complex scalar visibility.
+    pub visibility: Complex32,
+}
+
+/// Tile-routed standard-MFS sample before final density-dependent weighting.
+///
+/// Fixed-tile workers use this payload to compute final weights and taps close
+/// to the resident tile buffer. The producer computes only the deterministic
+/// owner-tile center needed for routing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StandardMfsRoutedSample {
+    /// Baseline `u` coordinate in wavelengths.
+    pub u_lambda: f64,
+    /// Baseline `v` coordinate in wavelengths.
+    pub v_lambda: f64,
+    /// Positive-tap center x cell in the padded standard grid.
+    pub center_x: u32,
+    /// Positive-tap center y cell in the padded standard grid.
+    pub center_y: u32,
+    /// Routed-sample flags; use [`Self::finite_visibility`] and [`Self::psf_only`].
+    pub flags: u16,
+    /// Number of 2-D tap visits expected for work attribution.
+    pub tap_count: u8,
+    /// Natural input weight before Uniform/Briggs reweighting.
+    pub natural_weight: f32,
+    /// Logical multiplicity factor for CASA-style reported `sumwt`.
+    pub sumwt_factor: f32,
+    /// Baseline `w` coordinate in wavelengths, retained for diagnostics.
+    pub w_lambda: f64,
+    /// Complex scalar visibility.
+    pub visibility: Complex32,
+}
+
+impl StandardMfsRoutedSample {
+    /// Visibility is finite and contributes to dirty/residual grids.
+    pub const FINITE_VISIBILITY: u16 = 1 << 0;
+    /// Visibility is nonfinite and contributes only to the PSF.
+    pub const PSF_ONLY: u16 = 1 << 1;
+
+    /// Returns true when the sample visibility can contribute to dirty/residual grids.
+    pub fn finite_visibility(self) -> bool {
+        self.flags & Self::FINITE_VISIBILITY != 0
+    }
+
+    /// Returns true when the sample should contribute to the PSF only.
+    pub fn psf_only(self) -> bool {
+        self.flags & Self::PSF_ONLY != 0
+    }
+}
+
+/// Pair-collapse operation for row-shaped standard-MFS visibility runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StandardMfsPairCollapseTransform {
+    /// Strict half-sum collapse, used for Stokes I.
+    HalfSum,
+    /// Strict half-difference collapse.
+    HalfDifference,
+    /// Positive imaginary half-difference collapse.
+    PositiveHalfImagDifference,
+    /// Negative imaginary half-difference collapse.
+    NegativeHalfImagDifference,
+}
+
+/// Polarization selection represented by a row-shaped standard-MFS visibility run.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StandardMfsVisibilityPolarization {
+    /// Use one explicit correlation from the row.
+    Explicit {
+        /// Correlation index in the row DATA/FLAG/WEIGHT arrays.
+        corr_index: usize,
+        /// Logical multiplicity factor for CASA-style reported `sumwt`.
+        sumwt_factor: f32,
+    },
+    /// Collapse two correlations into one logical visibility in the worker.
+    CollapsedPair {
+        /// First correlation index in the row DATA/FLAG/WEIGHT arrays.
+        first_corr_index: usize,
+        /// Second correlation index in the row DATA/FLAG/WEIGHT arrays.
+        second_corr_index: usize,
+        /// Collapse operation for the paired correlations.
+        transform: StandardMfsPairCollapseTransform,
+        /// Logical multiplicity factor for CASA-style reported `sumwt`.
+        sumwt_factor: f32,
+    },
+}
+
+/// Owned row-shaped visibility payload for standard-MFS fixed-tile routing.
+///
+/// A row may be shared by several tile-local runs through `Arc`; this avoids
+/// copying `u/v/w`, flags, weights, weight spectra, and visibility matrices
+/// into one scalar queue record per channel lane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StandardMfsRoutedVisibilityRow {
+    /// Baseline `uvw` coordinate in meters.
+    pub uvw_m: [f64; 3],
+    /// MeasurementSet spectral-window id for diagnostics.
+    pub spw_id: usize,
+    /// First source-channel index loaded into the row matrices.
+    pub channel_origin: usize,
+    /// Selected source-channel indices addressed by routed runs.
+    pub source_channel_indices: Arc<[usize]>,
+    /// Per-selected-channel conversion factor from meters to wavelengths.
+    pub channel_lambda_scales: Arc<[f64]>,
+    /// Complex visibility matrix in `[correlation, local_channel]` order.
+    pub data: Array2<Complex32>,
+    /// Flag matrix in `[correlation, local_channel]` order.
+    pub flag: Array2<bool>,
+    /// Per-correlation natural weights.
+    pub weight: Arc<[f32]>,
+    /// Optional per-correlation, per-channel natural weights.
+    pub weight_spectrum: Option<Array2<f32>>,
+    /// Whether this row is gridable by the standard interferometric path.
+    pub gridable: bool,
+    /// Polarization/correlation interpretation for this imaging plane.
+    pub polarization: StandardMfsVisibilityPolarization,
+}
+
+/// Tile-routed row/channel span for standard-MFS fixed-tile workers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StandardMfsRoutedVisibilityRun {
+    /// Shared row payload.
+    pub row: Arc<StandardMfsRoutedVisibilityRow>,
+    /// Range into `row.source_channel_indices` and `row.channel_lambda_scales`.
+    pub source_slot_range: Range<usize>,
+    /// Positive-tap centers for each source slot in `source_slot_range`.
+    pub tap_centers: Arc<[[u32; 2]]>,
+    /// Stable first input sequence for deterministic scheduling tie-breaks.
+    pub first_input_seq: u64,
+}
+
+impl StandardMfsRoutedVisibilityRun {
+    /// Returns the number of logical channel lanes in this run.
+    pub fn len(&self) -> usize {
+        self.source_slot_range
+            .end
+            .saturating_sub(self.source_slot_range.start)
+    }
+
+    /// Returns `true` when the run contains no logical channel lanes.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Return the expected tap visits for this run.
+    pub fn estimated_tap_visits(&self) -> usize {
+        self.len()
+            .saturating_mul(STANDARD_GRIDDER_TAP_COUNT)
+            .saturating_mul(STANDARD_GRIDDER_TAP_COUNT)
+    }
+}
+
+/// Bounded row-shaped routed standard-MFS visibility runs.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StandardMfsRoutedVisibilityRunBlock {
+    runs: Vec<StandardMfsRoutedVisibilityRun>,
+    len: usize,
+}
+
+impl StandardMfsRoutedVisibilityRunBlock {
+    /// Remove all runs while retaining allocated capacity.
+    pub fn clear(&mut self) {
+        self.runs.clear();
+        self.len = 0;
+    }
+
+    /// Append a row/channel run.
+    pub fn push_run(&mut self, run: StandardMfsRoutedVisibilityRun) {
+        if run.is_empty() {
+            return;
+        }
+        self.len = self.len.saturating_add(run.len());
+        self.runs.push(run);
+    }
+
+    /// Return routed row/channel runs.
+    pub fn runs(&self) -> &[StandardMfsRoutedVisibilityRun] {
+        &self.runs
+    }
+
+    /// Return the number of logical channel lanes in all runs.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Return `true` when there are no logical channel lanes.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Return expected tap visits for all runs.
+    pub fn estimated_tap_visits(&self) -> usize {
+        self.runs
+            .iter()
+            .map(StandardMfsRoutedVisibilityRun::estimated_tap_visits)
+            .sum()
+    }
+}
+
 /// Already weighted and grid-center-located scalar standard-MFS sample.
 ///
 /// This is the bounded row-block handoff used by streaming frontends that want
@@ -699,6 +917,63 @@ impl StandardMfsPlannedWeightedSampleRunBlock {
     }
 
     /// Return true when there are no planned scalar samples.
+    pub fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
+}
+
+/// Bounded routed standard-MFS samples with explicit scalar-run ranges.
+///
+/// This is the fixed-tile worker handoff for final-weight-deferred execution:
+/// samples are already routed to standard-gridder centers, but their
+/// Uniform/Briggs weights are applied by the tile workers.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StandardMfsRoutedSampleRunBlock {
+    samples: Vec<StandardMfsRoutedSample>,
+    runs: Vec<Range<usize>>,
+}
+
+impl StandardMfsRoutedSampleRunBlock {
+    /// Remove all samples and run ranges while retaining allocated capacity.
+    pub fn clear(&mut self) {
+        self.samples.clear();
+        self.runs.clear();
+    }
+
+    /// Return the routed scalar samples in stable input order.
+    pub fn samples(&self) -> &[StandardMfsRoutedSample] {
+        &self.samples
+    }
+
+    /// Return contiguous run ranges into [`Self::samples`].
+    pub fn runs(&self) -> &[Range<usize>] {
+        &self.runs
+    }
+
+    /// Start a new run, returning the current sample offset.
+    pub fn begin_run(&self) -> usize {
+        self.samples.len()
+    }
+
+    /// Append one routed scalar sample to the current run under construction.
+    pub fn push_sample(&mut self, sample: StandardMfsRoutedSample) {
+        self.samples.push(sample);
+    }
+
+    /// Finish a run that began at `start`, recording it if it is non-empty.
+    pub fn finish_run(&mut self, start: usize) {
+        let end = self.samples.len();
+        if start < end {
+            self.runs.push(start..end);
+        }
+    }
+
+    /// Return the total number of routed scalar samples.
+    pub fn len(&self) -> usize {
+        self.samples.len()
+    }
+
+    /// Return true when there are no routed scalar samples.
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }

@@ -2016,6 +2016,140 @@ The next candidate should avoid copying `u/v/w`, flags, weights, and visibility
 into per-lane vectors when an MS row or contiguous channel span belongs to one
 tile.
 
+## 2026-05-23 Producer/Scheduler Instrumentation Pass
+
+Workload:
+`wave1-vla-single-medium.ms`, field 0, spw 0, 64 channels, imsize 1024,
+Briggs robust 0.5, dirty-only, fixed-tile backend, 10 workers, tile edge 32,
+center-boundary anchor, `CASA_RS_STANDARD_MFS_PROFILE_DETAIL=1`.
+
+Artifact directory:
+`target/imperformance-wave2/instrumented-producer-20260523/`
+
+| candidate | timing artifact | sample artifact | frontend s | core s | scheduler stage s | peak RSS GiB | decision |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| line-detail probe, ungated | `medium-briggs-producer-detail-10w.log` | n/a | 92.80 | 77.48 | 77.03 | n/a | rejected as measurement artifact; per-lane `Instant::now()` dominated |
+| normal detail after line gate | `medium-briggs-normal-detail-10w.log` | n/a | 31.82 | 18.91 | 17.73 | 8.90 | baseline for this pass |
+| cached profile env gates + queue pre-reserve | `medium-briggs-core-env-queue-reserve-10w.log` | `profile-imager-core-env-queue-reserve-10s.sample.txt` | 30.95 | 18.45 | 18.33 | 8.90 | retained as low-risk instrumentation/hot-path cleanup; frontend movement below strict timing gate |
+| no temporary producer `VecDeque` on common enqueue path | `medium-briggs-no-temp-vecdeque-10w.log` | `profile-imager-no-temp-delayed-10s.sample.txt` | 30.93 | 17.65 | 17.54 | 8.85 | retained as architectural cleanup; removes sampled per-run allocation path, frontend movement still noisy |
+| routed final Briggs weighting, invalid line-detail flag | `medium-briggs-routed-weighting-10w.log` | n/a | 82.92 | 70.04 | n/a | n/a | rejected as measurement artifact; `CASA_RS_STANDARD_MFS_PROFILE_LINE_DETAIL=0` still enabled per-lane timings before boolean env parsing was fixed |
+| routed final Briggs weighting in tile workers | `medium-briggs-routed-weighting-10w-rerun.log` | `profile-imager-routed-weighting-10s.sample.txt` | 29.81 | 16.97 | 16.85 | 8.88 | retained; moves final Uniform/Briggs `weight_sample` from producer to fixed-tile workers and improves frontend/core by about 3.6%/3.8% versus the previous retained row |
+| inline hot routing/tap accessors | `medium-briggs-hot-inline-routed-cell1-10w.log` | n/a | 27.94 | 15.53 | 15.40 | 8.89 | retained; sampled `route_sample` and `positive_taps_at` remained visible after routed weighting, and narrow `#[inline]` hints improved frontend/core by about 6.3%/8.5% versus the previous retained row |
+| row/channel vector payload | `medium-briggs-row-vector-payload-10w.log`, `medium-briggs-row-vector-payload-rerun-10w.log` | n/a | 28.55 / 30.33 | 15.16 / 14.95 | 15.04 / 14.83 | 8.90 / 8.92 | retained as architectural boundary change; queued payload falls from 15.65 GB scalar fields to 3.56 GB row/run references and core/scheduler are modestly faster, but frontend wall is not claimed due MS-read variance |
+| direct row-run publish + shared tap centers | `medium-briggs-direct-row-run-no-tap-copy-10w.log` | n/a | 27.46 | 14.46 | 14.33 | 8.90 | retained; removes row-block run staging and queued tap-center copies, queued payload falls again to 2.19 GB, and frontend/core improve by about 1.7%/7.0% versus the inline scalar retained row |
+| ready threshold 1 | `medium-briggs-ready-min1-10w.log` | n/a | 97.56 | 84.42 | 84.34 | 8.95 | rejected; removing the 1024-sample ready gate exploded ready heads/drains to 8.07M and made scheduler traffic dominate |
+| center-quadrant 4-tile partition | `medium-briggs-center-quadrants-10w.log`, `medium-briggs-center-quadrants-4w.log` | n/a | 21.20 / 20.74 | 7.85 / 7.52 | 7.77 / 7.45 | 8.85 / 8.89 | retained as coarse adaptive baseline; four center-boundary quadrants cut scheduler work and halo overhead before hot-tile splitting |
+| one-pass routed run splitter | `medium-briggs-one-pass-run-split-routed-cell1-10w.log` | n/a | 29.19 | 16.68 | 16.55 | 8.80 | rejected and reverted; removing the common single-owner pre-scan regressed frontend/core versus the inline retained row |
+| unchecked row array access | `medium-briggs-unchecked-row-access-routed-cell1-10w.log` | n/a | 29.57 | 16.93 | 16.80 | 8.84 | rejected and reverted; prevalidating row shapes plus unchecked array access regressed the same target versus the inline retained row |
+
+The first sampled run found an instrumentation bug rather than an imaging
+algorithm issue: normal profile mode still reached `getenv` from the hot row
+path. The retained fix caches the standard-MFS profile gates once per process
+in both frontend and core.
+
+The next sampled stack showed producer-side allocation under
+`StandardMfsTileInboxProducer::enqueue_run`: the common path created a temporary
+one-element `VecDeque` before every tile enqueue. The retained fix publishes the
+single-run common path directly into the tile queue, leaving the pending
+`VecDeque` path only for rare `try_lock` misses.
+
+After those fixes, delayed sampling still shows the dominant shape is producer
+work versus worker work, not tile lock contention: the producer continues to do
+final Briggs weighting and center planning before enqueue, while tile workers
+mostly wait. The next plausible >2% structural candidate is to move final
+per-lane weighting and route-only center calculation across the frontend/core
+boundary so the producer reads and routes compact row/channel runs while tile
+workers perform the lane-level imaging semantics.
+
+The routed-weighting step adds that boundary for the fixed-tile multi-worker
+path: the frontend emits natural-weighted routed samples, and tile workers apply
+the final density-dependent weighting immediately before tap application. The
+valid rerun improved the dirty-only medium target from `30.93s` frontend /
+`17.65s` core to `29.81s` frontend / `16.97s` core. Worker utilization remains
+low (`10.3%`), and the follow-up sample still shows producer/read work as the
+larger remaining bottleneck rather than tile locks or scheduler contention.
+
+The follow-up sample also kept tiny routing/tap accessor calls visible in the
+hot loops. Adding narrow inline hints for the frontend route path and worker
+tap/weight accessors improved the same target to `27.94s` frontend / `15.53s`
+core without changing the memory shape.
+
+One attempted producer cleanup after that, a one-pass routed run splitter,
+regressed the same target. The common single-owner pre-scan is kept for now; the
+next run-shape change needs to be the larger row/channel vector payload rather
+than another scalar-run splitter tweak.
+
+A second scalar-path cleanup, unchecked row array access after shape
+prevalidation, also regressed. The row access path remains bounds-checked; the
+larger row/channel vector payload is still the next structural boundary change.
+
+The row/channel vector payload replaces scalar queue samples with row-backed
+tile runs: each run keeps an `Arc` to the row matrices and only stores the
+contiguous channel span plus tap centers. A first attempt exposed a routing
+adapter bug where row-backed runs were considered empty because their scalar
+sample vector is intentionally empty; the regression test
+`row_backed_visibility_runs_are_not_discarded_as_empty` now covers that path.
+The measured outcome is structurally positive but not a frontend timing win:
+logical enqueued queue bytes drop from `15.65 GB` to `3.56 GB`, core/scheduler
+time moves from `15.53s`/`15.40s` to `15.16s`/`15.04s` and `14.95s`/`14.83s`
+across two runs, while total frontend wall varies upward with slower MS reads.
+This is retained because it removes the scalar payload duplication across the
+frontend/core boundary without weakening correctness, not because it settles
+the worker-utilization bottleneck.
+
+The follow-up direct row-run publish step removes the remaining avoidable
+staging in that boundary. The frontend now calls the fixed-tile consumer for
+each routed row/channel run as it is produced, instead of filling a
+`StandardMfsRoutedVisibilityRunBlock` for the current row block. The tile queue
+also keeps a shared `Arc` to the original tap-center run plus a range, instead
+of allocating a copied tap-center slice for every tile-local subrun. On the same
+medium 10-worker dirty target this reduced logical queued bytes from `3.56 GB`
+to `2.19 GB`, reduced producer preprocess from roughly `4.69-4.82s` to
+`3.46s`, and improved core/scheduler to `14.46s`/`14.33s`. Worker utilization
+is still low (`16.5%`), so this fixes the payload/lifetime sloppiness but does
+not close the larger producer-vs-worker balance problem.
+
+The ready-threshold probe answered whether the tile inbox should wake workers
+on any nonempty queue instead of waiting for the default `1024` queued samples.
+It should not. With `ready_sample_min=1`, the same medium 10-worker dirty target
+regressed to `97.56s` frontend / `84.42s` core / `84.34s` scheduler stage.
+Ready heads and worker drains rose from about `182k` to `8.07M`, while average
+runs per drain fell from about `46` to `1.09`. The default stays at `1024`;
+the env override remains available for diagnostics.
+
+The center-quadrant probe adds `CASA_RS_STANDARD_MFS_TILE_ANCHOR=center_quadrants`,
+which creates four fixed tiles whose boundary intersection is the standard
+gridder's integer center. It is retained as the coarse adaptive baseline for the
+next scheduler pass. On the same medium target, the 10-worker run improved to
+`21.20s` frontend / `7.85s` core / `7.77s` scheduler stage, and the 4-worker
+run improved slightly further to `20.74s` / `7.52s` / `7.45s`. Resident tile
+bytes fell from `73.93 MB` to `50.48 MB`; logical enqueued bytes fell from
+`2.19 GB` to `0.75 GB`; worker drains fell from `181,712` to about `23,500`;
+and measured halo overhead fell to `0.96%`. With only four exclusive resident
+tiles, the 10-worker utilization percentage is expected to stay low; the next
+step is explicit hot-tile splitting so large quadrant queues can feed more than
+one worker through private scratch/reduction buffers when the data justifies it.
+
+Follow-up tile bookkeeping artifacts:
+
+```text
+dirty_only=target/imperformance-wave2/instrumented-producer-20260523/medium-briggs-center-quadrants-4w-tile-bookkeeping.log
+niter2=target/imperformance-wave2/instrumented-producer-20260523/medium-briggs-center-quadrants-4w-niter2-tile-bookkeeping.log
+```
+
+The added per-tile fields show the current 4-worker utilization is capped mostly
+by quadrant imbalance, not by tile queue locking. In the dirty-only probe, tile
+3 carried `78.43M` of `188.89M` samples (`41.52%`) and `5.18s` of tile-active
+work, versus tiles 0 and 2 at about `27-28M` samples and `2.1s` each. The
+ideal utilization bound from per-tile active time was `64.51%`, while measured
+worker utilization was `42.00%`. The same pattern held in the `niter=2`
+residual refresh: tile 3 again carried `41.52%` of samples and `5.54s` active
+time, with a `64.60%` tile-active bound and `51.41%` measured utilization.
+`active_tile_skips=0`, `stale_heap_entries=0`, and try-lock misses stayed in
+the low thousands across about `3.0M` enqueued runs, so queue mutex contention
+is not the first-order explanation. Hot splitting tile 3 is the next data-backed
+candidate.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:

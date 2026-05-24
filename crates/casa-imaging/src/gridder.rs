@@ -399,6 +399,7 @@ impl StandardGridder {
         })
     }
 
+    #[inline]
     pub(crate) fn plan_positive_taps(
         &self,
         u_lambda: f64,
@@ -410,6 +411,7 @@ impl StandardGridder {
         })
     }
 
+    #[inline]
     pub(crate) fn locate_positive_tap_center(
         &self,
         u_lambda: f64,

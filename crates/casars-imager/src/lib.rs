@@ -14,7 +14,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use casa_coordinates::{
@@ -31,14 +31,18 @@ use casa_imaging::{
     ImagingStageTimings, MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, ParallelHandBatch,
     PlaneStokes, PrimaryBeamModel, ResidualRefreshDiagnostics, RestoringBeamMode,
     StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest, StandardMfsExecutionConfig,
-    StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder, StandardMfsPlannedWeightedSample,
-    StandardMfsPlannedWeightedSampleRunBlock, StandardMfsStreamingWeightingPlan,
+    StandardMfsModelPredictor, StandardMfsPairCollapseTransform, StandardMfsPlannedSampleBuilder,
+    StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
+    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedSampleRunBlock,
+    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
+    StandardMfsStreamingWeightingPlan, StandardMfsVisibilityPolarization,
     StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
     WProjectDiagnostics, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
     estimate_psf_sidelobe_from_psf, primary_beam_voltage_pattern, restore_standard_mfs_model,
     run_cube, run_imaging, run_imaging_owned_with_execution_config, run_mtmfs,
     run_standard_mfs_planned_sample_block_source_streaming_with_execution_config,
     run_standard_mfs_planned_sample_run_block_streaming_with_execution_config,
+    run_standard_mfs_routed_visibility_run_streaming_with_execution_config,
     run_standard_mfs_weighted_streaming_with_execution_config, trace_cube_channel_residual_refresh,
     trace_cube_channel_residual_refresh_model_channel_lambda, trace_cube_channel_w_project_plan,
     trace_w_project_plan, trace_weighting,
@@ -2125,7 +2129,69 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
     let result = if use_sample_streaming {
         let channel_axes = Arc::new(MsImagingChannelAxisCatalog::load(ms)?);
         let mut replay_invocation = 0usize;
-        if standard_mfs_planned_run_blocks_enabled() {
+        let use_routed_tile_weighting = standard_mfs_fixed_tile_backend_enabled_for_frontend()
+            && env_standard_mfs_grid_threads().is_some_and(|threads| threads > 1)
+            && standard_mfs_planned_run_blocks_enabled()
+            && env::var_os("CASA_RS_STANDARD_MFS_DISABLE_ROUTED_WEIGHTING").is_none();
+        if use_routed_tile_weighting {
+            let mut replay_routed_runs = |consumer: &mut dyn FnMut(
+                &StandardMfsRoutedVisibilityRun,
+            )
+                -> Result<(), ImagingError>|
+             -> Result<(), ImagingError> {
+                let replay_pass = if replay_invocation == 0 {
+                    "initial_routed_visibility_run_replay"
+                } else {
+                    "residual_routed_visibility_run_replay"
+                };
+                let replay_ordinal = replay_invocation;
+                replay_invocation += 1;
+                let mut replay_stats =
+                    StandardMfsStreamingPassStats::new(replay_pass, replay_ordinal);
+                let mut stream_error = None::<ImagingError>;
+                let stream_result = stream_standard_mfs_routed_visibility_essentials_run_blocks(
+                    ms,
+                    config,
+                    data_column,
+                    &selection,
+                    &table_values,
+                    &active_selected_rows,
+                    derived_engine.as_ref(),
+                    Arc::clone(&channel_axes),
+                    channel_read_range,
+                    &geometry_columns,
+                    strategy.row_block_rows,
+                    prepare_started_at,
+                    &mut prepare_stage_timings,
+                    &mut accumulate_timings,
+                    &mut replay_stats,
+                    &planned_sample_builder,
+                    |run| {
+                        if let Err(error) = consumer(run) {
+                            stream_error = Some(error);
+                            return Err(ImagingError::InvalidRequest(
+                                "sample streaming standard MFS routed visibility consumer failed"
+                                    .to_string(),
+                            ));
+                        }
+                        Ok(())
+                    },
+                );
+                replay_stats.log();
+                if let Some(error) = stream_error {
+                    return Err(error);
+                }
+                stream_result
+                    .map(|_| ())
+                    .map_err(ImagingError::InvalidRequest)
+            };
+            run_standard_mfs_routed_visibility_run_streaming_with_execution_config(
+                request,
+                execution_config,
+                &weighting_plan,
+                &mut replay_routed_runs,
+            )
+        } else if standard_mfs_planned_run_blocks_enabled() {
             let mut replay_weighted_samples =
                 |consumer: &mut dyn FnMut(
                     &StandardMfsPlannedWeightedSampleRunBlock,
@@ -2535,11 +2601,7 @@ fn run_standard_mfs_dirty_streaming_from_open_ms(
             strategy.fixed_tile_resident_bytes as f64 / (1024.0 * 1024.0),
             strategy.fixed_tile_resident_limit_estimate,
             strategy.fixed_tile_edge,
-            if strategy.fixed_tile_anchor_center_boundary {
-                "center_boundary"
-            } else {
-                "zero"
-            },
+            strategy.fixed_tile_anchor_label,
             strategy.max_live_row_blocks,
             strategy.live_bucket_bytes as f64 / (1024.0 * 1024.0),
             strategy.queued_task_bytes as f64 / (1024.0 * 1024.0),
@@ -4228,11 +4290,33 @@ fn measurement_set_paths(config: &CliConfig) -> Result<Vec<PathBuf>, String> {
 }
 
 fn frontend_progress_enabled() -> bool {
-    env::var_os("CASA_RS_IMAGING_PROGRESS").is_some()
+    static ENABLED: LazyLock<bool> = LazyLock::new(|| env_flag_enabled("CASA_RS_IMAGING_PROGRESS"));
+    *ENABLED
 }
 
 fn standard_mfs_profile_detail_enabled() -> bool {
-    env::var_os("CASA_RS_STANDARD_MFS_PROFILE_DETAIL").is_some()
+    static ENABLED: LazyLock<bool> =
+        LazyLock::new(|| env_flag_enabled("CASA_RS_STANDARD_MFS_PROFILE_DETAIL"));
+    *ENABLED
+}
+
+fn standard_mfs_profile_line_detail_enabled() -> bool {
+    static ENABLED: LazyLock<bool> = LazyLock::new(|| {
+        standard_mfs_profile_detail_enabled()
+            && env_flag_enabled("CASA_RS_STANDARD_MFS_PROFILE_LINE_DETAIL")
+    });
+    *ENABLED
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn maybe_log_frontend_progress(stage: &str, stage_elapsed: Duration, total_elapsed: Duration) {
@@ -5225,6 +5309,7 @@ struct StandardMfsStreamingPassStats {
     planned_sample_candidates: usize,
     planned_samples: usize,
     planned_tap_visits: usize,
+    planned_sample_detail: StandardMfsPlannedRowSampleDetailTimings,
     get_ms_values_into_processing_buffer: Duration,
     get_ms_values_detail: GetMsValuesTimings,
     prepare_processing_buffer: Duration,
@@ -5237,6 +5322,32 @@ struct StandardMfsStreamingPassStats {
 struct StandardMfsPlannedRowSampleCounts {
     candidate_samples: usize,
     planned_samples: usize,
+    detail: StandardMfsPlannedRowSampleDetailTimings,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct StandardMfsPlannedRowSampleDetailTimings {
+    local_channel: Duration,
+    flag_lookup: Duration,
+    visibility_lookup: Duration,
+    weight_lookup: Duration,
+    finite_check: Duration,
+    final_weight: Duration,
+    plan_sample: Duration,
+    consume: Duration,
+}
+
+impl StandardMfsPlannedRowSampleDetailTimings {
+    fn add(&mut self, other: Self) {
+        self.local_channel += other.local_channel;
+        self.flag_lookup += other.flag_lookup;
+        self.visibility_lookup += other.visibility_lookup;
+        self.weight_lookup += other.weight_lookup;
+        self.finite_check += other.finite_check;
+        self.final_weight += other.final_weight;
+        self.plan_sample += other.plan_sample;
+        self.consume += other.consume;
+    }
 }
 
 impl StandardMfsStreamingPassStats {
@@ -5252,6 +5363,7 @@ impl StandardMfsStreamingPassStats {
             planned_sample_candidates: 0,
             planned_samples: 0,
             planned_tap_visits: 0,
+            planned_sample_detail: StandardMfsPlannedRowSampleDetailTimings::default(),
             get_ms_values_into_processing_buffer: Duration::ZERO,
             get_ms_values_detail: GetMsValuesTimings::default(),
             prepare_processing_buffer: Duration::ZERO,
@@ -5311,6 +5423,10 @@ impl StandardMfsStreamingPassStats {
         self.planned_tap_visits += tap_visits;
     }
 
+    fn add_planned_sample_detail(&mut self, detail: StandardMfsPlannedRowSampleDetailTimings) {
+        self.planned_sample_detail.add(detail);
+    }
+
     fn add_consumer(&mut self, elapsed: Duration) {
         self.consumer += elapsed;
     }
@@ -5320,7 +5436,7 @@ impl StandardMfsStreamingPassStats {
             return;
         }
         eprintln!(
-            "standard_mfs_streaming_pass pass={} ordinal={} row_blocks={} cached_row_blocks={} batches={} samples={} planned_candidates={} planned_samples={} planning_rejected={} planned_tap_visits={} get_ms_values_ms={:.3} get_data_ms={:.3} get_flag_ms={:.3} get_weight_ms={:.3} get_weight_spectrum_ms={:.3} get_geometry_ms={:.3} prepare_processing_ms={:.3} prepare_rows_seen={} prepare_rows_flagged={} prepare_flag_row_ms={:.3} prepare_data_ms={:.3} prepare_flag_ms={:.3} prepare_weight_ms={:.3} prepare_weight_spectrum_ms={:.3} prepare_adapt_samples_ms={:.3} weighting_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
+            "standard_mfs_streaming_pass pass={} ordinal={} row_blocks={} cached_row_blocks={} batches={} samples={} planned_candidates={} planned_samples={} planning_rejected={} planned_tap_visits={} get_ms_values_ms={:.3} get_data_ms={:.3} get_flag_ms={:.3} get_weight_ms={:.3} get_weight_spectrum_ms={:.3} get_geometry_ms={:.3} prepare_processing_ms={:.3} prepare_rows_seen={} prepare_rows_flagged={} prepare_flag_row_ms={:.3} prepare_data_ms={:.3} prepare_flag_ms={:.3} prepare_weight_ms={:.3} prepare_weight_spectrum_ms={:.3} prepare_adapt_samples_ms={:.3} planned_local_channel_ms={:.3} planned_flag_lookup_ms={:.3} planned_visibility_lookup_ms={:.3} planned_weight_lookup_ms={:.3} planned_finite_check_ms={:.3} planned_final_weight_ms={:.3} planned_plan_sample_ms={:.3} planned_consume_ms={:.3} weighting_ms={:.3} consumer_ms={:.3} total_ms={:.3}",
             self.pass,
             self.ordinal,
             self.row_blocks,
@@ -5347,6 +5463,14 @@ impl StandardMfsStreamingPassStats {
             duration_ms(self.accumulate_rows_detail.weight_column),
             duration_ms(self.accumulate_rows_detail.weight_spectrum),
             duration_ms(self.accumulate_rows_detail.adapt_samples),
+            duration_ms(self.planned_sample_detail.local_channel),
+            duration_ms(self.planned_sample_detail.flag_lookup),
+            duration_ms(self.planned_sample_detail.visibility_lookup),
+            duration_ms(self.planned_sample_detail.weight_lookup),
+            duration_ms(self.planned_sample_detail.finite_check),
+            duration_ms(self.planned_sample_detail.final_weight),
+            duration_ms(self.planned_sample_detail.plan_sample),
+            duration_ms(self.planned_sample_detail.consume),
             duration_ms(self.weighting),
             duration_ms(self.consumer),
             duration_ms(self.started_at.elapsed()),
@@ -8571,11 +8695,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
             strategy.fixed_tile_resident_bytes as f64 / (1024.0 * 1024.0),
             strategy.fixed_tile_resident_limit_estimate,
             strategy.fixed_tile_edge,
-            if strategy.fixed_tile_anchor_center_boundary {
-                "center_boundary"
-            } else {
-                "zero"
-            },
+            strategy.fixed_tile_anchor_label,
             strategy.max_live_row_blocks,
             strategy.live_bucket_bytes as f64 / (1024.0 * 1024.0),
             strategy.queued_task_bytes as f64 / (1024.0 * 1024.0),
@@ -8615,11 +8735,7 @@ fn prepare_standard_mfs_input_in_row_blocks(
             strategy.fixed_tile_resident_bytes,
             strategy.fixed_tile_resident_limit_estimate,
             strategy.fixed_tile_edge,
-            if strategy.fixed_tile_anchor_center_boundary {
-                "center_boundary"
-            } else {
-                "zero"
-            },
+            strategy.fixed_tile_anchor_label,
             strategy.max_live_row_blocks,
             strategy.live_row_block_bytes,
             strategy.live_bucket_bytes,
@@ -8822,6 +8938,7 @@ where
         let before_accumulate = *accumulate_timings;
         let mut planned_samples = Vec::<StandardMfsPlannedWeightedSample>::new();
         let mut block_candidate_samples = 0usize;
+        let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
         for (row_slot, row) in processing_buffer.geometry_rows.iter().enumerate() {
             let counts = prepared.stream_standard_mfs_planned_row_samples(
                 row,
@@ -8841,6 +8958,7 @@ where
                 accumulate_timings,
             )?;
             block_candidate_samples += counts.candidate_samples;
+            block_detail.add(counts.detail);
         }
         consume(&planned_samples).map_err(|error| error.to_string())?;
         let prepare_processing_elapsed = stage_started_at.elapsed();
@@ -8855,6 +8973,7 @@ where
             planned_samples.len(),
             planned_tap_visits,
         );
+        pass_stats.add_planned_sample_detail(block_detail);
         pass_stats.record_density_block(
             planned_samples.len(),
             get_ms_values_elapsed,
@@ -8929,6 +9048,7 @@ where
         let before_accumulate = *accumulate_timings;
         let mut planned_samples = Vec::<StandardMfsPlannedWeightedSample>::new();
         let mut block_candidate_samples = 0usize;
+        let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
         for (row_slot, (selected_row, row)) in row_chunk.iter().zip(block.rows.iter()).enumerate() {
             accumulate_timings.rows_seen += 1;
             if row.spw_id != selected_row.spw_id {
@@ -8950,6 +9070,7 @@ where
             )?;
             let _ = row_slot;
             block_candidate_samples += counts.candidate_samples;
+            block_detail.add(counts.detail);
         }
         let consumer_started_at = Instant::now();
         consume(&planned_samples).map_err(|error| error.to_string())?;
@@ -8966,6 +9087,7 @@ where
             planned_samples.len(),
             planned_tap_visits,
         );
+        pass_stats.add_planned_sample_detail(block_detail);
         pass_stats.record_density_block(
             planned_samples.len(),
             get_ms_values_elapsed,
@@ -9041,6 +9163,7 @@ where
         let before_accumulate = *accumulate_timings;
         planned_runs.clear();
         let mut block_candidate_samples = 0usize;
+        let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
         for (row_slot, (selected_row, row)) in row_chunk.iter().zip(block.rows.iter()).enumerate() {
             accumulate_timings.rows_seen += 1;
             if row.spw_id != selected_row.spw_id {
@@ -9064,6 +9187,7 @@ where
             planned_runs.finish_run(run_start);
             let _ = row_slot;
             block_candidate_samples += counts.candidate_samples;
+            block_detail.add(counts.detail);
         }
         let consumer_started_at = Instant::now();
         consume(&planned_runs).map_err(|error| error.to_string())?;
@@ -9081,6 +9205,7 @@ where
             planned_runs.len(),
             planned_tap_visits,
         );
+        pass_stats.add_planned_sample_detail(block_detail);
         pass_stats.record_density_block(
             planned_runs.len(),
             get_ms_values_elapsed,
@@ -9090,6 +9215,229 @@ where
         if frontend_progress_enabled() {
             eprintln!(
                 "frontend stage=prepare_plane_input/ms_essentials_sample_block rows_done={} rows_total={} samples={} total_elapsed_s={:.3}",
+                accumulate_timings.rows_seen,
+                active_selected_rows.len(),
+                streamed_samples,
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    Ok(streamed_samples)
+}
+
+#[allow(dead_code, clippy::too_many_arguments)]
+fn stream_standard_mfs_routed_sample_essentials_run_blocks<F>(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_axes: Arc<MsImagingChannelAxisCatalog>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+    pass_stats: &mut StandardMfsStreamingPassStats,
+    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+    mut consume: F,
+) -> Result<usize, String>
+where
+    F: FnMut(&StandardMfsRoutedSampleRunBlock) -> Result<(), ImagingError>,
+{
+    let mut streamed_samples = 0usize;
+    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+        config,
+        table_values,
+        selection.phase_center.clone(),
+        false,
+    )?;
+    let mut routed_runs = StandardMfsRoutedSampleRunBlock::default();
+    for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let stage_started_at = Instant::now();
+        let (block, read_timings) = read_ms_imaging_essentials_block(
+            ms,
+            data_column_kind,
+            Arc::clone(&channel_axes),
+            geometry_columns,
+            row_chunk,
+            channel_read_range,
+        )?;
+        let get_ms_values_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+        pass_stats.add_get_ms_values_detail(GetMsValuesTimings {
+            data_column: read_timings.data_column,
+            flag_column: read_timings.flag_column,
+            weight_column: read_timings.weight_column,
+            weight_spectrum: read_timings.weight_spectrum,
+            geometry_rows: read_timings.uvw_column,
+        });
+
+        let stage_started_at = Instant::now();
+        let before_accumulate = *accumulate_timings;
+        routed_runs.clear();
+        let mut block_candidate_samples = 0usize;
+        let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
+        for (row_slot, (selected_row, row)) in row_chunk.iter().zip(block.rows.iter()).enumerate() {
+            accumulate_timings.rows_seen += 1;
+            if row.spw_id != selected_row.spw_id {
+                return Err(format!(
+                    "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                    selected_row.row_index, selected_row.spw_id, row.spw_id
+                ));
+            }
+            let run_start = routed_runs.begin_run();
+            let counts = prepared.stream_standard_mfs_routed_essentials_row_samples(
+                selected_row,
+                row,
+                derived_engine,
+                planned_sample_builder,
+                &mut |sample| {
+                    routed_runs.push_sample(sample);
+                    Ok(())
+                },
+            )?;
+            routed_runs.finish_run(run_start);
+            let _ = row_slot;
+            block_candidate_samples += counts.candidate_samples;
+            block_detail.add(counts.detail);
+        }
+        let consumer_started_at = Instant::now();
+        consume(&routed_runs).map_err(|error| error.to_string())?;
+        pass_stats.add_consumer(consumer_started_at.elapsed());
+        let prepare_processing_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
+        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
+        let planned_tap_visits = routed_runs
+            .samples()
+            .iter()
+            .map(|sample| usize::from(sample.tap_count))
+            .sum();
+        pass_stats.add_planned_sample_counts(
+            block_candidate_samples,
+            routed_runs.len(),
+            planned_tap_visits,
+        );
+        pass_stats.add_planned_sample_detail(block_detail);
+        pass_stats.record_density_block(
+            routed_runs.len(),
+            get_ms_values_elapsed,
+            prepare_processing_elapsed,
+        );
+        streamed_samples += routed_runs.len();
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/ms_essentials_routed_block rows_done={} rows_total={} samples={} total_elapsed_s={:.3}",
+                accumulate_timings.rows_seen,
+                active_selected_rows.len(),
+                streamed_samples,
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    Ok(streamed_samples)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stream_standard_mfs_routed_visibility_essentials_run_blocks<F>(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_axes: Arc<MsImagingChannelAxisCatalog>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+    pass_stats: &mut StandardMfsStreamingPassStats,
+    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+    mut consume: F,
+) -> Result<usize, String>
+where
+    F: FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+{
+    let mut streamed_samples = 0usize;
+    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+        config,
+        table_values,
+        selection.phase_center.clone(),
+        false,
+    )?;
+    let source_channel_indices =
+        Arc::<[usize]>::from(prepared.source_channel_indices.clone().into_boxed_slice());
+    let mut next_input_seq = 0u64;
+    for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let stage_started_at = Instant::now();
+        let (block, read_timings) = read_ms_imaging_essentials_block(
+            ms,
+            data_column_kind,
+            Arc::clone(&channel_axes),
+            geometry_columns,
+            row_chunk,
+            channel_read_range,
+        )?;
+        let get_ms_values_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+        pass_stats.add_get_ms_values_detail(GetMsValuesTimings {
+            data_column: read_timings.data_column,
+            flag_column: read_timings.flag_column,
+            weight_column: read_timings.weight_column,
+            weight_spectrum: read_timings.weight_spectrum,
+            geometry_rows: read_timings.uvw_column,
+        });
+
+        let stage_started_at = Instant::now();
+        let before_accumulate = *accumulate_timings;
+        let mut block_candidate_samples = 0usize;
+        let mut block_planned_samples = 0usize;
+        let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
+        for (selected_row, row) in row_chunk.iter().zip(block.rows.into_iter()) {
+            accumulate_timings.rows_seen += 1;
+            if row.spw_id != selected_row.spw_id {
+                return Err(format!(
+                    "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                    selected_row.row_index, selected_row.spw_id, row.spw_id
+                ));
+            }
+            let counts = prepared.stream_standard_mfs_routed_essentials_row_visibility_runs(
+                selected_row,
+                row,
+                derived_engine,
+                Arc::clone(&source_channel_indices),
+                planned_sample_builder,
+                &mut next_input_seq,
+                &mut consume,
+            )?;
+            block_candidate_samples += counts.candidate_samples;
+            block_planned_samples += counts.planned_samples;
+            block_detail.add(counts.detail);
+        }
+        let prepare_processing_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
+        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
+        pass_stats.add_planned_sample_counts(
+            block_candidate_samples,
+            block_planned_samples,
+            block_planned_samples.saturating_mul(49),
+        );
+        pass_stats.add_planned_sample_detail(block_detail);
+        pass_stats.record_density_block(
+            block_planned_samples,
+            get_ms_values_elapsed,
+            prepare_processing_elapsed,
+        );
+        streamed_samples += block_planned_samples;
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/ms_essentials_routed_visibility_block rows_done={} rows_total={} samples={} total_elapsed_s={:.3}",
                 accumulate_timings.rows_seen,
                 active_selected_rows.len(),
                 streamed_samples,
@@ -9517,6 +9865,7 @@ struct StandardMfsMemoryPlan {
     fixed_tile_resident_limit_estimate: usize,
     fixed_tile_edge: usize,
     fixed_tile_anchor_center_boundary: bool,
+    fixed_tile_anchor_label: &'static str,
     max_live_row_blocks: usize,
     live_row_block_bytes: usize,
     live_bucket_bytes: usize,
@@ -9673,6 +10022,7 @@ fn standard_mfs_memory_plan(
         fixed_tile_resident_limit_estimate: fixed_tile_resident.tile_limit,
         fixed_tile_edge: fixed_tile_resident.tile_edge,
         fixed_tile_anchor_center_boundary: fixed_tile_resident.center_boundary_anchor,
+        fixed_tile_anchor_label: fixed_tile_resident.anchor_label,
         max_live_row_blocks,
         live_row_block_bytes,
         live_bucket_bytes,
@@ -9758,11 +10108,7 @@ fn log_standard_mfs_memory_plan_actual(
         strategy.fixed_tile_resident_bytes,
         strategy.fixed_tile_resident_limit_estimate,
         strategy.fixed_tile_edge,
-        if strategy.fixed_tile_anchor_center_boundary {
-            "center_boundary"
-        } else {
-            "zero"
-        },
+        strategy.fixed_tile_anchor_label,
         strategy.max_live_row_blocks,
         strategy.live_row_block_bytes,
         strategy.live_bucket_bytes,
@@ -9982,6 +10328,7 @@ struct FixedTileResidencyEstimate {
     tile_limit: usize,
     tile_edge: usize,
     center_boundary_anchor: bool,
+    anchor_label: &'static str,
 }
 
 fn standard_mfs_execution_config(config: &CliConfig) -> StandardMfsExecutionConfig {
@@ -10013,6 +10360,7 @@ fn estimated_fixed_tile_residency_with_backend(
         return FixedTileResidencyEstimate::default();
     }
     let center_boundary_anchor = standard_mfs_center_boundary_anchor_for_frontend();
+    let anchor_label = standard_mfs_tile_anchor_label_for_frontend();
     let memory_target = standard_mfs_memory_target();
     let default_tile_budget_bytes = memory_target
         .target_bytes
@@ -10023,6 +10371,9 @@ fn estimated_fixed_tile_residency_with_backend(
         .filter(|value| *value > 0)
         .map(|value| value.saturating_mul(1024 * 1024))
         .unwrap_or(default_tile_budget_bytes);
+    if anchor_label == "center_quadrants" && env_usize("CASA_RS_STANDARD_MFS_TILE_EDGE").is_none() {
+        return estimate_fixed_tile_quadrant_residency(config).with_budget(tile_budget_bytes);
+    }
     let tile_edge = env_usize("CASA_RS_STANDARD_MFS_TILE_EDGE")
         .filter(|value| *value > 0)
         .unwrap_or_else(|| {
@@ -10034,6 +10385,7 @@ fn estimated_fixed_tile_residency_with_backend(
             }
         });
     estimate_fixed_tile_residency_for_edge(config, tile_edge, center_boundary_anchor)
+        .with_anchor_label(anchor_label)
         .with_budget(tile_budget_bytes)
 }
 
@@ -10057,10 +10409,61 @@ fn estimate_fixed_tile_residency_for_edge(
         tile_limit: tile_count,
         tile_edge,
         center_boundary_anchor,
+        anchor_label: if center_boundary_anchor {
+            "center_boundary"
+        } else {
+            "zero"
+        },
+    }
+}
+
+fn estimate_fixed_tile_quadrant_residency(config: &CliConfig) -> FixedTileResidencyEstimate {
+    let halo = 3usize;
+    let grid_side = casa_composite_padded_len_estimate(config.imsize, 1.2);
+    let center = grid_side / 2;
+    let tile_edge = center.max(grid_side.saturating_sub(center)).max(1);
+    let bounds = [(0usize, center), (center, grid_side)];
+    let mut halo_cells = 0usize;
+    let mut tile_limit = 0usize;
+    for (x0, x1) in bounds {
+        if x0 >= x1 {
+            continue;
+        }
+        for (y0, y1) in bounds {
+            if y0 >= y1 {
+                continue;
+            }
+            tile_limit += 1;
+            let halo_width = x1
+                .saturating_add(halo)
+                .min(grid_side)
+                .saturating_sub(x0.saturating_sub(halo));
+            let halo_height = y1
+                .saturating_add(halo)
+                .min(grid_side)
+                .saturating_sub(y0.saturating_sub(halo));
+            halo_cells = halo_cells.saturating_add(halo_width.saturating_mul(halo_height));
+        }
+    }
+    FixedTileResidencyEstimate {
+        bytes: halo_cells
+            .saturating_mul(2)
+            .saturating_mul(std::mem::size_of::<Complex64>()),
+        tile_limit: tile_limit.max(1),
+        tile_edge,
+        center_boundary_anchor: true,
+        anchor_label: "center_quadrants",
     }
 }
 
 impl FixedTileResidencyEstimate {
+    fn with_anchor_label(self, anchor_label: &'static str) -> Self {
+        Self {
+            anchor_label,
+            ..self
+        }
+    }
+
     fn with_budget(self, budget_bytes: usize) -> Self {
         if self.tile_limit == 0 || self.bytes <= budget_bytes {
             return self;
@@ -10072,6 +10475,7 @@ impl FixedTileResidencyEstimate {
             tile_limit,
             tile_edge: self.tile_edge,
             center_boundary_anchor: self.center_boundary_anchor,
+            anchor_label: self.anchor_label,
         }
     }
 }
@@ -10102,10 +10506,23 @@ fn standard_mfs_center_boundary_anchor_for_frontend() -> bool {
     env::var("CASA_RS_STANDARD_MFS_TILE_ANCHOR")
         .map(|value| match value.trim().to_ascii_lowercase().as_str() {
             "zero" => false,
-            "center_boundary" | "center-boundary" | "center" | "boundary" => true,
+            "center_boundary" | "center-boundary" | "center" | "boundary" | "center_quadrants"
+            | "center-quadrants" | "center_quadrant" | "center-quadrant" | "quadrants"
+            | "quadrant" | "four" | "4" => true,
             _ => true,
         })
         .unwrap_or(true)
+}
+
+fn standard_mfs_tile_anchor_label_for_frontend() -> &'static str {
+    env::var("CASA_RS_STANDARD_MFS_TILE_ANCHOR")
+        .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "zero" => "zero",
+            "center_quadrants" | "center-quadrants" | "center_quadrant" | "center-quadrant"
+            | "quadrants" | "quadrant" | "four" | "4" => "center_quadrants",
+            _ => "center_boundary",
+        })
+        .unwrap_or("center_boundary")
 }
 
 fn standard_mfs_fixed_tile_backend_enabled_for_frontend() -> bool {
@@ -13624,6 +14041,19 @@ impl PreparedSelection {
         }
         let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let mut counts = StandardMfsPlannedRowSampleCounts::default();
+        let collect_detail = standard_mfs_profile_line_detail_enabled();
+        macro_rules! detail_time {
+            ($field:ident, $expr:expr) => {{
+                if collect_detail {
+                    let started = Instant::now();
+                    let value = $expr;
+                    counts.detail.$field += started.elapsed();
+                    value
+                } else {
+                    $expr
+                }
+            }};
+        }
         match &self.state {
             PreparedState::ExplicitMfs { corr_index, .. } => {
                 let channel_invariant_weight =
@@ -13640,49 +14070,59 @@ impl PreparedSelection {
                     .copied()
                     .zip(self.source_channel_frequencies_hz.iter().copied())
                 {
-                    let local_channel = local_channel_index(
-                        channel_index,
-                        row.channel_origin,
-                        row.data.shape()[1],
+                    let local_channel = detail_time!(
+                        local_channel,
+                        local_channel_index(channel_index, row.channel_origin, row.data.shape()[1])
                     )?;
-                    if *row.flag.get((*corr_index, local_channel)).ok_or_else(|| {
-                        format!("FLAG index [{corr_index}, {channel_index}] out of bounds")
-                    })? {
+                    if detail_time!(
+                        flag_lookup,
+                        *row.flag.get((*corr_index, local_channel)).ok_or_else(|| {
+                            format!("FLAG index [{corr_index}, {channel_index}] out of bounds")
+                        })?
+                    ) {
                         continue;
                     }
-                    let visibility = phase_rotate_visibility(
-                        *row.data.get((*corr_index, local_channel)).ok_or_else(|| {
-                            format!("DATA index [{corr_index}, {channel_index}] out of bounds")
-                        })?,
-                        0.0,
-                        frequency_hz * mfs_frequency_scale,
+                    let visibility = detail_time!(
+                        visibility_lookup,
+                        phase_rotate_visibility(
+                            *row.data.get((*corr_index, local_channel)).ok_or_else(|| {
+                                format!("DATA index [{corr_index}, {channel_index}] out of bounds")
+                            })?,
+                            0.0,
+                            frequency_hz * mfs_frequency_scale,
+                        )
                     );
-                    let natural_weight = if let Some(weight) = channel_invariant_weight {
-                        weight
-                    } else if let Some(weight_spectrum) = &row.weight_spectrum {
-                        *weight_spectrum
-                            .get((*corr_index, local_channel))
-                            .ok_or_else(|| {
-                                format!(
-                                    "WEIGHT_SPECTRUM index [{corr_index}, {channel_index}] out of bounds"
-                                )
+                    let natural_weight = detail_time!(
+                        weight_lookup,
+                        if let Some(weight) = channel_invariant_weight {
+                            weight
+                        } else if let Some(weight_spectrum) = &row.weight_spectrum {
+                            *weight_spectrum
+                                .get((*corr_index, local_channel))
+                                .ok_or_else(|| {
+                                    format!(
+                                        "WEIGHT_SPECTRUM index [{corr_index}, {channel_index}] out of bounds"
+                                    )
+                                })?
+                        } else {
+                            *row.weight.get(*corr_index).ok_or_else(|| {
+                                format!("WEIGHT correlation {corr_index} out of bounds")
                             })?
-                    } else {
-                        *row.weight.get(*corr_index).ok_or_else(|| {
-                            format!("WEIGHT correlation {corr_index} out of bounds")
-                        })?
-                    };
+                        }
+                    );
                     if !(natural_weight.is_finite() && natural_weight > 0.0) {
                         continue;
                     }
                     let lambda_scale = frequency_hz * mfs_lambda_scale;
-                    let weight = weighting_plan
-                        .weight_sample(
+                    let weight = detail_time!(
+                        final_weight,
+                        weighting_plan.weight_sample(
                             row.u_m * lambda_scale,
                             row.v_m * lambda_scale,
                             natural_weight,
                         )
-                        .map_err(|error| error.to_string())?;
+                    )
+                    .map_err(|error| error.to_string())?;
                     counts.candidate_samples += 1;
                     let sample = StandardMfsWeightedSample {
                         u_lambda: row.u_m * lambda_scale,
@@ -13693,11 +14133,12 @@ impl PreparedSelection {
                         gridable: row.gridable,
                         visibility,
                     };
-                    if let Some(planned_sample) = planned_sample_builder
-                        .plan_sample(sample)
-                        .map_err(|error| error.to_string())?
+                    if let Some(planned_sample) =
+                        detail_time!(plan_sample, planned_sample_builder.plan_sample(sample))
+                            .map_err(|error| error.to_string())?
                     {
-                        consume(planned_sample).map_err(|error| error.to_string())?;
+                        detail_time!(consume, consume(planned_sample))
+                            .map_err(|error| error.to_string())?;
                         counts.planned_samples += 1;
                     }
                 }
@@ -13727,48 +14168,54 @@ impl PreparedSelection {
                     .copied()
                     .zip(self.source_channel_frequencies_hz.iter().copied())
                 {
-                    let local_channel = local_channel_index(
-                        channel_index,
-                        row.channel_origin,
-                        row.data.shape()[1],
+                    let local_channel = detail_time!(
+                        local_channel,
+                        local_channel_index(channel_index, row.channel_origin, row.data.shape()[1])
                     )?;
-                    if *row.flag.get((pair.0, local_channel)).ok_or_else(|| {
-                        format!("FLAG index [{}, {channel_index}] out of bounds", pair.0)
-                    })? || *row.flag.get((pair.1, local_channel)).ok_or_else(|| {
-                        format!("FLAG index [{}, {channel_index}] out of bounds", pair.1)
-                    })? {
+                    if detail_time!(
+                        flag_lookup,
+                        *row.flag.get((pair.0, local_channel)).ok_or_else(|| {
+                            format!("FLAG index [{}, {channel_index}] out of bounds", pair.0)
+                        })? || *row.flag.get((pair.1, local_channel)).ok_or_else(|| {
+                            format!("FLAG index [{}, {channel_index}] out of bounds", pair.1)
+                        })?
+                    ) {
                         continue;
                     }
-                    let first_visibility =
-                        *row.data.get((pair.0, local_channel)).ok_or_else(|| {
-                            format!("DATA index [{}, {channel_index}] out of bounds", pair.0)
-                        })?;
-                    let second_visibility =
-                        *row.data.get((pair.1, local_channel)).ok_or_else(|| {
-                            format!("DATA index [{}, {channel_index}] out of bounds", pair.1)
-                        })?;
-                    let (first_weight, second_weight) =
+                    let (first_visibility, second_visibility) = detail_time!(
+                        visibility_lookup,
+                        (
+                            *row.data.get((pair.0, local_channel)).ok_or_else(|| {
+                                format!("DATA index [{}, {channel_index}] out of bounds", pair.0)
+                            })?,
+                            *row.data.get((pair.1, local_channel)).ok_or_else(|| {
+                                format!("DATA index [{}, {channel_index}] out of bounds", pair.1)
+                            })?,
+                        )
+                    );
+                    let (first_weight, second_weight) = detail_time!(
+                        weight_lookup,
                         if let Some(weights) = channel_invariant_pair_weights {
                             weights
                         } else if let Some(weight_spectrum) = &row.weight_spectrum {
                             (
-                            *weight_spectrum
-                                .get((pair.0, local_channel))
-                                .ok_or_else(|| {
-                                    format!(
-                                        "WEIGHT_SPECTRUM index [{}, {channel_index}] out of bounds",
-                                        pair.0
-                                    )
-                                })?,
-                            *weight_spectrum
-                                .get((pair.1, local_channel))
-                                .ok_or_else(|| {
-                                    format!(
-                                        "WEIGHT_SPECTRUM index [{}, {channel_index}] out of bounds",
-                                        pair.1
-                                    )
-                                })?,
-                        )
+                                *weight_spectrum
+                                    .get((pair.0, local_channel))
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "WEIGHT_SPECTRUM index [{}, {channel_index}] out of bounds",
+                                            pair.0
+                                        )
+                                    })?,
+                                *weight_spectrum
+                                    .get((pair.1, local_channel))
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "WEIGHT_SPECTRUM index [{}, {channel_index}] out of bounds",
+                                            pair.1
+                                        )
+                                    })?,
+                            )
                         } else {
                             (
                                 *row.weight.get(pair.0).ok_or_else(|| {
@@ -13778,7 +14225,8 @@ impl PreparedSelection {
                                     format!("WEIGHT correlation {} out of bounds", pair.1)
                                 })?,
                             )
-                        };
+                        }
+                    );
                     if !(first_weight.is_finite()
                         && first_weight > 0.0
                         && second_weight.is_finite()
@@ -13790,26 +14238,34 @@ impl PreparedSelection {
                     if !(natural_weight.is_finite() && natural_weight > 0.0) {
                         continue;
                     }
-                    let visibility = phase_rotate_visibility(
-                        collapse_paired_visibility(
-                            first_visibility,
-                            second_visibility,
-                            *pair_transform,
-                        ),
-                        0.0,
-                        frequency_hz * mfs_frequency_scale,
+                    let visibility = detail_time!(
+                        visibility_lookup,
+                        phase_rotate_visibility(
+                            collapse_paired_visibility(
+                                first_visibility,
+                                second_visibility,
+                                *pair_transform,
+                            ),
+                            0.0,
+                            frequency_hz * mfs_frequency_scale,
+                        )
                     );
-                    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                    if detail_time!(
+                        finite_check,
+                        !(visibility.re.is_finite() && visibility.im.is_finite())
+                    ) {
                         continue;
                     }
                     let lambda_scale = frequency_hz * mfs_lambda_scale;
-                    let weight = weighting_plan
-                        .weight_sample(
+                    let weight = detail_time!(
+                        final_weight,
+                        weighting_plan.weight_sample(
                             row.u_m * lambda_scale,
                             row.v_m * lambda_scale,
                             natural_weight,
                         )
-                        .map_err(|error| error.to_string())?;
+                    )
+                    .map_err(|error| error.to_string())?;
                     counts.candidate_samples += 1;
                     let sample = StandardMfsWeightedSample {
                         u_lambda: row.u_m * lambda_scale,
@@ -13820,11 +14276,12 @@ impl PreparedSelection {
                         gridable: row.gridable,
                         visibility,
                     };
-                    if let Some(planned_sample) = planned_sample_builder
-                        .plan_sample(sample)
-                        .map_err(|error| error.to_string())?
+                    if let Some(planned_sample) =
+                        detail_time!(plan_sample, planned_sample_builder.plan_sample(sample))
+                            .map_err(|error| error.to_string())?
                     {
-                        consume(planned_sample).map_err(|error| error.to_string())?;
+                        detail_time!(consume, consume(planned_sample))
+                            .map_err(|error| error.to_string())?;
                         counts.planned_samples += 1;
                     }
                 }
@@ -13835,6 +14292,380 @@ impl PreparedSelection {
                         .to_string(),
                 );
             }
+        }
+        Ok(counts)
+    }
+
+    #[allow(dead_code)]
+    fn stream_standard_mfs_routed_essentials_row_samples(
+        &mut self,
+        selected_row: &SelectedMainRow,
+        row: &MsImagingEssentials,
+        derived_engine: Option<&MsCalEngine>,
+        planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+        consume: &mut dyn FnMut(StandardMfsRoutedSample) -> Result<(), ImagingError>,
+    ) -> Result<StandardMfsPlannedRowSampleCounts, String> {
+        let mfs_frequency_scale =
+            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        if self.mfs_output_frequency_edge_range_hz.is_none() {
+            self.mfs_output_frequency_edge_range_hz =
+                Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
+        }
+        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
+        let mut counts = StandardMfsPlannedRowSampleCounts::default();
+        let collect_detail = standard_mfs_profile_line_detail_enabled();
+        macro_rules! detail_time {
+            ($field:ident, $expr:expr) => {{
+                if collect_detail {
+                    let started = Instant::now();
+                    let value = $expr;
+                    counts.detail.$field += started.elapsed();
+                    value
+                } else {
+                    $expr
+                }
+            }};
+        }
+        match &self.state {
+            PreparedState::ExplicitMfs { corr_index, .. } => {
+                let channel_invariant_weight =
+                    if row.weight_spectrum.is_none() {
+                        Some(*row.weight.get(*corr_index).ok_or_else(|| {
+                            format!("WEIGHT correlation {corr_index} out of bounds")
+                        })?)
+                    } else {
+                        None
+                    };
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    let local_channel = detail_time!(
+                        local_channel,
+                        local_channel_index(channel_index, row.channel_origin, row.data.shape()[1])
+                    )?;
+                    if detail_time!(
+                        flag_lookup,
+                        *row.flag.get((*corr_index, local_channel)).ok_or_else(|| {
+                            format!("FLAG index [{corr_index}, {channel_index}] out of bounds")
+                        })?
+                    ) {
+                        continue;
+                    }
+                    let visibility = detail_time!(
+                        visibility_lookup,
+                        phase_rotate_visibility(
+                            *row.data.get((*corr_index, local_channel)).ok_or_else(|| {
+                                format!("DATA index [{corr_index}, {channel_index}] out of bounds")
+                            })?,
+                            0.0,
+                            frequency_hz * mfs_frequency_scale,
+                        )
+                    );
+                    let natural_weight = detail_time!(
+                        weight_lookup,
+                        if let Some(weight) = channel_invariant_weight {
+                            weight
+                        } else if let Some(weight_spectrum) = &row.weight_spectrum {
+                            *weight_spectrum
+                                .get((*corr_index, local_channel))
+                                .ok_or_else(|| {
+                                    format!(
+                                        "WEIGHT_SPECTRUM index [{corr_index}, {channel_index}] out of bounds"
+                                    )
+                                })?
+                        } else {
+                            *row.weight.get(*corr_index).ok_or_else(|| {
+                                format!("WEIGHT correlation {corr_index} out of bounds")
+                            })?
+                        }
+                    );
+                    if !(natural_weight.is_finite() && natural_weight > 0.0) {
+                        continue;
+                    }
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
+                    counts.candidate_samples += 1;
+                    let sample = StandardMfsRoutableSample {
+                        u_lambda: row.u_m * lambda_scale,
+                        v_lambda: row.v_m * lambda_scale,
+                        w_lambda: row.w_m * lambda_scale,
+                        natural_weight,
+                        sumwt_factor: 1.0,
+                        gridable: row.gridable,
+                        visibility,
+                    };
+                    if let Some(routed_sample) =
+                        detail_time!(plan_sample, planned_sample_builder.route_sample(sample))
+                            .map_err(|error| error.to_string())?
+                    {
+                        detail_time!(consume, consume(routed_sample))
+                            .map_err(|error| error.to_string())?;
+                        counts.planned_samples += 1;
+                    }
+                }
+            }
+            PreparedState::CollapsedMfs {
+                plane_stokes,
+                transform: pair_transform,
+                pair,
+                ..
+            } => {
+                let sumwt_factor = reported_sumwt_factor_for_paired_plane(*plane_stokes);
+                let channel_invariant_pair_weights = if row.weight_spectrum.is_none() {
+                    Some((
+                        *row.weight.get(pair.0).ok_or_else(|| {
+                            format!("WEIGHT correlation {} out of bounds", pair.0)
+                        })?,
+                        *row.weight.get(pair.1).ok_or_else(|| {
+                            format!("WEIGHT correlation {} out of bounds", pair.1)
+                        })?,
+                    ))
+                } else {
+                    None
+                };
+                for (channel_index, frequency_hz) in self
+                    .source_channel_indices
+                    .iter()
+                    .copied()
+                    .zip(self.source_channel_frequencies_hz.iter().copied())
+                {
+                    let local_channel = detail_time!(
+                        local_channel,
+                        local_channel_index(channel_index, row.channel_origin, row.data.shape()[1])
+                    )?;
+                    if detail_time!(
+                        flag_lookup,
+                        *row.flag.get((pair.0, local_channel)).ok_or_else(|| {
+                            format!("FLAG index [{}, {channel_index}] out of bounds", pair.0)
+                        })? || *row.flag.get((pair.1, local_channel)).ok_or_else(|| {
+                            format!("FLAG index [{}, {channel_index}] out of bounds", pair.1)
+                        })?
+                    ) {
+                        continue;
+                    }
+                    let (first_visibility, second_visibility) = detail_time!(
+                        visibility_lookup,
+                        (
+                            *row.data.get((pair.0, local_channel)).ok_or_else(|| {
+                                format!("DATA index [{}, {channel_index}] out of bounds", pair.0)
+                            })?,
+                            *row.data.get((pair.1, local_channel)).ok_or_else(|| {
+                                format!("DATA index [{}, {channel_index}] out of bounds", pair.1)
+                            })?,
+                        )
+                    );
+                    let (first_weight, second_weight) = detail_time!(
+                        weight_lookup,
+                        if let Some(weights) = channel_invariant_pair_weights {
+                            weights
+                        } else if let Some(weight_spectrum) = &row.weight_spectrum {
+                            (
+                                *weight_spectrum
+                                    .get((pair.0, local_channel))
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "WEIGHT_SPECTRUM index [{}, {channel_index}] out of bounds",
+                                            pair.0
+                                        )
+                                    })?,
+                                *weight_spectrum
+                                    .get((pair.1, local_channel))
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "WEIGHT_SPECTRUM index [{}, {channel_index}] out of bounds",
+                                            pair.1
+                                        )
+                                    })?,
+                            )
+                        } else {
+                            (
+                                *row.weight.get(pair.0).ok_or_else(|| {
+                                    format!("WEIGHT correlation {} out of bounds", pair.0)
+                                })?,
+                                *row.weight.get(pair.1).ok_or_else(|| {
+                                    format!("WEIGHT correlation {} out of bounds", pair.1)
+                                })?,
+                            )
+                        }
+                    );
+                    if !(first_weight.is_finite()
+                        && first_weight > 0.0
+                        && second_weight.is_finite()
+                        && second_weight > 0.0)
+                    {
+                        continue;
+                    }
+                    let natural_weight = 0.5 * (first_weight + second_weight);
+                    if !(natural_weight.is_finite() && natural_weight > 0.0) {
+                        continue;
+                    }
+                    let visibility = detail_time!(
+                        visibility_lookup,
+                        phase_rotate_visibility(
+                            collapse_paired_visibility(
+                                first_visibility,
+                                second_visibility,
+                                *pair_transform,
+                            ),
+                            0.0,
+                            frequency_hz * mfs_frequency_scale,
+                        )
+                    );
+                    if detail_time!(
+                        finite_check,
+                        !(visibility.re.is_finite() && visibility.im.is_finite())
+                    ) {
+                        continue;
+                    }
+                    let lambda_scale = frequency_hz * mfs_lambda_scale;
+                    counts.candidate_samples += 1;
+                    let sample = StandardMfsRoutableSample {
+                        u_lambda: row.u_m * lambda_scale,
+                        v_lambda: row.v_m * lambda_scale,
+                        w_lambda: row.w_m * lambda_scale,
+                        natural_weight,
+                        sumwt_factor,
+                        gridable: row.gridable,
+                        visibility,
+                    };
+                    if let Some(routed_sample) =
+                        detail_time!(plan_sample, planned_sample_builder.route_sample(sample))
+                            .map_err(|error| error.to_string())?
+                    {
+                        detail_time!(consume, consume(routed_sample))
+                            .map_err(|error| error.to_string())?;
+                        counts.planned_samples += 1;
+                    }
+                }
+            }
+            _ => {
+                return Err(
+                    "internal error: MS essentials standard MFS routing requires MFS state"
+                        .to_string(),
+                );
+            }
+        }
+        Ok(counts)
+    }
+
+    fn stream_standard_mfs_routed_essentials_row_visibility_runs(
+        &mut self,
+        selected_row: &SelectedMainRow,
+        row: MsImagingEssentials,
+        derived_engine: Option<&MsCalEngine>,
+        source_channel_indices: Arc<[usize]>,
+        planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+        next_input_seq: &mut u64,
+        consume: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+    ) -> Result<StandardMfsPlannedRowSampleCounts, String> {
+        let mfs_frequency_scale =
+            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        if self.mfs_output_frequency_edge_range_hz.is_none() {
+            self.mfs_output_frequency_edge_range_hz =
+                Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
+        }
+        let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
+        let mut counts = StandardMfsPlannedRowSampleCounts::default();
+        if !row.gridable {
+            return Ok(counts);
+        }
+        let polarization = match &self.state {
+            PreparedState::ExplicitMfs { corr_index, .. } => {
+                StandardMfsVisibilityPolarization::Explicit {
+                    corr_index: *corr_index,
+                    sumwt_factor: 1.0,
+                }
+            }
+            PreparedState::CollapsedMfs {
+                plane_stokes,
+                transform,
+                pair,
+                ..
+            } => StandardMfsVisibilityPolarization::CollapsedPair {
+                first_corr_index: pair.0,
+                second_corr_index: pair.1,
+                transform: standard_mfs_pair_collapse_transform(*transform),
+                sumwt_factor: reported_sumwt_factor_for_paired_plane(*plane_stokes),
+            },
+            _ => {
+                return Err(
+                    "internal error: MS essentials standard MFS row routing requires MFS state"
+                        .to_string(),
+                );
+            }
+        };
+        let channel_lambda_scales = self
+            .source_channel_frequencies_hz
+            .iter()
+            .map(|frequency_hz| frequency_hz * mfs_lambda_scale)
+            .collect::<Vec<_>>();
+        let channel_lambda_scales = Arc::<[f64]>::from(channel_lambda_scales.into_boxed_slice());
+        if source_channel_indices.len() != channel_lambda_scales.len() {
+            return Err(format!(
+                "internal error: source channel index count {} differs from frequency count {}",
+                source_channel_indices.len(),
+                channel_lambda_scales.len()
+            ));
+        }
+
+        let uvw_m = [row.u_m, row.v_m, row.w_m];
+        let routed_row = Arc::new(StandardMfsRoutedVisibilityRow {
+            uvw_m,
+            spw_id: row.spw_id,
+            channel_origin: row.channel_origin,
+            source_channel_indices,
+            channel_lambda_scales: Arc::clone(&channel_lambda_scales),
+            data: row.data,
+            flag: row.flag,
+            weight: Arc::from(row.weight.into_boxed_slice()),
+            weight_spectrum: row.weight_spectrum,
+            gridable: row.gridable,
+            polarization,
+        });
+
+        let mut run_start = None::<usize>;
+        let mut tap_centers = Vec::<[u32; 2]>::new();
+        for (source_slot, lambda_scale) in channel_lambda_scales.iter().copied().enumerate() {
+            counts.candidate_samples += 1;
+            let u_lambda = uvw_m[0] * lambda_scale;
+            let v_lambda = uvw_m[1] * lambda_scale;
+            let Some(center) = planned_sample_builder.route_tap_center(u_lambda, v_lambda) else {
+                if let Some(start) = run_start.take() {
+                    let run_len = tap_centers.len();
+                    let centers = Arc::<[[u32; 2]]>::from(
+                        std::mem::take(&mut tap_centers).into_boxed_slice(),
+                    );
+                    let run = StandardMfsRoutedVisibilityRun {
+                        row: Arc::clone(&routed_row),
+                        source_slot_range: start..source_slot,
+                        tap_centers: centers,
+                        first_input_seq: *next_input_seq,
+                    };
+                    consume(&run).map_err(|error| error.to_string())?;
+                    *next_input_seq = (*next_input_seq).saturating_add(run_len as u64);
+                    counts.planned_samples += run_len;
+                }
+                continue;
+            };
+            if run_start.is_none() {
+                run_start = Some(source_slot);
+            }
+            tap_centers.push(center);
+        }
+        if let Some(start) = run_start {
+            let run_len = tap_centers.len();
+            let centers = Arc::<[[u32; 2]]>::from(tap_centers.into_boxed_slice());
+            let run = StandardMfsRoutedVisibilityRun {
+                row: routed_row,
+                source_slot_range: start..channel_lambda_scales.len(),
+                tap_centers: centers,
+                first_input_seq: *next_input_seq,
+            };
+            consume(&run).map_err(|error| error.to_string())?;
+            *next_input_seq = (*next_input_seq).saturating_add(run_len as u64);
+            counts.planned_samples += run_len;
         }
         Ok(counts)
     }
@@ -18486,6 +19317,21 @@ fn collapse_paired_visibility(
     }
 }
 
+fn standard_mfs_pair_collapse_transform(
+    transform: PairCollapseTransform,
+) -> StandardMfsPairCollapseTransform {
+    match transform {
+        PairCollapseTransform::HalfSum => StandardMfsPairCollapseTransform::HalfSum,
+        PairCollapseTransform::HalfDifference => StandardMfsPairCollapseTransform::HalfDifference,
+        PairCollapseTransform::PositiveHalfImagDifference => {
+            StandardMfsPairCollapseTransform::PositiveHalfImagDifference
+        }
+        PairCollapseTransform::NegativeHalfImagDifference => {
+            StandardMfsPairCollapseTransform::NegativeHalfImagDifference
+        }
+    }
+}
+
 fn collapse_paired_visibility_batch(
     paired: &ParallelHandBatch,
     transform: PairCollapseTransform,
@@ -19404,6 +20250,30 @@ mod tests {
         let larger = estimated_fixed_tile_residency_with_backend(&config, true);
         assert_eq!(larger.tile_edge, 32);
         assert!(larger.tile_limit > tight.tile_limit);
+    }
+
+    #[test]
+    fn standard_mfs_memory_planner_supports_center_quadrant_tiles() {
+        let _env_lock = ENV_LOCK.lock().unwrap();
+        let _backend = EnvGuard::set("CASA_RS_STANDARD_MFS_BACKEND", "fixed_tile");
+        let _target = EnvGuard::set("CASA_RS_STANDARD_MFS_MEMORY_TARGET_MB", "512");
+        let _tile_edge = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_EDGE");
+        let _tile_resident = EnvGuard::unset("CASA_RS_STANDARD_MFS_TILE_RESIDENT_MB");
+        let _tile_anchor = EnvGuard::set("CASA_RS_STANDARD_MFS_TILE_ANCHOR", "center_quadrants");
+        let mut config =
+            minimal_start_model_config(PathBuf::from("input.ms"), PathBuf::from("out"));
+        config.imsize = 1024;
+        config.weighting = WeightingMode::Briggs { robust: 0.5 };
+
+        let estimate = estimated_fixed_tile_residency_with_backend(&config, true);
+        assert_eq!(estimate.tile_limit, 4);
+        assert_eq!(estimate.anchor_label, "center_quadrants");
+        assert!(estimate.center_boundary_anchor);
+        assert!(estimate.tile_edge > 32);
+
+        let plan = standard_mfs_memory_plan(&config, 64);
+        assert_eq!(plan.fixed_tile_resident_limit_estimate, 4);
+        assert_eq!(plan.fixed_tile_anchor_label, "center_quadrants");
     }
 
     #[test]
