@@ -14550,6 +14550,7 @@ impl PreparedSelection {
         Ok(counts)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn stream_standard_mfs_routed_essentials_row_visibility_runs(
         &mut self,
         selected_row: &SelectedMainRow,

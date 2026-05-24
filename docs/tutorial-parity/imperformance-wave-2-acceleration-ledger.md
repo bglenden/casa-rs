@@ -1,7 +1,7 @@
 # ImPerformance Wave 2 Acceleration Ledger
 
 Truth class: current descriptive
-Last reality check: 2026-05-23
+Last reality check: 2026-05-24
 Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/stage_wave1_datasets.py tools/perf/imager/test_run_workload.py tools/perf/imager/test_stage_wave1_datasets.py`; `python3 -m unittest tools/perf/imager/test_stage_wave1_datasets.py tools/perf/imager/test_run_workload.py`; `cargo test -p casa-imaging paired_f64_product_grid_matches_separate_updates --lib`; `cargo test -p casa-imaging streaming_dirty_executor_accumulates_borrowed_row_blocks --lib`; `cargo test -p casa-imaging weighting --lib`; `cargo test -p casa-imaging streaming_density_samples_match_batch_density_weighting --lib`; `cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_briggs_weighting_matches_borrowed_weighting --lib`; `cargo test -p casa-imaging positive_tap_span_reconstructs_legacy_positive_taps --lib`; `cargo test -p casa-imaging compact_positive_tap_grid_and_degrid_match_product_taps --lib`; `cargo test -p casa-imaging fused_residual_refresh_matches_separate_degrid_grid --lib`; `cargo test -p casa-imaging standard_mfs_plan_buckets_gridder_accepted_samples --lib`; `cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=4 cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `CASA_RS_STANDARD_MFS_GRID_THREADS=auto cargo test -p casa-imaging owned_standard_mfs_briggs_clean_matches_borrowed_run --lib`; `cargo test -p casa-imaging trace_residual_refresh_matches_fft_residual_and_prediction_order --lib`; `cargo test -p casa-imaging degrid --lib`; `cargo test -p casa-imaging standard_mfs_thread_count_parser_accepts_numeric_and_auto_values --lib`; `cargo test -p casa-imaging standard_mfs_metal_backend_selection_is_explicit_and_gated --lib`; `cargo test -p casa-tables tiled_selected_row_reads_reuse_shared_tile_cache --lib`; `cargo test -p casars-imager standard_mfs_memory_planner_thread_parser_matches_core_spelling --lib`; `cargo test -p casars-imager standard_mfs_trace_free_prepare_matches_forced_trace_path --lib`; `cargo test -p casars-imager managed_output --lib`; `cargo test -p casars-imager --example profile_imager`; `cargo build --release -p casars-imager --example profile_imager`; `just quick`; `just docs-check`; `git diff --check`; selected `tools/perf/imager/run_workload.py` and `profile_imager` runs listed below, including the positive compact tap paired profile, bounded serial attribution probes, final full-shape one-worker profiles on 2026-05-20, and bounded fixed-tile single-worker density-direct profiles on 2026-05-22
 
 Wave issue: #263
@@ -9,6 +9,28 @@ Child issues: #264, #265, #266, #267
 
 This note records the first ImPerformance Wave 2 acceleration pass on the
 correctness-green full-medium VLA standard-MFS target from Wave 1.
+
+## Retained CPU Backend Decision
+
+Current retained standard-MFS CPU backend:
+
+```text
+Tile anchor: CASA_RS_STANDARD_MFS_TILE_ANCHOR=center_quadrants
+Worker count for retained medium heavy-clean evidence: 4
+Residual metadata cache: not retained
+Manual spatial/temporal hot splitting: not retained
+Adaptive per-chunk tiles: not retained
+Queue snapshot plotting hooks: not retained
+Detailed experiment summary: docs/tutorial-parity/imperformance-wave-2-experiment-summary.md
+```
+
+The retained path uses four center-quadrant fixed halo tiles, direct resident
+tile updates, row/channel routed visibility runs, and the fixed-tile inbox
+scheduler. This supersedes the diagnostic experiments later in this ledger
+where they mention temporal split, selected quadtree split, adaptive chunking,
+queue snapshots, or residual metadata caching as selectable env-driven paths.
+Those controls were useful evidence-gathering tools but are no longer part of
+the production-facing Wave 2 backend surface.
 
 ## Fixed-Tile Backend Checkpoint
 
@@ -100,7 +122,7 @@ Additional validation recorded for this repair:
 
 ```text
 cargo check -p casa-imaging -p casars-imager
-cargo test -p casa-imaging direct_resident_tiles_match_scratch_tile_dirty_and_residual_paths --lib
+cargo test -p casa-imaging direct_resident_tiles_match_evicted_tile_dirty_and_residual_paths --lib
 cargo test -p casa-imaging streaming_weighted_standard_mfs_clean_matches_retained_batches --lib
 cargo test -p casars-imager standard_mfs_memory --lib
 cargo test -p casars-imager standard_mfs_retained_prepare_guard --lib
@@ -1458,7 +1480,7 @@ cargo check -p casa-imaging
 cargo test -p casa-imaging block_tile_buckets --lib
 cargo test -p casa-imaging prepared_tile_row_block --lib
 cargo test -p casa-imaging standard_mfs_sample_classifier --lib
-cargo test -p casa-imaging direct_resident_tiles_match_scratch_tile_dirty_and_residual_paths --lib
+cargo test -p casa-imaging direct_resident_tiles_match_evicted_tile_dirty_and_residual_paths --lib
 cargo test -p casa-imaging persistent_tile_scheduler_matches_direct_dirty_and_residual --lib
 cargo check -p casa-imaging -p casars-imager
 ```
@@ -2150,12 +2172,12 @@ the low thousands across about `3.0M` enqueued runs, so queue mutex contention
 is not the first-order explanation. Hot splitting tile 3 is the next data-backed
 candidate.
 
-The temporal hot-split probe implemented an explicit diagnostic path behind
-`CASA_RS_STANDARD_MFS_TEMPORAL_SPLIT=forced`. In that mode multiple workers may
-drain separate chunks from the same hot tile, each worker grids into a private
-tile scratch buffer, and the task merges its scratch tile into the resident tile
-when it finishes. Correctness gates passed with forced temporal splitting, but
-the bounded medium timing rejects this shape as a retained optimization:
+The temporal hot-split probe implemented a diagnostic path where multiple
+workers could drain separate chunks from the same hot tile, each worker gridded
+into a private tile scratch buffer, and the task merged its scratch tile into
+the resident tile when it finished. Correctness gates passed, but the bounded
+medium timing rejected this shape as a retained optimization, and the code path
+has been removed from the production backend:
 
 | Candidate | Artifact | Frontend | Core | Scheduler | Split drains | Worker util | Peak RSS | Decision |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -2173,6 +2195,151 @@ if pursued, should be spatial splitting or a lower-copy subtile/stripe
 reduction, not whole-tile temporal scratch. One accidental full-shape
 `run_workload.py` attempt during this probe was interrupted and is not used as
 evidence.
+
+Spatial hot splitting was added as a quadtree owner-partition experiment. The
+partition could either split all four center quadrants uniformly or replace
+selected hot parent tiles with four spatial children. It kept the direct
+tile-inbox contract: no temporal scratch buffers, no per-sample scheduler
+tasks, and one active worker per spatial tile. The measured gains were too small
+and inconsistent for the added surface area, so this code path has been removed
+from the retained backend.
+
+| Candidate | Artifact | Frontend | Core | Scheduler | Tile count | Hot share | Worker util | Peak RSS | Decision |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| retained center-quadrant 4w baseline | `target/imperformance-wave2/priority-ready-20260524/medium-briggs-center-quadrants-4w-priority-inbox.log` | 20.40s | 7.24s | 7.17s | 4 | 41.52% | 47.3% | 9.55GB | reference |
+| all center quadrants split one level | `target/imperformance-wave2/spatial-split-20260524/medium-briggs-all-quadrants-quadtree-4w.log` | 19.84s | 6.97s | 6.90s | 16 | 25.77% | 47.5% | 9.55GB | rejected; extra routing/drain overhead reduces the benefit |
+| selected hot tile 3 split one level | `target/imperformance-wave2/spatial-split-20260524/medium-briggs-hot-tile3-quadtree-4w.log` | 19.56s | 6.72s | 6.64s | 7 | 29.24% | 48.8% | 9.55GB | retained for next pass |
+| selected tiles 1 and 3 split one level | `target/imperformance-wave2/spatial-split-20260524/medium-briggs-hot-tiles1-3-quadtree-4w.log` | 19.79s | 6.85s | 6.77s | 10 | 25.77% | 48.5% | 9.58GB | rejected; no improvement over splitting tile 3 only |
+| selected hot tile 3 split two levels | `target/imperformance-wave2/spatial-split-20260524/medium-briggs-hot-tile3-quadtree-depth2-4w.log` | 19.94s | 7.01s | 6.94s | 19 | 29.24% | 47.2% | 9.55GB | rejected; recursive split adds overhead without reducing the remaining global hot tile |
+
+The retained selected split improves the bounded dirty-only 4-worker core by
+about `7.3%` and frontend wall by about `4.1%` versus the current
+center-quadrant priority baseline. It does not solve utilization by itself: the
+next hot tile after splitting parent tile 3 is the unsplit parent tile 1, and
+worker utilization remains just under `50%`. Splitting tile 1 as well did not
+beat the selected tile-3-only run on this measurement, so the next parallel pass
+should focus on reducing routing/publication overhead or adding a data-driven
+split planner rather than blindly increasing tile count.
+
+A heavier clean probe was run to check whether more repeated residual-refresh
+work makes spatial splitting more valuable. The workload used the same
+64-channel, 1024-pixel medium MS but ran multiscale clean with `niter=500` and
+`minor_cycle_length=50`, producing `11` major cycles and `500` minor
+iterations.
+
+| Candidate | Artifact | Frontend | Core | PSF grid | Residual grid/degrid | Major refresh | Worker util | Peak RSS | Decision |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| center-quadrant 4w baseline | `target/imperformance-wave2/heavy-clean-20260524/medium-briggs-niter500-cycle50-center-quadrants-4w.log` | 97.81s | 85.17s | 3.86s | 70.81s | 67.49s | 50-51% residual stages | 9.55GB | retained baseline winner |
+| selected hot tile 3 split one level | `target/imperformance-wave2/heavy-clean-20260524/medium-briggs-niter500-cycle50-hot-tile3-4w.log` | 97.25s | 84.40s | 3.40s | 70.50s | 67.62s | 52-53% residual stages | 9.55GB | weak signal only; not enough to justify more manual splitting |
+| residual metadata cache, center-quadrant 4w | `target/imperformance-wave2/heavy-clean-20260524/medium-briggs-niter500-cycle50-center-quadrants-4w-metadata-cache.log`; RSS rerun `...-metadata-cache-rss-unsandboxed.log` | 95.90s `/usr/bin/time`; 98.78s RSS rerun | n/a | n/a | 61.99s residual stage sum; 65.04s RSS rerun | n/a | 60-61% residual stages | 12.85GB max RSS / 13.46GB peak footprint; metadata cache logical bytes 6.10GB | gated experiment retained for follow-up; needs planner accounting before default |
+
+The heavier run confirms the split is not the dominant lever. The selected
+split improved frontend by only `0.6%` and core by `0.9%`; residual
+grid/degrid moved by less than `0.5%`, while major-cycle refresh was
+effectively flat. The tile-worker utilization rises slightly in the repeated
+residual stages, but only to roughly `52-53%`. This points back to the
+producer/router and work-publication path, not more static spatial splitting,
+as the higher-leverage parallel target.
+
+The residual metadata-cache experiment keeps the center-quadrant partition and
+caches invariant row/routing metadata after the initial dirty pass: UVW,
+flags, weights, channel lambda scales, tap centers, and run boundaries. Residual
+passes still reread DATA, but no longer reread FLAG/WEIGHT/UVW or reroute tap
+centers. The residual replay detail confirms `get_flag_ms=0`,
+`get_weight_ms=0`, and `get_geometry_ms=0` after the initial pass. Residual
+stage total across the ten refreshes moved from `66.96s` to `61.99s`, while
+whole-run wall moved from `97.81s` to `95.90s` on the first run. An
+unsandboxed `time -l` rerun was noisier at `98.78s`, but reported
+`12.85GB` maximum resident set size and `13.46GB` peak memory footprint, below
+the default `16GiB` active target on this machine. The cache accounted about
+`6.10GB` of logical metadata for a modest and noisy speed signal, so it was not
+retained. Any future equivalent must be budgeted directly by the central memory
+planner before it is reintroduced.
+
+Adaptive per-chunk tiling was then extended from dirty/PSF into residual
+refresh so the heavy-clean case could test the strongest version of equal-work
+chunking. The result is useful diagnostic evidence but is rejected as a runtime
+backend shape: it balances worker work inside each chunk, but repeated
+per-chunk planning and routing across every major refresh more than erases that
+gain.
+
+| Candidate | Artifact | Wall/frontend | Core/profile | Dirty adaptive total | Residual adaptive total | Worker balance | Decision |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| center-quadrant 4w baseline | `target/imperformance-wave2/heavy-clean-20260524/medium-briggs-niter500-cycle50-center-quadrants-4w.log` | 97.81s | 85.17s | n/a | 70.81s residual grid/degrid | 50-51% residual utilization, hot tile about 41.6% | reference |
+| adaptive chunk 4w, 4M lanes/chunk | `target/imperformance-wave2/adaptive-chunks-20260524/medium-briggs-niter500-cycle50-adaptive-4w.log` | 193.52s `/usr/bin/time` | final profile line not emitted | 5.09s | 5.52s to 8.04s per residual refresh summary | per-chunk residual workers mostly 90-98%, hot share about 25% | rejected; keep as diagnostic proof that equal-work chunking alone is not enough |
+| adaptive chunk 4w with partition cache | `target/imperformance-wave2/adaptive-chunks-20260524/medium-briggs-niter500-cycle50-adaptive-cache-4w.log` | 152.88s `/usr/bin/time` | final profile line not emitted | 5.29s | 4.04s to 5.89s per residual refresh summary | per-refresh partition cache hits 50/50, `plan_tiles_total_ms=0` | improved but still rejected versus center quadrants |
+
+The adaptive scheduler portion improves the local balance signal, but the run
+is about `2.0x` slower end-to-end than the center-quadrant baseline. The log
+shows why: each residual refresh repeats `50` chunk plans, with tile planning
+alone rising from about `1.36s` to `2.15s` per refresh and route/enqueue around
+`0.9s` to `1.28s` per refresh. Later adaptive residual streaming passes spend
+roughly `13s` to `17s` in the replay/prepare path, while the fixed-quadrant
+residual pass is roughly `6s` to `7s`. The retained lesson is that load-balanced
+chunk partitions are useful, but not if they are recomputed and rerouted from
+scratch for every major-cycle refresh.
+
+An adaptive partition cache was then added because the logged chunk-shape
+summaries showed that dirty and every residual refresh recomputed the same
+partition for each chunk index. The cache keys by grid shape, halo, requested
+tile count, chunk index, run count, lane count, and a hash plus first/last
+center sentinels. It keeps only the lightweight partition, not visibility
+payloads or tap plans. This removes repeated partition planning from residual
+refresh (`partition_cache_hits=50`, `partition_cache_misses=0`,
+`plan_tiles_total_ms=0.000` for each residual refresh), improving the adaptive
+heavy run from `193.52s` to `152.88s`. The result remains `56%` slower than
+the retained center-quadrant baseline, so adaptive chunking is still diagnostic
+only. The likely remaining adaptive overhead is repeated route/enqueue plus
+per-chunk scheduler/store setup, not tile-shape planning.
+
+UV/tile distribution plots were generated to inspect why the manual hot split
+did not move the heavy-clean result:
+
+```text
+target/imperformance-wave2/uv-tile-plots-20260524/hot-tile3/uv_tile_distribution_timeseries.png
+target/imperformance-wave2/uv-tile-plots-20260524/hot-tile3/uv_tile_distribution_center_zoom.png
+target/imperformance-wave2/uv-tile-plots-20260524/hot-tile3/uv_tile_shares_by_time.png
+target/imperformance-wave2/uv-tile-plots-20260524/hot-tile3/summary.json
+```
+
+The plots sample five active row windows (`0%`, `25%`, `50%`, `75%`, `95%`) in
+the same 64-channel, 1024-pixel, 0.5arcsec standard-MFS geometry. They show
+that splitting parent tile 3 into four spatial children mostly creates three
+nearly empty children; the child nearest the grid origin remains hot. They also
+show that the hottest quadrant changes over row-order time: tile 1 dominates
+the `0%`, `50%`, and `75%` windows, while the split child tile 3 dominates the
+`25%` and `95%` windows. Representative top-tile shares are `49.4%` at the
+`25%` window and `63.4%` at the `95%` window. This explains why the stage-level
+hot-tile share and the manual split performance were misleading: row-order
+windows are much more imbalanced than the whole-stage totals.
+
+A live queue snapshot diagnostic was then added because the static row-window
+plots still do not show what workers can actually consume at a given instant.
+It wrote sampled CSV snapshots with `queued` tap centers from the live tile
+inboxes, `in_flight` tap centers that workers had drained into local chunks but
+not finished yet, and a bounded reservoir of `gridded` tap centers that workers
+had already completed. This diagnostic was useful for the investigation but was
+removed from the retained backend.
+
+Verification and diagnostic artifact:
+
+```text
+cargo test -p casa-imaging tile_inbox_scheduler_schedules_tiles_and_drains_all_runs --lib
+target/imperformance-wave2/live-queue-snapshots-20260524/queue_snapshot_timeseries.png
+target/imperformance-wave2/live-queue-snapshots-20260524/snapshots/
+```
+
+The first medium dirty diagnostic run used 4 center-quadrant workers,
+64 channels, 1024 pixels, Briggs weighting, and `niter=0`. Runtime was
+`40.22s` with snapshot sampling enabled, so it should not be compared as a
+performance number. The plot shows queue contents arriving in bursts, but it
+also corrects an important ambiguity in the earlier queued-only view:
+`queued=0` often means the work has already been drained into an active worker
+chunk, not necessarily that all workers are starving. Representative snapshots
+show tens of thousands of in-flight samples, and one publish snapshot shows
+`745,007` queued samples. This is a better visualization of the producer,
+in-flight worker, and completed-work states than either the static row-window
+UV plots or the queued-only snapshot prototype.
 
 ## Reproduction
 

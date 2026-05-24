@@ -2966,6 +2966,7 @@ fn compute_residual_standard_sample_replay(
     Ok(image)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_standard_routed_sample_replay(
     _geometry: ImageGeometry,
     gridder: &StandardGridder,
@@ -3046,6 +3047,7 @@ fn compute_residual_standard_routed_sample_replay(
     Ok(image)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_standard_routed_visibility_run_replay(
     _geometry: ImageGeometry,
     gridder: &StandardGridder,
