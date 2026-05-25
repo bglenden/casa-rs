@@ -11359,6 +11359,8 @@ mod tests {
     use num_complex::Complex32;
     use serial_test::serial;
 
+    #[cfg(target_os = "macos")]
+    use super::compute_dirty_psf_and_residual_standard_metal;
     use super::{
         CleanConfig, CleanStopReason, CompatibilityMode, CubeChannelRequest, CubeImagingRequest,
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
@@ -11371,14 +11373,13 @@ mod tests {
         VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
         build_direct_pixel_coordinates, build_multiscale_scale_masks, compute_cycle_threshold,
-        compute_dirty_psf_and_residual_standard, compute_dirty_psf_and_residual_standard_metal,
-        compute_psf, compute_psf_direct, compute_residual, compute_residual_direct,
-        direct_predict_visibility, dirty_clean_config, make_multiscale_kernel, mean_stddev,
-        minor_cycle_stop_reason, mosaic_pointing_contributes_by_simple_pb_center,
-        mosaic_pointing_pixel_inside_image, mosaic_projector_sampling,
-        parse_standard_mfs_backend_selection, parse_standard_mfs_thread_count, peak_abs_value,
-        peak_location_masked, run_cube, run_dirty_cube, run_hogbom_minor_cycle, run_imaging,
-        run_imaging_owned, run_mtmfs,
+        compute_dirty_psf_and_residual_standard, compute_psf, compute_psf_direct, compute_residual,
+        compute_residual_direct, direct_predict_visibility, dirty_clean_config,
+        make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
+        mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
+        mosaic_projector_sampling, parse_standard_mfs_backend_selection,
+        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked, run_cube,
+        run_dirty_cube, run_hogbom_minor_cycle, run_imaging, run_imaging_owned, run_mtmfs,
         run_standard_mfs_planned_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
         run_standard_mfs_weighted_sample_streaming_with_execution_config,
