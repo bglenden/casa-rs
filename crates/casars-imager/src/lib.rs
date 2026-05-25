@@ -2674,7 +2674,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
             if use_metal_grouped_prefill {
                 let mut prefill = StandardMfsMetalGroupedInputCachePrefill::new(request.geometry)
                     .map_err(|error| error.to_string())?;
-                stream_standard_mfs_density_and_routed_visibility_cache_row_blocks(
+                stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
                     ms,
                     config,
                     data_column,
@@ -2692,7 +2692,7 @@ fn run_standard_mfs_fixed_tile_streaming_clean_from_open_ms(
                     &mut density_stats,
                     &mut weighting_plan,
                     &planned_sample_builder,
-                    |run| prefill.append_run(run),
+                    &mut prefill,
                 )?;
                 if standard_mfs_profile_detail_enabled() {
                     eprintln!(
@@ -9556,6 +9556,119 @@ where
     Ok(accepted_density_samples)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
+    ms: &MeasurementSet,
+    config: &CliConfig,
+    data_column_kind: VisibilityDataColumn,
+    selection: &SelectedRowsContext,
+    table_values: &PreparedSelectionTableValues,
+    active_selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+    channel_axes: Arc<MsImagingChannelAxisCatalog>,
+    channel_read_range: Option<SelectedChannelReadRange>,
+    geometry_columns: &PreparedGeometryColumnCache,
+    row_block_rows: usize,
+    prepare_started_at: Instant,
+    prepare_stage_timings: &mut PreparePlaneInputStageTimings,
+    accumulate_timings: &mut AccumulateRowTimings,
+    pass_stats: &mut StandardMfsStreamingPassStats,
+    weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+    planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+    prefill: &mut StandardMfsMetalGroupedInputCachePrefill,
+) -> Result<usize, String> {
+    let mut accepted_density_samples = 0usize;
+    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+        config,
+        table_values,
+        selection.phase_center.clone(),
+        false,
+    )?;
+    let source_channel_indices =
+        Arc::<[usize]>::from(prepared.source_channel_indices.clone().into_boxed_slice());
+    let mut next_input_seq = 0u64;
+    for row_chunk in active_selected_rows.chunks(row_block_rows) {
+        let stage_started_at = Instant::now();
+        let (block, read_timings) = read_ms_imaging_essentials_block(
+            ms,
+            data_column_kind,
+            Arc::clone(&channel_axes),
+            geometry_columns,
+            row_chunk,
+            channel_read_range,
+        )?;
+        let get_ms_values_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.get_ms_values_into_processing_buffer += get_ms_values_elapsed;
+        pass_stats.add_get_ms_values_detail(GetMsValuesTimings {
+            data_column: read_timings.data_column,
+            flag_column: read_timings.flag_column,
+            weight_column: read_timings.weight_column,
+            weight_spectrum: read_timings.weight_spectrum,
+            geometry_rows: read_timings.uvw_column,
+        });
+
+        let stage_started_at = Instant::now();
+        let before_accumulate = *accumulate_timings;
+        let mut block_density_samples = 0usize;
+        let mut block_candidate_samples = 0usize;
+        let mut block_planned_samples = 0usize;
+        let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
+        for (selected_row, row) in row_chunk.iter().zip(block.rows.into_iter()) {
+            if row.spw_id != selected_row.spw_id {
+                return Err(format!(
+                    "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                    selected_row.row_index, selected_row.spw_id, row.spw_id
+                ));
+            }
+            block_density_samples += prepared.accumulate_standard_mfs_density_essentials_row(
+                selected_row,
+                &row,
+                derived_engine,
+                weighting_plan,
+                accumulate_timings,
+            )?;
+            let counts = prepared
+                .stream_standard_mfs_routed_essentials_row_into_metal_grouped_prefill(
+                    selected_row,
+                    row,
+                    derived_engine,
+                    Arc::clone(&source_channel_indices),
+                    planned_sample_builder,
+                    &mut next_input_seq,
+                    prefill,
+                )?;
+            block_candidate_samples += counts.candidate_samples;
+            block_planned_samples += counts.planned_samples;
+            block_detail.add(counts.detail);
+        }
+        let prepare_processing_elapsed = stage_started_at.elapsed();
+        prepare_stage_timings.prepare_processing_buffer += prepare_processing_elapsed;
+        pass_stats.add_accumulate_rows_detail(accumulate_timings.delta_since(before_accumulate));
+        pass_stats.add_planned_sample_counts(
+            block_candidate_samples,
+            block_planned_samples,
+            block_planned_samples.saturating_mul(49),
+        );
+        pass_stats.add_planned_sample_detail(block_detail);
+        pass_stats.record_density_block(
+            block_density_samples,
+            get_ms_values_elapsed,
+            prepare_processing_elapsed,
+        );
+        accepted_density_samples = accepted_density_samples.saturating_add(block_density_samples);
+        if frontend_progress_enabled() {
+            eprintln!(
+                "frontend stage=prepare_plane_input/density_metal_prefill_block rows_done={} rows_total={} accepted_density_samples={} total_elapsed_s={:.3}",
+                accumulate_timings.rows_seen,
+                active_selected_rows.len(),
+                accepted_density_samples,
+                prepare_started_at.elapsed().as_secs_f64(),
+            );
+        }
+    }
+    Ok(accepted_density_samples)
+}
+
 fn prepare_plane_input(
     ms: &MeasurementSet,
     config: &CliConfig,
@@ -15980,6 +16093,138 @@ impl PreparedSelection {
             };
             let consume_started = collect_detail.then(Instant::now);
             consume(&run).map_err(|error| error.to_string())?;
+            if let Some(started) = consume_started {
+                counts.detail.routed_consume += started.elapsed();
+            }
+            *next_input_seq = (*next_input_seq).saturating_add(run_len as u64);
+            counts.planned_samples += run_len;
+        }
+        if let Some(started) = tap_center_loop_started {
+            counts.detail.routed_tap_center += started
+                .elapsed()
+                .saturating_sub(counts.detail.routed_consume);
+        }
+        Ok(counts)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn stream_standard_mfs_routed_essentials_row_into_metal_grouped_prefill(
+        &mut self,
+        selected_row: &SelectedMainRow,
+        row: MsImagingEssentials,
+        derived_engine: Option<&MsCalEngine>,
+        source_channel_indices: Arc<[usize]>,
+        planned_sample_builder: &StandardMfsPlannedSampleBuilder,
+        next_input_seq: &mut u64,
+        prefill: &mut StandardMfsMetalGroupedInputCachePrefill,
+    ) -> Result<StandardMfsPlannedRowSampleCounts, String> {
+        let mut counts = StandardMfsPlannedRowSampleCounts::default();
+        let collect_detail = standard_mfs_profile_detail_enabled();
+        let frequency_scale_started = collect_detail.then(Instant::now);
+        let mfs_frequency_scale =
+            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        if self.mfs_output_frequency_edge_range_hz.is_none() {
+            self.mfs_output_frequency_edge_range_hz =
+                Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
+        }
+        if let Some(started) = frequency_scale_started {
+            counts.detail.routed_frequency_scale += started.elapsed();
+        }
+        if !row.gridable {
+            return Ok(counts);
+        }
+        let row_payload_started = collect_detail.then(Instant::now);
+        let polarization = match &self.state {
+            PreparedState::ExplicitMfs { corr_index, .. } => {
+                StandardMfsVisibilityPolarization::Explicit {
+                    corr_index: *corr_index,
+                    sumwt_factor: 1.0,
+                }
+            }
+            PreparedState::CollapsedMfs {
+                plane_stokes,
+                transform,
+                pair,
+                ..
+            } => StandardMfsVisibilityPolarization::CollapsedPair {
+                first_corr_index: pair.0,
+                second_corr_index: pair.1,
+                transform: standard_mfs_pair_collapse_transform(*transform),
+                sumwt_factor: reported_sumwt_factor_for_paired_plane(*plane_stokes),
+            },
+            _ => {
+                return Err(
+                    "internal error: MS essentials standard MFS row routing requires MFS state"
+                        .to_string(),
+                );
+            }
+        };
+        let channel_lambda_scales = self.mfs_channel_lambda_scales_for_scale(mfs_frequency_scale);
+        if source_channel_indices.len() != channel_lambda_scales.len() {
+            return Err(format!(
+                "internal error: source channel index count {} differs from frequency count {}",
+                source_channel_indices.len(),
+                channel_lambda_scales.len()
+            ));
+        }
+
+        let uvw_m = [row.u_m, row.v_m, row.w_m];
+        let routed_row = StandardMfsRoutedVisibilityRow {
+            uvw_m,
+            spw_id: row.spw_id,
+            channel_origin: row.channel_origin,
+            source_channel_indices,
+            channel_lambda_scales: Arc::clone(&channel_lambda_scales),
+            data: row.data,
+            flag: row.flag,
+            weight: Arc::from(row.weight.into_boxed_slice()),
+            weight_spectrum: row.weight_spectrum,
+            gridable: row.gridable,
+            polarization,
+        };
+        if let Some(started) = row_payload_started {
+            counts.detail.routed_row_payload += started.elapsed();
+        }
+
+        let mut run_start = None::<usize>;
+        let mut tap_centers = Vec::<[u32; 2]>::new();
+        let tap_center_loop_started = collect_detail.then(Instant::now);
+        for (source_slot, lambda_scale) in channel_lambda_scales.iter().copied().enumerate() {
+            counts.candidate_samples += 1;
+            let u_lambda = uvw_m[0] * lambda_scale;
+            let v_lambda = uvw_m[1] * lambda_scale;
+            let center = planned_sample_builder.route_tap_center(u_lambda, v_lambda);
+            let Some(center) = center else {
+                if let Some(start) = run_start.take() {
+                    let run_len = tap_centers.len();
+                    let consume_started = collect_detail.then(Instant::now);
+                    prefill
+                        .append_row_run(&routed_row, start..source_slot, &tap_centers)
+                        .map_err(|error| error.to_string())?;
+                    if let Some(started) = consume_started {
+                        counts.detail.routed_consume += started.elapsed();
+                    }
+                    *next_input_seq = (*next_input_seq).saturating_add(run_len as u64);
+                    counts.planned_samples += run_len;
+                    tap_centers.clear();
+                }
+                continue;
+            };
+            if run_start.is_none() {
+                run_start = Some(source_slot);
+            }
+            tap_centers.push(center);
+        }
+        if let Some(start) = run_start {
+            let run_len = tap_centers.len();
+            let consume_started = collect_detail.then(Instant::now);
+            prefill
+                .append_row_run(
+                    &routed_row,
+                    start..channel_lambda_scales.len(),
+                    &tap_centers,
+                )
+                .map_err(|error| error.to_string())?;
             if let Some(started) = consume_started {
                 counts.detail.routed_consume += started.elapsed();
             }

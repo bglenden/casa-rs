@@ -10251,24 +10251,39 @@ impl StandardMfsMetalGroupedInputCachePrefill {
         &mut self,
         routed_run: &StandardMfsRoutedVisibilityRun,
     ) -> Result<(), ImagingError> {
+        self.append_row_run(
+            routed_run.row.as_ref(),
+            routed_run.source_slot_range.clone(),
+            routed_run.tap_centers.as_ref(),
+        )
+    }
+
+    /// Append one borrowed routed row/channel span without allocating a run.
+    pub fn append_row_run(
+        &mut self,
+        row: &StandardMfsRoutedVisibilityRow,
+        source_slot_range: Range<usize>,
+        tap_centers: &[[u32; 2]],
+    ) -> Result<(), ImagingError> {
+        let lane_count = source_slot_range
+            .end
+            .saturating_sub(source_slot_range.start);
         if !self.chunk.is_empty()
-            && self
-                .chunk
-                .row_runs
-                .logical_lanes
-                .saturating_add(routed_run.len())
+            && self.chunk.row_runs.logical_lanes.saturating_add(lane_count)
                 > self.chunk_lane_capacity
         {
             self.finish_current_chunk()?;
         }
-        self.backend.append_metal_residual_grouped_row_run(
-            routed_run,
+        self.backend.append_metal_residual_grouped_row_run_parts(
+            row,
+            source_slot_range,
+            tap_centers,
             &self.partition,
             &mut self.accumulation,
             &mut self.chunk,
         )?;
         self.runs = self.runs.saturating_add(1);
-        self.logical_lanes = self.logical_lanes.saturating_add(routed_run.len());
+        self.logical_lanes = self.logical_lanes.saturating_add(lane_count);
         if self.chunk.row_runs.logical_lanes >= self.chunk_lane_capacity {
             self.finish_current_chunk()?;
         }
@@ -10481,6 +10496,18 @@ impl StandardMfsMetalGroupedInputCachePrefill {
     pub fn append_run(
         &mut self,
         _routed_run: &StandardMfsRoutedVisibilityRun,
+    ) -> Result<(), ImagingError> {
+        Err(ImagingError::Unsupported(
+            "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),
+        ))
+    }
+
+    /// Return an unsupported error on non-macOS platforms.
+    pub fn append_row_run(
+        &mut self,
+        _row: &StandardMfsRoutedVisibilityRow,
+        _source_slot_range: Range<usize>,
+        _tap_centers: &[[u32; 2]],
     ) -> Result<(), ImagingError> {
         Err(ImagingError::Unsupported(
             "standard MFS Metal grouped input cache prefill requires macOS Metal".to_string(),
@@ -13042,10 +13069,35 @@ impl MetalDirtyBackend {
         accumulation: &mut StandardMfsTiledResidualAccumulation,
         chunk: &mut MetalResidualRowRunChunk,
     ) -> Result<(), ImagingError> {
-        if routed_run.is_empty() {
+        self.append_metal_residual_row_run_parts(
+            routed_run.row.as_ref(),
+            routed_run.source_slot_range.clone(),
+            routed_run.tap_centers.as_ref(),
+            accumulation,
+            chunk,
+        )
+    }
+
+    fn append_metal_residual_row_run_parts(
+        &self,
+        row: &StandardMfsRoutedVisibilityRow,
+        source_slot_range: Range<usize>,
+        tap_centers: &[[u32; 2]],
+        accumulation: &mut StandardMfsTiledResidualAccumulation,
+        chunk: &mut MetalResidualRowRunChunk,
+    ) -> Result<(), ImagingError> {
+        let lane_count = source_slot_range
+            .end
+            .saturating_sub(source_slot_range.start);
+        if lane_count == 0 {
             return Ok(());
         }
-        let row = routed_run.row.as_ref();
+        if tap_centers.len() != lane_count {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS Metal row-run has {} tap centers for {lane_count} lanes",
+                tap_centers.len()
+            )));
+        }
         if row.weight_spectrum.is_some() {
             return Err(ImagingError::Unsupported(
                 "standard MFS residual backend 'metal-row-run' does not yet support WEIGHT_SPECTRUM"
@@ -13053,12 +13105,10 @@ impl MetalDirtyBackend {
             ));
         }
         if !row.gridable {
-            accumulation.skipped_not_gridable = accumulation
-                .skipped_not_gridable
-                .saturating_add(routed_run.len());
+            accumulation.skipped_not_gridable =
+                accumulation.skipped_not_gridable.saturating_add(lane_count);
             return Ok(());
         }
-        let lane_count = routed_run.len();
         let corr_count = row.data.shape().first().copied().unwrap_or(0);
         let local_channel_count = row.data.shape().get(1).copied().unwrap_or(0);
         if row.flag.shape() != [corr_count, local_channel_count] {
@@ -13072,8 +13122,8 @@ impl MetalDirtyBackend {
                 row.weight.len()
             )));
         }
-        let source_slot_start = routed_run.source_slot_range.start;
-        let source_slot_end = routed_run.source_slot_range.end;
+        let source_slot_start = source_slot_range.start;
+        let source_slot_end = source_slot_range.end;
         let contiguous_local_channels = if lane_count == 0 {
             Some(0..0)
         } else {
@@ -13140,7 +13190,7 @@ impl MetalDirtyBackend {
         let data_offset = chunk.data.len();
         let flag_offset = chunk.flags.len();
         let weight_offset = chunk.weights.len();
-        for (lane_index, source_slot) in routed_run.source_slot_range.clone().enumerate() {
+        for (lane_index, source_slot) in source_slot_range.clone().enumerate() {
             if contiguous_local_channels.is_none() {
                 let source_channel =
                     *row.source_channel_indices.get(source_slot).ok_or_else(|| {
@@ -13165,7 +13215,7 @@ impl MetalDirtyBackend {
                     "standard MFS Metal row-run lambda slot {source_slot} is out of bounds"
                 ))
             })?;
-            let center = routed_run.tap_centers.get(lane_index).ok_or_else(|| {
+            let center = tap_centers.get(lane_index).ok_or_else(|| {
                 ImagingError::InvalidRequest(format!(
                     "standard MFS Metal row-run tap center {lane_index} is out of bounds"
                 ))
@@ -13202,7 +13252,7 @@ impl MetalDirtyBackend {
             }
         } else {
             for corr in 0..corr_count {
-                for source_slot in routed_run.source_slot_range.clone() {
+                for source_slot in source_slot_range.clone() {
                     let source_channel = row.source_channel_indices[source_slot];
                     let local_channel = source_channel - row.channel_origin;
                     let visibility = *row.data.get((corr, local_channel)).ok_or_else(|| {
@@ -13292,21 +13342,49 @@ impl MetalDirtyBackend {
         accumulation: &mut StandardMfsTiledResidualAccumulation,
         chunk: &mut MetalResidualGroupedRowRunChunk,
     ) -> Result<(), ImagingError> {
+        self.append_metal_residual_grouped_row_run_parts(
+            routed_run.row.as_ref(),
+            routed_run.source_slot_range.clone(),
+            routed_run.tap_centers.as_ref(),
+            partition,
+            accumulation,
+            chunk,
+        )
+    }
+
+    fn append_metal_residual_grouped_row_run_parts(
+        &self,
+        row: &StandardMfsRoutedVisibilityRow,
+        source_slot_range: Range<usize>,
+        tap_centers: &[[u32; 2]],
+        partition: &MetalResidualGroupedTilePartition,
+        accumulation: &mut StandardMfsTiledResidualAccumulation,
+        chunk: &mut MetalResidualGroupedRowRunChunk,
+    ) -> Result<(), ImagingError> {
         let before_lanes = chunk.row_runs.lanes.len();
-        self.append_metal_residual_row_run(routed_run, accumulation, &mut chunk.row_runs)?;
+        self.append_metal_residual_row_run_parts(
+            row,
+            source_slot_range.clone(),
+            tap_centers,
+            accumulation,
+            &mut chunk.row_runs,
+        )?;
         let after_lanes = chunk.row_runs.lanes.len();
         if after_lanes == before_lanes {
             return Ok(());
         }
         let appended_lanes = after_lanes - before_lanes;
-        if appended_lanes != routed_run.len() {
+        let lane_count = source_slot_range
+            .end
+            .saturating_sub(source_slot_range.start);
+        if appended_lanes != lane_count {
             return Err(ImagingError::InvalidRequest(format!(
                 "standard MFS Metal grouped row-run appended {appended_lanes} lanes for a {}-lane run",
-                routed_run.len()
+                lane_count
             )));
         }
         for lane_index in 0..appended_lanes {
-            let center = routed_run.tap_centers.get(lane_index).ok_or_else(|| {
+            let center = tap_centers.get(lane_index).ok_or_else(|| {
                 ImagingError::InvalidRequest(format!(
                     "standard MFS Metal grouped row-run tap center {lane_index} is out of bounds"
                 ))

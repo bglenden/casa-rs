@@ -3081,6 +3081,17 @@ from `3.017s` to `0.593s`, residual degrid/grid from `5.877s` to `3.164s`,
 and peak RSS from `10.08 GiB` to `8.85 GiB`. This is retained: it removes the
 separate routed-run drain/repack boundary rather than merely optimizing it.
 
+Follow-up allocation cleanup: the Metal grouped input-cache prefill stream now
+borrows the row payload and tap-center slice directly when appending to the
+cache, instead of creating short-lived `StandardMfsRoutedVisibilityRun` Arcs for
+the Metal-only path. The retained artifact is
+`target/imperformance-wave2/metal-initial-dirty-20260525/grouped-initial-dirty-borrowed-prefill-niter150-cycleniter50.log`.
+Against the direct-prefill run, frontend moved from `25.463s` to `24.757s`
+(`2.8%`), prepare-plane input from `13.888s` to `12.965s`, and the density
+stream total from `10.368s` to `9.387s`. Core moved from `7.497s` to `7.717s`
+in this run due to Metal dispatch noise, so this is retained for the frontend
+allocation/data-flow improvement rather than as a kernel-stage win.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
