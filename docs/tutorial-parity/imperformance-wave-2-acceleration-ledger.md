@@ -3115,6 +3115,17 @@ Against the multiscale-state reuse run, frontend moved from `22.724s` to
 `0.515s` to `0.468s`, and residual degrid/grid from `3.156s` to `2.866s`.
 Peak RSS remained flat at about `8.88 GiB`.
 
+Rejected high-upside follow-ups:
+`grouped-initial-dirty-prealloc-metal-cache-niter150-cycleniter50.log`
+preallocated the large Metal cache vectors. It reduced `routed_consume` only
+from `2.136s` to `1.950s`, but worsened frontend to `24.344s`, core to
+`6.747s`, residual degrid/grid to `4.113s`, and peak RSS to `9.97 GiB`.
+`grouped-initial-dirty-fused-density-prefill-niter150-cycleniter50.log` fused
+the Briggs density and Metal prefill row walks. It improved density-pass total
+to `9.125s` but did not improve the end-to-end run (`22.130s` frontend versus
+`22.087s` retained), while making timing attribution less clear. Both are
+rejected for now.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
