@@ -620,6 +620,17 @@ private struct Metrics {
     let relativeRmsError: Double
 }
 
+private let allStrategyNames: Set<String> = [
+    "global_atomic",
+    "residual_refresh_global_atomic",
+    "cell_owner",
+    "sorted_reduce",
+    "tile_bucket_cell_owner",
+    "tile_cell_bins",
+    "gpu_tile_cell_bins",
+    "gpu_prefix_tile_cell_bins",
+]
+
 private struct RunConfig {
     var samples: Int = 20_000
     var imsize: Int = 512
@@ -628,8 +639,11 @@ private struct RunConfig {
     var repeats: Int = 1
     var tileEdge: Int = 64
     var preparedSamplesJSON: String?
+    var preparedSamplesBinary: String?
     var cellArcsec: Double = 1.0
     var skipSlowBaselines = false
+    var strategies: Set<String> = allStrategyNames
+    var skipCpuReference = false
 
     static func parse() throws -> RunConfig {
         var config = RunConfig()
@@ -658,6 +672,8 @@ private struct RunConfig {
                 config.tileEdge = try Int(requireValue()).requirePositive(arg)
             case "--prepared-samples-json":
                 config.preparedSamplesJSON = try requireValue()
+            case "--prepared-samples-bin":
+                config.preparedSamplesBinary = try requireValue()
             case "--cell-arcsec":
                 guard let value = Double(try requireValue()), value > 0 else {
                     throw ExperimentError.invalidArgument("--cell-arcsec must be a positive number")
@@ -665,6 +681,23 @@ private struct RunConfig {
                 config.cellArcsec = value
             case "--skip-slow-baselines":
                 config.skipSlowBaselines = true
+            case "--strategies":
+                let names = try requireValue()
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                if names.isEmpty {
+                    throw ExperimentError.invalidArgument("--strategies must name at least one strategy")
+                }
+                let unknown = names.filter { !allStrategyNames.contains($0) }
+                if !unknown.isEmpty {
+                    throw ExperimentError.invalidArgument(
+                        "unknown --strategies value(s): \(unknown.joined(separator: ","))"
+                    )
+                }
+                config.strategies = Set(names)
+            case "--no-cpu-reference":
+                config.skipCpuReference = true
             case "--help", "-h":
                 printUsageAndExit()
             default:
@@ -756,8 +789,12 @@ private final class Lcg {
 private func printUsageAndExit() -> Never {
     print("""
     Usage:
-      swift run MetalGridExperiment [--samples N] [--imsize N] [--support N] [--distribution uniform|cluster|boundary] [--tile-edge N] [--repeats N] [--skip-slow-baselines]
-      swift run MetalGridExperiment --prepared-samples-json prepared_samples.json [--samples MAX] [--imsize N] [--cell-arcsec ARCSEC] [--skip-slow-baselines]
+      swift run MetalGridExperiment [--samples N] [--imsize N] [--support N] [--distribution uniform|cluster|boundary] [--tile-edge N] [--repeats N] [--skip-slow-baselines] [--strategies LIST] [--no-cpu-reference]
+      swift run MetalGridExperiment --prepared-samples-json prepared_samples.json [--samples MAX] [--imsize N] [--cell-arcsec ARCSEC] [--skip-slow-baselines] [--strategies LIST] [--no-cpu-reference]
+      swift run MetalGridExperiment --prepared-samples-bin samples.bin [--samples MAX] [--imsize N] [--skip-slow-baselines] [--strategies LIST] [--no-cpu-reference]
+
+    Strategies:
+      \(allStrategyNames.sorted().joined(separator: ","))
     """)
     exit(0)
 }
@@ -826,6 +863,30 @@ private func makeSamples(config: RunConfig) -> [MetalGridSample] {
 }
 
 private func loadPreparedSamplesFixture(config: RunConfig) throws -> [MetalGridSample] {
+    if let path = config.preparedSamplesBinary {
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let stride = MemoryLayout<MetalGridSample>.stride
+        if data.count % stride != 0 {
+            throw ExperimentError.fixtureFailure(
+                "\(path) byte count \(data.count) is not a multiple of sample stride \(stride)"
+            )
+        }
+        let available = data.count / stride
+        let count = min(config.samples, available)
+        let samples = try data.withUnsafeBytes { rawBuffer -> [MetalGridSample] in
+            guard let baseAddress = rawBuffer.bindMemory(to: MetalGridSample.self).baseAddress else {
+                if count == 0 {
+                    return []
+                }
+                throw ExperimentError.fixtureFailure("empty or unaligned binary fixture \(path)")
+            }
+            return Array(UnsafeBufferPointer(start: baseAddress, count: count))
+        }
+        if samples.isEmpty {
+            throw ExperimentError.fixtureFailure("no samples loaded from \(path)")
+        }
+        return samples
+    }
     guard let path = config.preparedSamplesJSON else {
         return makeSamples(config: config)
     }
@@ -1760,11 +1821,120 @@ private func main() throws {
 
     let prepareStart = DispatchTime.now().uptimeNanoseconds
     let samples = try loadPreparedSamplesFixture(config: config)
-    if config.preparedSamplesJSON != nil {
+    if config.preparedSamplesJSON != nil || config.preparedSamplesBinary != nil {
         config.samples = samples.count
         config.distribution = "fixture"
     }
     let taps = makeTaps(support: config.support)
+    if config.strategies == Set(["global_atomic"])
+        || config.strategies == Set(["residual_refresh_global_atomic"])
+    {
+        let prepareEnd = DispatchTime.now().uptimeNanoseconds
+        let dirtyReference = config.skipCpuReference || !config.strategies.contains("global_atomic")
+            ? nil
+            : cpuReference(samples: samples, taps: taps, config: config)
+        let model = makeModelGrid(config: config)
+        let residualReference = config.skipCpuReference
+            || !config.strategies.contains("residual_refresh_global_atomic")
+            ? nil
+            : cpuResidualRefreshReference(samples: samples, taps: taps, model: model, config: config)
+        let params = ExperimentParams(
+            sampleCount: UInt32(config.samples),
+            width: UInt32(config.imsize),
+            height: UInt32(config.imsize),
+            support: UInt32(config.support),
+            tapCount: UInt32(2 * config.support + 1)
+        )
+        let cellCount = config.imsize * config.imsize
+        let uploadStart = DispatchTime.now().uptimeNanoseconds
+        let sampleBuffer = try makeBuffer(device: device, array: samples)
+        let tapBuffer = try makeBuffer(device: device, array: taps)
+        let paramsBuffer = try makeBuffer(device: device, value: params)
+        let modelReBuffer = try makeBuffer(device: device, array: model.re)
+        let modelImBuffer = try makeBuffer(device: device, array: model.im)
+        let uploadEnd = DispatchTime.now().uptimeNanoseconds
+
+        print("device=\(device.name)")
+        let strategyList = config.strategies.sorted().joined(separator: ",")
+        print("config samples=\(config.samples) imsize=\(config.imsize) support=\(config.support) distribution=\(config.distribution) tile_edge=\(config.tileEdge) repeats=\(config.repeats) strategies=\(strategyList) skip_cpu_reference=\(config.skipCpuReference)")
+        if let preparedSamplesJSON = config.preparedSamplesJSON {
+            print("fixture_prepared_samples_json=\(preparedSamplesJSON) cell_arcsec=\(config.cellArcsec)")
+        }
+        if let preparedSamplesBinary = config.preparedSamplesBinary {
+            print("fixture_prepared_samples_bin=\(preparedSamplesBinary)")
+        }
+        print("sample_stride_bytes=\(MemoryLayout<MetalGridSample>.stride)")
+        print("host_prepare_s=\(formatSeconds(Double(prepareEnd - prepareStart) / 1_000_000_000.0))")
+        print("upload_buffer_create_s=\(formatSeconds(Double(uploadEnd - uploadStart) / 1_000_000_000.0))")
+
+        for repeatIndex in 0..<config.repeats {
+            let tapUpdates = Double(config.samples * (2 * config.support + 1) * (2 * config.support + 1))
+            if config.strategies.contains("global_atomic") {
+                let atomicRe = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<UInt32>.stride)
+                let atomicIm = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<UInt32>.stride)
+                let globalGpuSeconds = try runKernel(
+                    queue: queue,
+                    pipeline: globalPipeline,
+                    sampleBuffer: sampleBuffer,
+                    tapBuffer: tapBuffer,
+                    reBuffer: atomicRe,
+                    imBuffer: atomicIm,
+                    paramsBuffer: paramsBuffer,
+                    threadCount: config.samples
+                )
+                let globalDownloadStart = DispatchTime.now().uptimeNanoseconds
+                let globalGrid = readAtomicFloatGrid(reBuffer: atomicRe, imBuffer: atomicIm, count: cellCount)
+                let globalDownloadEnd = DispatchTime.now().uptimeNanoseconds
+                let metricText: String
+                if let dirtyReference {
+                    let globalMetrics = compare(dirtyReference, globalGrid)
+                    metricText = "max_abs_error=\(formatMetric(globalMetrics.maxAbsError)) rms_error=\(formatMetric(globalMetrics.rmsError)) relative_rms_error=\(formatMetric(globalMetrics.relativeRmsError))"
+                } else {
+                    metricText = "max_abs_error=skipped rms_error=skipped relative_rms_error=skipped"
+                }
+                print("run=\(repeatIndex + 1) strategy=global_atomic gpu_s=\(formatSeconds(globalGpuSeconds)) download_s=\(formatSeconds(Double(globalDownloadEnd - globalDownloadStart) / 1_000_000_000.0)) samples_per_s=\(formatMetric(Double(config.samples) / max(globalGpuSeconds, 1e-12))) tap_updates_per_s=\(formatMetric(tapUpdates / max(globalGpuSeconds, 1e-12))) \(metricText)")
+            }
+            if config.strategies.contains("residual_refresh_global_atomic") {
+                let residualAtomicRe = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<UInt32>.stride)
+                let residualAtomicIm = try makeEmptyBuffer(device: device, bytes: cellCount * MemoryLayout<UInt32>.stride)
+                let residualGpuSeconds = try runResidualRefreshKernel(
+                    queue: queue,
+                    pipeline: residualRefreshPipeline,
+                    sampleBuffer: sampleBuffer,
+                    tapBuffer: tapBuffer,
+                    modelReBuffer: modelReBuffer,
+                    modelImBuffer: modelImBuffer,
+                    reBuffer: residualAtomicRe,
+                    imBuffer: residualAtomicIm,
+                    paramsBuffer: paramsBuffer,
+                    threadCount: config.samples
+                )
+                let residualDownloadStart = DispatchTime.now().uptimeNanoseconds
+                let residualGrid = readAtomicFloatGrid(
+                    reBuffer: residualAtomicRe,
+                    imBuffer: residualAtomicIm,
+                    count: cellCount
+                )
+                let residualDownloadEnd = DispatchTime.now().uptimeNanoseconds
+                let metricText: String
+                if let residualReference {
+                    let residualMetrics = compare(residualReference, residualGrid)
+                    metricText = "max_abs_error=\(formatMetric(residualMetrics.maxAbsError)) rms_error=\(formatMetric(residualMetrics.rmsError)) relative_rms_error=\(formatMetric(residualMetrics.relativeRmsError))"
+                } else {
+                    metricText = "max_abs_error=skipped rms_error=skipped relative_rms_error=skipped"
+                }
+                let residualTapPasses = tapUpdates * 2.0
+                print("run=\(repeatIndex + 1) strategy=residual_refresh_global_atomic gpu_s=\(formatSeconds(residualGpuSeconds)) download_s=\(formatSeconds(Double(residualDownloadEnd - residualDownloadStart) / 1_000_000_000.0)) samples_per_s=\(formatMetric(Double(config.samples) / max(residualGpuSeconds, 1e-12))) tap_passes_per_s=\(formatMetric(residualTapPasses / max(residualGpuSeconds, 1e-12))) \(metricText)")
+            }
+        }
+        let bufferBytes =
+            samples.count * MemoryLayout<MetalGridSample>.stride
+            + taps.count * MemoryLayout<Float>.stride
+            + 2 * cellCount * MemoryLayout<Float>.stride
+            + 2 * cellCount * MemoryLayout<UInt32>.stride
+        print("estimated_live_buffer_bytes=\(bufferBytes)")
+        return
+    }
     let reference = cpuReference(samples: samples, taps: taps, config: config)
     let model = makeModelGrid(config: config)
     let residualReference = cpuResidualRefreshReference(
@@ -1839,6 +2009,9 @@ private func main() throws {
     print("config samples=\(config.samples) imsize=\(config.imsize) support=\(config.support) distribution=\(config.distribution) tile_edge=\(config.tileEdge) repeats=\(config.repeats)")
     if let preparedSamplesJSON = config.preparedSamplesJSON {
         print("fixture_prepared_samples_json=\(preparedSamplesJSON) cell_arcsec=\(config.cellArcsec)")
+    }
+    if let preparedSamplesBinary = config.preparedSamplesBinary {
+        print("fixture_prepared_samples_bin=\(preparedSamplesBinary)")
     }
     print("sample_stride_bytes=\(MemoryLayout<MetalGridSample>.stride)")
     print("host_prepare_s=\(formatSeconds(Double(prepareEnd - prepareStart) / 1_000_000_000.0))")

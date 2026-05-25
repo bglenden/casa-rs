@@ -2,7 +2,7 @@
 
 Truth class: experimental
 Last reality check: 2026-05-21
-Verification: `swift run -c release MetalGridExperiment --samples 2000 --imsize 128 --distribution uniform --tile-edge 32 --skip-slow-baselines`; `swift run -c release MetalGridExperiment --samples 200000 --imsize 512 --support 3 --distribution uniform --tile-edge 64 --skip-slow-baselines`; `swift run -c release MetalGridExperiment --prepared-samples-json /private/tmp/metal_prepare_small/prepared_samples.json --samples 50000 --imsize 512 --cell-arcsec 0.05 --tile-edge 64`
+Verification: `swift run -c release MetalGridExperiment --samples 2000 --imsize 128 --distribution uniform --tile-edge 32 --skip-slow-baselines --strategies global_atomic`; `swift run -c release MetalGridExperiment --samples 200000 --imsize 512 --support 3 --distribution uniform --tile-edge 64 --skip-slow-baselines`; `swift run -c release MetalGridExperiment --prepared-samples-json /private/tmp/metal_prepare_small/prepared_samples.json --samples 50000 --imsize 512 --cell-arcsec 0.05 --tile-edge 64`
 
 ## Purpose
 
@@ -33,6 +33,38 @@ swift run MetalGridExperiment --samples 20000 --imsize 512 --distribution unifor
 swift run MetalGridExperiment --samples 20000 --imsize 512 --distribution cluster
 swift run MetalGridExperiment --samples 20000 --imsize 512 --distribution boundary
 ```
+
+Use `--strategies` to run a subset of strategies without building the
+CPU-expanded plans used by the other experiments. This is useful for dirty-only
+global-atomic and heavy residual-refresh throughput screens:
+
+```bash
+swift run -c release MetalGridExperiment \
+  --samples 20000000 \
+  --imsize 1250 \
+  --support 3 \
+  --distribution cluster \
+  --tile-edge 625 \
+  --skip-slow-baselines \
+  --strategies global_atomic \
+  --no-cpu-reference
+```
+
+```bash
+swift run -c release MetalGridExperiment \
+  --samples 20000000 \
+  --imsize 1250 \
+  --support 3 \
+  --distribution cluster \
+  --tile-edge 625 \
+  --skip-slow-baselines \
+  --strategies residual_refresh_global_atomic \
+  --no-cpu-reference
+```
+
+`--no-cpu-reference` skips CPU correctness comparison for large screening runs.
+Keep a smaller reference-checked run paired with any such throughput-only
+screen.
 
 The prototype compiles Metal shader source at runtime from Swift. That is
 deliberate for experiment speed; a production backend should precompile
@@ -109,6 +141,39 @@ The harness now includes:
 | fixture-derived compact samples, 22,078 accepted, 512, support 3 | residual refresh global atomic | 0.010957 | 2.01e6 | 1.97e8 tap passes/s | 2.72e2 | 4.83e-7 |
 | fixture-derived compact samples, 22,078 accepted, 512, support 3 | tile cell bins | 0.002180 | 1.01e7 | 4.96e8 | 3.87e-1 | 1.59e-7 |
 | fixture-derived compact samples, 22,078 accepted, 512, support 3 | GPU-built tile cell bins | 0.004142 | 5.33e6 | 2.61e8 | 1.00e0 | 6.83e-7 |
+
+Dirty-only light workload screening on 2026-05-24 added a strategy-filtered
+global-atomic path to avoid CPU-expanded experimental plans. The retained CPU
+center-quadrant dirty-only run grids `188,889,033` samples in `3.724447 s` per
+grid, about `50.7M` samples/s. The Metal global-atomic screen on an Apple M4
+was below that rate on the padded-grid analog:
+
+| Case | Strategy | GPU s | Samples/s | Note |
+| --- | --- | ---: | ---: | --- |
+| 20M synthetic central cluster, 1250, support 3 | global atomic | 0.483820 | 4.13e7 | throughput-only, CPU reference skipped |
+| 20M synthetic uniform, 1250, support 3 | global atomic | 0.440035 | 4.55e7 | throughput-only, CPU reference skipped |
+
+Conclusion: global atomics are not a compelling production Metal path for the
+current dirty-image-only light workload. Future Metal work should continue with
+GPU-resident grouping/reduction work units rather than a direct shared-grid
+atomic scatter.
+
+Heavy-clean residual-refresh screening on 2026-05-24 used the retained
+64-channel, 1024-pixel, Briggs, multiscale `niter=500` run as the comparison
+point. The retained CPU path averaged about `6.75 s` for each `197,519,040`
+sample residual refresh, or `29.3M` samples/s. Metal
+`residual_refresh_global_atomic` was mixed:
+
+| Case | Strategy | GPU s | Samples/s | Note |
+| --- | --- | ---: | ---: | --- |
+| 20M synthetic central cluster, 1250, support 3 | residual refresh global atomic | 0.460858 | 4.34e7 | throughput-only, CPU reference skipped |
+| 20M synthetic uniform, 1250, support 3 | residual refresh global atomic | 0.725857 | 2.76e7 | throughput-only, CPU reference skipped |
+
+Conclusion: residual refresh remains a plausible Metal target for the heavy
+workload if the real distribution behaves closer to the central-cluster screen
+and model/residual grids stay device-resident across major cycles. It is not
+yet a production claim, because this screen excludes real row/run routing,
+final weighting, and device residency lifecycle costs.
 
 The sorted-reduce rows exclude CPU-side expansion and sorting. For `200k`
 uniform support-3, that preparation cost was `0.509869 s` and `161.0 MB` of
@@ -325,6 +390,150 @@ and reduction toward the GPU and keep it bounded by the Wave 2 tile buckets.
 The next version should dispatch over nonempty fixed tiles, generate tap
 contributions from compact bucket samples on device, and reduce within
 tile-local or cell-local ranges before a deterministic merge.
+
+## Real-Data Residual-Refresh Screen
+
+The harness can consume a compact binary fixture emitted by:
+
+```text
+cargo run --release -p casars-imager --example export_metal_fixture -- \
+  --output samples.bin --metadata samples.json --max-samples 20000000 \
+  --sample-stride 10 -- <casars-imager standard-MFS args>
+```
+
+The binary fixture uses the 32-byte `MetalGridSample` layout below and avoids
+JSON expansion. On 2026-05-24, the medium VLA standard-MFS heavy workload
+(`field=0`, `spw=0`, 64 channels, Briggs robust 0.5, imsize 1024, cell
+0.5arcsec) exported 19,751,904 stride-10 records from 197,519,040 accepted
+samples in 22.517s. The sampled tap-center range required the 1250 padded grid.
+
+Metal command:
+
+```text
+swift run -c release MetalGridExperiment \
+  --prepared-samples-bin ../../../target/imperformance-wave2/metal-real-residual-20260524/medium-briggs-stride10.bin \
+  --samples 19751904 --imsize 1250 --support 3 --tile-edge 625 \
+  --skip-slow-baselines --strategies residual_refresh_global_atomic \
+  --no-cpu-reference --repeats 3
+```
+
+Result: `residual_refresh_global_atomic` ran the 19.75M-sample real fixture in
+0.435-0.496s, projecting to a median 4.67s full 197.5M-sample kernel. The
+current CPU heavy-clean baseline spends about 7.08s per residual degrid/grid
+refresh. This keeps exact residual refresh as a plausible optional Metal target,
+but not a default backend yet: production still needs bounded Rust/Metal
+staging, planner-visible device buffers, and a backend contract that does not
+retain the full MeasurementSet.
+
+The first Rust-side backend screen was intentionally gated behind
+`CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND=metal`. It uses exact per-sample tap-axis
+weights in an 88-byte Metal record and chunks the medium heavy residual refresh
+into 50 command buffers of up to 4M samples. On the same `niter=500` workload,
+this path was slower than CPU fixed-tile residual refresh:
+
+| backend | frontend | core | residual degrid/grid | mean refresh | peak footprint |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CPU fixed-tile | 97.811s | 85.169s | 70.815s | 6.696s | 9.55 GB |
+| Metal residual selector | 185.606s | 172.500s | 158.001s | 15.412s | 9.55 GB |
+
+The Metal command wait averaged 5.824s per full residual refresh, but exact
+host-side replay/staging pushed total refresh wall time to 15.4s. A bounded
+`niter=50` product comparison against the CPU fixed-tile output showed
+`image`/`residual` max abs diff `2.1822e-2`, RMS `9.36e-4`, with `model`,
+`PSF`, and `sumwt` identical. Conclusion: the explicit selector is useful for
+evidence, but this implementation should not become the macOS default. The next
+Metal shape needs compact tap keys or device-side tap lookup plus grouped
+tile/cell reduction rather than host-expanded exact tap weights per sample.
+
+A follow-up compact staging screen replaced the 88-byte host-expanded residual
+sample with a 32-byte sample containing tap-weight indices and moved tap-weight
+lookup into the Metal shader. It also reuses chunk sample and parameter buffers.
+On the same medium `niter=50` screen, staged bytes dropped from 17.38 GB to
+6.32 GB, per-refresh sample-buffer time dropped from 0.935s to 0.151s, and
+major-cycle residual refresh dropped from 15.347s to 14.029s. This keeps compact
+staging as the retained Metal evidence path, but it still does not justify a
+default macOS backend: host replay/staging remains large enough that the
+explicit Metal residual selector is slower than the CPU fixed-tile path on the
+bounded product comparison.
+
+The next screen moved positive-tap span planning into the Metal shader. The Rust
+path now stages finite padded-grid coordinates in the same 32-byte residual
+sample and the shader computes the rounded center, oversampling offset, support
+bounds, and tap-weight indices. On the same medium `niter=50` screen,
+major-cycle residual refresh dropped again from 14.029s to 12.876s, with staged
+bytes unchanged at 6.32 GB. This confirms the GPU can own residual tap planning,
+but host replay/staging remains the dominant integration issue.
+
+The current row-run screen adds an explicit
+`CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND=metal-row-run` selector. It stages
+routed row/channel runs instead of scalar residual samples, with DATA, FLAG,
+WEIGHT, and per-lane lambda-scale buffers consumed directly by the shader. The
+shader performs polarization collapse, Natural/Uniform/Briggs weighting, tap
+planning, degrid, and residual grid atomics. On the same medium `niter=50`
+screen this reduced staged bytes to 4.57 GB and major-cycle residual refresh to
+10.999s. This is the best integrated Metal evidence path so far, but it still
+does not make Metal the default: the CPU fixed-tile path remains faster for the
+bounded product screen, and the next attempt needs a larger change such as
+device-resident row payloads across major cycles or grouped reduction to reduce
+global atomic pressure.
+
+The row-run kernel bottleneck screen added profiler-only modes under
+`CASA_RS_STANDARD_MFS_METAL_ROW_RUN_DIAGNOSTIC`. On the same medium `niter=50`
+screen, exact command wait was 4.542s. `degrid-only` command wait was 0.652s
+despite the same candidate model-grid reads, while `grid-only` command wait was
+4.574s with the model reads removed. `single-tap` dropped to 0.809s and
+`tap-plan-only` to 0.183s. This makes global atomic accumulation the current
+Metal residual bottleneck. The next production experiment should therefore be a
+tile/cell grouped reduction path that emits far fewer global atomics, not
+another host payload reshaping pass.
+
+The grouped row-run screen added an explicit
+`CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND=metal-row-run-grouped` selector. It keeps
+the row-run descriptor payload, prepares compact residual lanes on device, then
+uses a cell-owner grouped accumulation kernel over microtile halos. On the same
+medium `niter=50` workload:
+
+| grouped edge | frontend | core | residual degrid/grid | major refresh | command wait | grouped candidate atomics | grouped scan tests |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | 32.672s | 19.068s | 13.516s | 9.739s | 2.356s | 43.6M | 38.714B |
+| 4 | 30.581s | 17.406s | 12.291s | 8.955s | 1.775s | 73.3M | 19.752B |
+| 2 | 30.640s | 17.445s | 12.150s | 8.631s | 1.482s | 161.8M | 12.641B |
+| 1 | 29.716s | 16.604s | 11.660s | 8.475s | 1.241s | 452.6M | 9.678B |
+
+The explicit grouped backend now defaults `CASA_RS_STANDARD_MFS_METAL_GROUP_TILE_EDGE`
+to `1`. This is the best integrated Metal residual evidence path so far, but it
+still should not become the default macOS backend: the wider end-to-end profile
+is dominated by streaming passes and CPU dirty/PSF work. The edge sweep says the
+grouped kernel is still scan-bound, so the next GPU direction should reduce by
+output cell more directly rather than scan every lane in each microtile halo
+cell.
+
+A direct threadgroup-reduction follow-up was tested and rejected. The naive
+rectangular dispatch over `max_lane_blocks` made many invalid reduction blocks
+and increased command wait to `37.32s` on the medium `niter=50` screen. The
+retained scan kernel instead benefited modestly from larger row-run chunks:
+
+| grouped scan chunk lanes | chunks | frontend | residual degrid/grid | major refresh | command wait |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4M recheck | 50 | 29.582s | 11.756s | 8.540s | 1.312s |
+| 8M | 25 | 29.173s | 11.483s | 8.269s | 1.025s |
+| 16M | 13 | 29.062s | 11.311s | 8.059s | 0.861s |
+| 32M | 7 | 29.062s | 11.341s | 8.168s | 0.824s |
+
+The explicit Metal row-run chunk default is now `16M` lanes. A future direct
+cell-reduction attempt needs a compact real-task list for `(group, cell,
+lane-block)` work rather than a dense rectangular launch.
+
+## Command-Buffer Attribution
+
+The Rust grouped residual path now records Metal `GPUStartTime`/`GPUEndTime`
+and `kernelStartTime`/`kernelEndTime` when detailed standard-MFS profiling is
+enabled. On the medium 64-channel `niter=50` screen with 16M lane chunks,
+the grouped residual refresh spent about `8.23s` replaying/routing the input,
+`1.47s` appending/grouping CPU-side Metal chunks, `0.85s` waiting for command
+buffers, `0.65s` GPU-active, and `0.19s` inside Metal kernels. The current high
+nail is therefore the residual replay/staging boundary, not the grouped Metal
+kernel body.
 
 ## Risk Table
 

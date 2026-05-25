@@ -24,6 +24,14 @@ pub(crate) enum DensityCellConvention {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) struct DensityGridCoordinateParams {
+    pub(crate) center_x: f64,
+    pub(crate) center_y: f64,
+    pub(crate) u_scale: f64,
+    pub(crate) v_scale: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct TapSet {
     pub(crate) indices: [usize; GRIDDER_TAP_COUNT],
     pub(crate) weights: [f32; GRIDDER_TAP_COUNT],
@@ -349,12 +357,25 @@ impl StandardGridder {
         [self.du_lambda, self.dv_lambda]
     }
 
+    pub(crate) fn oversampling(&self) -> usize {
+        self.oversampling
+    }
+
     pub(crate) fn positive_tap_halo(&self) -> usize {
         GRIDDER_SUPPORT
     }
 
     pub(crate) fn density_grid_shape(&self) -> [usize; 2] {
         [self.geometry.nx(), self.geometry.ny()]
+    }
+
+    pub(crate) fn density_grid_coordinate_params(&self) -> DensityGridCoordinateParams {
+        DensityGridCoordinateParams {
+            center_x: self.density_center_x,
+            center_y: self.density_center_y,
+            u_scale: self.density_u_scale,
+            v_scale: self.density_v_scale,
+        }
     }
 
     #[cfg(test)]
@@ -423,6 +444,16 @@ impl StandardGridder {
         ])
     }
 
+    pub(crate) fn positive_tap_grid_coordinates(
+        &self,
+        u_lambda: f64,
+        v_lambda: f64,
+    ) -> Option<[f32; 2]> {
+        let x = self.grid_coordinate_x(u_lambda);
+        let y = self.grid_coordinate_y(v_lambda);
+        (x.is_finite() && y.is_finite()).then_some([x as f32, y as f32])
+    }
+
     pub(crate) fn positive_tap_axis_weights(
         &self,
         taps: &PositiveTapSet,
@@ -434,6 +465,10 @@ impl StandardGridder {
             self.normalized_tap_weights[taps.x.weight_index],
             self.normalized_tap_weights[taps.y.weight_index],
         )
+    }
+
+    pub(crate) fn normalized_tap_weights(&self) -> &[[f32; STANDARD_GRIDDER_TAP_COUNT]] {
+        &self.normalized_tap_weights
     }
 
     #[allow(dead_code)]

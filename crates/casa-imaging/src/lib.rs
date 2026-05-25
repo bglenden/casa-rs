@@ -55,13 +55,13 @@ use beam::{
     BeamFitOutcome, beamfit_to_gaussian, estimate_psf_sidelobe_level, fit_beam_from_psf,
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
-#[cfg(target_os = "macos")]
-use execution::StandardMfsMetalExecutor;
 use execution::{
     StandardMfsCpuExecutor, StandardMfsDirtyAccumulation, StandardMfsDirtyCpuExecutor,
-    StandardMfsPlannedSample, StandardMfsTiledCpuExecutor, StandardMfsTiledResidualAccumulation,
-    StandardMfsVisibilityPlan, finite_visibility,
+    StandardMfsMetalGroupedInputCache, StandardMfsPlannedSample, StandardMfsTiledCpuExecutor,
+    StandardMfsTiledResidualAccumulation, StandardMfsVisibilityPlan, finite_visibility,
 };
+#[cfg(target_os = "macos")]
+use execution::{StandardMfsMetalExecutor, StandardMfsMetalGroupedInputCacheFill};
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{
     PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder,
@@ -85,12 +85,15 @@ type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
 const DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES: usize = 8_000_000;
 const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
 const STANDARD_MFS_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_BACKEND";
+const STANDARD_MFS_RESIDUAL_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StandardMfsBackendSelection {
     Cpu,
     FixedTile,
     Metal,
+    MetalRowRun,
+    MetalRowRunGrouped,
 }
 
 pub(crate) use cube::{HogbomMinorCycleOutcome, MinorCycleProbe};
@@ -433,6 +436,13 @@ pub struct StandardMfsExecutionConfig {
     /// thresholded scalar inbox path until run-shaped work units improve wall
     /// time or carry row-shaped worker semantics.
     pub fixed_tile_use_planned_run_blocks: bool,
+    /// Reuse finalized host-side grouped Metal residual input chunks across
+    /// major-cycle refreshes.
+    ///
+    /// Frontends should set this only after reserving the cache in their memory
+    /// plan. `CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE` remains a debug
+    /// override for performance screening.
+    pub metal_grouped_input_cache: bool,
 }
 
 /// Metadata for streaming natural-weighted standard MFS dirty accumulation.
@@ -1793,6 +1803,9 @@ pub fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_co
         .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
     let has_initial_model = model.iter().any(|value| value.abs() > 0.0);
     let mut stage_timings = ImagingStageTimings::default();
+    let mut metal_grouped_input_cache =
+        standard_mfs_metal_grouped_input_cache_enabled(execution_config.metal_grouped_input_cache)
+            .then(StandardMfsMetalGroupedInputCache::default);
 
     let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
         compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
@@ -1801,6 +1814,7 @@ pub fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_co
             weighting_plan,
             replay_routed_runs,
             &mut stage_timings,
+            metal_grouped_input_cache.as_mut(),
         )?
     } else {
         let psf_state = compute_psf_standard_routed_visibility_run_replay(
@@ -1809,6 +1823,7 @@ pub fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_co
             weighting_plan,
             replay_routed_runs,
             &mut stage_timings,
+            metal_grouped_input_cache.as_mut(),
         )?;
         let residual = compute_residual_standard_routed_visibility_run_replay(
             request.geometry,
@@ -1819,6 +1834,7 @@ pub fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_co
             weighting_plan,
             replay_routed_runs,
             &mut stage_timings,
+            metal_grouped_input_cache.as_mut(),
         )?;
         (psf_state, residual, 0.0)
     };
@@ -1849,6 +1865,7 @@ pub fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_co
             weighting_plan,
             replay_routed_runs,
             stage_timings,
+            metal_grouped_input_cache.as_mut(),
         )?;
         let refresh_elapsed = refresh_started.elapsed();
         let accounted = before.accounted_delta(stage_timings);
@@ -2477,22 +2494,64 @@ fn compute_dirty_psf_and_residual_standard_routed_sample_replay(
     .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda))
 }
 
+#[cfg(target_os = "macos")]
+fn begin_metal_grouped_input_cache_prime<'a>(
+    gridder: &'a StandardGridder,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    enabled: bool,
+) -> Result<
+    Option<(
+        StandardMfsMetalExecutor<'a>,
+        StandardMfsMetalGroupedInputCacheFill,
+        Instant,
+    )>,
+    ImagingError,
+> {
+    if !enabled {
+        return Ok(None);
+    }
+    if !matches!(
+        standard_mfs_residual_backend_selection_from_env()?,
+        Some(StandardMfsBackendSelection::MetalRowRunGrouped)
+    ) {
+        return Ok(None);
+    }
+    let metal_executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
+    let fill = metal_executor.begin_grouped_input_cache_fill(weighting_plan)?;
+    Ok(Some((metal_executor, fill, Instant::now())))
+}
+
 fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
     gridder: &StandardGridder,
     execution_config: StandardMfsExecutionConfig,
     weighting_plan: &StandardMfsStreamingWeightingPlan,
     replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
     stage_timings: &mut ImagingStageTimings,
+    metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
 ) -> Result<(PsfState, Array2<f32>, f64), ImagingError> {
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let executor =
         StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    #[cfg(target_os = "macos")]
+    let mut metal_cache_prime = begin_metal_grouped_input_cache_prime(
+        gridder,
+        weighting_plan,
+        metal_grouped_input_cache.is_some(),
+    )?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = metal_grouped_input_cache;
     let grid_started = Instant::now();
     let mut replay =
         |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
-            replay_routed_runs.replay_routed_visibility_runs(consumer)
+            replay_routed_runs.replay_routed_visibility_runs(&mut |routed_run| {
+                #[cfg(target_os = "macos")]
+                if let Some((metal_executor, fill, _)) = metal_cache_prime.as_mut() {
+                    metal_executor.append_grouped_input_cache_run(fill, routed_run)?;
+                }
+                consumer(routed_run)
+            })
         };
     let accumulation = executor.accumulate_dirty_grids_direct_routed_visibility_run_replay(
         &mut replay,
@@ -2504,6 +2563,20 @@ fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
     let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
     stage_timings.psf_grid += split_grid_elapsed;
     stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+    #[cfg(target_os = "macos")]
+    if let (Some((metal_executor, fill, fill_started)), Some(cache)) =
+        (metal_cache_prime, metal_grouped_input_cache)
+    {
+        let cache_finish_started = Instant::now();
+        metal_executor.finish_grouped_input_cache_fill(fill, cache)?;
+        stage_timings.residual_degrid_grid += cache_finish_started.elapsed();
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_grouped_input_cache_prime source=initial_dirty elapsed_ms={:.3}",
+                profile::millis(fill_started.elapsed())
+            );
+        }
+    }
 
     dirty_grids_to_psf_and_residual(
         gridder,
@@ -2668,15 +2741,30 @@ fn compute_psf_standard_routed_visibility_run_replay(
     weighting_plan: &StandardMfsStreamingWeightingPlan,
     replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
     stage_timings: &mut ImagingStageTimings,
+    metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
 ) -> Result<PsfState, ImagingError> {
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
     let executor =
         StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    #[cfg(target_os = "macos")]
+    let mut metal_cache_prime = begin_metal_grouped_input_cache_prime(
+        gridder,
+        weighting_plan,
+        metal_grouped_input_cache.is_some(),
+    )?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = metal_grouped_input_cache;
     let grid_started = Instant::now();
     let mut replay =
         |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
-            replay_routed_runs.replay_routed_visibility_runs(consumer)
+            replay_routed_runs.replay_routed_visibility_runs(&mut |routed_run| {
+                #[cfg(target_os = "macos")]
+                if let Some((metal_executor, fill, _)) = metal_cache_prime.as_mut() {
+                    metal_executor.append_grouped_input_cache_run(fill, routed_run)?;
+                }
+                consumer(routed_run)
+            })
         };
     let accumulation = executor.accumulate_psf_grid_direct_routed_visibility_run_replay(
         &mut replay,
@@ -2684,6 +2772,20 @@ fn compute_psf_standard_routed_visibility_run_replay(
         &mut psf_grid,
     )?;
     stage_timings.psf_grid += grid_started.elapsed();
+    #[cfg(target_os = "macos")]
+    if let (Some((metal_executor, fill, fill_started)), Some(cache)) =
+        (metal_cache_prime, metal_grouped_input_cache)
+    {
+        let cache_finish_started = Instant::now();
+        metal_executor.finish_grouped_input_cache_fill(fill, cache)?;
+        stage_timings.psf_grid += cache_finish_started.elapsed();
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_grouped_input_cache_prime source=initial_psf elapsed_ms={:.3}",
+                profile::millis(fill_started.elapsed())
+            );
+        }
+    }
     psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings)
 }
 
@@ -3057,6 +3159,7 @@ fn compute_residual_standard_routed_visibility_run_replay(
     weighting_plan: &StandardMfsStreamingWeightingPlan,
     replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
     stage_timings: &mut ImagingStageTimings,
+    _metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
 ) -> Result<Array2<f32>, ImagingError> {
     let [grid_nx, grid_ny] = gridder.grid_shape();
     let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
@@ -3070,19 +3173,81 @@ fn compute_residual_standard_routed_visibility_run_replay(
         None
     };
 
-    let executor =
-        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
     let degrid_grid_started = Instant::now();
     let mut replay =
         |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
             replay_routed_runs.replay_routed_visibility_runs(consumer)
         };
-    let counts = executor.accumulate_residual_grid_direct_routed_visibility_run_replay(
-        &mut replay,
-        weighting_plan,
-        model_grid.as_ref(),
-        &mut residual_grid,
-    )?;
+    let counts = match standard_mfs_residual_backend_selection_from_env()? {
+        Some(StandardMfsBackendSelection::Metal) => {
+            #[cfg(target_os = "macos")]
+            {
+                let executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
+                executor.accumulate_residual_grid_direct_routed_visibility_run_replay(
+                    &mut replay,
+                    weighting_plan,
+                    model_grid.as_ref(),
+                    &mut residual_grid,
+                )?
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(ImagingError::Unsupported(
+                    "standard MFS residual backend 'metal' requires macOS Metal".to_string(),
+                ));
+            }
+        }
+        Some(StandardMfsBackendSelection::MetalRowRun) => {
+            #[cfg(target_os = "macos")]
+            {
+                let executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
+                executor.accumulate_residual_grid_direct_routed_visibility_run_replay_row_run(
+                    &mut replay,
+                    weighting_plan,
+                    model_grid.as_ref(),
+                    &mut residual_grid,
+                )?
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(ImagingError::Unsupported(
+                    "standard MFS residual backend 'metal-row-run' requires macOS Metal"
+                        .to_string(),
+                ));
+            }
+        }
+        Some(StandardMfsBackendSelection::MetalRowRunGrouped) => {
+            #[cfg(target_os = "macos")]
+            {
+                let executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
+                executor
+                    .accumulate_residual_grid_direct_routed_visibility_run_replay_row_run_grouped(
+                        &mut replay,
+                        weighting_plan,
+                        model_grid.as_ref(),
+                        &mut residual_grid,
+                        _metal_grouped_input_cache,
+                    )?
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(ImagingError::Unsupported(
+                    "standard MFS residual backend 'metal-row-run-grouped' requires macOS Metal"
+                        .to_string(),
+                ));
+            }
+        }
+        _ => {
+            let executor =
+                StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+            executor.accumulate_residual_grid_direct_routed_visibility_run_replay(
+                &mut replay,
+                weighting_plan,
+                model_grid.as_ref(),
+                &mut residual_grid,
+            )?
+        }
+    };
     timings.degrid_grid = degrid_grid_started.elapsed();
 
     let fft_started = Instant::now();
@@ -3311,7 +3476,9 @@ fn should_use_standard_mfs_metal_backend(request: &ImagingRequest) -> bool {
 fn ensure_standard_mfs_backend_available() -> Result<(), ImagingError> {
     match standard_mfs_backend_selection_from_env()? {
         StandardMfsBackendSelection::Cpu | StandardMfsBackendSelection::FixedTile => Ok(()),
-        StandardMfsBackendSelection::Metal => {
+        StandardMfsBackendSelection::Metal
+        | StandardMfsBackendSelection::MetalRowRun
+        | StandardMfsBackendSelection::MetalRowRunGrouped => {
             #[cfg(target_os = "macos")]
             {
                 Ok(())
@@ -3338,14 +3505,46 @@ fn standard_mfs_fixed_tile_backend_enabled() -> bool {
 fn standard_mfs_metal_backend_enabled() -> bool {
     matches!(
         standard_mfs_backend_selection_from_env(),
-        Ok(StandardMfsBackendSelection::Metal)
+        Ok(StandardMfsBackendSelection::Metal
+            | StandardMfsBackendSelection::MetalRowRun
+            | StandardMfsBackendSelection::MetalRowRunGrouped)
     )
+}
+
+fn standard_mfs_metal_grouped_input_cache_enabled(planned_default: bool) -> bool {
+    env::var("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE")
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(planned_default)
 }
 
 fn standard_mfs_backend_selection_from_env() -> Result<StandardMfsBackendSelection, ImagingError> {
     env::var(STANDARD_MFS_BACKEND_ENV)
         .map(|value| parse_standard_mfs_backend_selection(&value))
         .unwrap_or(Ok(StandardMfsBackendSelection::Cpu))
+}
+
+fn standard_mfs_residual_backend_selection_from_env()
+-> Result<Option<StandardMfsBackendSelection>, ImagingError> {
+    env::var(STANDARD_MFS_RESIDUAL_BACKEND_ENV)
+        .map(|value| {
+            let selection = parse_standard_mfs_backend_selection(&value)?;
+            Ok(match selection {
+                StandardMfsBackendSelection::Cpu | StandardMfsBackendSelection::FixedTile => None,
+                StandardMfsBackendSelection::Metal => Some(StandardMfsBackendSelection::Metal),
+                StandardMfsBackendSelection::MetalRowRun => {
+                    Some(StandardMfsBackendSelection::MetalRowRun)
+                }
+                StandardMfsBackendSelection::MetalRowRunGrouped => {
+                    Some(StandardMfsBackendSelection::MetalRowRunGrouped)
+                }
+            })
+        })
+        .unwrap_or(Ok(None))
 }
 
 fn parse_standard_mfs_backend_selection(
@@ -3358,8 +3557,14 @@ fn parse_standard_mfs_backend_selection(
             Ok(StandardMfsBackendSelection::FixedTile)
         }
         "metal" => Ok(StandardMfsBackendSelection::Metal),
+        "metal-row-run" | "metal_row_run" | "metal-rowrun" | "metal_rowrun" => {
+            Ok(StandardMfsBackendSelection::MetalRowRun)
+        }
+        "metal-row-run-grouped" | "metal_row_run_grouped" | "metal-grouped" | "metal_grouped" => {
+            Ok(StandardMfsBackendSelection::MetalRowRunGrouped)
+        }
         _ => Err(ImagingError::Unsupported(format!(
-            "standard MFS backend '{value}' is not recognized; expected cpu, fixed_tile, or metal"
+            "standard MFS backend '{value}' is not recognized; expected cpu, fixed_tile, metal, metal-row-run, or metal-row-run-grouped"
         ))),
     }
 }
@@ -11013,6 +11218,14 @@ mod tests {
             StandardMfsBackendSelection::Metal
         );
         assert_eq!(
+            parse_standard_mfs_backend_selection("metal-row-run").unwrap(),
+            StandardMfsBackendSelection::MetalRowRun
+        );
+        assert_eq!(
+            parse_standard_mfs_backend_selection("metal-row-run-grouped").unwrap(),
+            StandardMfsBackendSelection::MetalRowRunGrouped
+        );
+        assert_eq!(
             parse_standard_mfs_backend_selection("fixed_tile").unwrap(),
             StandardMfsBackendSelection::FixedTile
         );
@@ -11020,7 +11233,9 @@ mod tests {
             parse_standard_mfs_backend_selection("not-a-backend")
                 .unwrap_err()
                 .to_string()
-                .contains("expected cpu, fixed_tile, or metal")
+                .contains(
+                    "expected cpu, fixed_tile, metal, metal-row-run, or metal-row-run-grouped"
+                )
         );
 
         let geometry = ImageGeometry {
@@ -11569,6 +11784,7 @@ mod tests {
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
+                metal_grouped_input_cache: false,
             },
             |consumer| {
                 for batch in &weighted_batches {
@@ -11643,6 +11859,7 @@ mod tests {
             fixed_tile_center_boundary: false,
             fixed_tile_max_live_row_blocks: 1,
             fixed_tile_use_planned_run_blocks: false,
+            metal_grouped_input_cache: false,
         };
         let batch_streaming = run_standard_mfs_weighted_streaming_with_execution_config(
             request.clone(),

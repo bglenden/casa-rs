@@ -4,6 +4,7 @@
 use std::{
     cmp::Ordering as CmpOrdering,
     collections::{BTreeMap, BinaryHeap, VecDeque},
+    env,
     ops::Range,
     sync::{
         Arc, Condvar, Mutex, MutexGuard,
@@ -22,10 +23,12 @@ use crate::{
     StandardMfsRoutedVisibilityRun, StandardMfsStreamingWeightingPlan,
     StandardMfsVisibilityPolarization, VisibilityBatch,
     gridder::{
-        PositiveTapSet, STANDARD_GRIDDER_SUPPORT, STANDARD_GRIDDER_TAP_COUNT, StandardGridder,
-        StandardMfsTapCensus, StandardMfsTapSkipReason, TapAxisSpan,
+        DensityCellConvention, PositiveTapSet, STANDARD_GRIDDER_SUPPORT,
+        STANDARD_GRIDDER_TAP_COUNT, StandardGridder, StandardMfsTapCensus,
+        StandardMfsTapSkipReason, TapAxisSpan,
     },
     profile,
+    weighting::StandardMfsStreamingReweightPlan,
 };
 
 /// Internal backend selection for standard MFS execution.
@@ -9369,6 +9372,81 @@ impl<'a> StandardMfsMetalExecutor<'a> {
         self.accumulate_dirty_grids(batches, psf_grid, &mut residual_grid)
     }
 
+    pub(crate) fn accumulate_residual_grid_direct_routed_visibility_run_replay(
+        &self,
+        replay_routed_runs: &mut MetalResidualRunReplay<'_>,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        model_grid: Option<&Array2<Complex32>>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError> {
+        self.backend.grid_residual_refresh_routed_visibility_runs(
+            self.gridder,
+            replay_routed_runs,
+            weighting_plan,
+            model_grid,
+            residual_grid,
+        )
+    }
+
+    pub(crate) fn accumulate_residual_grid_direct_routed_visibility_run_replay_row_run(
+        &self,
+        replay_routed_runs: &mut MetalResidualRunReplay<'_>,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        model_grid: Option<&Array2<Complex32>>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError> {
+        self.backend.grid_residual_refresh_row_runs(
+            self.gridder,
+            replay_routed_runs,
+            weighting_plan,
+            model_grid,
+            residual_grid,
+        )
+    }
+
+    pub(crate) fn accumulate_residual_grid_direct_routed_visibility_run_replay_row_run_grouped(
+        &self,
+        replay_routed_runs: &mut MetalResidualRunReplay<'_>,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        model_grid: Option<&Array2<Complex32>>,
+        residual_grid: &mut Array2<Complex64>,
+        input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
+    ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError> {
+        self.backend.grid_residual_refresh_row_runs_grouped(
+            self.gridder,
+            replay_routed_runs,
+            weighting_plan,
+            model_grid,
+            residual_grid,
+            input_cache,
+        )
+    }
+
+    pub(crate) fn begin_grouped_input_cache_fill(
+        &self,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<StandardMfsMetalGroupedInputCacheFill, ImagingError> {
+        self.backend
+            .begin_grouped_input_cache_fill(self.gridder, weighting_plan)
+    }
+
+    pub(crate) fn append_grouped_input_cache_run(
+        &self,
+        fill: &mut StandardMfsMetalGroupedInputCacheFill,
+        routed_run: &StandardMfsRoutedVisibilityRun,
+    ) -> Result<(), ImagingError> {
+        self.backend
+            .append_grouped_input_cache_run(routed_run, fill)
+    }
+
+    pub(crate) fn finish_grouped_input_cache_fill(
+        &self,
+        fill: StandardMfsMetalGroupedInputCacheFill,
+        cache: &mut StandardMfsMetalGroupedInputCache,
+    ) -> Result<(), ImagingError> {
+        self.backend.finish_grouped_input_cache_fill(fill, cache)
+    }
+
     fn metal_dirty_samples(
         &self,
         batch: &VisibilityBatch,
@@ -9420,6 +9498,179 @@ struct MetalDirtySample {
 #[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
+struct MetalResidualSample {
+    grid_x: f32,
+    grid_y: f32,
+    grid_weight: f32,
+    _pad0: f32,
+    visibility_re: f32,
+    visibility_im: f32,
+    _pad1: [f32; 2],
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct MetalResidualRowRunDesc {
+    u_m: f32,
+    v_m: f32,
+    sumwt_factor: f32,
+    _pad0: f32,
+    lane_offset: u32,
+    lane_count: u32,
+    data_offset: u32,
+    flag_offset: u32,
+    weight_offset: u32,
+    corr_count: u32,
+    polarization_mode: u32,
+    transform: u32,
+    corr0: u32,
+    corr1: u32,
+    _pad1: [u32; 2],
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct MetalResidualRowRunLane {
+    lambda_scale: f32,
+    center_x: u32,
+    center_y: u32,
+    _pad0: u32,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct MetalResidualGroupedLane {
+    center_x: u32,
+    center_y: u32,
+    x_weight_base: u32,
+    y_weight_base: u32,
+    residual_re: f32,
+    residual_im: f32,
+    grid_weight: f32,
+    _pad0: f32,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct MetalResidualGroupedTileDesc {
+    ref_offset: u32,
+    ref_count: u32,
+    halo_x0: u32,
+    halo_y0: u32,
+    halo_width: u32,
+    halo_height: u32,
+    _pad0: [u32; 2],
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+struct MetalResidualGroupedTilePartition {
+    grid_width: usize,
+    grid_height: usize,
+    edge: usize,
+    tile_count_x: usize,
+    tile_count_y: usize,
+}
+
+#[cfg(target_os = "macos")]
+impl MetalResidualGroupedTilePartition {
+    fn new(grid_width: usize, grid_height: usize, edge: usize) -> Result<Self, ImagingError> {
+        if grid_width == 0 || grid_height == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run grid shape must be non-empty".to_string(),
+            ));
+        }
+        if edge == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run tile edge must be greater than zero"
+                    .to_string(),
+            ));
+        }
+        let tile_count_x = grid_width.div_ceil(edge);
+        let tile_count_y = grid_height.div_ceil(edge);
+        Ok(Self {
+            grid_width,
+            grid_height,
+            edge,
+            tile_count_x,
+            tile_count_y,
+        })
+    }
+
+    fn tile_count(&self) -> usize {
+        self.tile_count_x.saturating_mul(self.tile_count_y)
+    }
+
+    fn owner(&self, center_x: u32, center_y: u32) -> Option<usize> {
+        let x = center_x as usize;
+        let y = center_y as usize;
+        if x >= self.grid_width || y >= self.grid_height {
+            return None;
+        }
+        let tile_x = x / self.edge;
+        let tile_y = y / self.edge;
+        Some(tile_x * self.tile_count_y + tile_y)
+    }
+
+    fn tile_desc(
+        &self,
+        tile_index: usize,
+        ref_offset: usize,
+        ref_count: usize,
+    ) -> Result<MetalResidualGroupedTileDesc, ImagingError> {
+        let tile_x = tile_index / self.tile_count_y;
+        let tile_y = tile_index % self.tile_count_y;
+        let x0 = tile_x.saturating_mul(self.edge);
+        let y0 = tile_y.saturating_mul(self.edge);
+        let x1 = (x0 + self.edge).min(self.grid_width);
+        let y1 = (y0 + self.edge).min(self.grid_height);
+        let halo_x0 = x0.saturating_sub(STANDARD_GRIDDER_SUPPORT);
+        let halo_y0 = y0.saturating_sub(STANDARD_GRIDDER_SUPPORT);
+        let halo_x1 = (x1 + STANDARD_GRIDDER_SUPPORT).min(self.grid_width);
+        let halo_y1 = (y1 + STANDARD_GRIDDER_SUPPORT).min(self.grid_height);
+        Ok(MetalResidualGroupedTileDesc {
+            ref_offset: u32::try_from(ref_offset).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run ref offset exceeds u32".to_string(),
+                )
+            })?,
+            ref_count: u32::try_from(ref_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run ref count exceeds u32".to_string(),
+                )
+            })?,
+            halo_x0: u32::try_from(halo_x0).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run halo x origin exceeds u32".to_string(),
+                )
+            })?,
+            halo_y0: u32::try_from(halo_y0).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run halo y origin exceeds u32".to_string(),
+                )
+            })?,
+            halo_width: u32::try_from(halo_x1.saturating_sub(halo_x0)).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run halo width exceeds u32".to_string(),
+                )
+            })?,
+            halo_height: u32::try_from(halo_y1.saturating_sub(halo_y0)).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run halo height exceeds u32".to_string(),
+                )
+            })?,
+            _pad0: [0; 2],
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
 struct MetalTileParams {
     sample_count: u32,
     halo_x0: u32,
@@ -9427,6 +9678,568 @@ struct MetalTileParams {
     halo_width: u32,
     halo_height: u32,
     _pad0: [u32; 3],
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct MetalResidualParams {
+    sample_count: u32,
+    grid_width: u32,
+    grid_height: u32,
+    oversampling: u32,
+    tap_weight_count: u32,
+    _pad0: [u32; 3],
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct MetalResidualRowRunParams {
+    run_count: u32,
+    max_lane_count: u32,
+    grid_width: u32,
+    grid_height: u32,
+    oversampling: u32,
+    tap_weight_count: u32,
+    weighting_mode: u32,
+    density_convention: u32,
+    density_width: u32,
+    density_height: u32,
+    diagnostic_mode: u32,
+    _pad0: u32,
+    du_lambda: f32,
+    dv_lambda: f32,
+    density_center_x: f32,
+    density_center_y: f32,
+    density_u_scale: f32,
+    density_v_scale: f32,
+    briggs_f2: f32,
+    _pad1: f32,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MetalResidualRowRunDiagnosticMode {
+    Exact,
+    DegridOnly,
+    GridOnly,
+    SingleTap,
+    TapPlanOnly,
+}
+
+#[cfg(target_os = "macos")]
+impl MetalResidualRowRunDiagnosticMode {
+    fn from_env() -> Result<Self, ImagingError> {
+        match env::var("CASA_RS_STANDARD_MFS_METAL_ROW_RUN_DIAGNOSTIC") {
+            Ok(value) => {
+                let normalized = value.trim().to_ascii_lowercase();
+                match normalized.as_str() {
+                    "" | "exact" | "off" | "none" => Ok(Self::Exact),
+                    "degrid-only" | "degrid_only" | "degrid" | "model-read" | "model_read" => {
+                        Ok(Self::DegridOnly)
+                    }
+                    "grid-only" | "grid_only" | "atomics" | "atomic" => Ok(Self::GridOnly),
+                    "single-tap" | "single_tap" | "one-tap" | "one_tap" => Ok(Self::SingleTap),
+                    "tap-plan-only" | "tap_plan_only" | "tap-plan" | "tap_plan" => {
+                        Ok(Self::TapPlanOnly)
+                    }
+                    _ => Err(ImagingError::Unsupported(format!(
+                        "standard MFS Metal row-run diagnostic mode '{value}' is not recognized; expected exact, degrid-only, grid-only, single-tap, or tap-plan-only"
+                    ))),
+                }
+            }
+            Err(_) => Ok(Self::Exact),
+        }
+    }
+
+    fn code(self) -> u32 {
+        match self {
+            Self::Exact => 0,
+            Self::DegridOnly => 1,
+            Self::GridOnly => 2,
+            Self::SingleTap => 3,
+            Self::TapPlanOnly => 4,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::DegridOnly => "degrid-only",
+            Self::GridOnly => "grid-only",
+            Self::SingleTap => "single-tap",
+            Self::TapPlanOnly => "tap-plan-only",
+        }
+    }
+
+    fn uses_diagnostic_pipeline(self) -> bool {
+        self != Self::Exact
+    }
+}
+
+#[cfg(target_os = "macos")]
+type MetalResidualRunReplay<'a> = dyn FnMut(
+        &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>
+    + 'a;
+
+#[cfg(target_os = "macos")]
+type MetalBuffer = objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLBuffer>>;
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MetalInputBufferCopyMode {
+    Copy,
+    NoCopy,
+}
+
+#[cfg(target_os = "macos")]
+struct MetalResidualDispatchBuffers<'a> {
+    sample_buffer: &'a MetalBuffer,
+    params_buffer: &'a MetalBuffer,
+    tap_weights: &'a MetalBuffer,
+    oversampling: u32,
+    tap_weight_count: u32,
+    model_re: &'a MetalBuffer,
+    model_im: &'a MetalBuffer,
+    grid_re: &'a MetalBuffer,
+    grid_im: &'a MetalBuffer,
+}
+
+#[cfg(target_os = "macos")]
+struct MetalResidualRowRunSharedBuffers<'a> {
+    tap_weights: &'a MetalBuffer,
+    density: &'a MetalBuffer,
+    model_re: &'a MetalBuffer,
+    model_im: &'a MetalBuffer,
+    grid_re: &'a MetalBuffer,
+    grid_im: &'a MetalBuffer,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct MetalResidualRowRunChunk {
+    runs: Vec<MetalResidualRowRunDesc>,
+    lanes: Vec<MetalResidualRowRunLane>,
+    data: Vec<MetalComplex32>,
+    flags: Vec<u8>,
+    weights: Vec<f32>,
+    logical_lanes: usize,
+    max_lane_count: usize,
+}
+
+#[cfg(target_os = "macos")]
+impl MetalResidualRowRunChunk {
+    fn clear(&mut self) {
+        self.runs.clear();
+        self.lanes.clear();
+        self.data.clear();
+        self.flags.clear();
+        self.weights.clear();
+        self.logical_lanes = 0;
+        self.max_lane_count = 0;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.runs.is_empty()
+    }
+
+    fn staged_bytes(&self) -> usize {
+        std::mem::size_of_val(self.runs.as_slice())
+            .saturating_add(std::mem::size_of_val(self.lanes.as_slice()))
+            .saturating_add(std::mem::size_of_val(self.data.as_slice()))
+            .saturating_add(std::mem::size_of_val(self.flags.as_slice()))
+            .saturating_add(std::mem::size_of_val(self.weights.as_slice()))
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+struct MetalResidualGroupedRowRunChunk {
+    row_runs: MetalResidualRowRunChunk,
+    lane_group_ids: Vec<u32>,
+    group_counts: Vec<u32>,
+    group_descs: Vec<MetalResidualGroupedTileDesc>,
+    lane_refs: Vec<u32>,
+    max_halo_cells: usize,
+    group_cell_count: u64,
+    group_scan_tests: u64,
+}
+
+#[cfg(target_os = "macos")]
+impl MetalResidualGroupedRowRunChunk {
+    fn new(tile_count: usize) -> Self {
+        Self {
+            row_runs: MetalResidualRowRunChunk::default(),
+            lane_group_ids: Vec::new(),
+            group_counts: vec![0; tile_count],
+            group_descs: Vec::new(),
+            lane_refs: Vec::new(),
+            max_halo_cells: 0,
+            group_cell_count: 0,
+            group_scan_tests: 0,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.row_runs.clear();
+        self.lane_group_ids.clear();
+        self.group_counts.fill(0);
+        self.group_descs.clear();
+        self.lane_refs.clear();
+        self.max_halo_cells = 0;
+        self.group_cell_count = 0;
+        self.group_scan_tests = 0;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.row_runs.is_empty()
+    }
+
+    fn staged_bytes(&self) -> usize {
+        self.row_runs
+            .staged_bytes()
+            .saturating_add(std::mem::size_of_val(self.group_descs.as_slice()))
+            .saturating_add(std::mem::size_of_val(self.lane_refs.as_slice()))
+            .saturating_add(
+                self.row_runs
+                    .lanes
+                    .len()
+                    .saturating_mul(std::mem::size_of::<MetalResidualGroupedLane>()),
+            )
+    }
+
+    fn host_cache_bytes(&self) -> usize {
+        self.row_runs
+            .staged_bytes()
+            .saturating_add(std::mem::size_of_val(self.lane_group_ids.as_slice()))
+            .saturating_add(std::mem::size_of_val(self.group_counts.as_slice()))
+            .saturating_add(std::mem::size_of_val(self.group_descs.as_slice()))
+            .saturating_add(std::mem::size_of_val(self.lane_refs.as_slice()))
+    }
+
+    fn finalize_groups(
+        &mut self,
+        partition: &MetalResidualGroupedTilePartition,
+    ) -> Result<(), ImagingError> {
+        self.group_descs.clear();
+        self.lane_refs.clear();
+        self.max_halo_cells = 0;
+        self.group_cell_count = 0;
+        self.group_scan_tests = 0;
+        if self.lane_group_ids.len() != self.row_runs.lanes.len() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS Metal grouped row-run lane/group length mismatch: {} lanes, {} group ids",
+                self.row_runs.lanes.len(),
+                self.lane_group_ids.len()
+            )));
+        }
+        if self.row_runs.lanes.is_empty() {
+            return Ok(());
+        }
+
+        let mut group_offsets = vec![0usize; self.group_counts.len()];
+        let mut ref_offset = 0usize;
+        for (group_index, &count) in self.group_counts.iter().enumerate() {
+            group_offsets[group_index] = ref_offset;
+            if count == 0 {
+                continue;
+            }
+            let desc = partition.tile_desc(group_index, ref_offset, count as usize)?;
+            let halo_cells = (desc.halo_width as usize).saturating_mul(desc.halo_height as usize);
+            self.max_halo_cells = self.max_halo_cells.max(halo_cells);
+            self.group_cell_count = self.group_cell_count.saturating_add(halo_cells as u64);
+            self.group_scan_tests = self
+                .group_scan_tests
+                .saturating_add((halo_cells as u64).saturating_mul(count as u64));
+            self.group_descs.push(desc);
+            ref_offset = ref_offset.saturating_add(count as usize);
+        }
+        self.lane_refs.resize(self.row_runs.lanes.len(), 0);
+        let mut cursors = group_offsets;
+        for (lane_index, &group_id) in self.lane_group_ids.iter().enumerate() {
+            let group_index = group_id as usize;
+            let slot = cursors.get_mut(group_index).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal grouped row-run group id {group_id} is out of range"
+                ))
+            })?;
+            self.lane_refs[*slot] = u32::try_from(lane_index).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run lane index exceeds u32".to_string(),
+                )
+            })?;
+            *slot = (*slot).saturating_add(1);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MetalResidualGroupedInputCacheKey {
+    grid_width: usize,
+    grid_height: usize,
+    oversampling: usize,
+    tap_weight_count: usize,
+    weighting_mode: u32,
+    density_convention: u32,
+    density_width: usize,
+    density_height: usize,
+    briggs_f2_bits: u32,
+    group_tile_edge: usize,
+    group_tile_count: usize,
+    chunk_lane_capacity: usize,
+    du_lambda_bits: u32,
+    dv_lambda_bits: u32,
+    density_center_x_bits: u32,
+    density_center_y_bits: u32,
+    density_u_scale_bits: u32,
+    density_v_scale_bits: u32,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+struct MetalResidualGroupedCachedChunk {
+    params: MetalResidualRowRunParams,
+    metrics: MetalResidualGroupedChunkMetrics,
+    host: Option<MetalResidualGroupedRowRunChunk>,
+    buffers: Option<MetalResidualGroupedCachedBuffers>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Default)]
+struct MetalResidualGroupedChunkMetrics {
+    runs: usize,
+    logical_lanes: usize,
+    group_descs: usize,
+    lane_refs: usize,
+    max_halo_cells: usize,
+    group_cell_count: u64,
+    group_scan_tests: u64,
+    staged_bytes: usize,
+}
+
+#[cfg(target_os = "macos")]
+impl MetalResidualGroupedChunkMetrics {
+    fn from_chunk(chunk: &MetalResidualGroupedRowRunChunk) -> Self {
+        Self {
+            runs: chunk.row_runs.runs.len(),
+            logical_lanes: chunk.row_runs.logical_lanes,
+            group_descs: chunk.group_descs.len(),
+            lane_refs: chunk.lane_refs.len(),
+            max_halo_cells: chunk.max_halo_cells,
+            group_cell_count: chunk.group_cell_count,
+            group_scan_tests: chunk.group_scan_tests,
+            staged_bytes: chunk.staged_bytes(),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+struct MetalResidualGroupedCachedBuffers {
+    run: MetalBuffer,
+    lane: MetalBuffer,
+    data: MetalBuffer,
+    flag: MetalBuffer,
+    weight: MetalBuffer,
+    group_desc: MetalBuffer,
+    lane_ref: MetalBuffer,
+    grouped_lane: MetalBuffer,
+    params: MetalBuffer,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+pub(crate) struct StandardMfsMetalGroupedInputCache {
+    key: Option<MetalResidualGroupedInputCacheKey>,
+    chunks: Vec<MetalResidualGroupedCachedChunk>,
+    accumulation: StandardMfsTiledResidualAccumulation,
+    host_bytes: usize,
+}
+
+#[cfg(target_os = "macos")]
+impl StandardMfsMetalGroupedInputCache {
+    fn matches(&self, key: MetalResidualGroupedInputCacheKey) -> bool {
+        self.key == Some(key) && !self.chunks.is_empty()
+    }
+
+    fn replace(
+        &mut self,
+        key: MetalResidualGroupedInputCacheKey,
+        chunks: Vec<MetalResidualGroupedCachedChunk>,
+        accumulation: StandardMfsTiledResidualAccumulation,
+    ) {
+        self.host_bytes = chunks
+            .iter()
+            .map(|chunk| {
+                chunk
+                    .host
+                    .as_ref()
+                    .map_or(chunk.metrics.staged_bytes, |host| host.host_cache_bytes())
+            })
+            .sum();
+        self.key = Some(key);
+        self.chunks = chunks;
+        self.accumulation = accumulation;
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) struct StandardMfsMetalGroupedInputCacheFill {
+    key: MetalResidualGroupedInputCacheKey,
+    partition: MetalResidualGroupedTilePartition,
+    chunk_lane_capacity: usize,
+    grid_width: usize,
+    grid_height: usize,
+    oversampling: usize,
+    tap_weight_count: usize,
+    weighting_mode: u32,
+    density_convention: u32,
+    density_width: usize,
+    density_height: usize,
+    briggs_f2: f32,
+    du_lambda: f32,
+    dv_lambda: f32,
+    density_center_x: f32,
+    density_center_y: f32,
+    density_u_scale: f32,
+    density_v_scale: f32,
+    chunks: Vec<MetalResidualGroupedCachedChunk>,
+    chunk: MetalResidualGroupedRowRunChunk,
+    accumulation: StandardMfsTiledResidualAccumulation,
+}
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug, Default)]
+pub(crate) struct StandardMfsMetalGroupedInputCache;
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct MetalResidualRefreshTimings {
+    model_pack: Duration,
+    model_buffer: Duration,
+    grid_buffer: Duration,
+    replay: Duration,
+    append_total: Duration,
+    run_wrap: Duration,
+    sample_decode_sampled: Duration,
+    weight_sampled: Duration,
+    tap_plan_sampled: Duration,
+    axis_weight_sampled: Duration,
+    push_sampled: Duration,
+    dispatch_sample_buffer: Duration,
+    dispatch_params_buffer: Duration,
+    dispatch_encode: Duration,
+    dispatch_wait: Duration,
+    readback: Duration,
+    sampled_samples: usize,
+    staged_bytes: usize,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct MetalResidualRowRunRefreshTimings {
+    model_pack: Duration,
+    model_buffer: Duration,
+    density_buffer: Duration,
+    grid_buffer: Duration,
+    replay: Duration,
+    append_total: Duration,
+    dispatch_input_buffers: Duration,
+    dispatch_params_buffer: Duration,
+    dispatch_encode: Duration,
+    dispatch_wait: Duration,
+    dispatch_gpu: Duration,
+    dispatch_kernel: Duration,
+    readback: Duration,
+    staged_bytes: usize,
+    diagnostic_output_bytes: usize,
+    candidate_tap_visits: u64,
+    candidate_model_reads: u64,
+    candidate_grid_atomic_adds: u64,
+    candidate_group_cell_atomic_adds: u64,
+    candidate_group_scan_tests: u64,
+    runs: usize,
+    logical_lanes: usize,
+    unsupported_runs: usize,
+    group_tile_edge: usize,
+    group_descs: usize,
+    lane_refs: usize,
+    input_cache_hit: bool,
+    input_cache_fill: bool,
+    input_cache_chunks: usize,
+    input_cache_host_bytes: usize,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct MetalResidualDispatchTiming {
+    sample_buffer: Duration,
+    params_buffer: Duration,
+    encode: Duration,
+    wait: Duration,
+    gpu: Duration,
+    kernel: Duration,
+}
+
+#[cfg(target_os = "macos")]
+fn record_metal_grouped_residual_dispatch(
+    chunk_number: usize,
+    metrics: MetalResidualGroupedChunkMetrics,
+    dispatch_timing: MetalResidualDispatchTiming,
+    timings: &mut MetalResidualRowRunRefreshTimings,
+) {
+    timings.dispatch_input_buffers += dispatch_timing.sample_buffer;
+    timings.dispatch_params_buffer += dispatch_timing.params_buffer;
+    timings.dispatch_encode += dispatch_timing.encode;
+    timings.dispatch_wait += dispatch_timing.wait;
+    timings.dispatch_gpu += dispatch_timing.gpu;
+    timings.dispatch_kernel += dispatch_timing.kernel;
+    if profile::standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "standard_mfs_metal_row_run_grouped_chunk chunk={} runs={} logical_lanes={} group_descs={} lane_refs={} group_cell_count={} group_scan_tests={} input_buffers_ms={:.3} params_ms={:.3} encode_ms={:.3} wait_ms={:.3} gpu_ms={:.3} kernel_ms={:.3} staged_bytes={}",
+            chunk_number,
+            metrics.runs,
+            metrics.logical_lanes,
+            metrics.group_descs,
+            metrics.lane_refs,
+            metrics.group_cell_count,
+            metrics.group_scan_tests,
+            profile::millis(dispatch_timing.sample_buffer),
+            profile::millis(dispatch_timing.params_buffer),
+            profile::millis(dispatch_timing.encode),
+            profile::millis(dispatch_timing.wait),
+            profile::millis(dispatch_timing.gpu),
+            profile::millis(dispatch_timing.kernel),
+            metrics.staged_bytes,
+        );
+    }
+    timings.staged_bytes = timings.staged_bytes.saturating_add(metrics.staged_bytes);
+    let candidate_tap_visits = (metrics.logical_lanes as u64)
+        .saturating_mul(STANDARD_GRIDDER_TAP_COUNT as u64)
+        .saturating_mul(STANDARD_GRIDDER_TAP_COUNT as u64);
+    timings.candidate_tap_visits = timings
+        .candidate_tap_visits
+        .saturating_add(candidate_tap_visits);
+    timings.candidate_model_reads = timings
+        .candidate_model_reads
+        .saturating_add(candidate_tap_visits.saturating_mul(2));
+    timings.candidate_grid_atomic_adds = timings
+        .candidate_grid_atomic_adds
+        .saturating_add(candidate_tap_visits.saturating_mul(2));
+    timings.candidate_group_cell_atomic_adds = timings
+        .candidate_group_cell_atomic_adds
+        .saturating_add(metrics.group_cell_count.saturating_mul(2));
+    timings.candidate_group_scan_tests = timings
+        .candidate_group_scan_tests
+        .saturating_add(metrics.group_scan_tests);
+    timings.runs = timings.runs.saturating_add(metrics.runs);
+    timings.logical_lanes = timings.logical_lanes.saturating_add(metrics.logical_lanes);
+    timings.group_descs = timings.group_descs.saturating_add(metrics.group_descs);
+    timings.lane_refs = timings.lane_refs.saturating_add(metrics.lane_refs);
 }
 
 #[cfg(target_os = "macos")]
@@ -9442,6 +10255,21 @@ struct MetalDirtyBackend {
     device: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLDevice>>,
     queue: objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandQueue>>,
     pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
+    residual_pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
+    residual_row_run_pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
+    residual_row_run_diagnostic_pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
+    residual_row_run_grouped_prepare_pipeline: objc2::rc::Retained<
+        objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+    >,
+    residual_row_run_grouped_accumulate_pipeline: objc2::rc::Retained<
         objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
     >,
 }
@@ -9477,11 +10305,89 @@ impl MetalDirtyBackend {
         let pipeline = device
             .newComputePipelineStateWithFunction_error(&function)
             .map_err(|error| metal_error("create dirty tile pipeline", error))?;
+        let residual_function_name =
+            objc2_foundation::NSString::from_str("residual_refresh_global_atomic_exact");
+        let residual_function = library
+            .newFunctionWithName(&residual_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' residual refresh shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let residual_pipeline = device
+            .newComputePipelineStateWithFunction_error(&residual_function)
+            .map_err(|error| metal_error("create residual refresh pipeline", error))?;
+        let residual_row_run_function_name =
+            objc2_foundation::NSString::from_str("residual_refresh_row_run_global_atomic_exact");
+        let residual_row_run_function = library
+            .newFunctionWithName(&residual_row_run_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal-row-run' residual refresh shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let residual_row_run_pipeline = device
+            .newComputePipelineStateWithFunction_error(&residual_row_run_function)
+            .map_err(|error| metal_error("create residual row-run refresh pipeline", error))?;
+        let residual_row_run_diagnostic_function_name =
+            objc2_foundation::NSString::from_str("residual_refresh_row_run_diagnostic");
+        let residual_row_run_diagnostic_function = library
+            .newFunctionWithName(&residual_row_run_diagnostic_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal-row-run' diagnostic residual refresh shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let residual_row_run_diagnostic_pipeline = device
+            .newComputePipelineStateWithFunction_error(&residual_row_run_diagnostic_function)
+            .map_err(|error| {
+                metal_error("create residual row-run diagnostic refresh pipeline", error)
+            })?;
+        let residual_row_run_grouped_prepare_function_name =
+            objc2_foundation::NSString::from_str("residual_refresh_row_run_grouped_prepare");
+        let residual_row_run_grouped_prepare_function = library
+            .newFunctionWithName(&residual_row_run_grouped_prepare_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal-row-run-grouped' prepare shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let residual_row_run_grouped_prepare_pipeline = device
+            .newComputePipelineStateWithFunction_error(&residual_row_run_grouped_prepare_function)
+            .map_err(|error| {
+                metal_error("create residual row-run grouped prepare pipeline", error)
+            })?;
+        let residual_row_run_grouped_accumulate_function_name =
+            objc2_foundation::NSString::from_str("residual_refresh_row_run_grouped_accumulate");
+        let residual_row_run_grouped_accumulate_function = library
+            .newFunctionWithName(&residual_row_run_grouped_accumulate_function_name)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal-row-run-grouped' accumulate shader entry point was not found"
+                        .to_string(),
+                )
+            })?;
+        let residual_row_run_grouped_accumulate_pipeline = device
+            .newComputePipelineStateWithFunction_error(
+                &residual_row_run_grouped_accumulate_function,
+            )
+            .map_err(|error| {
+                metal_error("create residual row-run grouped accumulate pipeline", error)
+            })?;
         let _ = MTLResourceOptions::StorageModeShared;
         Ok(Self {
             device,
             queue,
             pipeline,
+            residual_pipeline,
+            residual_row_run_pipeline,
+            residual_row_run_diagnostic_pipeline,
+            residual_row_run_grouped_prepare_pipeline,
+            residual_row_run_grouped_accumulate_pipeline,
         })
     }
 
@@ -9645,6 +10551,2186 @@ impl MetalDirtyBackend {
         Ok((psf_grid, residual_grid))
     }
 
+    fn grid_residual_refresh_routed_visibility_runs(
+        &self,
+        gridder: &StandardGridder,
+        replay_routed_runs: &mut MetalResidualRunReplay<'_>,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        model_grid: Option<&Array2<Complex32>>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError> {
+        use std::{mem, slice};
+
+        use objc2_metal::{MTLBuffer, MTLDevice, MTLResourceOptions};
+
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal residual grid is too large".to_string(),
+            )
+        })?;
+        if residual_grid.shape() != [grid_width, grid_height] {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS Metal residual grid shape {:?} differs from gridder shape {:?}",
+                residual_grid.shape(),
+                [grid_width, grid_height]
+            )));
+        }
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let mut timings = MetalResidualRefreshTimings::default();
+        let model_pack_started = Instant::now();
+        let mut model_re = Vec::<f32>::with_capacity(cell_count);
+        let mut model_im = Vec::<f32>::with_capacity(cell_count);
+        if let Some(model_grid) = model_grid {
+            if model_grid.shape() != [grid_width, grid_height] {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal model grid shape {:?} differs from gridder shape {:?}",
+                    model_grid.shape(),
+                    [grid_width, grid_height]
+                )));
+            }
+            for value in model_grid.as_slice_memory_order().ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal model grid must be contiguous".to_string(),
+                )
+            })? {
+                model_re.push(value.re);
+                model_im.push(value.im);
+            }
+        } else {
+            model_re.resize(cell_count, 0.0);
+            model_im.resize(cell_count, 0.0);
+        }
+        timings.model_pack += model_pack_started.elapsed();
+        let model_buffer_started = Instant::now();
+        let model_re_buffer = self.buffer_from_slice(&model_re, storage_options)?;
+        let model_im_buffer = self.buffer_from_slice(&model_im, storage_options)?;
+        timings.model_buffer += model_buffer_started.elapsed();
+        let grid_buffer_started = Instant::now();
+        let zero_grid = vec![0_u32; cell_count];
+        let grid_re_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
+        let grid_im_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
+        timings.grid_buffer += grid_buffer_started.elapsed();
+        let tap_weights_buffer =
+            self.buffer_from_slice(gridder.normalized_tap_weights(), storage_options)?;
+        let oversampling = u32::try_from(gridder.oversampling()).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal residual gridder oversampling exceeds u32".to_string(),
+            )
+        })?;
+        let tap_weight_count =
+            u32::try_from(gridder.normalized_tap_weights().len()).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal residual tap-weight table exceeds u32".to_string(),
+                )
+            })?;
+        let chunk_capacity = standard_mfs_metal_residual_chunk_samples();
+        let sample_buffer_bytes = chunk_capacity
+            .checked_mul(mem::size_of::<MetalResidualSample>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal residual chunk buffer is too large".to_string(),
+                )
+            })?;
+        let sample_buffer = self
+            .device
+            .newBufferWithLength_options(sample_buffer_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' could not allocate residual sample buffer"
+                        .to_string(),
+                )
+            })?;
+        let params_buffer = self
+            .device
+            .newBufferWithLength_options(mem::size_of::<MetalResidualParams>(), storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal' could not allocate residual params buffer"
+                        .to_string(),
+                )
+            })?;
+        let sample_stride = standard_mfs_metal_residual_staging_sample_stride();
+        let mut chunk = Vec::<MetalResidualSample>::with_capacity(chunk_capacity);
+        let mut accumulation = StandardMfsTiledResidualAccumulation::default();
+        let mut chunks_dispatched = 0usize;
+        let mut prepared_samples = 0usize;
+        let prepare_started = Instant::now();
+
+        let replay_started = Instant::now();
+        replay_routed_runs(&mut |routed_run| {
+            let append_started = Instant::now();
+            self.append_metal_residual_samples_from_routed_run(
+                gridder,
+                routed_run,
+                weighting_plan,
+                &mut accumulation,
+                &mut chunk,
+                sample_stride,
+                &mut timings,
+            )?;
+            timings.append_total += append_started.elapsed();
+            if chunk.len() >= chunk_capacity {
+                let mut dispatched = 0usize;
+                while dispatched < chunk.len() {
+                    let end = (dispatched + chunk_capacity).min(chunk.len());
+                    let chunk_slice = &chunk[dispatched..end];
+                    let dispatch_timing = self.dispatch_residual_refresh_chunk(
+                        chunk_slice,
+                        grid_width,
+                        grid_height,
+                        MetalResidualDispatchBuffers {
+                            sample_buffer: &sample_buffer,
+                            params_buffer: &params_buffer,
+                            tap_weights: &tap_weights_buffer,
+                            oversampling,
+                            tap_weight_count,
+                            model_re: &model_re_buffer,
+                            model_im: &model_im_buffer,
+                            grid_re: &grid_re_buffer,
+                            grid_im: &grid_im_buffer,
+                        },
+                    )?;
+                    timings.dispatch_sample_buffer += dispatch_timing.sample_buffer;
+                    timings.dispatch_params_buffer += dispatch_timing.params_buffer;
+                    timings.dispatch_encode += dispatch_timing.encode;
+                    timings.dispatch_wait += dispatch_timing.wait;
+                    timings.staged_bytes = timings
+                        .staged_bytes
+                        .saturating_add(std::mem::size_of_val(chunk_slice));
+                    prepared_samples = prepared_samples.saturating_add(chunk_slice.len());
+                    chunks_dispatched = chunks_dispatched.saturating_add(1);
+                    dispatched = end;
+                }
+                chunk.clear();
+            }
+            Ok(())
+        })?;
+        timings.replay += replay_started.elapsed();
+        if !chunk.is_empty() {
+            let mut dispatched = 0usize;
+            while dispatched < chunk.len() {
+                let end = (dispatched + chunk_capacity).min(chunk.len());
+                let chunk_slice = &chunk[dispatched..end];
+                let dispatch_timing = self.dispatch_residual_refresh_chunk(
+                    chunk_slice,
+                    grid_width,
+                    grid_height,
+                    MetalResidualDispatchBuffers {
+                        sample_buffer: &sample_buffer,
+                        params_buffer: &params_buffer,
+                        tap_weights: &tap_weights_buffer,
+                        oversampling,
+                        tap_weight_count,
+                        model_re: &model_re_buffer,
+                        model_im: &model_im_buffer,
+                        grid_re: &grid_re_buffer,
+                        grid_im: &grid_im_buffer,
+                    },
+                )?;
+                timings.dispatch_sample_buffer += dispatch_timing.sample_buffer;
+                timings.dispatch_params_buffer += dispatch_timing.params_buffer;
+                timings.dispatch_encode += dispatch_timing.encode;
+                timings.dispatch_wait += dispatch_timing.wait;
+                timings.staged_bytes = timings
+                    .staged_bytes
+                    .saturating_add(std::mem::size_of_val(chunk_slice));
+                prepared_samples = prepared_samples.saturating_add(chunk_slice.len());
+                chunks_dispatched = chunks_dispatched.saturating_add(1);
+                dispatched = end;
+            }
+            chunk.clear();
+        }
+
+        let readback_started = Instant::now();
+        let grid_re = unsafe {
+            slice::from_raw_parts(grid_re_buffer.contents().as_ptr().cast::<u32>(), cell_count)
+        };
+        let grid_im = unsafe {
+            slice::from_raw_parts(grid_im_buffer.contents().as_ptr().cast::<u32>(), cell_count)
+        };
+        for ((cell, &re_bits), &im_bits) in residual_grid
+            .as_slice_memory_order_mut()
+            .expect("standard MFS residual grid should be contiguous")
+            .iter_mut()
+            .zip(grid_re)
+            .zip(grid_im)
+        {
+            *cell = Complex64::new(
+                f64::from(f32::from_bits(re_bits)),
+                f64::from(f32::from_bits(im_bits)),
+            );
+        }
+        timings.readback += readback_started.elapsed();
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_residual_refresh chunks={} chunk_capacity={} prepared_samples={} prepare_plus_dispatch_ms={:.3} dispatch_wait_ms={:.3} readback_ms={:.3}",
+                chunks_dispatched,
+                chunk_capacity,
+                prepared_samples,
+                profile::millis(prepare_started.elapsed()),
+                profile::millis(timings.dispatch_wait),
+                profile::millis(timings.readback),
+            );
+            eprintln!(
+                "standard_mfs_metal_residual_refresh_detail model_pack_ms={:.3} model_buffer_ms={:.3} grid_buffer_ms={:.3} replay_ms={:.3} append_total_ms={:.3} run_wrap_ms={:.3} dispatch_sample_buffer_ms={:.3} dispatch_params_buffer_ms={:.3} dispatch_encode_ms={:.3} dispatch_wait_ms={:.3} readback_ms={:.3} sampled_samples={} sample_decode_sampled_ms={:.3} weight_sampled_ms={:.3} tap_plan_sampled_ms={:.3} axis_weight_sampled_ms={:.3} push_sampled_ms={:.3} staged_bytes={}",
+                profile::millis(timings.model_pack),
+                profile::millis(timings.model_buffer),
+                profile::millis(timings.grid_buffer),
+                profile::millis(timings.replay),
+                profile::millis(timings.append_total),
+                profile::millis(timings.run_wrap),
+                profile::millis(timings.dispatch_sample_buffer),
+                profile::millis(timings.dispatch_params_buffer),
+                profile::millis(timings.dispatch_encode),
+                profile::millis(timings.dispatch_wait),
+                profile::millis(timings.readback),
+                timings.sampled_samples,
+                profile::millis(timings.sample_decode_sampled),
+                profile::millis(timings.weight_sampled),
+                profile::millis(timings.tap_plan_sampled),
+                profile::millis(timings.axis_weight_sampled),
+                profile::millis(timings.push_sampled),
+                timings.staged_bytes,
+            );
+        }
+        Ok(accumulation)
+    }
+
+    fn grid_residual_refresh_row_runs(
+        &self,
+        gridder: &StandardGridder,
+        replay_routed_runs: &mut MetalResidualRunReplay<'_>,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        model_grid: Option<&Array2<Complex32>>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError> {
+        use std::slice;
+
+        use objc2_metal::{MTLBuffer, MTLResourceOptions};
+
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal row-run residual grid is too large".to_string(),
+            )
+        })?;
+        if residual_grid.shape() != [grid_width, grid_height] {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS Metal row-run residual grid shape {:?} differs from gridder shape {:?}",
+                residual_grid.shape(),
+                [grid_width, grid_height]
+            )));
+        }
+
+        let reweight_plan = weighting_plan.reweight_plan()?;
+        let (weighting_mode, density, density_convention, briggs_f2) = match reweight_plan {
+            StandardMfsStreamingReweightPlan::Natural => (0_u32, None, 0_u32, 0.0_f32),
+            StandardMfsStreamingReweightPlan::Uniform {
+                density,
+                convention,
+            } => (
+                1_u32,
+                Some(density),
+                metal_density_convention_code(convention),
+                0.0_f32,
+            ),
+            StandardMfsStreamingReweightPlan::Briggs {
+                density,
+                convention,
+                f2,
+                use_bandwidth_taper,
+                fractional_bandwidth,
+            } => {
+                if use_bandwidth_taper {
+                    return Err(ImagingError::Unsupported(format!(
+                        "standard MFS residual backend 'metal-row-run' does not yet support BriggsBwTaper weighting (fractional_bandwidth={fractional_bandwidth})"
+                    )));
+                }
+                (
+                    2_u32,
+                    Some(density),
+                    metal_density_convention_code(convention),
+                    f2,
+                )
+            }
+        };
+
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let diagnostic_mode = MetalResidualRowRunDiagnosticMode::from_env()?;
+        let mut timings = MetalResidualRowRunRefreshTimings::default();
+        let model_pack_started = Instant::now();
+        let mut model_re = Vec::<f32>::with_capacity(cell_count);
+        let mut model_im = Vec::<f32>::with_capacity(cell_count);
+        if let Some(model_grid) = model_grid {
+            if model_grid.shape() != [grid_width, grid_height] {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal row-run model grid shape {:?} differs from gridder shape {:?}",
+                    model_grid.shape(),
+                    [grid_width, grid_height]
+                )));
+            }
+            for value in model_grid.as_slice_memory_order().ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run model grid must be contiguous".to_string(),
+                )
+            })? {
+                model_re.push(value.re);
+                model_im.push(value.im);
+            }
+        } else {
+            model_re.resize(cell_count, 0.0);
+            model_im.resize(cell_count, 0.0);
+        }
+        timings.model_pack += model_pack_started.elapsed();
+        let model_buffer_started = Instant::now();
+        let model_re_buffer = self.buffer_from_slice(&model_re, storage_options)?;
+        let model_im_buffer = self.buffer_from_slice(&model_im, storage_options)?;
+        timings.model_buffer += model_buffer_started.elapsed();
+
+        let density_buffer_started = Instant::now();
+        let density_dummy = [0.0_f32];
+        let (density_values, density_width, density_height) = if let Some(density) = density {
+            let shape = density.shape();
+            (
+                density.as_slice_memory_order().ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS Metal row-run density grid must be contiguous".to_string(),
+                    )
+                })?,
+                shape[0],
+                shape[1],
+            )
+        } else {
+            (density_dummy.as_slice(), 1usize, 1usize)
+        };
+        let density_buffer = self.buffer_from_slice(density_values, storage_options)?;
+        timings.density_buffer += density_buffer_started.elapsed();
+
+        let grid_buffer_started = Instant::now();
+        let zero_grid = vec![0_u32; cell_count];
+        let grid_re_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
+        let grid_im_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
+        timings.grid_buffer += grid_buffer_started.elapsed();
+
+        let tap_weights_buffer =
+            self.buffer_from_slice(gridder.normalized_tap_weights(), storage_options)?;
+        let shared = MetalResidualRowRunSharedBuffers {
+            tap_weights: &tap_weights_buffer,
+            density: &density_buffer,
+            model_re: &model_re_buffer,
+            model_im: &model_im_buffer,
+            grid_re: &grid_re_buffer,
+            grid_im: &grid_im_buffer,
+        };
+        let [du_lambda, dv_lambda] = gridder.grid_spacing_lambda();
+        let density_params = gridder.density_grid_coordinate_params();
+        let chunk_lane_capacity = standard_mfs_metal_residual_chunk_samples();
+        let mut chunk = MetalResidualRowRunChunk::default();
+        let mut accumulation = StandardMfsTiledResidualAccumulation::default();
+        let mut chunks_dispatched = 0usize;
+        let prepare_started = Instant::now();
+
+        let mut flush_chunk = |chunk: &mut MetalResidualRowRunChunk,
+                               timings: &mut MetalResidualRowRunRefreshTimings,
+                               accumulation: &StandardMfsTiledResidualAccumulation|
+         -> Result<(), ImagingError> {
+            if chunk.is_empty() {
+                return Ok(());
+            }
+            let dispatch_timing = self.dispatch_residual_row_run_chunk(
+                chunk,
+                MetalResidualRowRunParams {
+                    run_count: u32::try_from(chunk.runs.len()).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal row-run chunk has too many runs".to_string(),
+                        )
+                    })?,
+                    max_lane_count: u32::try_from(chunk.max_lane_count).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal row-run chunk has too many lanes per run"
+                                .to_string(),
+                        )
+                    })?,
+                    grid_width: u32::try_from(grid_width).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal row-run grid width exceeds u32".to_string(),
+                        )
+                    })?,
+                    grid_height: u32::try_from(grid_height).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal row-run grid height exceeds u32".to_string(),
+                        )
+                    })?,
+                    oversampling: u32::try_from(gridder.oversampling()).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal row-run oversampling exceeds u32".to_string(),
+                        )
+                    })?,
+                    tap_weight_count: u32::try_from(gridder.normalized_tap_weights().len())
+                        .map_err(|_| {
+                            ImagingError::InvalidRequest(
+                                "standard MFS Metal row-run tap table exceeds u32".to_string(),
+                            )
+                        })?,
+                    weighting_mode,
+                    density_convention,
+                    density_width: u32::try_from(density_width).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal row-run density width exceeds u32".to_string(),
+                        )
+                    })?,
+                    density_height: u32::try_from(density_height).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal row-run density height exceeds u32".to_string(),
+                        )
+                    })?,
+                    diagnostic_mode: diagnostic_mode.code(),
+                    _pad0: 0,
+                    du_lambda: du_lambda as f32,
+                    dv_lambda: dv_lambda as f32,
+                    density_center_x: density_params.center_x as f32,
+                    density_center_y: density_params.center_y as f32,
+                    density_u_scale: density_params.u_scale as f32,
+                    density_v_scale: density_params.v_scale as f32,
+                    briggs_f2,
+                    _pad1: 0.0,
+                },
+                diagnostic_mode,
+                &shared,
+            )?;
+            timings.dispatch_input_buffers += dispatch_timing.sample_buffer;
+            timings.dispatch_params_buffer += dispatch_timing.params_buffer;
+            timings.dispatch_encode += dispatch_timing.encode;
+            timings.dispatch_wait += dispatch_timing.wait;
+            timings.dispatch_gpu += dispatch_timing.gpu;
+            timings.dispatch_kernel += dispatch_timing.kernel;
+            timings.staged_bytes = timings.staged_bytes.saturating_add(chunk.staged_bytes());
+            if diagnostic_mode.uses_diagnostic_pipeline() {
+                timings.diagnostic_output_bytes = timings
+                    .diagnostic_output_bytes
+                    .saturating_add(chunk.lanes.len().saturating_mul(std::mem::size_of::<u32>()));
+            }
+            let candidate_tap_visits = (chunk.logical_lanes as u64)
+                .saturating_mul(7)
+                .saturating_mul(7);
+            timings.candidate_tap_visits = timings
+                .candidate_tap_visits
+                .saturating_add(candidate_tap_visits);
+            match diagnostic_mode {
+                MetalResidualRowRunDiagnosticMode::Exact => {
+                    timings.candidate_model_reads = timings
+                        .candidate_model_reads
+                        .saturating_add(candidate_tap_visits.saturating_mul(2));
+                    timings.candidate_grid_atomic_adds = timings
+                        .candidate_grid_atomic_adds
+                        .saturating_add(candidate_tap_visits.saturating_mul(2));
+                }
+                MetalResidualRowRunDiagnosticMode::DegridOnly => {
+                    timings.candidate_model_reads = timings
+                        .candidate_model_reads
+                        .saturating_add(candidate_tap_visits.saturating_mul(2));
+                }
+                MetalResidualRowRunDiagnosticMode::GridOnly => {
+                    timings.candidate_grid_atomic_adds = timings
+                        .candidate_grid_atomic_adds
+                        .saturating_add(candidate_tap_visits.saturating_mul(2));
+                }
+                MetalResidualRowRunDiagnosticMode::SingleTap => {
+                    timings.candidate_grid_atomic_adds = timings
+                        .candidate_grid_atomic_adds
+                        .saturating_add((chunk.logical_lanes as u64).saturating_mul(2));
+                }
+                MetalResidualRowRunDiagnosticMode::TapPlanOnly => {}
+            }
+            timings.runs = timings.runs.saturating_add(chunk.runs.len());
+            timings.logical_lanes = timings.logical_lanes.saturating_add(chunk.logical_lanes);
+            chunks_dispatched = chunks_dispatched.saturating_add(1);
+            let _ = accumulation;
+            chunk.clear();
+            Ok(())
+        };
+
+        let replay_started = Instant::now();
+        replay_routed_runs(&mut |routed_run| {
+            if !chunk.is_empty()
+                && chunk.logical_lanes.saturating_add(routed_run.len()) > chunk_lane_capacity
+            {
+                flush_chunk(&mut chunk, &mut timings, &accumulation)?;
+            }
+            let append_started = Instant::now();
+            self.append_metal_residual_row_run(routed_run, &mut accumulation, &mut chunk)?;
+            timings.append_total += append_started.elapsed();
+            if chunk.logical_lanes >= chunk_lane_capacity {
+                flush_chunk(&mut chunk, &mut timings, &accumulation)?;
+            }
+            Ok(())
+        })?;
+        timings.replay += replay_started.elapsed();
+        flush_chunk(&mut chunk, &mut timings, &accumulation)?;
+
+        let readback_started = Instant::now();
+        let grid_re = unsafe {
+            slice::from_raw_parts(grid_re_buffer.contents().as_ptr().cast::<u32>(), cell_count)
+        };
+        let grid_im = unsafe {
+            slice::from_raw_parts(grid_im_buffer.contents().as_ptr().cast::<u32>(), cell_count)
+        };
+        for ((cell, &re_bits), &im_bits) in residual_grid
+            .as_slice_memory_order_mut()
+            .expect("standard MFS residual grid should be contiguous")
+            .iter_mut()
+            .zip(grid_re)
+            .zip(grid_im)
+        {
+            *cell = Complex64::new(
+                f64::from(f32::from_bits(re_bits)),
+                f64::from(f32::from_bits(im_bits)),
+            );
+        }
+        timings.readback += readback_started.elapsed();
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_row_run_residual_refresh mode={} chunks={} chunk_lane_capacity={} runs={} logical_lanes={} prepare_plus_dispatch_ms={:.3} dispatch_wait_ms={:.3} dispatch_gpu_ms={:.3} dispatch_kernel_ms={:.3} readback_ms={:.3}",
+                diagnostic_mode.label(),
+                chunks_dispatched,
+                chunk_lane_capacity,
+                timings.runs,
+                timings.logical_lanes,
+                profile::millis(prepare_started.elapsed()),
+                profile::millis(timings.dispatch_wait),
+                profile::millis(timings.dispatch_gpu),
+                profile::millis(timings.dispatch_kernel),
+                profile::millis(timings.readback),
+            );
+            eprintln!(
+                "standard_mfs_metal_row_run_residual_refresh_detail model_pack_ms={:.3} model_buffer_ms={:.3} density_buffer_ms={:.3} grid_buffer_ms={:.3} replay_ms={:.3} append_total_ms={:.3} dispatch_input_buffers_ms={:.3} dispatch_params_buffer_ms={:.3} dispatch_encode_ms={:.3} dispatch_wait_ms={:.3} dispatch_gpu_ms={:.3} dispatch_kernel_ms={:.3} readback_ms={:.3} staged_bytes={} diagnostic_output_bytes={} candidate_tap_visits={} candidate_model_reads={} candidate_grid_atomic_adds={} unsupported_runs={}",
+                profile::millis(timings.model_pack),
+                profile::millis(timings.model_buffer),
+                profile::millis(timings.density_buffer),
+                profile::millis(timings.grid_buffer),
+                profile::millis(timings.replay),
+                profile::millis(timings.append_total),
+                profile::millis(timings.dispatch_input_buffers),
+                profile::millis(timings.dispatch_params_buffer),
+                profile::millis(timings.dispatch_encode),
+                profile::millis(timings.dispatch_wait),
+                profile::millis(timings.dispatch_gpu),
+                profile::millis(timings.dispatch_kernel),
+                profile::millis(timings.readback),
+                timings.staged_bytes,
+                timings.diagnostic_output_bytes,
+                timings.candidate_tap_visits,
+                timings.candidate_model_reads,
+                timings.candidate_grid_atomic_adds,
+                timings.unsupported_runs,
+            );
+        }
+        Ok(accumulation)
+    }
+
+    fn grid_residual_refresh_row_runs_grouped(
+        &self,
+        gridder: &StandardGridder,
+        replay_routed_runs: &mut MetalResidualRunReplay<'_>,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        model_grid: Option<&Array2<Complex32>>,
+        residual_grid: &mut Array2<Complex64>,
+        input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
+    ) -> Result<StandardMfsTiledResidualAccumulation, ImagingError> {
+        use std::slice;
+
+        use objc2_metal::{MTLBuffer, MTLResourceOptions};
+
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run residual grid is too large".to_string(),
+            )
+        })?;
+        if residual_grid.shape() != [grid_width, grid_height] {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS Metal grouped row-run residual grid shape {:?} differs from gridder shape {:?}",
+                residual_grid.shape(),
+                [grid_width, grid_height]
+            )));
+        }
+
+        let reweight_plan = weighting_plan.reweight_plan()?;
+        let (weighting_mode, density, density_convention, briggs_f2) = match reweight_plan {
+            StandardMfsStreamingReweightPlan::Natural => (0_u32, None, 0_u32, 0.0_f32),
+            StandardMfsStreamingReweightPlan::Uniform {
+                density,
+                convention,
+            } => (
+                1_u32,
+                Some(density),
+                metal_density_convention_code(convention),
+                0.0_f32,
+            ),
+            StandardMfsStreamingReweightPlan::Briggs {
+                density,
+                convention,
+                f2,
+                use_bandwidth_taper,
+                fractional_bandwidth,
+            } => {
+                if use_bandwidth_taper {
+                    return Err(ImagingError::Unsupported(format!(
+                        "standard MFS residual backend 'metal-row-run-grouped' does not yet support BriggsBwTaper weighting (fractional_bandwidth={fractional_bandwidth})"
+                    )));
+                }
+                (
+                    2_u32,
+                    Some(density),
+                    metal_density_convention_code(convention),
+                    f2,
+                )
+            }
+        };
+
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let group_tile_edge = standard_mfs_metal_group_tile_edge();
+        let partition =
+            MetalResidualGroupedTilePartition::new(grid_width, grid_height, group_tile_edge)?;
+        let mut timings = MetalResidualRowRunRefreshTimings {
+            group_tile_edge,
+            ..Default::default()
+        };
+
+        let model_pack_started = Instant::now();
+        let mut model_re = Vec::<f32>::with_capacity(cell_count);
+        let mut model_im = Vec::<f32>::with_capacity(cell_count);
+        if let Some(model_grid) = model_grid {
+            if model_grid.shape() != [grid_width, grid_height] {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal grouped row-run model grid shape {:?} differs from gridder shape {:?}",
+                    model_grid.shape(),
+                    [grid_width, grid_height]
+                )));
+            }
+            for value in model_grid.as_slice_memory_order().ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run model grid must be contiguous".to_string(),
+                )
+            })? {
+                model_re.push(value.re);
+                model_im.push(value.im);
+            }
+        } else {
+            model_re.resize(cell_count, 0.0);
+            model_im.resize(cell_count, 0.0);
+        }
+        timings.model_pack += model_pack_started.elapsed();
+        let model_buffer_started = Instant::now();
+        let model_re_buffer = self.buffer_from_slice(&model_re, storage_options)?;
+        let model_im_buffer = self.buffer_from_slice(&model_im, storage_options)?;
+        timings.model_buffer += model_buffer_started.elapsed();
+
+        let density_buffer_started = Instant::now();
+        let density_dummy = [0.0_f32];
+        let (density_values, density_width, density_height) = if let Some(density) = density {
+            let shape = density.shape();
+            (
+                density.as_slice_memory_order().ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS Metal grouped row-run density grid must be contiguous"
+                            .to_string(),
+                    )
+                })?,
+                shape[0],
+                shape[1],
+            )
+        } else {
+            (density_dummy.as_slice(), 1usize, 1usize)
+        };
+        let density_buffer = self.buffer_from_slice(density_values, storage_options)?;
+        timings.density_buffer += density_buffer_started.elapsed();
+
+        let grid_buffer_started = Instant::now();
+        let zero_grid = vec![0_u32; cell_count];
+        let grid_re_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
+        let grid_im_buffer = self.buffer_from_slice(&zero_grid, storage_options)?;
+        timings.grid_buffer += grid_buffer_started.elapsed();
+
+        let tap_weights_buffer =
+            self.buffer_from_slice(gridder.normalized_tap_weights(), storage_options)?;
+        let shared = MetalResidualRowRunSharedBuffers {
+            tap_weights: &tap_weights_buffer,
+            density: &density_buffer,
+            model_re: &model_re_buffer,
+            model_im: &model_im_buffer,
+            grid_re: &grid_re_buffer,
+            grid_im: &grid_im_buffer,
+        };
+        let [du_lambda, dv_lambda] = gridder.grid_spacing_lambda();
+        let density_params = gridder.density_grid_coordinate_params();
+        let chunk_lane_capacity = standard_mfs_metal_residual_chunk_samples();
+        let cache_key = MetalResidualGroupedInputCacheKey {
+            grid_width,
+            grid_height,
+            oversampling: gridder.oversampling(),
+            tap_weight_count: gridder.normalized_tap_weights().len(),
+            weighting_mode,
+            density_convention,
+            density_width,
+            density_height,
+            briggs_f2_bits: briggs_f2.to_bits(),
+            group_tile_edge,
+            group_tile_count: partition.tile_count(),
+            chunk_lane_capacity,
+            du_lambda_bits: (du_lambda as f32).to_bits(),
+            dv_lambda_bits: (dv_lambda as f32).to_bits(),
+            density_center_x_bits: (density_params.center_x as f32).to_bits(),
+            density_center_y_bits: (density_params.center_y as f32).to_bits(),
+            density_u_scale_bits: (density_params.u_scale as f32).to_bits(),
+            density_v_scale_bits: (density_params.v_scale as f32).to_bits(),
+        };
+        let mut input_cache = input_cache;
+        let mut accumulation = StandardMfsTiledResidualAccumulation::default();
+        let mut chunks_dispatched = 0usize;
+        let prepare_started = Instant::now();
+
+        if let Some(cache) = input_cache.as_deref_mut() {
+            if cache.matches(cache_key) {
+                timings.input_cache_hit = true;
+                timings.input_cache_chunks = cache.chunks.len();
+                timings.input_cache_host_bytes = cache.host_bytes;
+                accumulation = cache.accumulation;
+                for cached in &cache.chunks {
+                    let dispatch_timing = if cached.buffers.is_some() {
+                        self.dispatch_cached_residual_row_run_grouped_chunk(cached, &shared)?
+                    } else if let Some(host) = cached.host.as_ref() {
+                        self.dispatch_residual_row_run_grouped_chunk(
+                            host,
+                            cached.params,
+                            &shared,
+                            MetalInputBufferCopyMode::NoCopy,
+                        )?
+                    } else {
+                        return Err(ImagingError::InvalidRequest(
+                            "standard MFS Metal grouped row-run cache chunk has no input payload"
+                                .to_string(),
+                        ));
+                    };
+                    chunks_dispatched = chunks_dispatched.saturating_add(1);
+                    record_metal_grouped_residual_dispatch(
+                        chunks_dispatched,
+                        cached.metrics,
+                        dispatch_timing,
+                        &mut timings,
+                    );
+                }
+            }
+        }
+
+        if !timings.input_cache_hit {
+            let cache_fill_enabled = input_cache.is_some();
+            let mut cached_chunks = cache_fill_enabled.then(Vec::new);
+            let mut chunk = MetalResidualGroupedRowRunChunk::new(partition.tile_count());
+
+            let mut flush_chunk = |chunk: &mut MetalResidualGroupedRowRunChunk,
+                                   timings: &mut MetalResidualRowRunRefreshTimings,
+                                   cached_chunks: &mut Option<
+                Vec<MetalResidualGroupedCachedChunk>,
+            >|
+             -> Result<(), ImagingError> {
+                if chunk.is_empty() {
+                    return Ok(());
+                }
+                chunk.finalize_groups(&partition)?;
+                let params = MetalResidualRowRunParams {
+                    run_count: u32::try_from(chunk.row_runs.runs.len()).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal grouped row-run chunk has too many runs"
+                                .to_string(),
+                        )
+                    })?,
+                    max_lane_count: u32::try_from(chunk.row_runs.max_lane_count).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal grouped row-run chunk has too many lanes per run"
+                                .to_string(),
+                        )
+                    })?,
+                    grid_width: u32::try_from(grid_width).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal grouped row-run grid width exceeds u32".to_string(),
+                        )
+                    })?,
+                    grid_height: u32::try_from(grid_height).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal grouped row-run grid height exceeds u32"
+                                .to_string(),
+                        )
+                    })?,
+                    oversampling: u32::try_from(gridder.oversampling()).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal grouped row-run oversampling exceeds u32"
+                                .to_string(),
+                        )
+                    })?,
+                    tap_weight_count: u32::try_from(gridder.normalized_tap_weights().len())
+                        .map_err(|_| {
+                            ImagingError::InvalidRequest(
+                                "standard MFS Metal grouped row-run tap table exceeds u32"
+                                    .to_string(),
+                            )
+                        })?,
+                    weighting_mode,
+                    density_convention,
+                    density_width: u32::try_from(density_width).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal grouped row-run density width exceeds u32"
+                                .to_string(),
+                        )
+                    })?,
+                    density_height: u32::try_from(density_height).map_err(|_| {
+                        ImagingError::InvalidRequest(
+                            "standard MFS Metal grouped row-run density height exceeds u32"
+                                .to_string(),
+                        )
+                    })?,
+                    diagnostic_mode: 0,
+                    _pad0: 0,
+                    du_lambda: du_lambda as f32,
+                    dv_lambda: dv_lambda as f32,
+                    density_center_x: density_params.center_x as f32,
+                    density_center_y: density_params.center_y as f32,
+                    density_u_scale: density_params.u_scale as f32,
+                    density_v_scale: density_params.v_scale as f32,
+                    briggs_f2,
+                    _pad1: 0.0,
+                };
+                let dispatch_timing = self.dispatch_residual_row_run_grouped_chunk(
+                    chunk,
+                    params,
+                    &shared,
+                    MetalInputBufferCopyMode::Copy,
+                )?;
+                chunks_dispatched = chunks_dispatched.saturating_add(1);
+                let metrics = MetalResidualGroupedChunkMetrics::from_chunk(chunk);
+                record_metal_grouped_residual_dispatch(
+                    chunks_dispatched,
+                    metrics,
+                    dispatch_timing,
+                    timings,
+                );
+                if let Some(cached_chunks) = cached_chunks.as_mut() {
+                    chunk.lane_group_ids.clear();
+                    chunk.group_counts.clear();
+                    let finalized_chunk = std::mem::replace(
+                        chunk,
+                        MetalResidualGroupedRowRunChunk::new(partition.tile_count()),
+                    );
+                    cached_chunks.push(self.cached_grouped_chunk(
+                        finalized_chunk,
+                        params,
+                        storage_options,
+                    )?);
+                } else {
+                    chunk.clear();
+                }
+                Ok(())
+            };
+
+            let replay_started = Instant::now();
+            replay_routed_runs(&mut |routed_run| {
+                if !chunk.is_empty()
+                    && chunk
+                        .row_runs
+                        .logical_lanes
+                        .saturating_add(routed_run.len())
+                        > chunk_lane_capacity
+                {
+                    flush_chunk(&mut chunk, &mut timings, &mut cached_chunks)?;
+                }
+                let append_started = Instant::now();
+                self.append_metal_residual_grouped_row_run(
+                    routed_run,
+                    &partition,
+                    &mut accumulation,
+                    &mut chunk,
+                )?;
+                timings.append_total += append_started.elapsed();
+                if chunk.row_runs.logical_lanes >= chunk_lane_capacity {
+                    flush_chunk(&mut chunk, &mut timings, &mut cached_chunks)?;
+                }
+                Ok(())
+            })?;
+            timings.replay += replay_started.elapsed();
+            flush_chunk(&mut chunk, &mut timings, &mut cached_chunks)?;
+            if let (Some(cache), Some(cached_chunks)) = (input_cache, cached_chunks) {
+                timings.input_cache_fill = true;
+                timings.input_cache_chunks = cached_chunks.len();
+                cache.replace(cache_key, cached_chunks, accumulation);
+                timings.input_cache_host_bytes = cache.host_bytes;
+            }
+        }
+
+        let readback_started = Instant::now();
+        let grid_re = unsafe {
+            slice::from_raw_parts(grid_re_buffer.contents().as_ptr().cast::<u32>(), cell_count)
+        };
+        let grid_im = unsafe {
+            slice::from_raw_parts(grid_im_buffer.contents().as_ptr().cast::<u32>(), cell_count)
+        };
+        for ((cell, &re_bits), &im_bits) in residual_grid
+            .as_slice_memory_order_mut()
+            .expect("standard MFS residual grid should be contiguous")
+            .iter_mut()
+            .zip(grid_re)
+            .zip(grid_im)
+        {
+            *cell = Complex64::new(
+                f64::from(f32::from_bits(re_bits)),
+                f64::from(f32::from_bits(im_bits)),
+            );
+        }
+        timings.readback += readback_started.elapsed();
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_row_run_grouped_residual_refresh chunks={} chunk_lane_capacity={} group_tile_edge={} runs={} logical_lanes={} group_descs={} lane_refs={} input_cache_hit={} input_cache_fill={} input_cache_chunks={} input_cache_host_bytes={} prepare_plus_dispatch_ms={:.3} dispatch_wait_ms={:.3} dispatch_gpu_ms={:.3} dispatch_kernel_ms={:.3} readback_ms={:.3}",
+                chunks_dispatched,
+                chunk_lane_capacity,
+                timings.group_tile_edge,
+                timings.runs,
+                timings.logical_lanes,
+                timings.group_descs,
+                timings.lane_refs,
+                timings.input_cache_hit,
+                timings.input_cache_fill,
+                timings.input_cache_chunks,
+                timings.input_cache_host_bytes,
+                profile::millis(prepare_started.elapsed()),
+                profile::millis(timings.dispatch_wait),
+                profile::millis(timings.dispatch_gpu),
+                profile::millis(timings.dispatch_kernel),
+                profile::millis(timings.readback),
+            );
+            eprintln!(
+                "standard_mfs_metal_row_run_grouped_residual_refresh_detail model_pack_ms={:.3} model_buffer_ms={:.3} density_buffer_ms={:.3} grid_buffer_ms={:.3} replay_ms={:.3} append_total_ms={:.3} dispatch_input_buffers_ms={:.3} dispatch_params_buffer_ms={:.3} dispatch_encode_ms={:.3} dispatch_wait_ms={:.3} dispatch_gpu_ms={:.3} dispatch_kernel_ms={:.3} readback_ms={:.3} staged_bytes={} candidate_tap_visits={} candidate_model_reads={} exact_candidate_grid_atomic_adds={} grouped_candidate_grid_atomic_adds={} grouped_candidate_scan_tests={} unsupported_runs={} input_cache_hit={} input_cache_fill={} input_cache_chunks={} input_cache_host_bytes={}",
+                profile::millis(timings.model_pack),
+                profile::millis(timings.model_buffer),
+                profile::millis(timings.density_buffer),
+                profile::millis(timings.grid_buffer),
+                profile::millis(timings.replay),
+                profile::millis(timings.append_total),
+                profile::millis(timings.dispatch_input_buffers),
+                profile::millis(timings.dispatch_params_buffer),
+                profile::millis(timings.dispatch_encode),
+                profile::millis(timings.dispatch_wait),
+                profile::millis(timings.dispatch_gpu),
+                profile::millis(timings.dispatch_kernel),
+                profile::millis(timings.readback),
+                timings.staged_bytes,
+                timings.candidate_tap_visits,
+                timings.candidate_model_reads,
+                timings.candidate_grid_atomic_adds,
+                timings.candidate_group_cell_atomic_adds,
+                timings.candidate_group_scan_tests,
+                timings.unsupported_runs,
+                timings.input_cache_hit,
+                timings.input_cache_fill,
+                timings.input_cache_chunks,
+                timings.input_cache_host_bytes,
+            );
+        }
+        Ok(accumulation)
+    }
+
+    fn begin_grouped_input_cache_fill(
+        &self,
+        gridder: &StandardGridder,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<StandardMfsMetalGroupedInputCacheFill, ImagingError> {
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let reweight_plan = weighting_plan.reweight_plan()?;
+        let (weighting_mode, density_width, density_height, density_convention, briggs_f2) =
+            match reweight_plan {
+                StandardMfsStreamingReweightPlan::Natural => (0_u32, 1usize, 1usize, 0_u32, 0.0),
+                StandardMfsStreamingReweightPlan::Uniform {
+                    density,
+                    convention,
+                } => {
+                    let shape = density.shape();
+                    (
+                        1_u32,
+                        shape[0],
+                        shape[1],
+                        metal_density_convention_code(convention),
+                        0.0,
+                    )
+                }
+                StandardMfsStreamingReweightPlan::Briggs {
+                    density,
+                    convention,
+                    f2,
+                    use_bandwidth_taper,
+                    fractional_bandwidth,
+                } => {
+                    if use_bandwidth_taper {
+                        return Err(ImagingError::Unsupported(format!(
+                            "standard MFS residual backend 'metal-row-run-grouped' does not yet support BriggsBwTaper weighting (fractional_bandwidth={fractional_bandwidth})"
+                        )));
+                    }
+                    let shape = density.shape();
+                    (
+                        2_u32,
+                        shape[0],
+                        shape[1],
+                        metal_density_convention_code(convention),
+                        f2,
+                    )
+                }
+            };
+        let group_tile_edge = standard_mfs_metal_group_tile_edge();
+        let partition =
+            MetalResidualGroupedTilePartition::new(grid_width, grid_height, group_tile_edge)?;
+        let [du_lambda, dv_lambda] = gridder.grid_spacing_lambda();
+        let density_params = gridder.density_grid_coordinate_params();
+        let chunk_lane_capacity = standard_mfs_metal_residual_chunk_samples();
+        let oversampling = gridder.oversampling();
+        let tap_weight_count = gridder.normalized_tap_weights().len();
+        let key = MetalResidualGroupedInputCacheKey {
+            grid_width,
+            grid_height,
+            oversampling,
+            tap_weight_count,
+            weighting_mode,
+            density_convention,
+            density_width,
+            density_height,
+            briggs_f2_bits: briggs_f2.to_bits(),
+            group_tile_edge,
+            group_tile_count: partition.tile_count(),
+            chunk_lane_capacity,
+            du_lambda_bits: (du_lambda as f32).to_bits(),
+            dv_lambda_bits: (dv_lambda as f32).to_bits(),
+            density_center_x_bits: (density_params.center_x as f32).to_bits(),
+            density_center_y_bits: (density_params.center_y as f32).to_bits(),
+            density_u_scale_bits: (density_params.u_scale as f32).to_bits(),
+            density_v_scale_bits: (density_params.v_scale as f32).to_bits(),
+        };
+        Ok(StandardMfsMetalGroupedInputCacheFill {
+            key,
+            chunk: MetalResidualGroupedRowRunChunk::new(partition.tile_count()),
+            partition,
+            chunk_lane_capacity,
+            grid_width,
+            grid_height,
+            oversampling,
+            tap_weight_count,
+            weighting_mode,
+            density_convention,
+            density_width,
+            density_height,
+            briggs_f2,
+            du_lambda: du_lambda as f32,
+            dv_lambda: dv_lambda as f32,
+            density_center_x: density_params.center_x as f32,
+            density_center_y: density_params.center_y as f32,
+            density_u_scale: density_params.u_scale as f32,
+            density_v_scale: density_params.v_scale as f32,
+            chunks: Vec::new(),
+            accumulation: StandardMfsTiledResidualAccumulation::default(),
+        })
+    }
+
+    fn append_grouped_input_cache_run(
+        &self,
+        routed_run: &StandardMfsRoutedVisibilityRun,
+        fill: &mut StandardMfsMetalGroupedInputCacheFill,
+    ) -> Result<(), ImagingError> {
+        if !fill.chunk.is_empty()
+            && fill
+                .chunk
+                .row_runs
+                .logical_lanes
+                .saturating_add(routed_run.len())
+                > fill.chunk_lane_capacity
+        {
+            self.finish_grouped_input_cache_chunk(fill)?;
+        }
+        self.append_metal_residual_grouped_row_run(
+            routed_run,
+            &fill.partition,
+            &mut fill.accumulation,
+            &mut fill.chunk,
+        )?;
+        if fill.chunk.row_runs.logical_lanes >= fill.chunk_lane_capacity {
+            self.finish_grouped_input_cache_chunk(fill)?;
+        }
+        Ok(())
+    }
+
+    fn finish_grouped_input_cache_fill(
+        &self,
+        mut fill: StandardMfsMetalGroupedInputCacheFill,
+        cache: &mut StandardMfsMetalGroupedInputCache,
+    ) -> Result<(), ImagingError> {
+        self.finish_grouped_input_cache_chunk(&mut fill)?;
+        cache.replace(fill.key, fill.chunks, fill.accumulation);
+        Ok(())
+    }
+
+    fn finish_grouped_input_cache_chunk(
+        &self,
+        fill: &mut StandardMfsMetalGroupedInputCacheFill,
+    ) -> Result<(), ImagingError> {
+        if fill.chunk.is_empty() {
+            return Ok(());
+        }
+        fill.chunk.finalize_groups(&fill.partition)?;
+        let params = MetalResidualRowRunParams {
+            run_count: u32::try_from(fill.chunk.row_runs.runs.len()).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run chunk has too many runs".to_string(),
+                )
+            })?,
+            max_lane_count: u32::try_from(fill.chunk.row_runs.max_lane_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run chunk has too many lanes per run"
+                        .to_string(),
+                )
+            })?,
+            grid_width: u32::try_from(fill.grid_width).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run grid width exceeds u32".to_string(),
+                )
+            })?,
+            grid_height: u32::try_from(fill.grid_height).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run grid height exceeds u32".to_string(),
+                )
+            })?,
+            oversampling: u32::try_from(fill.oversampling).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run oversampling exceeds u32".to_string(),
+                )
+            })?,
+            tap_weight_count: u32::try_from(fill.tap_weight_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run tap table exceeds u32".to_string(),
+                )
+            })?,
+            weighting_mode: fill.weighting_mode,
+            density_convention: fill.density_convention,
+            density_width: u32::try_from(fill.density_width).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run density width exceeds u32".to_string(),
+                )
+            })?,
+            density_height: u32::try_from(fill.density_height).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run density height exceeds u32".to_string(),
+                )
+            })?,
+            diagnostic_mode: 0,
+            _pad0: 0,
+            du_lambda: fill.du_lambda,
+            dv_lambda: fill.dv_lambda,
+            density_center_x: fill.density_center_x,
+            density_center_y: fill.density_center_y,
+            density_u_scale: fill.density_u_scale,
+            density_v_scale: fill.density_v_scale,
+            briggs_f2: fill.briggs_f2,
+            _pad1: 0.0,
+        };
+        fill.chunk.lane_group_ids.clear();
+        fill.chunk.group_counts.clear();
+        let finalized_chunk = std::mem::replace(
+            &mut fill.chunk,
+            MetalResidualGroupedRowRunChunk::new(fill.partition.tile_count()),
+        );
+        fill.chunks.push(self.cached_grouped_chunk(
+            finalized_chunk,
+            params,
+            objc2_metal::MTLResourceOptions::StorageModeShared,
+        )?);
+        Ok(())
+    }
+
+    fn append_metal_residual_row_run(
+        &self,
+        routed_run: &StandardMfsRoutedVisibilityRun,
+        accumulation: &mut StandardMfsTiledResidualAccumulation,
+        chunk: &mut MetalResidualRowRunChunk,
+    ) -> Result<(), ImagingError> {
+        if routed_run.is_empty() {
+            return Ok(());
+        }
+        let row = routed_run.row.as_ref();
+        if row.weight_spectrum.is_some() {
+            return Err(ImagingError::Unsupported(
+                "standard MFS residual backend 'metal-row-run' does not yet support WEIGHT_SPECTRUM"
+                    .to_string(),
+            ));
+        }
+        if !row.gridable {
+            accumulation.skipped_not_gridable = accumulation
+                .skipped_not_gridable
+                .saturating_add(routed_run.len());
+            return Ok(());
+        }
+        let lane_count = routed_run.len();
+        let corr_count = row.data.shape().first().copied().unwrap_or(0);
+        let local_channel_count = row.data.shape().get(1).copied().unwrap_or(0);
+        if row.flag.shape() != [corr_count, local_channel_count] {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS Metal row-run FLAG shape differs from DATA shape".to_string(),
+            ));
+        }
+        if row.weight.len() < corr_count {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS Metal row-run WEIGHT has {} correlations but DATA has {corr_count}",
+                row.weight.len()
+            )));
+        }
+        let (polarization_mode, transform, corr0, corr1, sumwt_factor) = match row.polarization {
+            StandardMfsVisibilityPolarization::Explicit {
+                corr_index,
+                sumwt_factor,
+            } => (0_u32, 0_u32, corr_index, corr_index, sumwt_factor),
+            StandardMfsVisibilityPolarization::CollapsedPair {
+                first_corr_index,
+                second_corr_index,
+                transform,
+                sumwt_factor,
+            } => (
+                1_u32,
+                metal_pair_transform_code(transform),
+                first_corr_index,
+                second_corr_index,
+                sumwt_factor,
+            ),
+        };
+        if corr0 >= corr_count || corr1 >= corr_count {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS Metal row-run polarization correlations [{corr0}, {corr1}] exceed DATA correlation count {corr_count}"
+            )));
+        }
+        let lane_offset = chunk.lanes.len();
+        let data_offset = chunk.data.len();
+        let flag_offset = chunk.flags.len();
+        let weight_offset = chunk.weights.len();
+        for (lane_index, source_slot) in routed_run.source_slot_range.clone().enumerate() {
+            let source_channel = *row.source_channel_indices.get(source_slot).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal row-run source slot {source_slot} is out of bounds"
+                ))
+            })?;
+            let local_channel = source_channel.checked_sub(row.channel_origin).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal row-run source channel {source_channel} precedes loaded origin {}",
+                    row.channel_origin
+                ))
+            })?;
+            if local_channel >= local_channel_count {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal row-run local channel {local_channel} exceeds row channel count {local_channel_count}"
+                )));
+            }
+            let lambda_scale = *row.channel_lambda_scales.get(source_slot).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal row-run lambda slot {source_slot} is out of bounds"
+                ))
+            })?;
+            let center = routed_run.tap_centers.get(lane_index).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal row-run tap center {lane_index} is out of bounds"
+                ))
+            })?;
+            chunk.lanes.push(MetalResidualRowRunLane {
+                lambda_scale: lambda_scale as f32,
+                center_x: center[0],
+                center_y: center[1],
+                _pad0: 0,
+            });
+        }
+        for corr in 0..corr_count {
+            for source_slot in routed_run.source_slot_range.clone() {
+                let source_channel = row.source_channel_indices[source_slot];
+                let local_channel = source_channel - row.channel_origin;
+                let visibility = *row.data.get((corr, local_channel)).ok_or_else(|| {
+                    ImagingError::InvalidRequest(format!(
+                        "standard MFS Metal row-run DATA index [{corr}, {source_channel}] is out of bounds"
+                    ))
+                })?;
+                let flag = *row.flag.get((corr, local_channel)).ok_or_else(|| {
+                    ImagingError::InvalidRequest(format!(
+                        "standard MFS Metal row-run FLAG index [{corr}, {source_channel}] is out of bounds"
+                    ))
+                })?;
+                chunk.data.push(MetalComplex32 {
+                    re: visibility.re,
+                    im: visibility.im,
+                });
+                chunk.flags.push(u8::from(flag));
+            }
+        }
+        chunk
+            .weights
+            .extend(row.weight.iter().take(corr_count).copied());
+        chunk.runs.push(MetalResidualRowRunDesc {
+            u_m: row.uvw_m[0] as f32,
+            v_m: row.uvw_m[1] as f32,
+            sumwt_factor,
+            _pad0: 0.0,
+            lane_offset: u32::try_from(lane_offset).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run lane offset exceeds u32".to_string(),
+                )
+            })?,
+            lane_count: u32::try_from(lane_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run lane count exceeds u32".to_string(),
+                )
+            })?,
+            data_offset: u32::try_from(data_offset).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run data offset exceeds u32".to_string(),
+                )
+            })?,
+            flag_offset: u32::try_from(flag_offset).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run flag offset exceeds u32".to_string(),
+                )
+            })?,
+            weight_offset: u32::try_from(weight_offset).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run weight offset exceeds u32".to_string(),
+                )
+            })?,
+            corr_count: u32::try_from(corr_count).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run correlation count exceeds u32".to_string(),
+                )
+            })?,
+            polarization_mode,
+            transform,
+            corr0: u32::try_from(corr0).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run correlation index exceeds u32".to_string(),
+                )
+            })?,
+            corr1: u32::try_from(corr1).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run correlation index exceeds u32".to_string(),
+                )
+            })?,
+            _pad1: [0; 2],
+        });
+        chunk.logical_lanes = chunk.logical_lanes.saturating_add(lane_count);
+        chunk.max_lane_count = chunk.max_lane_count.max(lane_count);
+        accumulation.valid_samples = accumulation.valid_samples.saturating_add(lane_count);
+        accumulation.planned_samples = accumulation.planned_samples.saturating_add(lane_count);
+        accumulation.gridded_residual_samples = accumulation
+            .gridded_residual_samples
+            .saturating_add(lane_count);
+        Ok(())
+    }
+
+    fn append_metal_residual_grouped_row_run(
+        &self,
+        routed_run: &StandardMfsRoutedVisibilityRun,
+        partition: &MetalResidualGroupedTilePartition,
+        accumulation: &mut StandardMfsTiledResidualAccumulation,
+        chunk: &mut MetalResidualGroupedRowRunChunk,
+    ) -> Result<(), ImagingError> {
+        let before_lanes = chunk.row_runs.lanes.len();
+        self.append_metal_residual_row_run(routed_run, accumulation, &mut chunk.row_runs)?;
+        let after_lanes = chunk.row_runs.lanes.len();
+        if after_lanes == before_lanes {
+            return Ok(());
+        }
+        let appended_lanes = after_lanes - before_lanes;
+        if appended_lanes != routed_run.len() {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS Metal grouped row-run appended {appended_lanes} lanes for a {}-lane run",
+                routed_run.len()
+            )));
+        }
+        for lane_index in 0..appended_lanes {
+            let center = routed_run.tap_centers.get(lane_index).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal grouped row-run tap center {lane_index} is out of bounds"
+                ))
+            })?;
+            let Some(group_index) = partition.owner(center[0], center[1]) else {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal grouped row-run tap center [{}, {}] has no owner",
+                    center[0], center[1]
+                )));
+            };
+            let group_id = u32::try_from(group_index).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run group index exceeds u32".to_string(),
+                )
+            })?;
+            chunk.lane_group_ids.push(group_id);
+            let count = chunk.group_counts.get_mut(group_index).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "standard MFS Metal grouped row-run group index {group_index} is out of range"
+                ))
+            })?;
+            *count = count.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    fn dispatch_residual_row_run_chunk(
+        &self,
+        chunk: &MetalResidualRowRunChunk,
+        params: MetalResidualRowRunParams,
+        diagnostic_mode: MetalResidualRowRunDiagnosticMode,
+        shared: &MetalResidualRowRunSharedBuffers<'_>,
+    ) -> Result<MetalResidualDispatchTiming, ImagingError> {
+        use std::slice;
+
+        use objc2_metal::{
+            MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+            MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice, MTLResourceOptions,
+            MTLSize,
+        };
+
+        let mut timing = MetalResidualDispatchTiming::default();
+        if chunk.is_empty() {
+            return Ok(timing);
+        }
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let input_buffers_started = Instant::now();
+        let run_buffer = self.buffer_from_slice(&chunk.runs, storage_options)?;
+        let lane_buffer = self.buffer_from_slice(&chunk.lanes, storage_options)?;
+        let data_buffer = self.buffer_from_slice(&chunk.data, storage_options)?;
+        let flag_buffer = self.buffer_from_slice(&chunk.flags, storage_options)?;
+        let weight_buffer = self.buffer_from_slice(&chunk.weights, storage_options)?;
+        let diagnostic_output_buffer = if diagnostic_mode.uses_diagnostic_pipeline() {
+            let output_bytes = chunk
+                .lanes
+                .len()
+                .max(1)
+                .checked_mul(std::mem::size_of::<u32>())
+                .ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS Metal row-run diagnostic output is too large".to_string(),
+                    )
+                })?;
+            Some(
+                self.device
+                    .newBufferWithLength_options(output_bytes, storage_options)
+                    .ok_or_else(|| {
+                        ImagingError::Unsupported(
+                            "standard MFS backend 'metal-row-run' could not allocate diagnostic output buffer"
+                                .to_string(),
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
+        timing.sample_buffer += input_buffers_started.elapsed();
+        let params_buffer_started = Instant::now();
+        let params_buffer = self.buffer_from_slice(slice::from_ref(&params), storage_options)?;
+        timing.params_buffer += params_buffer_started.elapsed();
+
+        let encode_started = Instant::now();
+        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal-row-run' could not create a residual command buffer"
+                    .to_string(),
+            )
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal-row-run' could not create a residual compute encoder"
+                    .to_string(),
+            )
+        })?;
+        let pipeline = if diagnostic_mode.uses_diagnostic_pipeline() {
+            &self.residual_row_run_diagnostic_pipeline
+        } else {
+            &self.residual_row_run_pipeline
+        };
+        encoder.setComputePipelineState(pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&run_buffer), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&lane_buffer), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&data_buffer), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(&flag_buffer), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(&weight_buffer), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(shared.density), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(shared.model_re), 0, 6);
+            encoder.setBuffer_offset_atIndex(Some(shared.model_im), 0, 7);
+            encoder.setBuffer_offset_atIndex(Some(shared.grid_re), 0, 8);
+            encoder.setBuffer_offset_atIndex(Some(shared.grid_im), 0, 9);
+            encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 10);
+            encoder.setBuffer_offset_atIndex(Some(shared.tap_weights), 0, 11);
+            if let Some(buffer) = diagnostic_output_buffer.as_ref() {
+                encoder.setBuffer_offset_atIndex(Some(buffer), 0, 12);
+            }
+        }
+        let thread_width = pipeline.threadExecutionWidth().max(1);
+        let max_threads = pipeline.maxTotalThreadsPerThreadgroup().max(1);
+        let group_width = thread_width.min(params.max_lane_count as usize).max(1);
+        let group_height = (max_threads / group_width)
+            .max(1)
+            .min(params.run_count as usize)
+            .max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: params.max_lane_count as usize,
+                height: params.run_count as usize,
+                depth: 1,
+            },
+            MTLSize {
+                width: group_width,
+                height: group_height,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        command_buffer.commit();
+        timing.encode += encode_started.elapsed();
+        let wait_started = Instant::now();
+        command_buffer.waitUntilCompleted();
+        timing.wait += wait_started.elapsed();
+        let gpu_start = command_buffer.GPUStartTime();
+        let gpu_end = command_buffer.GPUEndTime();
+        if gpu_start.is_finite() && gpu_end.is_finite() && gpu_end > gpu_start {
+            timing.gpu += Duration::from_secs_f64(gpu_end - gpu_start);
+        }
+        let kernel_start = command_buffer.kernelStartTime();
+        let kernel_end = command_buffer.kernelEndTime();
+        if kernel_start.is_finite() && kernel_end.is_finite() && kernel_end > kernel_start {
+            timing.kernel += Duration::from_secs_f64(kernel_end - kernel_start);
+        }
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "standard MFS backend 'metal-row-run' residual refresh command failed: {message}"
+            )));
+        }
+        Ok(timing)
+    }
+
+    fn dispatch_residual_row_run_grouped_chunk(
+        &self,
+        chunk: &MetalResidualGroupedRowRunChunk,
+        params: MetalResidualRowRunParams,
+        shared: &MetalResidualRowRunSharedBuffers<'_>,
+        input_copy_mode: MetalInputBufferCopyMode,
+    ) -> Result<MetalResidualDispatchTiming, ImagingError> {
+        use std::slice;
+
+        use objc2_metal::{
+            MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+            MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice, MTLResourceOptions,
+            MTLSize,
+        };
+
+        let mut timing = MetalResidualDispatchTiming::default();
+        if chunk.is_empty() || chunk.group_descs.is_empty() {
+            return Ok(timing);
+        }
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let input_buffers_started = Instant::now();
+        let run_buffer = self.buffer_from_slice_with_mode(
+            &chunk.row_runs.runs,
+            storage_options,
+            input_copy_mode,
+        )?;
+        let lane_buffer = self.buffer_from_slice_with_mode(
+            &chunk.row_runs.lanes,
+            storage_options,
+            input_copy_mode,
+        )?;
+        let data_buffer = self.buffer_from_slice_with_mode(
+            &chunk.row_runs.data,
+            storage_options,
+            input_copy_mode,
+        )?;
+        let flag_buffer = self.buffer_from_slice_with_mode(
+            &chunk.row_runs.flags,
+            storage_options,
+            input_copy_mode,
+        )?;
+        let weight_buffer = self.buffer_from_slice_with_mode(
+            &chunk.row_runs.weights,
+            storage_options,
+            input_copy_mode,
+        )?;
+        let group_desc_buffer =
+            self.buffer_from_slice_with_mode(&chunk.group_descs, storage_options, input_copy_mode)?;
+        let lane_ref_buffer =
+            self.buffer_from_slice_with_mode(&chunk.lane_refs, storage_options, input_copy_mode)?;
+        let grouped_lane_bytes = chunk
+            .row_runs
+            .lanes
+            .len()
+            .checked_mul(std::mem::size_of::<MetalResidualGroupedLane>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run output lane buffer is too large"
+                        .to_string(),
+                )
+            })?;
+        let grouped_lane_buffer = self
+            .device
+            .newBufferWithLength_options(grouped_lane_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal-row-run-grouped' could not allocate grouped lane buffer"
+                        .to_string(),
+                )
+            })?;
+        timing.sample_buffer += input_buffers_started.elapsed();
+        let params_buffer_started = Instant::now();
+        let params_buffer = self.buffer_from_slice(slice::from_ref(&params), storage_options)?;
+        timing.params_buffer += params_buffer_started.elapsed();
+
+        let encode_started = Instant::now();
+        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal-row-run-grouped' could not create a residual command buffer"
+                    .to_string(),
+            )
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal-row-run-grouped' could not create a residual compute encoder"
+                    .to_string(),
+            )
+        })?;
+        encoder.setComputePipelineState(&self.residual_row_run_grouped_prepare_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&run_buffer), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&lane_buffer), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&data_buffer), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(&flag_buffer), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(&weight_buffer), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(shared.density), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(shared.model_re), 0, 6);
+            encoder.setBuffer_offset_atIndex(Some(shared.model_im), 0, 7);
+            encoder.setBuffer_offset_atIndex(Some(&grouped_lane_buffer), 0, 8);
+            encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 9);
+            encoder.setBuffer_offset_atIndex(Some(shared.tap_weights), 0, 10);
+        }
+        let prepare_thread_width = self
+            .residual_row_run_grouped_prepare_pipeline
+            .threadExecutionWidth()
+            .max(1);
+        let prepare_max_threads = self
+            .residual_row_run_grouped_prepare_pipeline
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let prepare_group_width = prepare_thread_width
+            .min(params.max_lane_count as usize)
+            .max(1);
+        let prepare_group_height = (prepare_max_threads / prepare_group_width)
+            .max(1)
+            .min(params.run_count as usize)
+            .max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: params.max_lane_count as usize,
+                height: params.run_count as usize,
+                depth: 1,
+            },
+            MTLSize {
+                width: prepare_group_width,
+                height: prepare_group_height,
+                depth: 1,
+            },
+        );
+
+        encoder.setComputePipelineState(&self.residual_row_run_grouped_accumulate_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&grouped_lane_buffer), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&group_desc_buffer), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&lane_ref_buffer), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(shared.grid_re), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(shared.grid_im), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(&params_buffer), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(shared.tap_weights), 0, 6);
+        }
+        let accumulate_width = chunk.max_halo_cells.max(1);
+        let accumulate_height = chunk.group_descs.len().max(1);
+        let accumulate_thread_width = self
+            .residual_row_run_grouped_accumulate_pipeline
+            .threadExecutionWidth()
+            .max(1);
+        let accumulate_max_threads = self
+            .residual_row_run_grouped_accumulate_pipeline
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let accumulate_group_width = accumulate_thread_width.min(accumulate_width).max(1);
+        let accumulate_group_height = (accumulate_max_threads / accumulate_group_width)
+            .max(1)
+            .min(accumulate_height)
+            .max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: accumulate_width,
+                height: accumulate_height,
+                depth: 1,
+            },
+            MTLSize {
+                width: accumulate_group_width,
+                height: accumulate_group_height,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        command_buffer.commit();
+        timing.encode += encode_started.elapsed();
+        let wait_started = Instant::now();
+        command_buffer.waitUntilCompleted();
+        timing.wait += wait_started.elapsed();
+        let gpu_start = command_buffer.GPUStartTime();
+        let gpu_end = command_buffer.GPUEndTime();
+        if gpu_start.is_finite() && gpu_end.is_finite() && gpu_end > gpu_start {
+            timing.gpu += Duration::from_secs_f64(gpu_end - gpu_start);
+        }
+        let kernel_start = command_buffer.kernelStartTime();
+        let kernel_end = command_buffer.kernelEndTime();
+        if kernel_start.is_finite() && kernel_end.is_finite() && kernel_end > kernel_start {
+            timing.kernel += Duration::from_secs_f64(kernel_end - kernel_start);
+        }
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "standard MFS backend 'metal-row-run-grouped' residual refresh command failed: {message}"
+            )));
+        }
+        Ok(timing)
+    }
+
+    fn cached_grouped_chunk_buffers(
+        &self,
+        chunk: &MetalResidualGroupedRowRunChunk,
+        params: MetalResidualRowRunParams,
+        storage_options: objc2_metal::MTLResourceOptions,
+    ) -> Result<MetalResidualGroupedCachedBuffers, ImagingError> {
+        use objc2_metal::MTLDevice;
+
+        let grouped_lane_bytes = chunk
+            .row_runs
+            .lanes
+            .len()
+            .checked_mul(std::mem::size_of::<MetalResidualGroupedLane>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped row-run output lane buffer is too large"
+                        .to_string(),
+                )
+            })?;
+        let grouped_lane = self
+            .device
+            .newBufferWithLength_options(grouped_lane_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS backend 'metal-row-run-grouped' could not allocate grouped lane buffer"
+                        .to_string(),
+                )
+            })?;
+        Ok(MetalResidualGroupedCachedBuffers {
+            run: self.buffer_from_slice(&chunk.row_runs.runs, storage_options)?,
+            lane: self.buffer_from_slice(&chunk.row_runs.lanes, storage_options)?,
+            data: self.buffer_from_slice(&chunk.row_runs.data, storage_options)?,
+            flag: self.buffer_from_slice(&chunk.row_runs.flags, storage_options)?,
+            weight: self.buffer_from_slice(&chunk.row_runs.weights, storage_options)?,
+            group_desc: self.buffer_from_slice(&chunk.group_descs, storage_options)?,
+            lane_ref: self.buffer_from_slice(&chunk.lane_refs, storage_options)?,
+            grouped_lane,
+            params: self.buffer_from_slice(std::slice::from_ref(&params), storage_options)?,
+        })
+    }
+
+    fn cached_grouped_chunk(
+        &self,
+        chunk: MetalResidualGroupedRowRunChunk,
+        params: MetalResidualRowRunParams,
+        storage_options: objc2_metal::MTLResourceOptions,
+    ) -> Result<MetalResidualGroupedCachedChunk, ImagingError> {
+        let metrics = MetalResidualGroupedChunkMetrics::from_chunk(&chunk);
+        if standard_mfs_metal_resident_grouped_input_buffers_enabled() {
+            let buffers = self.cached_grouped_chunk_buffers(&chunk, params, storage_options)?;
+            Ok(MetalResidualGroupedCachedChunk {
+                params,
+                metrics,
+                host: None,
+                buffers: Some(buffers),
+            })
+        } else {
+            Ok(MetalResidualGroupedCachedChunk {
+                params,
+                metrics,
+                host: Some(chunk),
+                buffers: None,
+            })
+        }
+    }
+
+    fn dispatch_cached_residual_row_run_grouped_chunk(
+        &self,
+        cached: &MetalResidualGroupedCachedChunk,
+        shared: &MetalResidualRowRunSharedBuffers<'_>,
+    ) -> Result<MetalResidualDispatchTiming, ImagingError> {
+        use objc2_metal::{
+            MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
+            MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize,
+        };
+
+        let mut timing = MetalResidualDispatchTiming::default();
+        if cached.metrics.runs == 0 || cached.metrics.group_descs == 0 {
+            return Ok(timing);
+        }
+        let Some(buffers) = cached.buffers.as_ref() else {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run cache chunk has no resident input buffers"
+                    .to_string(),
+            ));
+        };
+        let params = cached.params;
+        let encode_started = Instant::now();
+        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal-row-run-grouped' could not create a residual command buffer"
+                    .to_string(),
+            )
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal-row-run-grouped' could not create a residual compute encoder"
+                    .to_string(),
+            )
+        })?;
+        encoder.setComputePipelineState(&self.residual_row_run_grouped_prepare_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&buffers.run), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&buffers.lane), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&buffers.data), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(&buffers.flag), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(&buffers.weight), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(shared.density), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(shared.model_re), 0, 6);
+            encoder.setBuffer_offset_atIndex(Some(shared.model_im), 0, 7);
+            encoder.setBuffer_offset_atIndex(Some(&buffers.grouped_lane), 0, 8);
+            encoder.setBuffer_offset_atIndex(Some(&buffers.params), 0, 9);
+            encoder.setBuffer_offset_atIndex(Some(shared.tap_weights), 0, 10);
+        }
+        let prepare_thread_width = self
+            .residual_row_run_grouped_prepare_pipeline
+            .threadExecutionWidth()
+            .max(1);
+        let prepare_max_threads = self
+            .residual_row_run_grouped_prepare_pipeline
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let prepare_group_width = prepare_thread_width
+            .min(params.max_lane_count as usize)
+            .max(1);
+        let prepare_group_height = (prepare_max_threads / prepare_group_width)
+            .max(1)
+            .min(params.run_count as usize)
+            .max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: params.max_lane_count as usize,
+                height: params.run_count as usize,
+                depth: 1,
+            },
+            MTLSize {
+                width: prepare_group_width,
+                height: prepare_group_height,
+                depth: 1,
+            },
+        );
+
+        encoder.setComputePipelineState(&self.residual_row_run_grouped_accumulate_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&buffers.grouped_lane), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&buffers.group_desc), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&buffers.lane_ref), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(shared.grid_re), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(shared.grid_im), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(&buffers.params), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(shared.tap_weights), 0, 6);
+        }
+        let accumulate_width = cached.metrics.max_halo_cells.max(1);
+        let accumulate_height = cached.metrics.group_descs.max(1);
+        let accumulate_thread_width = self
+            .residual_row_run_grouped_accumulate_pipeline
+            .threadExecutionWidth()
+            .max(1);
+        let accumulate_max_threads = self
+            .residual_row_run_grouped_accumulate_pipeline
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let accumulate_group_width = accumulate_thread_width.min(accumulate_width).max(1);
+        let accumulate_group_height = (accumulate_max_threads / accumulate_group_width)
+            .max(1)
+            .min(accumulate_height)
+            .max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: accumulate_width,
+                height: accumulate_height,
+                depth: 1,
+            },
+            MTLSize {
+                width: accumulate_group_width,
+                height: accumulate_group_height,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        command_buffer.commit();
+        timing.encode += encode_started.elapsed();
+        let wait_started = Instant::now();
+        command_buffer.waitUntilCompleted();
+        timing.wait += wait_started.elapsed();
+        let gpu_start = command_buffer.GPUStartTime();
+        let gpu_end = command_buffer.GPUEndTime();
+        if gpu_start.is_finite() && gpu_end.is_finite() && gpu_end > gpu_start {
+            timing.gpu += Duration::from_secs_f64(gpu_end - gpu_start);
+        }
+        let kernel_start = command_buffer.kernelStartTime();
+        let kernel_end = command_buffer.kernelEndTime();
+        if kernel_start.is_finite() && kernel_end.is_finite() && kernel_end > kernel_start {
+            timing.kernel += Duration::from_secs_f64(kernel_end - kernel_start);
+        }
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "standard MFS backend 'metal-row-run-grouped' residual refresh command failed: {message}"
+            )));
+        }
+        Ok(timing)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn append_metal_residual_samples_from_routed_run(
+        &self,
+        gridder: &StandardGridder,
+        routed_run: &StandardMfsRoutedVisibilityRun,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        accumulation: &mut StandardMfsTiledResidualAccumulation,
+        chunk: &mut Vec<MetalResidualSample>,
+        sample_stride: usize,
+        timings: &mut MetalResidualRefreshTimings,
+    ) -> Result<(), ImagingError> {
+        if routed_run.is_empty() {
+            return Ok(());
+        }
+        let run_wrap_started = Instant::now();
+        let run = StandardMfsTileVisibilityRun::from_routed_visibility_run(
+            routed_run,
+            0..routed_run.len(),
+            routed_run.first_input_seq,
+        );
+        timings.run_wrap += run_wrap_started.elapsed();
+        accumulation.valid_samples = accumulation.valid_samples.saturating_add(run.len());
+        accumulation.planned_samples = accumulation.planned_samples.saturating_add(run.len());
+        for sample_index in 0..run.len() {
+            let timed_sample = sample_stride > 0
+                && accumulation
+                    .gridded_residual_samples
+                    .checked_rem(sample_stride)
+                    .is_some_and(|remainder| remainder == 0);
+            let sample_decode_started = timed_sample.then(Instant::now);
+            let Some(sample) = run.routed_queue_sample_at(sample_index, false)? else {
+                if let Some(started) = sample_decode_started {
+                    timings.sample_decode_sampled += started.elapsed();
+                    timings.sampled_samples = timings.sampled_samples.saturating_add(1);
+                }
+                accumulation.skipped_nonfinite_visibility =
+                    accumulation.skipped_nonfinite_visibility.saturating_add(1);
+                continue;
+            };
+            if let Some(started) = sample_decode_started {
+                timings.sample_decode_sampled += started.elapsed();
+            }
+            let StandardMfsRoutedQueueVisibility::Finite(visibility) = sample.visibility else {
+                accumulation.skipped_nonfinite_visibility =
+                    accumulation.skipped_nonfinite_visibility.saturating_add(1);
+                continue;
+            };
+            let weight_started = timed_sample.then(Instant::now);
+            let Some(grid_weight) = sample.weighted_grid_weight(weighting_plan)? else {
+                if let Some(started) = weight_started {
+                    timings.weight_sampled += started.elapsed();
+                    timings.sampled_samples = timings.sampled_samples.saturating_add(1);
+                }
+                accumulation.skipped_invalid_weight =
+                    accumulation.skipped_invalid_weight.saturating_add(1);
+                continue;
+            };
+            if let Some(started) = weight_started {
+                timings.weight_sampled += started.elapsed();
+            }
+            let coordinate_started = timed_sample.then(Instant::now);
+            let Some([grid_x, grid_y]) =
+                gridder.positive_tap_grid_coordinates(sample.u_lambda, sample.v_lambda)
+            else {
+                if let Some(started) = coordinate_started {
+                    timings.tap_plan_sampled += started.elapsed();
+                    timings.sampled_samples = timings.sampled_samples.saturating_add(1);
+                }
+                accumulation.skipped_out_of_grid =
+                    accumulation.skipped_out_of_grid.saturating_add(1);
+                continue;
+            };
+            if let Some(started) = coordinate_started {
+                timings.tap_plan_sampled += started.elapsed();
+            }
+            let push_started = timed_sample.then(Instant::now);
+            chunk.push(MetalResidualSample {
+                grid_x,
+                grid_y,
+                grid_weight,
+                _pad0: 0.0,
+                visibility_re: visibility.re,
+                visibility_im: visibility.im,
+                _pad1: [0.0; 2],
+            });
+            if let Some(started) = push_started {
+                timings.push_sampled += started.elapsed();
+                timings.sampled_samples = timings.sampled_samples.saturating_add(1);
+            }
+            accumulation.gridded_residual_samples =
+                accumulation.gridded_residual_samples.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    fn dispatch_residual_refresh_chunk(
+        &self,
+        samples: &[MetalResidualSample],
+        grid_width: usize,
+        grid_height: usize,
+        buffers: MetalResidualDispatchBuffers<'_>,
+    ) -> Result<MetalResidualDispatchTiming, ImagingError> {
+        use std::{mem, ptr};
+
+        use objc2_metal::{
+            MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder,
+            MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState, MTLSize,
+        };
+
+        let mut timing = MetalResidualDispatchTiming::default();
+        let sample_count = u32::try_from(samples.len()).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal residual chunk has too many samples".to_string(),
+            )
+        })?;
+        if sample_count == 0 {
+            return Ok(timing);
+        }
+        let params = MetalResidualParams {
+            sample_count,
+            grid_width: u32::try_from(grid_width).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal residual grid width exceeds u32".to_string(),
+                )
+            })?,
+            grid_height: u32::try_from(grid_height).map_err(|_| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal residual grid height exceeds u32".to_string(),
+                )
+            })?,
+            oversampling: buffers.oversampling,
+            tap_weight_count: buffers.tap_weight_count,
+            _pad0: [0; 3],
+        };
+        let sample_buffer_started = Instant::now();
+        let sample_bytes = mem::size_of_val(samples);
+        unsafe {
+            ptr::copy_nonoverlapping(
+                samples.as_ptr().cast::<u8>(),
+                buffers.sample_buffer.contents().as_ptr().cast::<u8>(),
+                sample_bytes,
+            );
+        }
+        timing.sample_buffer += sample_buffer_started.elapsed();
+        let params_buffer_started = Instant::now();
+        unsafe {
+            ptr::copy_nonoverlapping(
+                ptr::addr_of!(params).cast::<u8>(),
+                buffers.params_buffer.contents().as_ptr().cast::<u8>(),
+                mem::size_of::<MetalResidualParams>(),
+            );
+        }
+        timing.params_buffer += params_buffer_started.elapsed();
+        let encode_started = Instant::now();
+        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' could not create a residual command buffer"
+                    .to_string(),
+            )
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS backend 'metal' could not create a residual compute encoder"
+                    .to_string(),
+            )
+        })?;
+        encoder.setComputePipelineState(&self.residual_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(buffers.sample_buffer), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(buffers.model_re), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(buffers.model_im), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(buffers.grid_re), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(buffers.grid_im), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(buffers.params_buffer), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(buffers.tap_weights), 0, 6);
+        }
+        let thread_count = samples.len();
+        let thread_width = self.residual_pipeline.threadExecutionWidth().max(1);
+        let max_threads = self
+            .residual_pipeline
+            .maxTotalThreadsPerThreadgroup()
+            .max(1);
+        let threads_per_group = thread_width.min(max_threads).min(thread_count);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: thread_count,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: threads_per_group,
+                height: 1,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        command_buffer.commit();
+        timing.encode += encode_started.elapsed();
+        let wait_started = Instant::now();
+        command_buffer.waitUntilCompleted();
+        timing.wait += wait_started.elapsed();
+        if command_buffer.status() == MTLCommandBufferStatus::Error {
+            let message = command_buffer
+                .error()
+                .map(|error| format!("{error:?}"))
+                .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+            return Err(ImagingError::Unsupported(format!(
+                "standard MFS backend 'metal' residual refresh command failed: {message}"
+            )));
+        }
+        Ok(timing)
+    }
+
     fn buffer_from_slice<T>(
         &self,
         values: &[T],
@@ -9680,6 +12766,53 @@ impl MetalDirtyBackend {
                 })
         }
     }
+
+    fn buffer_from_slice_with_mode<T>(
+        &self,
+        values: &[T],
+        options: objc2_metal::MTLResourceOptions,
+        mode: MetalInputBufferCopyMode,
+    ) -> Result<MetalBuffer, ImagingError> {
+        match mode {
+            MetalInputBufferCopyMode::Copy => self.buffer_from_slice(values, options),
+            MetalInputBufferCopyMode::NoCopy => self.buffer_from_slice_no_copy(values, options),
+        }
+    }
+
+    fn buffer_from_slice_no_copy<T>(
+        &self,
+        values: &[T],
+        options: objc2_metal::MTLResourceOptions,
+    ) -> Result<MetalBuffer, ImagingError> {
+        use std::{ffi::c_void, mem, ptr::NonNull};
+
+        use objc2_metal::MTLDevice;
+
+        let byte_len = mem::size_of_val(values);
+        if byte_len == 0 {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS Metal buffers must be non-empty".to_string(),
+            ));
+        }
+        let pointer =
+            NonNull::new(values.as_ptr().cast::<c_void>() as *mut c_void).ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal buffer pointer was null".to_string(),
+                )
+            })?;
+        unsafe {
+            self.device
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    pointer, byte_len, options, None,
+                )
+                .ok_or_else(|| {
+                    ImagingError::Unsupported(
+                        "standard MFS backend 'metal' could not wrap an input buffer without copying"
+                            .to_string(),
+                    )
+                })
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -9690,6 +12823,65 @@ fn metal_error(
     ImagingError::Unsupported(format!(
         "standard MFS backend 'metal' failed to {context}: {error:?}"
     ))
+}
+
+#[cfg(target_os = "macos")]
+fn metal_density_convention_code(convention: DensityCellConvention) -> u32 {
+    match convention {
+        DensityCellConvention::VisImagingWeight => 0,
+        DensityCellConvention::CubeBriggsWeightorDensity => 1,
+        DensityCellConvention::CubeBriggsWeightorLookup => 2,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn metal_pair_transform_code(transform: StandardMfsPairCollapseTransform) -> u32 {
+    match transform {
+        StandardMfsPairCollapseTransform::HalfSum => 0,
+        StandardMfsPairCollapseTransform::HalfDifference => 1,
+        StandardMfsPairCollapseTransform::PositiveHalfImagDifference => 2,
+        StandardMfsPairCollapseTransform::NegativeHalfImagDifference => 3,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn standard_mfs_metal_residual_chunk_samples() -> usize {
+    const DEFAULT_CHUNK_SAMPLES: usize = 16_000_000;
+    env::var("CASA_RS_STANDARD_MFS_METAL_CHUNK_SAMPLES")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CHUNK_SAMPLES)
+}
+
+#[cfg(target_os = "macos")]
+fn standard_mfs_metal_residual_staging_sample_stride() -> usize {
+    env::var("CASA_RS_STANDARD_MFS_METAL_STAGING_SAMPLE_STRIDE")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+#[cfg(target_os = "macos")]
+fn standard_mfs_metal_group_tile_edge() -> usize {
+    const DEFAULT_GROUP_TILE_EDGE: usize = 1;
+    env::var("CASA_RS_STANDARD_MFS_METAL_GROUP_TILE_EDGE")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_GROUP_TILE_EDGE)
+}
+
+#[cfg(target_os = "macos")]
+fn standard_mfs_metal_resident_grouped_input_buffers_enabled() -> bool {
+    env::var("CASA_RS_STANDARD_MFS_METAL_RESIDENT_GROUPED_INPUT_BUFFERS")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(target_os = "macos")]
@@ -9727,6 +12919,161 @@ struct TileParams {
     uint _pad0[3];
 };
 
+struct ResidualSample {
+    float grid_x;
+    float grid_y;
+    float grid_weight;
+    float _pad0;
+    float visibility_re;
+    float visibility_im;
+    float _pad1[2];
+};
+
+struct ResidualParams {
+    uint sample_count;
+    uint grid_width;
+    uint grid_height;
+    uint oversampling;
+    uint tap_weight_count;
+    uint _pad0[3];
+};
+
+struct RowRunDesc {
+    float u_m;
+    float v_m;
+    float sumwt_factor;
+    float _pad0;
+    uint lane_offset;
+    uint lane_count;
+    uint data_offset;
+    uint flag_offset;
+    uint weight_offset;
+    uint corr_count;
+    uint polarization_mode;
+    uint transform;
+    uint corr0;
+    uint corr1;
+    uint _pad1[2];
+};
+
+struct RowRunLane {
+    float lambda_scale;
+    uint center_x;
+    uint center_y;
+    uint _pad0;
+};
+
+struct GroupedLane {
+    uint center_x;
+    uint center_y;
+    uint x_weight_base;
+    uint y_weight_base;
+    float residual_re;
+    float residual_im;
+    float grid_weight;
+    float _pad0;
+};
+
+struct GroupedTileDesc {
+    uint ref_offset;
+    uint ref_count;
+    uint halo_x0;
+    uint halo_y0;
+    uint halo_width;
+    uint halo_height;
+    uint _pad0[2];
+};
+
+struct RowRunParams {
+    uint run_count;
+    uint max_lane_count;
+    uint grid_width;
+    uint grid_height;
+    uint oversampling;
+    uint tap_weight_count;
+    uint weighting_mode;
+    uint density_convention;
+    uint density_width;
+    uint density_height;
+    uint diagnostic_mode;
+    uint _pad0;
+    float du_lambda;
+    float dv_lambda;
+    float density_center_x;
+    float density_center_y;
+    float density_u_scale;
+    float density_v_scale;
+    float briggs_f2;
+    float _pad1;
+};
+
+static inline void atomic_add_float(device atomic_uint *address, float value) {
+    uint old_bits = atomic_load_explicit(address, memory_order_relaxed);
+    while (true) {
+        float old_value = as_type<float>(old_bits);
+        uint new_bits = as_type<uint>(old_value + value);
+        if (atomic_compare_exchange_weak_explicit(
+                address,
+                &old_bits,
+                new_bits,
+                memory_order_relaxed,
+                memory_order_relaxed)) {
+            return;
+        }
+    }
+}
+
+static inline int round_half_away_from_zero(float value) {
+    return value >= 0.0f ? int(floor(value + 0.5f)) : int(ceil(value - 0.5f));
+}
+
+static inline bool row_run_density_lookup(
+    float u_lambda,
+    float v_lambda,
+    constant RowRunParams &params,
+    device const float *density,
+    thread float &cell_density
+) {
+    float x;
+    float y;
+    if (params.density_convention == 0u) {
+        const float u = float(u_lambda);
+        const float v = float(v_lambda);
+        x = -u * params.density_u_scale + params.density_center_x;
+        y = v * params.density_v_scale + params.density_center_y;
+    } else {
+        x = u_lambda * params.density_u_scale + params.density_center_x;
+        y = -v_lambda * params.density_v_scale + params.density_center_y;
+    }
+    if (!isfinite(x) || !isfinite(y)) {
+        return false;
+    }
+    const int anchor_x = params.density_convention == 0u ? int(x) : round_half_away_from_zero(x);
+    const int anchor_y = params.density_convention == 0u ? int(y) : round_half_away_from_zero(y);
+    if (anchor_x <= 0 || anchor_y <= 0 ||
+        anchor_x >= int(params.density_width) ||
+        anchor_y >= int(params.density_height)) {
+        return false;
+    }
+    cell_density = density[uint(anchor_x) * params.density_height + uint(anchor_y)];
+    return isfinite(cell_density) && cell_density > 0.0f;
+}
+
+static inline float2 row_run_collapse_pair(float2 first, float2 second, uint transform) {
+    if (transform == 1u) {
+        return (first - second) * 0.5f;
+    }
+    if (transform == 2u) {
+        float2 difference = first - second;
+        return float2(-difference.y, difference.x) * 0.5f;
+    }
+    if (transform == 3u) {
+        float2 difference = first - second;
+        return float2(difference.y, -difference.x) * 0.5f;
+    }
+    return (first + second) * 0.5f;
+}
+
 kernel void grid_dirty_tile_cell_owner(
     device const DirtySample *samples [[buffer(0)]],
     device float2 *psf_grid [[buffer(1)]],
@@ -9763,6 +13110,579 @@ kernel void grid_dirty_tile_cell_owner(
     }
     psf_grid[gid] = float2(psf, 0.0f);
     residual_grid[gid] = float2(residual_re, residual_im);
+}
+
+kernel void residual_refresh_global_atomic_exact(
+    device const ResidualSample *samples [[buffer(0)]],
+    device const float *model_re [[buffer(1)]],
+    device const float *model_im [[buffer(2)]],
+    device atomic_uint *grid_re [[buffer(3)]],
+    device atomic_uint *grid_im [[buffer(4)]],
+    constant ResidualParams &params [[buffer(5)]],
+    device const float *tap_weights [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= params.sample_count) {
+        return;
+    }
+
+    const ResidualSample sample = samples[gid];
+    const int center_x = round_half_away_from_zero(sample.grid_x);
+    const int center_y = round_half_away_from_zero(sample.grid_y);
+    const int start_x = center_x - STANDARD_MFS_SUPPORT;
+    const int start_y = center_y - STANDARD_MFS_SUPPORT;
+    if (start_x < 0 || start_y < 0 ||
+        center_x + STANDARD_MFS_SUPPORT >= int(params.grid_width) ||
+        center_y + STANDARD_MFS_SUPPORT >= int(params.grid_height)) {
+        return;
+    }
+    const int offset_x = round_half_away_from_zero((float(center_x) - sample.grid_x) * float(params.oversampling));
+    const int offset_y = round_half_away_from_zero((float(center_y) - sample.grid_y) * float(params.oversampling));
+    const int half_oversampling = int(params.oversampling / 2u);
+    const int x_weight_index = offset_x + half_oversampling;
+    const int y_weight_index = offset_y + half_oversampling;
+    if (x_weight_index < 0 || y_weight_index < 0 ||
+        x_weight_index >= int(params.tap_weight_count) ||
+        y_weight_index >= int(params.tap_weight_count)) {
+        return;
+    }
+    const uint x_weight_base = uint(x_weight_index) * STANDARD_MFS_TAP_COUNT;
+    const uint y_weight_base = uint(y_weight_index) * STANDARD_MFS_TAP_COUNT;
+    float predicted_re = 0.0f;
+    float predicted_im = 0.0f;
+    for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
+        int x = start_x + int(dx);
+        float wx = tap_weights[x_weight_base + dx];
+        for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
+            int y = start_y + int(dy);
+            float tap_weight = wx * tap_weights[y_weight_base + dy];
+            uint cell = uint(x) * params.grid_height + uint(y);
+            predicted_re += model_re[cell] * tap_weight;
+            predicted_im += model_im[cell] * tap_weight;
+        }
+    }
+
+    const float residual_re = sample.visibility_re - predicted_re;
+    const float residual_im = sample.visibility_im - predicted_im;
+    for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
+        int x = start_x + int(dx);
+        float wx = tap_weights[x_weight_base + dx];
+        for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
+            int y = start_y + int(dy);
+            float tap_weight = wx * tap_weights[y_weight_base + dy] * sample.grid_weight;
+            uint cell = uint(x) * params.grid_height + uint(y);
+            atomic_add_float(&grid_re[cell], residual_re * tap_weight);
+            atomic_add_float(&grid_im[cell], residual_im * tap_weight);
+        }
+    }
+}
+
+kernel void residual_refresh_row_run_global_atomic_exact(
+    device const RowRunDesc *runs [[buffer(0)]],
+    device const RowRunLane *lanes [[buffer(1)]],
+    device const float2 *data [[buffer(2)]],
+    device const uchar *flags [[buffer(3)]],
+    device const float *weights [[buffer(4)]],
+    device const float *density [[buffer(5)]],
+    device const float *model_re [[buffer(6)]],
+    device const float *model_im [[buffer(7)]],
+    device atomic_uint *grid_re [[buffer(8)]],
+    device atomic_uint *grid_im [[buffer(9)]],
+    constant RowRunParams &params [[buffer(10)]],
+    device const float *tap_weights [[buffer(11)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint lane_index = gid.x;
+    const uint run_index = gid.y;
+    if (run_index >= params.run_count || lane_index >= params.max_lane_count) {
+        return;
+    }
+    const RowRunDesc run = runs[run_index];
+    if (lane_index >= run.lane_count) {
+        return;
+    }
+    const RowRunLane lane = lanes[run.lane_offset + lane_index];
+    const float u_lambda = run.u_m * lane.lambda_scale;
+    const float v_lambda = run.v_m * lane.lambda_scale;
+
+    float natural_weight;
+    float2 visibility;
+    if (run.polarization_mode == 0u) {
+        if (run.corr0 >= run.corr_count) {
+            return;
+        }
+        const uint index = run.corr0 * run.lane_count + lane_index;
+        if (flags[run.flag_offset + index] != 0) {
+            return;
+        }
+        visibility = data[run.data_offset + index];
+        if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
+            return;
+        }
+        natural_weight = weights[run.weight_offset + run.corr0];
+    } else {
+        if (run.corr0 >= run.corr_count || run.corr1 >= run.corr_count) {
+            return;
+        }
+        const uint first_index = run.corr0 * run.lane_count + lane_index;
+        const uint second_index = run.corr1 * run.lane_count + lane_index;
+        if (flags[run.flag_offset + first_index] != 0 ||
+            flags[run.flag_offset + second_index] != 0) {
+            return;
+        }
+        const float2 first_visibility = data[run.data_offset + first_index];
+        const float2 second_visibility = data[run.data_offset + second_index];
+        visibility = row_run_collapse_pair(first_visibility, second_visibility, run.transform);
+        if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
+            return;
+        }
+        const float first_weight = weights[run.weight_offset + run.corr0];
+        const float second_weight = weights[run.weight_offset + run.corr1];
+        if (!(isfinite(first_weight) && first_weight > 0.0f &&
+              isfinite(second_weight) && second_weight > 0.0f)) {
+            return;
+        }
+        natural_weight = 0.5f * (first_weight + second_weight);
+    }
+    if (!(isfinite(natural_weight) && natural_weight > 0.0f &&
+          isfinite(run.sumwt_factor) && run.sumwt_factor > 0.0f)) {
+        return;
+    }
+
+    float final_weight = natural_weight;
+    if (params.weighting_mode != 0u) {
+        float cell_density = 0.0f;
+        if (!row_run_density_lookup(u_lambda, v_lambda, params, density, cell_density)) {
+            return;
+        }
+        if (params.weighting_mode == 1u) {
+            final_weight = natural_weight / cell_density;
+        } else {
+            final_weight = natural_weight / (params.briggs_f2 * cell_density + 1.0f);
+        }
+    }
+    const float grid_weight = final_weight * run.sumwt_factor;
+    if (!(isfinite(grid_weight) && grid_weight > 0.0f)) {
+        return;
+    }
+
+    const float grid_x = u_lambda / params.du_lambda + float(params.grid_width) * 0.5f;
+    const float grid_y = -v_lambda / params.dv_lambda + float(params.grid_height) * 0.5f;
+    if (!isfinite(grid_x) || !isfinite(grid_y)) {
+        return;
+    }
+    const int center_x = round_half_away_from_zero(grid_x);
+    const int center_y = round_half_away_from_zero(grid_y);
+    const int start_x = center_x - STANDARD_MFS_SUPPORT;
+    const int start_y = center_y - STANDARD_MFS_SUPPORT;
+    if (start_x < 0 || start_y < 0 ||
+        center_x + STANDARD_MFS_SUPPORT >= int(params.grid_width) ||
+        center_y + STANDARD_MFS_SUPPORT >= int(params.grid_height)) {
+        return;
+    }
+    const int offset_x = round_half_away_from_zero((float(center_x) - grid_x) * float(params.oversampling));
+    const int offset_y = round_half_away_from_zero((float(center_y) - grid_y) * float(params.oversampling));
+    const int half_oversampling = int(params.oversampling / 2u);
+    const int x_weight_index = offset_x + half_oversampling;
+    const int y_weight_index = offset_y + half_oversampling;
+    if (x_weight_index < 0 || y_weight_index < 0 ||
+        x_weight_index >= int(params.tap_weight_count) ||
+        y_weight_index >= int(params.tap_weight_count)) {
+        return;
+    }
+    const uint x_weight_base = uint(x_weight_index) * STANDARD_MFS_TAP_COUNT;
+    const uint y_weight_base = uint(y_weight_index) * STANDARD_MFS_TAP_COUNT;
+    float predicted_re = 0.0f;
+    float predicted_im = 0.0f;
+    for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
+        int x = start_x + int(dx);
+        float wx = tap_weights[x_weight_base + dx];
+        for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
+            int y = start_y + int(dy);
+            float tap_weight = wx * tap_weights[y_weight_base + dy];
+            uint cell = uint(x) * params.grid_height + uint(y);
+            predicted_re += model_re[cell] * tap_weight;
+            predicted_im += model_im[cell] * tap_weight;
+        }
+    }
+
+    const float residual_re = visibility.x - predicted_re;
+    const float residual_im = visibility.y - predicted_im;
+    for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
+        int x = start_x + int(dx);
+        float wx = tap_weights[x_weight_base + dx];
+        for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
+            int y = start_y + int(dy);
+            float tap_weight = wx * tap_weights[y_weight_base + dy] * grid_weight;
+            uint cell = uint(x) * params.grid_height + uint(y);
+            atomic_add_float(&grid_re[cell], residual_re * tap_weight);
+            atomic_add_float(&grid_im[cell], residual_im * tap_weight);
+        }
+    }
+}
+
+kernel void residual_refresh_row_run_grouped_prepare(
+    device const RowRunDesc *runs [[buffer(0)]],
+    device const RowRunLane *lanes [[buffer(1)]],
+    device const float2 *data [[buffer(2)]],
+    device const uchar *flags [[buffer(3)]],
+    device const float *weights [[buffer(4)]],
+    device const float *density [[buffer(5)]],
+    device const float *model_re [[buffer(6)]],
+    device const float *model_im [[buffer(7)]],
+    device GroupedLane *grouped_lanes [[buffer(8)]],
+    constant RowRunParams &params [[buffer(9)]],
+    device const float *tap_weights [[buffer(10)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint lane_index = gid.x;
+    const uint run_index = gid.y;
+    if (run_index >= params.run_count || lane_index >= params.max_lane_count) {
+        return;
+    }
+    const RowRunDesc run = runs[run_index];
+    if (lane_index >= run.lane_count) {
+        return;
+    }
+    const RowRunLane lane = lanes[run.lane_offset + lane_index];
+    const uint output_index = run.lane_offset + lane_index;
+    GroupedLane output;
+    output.center_x = lane.center_x;
+    output.center_y = lane.center_y;
+    output.x_weight_base = 0u;
+    output.y_weight_base = 0u;
+    output.residual_re = 0.0f;
+    output.residual_im = 0.0f;
+    output.grid_weight = 0.0f;
+    output._pad0 = 0.0f;
+    grouped_lanes[output_index] = output;
+
+    const float u_lambda = run.u_m * lane.lambda_scale;
+    const float v_lambda = run.v_m * lane.lambda_scale;
+
+    float natural_weight;
+    float2 visibility;
+    if (run.polarization_mode == 0u) {
+        if (run.corr0 >= run.corr_count) {
+            return;
+        }
+        const uint index = run.corr0 * run.lane_count + lane_index;
+        if (flags[run.flag_offset + index] != 0) {
+            return;
+        }
+        visibility = data[run.data_offset + index];
+        if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
+            return;
+        }
+        natural_weight = weights[run.weight_offset + run.corr0];
+    } else {
+        if (run.corr0 >= run.corr_count || run.corr1 >= run.corr_count) {
+            return;
+        }
+        const uint first_index = run.corr0 * run.lane_count + lane_index;
+        const uint second_index = run.corr1 * run.lane_count + lane_index;
+        if (flags[run.flag_offset + first_index] != 0 ||
+            flags[run.flag_offset + second_index] != 0) {
+            return;
+        }
+        const float2 first_visibility = data[run.data_offset + first_index];
+        const float2 second_visibility = data[run.data_offset + second_index];
+        visibility = row_run_collapse_pair(first_visibility, second_visibility, run.transform);
+        if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
+            return;
+        }
+        const float first_weight = weights[run.weight_offset + run.corr0];
+        const float second_weight = weights[run.weight_offset + run.corr1];
+        if (!(isfinite(first_weight) && first_weight > 0.0f &&
+              isfinite(second_weight) && second_weight > 0.0f)) {
+            return;
+        }
+        natural_weight = 0.5f * (first_weight + second_weight);
+    }
+    if (!(isfinite(natural_weight) && natural_weight > 0.0f &&
+          isfinite(run.sumwt_factor) && run.sumwt_factor > 0.0f)) {
+        return;
+    }
+
+    float final_weight = natural_weight;
+    if (params.weighting_mode != 0u) {
+        float cell_density = 0.0f;
+        if (!row_run_density_lookup(u_lambda, v_lambda, params, density, cell_density)) {
+            return;
+        }
+        if (params.weighting_mode == 1u) {
+            final_weight = natural_weight / cell_density;
+        } else {
+            final_weight = natural_weight / (params.briggs_f2 * cell_density + 1.0f);
+        }
+    }
+    const float grid_weight = final_weight * run.sumwt_factor;
+    if (!(isfinite(grid_weight) && grid_weight > 0.0f)) {
+        return;
+    }
+
+    const float grid_x = u_lambda / params.du_lambda + float(params.grid_width) * 0.5f;
+    const float grid_y = -v_lambda / params.dv_lambda + float(params.grid_height) * 0.5f;
+    if (!isfinite(grid_x) || !isfinite(grid_y)) {
+        return;
+    }
+    const int center_x = int(lane.center_x);
+    const int center_y = int(lane.center_y);
+    const int start_x = center_x - STANDARD_MFS_SUPPORT;
+    const int start_y = center_y - STANDARD_MFS_SUPPORT;
+    if (start_x < 0 || start_y < 0 ||
+        center_x + STANDARD_MFS_SUPPORT >= int(params.grid_width) ||
+        center_y + STANDARD_MFS_SUPPORT >= int(params.grid_height)) {
+        return;
+    }
+    const int offset_x = round_half_away_from_zero((float(center_x) - grid_x) * float(params.oversampling));
+    const int offset_y = round_half_away_from_zero((float(center_y) - grid_y) * float(params.oversampling));
+    const int half_oversampling = int(params.oversampling / 2u);
+    const int x_weight_index = offset_x + half_oversampling;
+    const int y_weight_index = offset_y + half_oversampling;
+    if (x_weight_index < 0 || y_weight_index < 0 ||
+        x_weight_index >= int(params.tap_weight_count) ||
+        y_weight_index >= int(params.tap_weight_count)) {
+        return;
+    }
+    const uint x_weight_base = uint(x_weight_index) * STANDARD_MFS_TAP_COUNT;
+    const uint y_weight_base = uint(y_weight_index) * STANDARD_MFS_TAP_COUNT;
+    float predicted_re = 0.0f;
+    float predicted_im = 0.0f;
+    for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
+        int x = start_x + int(dx);
+        float wx = tap_weights[x_weight_base + dx];
+        for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
+            int y = start_y + int(dy);
+            float tap_weight = wx * tap_weights[y_weight_base + dy];
+            uint cell = uint(x) * params.grid_height + uint(y);
+            predicted_re += model_re[cell] * tap_weight;
+            predicted_im += model_im[cell] * tap_weight;
+        }
+    }
+
+    output.x_weight_base = x_weight_base;
+    output.y_weight_base = y_weight_base;
+    output.residual_re = visibility.x - predicted_re;
+    output.residual_im = visibility.y - predicted_im;
+    output.grid_weight = grid_weight;
+    grouped_lanes[output_index] = output;
+}
+
+kernel void residual_refresh_row_run_grouped_accumulate(
+    device const GroupedLane *grouped_lanes [[buffer(0)]],
+    device const GroupedTileDesc *group_descs [[buffer(1)]],
+    device const uint *lane_refs [[buffer(2)]],
+    device atomic_uint *grid_re [[buffer(3)]],
+    device atomic_uint *grid_im [[buffer(4)]],
+    constant RowRunParams &params [[buffer(5)]],
+    device const float *tap_weights [[buffer(6)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const GroupedTileDesc desc = group_descs[gid.y];
+    const uint cell_index = gid.x;
+    const uint halo_cell_count = desc.halo_width * desc.halo_height;
+    if (cell_index >= halo_cell_count) {
+        return;
+    }
+    const uint local_x = cell_index / desc.halo_height;
+    const uint local_y = cell_index - local_x * desc.halo_height;
+    const int global_x = int(desc.halo_x0 + local_x);
+    const int global_y = int(desc.halo_y0 + local_y);
+    float sum_re = 0.0f;
+    float sum_im = 0.0f;
+    for (uint ref_index = 0; ref_index < desc.ref_count; ++ref_index) {
+        const uint lane_index = lane_refs[desc.ref_offset + ref_index];
+        const GroupedLane lane = grouped_lanes[lane_index];
+        if (!(isfinite(lane.grid_weight) && lane.grid_weight > 0.0f)) {
+            continue;
+        }
+        const int tap_x = global_x - (int(lane.center_x) - STANDARD_MFS_SUPPORT);
+        const int tap_y = global_y - (int(lane.center_y) - STANDARD_MFS_SUPPORT);
+        if (tap_x < 0 || tap_x >= int(STANDARD_MFS_TAP_COUNT) ||
+            tap_y < 0 || tap_y >= int(STANDARD_MFS_TAP_COUNT)) {
+            continue;
+        }
+        const float tap_weight =
+            tap_weights[lane.x_weight_base + uint(tap_x)] *
+            tap_weights[lane.y_weight_base + uint(tap_y)] *
+            lane.grid_weight;
+        sum_re += lane.residual_re * tap_weight;
+        sum_im += lane.residual_im * tap_weight;
+    }
+    if (sum_re == 0.0f && sum_im == 0.0f) {
+        return;
+    }
+    const uint cell = uint(global_x) * params.grid_height + uint(global_y);
+    atomic_add_float(&grid_re[cell], sum_re);
+    atomic_add_float(&grid_im[cell], sum_im);
+}
+
+kernel void residual_refresh_row_run_diagnostic(
+    device const RowRunDesc *runs [[buffer(0)]],
+    device const RowRunLane *lanes [[buffer(1)]],
+    device const float2 *data [[buffer(2)]],
+    device const uchar *flags [[buffer(3)]],
+    device const float *weights [[buffer(4)]],
+    device const float *density [[buffer(5)]],
+    device const float *model_re [[buffer(6)]],
+    device const float *model_im [[buffer(7)]],
+    device atomic_uint *grid_re [[buffer(8)]],
+    device atomic_uint *grid_im [[buffer(9)]],
+    constant RowRunParams &params [[buffer(10)]],
+    device const float *tap_weights [[buffer(11)]],
+    device uint *diagnostic_output [[buffer(12)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint lane_index = gid.x;
+    const uint run_index = gid.y;
+    if (run_index >= params.run_count || lane_index >= params.max_lane_count) {
+        return;
+    }
+    const RowRunDesc run = runs[run_index];
+    if (lane_index >= run.lane_count) {
+        return;
+    }
+    const RowRunLane lane = lanes[run.lane_offset + lane_index];
+    const uint output_index = run.lane_offset + lane_index;
+    const float u_lambda = run.u_m * lane.lambda_scale;
+    const float v_lambda = run.v_m * lane.lambda_scale;
+
+    float natural_weight;
+    float2 visibility;
+    if (run.polarization_mode == 0u) {
+        if (run.corr0 >= run.corr_count) {
+            return;
+        }
+        const uint index = run.corr0 * run.lane_count + lane_index;
+        if (flags[run.flag_offset + index] != 0) {
+            return;
+        }
+        visibility = data[run.data_offset + index];
+        if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
+            return;
+        }
+        natural_weight = weights[run.weight_offset + run.corr0];
+    } else {
+        if (run.corr0 >= run.corr_count || run.corr1 >= run.corr_count) {
+            return;
+        }
+        const uint first_index = run.corr0 * run.lane_count + lane_index;
+        const uint second_index = run.corr1 * run.lane_count + lane_index;
+        if (flags[run.flag_offset + first_index] != 0 ||
+            flags[run.flag_offset + second_index] != 0) {
+            return;
+        }
+        const float2 first_visibility = data[run.data_offset + first_index];
+        const float2 second_visibility = data[run.data_offset + second_index];
+        visibility = row_run_collapse_pair(first_visibility, second_visibility, run.transform);
+        if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
+            return;
+        }
+        const float first_weight = weights[run.weight_offset + run.corr0];
+        const float second_weight = weights[run.weight_offset + run.corr1];
+        if (!(isfinite(first_weight) && first_weight > 0.0f &&
+              isfinite(second_weight) && second_weight > 0.0f)) {
+            return;
+        }
+        natural_weight = 0.5f * (first_weight + second_weight);
+    }
+    if (!(isfinite(natural_weight) && natural_weight > 0.0f &&
+          isfinite(run.sumwt_factor) && run.sumwt_factor > 0.0f)) {
+        return;
+    }
+
+    float final_weight = natural_weight;
+    if (params.weighting_mode != 0u) {
+        float cell_density = 0.0f;
+        if (!row_run_density_lookup(u_lambda, v_lambda, params, density, cell_density)) {
+            return;
+        }
+        if (params.weighting_mode == 1u) {
+            final_weight = natural_weight / cell_density;
+        } else {
+            final_weight = natural_weight / (params.briggs_f2 * cell_density + 1.0f);
+        }
+    }
+    const float grid_weight = final_weight * run.sumwt_factor;
+    if (!(isfinite(grid_weight) && grid_weight > 0.0f)) {
+        return;
+    }
+
+    const float grid_x = u_lambda / params.du_lambda + float(params.grid_width) * 0.5f;
+    const float grid_y = -v_lambda / params.dv_lambda + float(params.grid_height) * 0.5f;
+    if (!isfinite(grid_x) || !isfinite(grid_y)) {
+        return;
+    }
+    const int center_x = round_half_away_from_zero(grid_x);
+    const int center_y = round_half_away_from_zero(grid_y);
+    const int start_x = center_x - STANDARD_MFS_SUPPORT;
+    const int start_y = center_y - STANDARD_MFS_SUPPORT;
+    if (start_x < 0 || start_y < 0 ||
+        center_x + STANDARD_MFS_SUPPORT >= int(params.grid_width) ||
+        center_y + STANDARD_MFS_SUPPORT >= int(params.grid_height)) {
+        return;
+    }
+    const int offset_x = round_half_away_from_zero((float(center_x) - grid_x) * float(params.oversampling));
+    const int offset_y = round_half_away_from_zero((float(center_y) - grid_y) * float(params.oversampling));
+    const int half_oversampling = int(params.oversampling / 2u);
+    const int x_weight_index = offset_x + half_oversampling;
+    const int y_weight_index = offset_y + half_oversampling;
+    if (x_weight_index < 0 || y_weight_index < 0 ||
+        x_weight_index >= int(params.tap_weight_count) ||
+        y_weight_index >= int(params.tap_weight_count)) {
+        return;
+    }
+    const uint x_weight_base = uint(x_weight_index) * STANDARD_MFS_TAP_COUNT;
+    const uint y_weight_base = uint(y_weight_index) * STANDARD_MFS_TAP_COUNT;
+
+    if (params.diagnostic_mode == 4u) {
+        diagnostic_output[output_index] = as_type<uint>(grid_x + grid_y + float(x_weight_base + y_weight_base));
+        return;
+    }
+
+    float predicted_re = 0.0f;
+    float predicted_im = 0.0f;
+    if (params.diagnostic_mode == 1u) {
+        for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
+            int x = start_x + int(dx);
+            float wx = tap_weights[x_weight_base + dx];
+            for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
+                int y = start_y + int(dy);
+                float tap_weight = wx * tap_weights[y_weight_base + dy];
+                uint cell = uint(x) * params.grid_height + uint(y);
+                predicted_re += model_re[cell] * tap_weight;
+                predicted_im += model_im[cell] * tap_weight;
+            }
+        }
+        diagnostic_output[output_index] = as_type<uint>(predicted_re + predicted_im);
+        return;
+    }
+
+    if (params.diagnostic_mode == 3u) {
+        const uint center_cell = uint(center_x) * params.grid_height + uint(center_y);
+        const float tap_weight =
+            tap_weights[x_weight_base + STANDARD_MFS_SUPPORT] *
+            tap_weights[y_weight_base + STANDARD_MFS_SUPPORT] *
+            grid_weight;
+        atomic_add_float(&grid_re[center_cell], visibility.x * tap_weight);
+        atomic_add_float(&grid_im[center_cell], visibility.y * tap_weight);
+        return;
+    }
+
+    const float residual_re = visibility.x;
+    const float residual_im = visibility.y;
+    for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
+        int x = start_x + int(dx);
+        float wx = tap_weights[x_weight_base + dx];
+        for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
+            int y = start_y + int(dy);
+            float tap_weight = wx * tap_weights[y_weight_base + dy] * grid_weight;
+            uint cell = uint(x) * params.grid_height + uint(y);
+            atomic_add_float(&grid_re[cell], residual_re * tap_weight);
+            atomic_add_float(&grid_im[cell], residual_im * tap_weight);
+        }
+    }
 }
 "#;
 
@@ -11456,6 +15376,7 @@ mod tests {
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
+                metal_grouped_input_cache: false,
             },
         )
         .unwrap();
@@ -11467,6 +15388,7 @@ mod tests {
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: false,
+                metal_grouped_input_cache: false,
             },
         )
         .unwrap();
@@ -11607,6 +15529,7 @@ mod tests {
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 1,
                 fixed_tile_use_planned_run_blocks: true,
+                metal_grouped_input_cache: false,
             },
         )
         .unwrap();
@@ -11751,6 +15674,7 @@ mod tests {
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
+                metal_grouped_input_cache: false,
             },
         )
         .unwrap();
@@ -11864,6 +15788,7 @@ mod tests {
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
+                metal_grouped_input_cache: false,
             },
         )
         .unwrap();
@@ -12054,6 +15979,7 @@ mod tests {
                 fixed_tile_center_boundary: false,
                 fixed_tile_max_live_row_blocks: 2,
                 fixed_tile_use_planned_run_blocks: false,
+                metal_grouped_input_cache: false,
             },
         )
         .unwrap();

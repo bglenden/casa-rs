@@ -48,6 +48,22 @@ enum DensityReweightMode {
     },
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum StandardMfsStreamingReweightPlan<'a> {
+    Natural,
+    Uniform {
+        density: &'a Array2<f32>,
+        convention: DensityCellConvention,
+    },
+    Briggs {
+        density: &'a Array2<f32>,
+        convention: DensityCellConvention,
+        f2: f32,
+        use_bandwidth_taper: bool,
+        fractional_bandwidth: f64,
+    },
+}
+
 /// Streaming standard-MFS weighting state for bounded row-block execution.
 ///
 /// Natural weighting is a single pass. Uniform and Briggs variants use an
@@ -253,6 +269,56 @@ impl StandardMfsStreamingWeightingPlan {
                     &self.gridder,
                     mode,
                 ))
+            }
+        }
+    }
+
+    pub(crate) fn reweight_plan(
+        &self,
+    ) -> Result<StandardMfsStreamingReweightPlan<'_>, crate::ImagingError> {
+        match self.weighting {
+            WeightingMode::Natural => Ok(StandardMfsStreamingReweightPlan::Natural),
+            WeightingMode::Uniform => {
+                let density = self.density.as_ref().ok_or_else(|| {
+                    crate::ImagingError::InvalidRequest(
+                        "streaming standard MFS weighting density pass was not initialized"
+                            .to_string(),
+                    )
+                })?;
+                let Some(DensityReweightMode::Uniform) = self.mode else {
+                    return Err(crate::ImagingError::InvalidRequest(
+                        "streaming standard MFS uniform density pass was not finalized".to_string(),
+                    ));
+                };
+                Ok(StandardMfsStreamingReweightPlan::Uniform {
+                    density,
+                    convention: self.density_convention,
+                })
+            }
+            WeightingMode::Briggs { .. } | WeightingMode::BriggsBwTaper { .. } => {
+                let density = self.density.as_ref().ok_or_else(|| {
+                    crate::ImagingError::InvalidRequest(
+                        "streaming standard MFS weighting density pass was not initialized"
+                            .to_string(),
+                    )
+                })?;
+                let Some(DensityReweightMode::Briggs {
+                    f2,
+                    use_bandwidth_taper,
+                    fractional_bandwidth,
+                }) = self.mode
+                else {
+                    return Err(crate::ImagingError::InvalidRequest(
+                        "streaming standard MFS Briggs density pass was not finalized".to_string(),
+                    ));
+                };
+                Ok(StandardMfsStreamingReweightPlan::Briggs {
+                    density,
+                    convention: self.density_convention,
+                    f2,
+                    use_bandwidth_taper,
+                    fractional_bandwidth,
+                })
             }
         }
     }
