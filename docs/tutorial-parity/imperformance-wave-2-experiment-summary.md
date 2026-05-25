@@ -92,10 +92,16 @@ Retained Metal contracts:
 
 Direct global-atomic Metal scatter was rejected for the measured workloads.
 Grouped row-run Metal is retained because it moved the heavy residual path from
-CPU gridding into a smaller GPU kernel, but the current next high-value boundary
-is still CPU-side grouped input construction. The next Metal redesign should
-move center calculation, lane grouping, and group finalization onto the device
-or otherwise remove that host-cache work.
+CPU gridding into a smaller GPU kernel. The retained implementation stages the
+same grid-coordinate convention that the CPU router used to form tap centers;
+the Metal kernels must not recompute centers from a subtly different
+floating-point path. The row-run ABI is versioned so cached grouped input is
+invalidated when the lane layout changes.
+
+The current next high-value boundary is still CPU-side grouped input
+construction. The next Metal redesign should move center calculation, lane
+grouping, and group finalization onto the device or otherwise remove that
+host-cache work.
 
 ## Key Measurements
 
@@ -103,13 +109,25 @@ or otherwise remove that host-cache work.
 | --- | --- | ---: | ---: | --- | ---: | --- | --- |
 | full-shape one-worker, 512-channel, 2048 image, Briggs, `niter=2` | `target/imperformance-wave2/single-worker-full-shape-20260522/full-shape-one-worker-fixed-tile-sample-stream.log` | 328.937s | 294.998s | PSF 69.104s; residual 218.544s; major refresh 149.613s | 10.27GB | GREEN vs saved CASA `.image`, `.residual`, `.psf`, `.model` | retained memory-controlled full-shape path |
 | heavy CPU clean, 64-channel, 1024 image, Briggs, `niter=500`, `minor_cycle_length=50`, 4 workers | `target/imperformance-wave2/heavy-clean-20260524/medium-briggs-niter500-cycle50-center-quadrants-4w.log` | 97.81s | 85.17s | PSF 3.86s; residual 70.81s; major refresh 67.49s; residual worker utilization 50-51% | 9.55GB | GREEN targeted tests | retained CPU baseline winner |
-| final heavy Metal clean, grouped initial dirty/residual cache path | `target/imperformance-wave2/ms-read-parallel-20260525/heavy-final-check.log` | 18.746s | 5.115s | prepare 9.631s; get MS values 5.363s; prepare buffer 4.268s; PSF 0.459s; residual 2.784s; major refresh 2.484s | about 9.55GiB | GREEN targeted tests | retained current accelerated heavy path |
+| final heavy Metal clean, grouped initial dirty/residual cache path | `target/imperformance-wave2/ms-read-parallel-20260525/heavy-final-check.log` | 18.746s | 5.115s | prepare 9.631s; get MS values 5.363s; prepare buffer 4.268s; PSF 0.459s; residual 2.784s; major refresh 2.484s | about 9.55GiB | GREEN targeted tests | retained accelerated screen before paired CASA product audit |
+| heavy 1k paired audit, 64-channel, 1024 image, 0.25arcsec cell, Briggs, `niter=500`, auto Metal + 4 CPU | `target/imperformance-wave2/medium-divergence-20260525/niter_500` | 41.790s CLI; 41.527s profiler frontend | 23.930s | prepare 13.131s; PSF 1.821s; residual 16.436s; major refresh 15.215s; minor 2.890s | not recorded | GREEN vs CASA: image `1.72e-5`, residual `3.53e-5`, model `1.02e-5`, psf `3.04e-5` RMS ratios | retained paired correctness gate |
+| heavy 1k direct recheck, same parameters as paired audit | `target/imperformance-wave2/heavy-1k-current-rust-timed/rust` | 35.47s CLI | n/a | auto planner selected fixed-tile 4 CPU plus grouped Metal dirty/PSF and residual | not recorded | completion check only | confirms corrected path remains in the old 34s speed class outside comparison harness |
 | sparse touched-group Metal host grouping | `target/imperformance-wave2/structural-followups-20260525/heavy-sparse-metal-groups.log` | 21.873s | n/a | prefill append 2.33s; group finalize 711ms vs 546ms reference | n/a | GREEN targeted tests | rejected |
 
 The full-shape product check compared `.image`, `.residual`, `.psf`, and
 `.model` against saved CASA products. Max absolute normalized deltas remained
 small: `.image` `1.85e-5` of CASA peak, `.residual` `3.26e-6`, `.psf`
 `2.10e-6`, and `.model` `3.00e-7`.
+
+The final paired 1k `niter=500` CASA comparison used the same 64-channel medium
+VLA MeasurementSet and showed CASA `tclean` at 733.660s versus casa-rs auto at
+41.790s in the comparison harness, or 35.47s in a direct timed CLI recheck. The
+paired-harness speedup is 17.6x; the direct-rust timing against the same CASA
+run is 20.7x. An earlier 34.122s / 1100.377s artifact produced a nominal 32.3x
+ratio, but that artifact is not retained as correctness evidence: PSF matched,
+while the image, residual, and model products diverged materially. The retained
+Wave 2 claim is therefore the corrected Metal path with CASA-compatible product
+tolerance, not the faster-but-wrong intermediate artifact.
 
 ## What Worked
 
@@ -125,6 +143,7 @@ small: `.image` `1.85e-5` of CASA peak, `.residual` `3.26e-6`, `.psf`
 | Direct row-run publish and shared tap centers | Reduced queued payloads and staging overhead. | The producer/core boundary should pass compact row/run work units, not duplicate scalar vectors. |
 | Grouped Metal row-run residual refresh | Moved residual refresh into a much smaller GPU kernel and enabled cache reuse across major cycles. | Metal is promising only with grouped/reduced work units, not direct global atomic scatter. |
 | Metal grouped input cache and no-copy cache hits | Heavy run reached 18.746s frontend with controlled memory. | Cache production-shaped grouped input when the planner can budget it; avoid duplicate resident Metal buffers without wall gain. |
+| CPU-grid-coordinate staging for Metal row runs | `target/imperformance-wave2/medium-divergence-20260525/niter_500` matches CASA at `1e-5` to `4e-5` RMS ratios for image/model/residual/PSF. | Metal row-run kernels must consume the same discrete grid-coordinate convention used by the CPU router; do not recompute it independently on device. |
 
 ## What Did Not Work
 
@@ -145,6 +164,7 @@ small: `.image` `1.85e-5` of CASA peak, `.residual` `3.26e-6`, `.psf`
 | sparse touched-group host grouping | `target/imperformance-wave2/structural-followups-20260525/heavy-sparse-metal-groups.log` | 21.873s frontend | Sorting/touched tracking cost more than dense counter scanning. |
 | broad MS/Table read rewrite screen | `target/imperformance-wave2/structural-followups-20260525/ms-read-storage-profile-one-block.log` | 3.53GiB logical payload in 1.869s | Raw storage read was not dominant enough for this workload to justify the rewrite in Wave 2. |
 | specialized selected-correlation/channel packing | `target/imperformance-wave2/ms-read-parallel-20260525/heavy-packed-corr-metal-cache.log`; `target/imperformance-wave2/ms-read-parallel-20260525/heavy-metal-complex-bulk-copy.log` | 19.360s and 21.145s frontend | Packing changes worsened the measured heavy path. |
+| pre-fix 34s Metal paired artifact | `target/imperformance-wave2/heavy-1k-niter500-cell025-paired-20260525` | 34.122s casa-rs; 1100.377s CASA | Rejected as final evidence despite speed: image diff RMS was 0.130 of CASA RMS, residual 0.255, and model 0.064 in the raw comparison. |
 
 ## Design Lessons To Carry Forward
 

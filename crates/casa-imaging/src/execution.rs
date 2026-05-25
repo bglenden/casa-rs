@@ -9602,6 +9602,9 @@ struct MetalResidualRowRunLane {
     center_x: u32,
     center_y: u32,
     _pad0: u32,
+    grid_x: f32,
+    grid_y: f32,
+    _pad1: [f32; 2],
 }
 
 #[cfg(target_os = "macos")]
@@ -10073,6 +10076,7 @@ impl MetalResidualGroupedRowRunChunk {
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MetalResidualGroupedInputCacheKey {
+    lane_layout_version: u32,
     grid_width: usize,
     grid_height: usize,
     oversampling: usize,
@@ -10092,6 +10096,9 @@ struct MetalResidualGroupedInputCacheKey {
     density_u_scale_bits: u32,
     density_v_scale_bits: u32,
 }
+
+#[cfg(target_os = "macos")]
+const METAL_RESIDUAL_ROW_RUN_LANE_LAYOUT_VERSION: u32 = 2;
 
 #[cfg(target_os = "macos")]
 #[derive(Debug)]
@@ -10285,6 +10292,10 @@ impl StandardMfsMetalGroupedInputCachePrefill {
             row,
             source_slot_range,
             tap_centers,
+            grid_width: self.partition.grid_width,
+            grid_height: self.partition.grid_height,
+            du_lambda: self.gridder.grid_spacing_lambda()[0],
+            dv_lambda: self.gridder.grid_spacing_lambda()[1],
         };
         self.backend.append_metal_residual_grouped_row_run_parts(
             parts,
@@ -10385,10 +10396,15 @@ struct MetalGroupedAppendDetail {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone)]
 struct MetalRowRunParts<'a> {
     row: &'a StandardMfsRoutedVisibilityRow,
     source_slot_range: Range<usize>,
     tap_centers: &'a [[u32; 2]],
+    grid_width: usize,
+    grid_height: usize,
+    du_lambda: f64,
+    dv_lambda: f64,
 }
 
 #[cfg(target_os = "macos")]
@@ -11626,7 +11642,7 @@ impl MetalDirtyBackend {
                 flush_chunk(&mut chunk, &mut timings, &accumulation)?;
             }
             let append_started = Instant::now();
-            self.append_metal_residual_row_run(routed_run, &mut accumulation, &mut chunk)?;
+            self.append_metal_residual_row_run(gridder, routed_run, &mut accumulation, &mut chunk)?;
             timings.append_total += append_started.elapsed();
             if chunk.logical_lanes >= chunk_lane_capacity {
                 flush_chunk(&mut chunk, &mut timings, &accumulation)?;
@@ -11834,6 +11850,7 @@ impl MetalDirtyBackend {
         let density_params = gridder.density_grid_coordinate_params();
         let chunk_lane_capacity = standard_mfs_metal_residual_chunk_samples();
         let cache_key = MetalResidualGroupedInputCacheKey {
+            lane_layout_version: METAL_RESIDUAL_ROW_RUN_LANE_LAYOUT_VERSION,
             grid_width,
             grid_height,
             oversampling: gridder.oversampling(),
@@ -12013,8 +12030,17 @@ impl MetalDirtyBackend {
                     flush_chunk(&mut chunk, &mut timings, &mut cached_chunks)?;
                 }
                 let append_started = Instant::now();
+                let parts = MetalRowRunParts {
+                    row: routed_run.row.as_ref(),
+                    source_slot_range: routed_run.source_slot_range.clone(),
+                    tap_centers: routed_run.tap_centers.as_ref(),
+                    grid_width,
+                    grid_height,
+                    du_lambda,
+                    dv_lambda,
+                };
                 self.append_metal_residual_grouped_row_run_profiled(
-                    routed_run,
+                    parts,
                     &partition,
                     &mut accumulation,
                     &mut chunk,
@@ -12227,8 +12253,17 @@ impl MetalDirtyBackend {
             self.finish_grouped_initial_dirty_chunk(state)?;
         }
         let append_started = Instant::now();
+        let parts = MetalRowRunParts {
+            row: routed_run.row.as_ref(),
+            source_slot_range: routed_run.source_slot_range.clone(),
+            tap_centers: routed_run.tap_centers.as_ref(),
+            grid_width: state.fill.grid_width,
+            grid_height: state.fill.grid_height,
+            du_lambda: state.fill.du_lambda as f64,
+            dv_lambda: state.fill.dv_lambda as f64,
+        };
         self.append_metal_residual_grouped_row_run_profiled(
-            routed_run,
+            parts,
             &state.fill.partition,
             &mut state.fill.accumulation,
             &mut state.fill.chunk,
@@ -12784,6 +12819,7 @@ impl MetalDirtyBackend {
         let oversampling = gridder.oversampling();
         let tap_weight_count = gridder.normalized_tap_weights().len();
         let key = MetalResidualGroupedInputCacheKey {
+            lane_layout_version: METAL_RESIDUAL_ROW_RUN_LANE_LAYOUT_VERSION,
             grid_width,
             grid_height,
             oversampling,
@@ -12847,8 +12883,17 @@ impl MetalDirtyBackend {
         {
             self.finish_grouped_input_cache_chunk(fill)?;
         }
+        let parts = MetalRowRunParts {
+            row: routed_run.row.as_ref(),
+            source_slot_range: routed_run.source_slot_range.clone(),
+            tap_centers: routed_run.tap_centers.as_ref(),
+            grid_width: fill.grid_width,
+            grid_height: fill.grid_height,
+            du_lambda: fill.du_lambda as f64,
+            dv_lambda: fill.dv_lambda as f64,
+        };
         self.append_metal_residual_grouped_row_run_profiled(
-            routed_run,
+            parts,
             &fill.partition,
             &mut fill.accumulation,
             &mut fill.chunk,
@@ -13146,30 +13191,36 @@ impl MetalDirtyBackend {
 
     fn append_metal_residual_row_run(
         &self,
+        gridder: &StandardGridder,
         routed_run: &StandardMfsRoutedVisibilityRun,
         accumulation: &mut StandardMfsTiledResidualAccumulation,
         chunk: &mut MetalResidualRowRunChunk,
     ) -> Result<(), ImagingError> {
-        self.append_metal_residual_row_run_parts(
-            routed_run.row.as_ref(),
-            routed_run.source_slot_range.clone(),
-            routed_run.tap_centers.as_ref(),
-            accumulation,
-            chunk,
-            None,
-        )
+        let [du_lambda, dv_lambda] = gridder.grid_spacing_lambda();
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let parts = MetalRowRunParts {
+            row: routed_run.row.as_ref(),
+            source_slot_range: routed_run.source_slot_range.clone(),
+            tap_centers: routed_run.tap_centers.as_ref(),
+            grid_width,
+            grid_height,
+            du_lambda,
+            dv_lambda,
+        };
+        self.append_metal_residual_row_run_parts(parts, accumulation, chunk, None)
     }
 
     fn append_metal_residual_row_run_parts(
         &self,
-        row: &StandardMfsRoutedVisibilityRow,
-        source_slot_range: Range<usize>,
-        tap_centers: &[[u32; 2]],
+        parts: MetalRowRunParts<'_>,
         accumulation: &mut StandardMfsTiledResidualAccumulation,
         chunk: &mut MetalResidualRowRunChunk,
         mut append_detail: Option<&mut MetalGroupedAppendDetail>,
     ) -> Result<(), ImagingError> {
         let setup_started = Instant::now();
+        let row = parts.row;
+        let source_slot_range = parts.source_slot_range;
+        let tap_centers = parts.tap_centers;
         let lane_count = source_slot_range
             .end
             .saturating_sub(source_slot_range.start);
@@ -13319,11 +13370,24 @@ impl MetalDirtyBackend {
                     "standard MFS Metal row-run tap center {lane_index} is out of bounds"
                 ))
             })?;
+            let grid_x = (row.uvw_m[0] * lambda_scale / parts.du_lambda
+                + parts.grid_width as f64 * 0.5) as f32;
+            let grid_y = (-row.uvw_m[1] * lambda_scale / parts.dv_lambda
+                + parts.grid_height as f64 * 0.5) as f32;
+            if !(grid_x.is_finite() && grid_y.is_finite()) {
+                return Err(ImagingError::InvalidRequest(
+                    "standard MFS Metal row-run lane no longer maps to positive grid coordinates"
+                        .to_string(),
+                ));
+            }
             chunk.lanes.push(MetalResidualRowRunLane {
                 lambda_scale: lambda_scale as f32,
                 center_x: center[0],
                 center_y: center[1],
                 _pad0: 0,
+                grid_x,
+                grid_y,
+                _pad1: [0.0; 2],
             });
         }
         if let Some(detail) = append_detail.as_deref_mut() {
@@ -13331,10 +13395,14 @@ impl MetalDirtyBackend {
         }
         let data_flag_copy_started = Instant::now();
         if let (Some(local_channels), Some(data), Some(flags)) = (
-            contiguous_local_channels,
-            row.data.as_slice_memory_order(),
-            row.flag.as_slice_memory_order(),
+            contiguous_local_channels
+                .filter(|_| row.data.is_standard_layout() && row.flag.is_standard_layout()),
+            row.data.as_slice(),
+            row.flag.as_slice(),
         ) {
+            // The Metal row-run ABI below is explicitly corr-major. A contiguous
+            // ndarray slice is not enough here; non-standard layout would
+            // scramble lanes under the row-major indexing below.
             for corr in 0..corr_count {
                 let row_start = corr.checked_mul(local_channel_count).ok_or_else(|| {
                     ImagingError::InvalidRequest(
@@ -13447,17 +13515,12 @@ impl MetalDirtyBackend {
 
     fn append_metal_residual_grouped_row_run_profiled(
         &self,
-        routed_run: &StandardMfsRoutedVisibilityRun,
+        parts: MetalRowRunParts<'_>,
         partition: &MetalResidualGroupedTilePartition,
         accumulation: &mut StandardMfsTiledResidualAccumulation,
         chunk: &mut MetalResidualGroupedRowRunChunk,
         append_detail: &mut MetalGroupedAppendDetail,
     ) -> Result<(), ImagingError> {
-        let parts = MetalRowRunParts {
-            row: routed_run.row.as_ref(),
-            source_slot_range: routed_run.source_slot_range.clone(),
-            tap_centers: routed_run.tap_centers.as_ref(),
-        };
         self.append_metal_residual_grouped_row_run_parts(
             parts,
             partition,
@@ -13478,9 +13541,7 @@ impl MetalDirtyBackend {
         let before_lanes = chunk.row_runs.lanes.len();
         let row_detail = append_detail.as_deref_mut();
         self.append_metal_residual_row_run_parts(
-            parts.row,
-            parts.source_slot_range.clone(),
-            parts.tap_centers,
+            parts.clone(),
             accumulation,
             &mut chunk.row_runs,
             row_detail,
@@ -14516,6 +14577,9 @@ struct RowRunLane {
     uint center_x;
     uint center_y;
     uint _pad0;
+    float grid_x;
+    float grid_y;
+    float _pad1[2];
 };
 
 struct GroupedLane {
@@ -14748,8 +14812,8 @@ kernel void initial_dirty_psf_row_run_grouped_prepare(
         return;
     }
 
-    const float grid_x = u_lambda / params.du_lambda + float(params.grid_width) * 0.5f;
-    const float grid_y = -v_lambda / params.dv_lambda + float(params.grid_height) * 0.5f;
+    const float grid_x = lane.grid_x;
+    const float grid_y = lane.grid_y;
     if (!isfinite(grid_x) || !isfinite(grid_y)) {
         return;
     }
@@ -15137,8 +15201,8 @@ kernel void residual_refresh_row_run_global_atomic_exact(
         return;
     }
 
-    const float grid_x = u_lambda / params.du_lambda + float(params.grid_width) * 0.5f;
-    const float grid_y = -v_lambda / params.dv_lambda + float(params.grid_height) * 0.5f;
+    const float grid_x = lane.grid_x;
+    const float grid_y = lane.grid_y;
     if (!isfinite(grid_x) || !isfinite(grid_y)) {
         return;
     }
@@ -15301,8 +15365,8 @@ kernel void residual_refresh_row_run_grouped_prepare(
         return;
     }
 
-    const float grid_x = u_lambda / params.du_lambda + float(params.grid_width) * 0.5f;
-    const float grid_y = -v_lambda / params.dv_lambda + float(params.grid_height) * 0.5f;
+    const float grid_x = lane.grid_x;
+    const float grid_y = lane.grid_y;
     if (!isfinite(grid_x) || !isfinite(grid_y)) {
         return;
     }
@@ -15506,8 +15570,8 @@ kernel void residual_refresh_row_run_diagnostic(
         return;
     }
 
-    const float grid_x = u_lambda / params.du_lambda + float(params.grid_width) * 0.5f;
-    const float grid_y = -v_lambda / params.dv_lambda + float(params.grid_height) * 0.5f;
+    const float grid_x = lane.grid_x;
+    const float grid_y = lane.grid_y;
     if (!isfinite(grid_x) || !isfinite(grid_y)) {
         return;
     }
