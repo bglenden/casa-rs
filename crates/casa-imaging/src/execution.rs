@@ -12789,6 +12789,47 @@ impl MetalDirtyBackend {
                 row.weight.len()
             )));
         }
+        let source_slot_start = routed_run.source_slot_range.start;
+        let source_slot_end = routed_run.source_slot_range.end;
+        let contiguous_local_channels = if lane_count == 0 {
+            Some(0..0)
+        } else {
+            let first_source_channel =
+                *row.source_channel_indices
+                    .get(source_slot_start)
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "standard MFS Metal row-run source slot {source_slot_start} is out of bounds"
+                        ))
+                    })?;
+            let first_local_channel =
+                first_source_channel
+                    .checked_sub(row.channel_origin)
+                    .ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "standard MFS Metal row-run source channel {first_source_channel} precedes loaded origin {}",
+                            row.channel_origin
+                        ))
+                    })?;
+            if first_local_channel.saturating_add(lane_count) <= local_channel_count
+                && (source_slot_start..source_slot_end).all(|source_slot| {
+                    row.source_channel_indices
+                        .get(source_slot)
+                        .copied()
+                        .is_some_and(|source_channel| {
+                            source_channel
+                                == row
+                                    .channel_origin
+                                    .saturating_add(first_local_channel)
+                                    .saturating_add(source_slot - source_slot_start)
+                        })
+                })
+            {
+                Some(first_local_channel..first_local_channel + lane_count)
+            } else {
+                None
+            }
+        };
         let (polarization_mode, transform, corr0, corr1, sumwt_factor) = match row.polarization {
             StandardMfsVisibilityPolarization::Explicit {
                 corr_index,
@@ -12817,21 +12858,24 @@ impl MetalDirtyBackend {
         let flag_offset = chunk.flags.len();
         let weight_offset = chunk.weights.len();
         for (lane_index, source_slot) in routed_run.source_slot_range.clone().enumerate() {
-            let source_channel = *row.source_channel_indices.get(source_slot).ok_or_else(|| {
-                ImagingError::InvalidRequest(format!(
-                    "standard MFS Metal row-run source slot {source_slot} is out of bounds"
-                ))
-            })?;
-            let local_channel = source_channel.checked_sub(row.channel_origin).ok_or_else(|| {
-                ImagingError::InvalidRequest(format!(
-                    "standard MFS Metal row-run source channel {source_channel} precedes loaded origin {}",
-                    row.channel_origin
-                ))
-            })?;
-            if local_channel >= local_channel_count {
-                return Err(ImagingError::InvalidRequest(format!(
-                    "standard MFS Metal row-run local channel {local_channel} exceeds row channel count {local_channel_count}"
-                )));
+            if contiguous_local_channels.is_none() {
+                let source_channel =
+                    *row.source_channel_indices.get(source_slot).ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "standard MFS Metal row-run source slot {source_slot} is out of bounds"
+                        ))
+                    })?;
+                let local_channel = source_channel.checked_sub(row.channel_origin).ok_or_else(|| {
+                    ImagingError::InvalidRequest(format!(
+                        "standard MFS Metal row-run source channel {source_channel} precedes loaded origin {}",
+                        row.channel_origin
+                    ))
+                })?;
+                if local_channel >= local_channel_count {
+                    return Err(ImagingError::InvalidRequest(format!(
+                        "standard MFS Metal row-run local channel {local_channel} exceeds row channel count {local_channel_count}"
+                    )));
+                }
             }
             let lambda_scale = *row.channel_lambda_scales.get(source_slot).ok_or_else(|| {
                 ImagingError::InvalidRequest(format!(
@@ -12850,25 +12894,50 @@ impl MetalDirtyBackend {
                 _pad0: 0,
             });
         }
-        for corr in 0..corr_count {
-            for source_slot in routed_run.source_slot_range.clone() {
-                let source_channel = row.source_channel_indices[source_slot];
-                let local_channel = source_channel - row.channel_origin;
-                let visibility = *row.data.get((corr, local_channel)).ok_or_else(|| {
-                    ImagingError::InvalidRequest(format!(
-                        "standard MFS Metal row-run DATA index [{corr}, {source_channel}] is out of bounds"
-                    ))
+        if let (Some(local_channels), Some(data), Some(flags)) = (
+            contiguous_local_channels,
+            row.data.as_slice_memory_order(),
+            row.flag.as_slice_memory_order(),
+        ) {
+            for corr in 0..corr_count {
+                let row_start = corr.checked_mul(local_channel_count).ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS Metal row-run DATA row offset is too large".to_string(),
+                    )
                 })?;
-                let flag = *row.flag.get((corr, local_channel)).ok_or_else(|| {
-                    ImagingError::InvalidRequest(format!(
-                        "standard MFS Metal row-run FLAG index [{corr}, {source_channel}] is out of bounds"
-                    ))
-                })?;
-                chunk.data.push(MetalComplex32 {
-                    re: visibility.re,
-                    im: visibility.im,
-                });
-                chunk.flags.push(u8::from(flag));
+                let start = row_start + local_channels.start;
+                let end = row_start + local_channels.end;
+                for visibility in &data[start..end] {
+                    chunk.data.push(MetalComplex32 {
+                        re: visibility.re,
+                        im: visibility.im,
+                    });
+                }
+                chunk
+                    .flags
+                    .extend(flags[start..end].iter().copied().map(u8::from));
+            }
+        } else {
+            for corr in 0..corr_count {
+                for source_slot in routed_run.source_slot_range.clone() {
+                    let source_channel = row.source_channel_indices[source_slot];
+                    let local_channel = source_channel - row.channel_origin;
+                    let visibility = *row.data.get((corr, local_channel)).ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "standard MFS Metal row-run DATA index [{corr}, {source_channel}] is out of bounds"
+                        ))
+                    })?;
+                    let flag = *row.flag.get((corr, local_channel)).ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "standard MFS Metal row-run FLAG index [{corr}, {source_channel}] is out of bounds"
+                        ))
+                    })?;
+                    chunk.data.push(MetalComplex32 {
+                        re: visibility.re,
+                        im: visibility.im,
+                    });
+                    chunk.flags.push(u8::from(flag));
+                }
             }
         }
         chunk

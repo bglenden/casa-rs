@@ -3042,6 +3042,18 @@ routine Metal initial-dirty data-flow shape, with
 `CASA_RS_STANDARD_MFS_ROUTED_REPLAY_CACHE=0` still available as an explicit
 disable switch.
 
+Follow-up host packing cleanup: the grouped Metal row-run builder now takes a
+contiguous selected-channel fast path when the routed run maps to adjacent
+loaded channels and the row DATA/FLAG arrays are contiguous. The generic path
+remains for arbitrary channel selections. The retained artifact is
+`target/imperformance-wave2/metal-initial-dirty-20260525/grouped-initial-dirty-contiguous-pack-niter150-cycleniter50.log`.
+Against the density-prefill retained run, the profile moved core from
+`12.626s` to `12.278s`, PSF grid from `3.017s` to `2.894s`, and residual
+degrid/grid from `5.877s` to `5.679s`; frontend was effectively noise
+(`28.793s` to `28.978s`). This is retained because it removes measured
+host-side ndarray/index work from the Metal grouped path and preserves the
+fallback representation for non-contiguous selections.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
