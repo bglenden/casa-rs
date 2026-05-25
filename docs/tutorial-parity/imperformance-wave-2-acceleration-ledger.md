@@ -3134,6 +3134,23 @@ End-to-end heavy frontend time moved from the previous retained `22.087s` to
 `10.394s` and `get_ms_values_ms` from `7.439s` to `5.109s`. Peak RSS stayed
 within the same envelope at about `9.55 GiB`.
 
+Density preparation and row-scale reuse: the Briggs density pass now accumulates
+bounded row blocks on worker-local density grids and merges those grids into the
+streaming weighting plan before robust statistics are finalized. The same row
+frequency scale computed for the density pass is reused by the routed
+run/Metal-prefill pass, eliminating the duplicate per-row scale lookup in the
+hot preparation path. The retained artifact is
+`target/imperformance-wave2/ms-read-parallel-20260525/heavy-final-check.log`.
+
+Against the previous retained MS-read artifact
+`target/imperformance-wave2/ms-read-parallel-20260525/heavy-parallel-read.log`,
+frontend moved from `19.668s` to `18.746s` (`4.7%`), `prepare_plane_input`
+from `10.394s` to `9.631s`, `prepare_processing_buffer` from `5.285s` to
+`4.268s`, and core from `5.281s` to `5.115s`. The density-pass
+`routed_frequency_scale_ms` counter dropped from `70.443ms` to zero because the
+scale is now supplied from the density pass. Peak RSS stayed in the same
+controlled envelope at about `9.55 GiB`.
+
 Rejected high-upside follow-ups:
 `grouped-initial-dirty-prealloc-metal-cache-niter150-cycleniter50.log`
 preallocated the large Metal cache vectors. It reduced `routed_consume` only
@@ -3144,6 +3161,29 @@ the Briggs density and Metal prefill row walks. It improved density-pass total
 to `9.125s` but did not improve the end-to-end run (`22.130s` frontend versus
 `22.087s` retained), while making timing attribution less clear. Both are
 rejected for now.
+
+The final MS-read/density-prep pass also rejected several larger structural
+attempts. `heavy-fused-group-append.log` fused Metal group appends but worsened
+frontend to `21.495s` and core to `6.711s`. `heavy-chunk64m.log` increased the
+Metal chunk size and worsened frontend to `20.871s`, PSF grid to `0.970s`, and
+residual degrid/grid to `3.460s`. `heavy-rowblock131k.log` doubled the
+preparation row block and worsened frontend to `19.319s` while increasing peak
+RSS to about `10.00 GiB`. `heavy-uvw-cache.log` cached the full UVW vector and
+worsened frontend to `19.873s`, `get_ms_values_ms` to `6.268s`, and RSS.
+`heavy-parallel-metal-prefill-route.log` materialized Metal-prefill routing in
+parallel but moved work into materialization and worsened frontend to `19.354s`.
+`heavy-packed-corr-metal-cache.log` tried to pack selected correlations in the
+Metal cache, but the cache size did not fall for this selected plane and
+frontend worsened to `19.360s`. `heavy-metal-complex-bulk-copy.log` changed the
+Metal complex payload to a direct `Complex32` bulk-copy shape and worsened
+frontend to `21.145s` and core to `6.379s`.
+
+Current conclusion: the obvious local CPU-side preparation levers around
+parallel column reads, density accumulation, and duplicate row-scale work are
+now spent for this workload. Remaining high-value work likely needs either a
+different Metal input contract that computes tap centers/grouping on device, or
+a broader MS/Table read API that avoids copying unneeded row/channel/correlation
+payload in the first place.
 
 ## Reproduction
 

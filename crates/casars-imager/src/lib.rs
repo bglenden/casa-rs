@@ -15,6 +15,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use casa_coordinates::{
@@ -8201,6 +8202,11 @@ fn read_ms_imaging_essentials_block(
                     )?;
                     Ok::<_, String>((column, started.elapsed()))
                 });
+                let uvw_handle = scope.spawn(|| {
+                    let started = Instant::now();
+                    let column = SelectedMainArrayColumn::load(ms, "UVW", &selected_row_indices)?;
+                    Ok::<_, String>((column, started.elapsed()))
+                });
                 let weight_spectrum_handle = has_weight_spectrum.then(|| {
                     scope.spawn(|| {
                         let started = Instant::now();
@@ -8220,11 +8226,6 @@ fn read_ms_imaging_essentials_block(
                         };
                         Ok::<_, String>((column, started.elapsed()))
                     })
-                });
-                let uvw_handle = scope.spawn(|| {
-                    let started = Instant::now();
-                    let column = SelectedMainArrayColumn::load(ms, "UVW", &selected_row_indices)?;
-                    Ok::<_, String>((column, started.elapsed()))
                 });
 
                 let (data_column, elapsed) = data_handle
@@ -8319,6 +8320,7 @@ fn read_ms_imaging_essentials_block(
             let started = Instant::now();
             let selected_uvw = SelectedMainArrayColumn::load(ms, "UVW", &selected_row_indices)?;
             timings.uvw_column = started.elapsed();
+
             (
                 data_column,
                 flag_column,
@@ -8348,8 +8350,10 @@ fn read_ms_imaging_essentials_block(
             .antenna2
             .get(row_index)
             .ok_or_else(|| format!("read ANTENNA2 row {row_index}: row is out of bounds"))?;
-        let uvw_value = take_required_array(&mut uvw_values, row_slot, "UVW", row_index)?;
-        let raw_uvw_m = extract_uvw_from_array(&uvw_value, row_index)?;
+        let raw_uvw_m = extract_uvw_from_array(
+            &take_required_array(&mut uvw_values, row_slot, "UVW", row_index)?,
+            row_index,
+        )?;
         let data = complex_array2_owned(
             take_required_array(
                 &mut data_values,
@@ -9582,6 +9586,162 @@ fn stream_standard_mfs_density_row_blocks(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn standard_mfs_frequency_scales_for_selected_rows(
+    config: &CliConfig,
+    table_values: &PreparedSelectionTableValues,
+    phase_center: &PhaseCenter,
+    selected_rows: &[SelectedMainRow],
+    derived_engine: Option<&MsCalEngine>,
+) -> Result<Vec<f64>, String> {
+    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+        config,
+        table_values,
+        phase_center.clone(),
+        false,
+    )?;
+    let mut row_frequency_scales = Vec::with_capacity(selected_rows.len());
+    for selected_row in selected_rows {
+        row_frequency_scales
+            .push(prepared.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?);
+    }
+    Ok(row_frequency_scales)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_standard_mfs_density_essentials_rows(
+    config: &CliConfig,
+    table_values: &PreparedSelectionTableValues,
+    phase_center: &PhaseCenter,
+    selected_rows: &[SelectedMainRow],
+    rows: &[MsImagingEssentials],
+    row_frequency_scales: &[f64],
+    weighting_plan: &mut StandardMfsStreamingWeightingPlan,
+    accumulate_timings: &mut AccumulateRowTimings,
+) -> Result<usize, String> {
+    if selected_rows.len() != rows.len() {
+        return Err(format!(
+            "internal error: selected row count {} differs from essentials row count {}",
+            selected_rows.len(),
+            rows.len()
+        ));
+    }
+    if row_frequency_scales.len() != rows.len() {
+        return Err(format!(
+            "internal error: frequency-scale count {} differs from essentials row count {}",
+            row_frequency_scales.len(),
+            rows.len()
+        ));
+    }
+    let thread_count = standard_mfs_density_prepare_threads(rows.len());
+    if thread_count <= 1 {
+        let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+            config,
+            table_values,
+            phase_center.clone(),
+            false,
+        )?;
+        let mut accepted_samples = 0usize;
+        for ((selected_row, row), &mfs_frequency_scale) in selected_rows
+            .iter()
+            .zip(rows.iter())
+            .zip(row_frequency_scales.iter())
+        {
+            if row.spw_id != selected_row.spw_id {
+                return Err(format!(
+                    "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                    selected_row.row_index, selected_row.spw_id, row.spw_id
+                ));
+            }
+            accepted_samples += prepared
+                .accumulate_standard_mfs_density_essentials_row_with_frequency_scale(
+                    row,
+                    mfs_frequency_scale,
+                    weighting_plan,
+                    accumulate_timings,
+                )?;
+        }
+        return Ok(accepted_samples);
+    }
+
+    let started = Instant::now();
+    let chunk_len = rows.len().div_ceil(thread_count).max(1);
+    let plan_template = &*weighting_plan;
+    let worker_results =
+        thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(thread_count);
+            for ((selected_chunk, row_chunk), scale_chunk) in selected_rows
+                .chunks(chunk_len)
+                .zip(rows.chunks(chunk_len))
+                .zip(row_frequency_scales.chunks(chunk_len))
+            {
+                let table_values = table_values.clone();
+                let phase_center = phase_center.clone();
+                handles.push(scope.spawn(move || {
+                    let mut prepared = PreparedSelection::new_standard_mfs_from_table_values(
+                        config,
+                        &table_values,
+                        phase_center,
+                        false,
+                    )?;
+                    let mut local_plan = plan_template
+                        .fork_density_accumulator()
+                        .map_err(|error| error.to_string())?;
+                    let mut local_timings = AccumulateRowTimings::default();
+                    let mut accepted_samples = 0usize;
+                    for ((selected_row, row), &mfs_frequency_scale) in selected_chunk
+                        .iter()
+                        .zip(row_chunk.iter())
+                        .zip(scale_chunk.iter())
+                    {
+                        if row.spw_id != selected_row.spw_id {
+                            return Err(format!(
+                                "row {} SPW mismatch: selected row has {}, essentials block has {}",
+                                selected_row.row_index, selected_row.spw_id, row.spw_id
+                            ));
+                        }
+                        accepted_samples += prepared
+                            .accumulate_standard_mfs_density_essentials_row_with_frequency_scale(
+                                row,
+                                mfs_frequency_scale,
+                                &mut local_plan,
+                                &mut local_timings,
+                            )?;
+                    }
+                    Ok::<_, String>((accepted_samples, local_timings, local_plan))
+                }));
+            }
+
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.join().map_err(|_| {
+                    "standard MFS density preparation worker panicked".to_string()
+                })??);
+            }
+            Ok::<_, String>(results)
+        })?;
+
+    let mut accepted_samples = 0usize;
+    for (worker_samples, worker_timings, local_plan) in worker_results {
+        accepted_samples = accepted_samples.saturating_add(worker_samples);
+        *accumulate_timings += worker_timings;
+        weighting_plan
+            .merge_density_accumulator(local_plan)
+            .map_err(|error| error.to_string())?;
+    }
+    if standard_mfs_profile_detail_enabled() {
+        eprintln!(
+            "standard_mfs_density_prepare_parallel threads={} rows={} accepted_samples={} chunk_len={} wall_ms={:.3}",
+            thread_count,
+            rows.len(),
+            accepted_samples,
+            chunk_len,
+            duration_ms(started.elapsed()),
+        );
+    }
+    Ok(accepted_samples)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn stream_standard_mfs_density_and_routed_visibility_cache_row_blocks<F>(
     ms: &MeasurementSet,
     config: &CliConfig,
@@ -9636,29 +9796,45 @@ where
         });
 
         let stage_started_at = Instant::now();
-        let before_accumulate = *accumulate_timings;
         let mut block_density_samples = 0usize;
         let mut block_candidate_samples = 0usize;
         let mut block_planned_samples = 0usize;
         let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
-        for (selected_row, row) in row_chunk.iter().zip(block.rows.into_iter()) {
+        let rows = block.rows;
+        let row_frequency_scales = standard_mfs_frequency_scales_for_selected_rows(
+            config,
+            table_values,
+            &selection.phase_center,
+            row_chunk,
+            derived_engine,
+        )?;
+        let before_accumulate = *accumulate_timings;
+        block_density_samples += accumulate_standard_mfs_density_essentials_rows(
+            config,
+            table_values,
+            &selection.phase_center,
+            row_chunk,
+            &rows,
+            &row_frequency_scales,
+            weighting_plan,
+            accumulate_timings,
+        )?;
+        for ((selected_row, row), &mfs_frequency_scale) in row_chunk
+            .iter()
+            .zip(rows.into_iter())
+            .zip(row_frequency_scales.iter())
+        {
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
                     "row {} SPW mismatch: selected row has {}, essentials block has {}",
                     selected_row.row_index, selected_row.spw_id, row.spw_id
                 ));
             }
-            block_density_samples += prepared.accumulate_standard_mfs_density_essentials_row(
-                selected_row,
-                &row,
-                derived_engine,
-                weighting_plan,
-                accumulate_timings,
-            )?;
             let counts = prepared.stream_standard_mfs_routed_essentials_row_visibility_runs(
                 selected_row,
                 row,
                 derived_engine,
+                Some(mfs_frequency_scale),
                 Arc::clone(&source_channel_indices),
                 planned_sample_builder,
                 &mut next_input_seq,
@@ -9751,30 +9927,46 @@ fn stream_standard_mfs_density_and_metal_grouped_input_cache_row_blocks(
         });
 
         let stage_started_at = Instant::now();
-        let before_accumulate = *accumulate_timings;
         let mut block_density_samples = 0usize;
         let mut block_candidate_samples = 0usize;
         let mut block_planned_samples = 0usize;
         let mut block_detail = StandardMfsPlannedRowSampleDetailTimings::default();
-        for (selected_row, row) in row_chunk.iter().zip(block.rows.into_iter()) {
+        let rows = block.rows;
+        let row_frequency_scales = standard_mfs_frequency_scales_for_selected_rows(
+            config,
+            table_values,
+            &selection.phase_center,
+            row_chunk,
+            derived_engine,
+        )?;
+        let before_accumulate = *accumulate_timings;
+        block_density_samples += accumulate_standard_mfs_density_essentials_rows(
+            config,
+            table_values,
+            &selection.phase_center,
+            row_chunk,
+            &rows,
+            &row_frequency_scales,
+            weighting_plan,
+            accumulate_timings,
+        )?;
+        for ((selected_row, row), &mfs_frequency_scale) in row_chunk
+            .iter()
+            .zip(rows.into_iter())
+            .zip(row_frequency_scales.iter())
+        {
             if row.spw_id != selected_row.spw_id {
                 return Err(format!(
                     "row {} SPW mismatch: selected row has {}, essentials block has {}",
                     selected_row.row_index, selected_row.spw_id, row.spw_id
                 ));
             }
-            block_density_samples += prepared.accumulate_standard_mfs_density_essentials_row(
-                selected_row,
-                &row,
-                derived_engine,
-                weighting_plan,
-                accumulate_timings,
-            )?;
             let counts = prepared
                 .stream_standard_mfs_routed_essentials_row_into_metal_grouped_prefill(
                     selected_row,
                     row,
                     derived_engine,
+                    Some(mfs_frequency_scale),
                     Arc::clone(&source_channel_indices),
                     planned_sample_builder,
                     &mut next_input_seq,
@@ -10656,6 +10848,7 @@ where
                 selected_row,
                 row,
                 derived_engine,
+                None,
                 Arc::clone(&source_channel_indices),
                 planned_sample_builder,
                 &mut next_input_seq,
@@ -11590,6 +11783,19 @@ fn env_standard_mfs_grid_threads() -> Option<usize> {
     env::var("CASA_RS_STANDARD_MFS_GRID_THREADS")
         .ok()
         .and_then(|value| parse_standard_mfs_grid_threads(&value))
+}
+
+fn standard_mfs_density_prepare_threads(row_count: usize) -> usize {
+    if row_count == 0 {
+        return 1;
+    }
+    let requested = env::var("CASA_RS_STANDARD_MFS_DENSITY_THREADS")
+        .ok()
+        .and_then(|value| parse_standard_mfs_grid_threads(&value))
+        .or_else(env_standard_mfs_grid_threads)
+        .unwrap_or(1);
+    let available = std::thread::available_parallelism().map_or(1, |value| value.get());
+    requested.max(1).min(available).min(row_count)
 }
 
 fn standard_mfs_planned_run_blocks_enabled() -> bool {
@@ -14855,18 +15061,15 @@ impl PreparedSelection {
         )
     }
 
-    fn accumulate_standard_mfs_density_essentials_row(
+    fn accumulate_standard_mfs_density_essentials_row_with_frequency_scale(
         &mut self,
-        selected_row: &SelectedMainRow,
         row: &MsImagingEssentials,
-        derived_engine: Option<&MsCalEngine>,
+        mfs_frequency_scale: f64,
         weighting_plan: &mut StandardMfsStreamingWeightingPlan,
         timings: &mut AccumulateRowTimings,
     ) -> Result<usize, String> {
         timings.rows_seen += 1;
         let adapt_started_at = Instant::now();
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
         let mfs_lambda_scale = mfs_frequency_scale / SPEED_OF_LIGHT_M_PER_S;
         let local_channel_count = row.data.shape().get(1).copied().unwrap_or(0);
         let mut accepted_samples = 0usize;
@@ -16117,6 +16320,7 @@ impl PreparedSelection {
         selected_row: &SelectedMainRow,
         row: MsImagingEssentials,
         derived_engine: Option<&MsCalEngine>,
+        precomputed_mfs_frequency_scale: Option<f64>,
         source_channel_indices: Arc<[usize]>,
         planned_sample_builder: &StandardMfsPlannedSampleBuilder,
         next_input_seq: &mut u64,
@@ -16125,13 +16329,17 @@ impl PreparedSelection {
         let mut counts = StandardMfsPlannedRowSampleCounts::default();
         let collect_detail = standard_mfs_profile_detail_enabled();
         let frequency_scale_started = collect_detail.then(Instant::now);
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_frequency_scale = match precomputed_mfs_frequency_scale {
+            Some(scale) => scale,
+            None => self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?,
+        };
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
-        if let Some(started) = frequency_scale_started {
+        if precomputed_mfs_frequency_scale.is_none()
+            && let Some(started) = frequency_scale_started
+        {
             counts.detail.routed_frequency_scale += started.elapsed();
         }
         if !row.gridable {
@@ -16256,6 +16464,7 @@ impl PreparedSelection {
         selected_row: &SelectedMainRow,
         row: MsImagingEssentials,
         derived_engine: Option<&MsCalEngine>,
+        precomputed_mfs_frequency_scale: Option<f64>,
         source_channel_indices: Arc<[usize]>,
         planned_sample_builder: &StandardMfsPlannedSampleBuilder,
         next_input_seq: &mut u64,
@@ -16264,13 +16473,17 @@ impl PreparedSelection {
         let mut counts = StandardMfsPlannedRowSampleCounts::default();
         let collect_detail = standard_mfs_profile_detail_enabled();
         let frequency_scale_started = collect_detail.then(Instant::now);
-        let mfs_frequency_scale =
-            self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?;
+        let mfs_frequency_scale = match precomputed_mfs_frequency_scale {
+            Some(scale) => scale,
+            None => self.mfs_imaging_frequency_scale_for_row(selected_row, derived_engine)?,
+        };
         if self.mfs_output_frequency_edge_range_hz.is_none() {
             self.mfs_output_frequency_edge_range_hz =
                 Some(self.mfs_imaging_frequency_edge_range_for_row(selected_row, derived_engine)?);
         }
-        if let Some(started) = frequency_scale_started {
+        if precomputed_mfs_frequency_scale.is_none()
+            && let Some(started) = frequency_scale_started
+        {
             counts.detail.routed_frequency_scale += started.elapsed();
         }
         if !row.gridable {

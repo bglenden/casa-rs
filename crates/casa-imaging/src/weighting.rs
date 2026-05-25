@@ -149,6 +149,41 @@ impl StandardMfsStreamingWeightingPlan {
         );
     }
 
+    /// Create an empty density accumulator with the same weighting geometry.
+    ///
+    /// Frontends use this to accumulate bounded row blocks on worker-local
+    /// density grids, then merge those grids into the main plan before robust
+    /// statistics are finalized.
+    pub fn fork_density_accumulator(&self) -> Result<Self, crate::ImagingError> {
+        let density = self.density.as_ref().map(|density| {
+            let (nx, ny) = density.dim();
+            Array2::<f32>::zeros((nx, ny))
+        });
+        Ok(Self {
+            gridder: StandardGridder::new(self.gridder.geometry())?,
+            weighting: self.weighting,
+            density_convention: self.density_convention,
+            density_build_convention: self.density_build_convention,
+            fractional_bandwidth: self.fractional_bandwidth,
+            density,
+            mode: None,
+        })
+    }
+
+    /// Merge a worker-local density accumulator into this plan.
+    pub fn merge_density_accumulator(&mut self, other: Self) -> Result<(), crate::ImagingError> {
+        match (self.density.as_mut(), other.density) {
+            (Some(target), Some(source)) => {
+                add_f32_grid(target, &source);
+                Ok(())
+            }
+            (None, None) => Ok(()),
+            _ => Err(crate::ImagingError::InvalidRequest(
+                "cannot merge mismatched standard MFS density accumulators".to_string(),
+            )),
+        }
+    }
+
     /// Finalize robust statistics after the density pass.
     pub fn finish_density_pass(&mut self) {
         self.mode = match self.weighting {

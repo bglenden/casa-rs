@@ -348,6 +348,10 @@ impl StandardGridder {
         self.grid_shape
     }
 
+    pub(crate) fn geometry(&self) -> ImageGeometry {
+        self.geometry
+    }
+
     pub(crate) fn positive_tap_grid_center(&self) -> [usize; 2] {
         self.locate_positive_tap_center(0.0, 0.0)
             .unwrap_or([self.grid_shape[0] / 2, self.grid_shape[1] / 2])

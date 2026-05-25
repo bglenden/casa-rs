@@ -13124,6 +13124,10 @@ impl MetalDirtyBackend {
         }
         let source_slot_start = source_slot_range.start;
         let source_slot_end = source_slot_range.end;
+        chunk.lanes.reserve(lane_count);
+        chunk.data.reserve(lane_count.saturating_mul(corr_count));
+        chunk.flags.reserve(lane_count.saturating_mul(corr_count));
+        chunk.weights.reserve(corr_count);
         let contiguous_local_channels = if lane_count == 0 {
             Some(0..0)
         } else {
@@ -13144,8 +13148,13 @@ impl MetalDirtyBackend {
                             row.channel_origin
                         ))
                     })?;
-            if first_local_channel.saturating_add(lane_count) <= local_channel_count
-                && (source_slot_start..source_slot_end).all(|source_slot| {
+            let contiguous_end = first_source_channel.saturating_add(lane_count - 1);
+            let source_slots_are_contiguous = row
+                .source_channel_indices
+                .get(source_slot_end - 1)
+                .copied()
+                .is_some_and(|last_source_channel| last_source_channel == contiguous_end)
+                || (source_slot_start..source_slot_end).all(|source_slot| {
                     row.source_channel_indices
                         .get(source_slot)
                         .copied()
@@ -13156,7 +13165,9 @@ impl MetalDirtyBackend {
                                     .saturating_add(first_local_channel)
                                     .saturating_add(source_slot - source_slot_start)
                         })
-                })
+                });
+            if first_local_channel.saturating_add(lane_count) <= local_channel_count
+                && source_slots_are_contiguous
             {
                 Some(first_local_channel..first_local_channel + lane_count)
             } else {
@@ -13374,6 +13385,7 @@ impl MetalDirtyBackend {
             return Ok(());
         }
         let appended_lanes = after_lanes - before_lanes;
+        chunk.lane_group_ids.reserve(appended_lanes);
         let lane_count = source_slot_range
             .end
             .saturating_sub(source_slot_range.start);
