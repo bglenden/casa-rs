@@ -293,7 +293,7 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
         self.assertEqual("2", plan["command"]["env"]["IMAGER_BENCH_NTERMS"])
         self.assertEqual(2, plan["mode"]["nterms"])
 
-    def test_ms_staging_can_be_set_for_direct_medium_runs(self) -> None:
+    def test_ms_staging_defaults_to_direct(self) -> None:
         manifest = {
             "id": "medium-direct",
             "mode_id": "standard-mfs-dirty-control",
@@ -305,9 +305,6 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
                 "mode": "dirty",
                 "specmode": "mfs",
                 "gridder": "standard",
-            },
-            "run": {
-                "ms_staging": "direct",
             },
         }
 
@@ -322,6 +319,96 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
 
         self.assertEqual("direct", plan["run"]["ms_staging"])
         self.assertEqual("direct", plan["command"]["env"]["IMAGER_BENCH_MS_STAGING"])
+        self.assertEqual("0", plan["run"]["phase_probe"])
+        self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASE_PROBE"])
+
+    def test_phase_probe_is_opt_in_for_casa_stage_diagnostics(self) -> None:
+        manifest = {
+            "id": "stage-probe",
+            "mode_id": "standard-mfs-clean-current",
+            "dataset": {
+                "key": "medium.ms",
+                "path": "/tmp/medium.ms",
+            },
+            "imaging": {
+                "mode": "clean",
+                "specmode": "mfs",
+                "gridder": "standard",
+            },
+            "run": {
+                "phase_probe": "1",
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("1", plan["run"]["phase_probe"])
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_PHASE_PROBE"])
+
+    def test_invalid_phase_probe_fails_before_running_benchmark(self) -> None:
+        manifest = {
+            "id": "bad-stage-probe",
+            "mode_id": "standard-mfs-clean-current",
+            "dataset": {
+                "key": "medium.ms",
+                "path": "/tmp/medium.ms",
+            },
+            "imaging": {
+                "mode": "clean",
+                "specmode": "mfs",
+                "gridder": "standard",
+            },
+            "run": {
+                "phase_probe": "sometimes",
+            },
+        }
+
+        with self.assertRaisesRegex(run_workload.HarnessError, "phase_probe"):
+            run_workload.build_plan(
+                manifest_path=Path("manifest.json"),
+                manifest=manifest,
+                repeats_override=1,
+                run_label_override=None,
+                storage_label_override=None,
+                dry_run=True,
+            )
+
+    def test_ms_staging_can_be_set_for_small_copy_runs(self) -> None:
+        manifest = {
+            "id": "small-copy",
+            "mode_id": "standard-mfs-dirty-control",
+            "dataset": {
+                "key": "small.ms",
+                "path": "/tmp/small.ms",
+            },
+            "imaging": {
+                "mode": "dirty",
+                "specmode": "mfs",
+                "gridder": "standard",
+            },
+            "run": {
+                "ms_staging": "copy",
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("copy", plan["run"]["ms_staging"])
+        self.assertEqual("copy", plan["command"]["env"]["IMAGER_BENCH_MS_STAGING"])
 
     def test_invalid_ms_staging_fails_before_running_benchmark(self) -> None:
         manifest = {
@@ -395,6 +482,10 @@ WARNING: All log messages before absl::InitializeLog() is called are written to 
   residual_fft=15.000
   residual_normalize=16.000
   major_cycle_refresh=9.000
+  residual_refresh_overhead=9.500
+  clean_cycle_setup=9.250
+  deconvolver_setup=9.750
+  multiscale_scale_refresh=9.125
   minor_cycle=17.000
   minor_cycle_solve=18.000
   beam_fit=19.000
@@ -411,6 +502,10 @@ CASA tclean timings (seconds):
             "model_fft",
             "residual_normalize",
             "major_cycle_refresh",
+            "residual_refresh_overhead",
+            "clean_cycle_setup",
+            "deconvolver_setup",
+            "multiscale_scale_refresh",
             "minor_cycle",
             "minor_cycle_solve",
             "beam_fit",
@@ -419,6 +514,10 @@ CASA tclean timings (seconds):
             self.assertIn(name, stages)
         self.assertEqual(stages["psf_normalize"], 12.0)
         self.assertEqual(stages["model_fft"], 13.0)
+        self.assertEqual(stages["residual_refresh_overhead"], 9.5)
+        self.assertEqual(stages["clean_cycle_setup"], 9.25)
+        self.assertEqual(stages["deconvolver_setup"], 9.75)
+        self.assertEqual(stages["multiscale_scale_refresh"], 9.125)
         self.assertEqual(stages["get_ms_values_into_processing_buffer"], 2.5)
         self.assertEqual(stages["prepare_processing_buffer"], 3.5)
         self.assertEqual(stages["restore"], 20.0)

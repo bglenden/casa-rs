@@ -10,12 +10,16 @@
 
 use std::env;
 use std::fs;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use casa_imaging::{Deconvolver, HogbomIterationMode, RestoringBeamMode, WTermMode, WeightingMode};
 use casa_ms::{CubeAxisConfig, CubeInterpolation};
-use casars_imager::{CliConfig, RunSummary, SpectralMode, run_from_config};
+use casars_imager::{
+    CliConfig, RunSummary, SpectralMode, StandardMfsAccelerationPolicy, run_from_config,
+};
 
 #[derive(Debug, Clone)]
 struct Options {
@@ -83,7 +87,7 @@ fn run() -> Result<(), String> {
         let prefix = temp.join(format!("run-{run_index}"));
         let summary = run_from_config(&build_cli_config(&options, prefix))?;
         println!(
-            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} get_ms_values_ms={:.3} prepare_buffer_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} major_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} residual_normalize_ms={:.3} minor_ms={:.3} minor_solve_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3}",
+            "run={} frontend_total_ms={:.3} open_ms={:.3} prepare_ms={:.3} get_ms_values_ms={:.3} prepare_buffer_ms={:.3} phase_center_ms={:.3} imaging_ms={:.3} coords_ms={:.3} write_ms={:.3} core_total_ms={:.3} controller_ms={:.3} weighting_ms={:.3} major_refresh_ms={:.3} residual_refresh_overhead_ms={:.3} clean_cycle_setup_ms={:.3} deconvolver_setup_ms={:.3} multiscale_scale_refresh_ms={:.3} psf_grid_ms={:.3} psf_fft_ms={:.3} psf_normalize_ms={:.3} model_fft_ms={:.3} residual_grid_ms={:.3} residual_fft_ms={:.3} residual_normalize_ms={:.3} minor_ms={:.3} minor_solve_ms={:.3} beam_fit_ms={:.3} restore_ms={:.3}",
             run_index + 1,
             millis(summary.frontend_timings.total),
             millis(summary.frontend_timings.open_measurement_set),
@@ -102,6 +106,10 @@ fn run() -> Result<(), String> {
             millis(summary.stage_timings.controller_overhead),
             millis(summary.stage_timings.weighting),
             millis(summary.stage_timings.major_cycle_refresh),
+            millis(summary.stage_timings.residual_refresh_overhead),
+            millis(summary.stage_timings.clean_cycle_setup),
+            millis(summary.stage_timings.deconvolver_setup),
+            millis(summary.stage_timings.multiscale_scale_refresh),
             millis(summary.stage_timings.psf_grid),
             millis(summary.stage_timings.psf_fft),
             millis(summary.stage_timings.psf_normalize),
@@ -114,6 +122,7 @@ fn run() -> Result<(), String> {
             millis(summary.stage_timings.beam_fit),
             millis(summary.stage_timings.restore),
         );
+        maybe_print_standard_mfs_profile_run(run_index + 1, &options, &summary);
         runs.push(summary);
     }
 
@@ -222,6 +231,22 @@ fn run() -> Result<(), String> {
     print_stage(
         "major_cycle_refresh",
         median_duration(&runs, |run| run.stage_timings.major_cycle_refresh),
+    );
+    print_stage(
+        "residual_refresh_overhead",
+        median_duration(&runs, |run| run.stage_timings.residual_refresh_overhead),
+    );
+    print_stage(
+        "clean_cycle_setup",
+        median_duration(&runs, |run| run.stage_timings.clean_cycle_setup),
+    );
+    print_stage(
+        "deconvolver_setup",
+        median_duration(&runs, |run| run.stage_timings.deconvolver_setup),
+    );
+    print_stage(
+        "multiscale_scale_refresh",
+        median_duration(&runs, |run| run.stage_timings.multiscale_scale_refresh),
     );
     print_stage(
         "minor_cycle",
@@ -359,6 +384,13 @@ fn build_cli_config(options: &Options, imagename: PathBuf) -> CliConfig {
         force_standard_gridder: options.force_standard_gridder,
         w_project_planes: options.w_project_planes,
         dirty_only: options.dirty_only,
+        standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+        standard_mfs_backend: None,
+        standard_mfs_grid_threads: None,
+        standard_mfs_tile_anchor: None,
+        standard_mfs_residual_backend: None,
+        standard_mfs_initial_dirty_backend: None,
+        standard_mfs_metal_grouped_input_cache: None,
         write_preview_pngs: false,
     }
 }
@@ -377,6 +409,86 @@ fn median_usize(runs: &[RunSummary], selector: impl Fn(&RunSummary) -> usize) ->
 
 fn print_stage(label: &str, value: Duration) {
     println!("  {label}={:.3}", millis(value));
+}
+
+fn maybe_print_standard_mfs_profile_run(
+    run_number: usize,
+    options: &Options,
+    summary: &RunSummary,
+) {
+    if env::var_os("CASA_RS_STANDARD_MFS_PROFILE_DETAIL").is_none() {
+        return;
+    }
+    let thread_env =
+        env::var("CASA_RS_STANDARD_MFS_GRID_THREADS").unwrap_or_else(|_| "unset".to_string());
+    let row_block_env =
+        env::var("CASA_RS_IMAGING_PREPARE_ROW_BLOCK").unwrap_or_else(|_| "auto".to_string());
+    let prepare_workers_env =
+        env::var("CASA_RS_IMAGING_PREPARE_WORKERS").unwrap_or_else(|_| "auto".to_string());
+    let ms_read_threads_env =
+        env::var("CASA_RS_MS_IMAGING_READ_THREADS").unwrap_or_else(|_| "auto".to_string());
+    println!(
+        "standard_mfs_profile_run run={} workload_ms={} field_ids={:?} phasecenter_field={:?} ddid={:?} spw={:?} channel_start={:?} channel_count={:?} spectral_mode={:?} weighting={:?} deconvolver={:?} nterms={} imsize={} niter={} dirty_only={} thread_env={} row_block_rows_env={} prepare_workers_env={} ms_read_threads_env={} frontend_total_ms={:.3} core_total_ms={:.3} prepare_plane_input_ms={:.3} get_ms_values_ms={:.3} prepare_processing_buffer_ms={:.3} weighting_ms={:.3} psf_grid_ms={:.3} residual_degrid_grid_ms={:.3} major_cycle_refresh_ms={:.3} peak_rss_bytes={} product_status=written",
+        run_number,
+        options.ms.display(),
+        options.field_ids,
+        options.phasecenter_field,
+        options.ddid,
+        options.spw,
+        options.channel_start,
+        options.channel_count,
+        options.spectral_mode,
+        options.weighting,
+        options.deconvolver,
+        options.nterms,
+        options.imsize,
+        options.niter,
+        options.dirty_only,
+        thread_env,
+        row_block_env,
+        prepare_workers_env,
+        ms_read_threads_env,
+        millis(summary.frontend_timings.total),
+        millis(summary.stage_timings.total),
+        millis(summary.frontend_timings.prepare_plane_input),
+        millis(
+            summary
+                .frontend_timings
+                .get_ms_values_into_processing_buffer,
+        ),
+        millis(summary.frontend_timings.prepare_processing_buffer),
+        millis(summary.stage_timings.weighting),
+        millis(summary.stage_timings.psf_grid),
+        millis(summary.stage_timings.residual_degrid_grid),
+        millis(summary.stage_timings.major_cycle_refresh),
+        peak_rss_bytes().unwrap_or(0),
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn peak_rss_bytes() -> Option<u64> {
+    let mut usage = MaybeUninit::<libc::rusage>::zeroed();
+    let status = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    if status != 0 {
+        return None;
+    }
+    let max_rss = unsafe { usage.assume_init() }.ru_maxrss;
+    if max_rss < 0 {
+        return None;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Some(max_rss as u64)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Some((max_rss as u64).saturating_mul(1024))
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn peak_rss_bytes() -> Option<u64> {
+    None
 }
 
 fn millis(value: Duration) -> f64 {

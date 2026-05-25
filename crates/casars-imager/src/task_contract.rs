@@ -26,7 +26,8 @@ use serde_json::Value as JsonValue;
 
 use crate::{
     AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, FrontendStageTimings,
-    RunSummary, SaveModelMode, SpectralMode, command_schema, run_from_config,
+    RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, command_schema,
+    run_from_config,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
@@ -1121,6 +1122,13 @@ impl ImagerRunTaskRequest {
             force_standard_gridder: false,
             w_project_planes: self.w_project_planes,
             dirty_only: self.dirty_only,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_backend: None,
+            standard_mfs_grid_threads: None,
+            standard_mfs_tile_anchor: None,
+            standard_mfs_residual_backend: None,
+            standard_mfs_initial_dirty_backend: None,
+            standard_mfs_metal_grouped_input_cache: None,
             write_preview_pngs: self.write_preview_pngs,
         })
     }

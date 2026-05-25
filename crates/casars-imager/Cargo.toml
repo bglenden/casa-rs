@@ -25,6 +25,7 @@ casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
+libc = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true
 schemars = "0.8"

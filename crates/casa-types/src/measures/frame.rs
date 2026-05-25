@@ -8,7 +8,7 @@
 //! It mirrors C++ `MeasFrame` but stores only the subset of fields relevant to
 //! MEpoch, MPosition, MDirection, and MFrequency conversions.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use casa_measures_data::EopTable;
 
@@ -17,6 +17,9 @@ use super::epoch::MEpoch;
 use super::error::MeasureError;
 use super::position::MPosition;
 use super::radial_velocity::MRadialVelocity;
+
+static STANDARD_EOP_TABLE: LazyLock<Arc<EopTable>> =
+    LazyLock::new(|| Arc::new(EopTable::bundled().clone()));
 
 /// IAU precession/nutation model selection.
 ///
@@ -197,12 +200,10 @@ impl MeasFrame {
 
     /// Attaches the standard CASA-table-backed IERS EOP data.
     ///
-    /// Equivalent to `self.with_eop(Arc::new(EopTable::bundled().clone()))`,
-    /// but uses the standard runtime loader internally.
+    /// Equivalent to attaching the bundled standard EOP table, but shares one
+    /// process-wide table allocation across frames.
     pub fn with_standard_eop(self) -> Self {
-        // Clone the bundled table into an Arc so the frame owns it.
-        // The actual runtime load is done only once.
-        self.with_eop(Arc::new(EopTable::bundled().clone()))
+        self.with_eop(Arc::clone(&STANDARD_EOP_TABLE))
     }
 
     /// Compatibility alias for [`with_standard_eop`](Self::with_standard_eop).

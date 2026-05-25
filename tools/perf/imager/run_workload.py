@@ -24,6 +24,7 @@ SUPPORTED_SPEC_MODES = {"mfs", "cube"}
 SUPPORTED_BENCH_MODES = {"dirty", "clean"}
 SUPPORTED_INTERPOLATION = {"nearest", "linear"}
 SUPPORTED_MS_STAGING = {"copy", "direct"}
+SUPPORTED_BOOLEAN_FLAGS = {"0", "1", "false", "true", "no", "yes", "off", "on"}
 DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
 RUST_STAGE_FIELDS = {
     "open_measurement_set",
@@ -44,7 +45,11 @@ RUST_STAGE_FIELDS = {
     "residual_degrid_grid",
     "residual_fft",
     "residual_normalize",
+    "clean_cycle_setup",
+    "deconvolver_setup",
     "major_cycle_refresh",
+    "residual_refresh_overhead",
+    "multiscale_scale_refresh",
     "minor_cycle",
     "minor_cycle_solve",
     "beam_fit",
@@ -178,10 +183,15 @@ def build_plan(
     if repeats < 1:
         raise HarnessError("repeats must be >= 1")
     ms_staging = os.environ.get("CASA_RS_BENCH_MS_STAGING") or str_value(
-        run, "ms_staging", "copy"
+        run, "ms_staging", "direct"
     )
     if ms_staging not in SUPPORTED_MS_STAGING:
         raise HarnessError("run.ms_staging must be copy or direct")
+    phase_probe = os.environ.get("CASA_RS_BENCH_PHASE_PROBE") or str_value(
+        run, "phase_probe", "0"
+    )
+    if phase_probe.lower() not in SUPPORTED_BOOLEAN_FLAGS:
+        raise HarnessError("run.phase_probe must be 0/1, true/false, yes/no, or on/off")
 
     dataset_path = resolve_dataset_path(dataset, dry_run=dry_run)
     casa_python = os.environ.get("CASA_RS_CASA_PYTHON")
@@ -225,6 +235,7 @@ def build_plan(
             float_value(imaging, "max_psf_fraction", 0.8)
         ),
         "IMAGER_BENCH_MS_STAGING": ms_staging,
+        "IMAGER_BENCH_PHASE_PROBE": phase_probe,
     }
 
     command = [str(BENCH_SCRIPT), str(dataset_path)]
@@ -260,6 +271,7 @@ def build_plan(
             "storage_label": storage_label_override
             or str_value(run, "storage_label", "script-staged-tempdir"),
             "ms_staging": ms_staging,
+            "phase_probe": phase_probe,
         },
         "comparison": {
             "products": product_suffixes_value(comparison),

@@ -1,8 +1,8 @@
 # ImPerformance Wave 1 Benchmark Harness
 
 Truth class: current descriptive
-Last reality check: 2026-05-18
-Verification: `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `bash -n scripts/bench-imager-vs-casa.sh`; `CASA_RS_BENCH_MS_STAGING=direct CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --dry-run --repeats 1 --run-label warm-medium-direct-probe --storage-label external-ssd-wave1-medium-direct --output-dir target/imperformance-wave1/issue251-medium-large-dry-run target/imperformance-wave1/issue251-medium-large-plan/workloads/wave1-vla-single-medium-standard-mfs-dirty-control.json`
+Last reality check: 2026-05-20
+Verification: `bash -n scripts/bench-imager-vs-casa.sh`; `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `CASA_RS_BENCH_MS_STAGING=direct CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --dry-run --repeats 1 --run-label wave2-positive-compact-clean-niter2 --storage-label external-ssd-wave2-medium-direct --output-dir target/imperformance-wave2/positive-compact-clean-niter2-dry-run target/imperformance-wave2/medium-plan-current/workloads/wave1-vla-single-medium-standard-mfs-clean-niter2.json`; `just docs-check`
 
 Wave issue: #246
 Child issue: #252
@@ -45,7 +45,8 @@ generated manifest.
 - records git branch/commit, CASA Python path, benchmark script hash, command
   argv, and delegated environment;
 - delegates to `scripts/bench-imager-vs-casa.sh` for the Rust CLI, Rust core
-  stage profiler, CASA `tclean`, and CASA `PySynthesisImager` stage probe;
+  stage profiler, CASA `tclean`, and, when explicitly enabled, CASA
+  `PySynthesisImager` stage probing;
 - preserves the final Rust and CASA product prefixes under the run output
   directory;
 - compares configured image products with CASA `casatools.image`;
@@ -60,14 +61,25 @@ manifest runner stable while the lower-level commands evolve.
 The benchmark script supports two MeasurementSet staging modes:
 
 - `copy`: copy the input MS into the script temp directory before timing. This
-  is the default and is appropriate for small smoke workloads.
-- `direct`: read the manifest MS path in place. Set this through
-  `CASA_RS_BENCH_MS_STAGING=direct` when invoking `run_workload.py`, or through
-  `run.ms_staging: "direct"` in a generated/ad hoc manifest.
+  is appropriate only for small, intentionally disposable workloads.
+- `direct`: read the manifest MS path in place. This is the default. It can
+  also be set explicitly through `CASA_RS_BENCH_MS_STAGING=direct` when
+  invoking `run_workload.py`, or through `run.ms_staging: "direct"` in a
+  generated/ad hoc manifest.
 
 Medium and large Wave 1 datasets must use `direct`. Copy staging consumed a
 32 GiB local `/var/folders` temp copy for the VLA medium MS before timing and
-left too little headroom for reliable benchmark execution.
+left too little headroom for reliable benchmark execution. Use
+`IMAGER_BENCH_MS_STAGING=copy` or `CASA_RS_BENCH_MS_STAGING=copy` only when the
+run size and cleanup cost are known in advance.
+
+CASA phase probing is similarly opt-in. Set
+`CASA_RS_BENCH_PHASE_PROBE=1` for manifest-driven runs, or
+`IMAGER_BENCH_PHASE_PROBE=1` when invoking `scripts/bench-imager-vs-casa.sh`
+directly, only when a CASA stage breakdown is needed. The probe drives
+`PySynthesisImager` directly and can cost about as much as another CASA imaging
+run on medium and larger shapes; routine paired timing should use the direct
+`tclean` wall time plus product comparison without the extra probe.
 
 ## Supported Slice
 

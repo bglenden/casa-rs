@@ -32,6 +32,7 @@ mod error;
 mod execution;
 mod fft;
 mod gridder;
+mod profile;
 mod trace;
 mod types;
 mod weighting;
@@ -40,6 +41,7 @@ use std::{
     env,
     fs::OpenOptions,
     io::Write,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -53,14 +55,23 @@ use beam::{
     BeamFitOutcome, beamfit_to_gaussian, estimate_psf_sidelobe_level, fit_beam_from_psf,
     gaussian_to_beamfit, rescale_residual_to_restored_beam, restore_model,
 };
-use execution::{StandardMfsCpuExecutor, StandardMfsDirtyCpuExecutor, finite_visibility};
+use execution::{
+    StandardMfsCpuExecutor, StandardMfsDirtyAccumulation, StandardMfsDirtyCpuExecutor,
+    StandardMfsPlannedSample, StandardMfsTiledCpuExecutor, StandardMfsTiledResidualAccumulation,
+    StandardMfsVisibilityPlan, finite_visibility,
+};
+#[cfg(target_os = "macos")]
+use execution::{StandardMfsMetalExecutor, StandardMfsMetalGroupedInputCacheFill};
+pub use execution::{StandardMfsMetalGroupedInputCache, StandardMfsMetalGroupedInputCachePrefill};
 use fft::{centered_fft2, centered_ifft2, centered_ifft2_f64};
 use gridder::{
-    PlannedSample, ScreenProjector, StandardGridder, WProjectSamplePlan, WProjector,
+    PlannedSample, PositiveTapSet, STANDARD_GRIDDER_TAP_COUNT, ScreenProjector, StandardGridder,
+    StandardMfsTapCensus, StandardMfsTapSkipReason, WProjectSamplePlan, WProjector,
     hetarray_screen_conv_size_for_support,
 };
+pub use weighting::StandardMfsStreamingWeightingPlan;
 use weighting::{
-    apply_weighting, apply_weighting_with_density_source,
+    apply_weighting, apply_weighting_to_owned_batches, apply_weighting_with_density_source,
     fractional_bandwidth_from_frequency_range, trace_weighting_with_density_source,
 };
 
@@ -73,6 +84,19 @@ enum CubePredictionLambdaMode {
 type MosaicProjectorKey = ((u8, u64, u64), u64, u8);
 type MosaicProjectorCache = BTreeMap<MosaicProjectorKey, ScreenProjector>;
 const DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES: usize = 8_000_000;
+const STANDARD_MFS_GRID_THREADS_ENV: &str = "CASA_RS_STANDARD_MFS_GRID_THREADS";
+const STANDARD_MFS_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_BACKEND";
+const STANDARD_MFS_RESIDUAL_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND";
+const STANDARD_MFS_INITIAL_DIRTY_BACKEND_ENV: &str = "CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StandardMfsBackendSelection {
+    Cpu,
+    FixedTile,
+    Metal,
+    MetalRowRun,
+    MetalRowRunGrouped,
+}
 
 pub(crate) use cube::{HogbomMinorCycleOutcome, MinorCycleProbe};
 pub use cube::{run_cube, run_dirty_cube};
@@ -92,10 +116,15 @@ pub use types::{
     ImageGeometry, ImagingDiagnostics, ImagingRequest, ImagingResult, ImagingStageTimings,
     MinorCycleTrace, MosaicGridderConfig, MtmfsRequest, MtmfsResult, ParallelHandBatch,
     PlaneStokes, PrimaryBeamModel, PsfBeamFitResult, ResidualRefreshDiagnostics,
-    ResidualSampleDiagnostics, RestoringBeamMode, UvTaperSize, VisibilityBatch,
-    VisibilityMetadataBatch, WProjectDiagnostics, WProjectKernelDiagnostics,
-    WProjectSamplePlanDiagnostics, WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode,
-    WeightDensityMode, WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
+    ResidualSampleDiagnostics, RestoringBeamMode, StandardMfsPairCollapseTransform,
+    StandardMfsPlannedWeightedSample, StandardMfsPlannedWeightedSampleRunBlock,
+    StandardMfsRoutableSample, StandardMfsRoutedSample, StandardMfsRoutedSampleRunBlock,
+    StandardMfsRoutedVisibilityRow, StandardMfsRoutedVisibilityRun,
+    StandardMfsRoutedVisibilityRunBlock, StandardMfsVisibilityPolarization,
+    StandardMfsWeightedSample, UvTaperSize, VisibilityBatch, VisibilityMetadataBatch,
+    WProjectDiagnostics, WProjectKernelDiagnostics, WProjectSamplePlanDiagnostics,
+    WProjectSkipReason, WProjectSkippedSampleDiagnostics, WTermMode, WeightDensityMode,
+    WeightingDiagnostics, WeightingMode, WeightingSampleDiagnostics,
 };
 
 /// FFT-backed predictor for a standard MFS component model.
@@ -106,6 +135,316 @@ pub use types::{
 pub struct StandardMfsModelPredictor {
     gridder: StandardGridder,
     model_grid: Option<Array2<Complex32>>,
+}
+
+/// Planner for bounded standard-MFS weighted sample blocks.
+///
+/// Frontends use this helper after applying natural/uniform/Briggs weighting to
+/// convert compact weighted samples into the shared planned representation used
+/// by the CPU gridders. The planner owns the private standard gridder state, so
+/// callers do not need access to internal tap tables.
+pub struct StandardMfsPlannedSampleBuilder {
+    gridder: StandardGridder,
+}
+
+/// Replayable source of bounded standard-MFS planned sample blocks.
+///
+/// This is the core streaming input boundary for standard-MFS backends. A
+/// frontend may read MeasurementSet rows, apply weighting, and plan compact tap
+/// identities however it chooses, but it must be able to replay the same
+/// bounded blocks for the initial dirty/PSF pass and every exact residual
+/// refresh pass.
+pub trait StandardMfsPlannedSampleBlockSource {
+    /// Replay planned samples in stable input order.
+    fn replay_planned_sample_blocks(
+        &mut self,
+        consumer: &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>;
+
+    /// Replay planned samples with explicit scalar-run ranges when available.
+    fn replay_planned_sample_run_blocks(
+        &mut self,
+        consumer: &mut dyn FnMut(
+            &StandardMfsPlannedWeightedSampleRunBlock,
+        ) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError> {
+        let mut run_block = StandardMfsPlannedWeightedSampleRunBlock::default();
+        self.replay_planned_sample_blocks(&mut |samples| {
+            run_block.clear();
+            run_block.push_run_from_slice(samples);
+            consumer(&run_block)
+        })
+    }
+}
+
+/// Replayable source of bounded standard-MFS routed sample blocks.
+///
+/// Routed samples have already been assigned to standard-gridder centers, but
+/// final density-dependent weighting remains a worker-side operation.
+pub trait StandardMfsRoutedSampleBlockSource {
+    /// Replay routed samples in stable input order.
+    fn replay_routed_sample_blocks(
+        &mut self,
+        consumer: &mut dyn FnMut(&[StandardMfsRoutedSample]) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>;
+
+    /// Replay routed samples with explicit scalar-run ranges when available.
+    fn replay_routed_sample_run_blocks(
+        &mut self,
+        consumer: &mut dyn FnMut(&StandardMfsRoutedSampleRunBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError> {
+        let mut run_block = StandardMfsRoutedSampleRunBlock::default();
+        self.replay_routed_sample_blocks(&mut |samples| {
+            run_block.clear();
+            let start = run_block.begin_run();
+            for &sample in samples {
+                run_block.push_sample(sample);
+            }
+            run_block.finish_run(start);
+            consumer(&run_block)
+        })
+    }
+}
+
+/// Replayable source of bounded row-shaped standard-MFS routed visibility runs.
+///
+/// This is the preferred fixed-tile multi-worker boundary: the producer routes
+/// row/channel spans to standard-gridder centers, while tile workers perform
+/// lane-level flag, visibility, final weighting, and tap application work.
+pub trait StandardMfsRoutedVisibilityRunBlockSource {
+    /// Replay routed row/channel runs in stable input order.
+    fn replay_routed_visibility_run_blocks(
+        &mut self,
+        consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRunBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>;
+}
+
+/// Replayable source of standard-MFS routed visibility runs.
+///
+/// Unlike [`StandardMfsRoutedVisibilityRunBlockSource`], this boundary publishes
+/// each row/channel run as soon as it is routed, so the fixed-tile scheduler can
+/// enqueue tile work without waiting for a frontend row-block staging vector.
+pub trait StandardMfsRoutedVisibilityRunSource {
+    /// Replay routed row/channel runs in stable input order.
+    fn replay_routed_visibility_runs(
+        &mut self,
+        consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>;
+}
+
+impl<T> StandardMfsRoutedVisibilityRunSource for T
+where
+    T: StandardMfsRoutedVisibilityRunBlockSource + ?Sized,
+{
+    fn replay_routed_visibility_runs(
+        &mut self,
+        consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError> {
+        self.replay_routed_visibility_run_blocks(&mut |run_block| {
+            for run in run_block.runs() {
+                consumer(run)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+impl<F> StandardMfsPlannedSampleBlockSource for F
+where
+    F: FnMut(
+        &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    fn replay_planned_sample_blocks(
+        &mut self,
+        consumer: &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError> {
+        self(consumer)
+    }
+}
+
+impl StandardMfsPlannedSampleBuilder {
+    /// Build a planner for standard-MFS image geometry.
+    #[inline]
+    pub fn new(geometry: ImageGeometry) -> Result<Self, ImagingError> {
+        Ok(Self {
+            gridder: StandardGridder::new(geometry)?,
+        })
+    }
+
+    /// Plan one weighted sample, returning `None` when it does not grid.
+    #[inline]
+    pub fn plan_sample(
+        &self,
+        sample: StandardMfsWeightedSample,
+    ) -> Result<Option<StandardMfsPlannedWeightedSample>, ImagingError> {
+        if !sample.gridable {
+            return Ok(None);
+        }
+        if !(sample.weight.is_finite()
+            && sample.weight > 0.0
+            && sample.sumwt_factor.is_finite()
+            && sample.sumwt_factor > 0.0)
+        {
+            return Ok(None);
+        }
+        let grid_weight = sample.weight * sample.sumwt_factor;
+        if !(grid_weight.is_finite() && grid_weight > 0.0) {
+            return Ok(None);
+        }
+        let Some(center) = self
+            .gridder
+            .locate_positive_tap_center(sample.u_lambda, sample.v_lambda)
+        else {
+            return Ok(None);
+        };
+        let flags = if finite_visibility(sample.visibility) {
+            StandardMfsPlannedWeightedSample::FINITE_VISIBILITY
+        } else {
+            StandardMfsPlannedWeightedSample::PSF_ONLY
+        };
+        Ok(Some(StandardMfsPlannedWeightedSample {
+            u_lambda: sample.u_lambda,
+            v_lambda: sample.v_lambda,
+            center_x: center[0] as u32,
+            center_y: center[1] as u32,
+            flags,
+            tap_count: (STANDARD_GRIDDER_TAP_COUNT * STANDARD_GRIDDER_TAP_COUNT) as u8,
+            grid_weight,
+            w_lambda: sample.w_lambda,
+            visibility: sample.visibility,
+        }))
+    }
+
+    /// Route one natural-weighted sample, returning `None` when it does not grid.
+    #[inline]
+    pub fn route_sample(
+        &self,
+        sample: StandardMfsRoutableSample,
+    ) -> Result<Option<StandardMfsRoutedSample>, ImagingError> {
+        if !sample.gridable {
+            return Ok(None);
+        }
+        if !(sample.natural_weight.is_finite()
+            && sample.natural_weight > 0.0
+            && sample.sumwt_factor.is_finite()
+            && sample.sumwt_factor > 0.0)
+        {
+            return Ok(None);
+        }
+        let Some(center) = self
+            .gridder
+            .locate_positive_tap_center(sample.u_lambda, sample.v_lambda)
+        else {
+            return Ok(None);
+        };
+        let flags = if finite_visibility(sample.visibility) {
+            StandardMfsRoutedSample::FINITE_VISIBILITY
+        } else {
+            StandardMfsRoutedSample::PSF_ONLY
+        };
+        Ok(Some(StandardMfsRoutedSample {
+            u_lambda: sample.u_lambda,
+            v_lambda: sample.v_lambda,
+            center_x: center[0] as u32,
+            center_y: center[1] as u32,
+            flags,
+            tap_count: (STANDARD_GRIDDER_TAP_COUNT * STANDARD_GRIDDER_TAP_COUNT) as u8,
+            natural_weight: sample.natural_weight,
+            sumwt_factor: sample.sumwt_factor,
+            w_lambda: sample.w_lambda,
+            visibility: sample.visibility,
+        }))
+    }
+
+    /// Locate the positive-tap center used for fixed-tile routing.
+    #[inline]
+    pub fn route_tap_center(&self, u_lambda: f64, v_lambda: f64) -> Option<[u32; 2]> {
+        self.gridder
+            .locate_positive_tap_center(u_lambda, v_lambda)
+            .map(|center| [center[0] as u32, center[1] as u32])
+    }
+
+    /// Plan a weighted row block into a caller-provided output buffer.
+    pub fn plan_samples_into(
+        &self,
+        samples: &[StandardMfsWeightedSample],
+        planned: &mut Vec<StandardMfsPlannedWeightedSample>,
+    ) -> Result<usize, ImagingError> {
+        let initial_len = planned.len();
+        planned.reserve(samples.len());
+        for &sample in samples {
+            if let Some(planned_sample) = self.plan_sample(sample)? {
+                planned.push(planned_sample);
+            }
+        }
+        Ok(planned.len() - initial_len)
+    }
+
+    /// Plan an owned visibility batch into a caller-provided output buffer.
+    pub fn plan_visibility_batch_into(
+        &self,
+        batch: &VisibilityBatch,
+        planned: &mut Vec<StandardMfsPlannedWeightedSample>,
+    ) -> Result<usize, ImagingError> {
+        batch.validate()?;
+        let initial_len = planned.len();
+        planned.reserve(batch.len());
+        for sample_index in 0..batch.len() {
+            let sample = StandardMfsWeightedSample {
+                u_lambda: batch.u_lambda[sample_index],
+                v_lambda: batch.v_lambda[sample_index],
+                w_lambda: batch.w_lambda[sample_index],
+                weight: batch.weight[sample_index],
+                sumwt_factor: batch.sumwt_factor[sample_index],
+                gridable: batch.gridable[sample_index],
+                visibility: batch.visibility[sample_index],
+            };
+            if let Some(planned_sample) = self.plan_sample(sample)? {
+                planned.push(planned_sample);
+            }
+        }
+        Ok(planned.len() - initial_len)
+    }
+}
+
+/// Runtime execution knobs for standard-MFS backends.
+///
+/// These values are deliberately separate from [`ImagingRequest`] so callers
+/// can tune memory residency without changing the imaging contract itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StandardMfsExecutionConfig {
+    /// Optional byte budget for resident fixed-tile stage grids.
+    ///
+    /// When the fixed-tile backend is enabled, the backend converts this budget
+    /// into a deterministic resident tile count from the actual padded grid and
+    /// halo geometry. `CASA_RS_STANDARD_MFS_TILE_RESIDENT_LIMIT` remains an
+    /// explicit debug override.
+    pub fixed_tile_resident_bytes: Option<usize>,
+    /// Optional fixed-tile interior edge selected by the frontend memory planner.
+    ///
+    /// `CASA_RS_STANDARD_MFS_TILE_EDGE` remains the explicit debug override.
+    pub fixed_tile_edge: Option<usize>,
+    /// Use the gridder-center boundary anchor when no tile-anchor env override is set.
+    pub fixed_tile_center_boundary: bool,
+    /// Maximum prepared row blocks the tiled scheduler may keep live.
+    ///
+    /// The first bounded scheduler uses one live row block; later read-ahead
+    /// must be explicitly represented here and in the memory plan.
+    pub fixed_tile_max_live_row_blocks: usize,
+    /// Route fixed-tile sample replay through planned run blocks.
+    ///
+    /// This is an experimental scalar-run interface. The default remains the
+    /// thresholded scalar inbox path until run-shaped work units improve wall
+    /// time or carry row-shaped worker semantics.
+    pub fixed_tile_use_planned_run_blocks: bool,
+    /// Reuse finalized host-side grouped Metal residual input chunks across
+    /// major-cycle refreshes.
+    ///
+    /// Frontends should set this only after reserving the cache in their memory
+    /// plan. `CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE` remains a debug
+    /// override for performance screening.
+    pub metal_grouped_input_cache: bool,
 }
 
 /// Metadata for streaming natural-weighted standard MFS dirty accumulation.
@@ -425,6 +764,7 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
             "deconvolver='mtmfs' requires the dedicated run_mtmfs() entrypoint".to_string(),
         ));
     }
+    ensure_standard_mfs_backend_available()?;
     if let GridderMode::Mosaic(config) = &request.gridder_mode {
         return run_mosaic_dirty_imaging(request, config, total_started);
     }
@@ -434,35 +774,140 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     let weighting_started = Instant::now();
     let weighted_batches = apply_weighting(request, &gridder)?;
     stage_timings.weighting += weighting_started.elapsed();
-    let mut standard_executor = should_use_standard_mfs_executor(request, &weighted_batches)
-        .then(|| StandardMfsCpuExecutor::new(&gridder, &weighted_batches))
-        .transpose()?;
+    run_standard_mfs_imaging_with_weighted_batches(
+        request,
+        &weighted_batches,
+        &gridder,
+        StandardMfsExecutionConfig::default(),
+        stage_timings,
+        total_started,
+    )
+}
+
+/// Run CASA-style standard MFS imaging while consuming the request's visibility batches.
+///
+/// This preserves the borrowed [`run_imaging`] API for general callers, but
+/// lets frontend owners pass prepared batches through weighting without
+/// cloning the full visibility payload.
+pub fn run_imaging_owned(request: ImagingRequest) -> Result<ImagingResult, ImagingError> {
+    run_imaging_owned_with_execution_config(request, StandardMfsExecutionConfig::default())
+}
+
+/// Run CASA-style standard MFS imaging with caller-supplied backend execution knobs.
+pub fn run_imaging_owned_with_execution_config(
+    mut request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+) -> Result<ImagingResult, ImagingError> {
+    let total_started = Instant::now();
+    request.validate()?;
+    if request.compatibility != CompatibilityMode::CasaStandardMfs {
+        return Err(ImagingError::Unsupported(
+            "only CASA standard MFS compatibility mode is implemented".to_string(),
+        ));
+    }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "deconvolver='mtmfs' requires the dedicated run_mtmfs() entrypoint".to_string(),
+        ));
+    }
+    ensure_standard_mfs_backend_available()?;
+    if let GridderMode::Mosaic(config) = &request.gridder_mode {
+        return run_mosaic_dirty_imaging(&request, config, total_started);
+    }
+
+    let gridder = StandardGridder::new(request.geometry)?;
+    let mut stage_timings = ImagingStageTimings::default();
+    let weighting_started = Instant::now();
+    let source_batches = std::mem::take(&mut request.visibility_batches);
+    let weighted_batches = apply_weighting_to_owned_batches(&request, &gridder, source_batches)?;
+    stage_timings.weighting += weighting_started.elapsed();
+    request.visibility_batches = weighted_batches;
+    run_standard_mfs_imaging_with_weighted_batches(
+        &request,
+        &request.visibility_batches,
+        &gridder,
+        execution_config,
+        stage_timings,
+        total_started,
+    )
+}
+
+fn run_standard_mfs_imaging_with_weighted_batches(
+    request: &ImagingRequest,
+    weighted_batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    mut stage_timings: ImagingStageTimings,
+    total_started: Instant,
+) -> Result<ImagingResult, ImagingError> {
+    let use_metal_executor = should_use_standard_mfs_metal_backend(request);
+    let use_tiled_executor = should_use_standard_mfs_tiled_backend(request);
+    let mut standard_executor = (!(use_metal_executor || use_tiled_executor)
+        && should_use_standard_mfs_executor(request, weighted_batches))
+    .then(|| StandardMfsCpuExecutor::new(gridder, weighted_batches))
+    .transpose()?;
     let [nx, ny] = request.geometry.image_shape;
     let mut model = request
         .initial_model
         .clone()
         .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
     let has_initial_model = request.initial_model.is_some();
-    let (psf_state, mut residual) = if request.clean.niter == 0
-        && !has_initial_model
-        && matches!(request.w_term_mode, WTermMode::None)
-    {
-        if let Some(executor) = standard_executor.as_mut() {
+    let can_start_from_combined_dirty_pass =
+        !has_initial_model && matches!(request.w_term_mode, WTermMode::None);
+    let (psf_state, mut residual) = if can_start_from_combined_dirty_pass {
+        if use_metal_executor {
+            compute_dirty_psf_and_residual_standard_metal(
+                weighted_batches,
+                gridder,
+                execution_config,
+                &mut stage_timings,
+            )?
+        } else if use_tiled_executor {
+            compute_dirty_psf_and_residual_standard_tiled(
+                weighted_batches,
+                gridder,
+                execution_config,
+                &mut stage_timings,
+            )?
+        } else if let Some(executor) = standard_executor.as_mut() {
             compute_dirty_psf_and_residual_standard_with_executor(executor, &mut stage_timings)?
         } else {
             compute_dirty_psf_and_residual_standard_streaming(
-                &weighted_batches,
-                &gridder,
+                weighted_batches,
+                gridder,
                 &mut stage_timings,
             )?
         }
     } else {
-        let psf_state = if let Some(executor) = standard_executor.as_mut() {
+        let psf_state = if use_metal_executor {
+            compute_psf_standard_metal(
+                weighted_batches,
+                gridder,
+                execution_config,
+                &mut stage_timings,
+            )?
+        } else if use_tiled_executor {
+            compute_psf_standard_tiled(
+                weighted_batches,
+                gridder,
+                execution_config,
+                &mut stage_timings,
+            )?
+        } else if let Some(executor) = standard_executor.as_mut() {
             compute_psf_standard(executor, &mut stage_timings)?
         } else {
-            compute_psf_standard_streaming(&weighted_batches, &gridder, &mut stage_timings)?
+            compute_psf_standard_streaming(weighted_batches, gridder, &mut stage_timings)?
         };
-        let residual = if let Some(executor) = standard_executor.as_mut() {
+        let residual = if use_metal_executor || use_tiled_executor {
+            compute_residual_standard_tiled(
+                weighted_batches,
+                gridder,
+                &model,
+                &psf_state,
+                execution_config,
+                &mut stage_timings,
+            )?
+        } else if let Some(executor) = standard_executor.as_mut() {
             compute_residual_standard_with_executor(
                 executor,
                 &model,
@@ -472,8 +917,8 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
         } else {
             compute_residual_standard_streaming(
                 request.geometry,
-                &weighted_batches,
-                &gridder,
+                weighted_batches,
+                gridder,
                 &model,
                 &psf_state,
                 false,
@@ -498,9 +943,11 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     let controller_started = Instant::now();
     let clean_state = run_cotton_schwab_controller(
         request,
-        &weighted_batches,
-        &gridder,
+        weighted_batches,
+        &mut standard_executor,
+        gridder,
         &psf_state,
+        execution_config,
         &mut stage_timings,
         &mut model,
         residual,
@@ -533,8 +980,7 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     stage_timings.restore += restore_started.elapsed();
     let restored_image = &restored_model + &residual;
 
-    let max_abs_w_lambda = request
-        .visibility_batches
+    let max_abs_w_lambda = weighted_batches
         .iter()
         .flat_map(|batch| batch.w_lambda.iter())
         .fold(0.0f64, |max_value, value| max_value.max(value.abs()));
@@ -606,6 +1052,2575 @@ pub fn run_imaging(request: &ImagingRequest) -> Result<ImagingResult, ImagingErr
     })
 }
 
+/// Run standard-MFS CLEAN from replayable weighted row-block batches.
+///
+/// The callback is invoked once for the initial dirty/PSF pass and once for
+/// each exact residual-refresh pass. Each invocation must stream batches in a
+/// stable MeasurementSet order and pass ownership of each bounded row block to
+/// the supplied consumer.
+pub fn run_standard_mfs_weighted_streaming_with_execution_config<F>(
+    mut request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    mut replay_weighted_batches: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let total_started = Instant::now();
+    request.geometry.validate()?;
+    request.clean.validate()?;
+    if !matches!(request.gridder_mode, GridderMode::Standard) {
+        return Err(ImagingError::Unsupported(
+            "streaming standard MFS clean requires gridder='standard'".to_string(),
+        ));
+    }
+    if !matches!(request.w_term_mode, WTermMode::None) {
+        return Err(ImagingError::Unsupported(
+            "streaming standard MFS clean does not support W-term gridding".to_string(),
+        ));
+    }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "streaming standard MFS clean does not support deconvolver='mtmfs'".to_string(),
+        ));
+    }
+    let gridder = StandardGridder::new(request.geometry)?;
+    let [nx, ny] = request.geometry.image_shape;
+    let mut model = request
+        .initial_model
+        .take()
+        .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
+    let has_initial_model = model.iter().any(|value| value.abs() > 0.0);
+    let mut stage_timings = ImagingStageTimings::default();
+
+    let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
+        compute_dirty_psf_and_residual_standard_tiled_replay(
+            &gridder,
+            execution_config,
+            &mut replay_weighted_batches,
+            &mut stage_timings,
+        )?
+    } else {
+        let psf_state = compute_psf_standard_tiled_replay(
+            &gridder,
+            execution_config,
+            &mut replay_weighted_batches,
+            &mut stage_timings,
+        )?;
+        let residual = compute_residual_standard_tiled_replay(
+            request.geometry,
+            &gridder,
+            &model,
+            &psf_state,
+            execution_config,
+            &mut replay_weighted_batches,
+            &mut stage_timings,
+        )?;
+        (psf_state, residual, 0.0)
+    };
+    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    let clean_mask_pixels = request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(nx * ny);
+    let initial_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+    let mut warnings = Vec::new();
+
+    let mut refresh_residual = |model: &Array2<f32>,
+                                stage_timings: &mut ImagingStageTimings|
+     -> Result<Array2<f32>, ImagingError> {
+        let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
+        let refresh_started = Instant::now();
+        let residual = compute_residual_standard_tiled_replay(
+            request.geometry,
+            &gridder,
+            model,
+            &psf_state,
+            execution_config,
+            &mut replay_weighted_batches,
+            stage_timings,
+        )?;
+        let refresh_elapsed = refresh_started.elapsed();
+        let accounted = before.accounted_delta(stage_timings);
+        stage_timings.major_cycle_refresh += refresh_elapsed;
+        stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
+        Ok(residual)
+    };
+
+    let controller_started = Instant::now();
+    let clean_state = run_cotton_schwab_controller_with_refresh(
+        &request,
+        &psf_state,
+        &mut stage_timings,
+        &mut refresh_residual,
+        &mut model,
+        residual,
+        max_psf_sidelobe_level,
+        initial_peak,
+        &mut warnings,
+    )?;
+    let controller_elapsed = controller_started.elapsed();
+    let accounted = stage_timings
+        .minor_cycle_solve
+        .saturating_add(stage_timings.major_cycle_refresh);
+    stage_timings.controller_overhead += controller_elapsed.saturating_sub(accounted);
+    residual = clean_state.residual;
+
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    let restore_started = Instant::now();
+    let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
+    stage_timings.restore += restore_started.elapsed();
+    let restored_image = &restored_model + &residual;
+
+    let fractional_bandwidth = (request.selected_frequency_range_hz[1]
+        - request.selected_frequency_range_hz[0])
+        / request.reffreq_hz;
+    if fractional_bandwidth > 0.1 {
+        warnings.push(format!(
+            "fractional bandwidth {:.3} exceeds the narrow-band nterms=1 comfort zone",
+            fractional_bandwidth
+        ));
+    }
+    let w_phase_metric = max_abs_w_lambda * request.geometry.field_of_view_rad().powi(2);
+    if w_phase_metric > 0.1 {
+        warnings.push(format!(
+            "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
+            w_phase_metric
+        ));
+    }
+    warnings.extend(beam_warnings);
+    stage_timings.total = total_started.elapsed();
+
+    Ok(ImagingResult {
+        psf: expand_plane(&psf_state.psf),
+        residual: expand_plane(&residual),
+        model: expand_plane(&model),
+        image: expand_plane(&restored_image),
+        sumwt: expand_scalar(psf_state.reported_sumwt),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            major_cycles: casa_major_cycle_count(clean_state.major_cycles, request.clean.niter),
+            minor_iterations: clean_state.minor_iterations,
+            clean_stop_reason: clean_state.clean_stop_reason,
+            minor_cycle_traces: clean_state.minor_cycle_traces,
+            initial_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            ),
+            max_abs_w_lambda,
+            fractional_bandwidth,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: clean_state.final_cycle_threshold_jy_per_beam,
+            clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: None,
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: request.plane_stokes,
+            reffreq_hz: request.reffreq_hz,
+            channel_frequencies_hz: vec![request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
+/// Run standard-MFS CLEAN from replayable weighted samples.
+///
+/// This is the sample-stream equivalent of
+/// [`run_standard_mfs_weighted_streaming_with_execution_config`]. The callback
+/// is invoked once for the initial dirty/PSF pass and once for each exact
+/// residual-refresh pass. Each invocation must stream samples in a stable
+/// MeasurementSet order.
+pub fn run_standard_mfs_weighted_sample_streaming_with_execution_config<F>(
+    request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    mut replay_weighted_samples: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(StandardMfsWeightedSample) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    run_standard_mfs_weighted_sample_block_streaming_with_execution_config(
+        request,
+        execution_config,
+        |consume_blocks| {
+            replay_weighted_samples(&mut |sample| consume_blocks(std::slice::from_ref(&sample)))
+        },
+    )
+}
+
+/// Run standard-MFS CLEAN from replayable blocks of weighted samples.
+///
+/// This is the preferred frontend/core boundary for trace-free streaming: the
+/// frontend can hand one bounded row block of compact weighted samples to the
+/// core, avoiding a dynamic callback crossing for every scalar sample.
+pub fn run_standard_mfs_weighted_sample_block_streaming_with_execution_config<F>(
+    request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    mut replay_weighted_samples: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&[StandardMfsWeightedSample]) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let planner = StandardMfsPlannedSampleBuilder::new(request.geometry)?;
+    let mut planned = Vec::<StandardMfsPlannedWeightedSample>::new();
+    run_standard_mfs_planned_sample_block_streaming_with_execution_config(
+        request,
+        execution_config,
+        |consume_planned| {
+            replay_weighted_samples(&mut |weighted| {
+                planned.clear();
+                planner.plan_samples_into(weighted, &mut planned)?;
+                consume_planned(&planned)
+            })
+        },
+    )
+}
+
+/// Run standard-MFS CLEAN from replayable blocks of planned weighted samples.
+///
+/// Planned sample blocks are the shared single-worker and fixed-tile work-unit
+/// shape: they are bounded to row-block lifetime and already carry compact
+/// standard-gridder tap identity.
+pub fn run_standard_mfs_planned_sample_block_streaming_with_execution_config<F>(
+    request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    mut replay_weighted_samples: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&[StandardMfsPlannedWeightedSample]) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
+        request,
+        execution_config,
+        &mut replay_weighted_samples,
+    )
+}
+
+/// Run standard-MFS CLEAN from replayable blocks of planned scalar runs.
+///
+/// This keeps row/channel run boundaries available to fixed-tile backends while
+/// retaining the scalar planned-sample payload used by the existing gridders.
+pub fn run_standard_mfs_planned_sample_run_block_streaming_with_execution_config<F>(
+    request: ImagingRequest,
+    mut execution_config: StandardMfsExecutionConfig,
+    replay_planned_runs: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    execution_config.fixed_tile_use_planned_run_blocks = true;
+    struct RunBlockSource<F> {
+        replay: F,
+    }
+
+    impl<F> StandardMfsPlannedSampleBlockSource for RunBlockSource<F>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&StandardMfsPlannedWeightedSampleRunBlock) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        fn replay_planned_sample_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(
+                &[StandardMfsPlannedWeightedSample],
+            ) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(&mut |run_block| consumer(run_block.samples()))
+        }
+
+        fn replay_planned_sample_run_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(
+                &StandardMfsPlannedWeightedSampleRunBlock,
+            ) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(consumer)
+        }
+    }
+
+    let mut source = RunBlockSource {
+        replay: replay_planned_runs,
+    };
+    run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
+        request,
+        execution_config,
+        &mut source,
+    )
+}
+
+/// Run standard-MFS CLEAN from replayable blocks of routed natural-weight samples.
+///
+/// This path is intended for the fixed-tile CPU backend: the frontend routes
+/// samples to tile centers, while tile workers apply final Uniform/Briggs
+/// weighting next to the gridding work.
+pub fn run_standard_mfs_routed_sample_run_block_streaming_with_execution_config<F>(
+    request: ImagingRequest,
+    mut execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&StandardMfsRoutedSampleRunBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    execution_config.fixed_tile_use_planned_run_blocks = true;
+    struct RunBlockSource<F> {
+        replay: F,
+    }
+
+    impl<F> StandardMfsRoutedSampleBlockSource for RunBlockSource<F>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&StandardMfsRoutedSampleRunBlock) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        fn replay_routed_sample_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(&[StandardMfsRoutedSample]) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(&mut |run_block| consumer(run_block.samples()))
+        }
+
+        fn replay_routed_sample_run_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(&StandardMfsRoutedSampleRunBlock) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(consumer)
+        }
+    }
+
+    let mut source = RunBlockSource {
+        replay: replay_routed_runs,
+    };
+    run_standard_mfs_routed_sample_block_source_streaming_with_execution_config(
+        request,
+        execution_config,
+        weighting_plan,
+        &mut source,
+    )
+}
+
+/// Run standard-MFS CLEAN from replayable row-shaped routed visibility runs.
+pub fn run_standard_mfs_routed_visibility_run_block_streaming_with_execution_config<F>(
+    request: ImagingRequest,
+    mut execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&StandardMfsRoutedVisibilityRunBlock) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    execution_config.fixed_tile_use_planned_run_blocks = true;
+    struct RunBlockSource<F> {
+        replay: F,
+    }
+
+    impl<F> StandardMfsRoutedVisibilityRunBlockSource for RunBlockSource<F>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&StandardMfsRoutedVisibilityRunBlock) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        fn replay_routed_visibility_run_blocks(
+            &mut self,
+            consumer: &mut dyn FnMut(
+                &StandardMfsRoutedVisibilityRunBlock,
+            ) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(consumer)
+        }
+    }
+
+    let mut source = RunBlockSource {
+        replay: replay_routed_runs,
+    };
+    run_standard_mfs_routed_visibility_run_block_source_streaming_with_execution_config(
+        request,
+        execution_config,
+        weighting_plan,
+        &mut source,
+    )
+}
+
+/// Run standard-MFS CLEAN from directly replayable row-shaped routed visibility runs.
+pub fn run_standard_mfs_routed_visibility_run_streaming_with_execution_config<F>(
+    request: ImagingRequest,
+    mut execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: F,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    execution_config.fixed_tile_use_planned_run_blocks = true;
+    struct RunSource<F> {
+        replay: F,
+    }
+
+    impl<F> StandardMfsRoutedVisibilityRunSource for RunSource<F>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        fn replay_routed_visibility_runs(
+            &mut self,
+            consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(consumer)
+        }
+    }
+
+    let mut source = RunSource {
+        replay: replay_routed_runs,
+    };
+    run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config(
+        request,
+        execution_config,
+        weighting_plan,
+        &mut source,
+    )
+}
+
+/// Run standard-MFS CLEAN from directly replayable routed visibility runs and
+/// an optional prebuilt Metal grouped input cache.
+pub fn run_standard_mfs_routed_visibility_run_streaming_with_execution_config_and_metal_grouped_input_cache<
+    F,
+>(
+    request: ImagingRequest,
+    mut execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: F,
+    metal_grouped_input_cache: Option<StandardMfsMetalGroupedInputCache>,
+) -> Result<ImagingResult, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    execution_config.fixed_tile_use_planned_run_blocks = true;
+    struct RunSource<F> {
+        replay: F,
+    }
+
+    impl<F> StandardMfsRoutedVisibilityRunSource for RunSource<F>
+    where
+        F: FnMut(
+            &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError>,
+    {
+        fn replay_routed_visibility_runs(
+            &mut self,
+            consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            (self.replay)(consumer)
+        }
+    }
+
+    let mut source = RunSource {
+        replay: replay_routed_runs,
+    };
+    run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config_inner(
+        request,
+        execution_config,
+        weighting_plan,
+        &mut source,
+        metal_grouped_input_cache,
+    )
+}
+
+/// Run standard-MFS CLEAN from a replayable planned-sample block source.
+pub fn run_standard_mfs_planned_sample_block_source_streaming_with_execution_config(
+    mut request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
+) -> Result<ImagingResult, ImagingError> {
+    let total_started = Instant::now();
+    request.geometry.validate()?;
+    request.clean.validate()?;
+    if !matches!(request.gridder_mode, GridderMode::Standard) {
+        return Err(ImagingError::Unsupported(
+            "sample streaming standard MFS clean requires gridder='standard'".to_string(),
+        ));
+    }
+    if !matches!(request.w_term_mode, WTermMode::None) {
+        return Err(ImagingError::Unsupported(
+            "sample streaming standard MFS clean does not support W-term gridding".to_string(),
+        ));
+    }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "sample streaming standard MFS clean does not support deconvolver='mtmfs'".to_string(),
+        ));
+    }
+    let gridder = StandardGridder::new(request.geometry)?;
+    let [nx, ny] = request.geometry.image_shape;
+    let mut model = request
+        .initial_model
+        .take()
+        .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
+    let has_initial_model = model.iter().any(|value| value.abs() > 0.0);
+    let mut stage_timings = ImagingStageTimings::default();
+
+    let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
+        compute_dirty_psf_and_residual_standard_sample_replay(
+            &gridder,
+            execution_config,
+            replay_weighted_samples,
+            &mut stage_timings,
+        )?
+    } else {
+        let psf_state = compute_psf_standard_sample_replay(
+            &gridder,
+            execution_config,
+            replay_weighted_samples,
+            &mut stage_timings,
+        )?;
+        let residual = compute_residual_standard_sample_replay(
+            request.geometry,
+            &gridder,
+            &model,
+            &psf_state,
+            execution_config,
+            replay_weighted_samples,
+            &mut stage_timings,
+        )?;
+        (psf_state, residual, 0.0)
+    };
+    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    let clean_mask_pixels = request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(nx * ny);
+    let initial_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+    let mut warnings = Vec::new();
+
+    let mut refresh_residual = |model: &Array2<f32>,
+                                stage_timings: &mut ImagingStageTimings|
+     -> Result<Array2<f32>, ImagingError> {
+        let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
+        let refresh_started = Instant::now();
+        let residual = compute_residual_standard_sample_replay(
+            request.geometry,
+            &gridder,
+            model,
+            &psf_state,
+            execution_config,
+            replay_weighted_samples,
+            stage_timings,
+        )?;
+        let refresh_elapsed = refresh_started.elapsed();
+        let accounted = before.accounted_delta(stage_timings);
+        stage_timings.major_cycle_refresh += refresh_elapsed;
+        stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
+        Ok(residual)
+    };
+
+    let controller_started = Instant::now();
+    let clean_state = run_cotton_schwab_controller_with_refresh(
+        &request,
+        &psf_state,
+        &mut stage_timings,
+        &mut refresh_residual,
+        &mut model,
+        residual,
+        max_psf_sidelobe_level,
+        initial_peak,
+        &mut warnings,
+    )?;
+    let controller_elapsed = controller_started.elapsed();
+    let accounted = stage_timings
+        .minor_cycle_solve
+        .saturating_add(stage_timings.major_cycle_refresh);
+    stage_timings.controller_overhead += controller_elapsed.saturating_sub(accounted);
+    residual = clean_state.residual;
+
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    let restore_started = Instant::now();
+    let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
+    stage_timings.restore += restore_started.elapsed();
+    let restored_image = &restored_model + &residual;
+
+    let fractional_bandwidth = (request.selected_frequency_range_hz[1]
+        - request.selected_frequency_range_hz[0])
+        / request.reffreq_hz;
+    if fractional_bandwidth > 0.1 {
+        warnings.push(format!(
+            "fractional bandwidth {:.3} exceeds the narrow-band nterms=1 comfort zone",
+            fractional_bandwidth
+        ));
+    }
+    let w_phase_metric = max_abs_w_lambda * request.geometry.field_of_view_rad().powi(2);
+    if w_phase_metric > 0.1 {
+        warnings.push(format!(
+            "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
+            w_phase_metric
+        ));
+    }
+    warnings.extend(beam_warnings);
+    stage_timings.total = total_started.elapsed();
+
+    Ok(ImagingResult {
+        psf: expand_plane(&psf_state.psf),
+        residual: expand_plane(&residual),
+        model: expand_plane(&model),
+        image: expand_plane(&restored_image),
+        sumwt: expand_scalar(psf_state.reported_sumwt),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            major_cycles: casa_major_cycle_count(clean_state.major_cycles, request.clean.niter),
+            minor_iterations: clean_state.minor_iterations,
+            clean_stop_reason: clean_state.clean_stop_reason,
+            minor_cycle_traces: clean_state.minor_cycle_traces,
+            initial_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            ),
+            max_abs_w_lambda,
+            fractional_bandwidth,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: clean_state.final_cycle_threshold_jy_per_beam,
+            clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: None,
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: request.plane_stokes,
+            reffreq_hz: request.reffreq_hz,
+            channel_frequencies_hz: vec![request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
+/// Run standard-MFS CLEAN from a replayable row-shaped routed visibility source.
+pub fn run_standard_mfs_routed_visibility_run_block_source_streaming_with_execution_config(
+    request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunBlockSource,
+) -> Result<ImagingResult, ImagingError> {
+    struct BlockAsRunSource<'a> {
+        source: &'a mut dyn StandardMfsRoutedVisibilityRunBlockSource,
+    }
+    impl StandardMfsRoutedVisibilityRunSource for BlockAsRunSource<'_> {
+        fn replay_routed_visibility_runs(
+            &mut self,
+            consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>,
+        ) -> Result<(), ImagingError> {
+            self.source
+                .replay_routed_visibility_run_blocks(&mut |run_block| {
+                    for run in run_block.runs() {
+                        consumer(run)?;
+                    }
+                    Ok(())
+                })
+        }
+    }
+
+    let mut source = BlockAsRunSource {
+        source: replay_routed_runs,
+    };
+    run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config(
+        request,
+        execution_config,
+        weighting_plan,
+        &mut source,
+    )
+}
+
+/// Run standard-MFS CLEAN from a replayable routed visibility-run source.
+pub fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config(
+    request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
+) -> Result<ImagingResult, ImagingError> {
+    run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config_inner(
+        request,
+        execution_config,
+        weighting_plan,
+        replay_routed_runs,
+        None,
+    )
+}
+
+fn run_standard_mfs_routed_visibility_run_source_streaming_with_execution_config_inner(
+    mut request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
+    prebuilt_metal_grouped_input_cache: Option<StandardMfsMetalGroupedInputCache>,
+) -> Result<ImagingResult, ImagingError> {
+    let total_started = Instant::now();
+    request.geometry.validate()?;
+    request.clean.validate()?;
+    if !matches!(request.gridder_mode, GridderMode::Standard) {
+        return Err(ImagingError::Unsupported(
+            "routed visibility-run streaming standard MFS clean requires gridder='standard'"
+                .to_string(),
+        ));
+    }
+    if !matches!(request.w_term_mode, WTermMode::None) {
+        return Err(ImagingError::Unsupported(
+            "routed visibility-run streaming standard MFS clean does not support W-term gridding"
+                .to_string(),
+        ));
+    }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "routed visibility-run streaming standard MFS clean does not support deconvolver='mtmfs'"
+                .to_string(),
+        ));
+    }
+    if !(standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1) {
+        return Err(ImagingError::Unsupported(
+            "routed visibility-run streaming standard MFS clean requires the fixed-tile multi-worker backend"
+                .to_string(),
+        ));
+    }
+    let gridder = StandardGridder::new(request.geometry)?;
+    let [nx, ny] = request.geometry.image_shape;
+    let mut model = request
+        .initial_model
+        .take()
+        .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
+    let has_initial_model = model.iter().any(|value| value.abs() > 0.0);
+    let mut stage_timings = ImagingStageTimings::default();
+    let mut metal_grouped_input_cache = prebuilt_metal_grouped_input_cache.or_else(|| {
+        standard_mfs_metal_grouped_input_cache_enabled(execution_config.metal_grouped_input_cache)
+            .then(StandardMfsMetalGroupedInputCache::default)
+    });
+
+    let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
+        compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
+            &gridder,
+            execution_config,
+            weighting_plan,
+            replay_routed_runs,
+            &mut stage_timings,
+            metal_grouped_input_cache.as_mut(),
+        )?
+    } else {
+        let psf_state = compute_psf_standard_routed_visibility_run_replay(
+            &gridder,
+            execution_config,
+            weighting_plan,
+            replay_routed_runs,
+            &mut stage_timings,
+            metal_grouped_input_cache.as_mut(),
+        )?;
+        let residual = compute_residual_standard_routed_visibility_run_replay(
+            request.geometry,
+            &gridder,
+            &model,
+            &psf_state,
+            execution_config,
+            weighting_plan,
+            replay_routed_runs,
+            &mut stage_timings,
+            metal_grouped_input_cache.as_mut(),
+        )?;
+        (psf_state, residual, 0.0)
+    };
+    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    let clean_mask_pixels = request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(nx * ny);
+    let initial_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+    let mut warnings = Vec::new();
+
+    let mut refresh_residual = |model: &Array2<f32>,
+                                stage_timings: &mut ImagingStageTimings|
+     -> Result<Array2<f32>, ImagingError> {
+        let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
+        let refresh_started = Instant::now();
+        let residual = compute_residual_standard_routed_visibility_run_replay(
+            request.geometry,
+            &gridder,
+            model,
+            &psf_state,
+            execution_config,
+            weighting_plan,
+            replay_routed_runs,
+            stage_timings,
+            metal_grouped_input_cache.as_mut(),
+        )?;
+        let refresh_elapsed = refresh_started.elapsed();
+        let accounted = before.accounted_delta(stage_timings);
+        stage_timings.major_cycle_refresh += refresh_elapsed;
+        stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
+        Ok(residual)
+    };
+
+    let controller_started = Instant::now();
+    let clean_state = run_cotton_schwab_controller_with_refresh(
+        &request,
+        &psf_state,
+        &mut stage_timings,
+        &mut refresh_residual,
+        &mut model,
+        residual,
+        max_psf_sidelobe_level,
+        initial_peak,
+        &mut warnings,
+    )?;
+    let controller_elapsed = controller_started.elapsed();
+    let accounted = stage_timings
+        .minor_cycle_solve
+        .saturating_add(stage_timings.major_cycle_refresh);
+    stage_timings.controller_overhead += controller_elapsed.saturating_sub(accounted);
+    residual = clean_state.residual;
+
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    let restore_started = Instant::now();
+    let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
+    stage_timings.restore += restore_started.elapsed();
+    let restored_image = &restored_model + &residual;
+
+    let fractional_bandwidth = (request.selected_frequency_range_hz[1]
+        - request.selected_frequency_range_hz[0])
+        / request.reffreq_hz;
+    if fractional_bandwidth > 0.1 {
+        warnings.push(format!(
+            "fractional bandwidth {:.3} exceeds the narrow-band nterms=1 comfort zone",
+            fractional_bandwidth
+        ));
+    }
+    let w_phase_metric = max_abs_w_lambda * request.geometry.field_of_view_rad().powi(2);
+    if w_phase_metric > 0.1 {
+        warnings.push(format!(
+            "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
+            w_phase_metric
+        ));
+    }
+    warnings.extend(beam_warnings);
+    stage_timings.total = total_started.elapsed();
+
+    Ok(ImagingResult {
+        psf: expand_plane(&psf_state.psf),
+        residual: expand_plane(&residual),
+        model: expand_plane(&model),
+        image: expand_plane(&restored_image),
+        sumwt: expand_scalar(psf_state.reported_sumwt),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            major_cycles: casa_major_cycle_count(clean_state.major_cycles, request.clean.niter),
+            minor_iterations: clean_state.minor_iterations,
+            clean_stop_reason: clean_state.clean_stop_reason,
+            minor_cycle_traces: clean_state.minor_cycle_traces,
+            initial_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            ),
+            max_abs_w_lambda,
+            fractional_bandwidth,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: clean_state.final_cycle_threshold_jy_per_beam,
+            clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: None,
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: request.plane_stokes,
+            reffreq_hz: request.reffreq_hz,
+            channel_frequencies_hz: vec![request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
+/// Run standard-MFS CLEAN from a replayable routed-sample block source.
+pub fn run_standard_mfs_routed_sample_block_source_streaming_with_execution_config(
+    mut request: ImagingRequest,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_samples: &mut dyn StandardMfsRoutedSampleBlockSource,
+) -> Result<ImagingResult, ImagingError> {
+    let total_started = Instant::now();
+    request.geometry.validate()?;
+    request.clean.validate()?;
+    if !matches!(request.gridder_mode, GridderMode::Standard) {
+        return Err(ImagingError::Unsupported(
+            "routed-sample streaming standard MFS clean requires gridder='standard'".to_string(),
+        ));
+    }
+    if !matches!(request.w_term_mode, WTermMode::None) {
+        return Err(ImagingError::Unsupported(
+            "routed-sample streaming standard MFS clean does not support W-term gridding"
+                .to_string(),
+        ));
+    }
+    if request.deconvolver == Deconvolver::Mtmfs {
+        return Err(ImagingError::Unsupported(
+            "routed-sample streaming standard MFS clean does not support deconvolver='mtmfs'"
+                .to_string(),
+        ));
+    }
+    if !(standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1) {
+        return Err(ImagingError::Unsupported(
+            "routed-sample streaming standard MFS clean requires the fixed-tile multi-worker backend"
+                .to_string(),
+        ));
+    }
+    let gridder = StandardGridder::new(request.geometry)?;
+    let [nx, ny] = request.geometry.image_shape;
+    let mut model = request
+        .initial_model
+        .take()
+        .unwrap_or_else(|| Array2::<f32>::zeros((nx, ny)));
+    let has_initial_model = model.iter().any(|value| value.abs() > 0.0);
+    let mut stage_timings = ImagingStageTimings::default();
+
+    let (psf_state, mut residual, max_abs_w_lambda) = if !has_initial_model {
+        compute_dirty_psf_and_residual_standard_routed_sample_replay(
+            &gridder,
+            execution_config,
+            weighting_plan,
+            replay_routed_samples,
+            &mut stage_timings,
+        )?
+    } else {
+        let psf_state = compute_psf_standard_routed_sample_replay(
+            &gridder,
+            execution_config,
+            weighting_plan,
+            replay_routed_samples,
+            &mut stage_timings,
+        )?;
+        let residual = compute_residual_standard_routed_sample_replay(
+            request.geometry,
+            &gridder,
+            &model,
+            &psf_state,
+            execution_config,
+            weighting_plan,
+            replay_routed_samples,
+            &mut stage_timings,
+        )?;
+        (psf_state, residual, 0.0)
+    };
+    let max_psf_sidelobe_level = estimate_psf_sidelobe_level(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    let clean_mask_pixels = request
+        .clean_mask
+        .as_ref()
+        .map(|mask| mask.iter().filter(|value| **value).count())
+        .unwrap_or(nx * ny);
+    let initial_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
+    let mut warnings = Vec::new();
+
+    let mut refresh_residual = |model: &Array2<f32>,
+                                stage_timings: &mut ImagingStageTimings|
+     -> Result<Array2<f32>, ImagingError> {
+        let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
+        let refresh_started = Instant::now();
+        let residual = compute_residual_standard_routed_sample_replay(
+            request.geometry,
+            &gridder,
+            model,
+            &psf_state,
+            execution_config,
+            weighting_plan,
+            replay_routed_samples,
+            stage_timings,
+        )?;
+        let refresh_elapsed = refresh_started.elapsed();
+        let accounted = before.accounted_delta(stage_timings);
+        stage_timings.major_cycle_refresh += refresh_elapsed;
+        stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
+        Ok(residual)
+    };
+
+    let controller_started = Instant::now();
+    let clean_state = run_cotton_schwab_controller_with_refresh(
+        &request,
+        &psf_state,
+        &mut stage_timings,
+        &mut refresh_residual,
+        &mut model,
+        residual,
+        max_psf_sidelobe_level,
+        initial_peak,
+        &mut warnings,
+    )?;
+    let controller_elapsed = controller_started.elapsed();
+    let accounted = stage_timings
+        .minor_cycle_solve
+        .saturating_add(stage_timings.major_cycle_refresh);
+    stage_timings.controller_overhead += controller_elapsed.saturating_sub(accounted);
+    residual = clean_state.residual;
+
+    let beam_fit_started = Instant::now();
+    let BeamFitOutcome {
+        beam,
+        warnings: beam_warnings,
+        attempts: beam_fit_attempts,
+        cutoff_used: beam_fit_cutoff_used,
+        debug: beam_fit_debug,
+    } = fit_beam_from_psf(
+        &psf_state.psf,
+        request.geometry.cell_size_rad,
+        request.clean.psf_cutoff,
+    );
+    stage_timings.beam_fit += beam_fit_started.elapsed();
+    let restore_started = Instant::now();
+    let restored_model = restore_model(&model, request.geometry.cell_size_rad, beam);
+    stage_timings.restore += restore_started.elapsed();
+    let restored_image = &restored_model + &residual;
+
+    let fractional_bandwidth = (request.selected_frequency_range_hz[1]
+        - request.selected_frequency_range_hz[0])
+        / request.reffreq_hz;
+    if fractional_bandwidth > 0.1 {
+        warnings.push(format!(
+            "fractional bandwidth {:.3} exceeds the narrow-band nterms=1 comfort zone",
+            fractional_bandwidth
+        ));
+    }
+    let w_phase_metric = max_abs_w_lambda * request.geometry.field_of_view_rad().powi(2);
+    if w_phase_metric > 0.1 {
+        warnings.push(format!(
+            "max |w| * fov^2 = {:.3} suggests 2-D standard imaging may show non-coplanar artifacts",
+            w_phase_metric
+        ));
+    }
+    warnings.extend(beam_warnings);
+    stage_timings.total = total_started.elapsed();
+
+    Ok(ImagingResult {
+        psf: expand_plane(&psf_state.psf),
+        residual: expand_plane(&residual),
+        model: expand_plane(&model),
+        image: expand_plane(&restored_image),
+        sumwt: expand_scalar(psf_state.reported_sumwt),
+        beam,
+        diagnostics: ImagingDiagnostics {
+            warnings,
+            gridded_samples: psf_state.gridded_samples,
+            skipped_samples: psf_state.skipped_samples,
+            major_cycles: casa_major_cycle_count(clean_state.major_cycles, request.clean.niter),
+            minor_iterations: clean_state.minor_iterations,
+            clean_stop_reason: clean_state.clean_stop_reason,
+            minor_cycle_traces: clean_state.minor_cycle_traces,
+            initial_residual_peak_jy_per_beam: initial_peak,
+            final_residual_peak_jy_per_beam: peak_abs_value_masked(
+                &residual,
+                request.clean_mask.as_ref(),
+            ),
+            max_abs_w_lambda,
+            fractional_bandwidth,
+            max_psf_sidelobe_level,
+            final_cycle_threshold_jy_per_beam: clean_state.final_cycle_threshold_jy_per_beam,
+            clean_mask_pixels,
+            beam_fit_attempts,
+            beam_fit_cutoff_used,
+            beam_fit_debug,
+            mosaic_weight_image: None,
+            stage_timings,
+        },
+        compatibility: CompatibilityMetadata {
+            axis_order: [
+                AxisKind::RightAscension,
+                AxisKind::Declination,
+                AxisKind::Stokes,
+                AxisKind::Frequency,
+            ],
+            plane_stokes: request.plane_stokes,
+            reffreq_hz: request.reffreq_hz,
+            channel_frequencies_hz: vec![request.reffreq_hz],
+            psf_units: String::new(),
+            residual_units: "Jy/beam".to_string(),
+            model_units: "Jy/pixel".to_string(),
+            image_units: "Jy/beam".to_string(),
+        },
+    })
+}
+
+fn accumulate_dirty_accumulation(
+    target: &mut StandardMfsDirtyAccumulation,
+    source: StandardMfsDirtyAccumulation,
+) {
+    target.normalization_sumwt += source.normalization_sumwt;
+    target.reported_sumwt += source.reported_sumwt;
+    target.gridded_samples += source.gridded_samples;
+    target.skipped_samples += source.skipped_samples;
+    target.max_abs_w_lambda = target.max_abs_w_lambda.max(source.max_abs_w_lambda);
+}
+
+fn accumulate_residual_accumulation(
+    target: &mut StandardMfsTiledResidualAccumulation,
+    source: StandardMfsTiledResidualAccumulation,
+) {
+    target.valid_samples += source.valid_samples;
+    target.planned_samples += source.planned_samples;
+    target.gridded_residual_samples += source.gridded_residual_samples;
+    target.skipped_not_gridable += source.skipped_not_gridable;
+    target.skipped_invalid_weight += source.skipped_invalid_weight;
+    target.skipped_invalid_sumwt += source.skipped_invalid_sumwt;
+    target.skipped_out_of_grid += source.skipped_out_of_grid;
+    target.skipped_nonfinite_visibility += source.skipped_nonfinite_visibility;
+}
+
+fn compute_dirty_psf_and_residual_standard_tiled_replay<F>(
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_batches: &mut F,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>, f64), ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    let mut accumulation = StandardMfsDirtyAccumulation {
+        normalization_sumwt: 0.0,
+        reported_sumwt: 0.0,
+        gridded_samples: 0,
+        skipped_samples: 0,
+        max_abs_w_lambda: 0.0,
+    };
+
+    let grid_started = Instant::now();
+    if executor.has_all_resident_tiles() {
+        accumulation = executor.accumulate_dirty_grids_direct_owned_replay(
+            replay_weighted_batches,
+            &mut psf_grid,
+            &mut residual_grid,
+            execution_config.fixed_tile_max_live_row_blocks,
+        )?;
+    } else {
+        replay_weighted_batches(&mut |batches| {
+            let block_accumulation =
+                executor.accumulate_dirty_grids(&batches, &mut psf_grid, &mut residual_grid)?;
+            accumulate_dirty_accumulation(&mut accumulation, block_accumulation);
+            Ok(())
+        })?;
+    }
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    stage_timings.psf_grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    dirty_grids_to_psf_and_residual(
+        gridder,
+        &psf_grid,
+        &residual_grid,
+        accumulation,
+        stage_timings,
+    )
+    .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda))
+}
+
+#[inline(always)]
+fn planned_sample_positive_taps(
+    gridder: &StandardGridder,
+    sample: StandardMfsPlannedWeightedSample,
+) -> Result<PositiveTapSet, ImagingError> {
+    let taps = gridder
+        .plan_positive_taps(sample.u_lambda, sample.v_lambda)
+        .ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "standard MFS planned sample no longer maps to positive taps".to_string(),
+            )
+        })?;
+    if taps.center() != [sample.center_x as usize, sample.center_y as usize] {
+        return Err(ImagingError::InvalidRequest(
+            "standard MFS planned sample center changed during worker tap planning".to_string(),
+        ));
+    }
+    Ok(taps)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlannedCompactTaps {
+    x_start: usize,
+    y_start: usize,
+    x_weight_index: usize,
+    y_weight_index: usize,
+}
+
+#[inline(always)]
+fn planned_sample_compact_taps(
+    gridder: &StandardGridder,
+    sample: StandardMfsPlannedWeightedSample,
+) -> Result<PlannedCompactTaps, ImagingError> {
+    let taps = planned_sample_positive_taps(gridder, sample)?;
+    Ok(PlannedCompactTaps {
+        x_start: taps.x.start,
+        y_start: taps.y.start,
+        x_weight_index: taps.x.weight_index,
+        y_weight_index: taps.y.weight_index,
+    })
+}
+
+fn compute_dirty_psf_and_residual_standard_sample_replay(
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>, f64), ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    if standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1 {
+        let executor =
+            StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        let grid_started = Instant::now();
+        let accumulation = if execution_config.fixed_tile_use_planned_run_blocks {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &StandardMfsPlannedWeightedSampleRunBlock,
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_run_blocks(consumer)
+            };
+            executor.accumulate_dirty_grids_direct_planned_run_replay(
+                &mut replay,
+                &mut psf_grid,
+                &mut residual_grid,
+            )?
+        } else {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &[StandardMfsPlannedWeightedSample],
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_blocks(consumer)
+            };
+            executor.accumulate_dirty_grids_direct_planned_replay(
+                &mut replay,
+                &mut psf_grid,
+                &mut residual_grid,
+            )?
+        };
+        let grid_elapsed = grid_started.elapsed();
+        let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+        stage_timings.psf_grid += split_grid_elapsed;
+        stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+        return dirty_grids_to_psf_and_residual(
+            gridder,
+            &psf_grid,
+            &residual_grid,
+            accumulation,
+            stage_timings,
+        )
+        .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda));
+    }
+    let mut accumulation = StandardMfsDirtyAccumulation {
+        normalization_sumwt: 0.0,
+        reported_sumwt: 0.0,
+        gridded_samples: 0,
+        skipped_samples: 0,
+        max_abs_w_lambda: 0.0,
+    };
+
+    let grid_started = Instant::now();
+    if let (Some(psf_storage), Some(residual_storage)) = (
+        psf_grid.as_slice_memory_order_mut(),
+        residual_grid.as_slice_memory_order_mut(),
+    ) {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            for &sample in samples {
+                accumulation.max_abs_w_lambda =
+                    accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
+                let taps = planned_sample_compact_taps(gridder, sample)?;
+                let grid_weight = sample.grid_weight;
+                let grid_weight = f64::from(grid_weight);
+                accumulation.normalization_sumwt += grid_weight;
+                accumulation.reported_sumwt += grid_weight;
+                accumulation.gridded_samples += 1;
+                if sample.finite_visibility() {
+                    let residual = Complex64::new(
+                        f64::from(sample.visibility.re) * grid_weight,
+                        f64::from(sample.visibility.im) * grid_weight,
+                    );
+                    gridder.grid_compact_taps_real_complex_pair_planned_f64_storage(
+                        psf_storage,
+                        grid_weight,
+                        residual_storage,
+                        residual,
+                        taps.x_start,
+                        taps.y_start,
+                        taps.x_weight_index,
+                        taps.y_weight_index,
+                    );
+                } else {
+                    gridder.grid_compact_taps_real_planned_f64_storage(
+                        psf_storage,
+                        grid_weight,
+                        taps.x_start,
+                        taps.y_start,
+                        taps.x_weight_index,
+                        taps.y_weight_index,
+                    );
+                }
+            }
+            Ok(())
+        })?;
+    } else {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            for &sample in samples {
+                accumulation.max_abs_w_lambda =
+                    accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
+                let taps = planned_sample_positive_taps(gridder, sample)?;
+                let grid_weight = sample.grid_weight;
+                let grid_weight = f64::from(grid_weight);
+                accumulation.normalization_sumwt += grid_weight;
+                accumulation.reported_sumwt += grid_weight;
+                accumulation.gridded_samples += 1;
+                if sample.finite_visibility() {
+                    let residual = Complex64::new(
+                        f64::from(sample.visibility.re) * grid_weight,
+                        f64::from(sample.visibility.im) * grid_weight,
+                    );
+                    gridder.grid_sample_taps_real_complex_pair_planned_f64(
+                        &mut psf_grid,
+                        grid_weight,
+                        &mut residual_grid,
+                        residual,
+                        &taps,
+                    );
+                } else {
+                    gridder.grid_sample_taps_real_planned_f64(&mut psf_grid, &taps, grid_weight);
+                }
+            }
+            Ok(())
+        })?;
+    }
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    stage_timings.psf_grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    dirty_grids_to_psf_and_residual(
+        gridder,
+        &psf_grid,
+        &residual_grid,
+        accumulation,
+        stage_timings,
+    )
+    .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda))
+}
+
+fn compute_dirty_psf_and_residual_standard_routed_sample_replay(
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_samples: &mut dyn StandardMfsRoutedSampleBlockSource,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>, f64), ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    let grid_started = Instant::now();
+    let mut replay =
+        |consumer: &mut dyn FnMut(&StandardMfsRoutedSampleRunBlock) -> Result<(), ImagingError>| {
+            replay_routed_samples.replay_routed_sample_run_blocks(consumer)
+        };
+    let accumulation = executor.accumulate_dirty_grids_direct_routed_run_replay(
+        &mut replay,
+        weighting_plan,
+        &mut psf_grid,
+        &mut residual_grid,
+    )?;
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    stage_timings.psf_grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    dirty_grids_to_psf_and_residual(
+        gridder,
+        &psf_grid,
+        &residual_grid,
+        accumulation,
+        stage_timings,
+    )
+    .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda))
+}
+
+#[cfg(target_os = "macos")]
+fn begin_metal_grouped_input_cache_prime<'a>(
+    gridder: &'a StandardGridder,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    enabled: bool,
+) -> Result<
+    Option<(
+        StandardMfsMetalExecutor<'a>,
+        StandardMfsMetalGroupedInputCacheFill,
+        Instant,
+    )>,
+    ImagingError,
+> {
+    if !enabled {
+        return Ok(None);
+    }
+    if !matches!(
+        standard_mfs_residual_backend_selection_from_env()?,
+        Some(StandardMfsBackendSelection::MetalRowRunGrouped)
+    ) {
+        return Ok(None);
+    }
+    let metal_executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
+    let fill = metal_executor.begin_grouped_input_cache_fill(weighting_plan)?;
+    Ok(Some((metal_executor, fill, Instant::now())))
+}
+
+fn compute_dirty_psf_and_residual_standard_routed_visibility_run_replay(
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
+    stage_timings: &mut ImagingStageTimings,
+    metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
+) -> Result<(PsfState, Array2<f32>, f64), ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    if matches!(
+        standard_mfs_initial_dirty_backend_selection_from_env()?,
+        Some(StandardMfsBackendSelection::MetalRowRunGrouped)
+    ) {
+        #[cfg(target_os = "macos")]
+        {
+            let mut metal_grouped_input_cache = metal_grouped_input_cache;
+            let grid_started = Instant::now();
+            let metal_executor =
+                StandardMfsMetalExecutor::new_with_initial_dirty_grouped(gridder, None)?;
+            if let Some(cache) = metal_grouped_input_cache.as_deref_mut() {
+                if let Some(accumulation) = metal_executor
+                    .accumulate_initial_dirty_grids_from_grouped_input_cache(
+                        weighting_plan,
+                        cache,
+                        &mut psf_grid,
+                        &mut residual_grid,
+                    )?
+                {
+                    let grid_elapsed = grid_started.elapsed();
+                    let split_grid_elapsed =
+                        Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+                    stage_timings.psf_grid += split_grid_elapsed;
+                    stage_timings.residual_degrid_grid +=
+                        grid_elapsed.saturating_sub(split_grid_elapsed);
+                    if profile::standard_mfs_profile_detail_enabled() {
+                        eprintln!(
+                            "standard_mfs_metal_grouped_initial_dirty source=input_cache total_elapsed_ms={:.3}",
+                            profile::millis(grid_elapsed)
+                        );
+                    }
+                    return dirty_grids_to_psf_and_residual(
+                        gridder,
+                        &psf_grid,
+                        &residual_grid,
+                        accumulation,
+                        stage_timings,
+                    )
+                    .map(|(psf_state, residual)| {
+                        (psf_state, residual, accumulation.max_abs_w_lambda)
+                    });
+                }
+            }
+            let mut state =
+                metal_executor.begin_grouped_initial_dirty_accumulation(weighting_plan)?;
+            let dispatch_started = Instant::now();
+            replay_routed_runs.replay_routed_visibility_runs(&mut |routed_run| {
+                metal_executor.append_grouped_initial_dirty_run(
+                    &mut state,
+                    routed_run,
+                    weighting_plan,
+                )
+            })?;
+            let mut local_cache = StandardMfsMetalGroupedInputCache::default();
+            let cache = match metal_grouped_input_cache {
+                Some(cache) => cache,
+                None => &mut local_cache,
+            };
+            let accumulation = metal_executor.finish_grouped_initial_dirty_accumulation(
+                state,
+                cache,
+                &mut psf_grid,
+                &mut residual_grid,
+            )?;
+            let grid_elapsed = grid_started.elapsed();
+            let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+            stage_timings.psf_grid += split_grid_elapsed;
+            stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+            if profile::standard_mfs_profile_detail_enabled() {
+                eprintln!(
+                    "standard_mfs_metal_grouped_initial_dirty source=initial_dirty dispatch_elapsed_ms={:.3} total_elapsed_ms={:.3}",
+                    profile::millis(dispatch_started.elapsed()),
+                    profile::millis(grid_elapsed)
+                );
+            }
+            return dirty_grids_to_psf_and_residual(
+                gridder,
+                &psf_grid,
+                &residual_grid,
+                accumulation,
+                stage_timings,
+            )
+            .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Err(ImagingError::Unsupported(
+                "standard MFS initial dirty backend 'metal-row-run-grouped' requires macOS Metal"
+                    .to_string(),
+            ));
+        }
+    }
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    #[cfg(target_os = "macos")]
+    let mut metal_cache_prime = begin_metal_grouped_input_cache_prime(
+        gridder,
+        weighting_plan,
+        metal_grouped_input_cache.is_some(),
+    )?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = metal_grouped_input_cache;
+    let grid_started = Instant::now();
+    let mut replay =
+        |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
+            replay_routed_runs.replay_routed_visibility_runs(&mut |routed_run| {
+                #[cfg(target_os = "macos")]
+                if let Some((metal_executor, fill, _)) = metal_cache_prime.as_mut() {
+                    metal_executor.append_grouped_input_cache_run(
+                        fill,
+                        routed_run,
+                        weighting_plan,
+                    )?;
+                }
+                consumer(routed_run)
+            })
+        };
+    let accumulation = executor.accumulate_dirty_grids_direct_routed_visibility_run_replay(
+        &mut replay,
+        weighting_plan,
+        &mut psf_grid,
+        &mut residual_grid,
+    )?;
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    stage_timings.psf_grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+    #[cfg(target_os = "macos")]
+    if let (Some((metal_executor, fill, fill_started)), Some(cache)) =
+        (metal_cache_prime, metal_grouped_input_cache)
+    {
+        let cache_finish_started = Instant::now();
+        metal_executor.finish_grouped_input_cache_fill(fill, cache)?;
+        stage_timings.residual_degrid_grid += cache_finish_started.elapsed();
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_grouped_input_cache_prime source=initial_dirty elapsed_ms={:.3}",
+                profile::millis(fill_started.elapsed())
+            );
+        }
+    }
+
+    dirty_grids_to_psf_and_residual(
+        gridder,
+        &psf_grid,
+        &residual_grid,
+        accumulation,
+        stage_timings,
+    )
+    .map(|(psf_state, residual)| (psf_state, residual, accumulation.max_abs_w_lambda))
+}
+
+fn compute_psf_standard_tiled_replay<F>(
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_batches: &mut F,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    let mut accumulation = StandardMfsDirtyAccumulation {
+        normalization_sumwt: 0.0,
+        reported_sumwt: 0.0,
+        gridded_samples: 0,
+        skipped_samples: 0,
+        max_abs_w_lambda: 0.0,
+    };
+
+    let grid_started = Instant::now();
+    if executor.has_all_resident_tiles() {
+        accumulation = executor.accumulate_psf_grid_direct_owned_replay(
+            replay_weighted_batches,
+            &mut psf_grid,
+            execution_config.fixed_tile_max_live_row_blocks,
+        )?;
+    } else {
+        replay_weighted_batches(&mut |batches| {
+            let block_accumulation = executor.accumulate_psf_grid(&batches, &mut psf_grid)?;
+            accumulate_dirty_accumulation(&mut accumulation, block_accumulation);
+            Ok(())
+        })?;
+    }
+    stage_timings.psf_grid += grid_started.elapsed();
+    psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings)
+}
+
+fn compute_psf_standard_sample_replay(
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    if standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1 {
+        let executor =
+            StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        let grid_started = Instant::now();
+        let accumulation = if execution_config.fixed_tile_use_planned_run_blocks {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &StandardMfsPlannedWeightedSampleRunBlock,
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_run_blocks(consumer)
+            };
+            executor.accumulate_psf_grid_direct_planned_run_replay(&mut replay, &mut psf_grid)?
+        } else {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &[StandardMfsPlannedWeightedSample],
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_blocks(consumer)
+            };
+            executor.accumulate_psf_grid_direct_planned_replay(&mut replay, &mut psf_grid)?
+        };
+        stage_timings.psf_grid += grid_started.elapsed();
+        return psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings);
+    }
+    let mut accumulation = StandardMfsDirtyAccumulation {
+        normalization_sumwt: 0.0,
+        reported_sumwt: 0.0,
+        gridded_samples: 0,
+        skipped_samples: 0,
+        max_abs_w_lambda: 0.0,
+    };
+
+    let grid_started = Instant::now();
+    if let Some(psf_storage) = psf_grid.as_slice_memory_order_mut() {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            for &sample in samples {
+                accumulation.max_abs_w_lambda =
+                    accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
+                let taps = planned_sample_compact_taps(gridder, sample)?;
+                let grid_weight = sample.grid_weight;
+                let grid_weight = f64::from(grid_weight);
+                accumulation.normalization_sumwt += grid_weight;
+                accumulation.reported_sumwt += grid_weight;
+                accumulation.gridded_samples += 1;
+                gridder.grid_compact_taps_real_planned_f64_storage(
+                    psf_storage,
+                    grid_weight,
+                    taps.x_start,
+                    taps.y_start,
+                    taps.x_weight_index,
+                    taps.y_weight_index,
+                );
+            }
+            Ok(())
+        })?;
+    } else {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            for &sample in samples {
+                accumulation.max_abs_w_lambda =
+                    accumulation.max_abs_w_lambda.max(sample.w_lambda.abs());
+                let taps = planned_sample_positive_taps(gridder, sample)?;
+                let grid_weight = sample.grid_weight;
+                let grid_weight = f64::from(grid_weight);
+                accumulation.normalization_sumwt += grid_weight;
+                accumulation.reported_sumwt += grid_weight;
+                accumulation.gridded_samples += 1;
+                gridder.grid_sample_taps_real_planned_f64(&mut psf_grid, &taps, grid_weight);
+            }
+            Ok(())
+        })?;
+    }
+    stage_timings.psf_grid += grid_started.elapsed();
+    psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings)
+}
+
+fn compute_psf_standard_routed_sample_replay(
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_samples: &mut dyn StandardMfsRoutedSampleBlockSource,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    let grid_started = Instant::now();
+    let mut replay =
+        |consumer: &mut dyn FnMut(&StandardMfsRoutedSampleRunBlock) -> Result<(), ImagingError>| {
+            replay_routed_samples.replay_routed_sample_run_blocks(consumer)
+        };
+    let accumulation = executor.accumulate_psf_grid_direct_routed_run_replay(
+        &mut replay,
+        weighting_plan,
+        &mut psf_grid,
+    )?;
+    stage_timings.psf_grid += grid_started.elapsed();
+    psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings)
+}
+
+fn compute_psf_standard_routed_visibility_run_replay(
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
+    stage_timings: &mut ImagingStageTimings,
+    metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
+) -> Result<PsfState, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    #[cfg(target_os = "macos")]
+    let mut metal_cache_prime = begin_metal_grouped_input_cache_prime(
+        gridder,
+        weighting_plan,
+        metal_grouped_input_cache.is_some(),
+    )?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = metal_grouped_input_cache;
+    let grid_started = Instant::now();
+    let mut replay =
+        |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
+            replay_routed_runs.replay_routed_visibility_runs(&mut |routed_run| {
+                #[cfg(target_os = "macos")]
+                if let Some((metal_executor, fill, _)) = metal_cache_prime.as_mut() {
+                    metal_executor.append_grouped_input_cache_run(
+                        fill,
+                        routed_run,
+                        weighting_plan,
+                    )?;
+                }
+                consumer(routed_run)
+            })
+        };
+    let accumulation = executor.accumulate_psf_grid_direct_routed_visibility_run_replay(
+        &mut replay,
+        weighting_plan,
+        &mut psf_grid,
+    )?;
+    stage_timings.psf_grid += grid_started.elapsed();
+    #[cfg(target_os = "macos")]
+    if let (Some((metal_executor, fill, fill_started)), Some(cache)) =
+        (metal_cache_prime, metal_grouped_input_cache)
+    {
+        let cache_finish_started = Instant::now();
+        metal_executor.finish_grouped_input_cache_fill(fill, cache)?;
+        stage_timings.psf_grid += cache_finish_started.elapsed();
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_grouped_input_cache_prime source=initial_psf elapsed_ms={:.3}",
+                profile::millis(fill_started.elapsed())
+            );
+        }
+    }
+    psf_grid_to_state(gridder, &psf_grid, accumulation, stage_timings)
+}
+
+fn compute_residual_standard_tiled_replay<F>(
+    _geometry: ImageGeometry,
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_batches: &mut F,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError>
+where
+    F: FnMut(
+        &mut dyn FnMut(Vec<VisibilityBatch>) -> Result<(), ImagingError>,
+    ) -> Result<(), ImagingError>,
+{
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut timings = ResidualComputationTimings::default();
+    let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        let model_fft_started = Instant::now();
+        let transformed = centered_fft2(&gridder.apodize_model(model));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    let mut counts = StandardMfsTiledResidualAccumulation::default();
+    let degrid_grid_started = Instant::now();
+    if executor.has_all_resident_tiles() {
+        counts = executor.accumulate_residual_grid_direct_owned_replay(
+            replay_weighted_batches,
+            model_grid.as_ref(),
+            &mut residual_grid,
+            execution_config.fixed_tile_max_live_row_blocks,
+        )?;
+    } else {
+        replay_weighted_batches(&mut |batches| {
+            let block_counts = executor.accumulate_residual_grid(
+                &batches,
+                model_grid.as_ref(),
+                &mut residual_grid,
+            )?;
+            accumulate_residual_accumulation(&mut counts, block_counts);
+            Ok(())
+        })?;
+    }
+    timings.degrid_grid = degrid_grid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2_f64(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image = gridder.corrected_image_from_grid_f64(&raw);
+    image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+
+    profile::log_serial_stage(profile::SerialStageProfile {
+        stage: "streaming_tiled_residual_refresh",
+        samples_total: counts.valid_samples
+            + counts.skipped_not_gridable
+            + counts.skipped_invalid_weight
+            + counts.skipped_nonfinite_visibility,
+        finite_visibility_samples: counts.valid_samples,
+        nonfinite_visibility_samples: counts.skipped_nonfinite_visibility,
+        planned_samples: counts.planned_samples,
+        model_grid_present_samples: if model_grid.is_some() {
+            counts.gridded_residual_samples
+        } else {
+            0
+        },
+        model_grid_absent_samples: if model_grid.is_some() {
+            0
+        } else {
+            counts.gridded_residual_samples
+        },
+        degrid_tap_visits: if model_grid.is_some() {
+            counts.gridded_residual_samples.saturating_mul(49)
+        } else {
+            0
+        },
+        grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+        stage_duration: timings.degrid_grid,
+    });
+
+    Ok(image)
+}
+
+fn compute_residual_standard_sample_replay(
+    _geometry: ImageGeometry,
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
+    replay_weighted_samples: &mut dyn StandardMfsPlannedSampleBlockSource,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut timings = ResidualComputationTimings::default();
+    let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        let model_fft_started = Instant::now();
+        let transformed = centered_fft2(&gridder.apodize_model(model));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+
+    if standard_mfs_fixed_tile_backend_enabled() && standard_mfs_grid_threads() > 1 {
+        let executor =
+            StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+        let degrid_grid_started = Instant::now();
+        let counts = if execution_config.fixed_tile_use_planned_run_blocks {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &StandardMfsPlannedWeightedSampleRunBlock,
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_run_blocks(consumer)
+            };
+            executor.accumulate_residual_grid_direct_planned_run_replay(
+                &mut replay,
+                model_grid.as_ref(),
+                &mut residual_grid,
+            )?
+        } else {
+            let mut replay = |consumer: &mut dyn FnMut(
+                &[StandardMfsPlannedWeightedSample],
+            ) -> Result<(), ImagingError>| {
+                replay_weighted_samples.replay_planned_sample_blocks(consumer)
+            };
+            executor.accumulate_residual_grid_direct_planned_replay(
+                &mut replay,
+                model_grid.as_ref(),
+                &mut residual_grid,
+            )?
+        };
+        timings.degrid_grid = degrid_grid_started.elapsed();
+
+        let fft_started = Instant::now();
+        let raw = centered_ifft2_f64(&residual_grid);
+        timings.fft = fft_started.elapsed();
+        let normalize_started = Instant::now();
+        let mut image = gridder.corrected_image_from_grid_f64(&raw);
+        image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
+        timings.normalize = normalize_started.elapsed();
+        stage_timings.model_fft += timings.model_fft;
+        stage_timings.residual_degrid_grid += timings.degrid_grid;
+        stage_timings.residual_fft += timings.fft;
+        stage_timings.residual_normalize += timings.normalize;
+
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "streaming_tiled_planned_residual_refresh",
+            samples_total: counts.valid_samples
+                + counts.skipped_not_gridable
+                + counts.skipped_invalid_weight
+                + counts.skipped_nonfinite_visibility,
+            finite_visibility_samples: counts.valid_samples,
+            nonfinite_visibility_samples: counts.skipped_nonfinite_visibility,
+            planned_samples: counts.planned_samples,
+            model_grid_present_samples: if model_grid.is_some() {
+                counts.gridded_residual_samples
+            } else {
+                0
+            },
+            model_grid_absent_samples: if model_grid.is_some() {
+                0
+            } else {
+                counts.gridded_residual_samples
+            },
+            degrid_tap_visits: if model_grid.is_some() {
+                counts.gridded_residual_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+            stage_duration: timings.degrid_grid,
+        });
+        return Ok(image);
+    }
+
+    let mut counts = StandardMfsTiledResidualAccumulation::default();
+    let degrid_grid_started = Instant::now();
+    if let (Some(model_storage), Some(residual_storage)) = (
+        model_grid
+            .as_ref()
+            .and_then(|grid| grid.as_slice_memory_order()),
+        residual_grid.as_slice_memory_order_mut(),
+    ) {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            for &sample in samples {
+                accumulate_weighted_residual_sample_storage(
+                    gridder,
+                    sample,
+                    Some(model_storage),
+                    residual_storage,
+                    &mut counts,
+                )?;
+            }
+            Ok(())
+        })?;
+    } else if model_grid.is_none()
+        && let Some(residual_storage) = residual_grid.as_slice_memory_order_mut()
+    {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            for &sample in samples {
+                accumulate_weighted_residual_sample_storage(
+                    gridder,
+                    sample,
+                    None,
+                    residual_storage,
+                    &mut counts,
+                )?;
+            }
+            Ok(())
+        })?;
+    } else {
+        replay_weighted_samples.replay_planned_sample_blocks(&mut |samples| {
+            for &sample in samples {
+                accumulate_weighted_residual_sample_array(
+                    gridder,
+                    sample,
+                    model_grid.as_ref(),
+                    &mut residual_grid,
+                    &mut counts,
+                )?;
+            }
+            Ok(())
+        })?;
+    }
+    timings.degrid_grid = degrid_grid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2_f64(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image = gridder.corrected_image_from_grid_f64(&raw);
+    image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+
+    profile::log_serial_stage(profile::SerialStageProfile {
+        stage: "sample_streaming_residual_refresh",
+        samples_total: counts.valid_samples
+            + counts.skipped_not_gridable
+            + counts.skipped_invalid_weight
+            + counts.skipped_nonfinite_visibility,
+        finite_visibility_samples: counts.valid_samples,
+        nonfinite_visibility_samples: counts.skipped_nonfinite_visibility,
+        planned_samples: counts.planned_samples,
+        model_grid_present_samples: if model_grid.is_some() {
+            counts.gridded_residual_samples
+        } else {
+            0
+        },
+        model_grid_absent_samples: if model_grid.is_some() {
+            0
+        } else {
+            counts.gridded_residual_samples
+        },
+        degrid_tap_visits: if model_grid.is_some() {
+            counts.gridded_residual_samples.saturating_mul(49)
+        } else {
+            0
+        },
+        grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+        stage_duration: timings.degrid_grid,
+    });
+
+    Ok(image)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_residual_standard_routed_sample_replay(
+    _geometry: ImageGeometry,
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_samples: &mut dyn StandardMfsRoutedSampleBlockSource,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut timings = ResidualComputationTimings::default();
+    let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        let model_fft_started = Instant::now();
+        let transformed = centered_fft2(&gridder.apodize_model(model));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    let degrid_grid_started = Instant::now();
+    let mut replay =
+        |consumer: &mut dyn FnMut(&StandardMfsRoutedSampleRunBlock) -> Result<(), ImagingError>| {
+            replay_routed_samples.replay_routed_sample_run_blocks(consumer)
+        };
+    let counts = executor.accumulate_residual_grid_direct_routed_run_replay(
+        &mut replay,
+        weighting_plan,
+        model_grid.as_ref(),
+        &mut residual_grid,
+    )?;
+    timings.degrid_grid = degrid_grid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2_f64(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image = gridder.corrected_image_from_grid_f64(&raw);
+    image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+
+    profile::log_serial_stage(profile::SerialStageProfile {
+        stage: "streaming_tiled_routed_residual_refresh",
+        samples_total: counts.valid_samples
+            + counts.skipped_not_gridable
+            + counts.skipped_invalid_weight
+            + counts.skipped_nonfinite_visibility,
+        finite_visibility_samples: counts.valid_samples,
+        nonfinite_visibility_samples: counts.skipped_nonfinite_visibility,
+        planned_samples: counts.planned_samples,
+        model_grid_present_samples: if model_grid.is_some() {
+            counts.gridded_residual_samples
+        } else {
+            0
+        },
+        model_grid_absent_samples: if model_grid.is_some() {
+            0
+        } else {
+            counts.gridded_residual_samples
+        },
+        degrid_tap_visits: if model_grid.is_some() {
+            counts.gridded_residual_samples.saturating_mul(49)
+        } else {
+            0
+        },
+        grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+        stage_duration: timings.degrid_grid,
+    });
+
+    Ok(image)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_residual_standard_routed_visibility_run_replay(
+    _geometry: ImageGeometry,
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
+    weighting_plan: &StandardMfsStreamingWeightingPlan,
+    replay_routed_runs: &mut dyn StandardMfsRoutedVisibilityRunSource,
+    stage_timings: &mut ImagingStageTimings,
+    _metal_grouped_input_cache: Option<&mut StandardMfsMetalGroupedInputCache>,
+) -> Result<Array2<f32>, ImagingError> {
+    let [grid_nx, grid_ny] = gridder.grid_shape();
+    let mut residual_grid = Array2::<Complex64>::zeros((grid_nx, grid_ny));
+    let mut timings = ResidualComputationTimings::default();
+    let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        let model_fft_started = Instant::now();
+        let transformed = centered_fft2(&gridder.apodize_model(model));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+
+    let degrid_grid_started = Instant::now();
+    let mut replay =
+        |consumer: &mut dyn FnMut(&StandardMfsRoutedVisibilityRun) -> Result<(), ImagingError>| {
+            replay_routed_runs.replay_routed_visibility_runs(consumer)
+        };
+    let counts = match standard_mfs_residual_backend_selection_from_env()? {
+        Some(StandardMfsBackendSelection::Metal) => {
+            #[cfg(target_os = "macos")]
+            {
+                let executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
+                executor.accumulate_residual_grid_direct_routed_visibility_run_replay(
+                    &mut replay,
+                    weighting_plan,
+                    model_grid.as_ref(),
+                    &mut residual_grid,
+                )?
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(ImagingError::Unsupported(
+                    "standard MFS residual backend 'metal' requires macOS Metal".to_string(),
+                ));
+            }
+        }
+        Some(StandardMfsBackendSelection::MetalRowRun) => {
+            #[cfg(target_os = "macos")]
+            {
+                let executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
+                executor.accumulate_residual_grid_direct_routed_visibility_run_replay_row_run(
+                    &mut replay,
+                    weighting_plan,
+                    model_grid.as_ref(),
+                    &mut residual_grid,
+                )?
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(ImagingError::Unsupported(
+                    "standard MFS residual backend 'metal-row-run' requires macOS Metal"
+                        .to_string(),
+                ));
+            }
+        }
+        Some(StandardMfsBackendSelection::MetalRowRunGrouped) => {
+            #[cfg(target_os = "macos")]
+            {
+                let executor = StandardMfsMetalExecutor::new_with_resident_bytes(gridder, None)?;
+                executor
+                    .accumulate_residual_grid_direct_routed_visibility_run_replay_row_run_grouped(
+                        &mut replay,
+                        weighting_plan,
+                        model_grid.as_ref(),
+                        &mut residual_grid,
+                        _metal_grouped_input_cache,
+                    )?
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(ImagingError::Unsupported(
+                    "standard MFS residual backend 'metal-row-run-grouped' requires macOS Metal"
+                        .to_string(),
+                ));
+            }
+        }
+        _ => {
+            let executor =
+                StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+            executor.accumulate_residual_grid_direct_routed_visibility_run_replay(
+                &mut replay,
+                weighting_plan,
+                model_grid.as_ref(),
+                &mut residual_grid,
+            )?
+        }
+    };
+    timings.degrid_grid = degrid_grid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2_f64(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image = gridder.corrected_image_from_grid_f64(&raw);
+    image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+
+    profile::log_serial_stage(profile::SerialStageProfile {
+        stage: "streaming_tiled_routed_visibility_residual_refresh",
+        samples_total: counts.valid_samples
+            + counts.skipped_not_gridable
+            + counts.skipped_invalid_weight
+            + counts.skipped_nonfinite_visibility,
+        finite_visibility_samples: counts.valid_samples,
+        nonfinite_visibility_samples: counts.skipped_nonfinite_visibility,
+        planned_samples: counts.planned_samples,
+        model_grid_present_samples: if model_grid.is_some() {
+            counts.gridded_residual_samples
+        } else {
+            0
+        },
+        model_grid_absent_samples: if model_grid.is_some() {
+            0
+        } else {
+            counts.gridded_residual_samples
+        },
+        degrid_tap_visits: if model_grid.is_some() {
+            counts.gridded_residual_samples.saturating_mul(49)
+        } else {
+            0
+        },
+        grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+        stage_duration: timings.degrid_grid,
+    });
+
+    Ok(image)
+}
+
+fn accumulate_weighted_residual_sample_storage(
+    gridder: &StandardGridder,
+    sample: StandardMfsPlannedWeightedSample,
+    model_storage: Option<&[Complex32]>,
+    residual_storage: &mut [Complex64],
+    counts: &mut StandardMfsTiledResidualAccumulation,
+) -> Result<(), ImagingError> {
+    if !sample.finite_visibility() {
+        counts.skipped_nonfinite_visibility += 1;
+        return Ok(());
+    }
+    counts.valid_samples += 1;
+    let taps = planned_sample_compact_taps(gridder, sample)?;
+    counts.planned_samples += 1;
+    let residual_weight = sample.grid_weight;
+    let residual_weight = f64::from(residual_weight);
+    if let Some(model_storage) = model_storage {
+        gridder.degrid_model_and_grid_residual_compact_taps_planned_f64_storage(
+            model_storage,
+            residual_storage,
+            sample.visibility,
+            residual_weight,
+            taps.x_start,
+            taps.y_start,
+            taps.x_weight_index,
+            taps.y_weight_index,
+        );
+    } else {
+        let residual = Complex64::new(
+            f64::from(sample.visibility.re) * residual_weight,
+            f64::from(sample.visibility.im) * residual_weight,
+        );
+        gridder.grid_compact_taps_planned_f64_storage(
+            residual_storage,
+            residual,
+            taps.x_start,
+            taps.y_start,
+            taps.x_weight_index,
+            taps.y_weight_index,
+        );
+    }
+    counts.gridded_residual_samples += 1;
+    Ok(())
+}
+
+fn accumulate_weighted_residual_sample_array(
+    gridder: &StandardGridder,
+    sample: StandardMfsPlannedWeightedSample,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex64>,
+    counts: &mut StandardMfsTiledResidualAccumulation,
+) -> Result<(), ImagingError> {
+    if !sample.finite_visibility() {
+        counts.skipped_nonfinite_visibility += 1;
+        return Ok(());
+    }
+    counts.valid_samples += 1;
+    let taps = planned_sample_positive_taps(gridder, sample)?;
+    counts.planned_samples += 1;
+    let residual_weight = sample.grid_weight;
+    let residual_weight = f64::from(residual_weight);
+    if let Some(model_grid) = model_grid {
+        gridder.degrid_model_and_grid_residual_taps_planned_f64(
+            model_grid,
+            residual_grid,
+            &taps,
+            sample.visibility,
+            residual_weight,
+        );
+    } else {
+        let residual = Complex64::new(
+            f64::from(sample.visibility.re) * residual_weight,
+            f64::from(sample.visibility.im) * residual_weight,
+        );
+        gridder.grid_sample_taps_planned_f64(residual_grid, &taps, residual);
+    }
+    counts.gridded_residual_samples += 1;
+    Ok(())
+}
+
+fn dirty_grids_to_psf_and_residual(
+    gridder: &StandardGridder,
+    psf_grid: &Array2<Complex64>,
+    residual_grid: &Array2<Complex64>,
+    accumulation: StandardMfsDirtyAccumulation,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let psf_fft_started = Instant::now();
+    let raw_psf = centered_ifft2_f64(psf_grid);
+    stage_timings.psf_fft += psf_fft_started.elapsed();
+    let psf_normalize_started = Instant::now();
+    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+    psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    stage_timings.psf_normalize += psf_normalize_started.elapsed();
+
+    let residual_fft_started = Instant::now();
+    let raw_residual = centered_ifft2_f64(residual_grid);
+    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let residual_normalize_started = Instant::now();
+    let mut residual = gridder.corrected_image_from_grid_f64(&raw_residual);
+    residual.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32 / psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    Ok((
+        PsfState {
+            psf,
+            normalization_sumwt: accumulation.normalization_sumwt as f32,
+            reported_sumwt: accumulation.reported_sumwt as f32,
+            psf_peak,
+            gridded_samples: accumulation.gridded_samples,
+            skipped_samples: accumulation.skipped_samples,
+        },
+        residual,
+    ))
+}
+
+fn psf_grid_to_state(
+    gridder: &StandardGridder,
+    psf_grid: &Array2<Complex64>,
+    accumulation: StandardMfsDirtyAccumulation,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let fft_started = Instant::now();
+    let raw_psf = centered_ifft2_f64(psf_grid);
+    stage_timings.psf_fft += fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+    psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    stage_timings.psf_normalize += normalize_started.elapsed();
+
+    Ok(PsfState {
+        psf,
+        normalization_sumwt: accumulation.normalization_sumwt as f32,
+        reported_sumwt: accumulation.reported_sumwt as f32,
+        psf_peak,
+        gridded_samples: accumulation.gridded_samples,
+        skipped_samples: accumulation.skipped_samples,
+    })
+}
+
 fn should_use_standard_mfs_executor(
     request: &ImagingRequest,
     weighted_batches: &[VisibilityBatch],
@@ -616,6 +3631,148 @@ fn should_use_standard_mfs_executor(
     standard_mfs_sample_count(weighted_batches) <= standard_mfs_executor_max_samples()
 }
 
+fn should_use_standard_mfs_tiled_backend(request: &ImagingRequest) -> bool {
+    matches!(request.w_term_mode, WTermMode::None) && standard_mfs_fixed_tile_backend_enabled()
+}
+
+/// Return whether this process can create a default macOS Metal device.
+///
+/// Auto runtime planners use this as an availability gate. Explicit Metal
+/// backend selections are still allowed to reach the backend so callers get
+/// the detailed backend error if the device cannot be opened.
+pub fn standard_mfs_metal_device_available() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        objc2_metal::MTLCreateSystemDefaultDevice().is_some()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+fn should_use_standard_mfs_metal_backend(request: &ImagingRequest) -> bool {
+    matches!(request.w_term_mode, WTermMode::None) && standard_mfs_metal_backend_enabled()
+}
+
+fn ensure_standard_mfs_backend_available() -> Result<(), ImagingError> {
+    match standard_mfs_backend_selection_from_env()? {
+        StandardMfsBackendSelection::Cpu | StandardMfsBackendSelection::FixedTile => Ok(()),
+        StandardMfsBackendSelection::Metal
+        | StandardMfsBackendSelection::MetalRowRun
+        | StandardMfsBackendSelection::MetalRowRunGrouped => {
+            #[cfg(target_os = "macos")]
+            {
+                Ok(())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Err(ImagingError::Unsupported(
+                    "standard MFS backend 'metal' requires macOS Metal and is not available \
+                     on this platform"
+                        .to_string(),
+                ))
+            }
+        }
+    }
+}
+
+fn standard_mfs_fixed_tile_backend_enabled() -> bool {
+    matches!(
+        standard_mfs_backend_selection_from_env(),
+        Ok(StandardMfsBackendSelection::FixedTile)
+    )
+}
+
+fn standard_mfs_metal_backend_enabled() -> bool {
+    matches!(
+        standard_mfs_backend_selection_from_env(),
+        Ok(StandardMfsBackendSelection::Metal
+            | StandardMfsBackendSelection::MetalRowRun
+            | StandardMfsBackendSelection::MetalRowRunGrouped)
+    )
+}
+
+fn standard_mfs_metal_grouped_input_cache_enabled(planned_default: bool) -> bool {
+    env::var("CASA_RS_STANDARD_MFS_METAL_GROUPED_INPUT_CACHE")
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(planned_default)
+}
+
+fn standard_mfs_backend_selection_from_env() -> Result<StandardMfsBackendSelection, ImagingError> {
+    env::var(STANDARD_MFS_BACKEND_ENV)
+        .map(|value| parse_standard_mfs_backend_selection(&value))
+        .unwrap_or(Ok(StandardMfsBackendSelection::Cpu))
+}
+
+fn standard_mfs_residual_backend_selection_from_env()
+-> Result<Option<StandardMfsBackendSelection>, ImagingError> {
+    env::var(STANDARD_MFS_RESIDUAL_BACKEND_ENV)
+        .map(|value| {
+            let selection = parse_standard_mfs_backend_selection(&value)?;
+            Ok(match selection {
+                StandardMfsBackendSelection::Cpu | StandardMfsBackendSelection::FixedTile => None,
+                StandardMfsBackendSelection::Metal => Some(StandardMfsBackendSelection::Metal),
+                StandardMfsBackendSelection::MetalRowRun => {
+                    Some(StandardMfsBackendSelection::MetalRowRun)
+                }
+                StandardMfsBackendSelection::MetalRowRunGrouped => {
+                    Some(StandardMfsBackendSelection::MetalRowRunGrouped)
+                }
+            })
+        })
+        .unwrap_or(Ok(None))
+}
+
+fn standard_mfs_initial_dirty_backend_selection_from_env()
+-> Result<Option<StandardMfsBackendSelection>, ImagingError> {
+    env::var(STANDARD_MFS_INITIAL_DIRTY_BACKEND_ENV)
+        .map(|value| {
+            let selection = parse_standard_mfs_backend_selection(&value)?;
+            match selection {
+                StandardMfsBackendSelection::Cpu | StandardMfsBackendSelection::FixedTile => {
+                    Ok(None)
+                }
+                StandardMfsBackendSelection::MetalRowRunGrouped => {
+                    Ok(Some(StandardMfsBackendSelection::MetalRowRunGrouped))
+                }
+                StandardMfsBackendSelection::Metal | StandardMfsBackendSelection::MetalRowRun => {
+                    Err(ImagingError::Unsupported(format!(
+                        "standard MFS initial dirty backend '{value}' is not implemented; expected cpu, fixed_tile, or metal-row-run-grouped"
+                    )))
+                }
+            }
+        })
+        .unwrap_or(Ok(None))
+}
+
+fn parse_standard_mfs_backend_selection(
+    value: &str,
+) -> Result<StandardMfsBackendSelection, ImagingError> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "cpu" | "default" => Ok(StandardMfsBackendSelection::Cpu),
+        "fixed_tile" | "fixed-tile" | "tile" | "tiled" | "streaming_fixed_tile" => {
+            Ok(StandardMfsBackendSelection::FixedTile)
+        }
+        "metal" => Ok(StandardMfsBackendSelection::Metal),
+        "metal-row-run" | "metal_row_run" | "metal-rowrun" | "metal_rowrun" => {
+            Ok(StandardMfsBackendSelection::MetalRowRun)
+        }
+        "metal-row-run-grouped" | "metal_row_run_grouped" | "metal-grouped" | "metal_grouped" => {
+            Ok(StandardMfsBackendSelection::MetalRowRunGrouped)
+        }
+        _ => Err(ImagingError::Unsupported(format!(
+            "standard MFS backend '{value}' is not recognized; expected cpu, fixed_tile, metal, metal-row-run, or metal-row-run-grouped"
+        ))),
+    }
+}
+
 fn standard_mfs_executor_max_samples() -> usize {
     env::var("CASA_RS_STANDARD_MFS_EXECUTOR_MAX_SAMPLES")
         .ok()
@@ -623,8 +3780,33 @@ fn standard_mfs_executor_max_samples() -> usize {
         .unwrap_or(DEFAULT_STANDARD_MFS_EXECUTOR_MAX_SAMPLES)
 }
 
+fn standard_mfs_grid_threads() -> usize {
+    standard_mfs_thread_count_from_env()
+}
+
+fn standard_mfs_thread_count_from_env() -> usize {
+    env::var(STANDARD_MFS_GRID_THREADS_ENV)
+        .ok()
+        .and_then(|value| parse_standard_mfs_thread_count(&value))
+        .unwrap_or(1)
+}
+
+fn parse_standard_mfs_thread_count(value: &str) -> Option<usize> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("auto") {
+        return Some(thread::available_parallelism().map_or(1, |value| value.get()));
+    }
+    value.parse::<usize>().ok().filter(|value| *value > 0)
+}
+
 fn standard_mfs_sample_count(batches: &[VisibilityBatch]) -> usize {
     batches.iter().map(VisibilityBatch::len).sum()
+}
+
+fn complex64_grid_bytes(nx: usize, ny: usize, grid_count: usize) -> usize {
+    nx.saturating_mul(ny)
+        .saturating_mul(grid_count)
+        .saturating_mul(std::mem::size_of::<Complex64>())
 }
 
 /// Run CASA-style MTMFS imaging on already-prepared MFS visibilities.
@@ -2530,6 +5712,9 @@ struct CottonSchwabState {
     final_cycle_threshold_jy_per_beam: f32,
 }
 
+type StandardMfsResidualRefreshCallback<'a> =
+    dyn FnMut(&Array2<f32>, &mut ImagingStageTimings) -> Result<Array2<f32>, ImagingError> + 'a;
+
 fn image_center_value(image: &Array2<f32>) -> f32 {
     let center = (image.dim().0 / 2, image.dim().1 / 2);
     image[center]
@@ -2579,9 +5764,50 @@ fn casa_multiscale_reported_updates(
 fn run_cotton_schwab_controller(
     request: &ImagingRequest,
     weighted_batches: &[VisibilityBatch],
+    standard_executor: &mut Option<StandardMfsCpuExecutor<'_>>,
     gridder: &StandardGridder,
     psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
+    model: &mut Array2<f32>,
+    residual: Array2<f32>,
+    max_psf_sidelobe_level: f32,
+    initial_peak: f32,
+    warnings: &mut Vec<String>,
+) -> Result<CottonSchwabState, ImagingError> {
+    let mut refresh_residual = |model: &Array2<f32>,
+                                stage_timings: &mut ImagingStageTimings|
+     -> Result<Array2<f32>, ImagingError> {
+        refresh_standard_mfs_residual(
+            request,
+            weighted_batches,
+            standard_executor,
+            gridder,
+            model,
+            psf_state,
+            execution_config,
+            stage_timings,
+        )
+    };
+    run_cotton_schwab_controller_with_refresh(
+        request,
+        psf_state,
+        stage_timings,
+        &mut refresh_residual,
+        model,
+        residual,
+        max_psf_sidelobe_level,
+        initial_peak,
+        warnings,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_cotton_schwab_controller_with_refresh(
+    request: &ImagingRequest,
+    psf_state: &PsfState,
+    stage_timings: &mut ImagingStageTimings,
+    refresh_residual: &mut StandardMfsResidualRefreshCallback<'_>,
     model: &mut Array2<f32>,
     residual: Array2<f32>,
     max_psf_sidelobe_level: f32,
@@ -2591,10 +5817,9 @@ fn run_cotton_schwab_controller(
     match request.deconvolver {
         Deconvolver::Hogbom => run_hogbom_cotton_schwab(
             request,
-            weighted_batches,
-            gridder,
             psf_state,
             stage_timings,
+            refresh_residual,
             model,
             residual,
             max_psf_sidelobe_level,
@@ -2603,10 +5828,9 @@ fn run_cotton_schwab_controller(
         ),
         Deconvolver::Clark => run_clark_cotton_schwab(
             request,
-            weighted_batches,
-            gridder,
             psf_state,
             stage_timings,
+            refresh_residual,
             model,
             residual,
             max_psf_sidelobe_level,
@@ -2615,10 +5839,9 @@ fn run_cotton_schwab_controller(
         ),
         Deconvolver::Multiscale => run_multiscale_cotton_schwab(
             request,
-            weighted_batches,
-            gridder,
             psf_state,
             stage_timings,
+            refresh_residual,
             model,
             residual,
             max_psf_sidelobe_level,
@@ -2886,10 +6109,9 @@ fn run_mosaic_image_domain_controller(
 #[allow(clippy::too_many_arguments)]
 fn run_hogbom_cotton_schwab(
     request: &ImagingRequest,
-    weighted_batches: &[VisibilityBatch],
-    gridder: &StandardGridder,
     psf_state: &PsfState,
     stage_timings: &mut ImagingStageTimings,
+    refresh_residual: &mut StandardMfsResidualRefreshCallback<'_>,
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
     max_psf_sidelobe_level: f32,
@@ -2915,9 +6137,11 @@ fn run_hogbom_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
             break;
         }
+        let cycle_setup_started = Instant::now();
         let Some((_, cycle_peak_value)) =
             peak_location_masked(&residual, request.clean_mask.as_ref())
         else {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
@@ -2929,6 +6153,7 @@ fn run_hogbom_cotton_schwab(
             request.clean.threshold_jy_per_beam,
             cycle_nsigma_threshold_jy_per_beam,
         ) {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(stop_reason);
             break;
         }
@@ -2937,6 +6162,7 @@ fn run_hogbom_cotton_schwab(
         let start_reported_iteration = reported_minor_iterations;
         let cycle_threshold_jy_per_beam =
             compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+        stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let outcome = run_hogbom_minor_cycle(
             request,
             psf_state,
@@ -2987,16 +6213,7 @@ fn run_hogbom_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
-        let refresh_started = Instant::now();
-        residual = compute_residual(
-            request,
-            weighted_batches,
-            gridder,
-            model,
-            psf_state,
-            stage_timings,
-        )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        residual = refresh_residual(model, stage_timings)?;
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
@@ -3018,16 +6235,7 @@ fn run_hogbom_cotton_schwab(
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
     }
     if residual_needs_refresh {
-        let refresh_started = Instant::now();
-        residual = compute_residual(
-            request,
-            weighted_batches,
-            gridder,
-            model,
-            psf_state,
-            stage_timings,
-        )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        residual = refresh_residual(model, stage_timings)?;
     }
 
     Ok(CottonSchwabState {
@@ -3376,21 +6584,22 @@ struct ClarkActivePixel {
 #[allow(clippy::too_many_arguments)]
 fn run_clark_cotton_schwab(
     request: &ImagingRequest,
-    weighted_batches: &[VisibilityBatch],
-    gridder: &StandardGridder,
     psf_state: &PsfState,
     stage_timings: &mut ImagingStageTimings,
+    refresh_residual: &mut StandardMfsResidualRefreshCallback<'_>,
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
+    let deconvolver_setup_started = Instant::now();
     let psf_patch = build_clark_psf_patch(
         &psf_state.psf,
         request.geometry.cell_size_rad,
         request.clean.psf_cutoff,
     );
+    stage_timings.deconvolver_setup += deconvolver_setup_started.elapsed();
     let mut minor_iterations = 0usize;
     let mut reported_minor_iterations = 0usize;
     let mut major_cycles = 0usize;
@@ -3410,9 +6619,11 @@ fn run_clark_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
             break;
         }
+        let cycle_setup_started = Instant::now();
         let Some((_, cycle_peak_value)) =
             peak_location_masked(&residual, request.clean_mask.as_ref())
         else {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
@@ -3424,6 +6635,7 @@ fn run_clark_cotton_schwab(
             request.clean.threshold_jy_per_beam,
             cycle_nsigma_threshold_jy_per_beam,
         ) {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(stop_reason);
             break;
         }
@@ -3432,6 +6644,7 @@ fn run_clark_cotton_schwab(
         let start_reported_iteration = reported_minor_iterations;
         final_cycle_threshold_jy_per_beam =
             compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+        stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let outcome = run_clark_minor_cycle(
             request,
             &psf_state.psf,
@@ -3472,16 +6685,7 @@ fn run_clark_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
-        let refresh_started = Instant::now();
-        residual = compute_residual(
-            request,
-            weighted_batches,
-            gridder,
-            model,
-            psf_state,
-            stage_timings,
-        )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        residual = refresh_residual(model, stage_timings)?;
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
@@ -3500,16 +6704,7 @@ fn run_clark_cotton_schwab(
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
     }
     if residual_needs_refresh {
-        let refresh_started = Instant::now();
-        residual = compute_residual(
-            request,
-            weighted_batches,
-            gridder,
-            model,
-            psf_state,
-            stage_timings,
-        )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        residual = refresh_residual(model, stage_timings)?;
     }
 
     Ok(CottonSchwabState {
@@ -3525,16 +6720,16 @@ fn run_clark_cotton_schwab(
 #[allow(clippy::too_many_arguments)]
 fn run_multiscale_cotton_schwab(
     request: &ImagingRequest,
-    weighted_batches: &[VisibilityBatch],
-    gridder: &StandardGridder,
     psf_state: &PsfState,
     stage_timings: &mut ImagingStageTimings,
+    refresh_residual: &mut StandardMfsResidualRefreshCallback<'_>,
     model: &mut Array2<f32>,
     mut residual: Array2<f32>,
     max_psf_sidelobe_level: f32,
     initial_peak: f32,
     warnings: &mut Vec<String>,
 ) -> Result<CottonSchwabState, ImagingError> {
+    let deconvolver_setup_started = Instant::now();
     let scales = effective_multiscale_scales(request);
     let mut multiscale_state = build_multiscale_state(
         &residual,
@@ -3543,6 +6738,7 @@ fn run_multiscale_cotton_schwab(
         request.small_scale_bias,
         request.clean_mask.as_ref(),
     );
+    stage_timings.deconvolver_setup += deconvolver_setup_started.elapsed();
     let mut minor_iterations = 0usize;
     let mut reported_minor_iterations = 0usize;
     let mut major_cycles = 0usize;
@@ -3562,9 +6758,11 @@ fn run_multiscale_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::MajorCycleLimitReached);
             break;
         }
+        let cycle_setup_started = Instant::now();
         let Some(cycle_candidate) =
             select_multiscale_candidate(&multiscale_state, request.clean_mask.as_ref())
         else {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(CleanStopReason::NoCleanablePixels);
             break;
         };
@@ -3579,6 +6777,7 @@ fn run_multiscale_cotton_schwab(
             request.clean.threshold_jy_per_beam,
             cycle_nsigma_threshold_jy_per_beam,
         ) {
+            stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
             clean_stop_reason = Some(stop_reason);
             break;
         }
@@ -3599,6 +6798,7 @@ fn run_multiscale_cotton_schwab(
         let mut cycle_stop_reason = None::<CleanStopReason>;
         final_cycle_threshold_jy_per_beam =
             compute_cycle_threshold(cycle_peak, max_psf_sidelobe_level, request.clean);
+        stage_timings.clean_cycle_setup += cycle_setup_started.elapsed();
         let minor_started = Instant::now();
         while cycle_component_updates < cycle_reported_niter {
             let Some(candidate) =
@@ -3682,23 +6882,10 @@ fn run_multiscale_cotton_schwab(
             clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
             break;
         }
-        let refresh_started = Instant::now();
-        residual = compute_residual(
-            request,
-            weighted_batches,
-            gridder,
-            model,
-            psf_state,
-            stage_timings,
-        )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
-        multiscale_state = build_multiscale_state(
-            &residual,
-            &psf_state.psf,
-            &scales,
-            request.small_scale_bias,
-            request.clean_mask.as_ref(),
-        );
+        residual = refresh_residual(model, stage_timings)?;
+        let multiscale_refresh_started = Instant::now();
+        refresh_multiscale_dirty_conv_scales(&mut multiscale_state, &residual);
+        stage_timings.multiscale_scale_refresh += multiscale_refresh_started.elapsed();
         major_cycles += 1;
         residual_needs_refresh = false;
         let refreshed_peak = peak_abs_value_masked(&residual, request.clean_mask.as_ref());
@@ -3717,16 +6904,7 @@ fn run_multiscale_cotton_schwab(
         clean_stop_reason = Some(CleanStopReason::IterationLimitReached);
     }
     if residual_needs_refresh {
-        let refresh_started = Instant::now();
-        residual = compute_residual(
-            request,
-            weighted_batches,
-            gridder,
-            model,
-            psf_state,
-            stage_timings,
-        )?;
-        stage_timings.major_cycle_refresh += refresh_started.elapsed();
+        residual = refresh_residual(model, stage_timings)?;
         major_cycles += 1;
     }
 
@@ -5132,6 +8310,22 @@ fn compute_psf(
         }
         WTermMode::None => {}
     }
+    if standard_mfs_fixed_tile_backend_enabled() {
+        return compute_psf_standard_tiled(
+            batches,
+            gridder,
+            StandardMfsExecutionConfig::default(),
+            stage_timings,
+        );
+    }
+    if standard_mfs_metal_backend_enabled() {
+        return compute_psf_standard_metal(
+            batches,
+            gridder,
+            StandardMfsExecutionConfig::default(),
+            stage_timings,
+        );
+    }
     if standard_mfs_sample_count(batches) > standard_mfs_executor_max_samples() {
         return compute_psf_standard_streaming(batches, gridder, stage_timings);
     }
@@ -5149,8 +8343,11 @@ fn compute_psf_standard(
 
     let grid_started = Instant::now();
     for sample in plan.samples() {
-        let psf_weight = Complex64::new(sample.grid_weight_f64(), 0.0);
-        gridder.grid_sample_product_planned_f64(psf_grid, &sample.plan.positive, psf_weight);
+        gridder.grid_sample_taps_real_planned_f64(
+            psf_grid,
+            &sample.positive_taps,
+            sample.grid_weight_f64(),
+        );
     }
     timings.grid = grid_started.elapsed();
 
@@ -5218,8 +8415,8 @@ fn compute_psf_standard_streaming(
                 skipped_samples += 1;
                 continue;
             }
-            let Some(plan) =
-                gridder.plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+            let Some(plan) = gridder
+                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
             else {
                 skipped_samples += 1;
                 continue;
@@ -5228,11 +8425,7 @@ fn compute_psf_standard_streaming(
             normalization_sumwt += grid_weight;
             reported_sumwt += grid_weight;
             gridded_samples += 1;
-            gridder.grid_sample_product_planned_f64(
-                &mut psf_grid,
-                &plan.positive,
-                Complex64::new(grid_weight, 0.0),
-            );
+            gridder.grid_sample_taps_real_planned_f64(&mut psf_grid, &plan, grid_weight);
         }
     }
     timings.grid = grid_started.elapsed();
@@ -5269,6 +8462,115 @@ fn compute_psf_standard_streaming(
     })
 }
 
+fn compute_psf_standard_tiled(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    let mut timings = PsfComputationTimings::default();
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+
+    let grid_started = Instant::now();
+    let accumulation = executor.accumulate_psf_grid(batches, &mut psf_grid)?;
+    timings.grid = grid_started.elapsed();
+
+    if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let fft_started = Instant::now();
+    let raw_psf = centered_ifft2_f64(&psf_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+    psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.psf_grid += timings.grid;
+    stage_timings.psf_fft += timings.fft;
+    stage_timings.psf_normalize += timings.normalize;
+
+    Ok(PsfState {
+        psf,
+        normalization_sumwt: accumulation.normalization_sumwt as f32,
+        reported_sumwt: accumulation.reported_sumwt as f32,
+        psf_peak,
+        gridded_samples: accumulation.gridded_samples,
+        skipped_samples: accumulation.skipped_samples,
+    })
+}
+
+fn compute_psf_standard_metal(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<PsfState, ImagingError> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut timings = PsfComputationTimings::default();
+        let [nx, ny] = gridder.grid_shape();
+        let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+        let executor = StandardMfsMetalExecutor::new_with_resident_bytes(
+            gridder,
+            execution_config.fixed_tile_resident_bytes,
+        )?;
+
+        let grid_started = Instant::now();
+        let accumulation = executor.accumulate_psf_grid(batches, &mut psf_grid)?;
+        timings.grid = grid_started.elapsed();
+
+        if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+            return Err(ImagingError::NoUsableSamples);
+        }
+
+        let fft_started = Instant::now();
+        let raw_psf = centered_ifft2_f64(&psf_grid);
+        timings.fft = fft_started.elapsed();
+        let normalize_started = Instant::now();
+        let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+        psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+        let psf_peak = peak_abs_value(&psf);
+        if !(psf_peak.is_finite() && psf_peak > 0.0) {
+            return Err(ImagingError::Normalization(
+                "PSF peak is non-finite or zero".to_string(),
+            ));
+        }
+        psf.mapv_inplace(|value| value / psf_peak);
+        timings.normalize = normalize_started.elapsed();
+        stage_timings.psf_grid += timings.grid;
+        stage_timings.psf_fft += timings.fft;
+        stage_timings.psf_normalize += timings.normalize;
+
+        Ok(PsfState {
+            psf,
+            normalization_sumwt: accumulation.normalization_sumwt as f32,
+            reported_sumwt: accumulation.reported_sumwt as f32,
+            psf_peak,
+            gridded_samples: accumulation.gridded_samples,
+            skipped_samples: accumulation.skipped_samples,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (batches, gridder, execution_config, stage_timings);
+        Err(ImagingError::Unsupported(
+            "standard MFS backend 'metal' requires macOS Metal and is not available on this platform"
+                .to_string(),
+        ))
+    }
+}
+
 #[cfg(test)]
 fn compute_dirty_psf_and_residual_standard(
     batches: &[VisibilityBatch],
@@ -5289,17 +8591,15 @@ fn compute_dirty_psf_and_residual_standard_with_executor(
     let grid_started = Instant::now();
     for sample in plan.samples() {
         let grid_weight = sample.grid_weight_f64();
-        let psf_weight = Complex64::new(grid_weight, 0.0);
-        gridder.grid_sample_product_planned_f64(psf_grid, &sample.plan.positive, psf_weight);
+        gridder.grid_sample_taps_real_planned_f64(psf_grid, &sample.positive_taps, grid_weight);
 
-        let batch = plan.batch(sample);
-        let observed_visibility = batch.visibility[sample.sample_index];
+        let observed_visibility = sample.visibility;
         if finite_visibility(observed_visibility) {
             let residual = Complex64::new(
                 f64::from(observed_visibility.re) * grid_weight,
                 f64::from(observed_visibility.im) * grid_weight,
             );
-            gridder.grid_sample_product_planned_f64(residual_grid, &sample.plan.positive, residual);
+            gridder.grid_sample_taps_planned_f64(residual_grid, &sample.positive_taps, residual);
         }
     }
     let grid_elapsed = grid_started.elapsed();
@@ -5357,58 +8657,20 @@ fn compute_dirty_psf_and_residual_standard_streaming(
     let [nx, ny] = gridder.grid_shape();
     let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
     let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
-    let mut normalization_sumwt = 0.0f64;
-    let mut reported_sumwt = 0.0f64;
-    let mut gridded_samples = 0usize;
-    let mut skipped_samples = 0usize;
 
     let grid_started = Instant::now();
-    for batch in batches {
-        for sample_index in 0..batch.len() {
-            if !batch.gridable[sample_index] {
-                skipped_samples += 1;
-                continue;
-            }
-            let weight = batch.weight[sample_index];
-            let sumwt_factor = batch.sumwt_factor[sample_index];
-            if !(weight.is_finite()
-                && weight > 0.0
-                && sumwt_factor.is_finite()
-                && sumwt_factor > 0.0)
-            {
-                skipped_samples += 1;
-                continue;
-            }
-            let Some(plan) =
-                gridder.plan_sample(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
-            else {
-                skipped_samples += 1;
-                continue;
-            };
-            let grid_weight = f64::from(weight * sumwt_factor);
-            normalization_sumwt += grid_weight;
-            reported_sumwt += grid_weight;
-            gridded_samples += 1;
-            gridder.grid_sample_product_planned_f64(
-                &mut psf_grid,
-                &plan.positive,
-                Complex64::new(grid_weight, 0.0),
-            );
-
-            let observed_visibility = batch.visibility[sample_index];
-            if finite_visibility(observed_visibility) {
-                let residual = Complex64::new(
-                    f64::from(observed_visibility.re) * grid_weight,
-                    f64::from(observed_visibility.im) * grid_weight,
-                );
-                gridder.grid_sample_product_planned_f64(
-                    &mut residual_grid,
-                    &plan.positive,
-                    residual,
-                );
-            }
-        }
-    }
+    let DirtyGridAccumulation {
+        normalization_sumwt,
+        reported_sumwt,
+        gridded_samples,
+        skipped_samples,
+        ..
+    } = accumulate_dirty_psf_and_residual_standard_streaming_grid(
+        batches,
+        gridder,
+        &mut psf_grid,
+        &mut residual_grid,
+    )?;
     let grid_elapsed = grid_started.elapsed();
     let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
     stage_timings.psf_grid += split_grid_elapsed;
@@ -5454,12 +8716,373 @@ fn compute_dirty_psf_and_residual_standard_streaming(
     ))
 }
 
+fn compute_dirty_psf_and_residual_standard_tiled(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+    let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+
+    let grid_started = Instant::now();
+    let accumulation =
+        executor.accumulate_dirty_grids(batches, &mut psf_grid, &mut residual_grid)?;
+    let grid_elapsed = grid_started.elapsed();
+    let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+    stage_timings.psf_grid += split_grid_elapsed;
+    stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+    if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+        return Err(ImagingError::NoUsableSamples);
+    }
+
+    let psf_fft_started = Instant::now();
+    let raw_psf = centered_ifft2_f64(&psf_grid);
+    stage_timings.psf_fft += psf_fft_started.elapsed();
+    let psf_normalize_started = Instant::now();
+    let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+    psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+    let psf_peak = peak_abs_value(&psf);
+    if !(psf_peak.is_finite() && psf_peak > 0.0) {
+        return Err(ImagingError::Normalization(
+            "PSF peak is non-finite or zero".to_string(),
+        ));
+    }
+    psf.mapv_inplace(|value| value / psf_peak);
+    stage_timings.psf_normalize += psf_normalize_started.elapsed();
+
+    let residual_fft_started = Instant::now();
+    let raw_residual = centered_ifft2_f64(&residual_grid);
+    stage_timings.residual_fft += residual_fft_started.elapsed();
+    let residual_normalize_started = Instant::now();
+    let mut residual = gridder.corrected_image_from_grid_f64(&raw_residual);
+    residual.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32 / psf_peak);
+    stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+    Ok((
+        PsfState {
+            psf,
+            normalization_sumwt: accumulation.normalization_sumwt as f32,
+            reported_sumwt: accumulation.reported_sumwt as f32,
+            psf_peak,
+            gridded_samples: accumulation.gridded_samples,
+            skipped_samples: accumulation.skipped_samples,
+        },
+        residual,
+    ))
+}
+
+fn compute_dirty_psf_and_residual_standard_metal(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    execution_config: StandardMfsExecutionConfig,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<(PsfState, Array2<f32>), ImagingError> {
+    #[cfg(target_os = "macos")]
+    {
+        let [nx, ny] = gridder.grid_shape();
+        let mut psf_grid = Array2::<Complex64>::zeros((nx, ny));
+        let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
+        let executor = StandardMfsMetalExecutor::new_with_resident_bytes(
+            gridder,
+            execution_config.fixed_tile_resident_bytes,
+        )?;
+
+        let grid_started = Instant::now();
+        let accumulation =
+            executor.accumulate_dirty_grids(batches, &mut psf_grid, &mut residual_grid)?;
+        let grid_elapsed = grid_started.elapsed();
+        let split_grid_elapsed = Duration::from_secs_f64(grid_elapsed.as_secs_f64() * 0.5);
+        stage_timings.psf_grid += split_grid_elapsed;
+        stage_timings.residual_degrid_grid += grid_elapsed.saturating_sub(split_grid_elapsed);
+
+        if accumulation.normalization_sumwt <= 0.0 || accumulation.reported_sumwt <= 0.0 {
+            return Err(ImagingError::NoUsableSamples);
+        }
+
+        let psf_fft_started = Instant::now();
+        let raw_psf = centered_ifft2_f64(&psf_grid);
+        stage_timings.psf_fft += psf_fft_started.elapsed();
+        let psf_normalize_started = Instant::now();
+        let mut psf = gridder.corrected_image_from_grid_f64(&raw_psf);
+        psf.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32);
+        let psf_peak = peak_abs_value(&psf);
+        if !(psf_peak.is_finite() && psf_peak > 0.0) {
+            return Err(ImagingError::Normalization(
+                "PSF peak is non-finite or zero".to_string(),
+            ));
+        }
+        psf.mapv_inplace(|value| value / psf_peak);
+        stage_timings.psf_normalize += psf_normalize_started.elapsed();
+
+        let residual_fft_started = Instant::now();
+        let raw_residual = centered_ifft2_f64(&residual_grid);
+        stage_timings.residual_fft += residual_fft_started.elapsed();
+        let residual_normalize_started = Instant::now();
+        let mut residual = gridder.corrected_image_from_grid_f64(&raw_residual);
+        residual.mapv_inplace(|value| value / accumulation.normalization_sumwt as f32 / psf_peak);
+        stage_timings.residual_normalize += residual_normalize_started.elapsed();
+
+        Ok((
+            PsfState {
+                psf,
+                normalization_sumwt: accumulation.normalization_sumwt as f32,
+                reported_sumwt: accumulation.reported_sumwt as f32,
+                psf_peak,
+                gridded_samples: accumulation.gridded_samples,
+                skipped_samples: accumulation.skipped_samples,
+            },
+            residual,
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (batches, gridder, execution_config, stage_timings);
+        Err(ImagingError::Unsupported(
+            "standard MFS backend 'metal' requires macOS Metal and is not available on this platform"
+                .to_string(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DirtyGridAccumulation {
+    normalization_sumwt: f64,
+    reported_sumwt: f64,
+    gridded_samples: usize,
+    skipped_samples: usize,
+    finite_visibility_samples: usize,
+    nonfinite_visibility_samples: usize,
+    skipped_not_gridable: usize,
+    skipped_invalid_weight: usize,
+    skipped_invalid_sumwt: usize,
+    skipped_out_of_grid: usize,
+}
+
+impl DirtyGridAccumulation {
+    fn add(&mut self, other: Self) {
+        self.normalization_sumwt += other.normalization_sumwt;
+        self.reported_sumwt += other.reported_sumwt;
+        self.gridded_samples += other.gridded_samples;
+        self.skipped_samples += other.skipped_samples;
+        self.finite_visibility_samples += other.finite_visibility_samples;
+        self.nonfinite_visibility_samples += other.nonfinite_visibility_samples;
+        self.skipped_not_gridable += other.skipped_not_gridable;
+        self.skipped_invalid_weight += other.skipped_invalid_weight;
+        self.skipped_invalid_sumwt += other.skipped_invalid_sumwt;
+        self.skipped_out_of_grid += other.skipped_out_of_grid;
+    }
+}
+
+fn accumulate_dirty_psf_and_residual_standard_streaming_grid(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    psf_grid: &mut Array2<Complex64>,
+    residual_grid: &mut Array2<Complex64>,
+) -> Result<DirtyGridAccumulation, ImagingError> {
+    let requested_threads = standard_mfs_grid_threads();
+    let thread_count = requested_threads
+        .min(batches.len())
+        .min(thread::available_parallelism().map_or(1, |value| value.get()))
+        .max(1);
+    if thread_count <= 1 || batches.len() < 2 {
+        return Ok(
+            accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
+                batches,
+                gridder,
+                psf_grid,
+                residual_grid,
+            ),
+        );
+    }
+
+    let [nx, ny] = gridder.grid_shape();
+    let chunk_len = batches.len().div_ceil(thread_count);
+    let stage_started = profile::maybe_profile_now();
+    let mut local_results = Vec::with_capacity(thread_count);
+    let join_started = profile::maybe_profile_now();
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for (chunk_index, chunk) in batches.chunks(chunk_len).enumerate() {
+            let batch_offset = chunk_index * chunk_len;
+            let worker_samples = standard_mfs_sample_count(chunk);
+            handles.push(scope.spawn(move || {
+                let alloc_started = profile::maybe_profile_now();
+                let mut local_psf_grid = Array2::<Complex64>::zeros((nx, ny));
+                let mut local_residual_grid = Array2::<Complex64>::zeros((nx, ny));
+                let alloc_elapsed = profile::elapsed_since(alloc_started);
+                let compute_started = profile::maybe_profile_now();
+                let counts = accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
+                    chunk,
+                    gridder,
+                    &mut local_psf_grid,
+                    &mut local_residual_grid,
+                );
+                let compute_elapsed = profile::elapsed_since(compute_started);
+                (
+                    batch_offset,
+                    worker_samples,
+                    local_psf_grid,
+                    local_residual_grid,
+                    counts,
+                    alloc_elapsed,
+                    compute_elapsed,
+                )
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("standard MFS dirty grid worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    let join_elapsed = profile::elapsed_since(join_started);
+
+    local_results.sort_by_key(|(batch_offset, _, _, _, _, _, _)| *batch_offset);
+    let mut counts = DirtyGridAccumulation::default();
+    let merge_started = profile::maybe_profile_now();
+    for (_, _, local_psf_grid, local_residual_grid, local_counts, _, _) in &local_results {
+        add_complex64_grid(psf_grid, local_psf_grid);
+        add_complex64_grid(residual_grid, local_residual_grid);
+        counts.add(*local_counts);
+    }
+    let merge_elapsed = profile::elapsed_since(merge_started);
+    profile::log_parallel_stage(profile::ParallelStageProfile {
+        stage: "dirty_psf_residual_grid",
+        requested_threads,
+        actual_threads: local_results.len(),
+        chunking: "batch",
+        chunk_len,
+        samples_total: standard_mfs_sample_count(batches),
+        samples_per_worker: local_results
+            .iter()
+            .map(|(_, worker_samples, _, _, _, _, _)| *worker_samples)
+            .collect(),
+        local_grid_bytes_per_worker: complex64_grid_bytes(nx, ny, 2),
+        local_grid_count: 2,
+        local_alloc_zero_by_worker: local_results
+            .iter()
+            .map(|(_, _, _, _, _, alloc_elapsed, _)| *alloc_elapsed)
+            .collect(),
+        worker_compute_by_worker: local_results
+            .iter()
+            .map(|(_, _, _, _, _, _, compute_elapsed)| *compute_elapsed)
+            .collect(),
+        join_duration: join_elapsed,
+        merge_duration: merge_elapsed,
+        stage_duration: profile::elapsed_since(stage_started),
+    });
+    for (worker_index, (_, worker_samples, _, _, local_counts, alloc_elapsed, compute_elapsed)) in
+        local_results.iter().enumerate()
+    {
+        profile::log_parallel_worker(profile::ParallelWorkerProfile {
+            stage: "dirty_psf_residual_grid",
+            worker_index,
+            samples: *worker_samples,
+            accepted_samples: local_counts.gridded_samples,
+            finite_visibility_samples: local_counts.finite_visibility_samples,
+            nonfinite_visibility_samples: local_counts.nonfinite_visibility_samples,
+            skipped_not_gridable: local_counts.skipped_not_gridable,
+            skipped_invalid_weight: local_counts.skipped_invalid_weight,
+            skipped_invalid_sumwt: local_counts.skipped_invalid_sumwt,
+            skipped_invalid_density: 0,
+            skipped_out_of_grid: local_counts.skipped_out_of_grid,
+            degrid_tap_visits: 0,
+            grid_tap_visits: local_counts.gridded_samples.saturating_mul(49),
+            density_cell_hits: 0,
+            local_alloc_zero: *alloc_elapsed,
+            worker_compute: *compute_elapsed,
+        });
+    }
+    Ok(counts)
+}
+
+fn accumulate_dirty_psf_and_residual_standard_streaming_grid_serial(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    psf_grid: &mut Array2<Complex64>,
+    residual_grid: &mut Array2<Complex64>,
+) -> DirtyGridAccumulation {
+    let mut counts = DirtyGridAccumulation::default();
+    let collect_profile = profile::standard_mfs_profile_detail_enabled();
+    for batch in batches {
+        for sample_index in 0..batch.len() {
+            if !batch.gridable[sample_index] {
+                counts.skipped_samples += 1;
+                if collect_profile {
+                    counts.skipped_not_gridable += 1;
+                }
+                continue;
+            }
+            let weight = batch.weight[sample_index];
+            let sumwt_factor = batch.sumwt_factor[sample_index];
+            if !(weight.is_finite()
+                && weight > 0.0
+                && sumwt_factor.is_finite()
+                && sumwt_factor > 0.0)
+            {
+                counts.skipped_samples += 1;
+                if collect_profile {
+                    if !(weight.is_finite() && weight > 0.0) {
+                        counts.skipped_invalid_weight += 1;
+                    } else {
+                        counts.skipped_invalid_sumwt += 1;
+                    }
+                }
+                continue;
+            }
+            let Some(plan) = gridder
+                .plan_positive_taps(batch.u_lambda[sample_index], batch.v_lambda[sample_index])
+            else {
+                counts.skipped_samples += 1;
+                if collect_profile {
+                    counts.skipped_out_of_grid += 1;
+                }
+                continue;
+            };
+            let grid_weight = f64::from(weight * sumwt_factor);
+            counts.normalization_sumwt += grid_weight;
+            counts.reported_sumwt += grid_weight;
+            counts.gridded_samples += 1;
+            let observed_visibility = batch.visibility[sample_index];
+            if finite_visibility(observed_visibility) {
+                if collect_profile {
+                    counts.finite_visibility_samples += 1;
+                }
+                let residual = Complex64::new(
+                    f64::from(observed_visibility.re) * grid_weight,
+                    f64::from(observed_visibility.im) * grid_weight,
+                );
+                gridder.grid_sample_taps_real_complex_pair_planned_f64(
+                    psf_grid,
+                    grid_weight,
+                    residual_grid,
+                    residual,
+                    &plan,
+                );
+            } else {
+                if collect_profile {
+                    counts.nonfinite_visibility_samples += 1;
+                }
+                gridder.grid_sample_taps_real_planned_f64(psf_grid, &plan, grid_weight);
+            }
+        }
+    }
+    counts
+}
+
 fn compute_residual(
     request: &ImagingRequest,
     batches: &[VisibilityBatch],
     gridder: &StandardGridder,
     model: &Array2<f32>,
     psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
     match request.w_term_mode {
@@ -5492,8 +9115,78 @@ fn compute_residual(
         model,
         psf_state,
         false,
+        execution_config,
         stage_timings,
     )
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResidualRefreshTimingSnapshot {
+    model_fft: Duration,
+    residual_degrid_grid: Duration,
+    residual_fft: Duration,
+    residual_normalize: Duration,
+}
+
+impl ResidualRefreshTimingSnapshot {
+    fn capture(timings: &ImagingStageTimings) -> Self {
+        Self {
+            model_fft: timings.model_fft,
+            residual_degrid_grid: timings.residual_degrid_grid,
+            residual_fft: timings.residual_fft,
+            residual_normalize: timings.residual_normalize,
+        }
+    }
+
+    fn accounted_delta(self, timings: &ImagingStageTimings) -> Duration {
+        timings
+            .model_fft
+            .saturating_sub(self.model_fft)
+            .saturating_add(
+                timings
+                    .residual_degrid_grid
+                    .saturating_sub(self.residual_degrid_grid),
+            )
+            .saturating_add(timings.residual_fft.saturating_sub(self.residual_fft))
+            .saturating_add(
+                timings
+                    .residual_normalize
+                    .saturating_sub(self.residual_normalize),
+            )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn refresh_standard_mfs_residual(
+    request: &ImagingRequest,
+    batches: &[VisibilityBatch],
+    standard_executor: &mut Option<StandardMfsCpuExecutor<'_>>,
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
+    let before = ResidualRefreshTimingSnapshot::capture(stage_timings);
+    let refresh_started = Instant::now();
+    let residual = if let Some(executor) = standard_executor.as_mut() {
+        compute_residual_standard_with_executor(executor, model, psf_state, stage_timings)?
+    } else {
+        compute_residual(
+            request,
+            batches,
+            gridder,
+            model,
+            psf_state,
+            execution_config,
+            stage_timings,
+        )?
+    };
+    let refresh_elapsed = refresh_started.elapsed();
+    let accounted = before.accounted_delta(stage_timings);
+    stage_timings.major_cycle_refresh += refresh_elapsed;
+    stage_timings.residual_refresh_overhead += refresh_elapsed.saturating_sub(accounted);
+    Ok(residual)
 }
 
 fn build_standard_residual_sample_plans(
@@ -5529,6 +9222,7 @@ fn build_standard_residual_sample_plans(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_residual_standard(
     geometry: ImageGeometry,
     batches: &[VisibilityBatch],
@@ -5536,8 +9230,21 @@ fn compute_residual_standard(
     model: &Array2<f32>,
     psf_state: &PsfState,
     use_direct_point_predict: bool,
+    execution_config: StandardMfsExecutionConfig,
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
+    if !use_direct_point_predict
+        && (standard_mfs_fixed_tile_backend_enabled() || standard_mfs_metal_backend_enabled())
+    {
+        return compute_residual_standard_tiled(
+            batches,
+            gridder,
+            model,
+            psf_state,
+            execution_config,
+            stage_timings,
+        );
+    }
     if !use_direct_point_predict
         && standard_mfs_sample_count(batches) <= standard_mfs_executor_max_samples()
     {
@@ -5582,6 +9289,73 @@ fn compute_residual_standard_streaming(
     .residual_image)
 }
 
+fn compute_residual_standard_tiled(
+    batches: &[VisibilityBatch],
+    gridder: &StandardGridder,
+    model: &Array2<f32>,
+    psf_state: &PsfState,
+    execution_config: StandardMfsExecutionConfig,
+    stage_timings: &mut ImagingStageTimings,
+) -> Result<Array2<f32>, ImagingError> {
+    let [nx, ny] = gridder.grid_shape();
+    let mut residual_grid = Array2::<Complex64>::zeros((nx, ny));
+    let mut timings = ResidualComputationTimings::default();
+    let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
+        let model_fft_started = Instant::now();
+        let transformed = centered_fft2(&gridder.apodize_model(model));
+        timings.model_fft = model_fft_started.elapsed();
+        Some(transformed)
+    } else {
+        None
+    };
+
+    let degrid_grid_started = Instant::now();
+    let executor =
+        StandardMfsTiledCpuExecutor::new_with_execution_config(gridder, execution_config)?;
+    let counts =
+        executor.accumulate_residual_grid(batches, model_grid.as_ref(), &mut residual_grid)?;
+    timings.degrid_grid = degrid_grid_started.elapsed();
+
+    let fft_started = Instant::now();
+    let raw = centered_ifft2_f64(&residual_grid);
+    timings.fft = fft_started.elapsed();
+    let normalize_started = Instant::now();
+    let mut image = gridder.corrected_image_from_grid_f64(&raw);
+    image.mapv_inplace(|value| value / psf_state.normalization_sumwt / psf_state.psf_peak);
+    timings.normalize = normalize_started.elapsed();
+    stage_timings.model_fft += timings.model_fft;
+    stage_timings.residual_degrid_grid += timings.degrid_grid;
+    stage_timings.residual_fft += timings.fft;
+    stage_timings.residual_normalize += timings.normalize;
+
+    profile::log_serial_stage(profile::SerialStageProfile {
+        stage: "tiled_residual_refresh",
+        samples_total: standard_mfs_sample_count(batches),
+        finite_visibility_samples: counts.valid_samples,
+        nonfinite_visibility_samples: counts.skipped_nonfinite_visibility,
+        planned_samples: counts.planned_samples,
+        model_grid_present_samples: if model_grid.is_some() {
+            counts.gridded_residual_samples
+        } else {
+            0
+        },
+        model_grid_absent_samples: if model_grid.is_some() {
+            0
+        } else {
+            counts.gridded_residual_samples
+        },
+        degrid_tap_visits: if model_grid.is_some() {
+            counts.gridded_residual_samples.saturating_mul(49)
+        } else {
+            0
+        },
+        grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+        stage_duration: timings.degrid_grid,
+    });
+
+    Ok(image)
+}
+
 fn compute_residual_standard_with_executor(
     executor: &mut StandardMfsCpuExecutor<'_>,
     model: &Array2<f32>,
@@ -5589,6 +9363,18 @@ fn compute_residual_standard_with_executor(
     stage_timings: &mut ImagingStageTimings,
 ) -> Result<Array2<f32>, ImagingError> {
     let (gridder, plan, workspace) = executor.parts_mut();
+    if profile::standard_mfs_profile_detail_enabled() {
+        let [nx, ny] = gridder.grid_shape();
+        eprintln!(
+            "standard_mfs_executor_plan stage=residual_refresh samples={} skipped_samples={} normalization_sumwt={:.12e} reported_sumwt={:.12e} sample_plan_bytes={} residual_grid_bytes={}",
+            plan.gridded_samples(),
+            plan.skipped_samples(),
+            plan.normalization_sumwt(),
+            plan.reported_sumwt(),
+            plan.estimated_bytes(),
+            complex64_grid_bytes(nx, ny, 1),
+        );
+    }
     let residual_grid = workspace.clear_residual_grid();
     let mut timings = ResidualComputationTimings::default();
     let model_grid = if model.iter().any(|value| value.abs() > 0.0) {
@@ -5601,24 +9387,7 @@ fn compute_residual_standard_with_executor(
     };
 
     let degrid_grid_started = Instant::now();
-    for sample in plan.samples() {
-        let batch = plan.batch(sample);
-        let observed_visibility = batch.visibility[sample.sample_index];
-        if !finite_visibility(observed_visibility) {
-            continue;
-        }
-        let predicted_visibility = model_grid.as_ref().map_or_else(
-            || Complex32::new(0.0, 0.0),
-            |grid| gridder.degrid_sample_product_planned_normalized(grid, &sample.plan.positive),
-        );
-        let residual_visibility = observed_visibility - predicted_visibility;
-        let residual_weight = sample.grid_weight_f64();
-        let residual = Complex64::new(
-            f64::from(residual_visibility.re) * residual_weight,
-            f64::from(residual_visibility.im) * residual_weight,
-        );
-        gridder.grid_sample_product_planned_f64(residual_grid, &sample.plan.positive, residual);
-    }
+    accumulate_standard_mfs_residual_grid(gridder, plan, model_grid.as_ref(), residual_grid)?;
     timings.degrid_grid = degrid_grid_started.elapsed();
 
     let fft_started = Instant::now();
@@ -5633,6 +9402,610 @@ fn compute_residual_standard_with_executor(
     stage_timings.residual_fft += timings.fft;
     stage_timings.residual_normalize += timings.normalize;
     Ok(image)
+}
+
+fn accumulate_standard_mfs_residual_grid(
+    gridder: &StandardGridder,
+    plan: &StandardMfsVisibilityPlan,
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex64>,
+) -> Result<(), ImagingError> {
+    let requested_threads = standard_mfs_grid_threads();
+    let thread_count = requested_threads
+        .min(plan.samples().len())
+        .min(thread::available_parallelism().map_or(1, |value| value.get()))
+        .max(1);
+    if thread_count <= 1 || plan.samples().len() < 100_000 {
+        let stage_started = profile::maybe_profile_now();
+        let mut finite_samples = 0usize;
+        for sample in plan.samples() {
+            if finite_visibility(sample.visibility) {
+                finite_samples += 1;
+            }
+            accumulate_standard_mfs_residual_sample(gridder, model_grid, sample, residual_grid);
+        }
+        let stage_duration = profile::elapsed_since(stage_started);
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "executor_residual_refresh",
+            samples_total: plan.samples().len(),
+            finite_visibility_samples: finite_samples,
+            nonfinite_visibility_samples: plan.samples().len().saturating_sub(finite_samples),
+            planned_samples: plan.samples().len(),
+            model_grid_present_samples: if model_grid.is_some() {
+                finite_samples
+            } else {
+                0
+            },
+            model_grid_absent_samples: if model_grid.is_some() {
+                0
+            } else {
+                finite_samples
+            },
+            degrid_tap_visits: if model_grid.is_some() {
+                finite_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: finite_samples.saturating_mul(49),
+            stage_duration,
+        });
+        return Ok(());
+    }
+
+    let [nx, ny] = gridder.grid_shape();
+    let chunk_len = plan.samples().len().div_ceil(thread_count);
+    let stage_started = profile::maybe_profile_now();
+    let mut local_grids = Vec::with_capacity(thread_count);
+    let join_started = profile::maybe_profile_now();
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for samples in plan.samples().chunks(chunk_len) {
+            handles.push(scope.spawn(move || {
+                let alloc_started = profile::maybe_profile_now();
+                let mut local_grid = Array2::<Complex64>::zeros((nx, ny));
+                let alloc_elapsed = profile::elapsed_since(alloc_started);
+                let compute_started = profile::maybe_profile_now();
+                let mut finite_samples = 0usize;
+                for sample in samples {
+                    if finite_visibility(sample.visibility) {
+                        finite_samples += 1;
+                    }
+                    accumulate_standard_mfs_residual_sample(
+                        gridder,
+                        model_grid,
+                        sample,
+                        &mut local_grid,
+                    );
+                }
+                let compute_elapsed = profile::elapsed_since(compute_started);
+                (
+                    samples.len(),
+                    finite_samples,
+                    local_grid,
+                    alloc_elapsed,
+                    compute_elapsed,
+                )
+            }));
+        }
+        for handle in handles {
+            local_grids.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("standard MFS grid worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    let join_elapsed = profile::elapsed_since(join_started);
+
+    let merge_started = profile::maybe_profile_now();
+    for (_, _, local_grid, _, _) in &local_grids {
+        add_complex64_grid(residual_grid, local_grid);
+    }
+    let merge_elapsed = profile::elapsed_since(merge_started);
+    let finite_samples = local_grids
+        .iter()
+        .map(|(_, finite_samples, _, _, _)| *finite_samples)
+        .sum::<usize>();
+    profile::log_parallel_stage(profile::ParallelStageProfile {
+        stage: "executor_residual_refresh_grid",
+        requested_threads,
+        actual_threads: local_grids.len(),
+        chunking: "planned_sample",
+        chunk_len,
+        samples_total: plan.samples().len(),
+        samples_per_worker: local_grids
+            .iter()
+            .map(|(worker_samples, _, _, _, _)| *worker_samples)
+            .collect(),
+        local_grid_bytes_per_worker: complex64_grid_bytes(nx, ny, 1),
+        local_grid_count: 1,
+        local_alloc_zero_by_worker: local_grids
+            .iter()
+            .map(|(_, _, _, alloc_elapsed, _)| *alloc_elapsed)
+            .collect(),
+        worker_compute_by_worker: local_grids
+            .iter()
+            .map(|(_, _, _, _, compute_elapsed)| *compute_elapsed)
+            .collect(),
+        join_duration: join_elapsed,
+        merge_duration: merge_elapsed,
+        stage_duration: profile::elapsed_since(stage_started),
+    });
+    for (worker_index, (worker_samples, finite_samples, _, alloc_elapsed, compute_elapsed)) in
+        local_grids.iter().enumerate()
+    {
+        profile::log_parallel_worker(profile::ParallelWorkerProfile {
+            stage: "executor_residual_refresh_grid",
+            worker_index,
+            samples: *worker_samples,
+            accepted_samples: *finite_samples,
+            finite_visibility_samples: *finite_samples,
+            nonfinite_visibility_samples: worker_samples.saturating_sub(*finite_samples),
+            skipped_not_gridable: 0,
+            skipped_invalid_weight: 0,
+            skipped_invalid_sumwt: 0,
+            skipped_invalid_density: 0,
+            skipped_out_of_grid: 0,
+            degrid_tap_visits: if model_grid.is_some() {
+                finite_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: finite_samples.saturating_mul(49),
+            density_cell_hits: 0,
+            local_alloc_zero: *alloc_elapsed,
+            worker_compute: *compute_elapsed,
+        });
+    }
+    profile::log_serial_stage(profile::SerialStageProfile {
+        stage: "executor_residual_refresh_counts",
+        samples_total: plan.samples().len(),
+        finite_visibility_samples: finite_samples,
+        nonfinite_visibility_samples: plan.samples().len().saturating_sub(finite_samples),
+        planned_samples: plan.samples().len(),
+        model_grid_present_samples: if model_grid.is_some() {
+            finite_samples
+        } else {
+            0
+        },
+        model_grid_absent_samples: if model_grid.is_some() {
+            0
+        } else {
+            finite_samples
+        },
+        degrid_tap_visits: if model_grid.is_some() {
+            finite_samples.saturating_mul(49)
+        } else {
+            0
+        },
+        grid_tap_visits: finite_samples.saturating_mul(49),
+        stage_duration: Duration::ZERO,
+    });
+    Ok(())
+}
+
+fn accumulate_standard_mfs_residual_sample(
+    gridder: &StandardGridder,
+    model_grid: Option<&Array2<Complex32>>,
+    sample: &StandardMfsPlannedSample,
+    residual_grid: &mut Array2<Complex64>,
+) {
+    let observed_visibility = sample.visibility;
+    if !finite_visibility(observed_visibility) {
+        return;
+    }
+    let residual_weight = sample.grid_weight_f64();
+    if let Some(model_grid) = model_grid {
+        gridder.degrid_model_and_grid_residual_taps_planned_f64(
+            model_grid,
+            residual_grid,
+            &sample.positive_taps,
+            observed_visibility,
+            residual_weight,
+        );
+    } else {
+        let residual = Complex64::new(
+            f64::from(observed_visibility.re) * residual_weight,
+            f64::from(observed_visibility.im) * residual_weight,
+        );
+        gridder.grid_sample_taps_planned_f64(residual_grid, &sample.positive_taps, residual);
+    }
+}
+
+fn add_complex64_grid(target: &mut Array2<Complex64>, source: &Array2<Complex64>) {
+    if let (Some(target), Some(source)) = (
+        target.as_slice_memory_order_mut(),
+        source.as_slice_memory_order(),
+    ) {
+        for (target, source) in target.iter_mut().zip(source.iter()) {
+            *target += *source;
+        }
+        return;
+    }
+    Zip::from(target).and(source).for_each(|target, source| {
+        *target += *source;
+    });
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ResidualGridAccumulation {
+    valid_samples: usize,
+    planned_samples: usize,
+    gridded_residual_samples: usize,
+    skipped_not_gridable: usize,
+    skipped_invalid_weight: usize,
+    skipped_invalid_sumwt: usize,
+    skipped_out_of_grid: usize,
+    skipped_nonfinite_visibility: usize,
+}
+
+impl ResidualGridAccumulation {
+    fn add(&mut self, other: Self) {
+        self.valid_samples += other.valid_samples;
+        self.planned_samples += other.planned_samples;
+        self.gridded_residual_samples += other.gridded_residual_samples;
+        self.skipped_not_gridable += other.skipped_not_gridable;
+        self.skipped_invalid_weight += other.skipped_invalid_weight;
+        self.skipped_invalid_sumwt += other.skipped_invalid_sumwt;
+        self.skipped_out_of_grid += other.skipped_out_of_grid;
+        self.skipped_nonfinite_visibility += other.skipped_nonfinite_visibility;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_streaming_standard_mfs_residual_grid_serial(
+    gridder: &StandardGridder,
+    batches: &[VisibilityBatch],
+    model_grid: Option<&Array2<Complex32>>,
+    direct_components: Option<&Vec<DirectComponent>>,
+    use_direct_point_predict: bool,
+    mut samples: Option<&mut Vec<ResidualSampleTraceInternal>>,
+    residual_grid: &mut Array2<Complex64>,
+) -> ResidualGridAccumulation {
+    let mut counts = ResidualGridAccumulation::default();
+    let mut census = StandardMfsTapCensus::new("streaming_residual_grid");
+    let collect_profile = profile::standard_mfs_profile_detail_enabled();
+    for (batch_index, batch) in batches.iter().enumerate() {
+        for index in 0..batch.len() {
+            accumulate_streaming_standard_mfs_residual_sample(
+                gridder,
+                batch,
+                batch_index,
+                index,
+                model_grid,
+                direct_components,
+                use_direct_point_predict,
+                samples.as_deref_mut(),
+                residual_grid,
+                &mut counts,
+                collect_profile,
+                census.as_mut(),
+            );
+        }
+    }
+    if let Some(census) = census {
+        census.log(std::mem::size_of::<StandardMfsPlannedSample>());
+    }
+    counts
+}
+
+fn accumulate_streaming_standard_mfs_residual_grid_parallel(
+    gridder: &StandardGridder,
+    batches: &[VisibilityBatch],
+    model_grid: Option<&Array2<Complex32>>,
+    residual_grid: &mut Array2<Complex64>,
+    requested_threads: usize,
+) -> Result<ResidualGridAccumulation, ImagingError> {
+    let thread_count = requested_threads
+        .min(batches.len())
+        .min(thread::available_parallelism().map_or(1, |value| value.get()))
+        .max(1);
+    if thread_count <= 1 || batches.len() < 2 {
+        let stage_started = profile::maybe_profile_now();
+        let counts = accumulate_streaming_standard_mfs_residual_grid_serial(
+            gridder,
+            batches,
+            model_grid,
+            None,
+            false,
+            None,
+            residual_grid,
+        );
+        let samples_total = standard_mfs_sample_count(batches);
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "streaming_residual_refresh",
+            samples_total,
+            finite_visibility_samples: counts.valid_samples,
+            nonfinite_visibility_samples: samples_total.saturating_sub(counts.valid_samples),
+            planned_samples: counts.planned_samples,
+            model_grid_present_samples: if model_grid.is_some() {
+                counts.gridded_residual_samples
+            } else {
+                0
+            },
+            model_grid_absent_samples: if model_grid.is_some() {
+                0
+            } else {
+                counts.gridded_residual_samples
+            },
+            degrid_tap_visits: if model_grid.is_some() {
+                counts.gridded_residual_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+            stage_duration: profile::elapsed_since(stage_started),
+        });
+        return Ok(counts);
+    }
+
+    let [nx, ny] = gridder.grid_shape();
+    let chunk_len = batches.len().div_ceil(thread_count);
+    let stage_started = profile::maybe_profile_now();
+    let mut local_results = Vec::with_capacity(thread_count);
+    let join_started = profile::maybe_profile_now();
+    thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(thread_count);
+        for (chunk_index, chunk) in batches.chunks(chunk_len).enumerate() {
+            let batch_offset = chunk_index * chunk_len;
+            let worker_samples = standard_mfs_sample_count(chunk);
+            handles.push(scope.spawn(move || {
+                let alloc_started = profile::maybe_profile_now();
+                let mut local_grid = Array2::<Complex64>::zeros((nx, ny));
+                let alloc_elapsed = profile::elapsed_since(alloc_started);
+                let compute_started = profile::maybe_profile_now();
+                let counts = accumulate_streaming_standard_mfs_residual_grid_serial(
+                    gridder,
+                    chunk,
+                    model_grid,
+                    None,
+                    false,
+                    None,
+                    &mut local_grid,
+                );
+                let compute_elapsed = profile::elapsed_since(compute_started);
+                (
+                    batch_offset,
+                    worker_samples,
+                    local_grid,
+                    counts,
+                    alloc_elapsed,
+                    compute_elapsed,
+                )
+            }));
+        }
+        for handle in handles {
+            local_results.push(handle.join().map_err(|_| {
+                ImagingError::Unsupported("standard MFS streaming grid worker panicked".to_string())
+            })?);
+        }
+        Ok::<(), ImagingError>(())
+    })?;
+    let join_elapsed = profile::elapsed_since(join_started);
+
+    local_results.sort_by_key(|(batch_offset, _, _, _, _, _)| *batch_offset);
+    let mut counts = ResidualGridAccumulation::default();
+    let merge_started = profile::maybe_profile_now();
+    for (_, _, local_grid, local_counts, _, _) in &local_results {
+        add_complex64_grid(residual_grid, local_grid);
+        counts.add(*local_counts);
+    }
+    let merge_elapsed = profile::elapsed_since(merge_started);
+    profile::log_parallel_stage(profile::ParallelStageProfile {
+        stage: "streaming_residual_refresh_grid",
+        requested_threads,
+        actual_threads: local_results.len(),
+        chunking: "batch",
+        chunk_len,
+        samples_total: standard_mfs_sample_count(batches),
+        samples_per_worker: local_results
+            .iter()
+            .map(|(_, worker_samples, _, _, _, _)| *worker_samples)
+            .collect(),
+        local_grid_bytes_per_worker: complex64_grid_bytes(nx, ny, 1),
+        local_grid_count: 1,
+        local_alloc_zero_by_worker: local_results
+            .iter()
+            .map(|(_, _, _, _, alloc_elapsed, _)| *alloc_elapsed)
+            .collect(),
+        worker_compute_by_worker: local_results
+            .iter()
+            .map(|(_, _, _, _, _, compute_elapsed)| *compute_elapsed)
+            .collect(),
+        join_duration: join_elapsed,
+        merge_duration: merge_elapsed,
+        stage_duration: profile::elapsed_since(stage_started),
+    });
+    for (worker_index, (_, worker_samples, _, local_counts, alloc_elapsed, compute_elapsed)) in
+        local_results.iter().enumerate()
+    {
+        profile::log_parallel_worker(profile::ParallelWorkerProfile {
+            stage: "streaming_residual_refresh_grid",
+            worker_index,
+            samples: *worker_samples,
+            accepted_samples: local_counts.planned_samples,
+            finite_visibility_samples: local_counts.valid_samples,
+            nonfinite_visibility_samples: local_counts.skipped_nonfinite_visibility,
+            skipped_not_gridable: local_counts.skipped_not_gridable,
+            skipped_invalid_weight: local_counts.skipped_invalid_weight,
+            skipped_invalid_sumwt: local_counts.skipped_invalid_sumwt,
+            skipped_invalid_density: 0,
+            skipped_out_of_grid: local_counts.skipped_out_of_grid,
+            degrid_tap_visits: if model_grid.is_some() {
+                local_counts.gridded_residual_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: local_counts.gridded_residual_samples.saturating_mul(49),
+            density_cell_hits: 0,
+            local_alloc_zero: *alloc_elapsed,
+            worker_compute: *compute_elapsed,
+        });
+    }
+    profile::log_serial_stage(profile::SerialStageProfile {
+        stage: "streaming_residual_refresh_counts",
+        samples_total: standard_mfs_sample_count(batches),
+        finite_visibility_samples: counts.valid_samples,
+        nonfinite_visibility_samples: standard_mfs_sample_count(batches)
+            .saturating_sub(counts.valid_samples),
+        planned_samples: counts.planned_samples,
+        model_grid_present_samples: if model_grid.is_some() {
+            counts.gridded_residual_samples
+        } else {
+            0
+        },
+        model_grid_absent_samples: if model_grid.is_some() {
+            0
+        } else {
+            counts.gridded_residual_samples
+        },
+        degrid_tap_visits: if model_grid.is_some() {
+            counts.gridded_residual_samples.saturating_mul(49)
+        } else {
+            0
+        },
+        grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+        stage_duration: Duration::ZERO,
+    });
+    Ok(counts)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn accumulate_streaming_standard_mfs_residual_sample(
+    gridder: &StandardGridder,
+    batch: &VisibilityBatch,
+    batch_index: usize,
+    index: usize,
+    model_grid: Option<&Array2<Complex32>>,
+    direct_components: Option<&Vec<DirectComponent>>,
+    use_direct_point_predict: bool,
+    samples: Option<&mut Vec<ResidualSampleTraceInternal>>,
+    residual_grid: &mut Array2<Complex64>,
+    counts: &mut ResidualGridAccumulation,
+    collect_profile: bool,
+    mut census: Option<&mut StandardMfsTapCensus>,
+) {
+    let weight = batch.weight[index];
+    let observed_visibility = batch.visibility[index];
+    let gridable = batch.gridable[index];
+    let planned_sample: Option<PositiveTapSet> =
+        if gridable && weight.is_finite() && weight > 0.0 && finite_visibility(observed_visibility)
+        {
+            counts.valid_samples += 1;
+            let planned_sample =
+                gridder.plan_positive_taps(batch.u_lambda[index], batch.v_lambda[index]);
+            if let Some(plan) = planned_sample.as_ref() {
+                counts.planned_samples += 1;
+                if let Some(census) = census.as_mut() {
+                    census.observe_accepted(plan);
+                }
+            } else {
+                if collect_profile {
+                    counts.skipped_out_of_grid += 1;
+                }
+                if let Some(census) = census.as_mut() {
+                    census.observe_skip(StandardMfsTapSkipReason::OutOfGrid);
+                }
+            }
+            planned_sample
+        } else {
+            if !gridable {
+                if collect_profile {
+                    counts.skipped_not_gridable += 1;
+                }
+                if let Some(census) = census.as_mut() {
+                    census.observe_skip(StandardMfsTapSkipReason::NotGridable);
+                }
+            } else if !(weight.is_finite() && weight > 0.0) {
+                if collect_profile {
+                    counts.skipped_invalid_weight += 1;
+                }
+                if let Some(census) = census.as_mut() {
+                    census.observe_skip(StandardMfsTapSkipReason::InvalidWeight);
+                }
+            } else {
+                if collect_profile {
+                    counts.skipped_nonfinite_visibility += 1;
+                }
+                if let Some(census) = census.as_mut() {
+                    census.observe_skip(StandardMfsTapSkipReason::NonfiniteVisibility);
+                }
+            }
+            None
+        };
+    let sumwt_factor = batch.sumwt_factor[index];
+    let sumwt_valid = sumwt_factor.is_finite() && sumwt_factor > 0.0;
+    let mut fused_residual_gridded = false;
+    let predicted_visibility = if let Some(plan) = planned_sample.as_ref() {
+        if use_direct_point_predict {
+            direct_components.map_or_else(
+                || Complex32::new(0.0, 0.0),
+                |components| {
+                    direct_predict_visibility(
+                        components,
+                        batch.u_lambda[index],
+                        batch.v_lambda[index],
+                        0.0,
+                    )
+                },
+            )
+        } else if let Some(model_grid) = model_grid {
+            if sumwt_valid {
+                let residual_weight = f64::from(weight * sumwt_factor);
+                counts.gridded_residual_samples += 1;
+                fused_residual_gridded = true;
+                gridder.degrid_model_and_grid_residual_taps_planned_f64(
+                    model_grid,
+                    residual_grid,
+                    plan,
+                    observed_visibility,
+                    residual_weight,
+                )
+            } else {
+                gridder.degrid_sample_taps_planned_normalized(model_grid, plan)
+            }
+        } else {
+            Complex32::new(0.0, 0.0)
+        }
+    } else {
+        Complex32::new(0.0, 0.0)
+    };
+    let residual_visibility = observed_visibility - predicted_visibility;
+    if let Some(samples) = samples {
+        samples.push(ResidualSampleTraceInternal {
+            batch_index,
+            sample_index: index,
+            u_lambda: batch.u_lambda[index],
+            v_lambda: batch.v_lambda[index],
+            w_lambda: batch.w_lambda[index],
+            observed_visibility,
+            predicted_visibility,
+            residual_visibility,
+            weight,
+            gridable,
+        });
+    }
+    let Some(plan) = planned_sample.as_ref() else {
+        return;
+    };
+    if !sumwt_valid {
+        if collect_profile {
+            counts.skipped_invalid_sumwt += 1;
+        }
+        if let Some(census) = census.as_mut() {
+            census.observe_skip(StandardMfsTapSkipReason::InvalidSumwt);
+        }
+        return;
+    }
+    if fused_residual_gridded {
+        return;
+    }
+    counts.gridded_residual_samples += 1;
+    let residual_weight = f64::from(weight * sumwt_factor);
+    let residual = Complex64::new(
+        f64::from(residual_visibility.re) * residual_weight,
+        f64::from(residual_visibility.im) * residual_weight,
+    );
+    gridder.grid_sample_taps_planned_f64(residual_grid, plan, residual);
 }
 
 fn compute_residual_trace_standard(
@@ -5694,83 +10067,62 @@ fn compute_residual_standard_internal(
     };
 
     let degrid_grid_started = Instant::now();
-    let mut valid_samples = 0usize;
-    let mut planned_samples = 0usize;
-    let mut gridded_residual_samples = 0usize;
-    for (batch_index, batch) in batches.iter().enumerate() {
-        for index in 0..batch.len() {
-            let weight = batch.weight[index];
-            let observed_visibility = batch.visibility[index];
-            let gridable = batch.gridable[index];
-            let valid_sample = gridable
-                && weight.is_finite()
-                && weight > 0.0
-                && observed_visibility.re.is_finite()
-                && observed_visibility.im.is_finite();
-            let planned_sample = if valid_sample {
-                valid_samples += 1;
-                gridder.plan_sample(batch.u_lambda[index], batch.v_lambda[index])
+    let grid_threads = if capture_samples || use_direct_point_predict {
+        1
+    } else {
+        standard_mfs_grid_threads()
+    };
+    let samples_total = standard_mfs_sample_count(batches);
+    let ResidualGridAccumulation {
+        valid_samples,
+        planned_samples,
+        gridded_residual_samples,
+        ..
+    } = if grid_threads > 1 {
+        accumulate_streaming_standard_mfs_residual_grid_parallel(
+            gridder,
+            batches,
+            model_grid.as_ref(),
+            &mut residual_grid,
+            grid_threads,
+        )?
+    } else {
+        let stage_started = profile::maybe_profile_now();
+        let counts = accumulate_streaming_standard_mfs_residual_grid_serial(
+            gridder,
+            batches,
+            model_grid.as_ref(),
+            direct_components.as_ref(),
+            use_direct_point_predict,
+            capture_samples.then_some(&mut samples),
+            &mut residual_grid,
+        );
+        profile::log_serial_stage(profile::SerialStageProfile {
+            stage: "streaming_residual_refresh",
+            samples_total,
+            finite_visibility_samples: counts.valid_samples,
+            nonfinite_visibility_samples: samples_total.saturating_sub(counts.valid_samples),
+            planned_samples: counts.planned_samples,
+            model_grid_present_samples: if model_grid.is_some() {
+                counts.gridded_residual_samples
             } else {
-                None
-            };
-            if planned_sample.is_some() {
-                planned_samples += 1;
-            }
-            let predicted_visibility = if let Some(plan) = planned_sample.as_ref() {
-                if use_direct_point_predict {
-                    direct_components.as_ref().map_or_else(
-                        || Complex32::new(0.0, 0.0),
-                        |components| {
-                            direct_predict_visibility(
-                                components,
-                                batch.u_lambda[index],
-                                batch.v_lambda[index],
-                                0.0,
-                            )
-                        },
-                    )
-                } else {
-                    model_grid.as_ref().map_or_else(
-                        || Complex32::new(0.0, 0.0),
-                        |grid| {
-                            gridder.degrid_sample_product_planned_normalized(grid, &plan.positive)
-                        },
-                    )
-                }
+                0
+            },
+            model_grid_absent_samples: if model_grid.is_some() {
+                0
             } else {
-                Complex32::new(0.0, 0.0)
-            };
-            let residual_visibility = observed_visibility - predicted_visibility;
-            if capture_samples {
-                samples.push(ResidualSampleTraceInternal {
-                    batch_index,
-                    sample_index: index,
-                    u_lambda: batch.u_lambda[index],
-                    v_lambda: batch.v_lambda[index],
-                    w_lambda: batch.w_lambda[index],
-                    observed_visibility,
-                    predicted_visibility,
-                    residual_visibility,
-                    weight,
-                    gridable,
-                });
-            }
-            let Some(plan) = planned_sample.as_ref() else {
-                continue;
-            };
-            let sumwt_factor = batch.sumwt_factor[index];
-            if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
-                continue;
-            }
-            gridded_residual_samples += 1;
-            let residual_weight = f64::from(weight * sumwt_factor);
-            let residual = Complex64::new(
-                f64::from(residual_visibility.re) * residual_weight,
-                f64::from(residual_visibility.im) * residual_weight,
-            );
-            gridder.grid_sample_product_planned_f64(&mut residual_grid, &plan.positive, residual);
-        }
-    }
+                counts.gridded_residual_samples
+            },
+            degrid_tap_visits: if model_grid.is_some() {
+                counts.gridded_residual_samples.saturating_mul(49)
+            } else {
+                0
+            },
+            grid_tap_visits: counts.gridded_residual_samples.saturating_mul(49),
+            stage_duration: profile::elapsed_since(stage_started),
+        });
+        counts
+    };
     timings.degrid_grid = degrid_grid_started.elapsed();
 
     let fft_started = Instant::now();
@@ -5786,12 +10138,13 @@ fn compute_residual_standard_internal(
     stage_timings.residual_normalize += timings.normalize;
     if trace_timing {
         eprintln!(
-            "CASA_RS_TRACE_RESIDUAL_TIMING residual_refresh mode={} batches={} input_samples={} valid_samples={} planned_samples={} gridded_residual_samples={} model_nonzero={} direct_components={} direct_setup_ms={:.3} model_fft_ms={:.3} degrid_grid_ms={:.3} residual_fft_ms={:.3} normalize_ms={:.3} total_ms={:.3}",
+            "CASA_RS_TRACE_RESIDUAL_TIMING residual_refresh mode={} grid_threads={} batches={} input_samples={} valid_samples={} planned_samples={} gridded_residual_samples={} model_nonzero={} direct_components={} direct_setup_ms={:.3} model_fft_ms={:.3} degrid_grid_ms={:.3} residual_fft_ms={:.3} normalize_ms={:.3} total_ms={:.3}",
             if use_direct_point_predict {
                 "direct"
             } else {
                 "fft_grid"
             },
+            grid_threads,
             batches.len(),
             batches.iter().map(VisibilityBatch::len).sum::<usize>(),
             valid_samples,
@@ -7006,13 +11359,17 @@ mod tests {
     use num_complex::Complex32;
     use serial_test::serial;
 
+    #[cfg(target_os = "macos")]
+    use super::compute_dirty_psf_and_residual_standard_metal;
     use super::{
         CleanConfig, CleanStopReason, CompatibilityMode, CubeChannelRequest, CubeImagingRequest,
         CubeModelChannelContribution, CubeModelInterpolationBatch, Deconvolver, GridderMode,
         HogbomIterationMode, ImageGeometry, ImagingRequest, ImagingStageTimings,
         MosaicGridderConfig, MtmfsRequest, ParallelHandBatch, PlaneStokes, PrimaryBeamModel,
-        PsfState, RestoringBeamMode, StandardGridder, StandardMfsDirtyAccumulator,
-        StandardMfsDirtyAccumulatorRequest, StandardMfsModelPredictor, VisibilityBatch,
+        PsfState, RestoringBeamMode, StandardGridder, StandardMfsBackendSelection,
+        StandardMfsDirtyAccumulator, StandardMfsDirtyAccumulatorRequest,
+        StandardMfsExecutionConfig, StandardMfsModelPredictor, StandardMfsPlannedSampleBuilder,
+        StandardMfsPlannedWeightedSample, StandardMfsWeightedSample, VisibilityBatch,
         VisibilityMetadataBatch, WProjectSkipReason, WTermMode, WeightDensityMode, WeightingMode,
         add_shifted_kernel, apply_chauvenet_clipping, apply_weighting, build_direct_components,
         build_direct_pixel_coordinates, build_multiscale_scale_masks, compute_cycle_threshold,
@@ -7020,13 +11377,140 @@ mod tests {
         compute_residual_direct, direct_predict_visibility, dirty_clean_config,
         make_multiscale_kernel, mean_stddev, minor_cycle_stop_reason,
         mosaic_pointing_contributes_by_simple_pb_center, mosaic_pointing_pixel_inside_image,
-        mosaic_projector_sampling, peak_abs_value, peak_location_masked, run_cube, run_dirty_cube,
-        run_hogbom_minor_cycle, run_imaging, run_mtmfs, tolerant_clean_stop_reason,
+        mosaic_projector_sampling, parse_standard_mfs_backend_selection,
+        parse_standard_mfs_thread_count, peak_abs_value, peak_location_masked, run_cube,
+        run_dirty_cube, run_hogbom_minor_cycle, run_imaging, run_imaging_owned, run_mtmfs,
+        run_standard_mfs_planned_sample_block_streaming_with_execution_config,
+        run_standard_mfs_weighted_sample_block_streaming_with_execution_config,
+        run_standard_mfs_weighted_sample_streaming_with_execution_config,
+        run_standard_mfs_weighted_streaming_with_execution_config, tolerant_clean_stop_reason,
         trace_cube_channel_residual_refresh,
         trace_cube_channel_residual_refresh_model_channel_lambda,
         trace_cube_channel_w_project_plan, trace_cube_weighting, trace_residual_refresh,
         trace_w_project_plan, trace_weighting,
     };
+
+    #[test]
+    fn standard_mfs_thread_count_parser_accepts_numeric_and_auto_values() {
+        assert_eq!(parse_standard_mfs_thread_count("1"), Some(1));
+        assert_eq!(parse_standard_mfs_thread_count("10"), Some(10));
+        assert_eq!(parse_standard_mfs_thread_count(" 4 "), Some(4));
+        assert_eq!(parse_standard_mfs_thread_count("0"), None);
+        assert_eq!(parse_standard_mfs_thread_count("not-a-count"), None);
+        assert!(parse_standard_mfs_thread_count("auto").is_some_and(|value| value >= 1));
+        assert!(parse_standard_mfs_thread_count("AUTO").is_some_and(|value| value >= 1));
+    }
+
+    #[test]
+    fn standard_mfs_metal_backend_selection_is_explicit_and_gated() {
+        assert_eq!(
+            parse_standard_mfs_backend_selection("metal").unwrap(),
+            StandardMfsBackendSelection::Metal
+        );
+        assert_eq!(
+            parse_standard_mfs_backend_selection("metal-row-run").unwrap(),
+            StandardMfsBackendSelection::MetalRowRun
+        );
+        assert_eq!(
+            parse_standard_mfs_backend_selection("metal-row-run-grouped").unwrap(),
+            StandardMfsBackendSelection::MetalRowRunGrouped
+        );
+        assert_eq!(
+            parse_standard_mfs_backend_selection("fixed_tile").unwrap(),
+            StandardMfsBackendSelection::FixedTile
+        );
+        assert!(
+            parse_standard_mfs_backend_selection("not-a-backend")
+                .unwrap_err()
+                .to_string()
+                .contains(
+                    "expected cpu, fixed_tile, metal, metal-row-run, or metal-row-run-grouped"
+                )
+        );
+
+        let geometry = ImageGeometry {
+            image_shape: [32, 32],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![point_source_visibilities(
+                &[(0.0, 0.0, 0.0)],
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (16.0, 16.0),
+                1.0,
+            )],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Natural,
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.4e9, 1.4e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 0,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+
+        #[cfg(target_os = "macos")]
+        {
+            let gridder = StandardGridder::new(geometry).unwrap();
+            let weighted_batches = apply_weighting(&request, &gridder).unwrap();
+            let mut cpu_timings = ImagingStageTimings::default();
+            let (cpu_psf, cpu_residual) = compute_dirty_psf_and_residual_standard(
+                &weighted_batches,
+                &gridder,
+                &mut cpu_timings,
+            )
+            .unwrap();
+            let mut metal_timings = ImagingStageTimings::default();
+            let metal_result = compute_dirty_psf_and_residual_standard_metal(
+                &weighted_batches,
+                &gridder,
+                StandardMfsExecutionConfig::default(),
+                &mut metal_timings,
+            );
+            let (metal_psf, metal_residual) = match metal_result {
+                Ok(result) => result,
+                Err(error)
+                    if error
+                        .to_string()
+                        .contains("could not find a default Metal device") =>
+                {
+                    return;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            let max_psf_delta = metal_psf
+                .psf
+                .iter()
+                .zip(cpu_psf.psf.iter())
+                .map(|(lhs, rhs)| (lhs - rhs).abs())
+                .fold(0.0f32, f32::max);
+            let max_residual_delta = metal_residual
+                .iter()
+                .zip(cpu_residual.iter())
+                .map(|(lhs, rhs)| (lhs - rhs).abs())
+                .fold(0.0f32, f32::max);
+            assert!(max_psf_delta < 1.0e-4, "max PSF delta {max_psf_delta}");
+            assert!(
+                max_residual_delta < 1.0e-4,
+                "max residual delta {max_residual_delta}"
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = request;
+        }
+    }
 
     #[test]
     fn mosaic_projector_sampling_matches_casa_hetarray_default() {
@@ -7359,6 +11843,331 @@ mod tests {
         }
     }
 
+    fn assert_array4_close(actual: &Array4<f32>, expected: &Array4<f32>, tolerance: f32) {
+        assert_eq!(actual.dim(), expected.dim());
+        let max_abs = actual
+            .iter()
+            .zip(expected.iter())
+            .map(|(actual, expected)| (actual - expected).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_abs <= tolerance,
+            "max abs difference {max_abs:.6e} exceeded tolerance {tolerance:.6e}"
+        );
+    }
+
+    #[test]
+    fn owned_standard_mfs_briggs_clean_matches_borrowed_run() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [
+            (-95.0, -35.0, 0.0),
+            (-70.0, 40.0, 0.0),
+            (-35.0, -80.0, 0.0),
+            (22.0, 75.0, 0.0),
+            (55.0, -25.0, 0.0),
+            (105.0, 50.0, 0.0),
+        ];
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![point_source_visibilities(
+                &samples,
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (34.0, 30.0),
+                1.0,
+            )],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Briggs { robust: 0.5 },
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 4,
+                gain: 0.2,
+                minor_cycle_length: 2,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+
+        let borrowed = run_imaging(&request).unwrap();
+        let owned = run_imaging_owned(request).unwrap();
+
+        assert_eq!(owned.psf, borrowed.psf);
+        assert_eq!(owned.residual, borrowed.residual);
+        assert_eq!(owned.model, borrowed.model);
+        assert_eq!(owned.image, borrowed.image);
+        assert_eq!(owned.sumwt, borrowed.sumwt);
+        assert_eq!(
+            owned.diagnostics.minor_iterations,
+            borrowed.diagnostics.minor_iterations
+        );
+        assert_eq!(
+            owned.diagnostics.clean_stop_reason,
+            borrowed.diagnostics.clean_stop_reason
+        );
+    }
+
+    #[test]
+    fn streaming_weighted_standard_mfs_clean_matches_retained_batches() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [
+            (-95.0, -35.0, 0.0),
+            (-70.0, 40.0, 0.0),
+            (-35.0, -80.0, 0.0),
+            (22.0, 75.0, 0.0),
+            (55.0, -25.0, 0.0),
+            (105.0, 50.0, 0.0),
+        ];
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: vec![point_source_visibilities(
+                &samples,
+                geometry.cell_size_rad[0],
+                geometry.image_shape,
+                (34.0, 30.0),
+                1.0,
+            )],
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Briggs { robust: 0.5 },
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 4,
+                gain: 0.2,
+                minor_cycle_length: 2,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let gridder = StandardGridder::new(geometry).unwrap();
+        let weighted_batches = apply_weighting(&request, &gridder).unwrap();
+        let retained = run_imaging(&request).unwrap();
+        let mut streaming_request = request.clone();
+        streaming_request.visibility_batches.clear();
+        let streaming = run_standard_mfs_weighted_streaming_with_execution_config(
+            streaming_request,
+            StandardMfsExecutionConfig {
+                fixed_tile_resident_bytes: Some(usize::MAX),
+                fixed_tile_edge: Some(16),
+                fixed_tile_center_boundary: false,
+                fixed_tile_max_live_row_blocks: 1,
+                fixed_tile_use_planned_run_blocks: false,
+                metal_grouped_input_cache: false,
+            },
+            |consumer| {
+                for batch in &weighted_batches {
+                    consumer(vec![batch.clone()])?;
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_array4_close(&streaming.psf, &retained.psf, 1.0e-5);
+        assert_array4_close(&streaming.residual, &retained.residual, 1.0e-5);
+        assert_array4_close(&streaming.model, &retained.model, 1.0e-5);
+        assert_array4_close(&streaming.image, &retained.image, 1.0e-5);
+        assert_eq!(
+            streaming.diagnostics.minor_iterations,
+            retained.diagnostics.minor_iterations
+        );
+        assert_eq!(
+            streaming.diagnostics.clean_stop_reason,
+            retained.diagnostics.clean_stop_reason
+        );
+    }
+
+    #[test]
+    fn sample_streaming_weighted_standard_mfs_clean_matches_batch_streaming() {
+        let geometry = ImageGeometry {
+            image_shape: [64, 64],
+            cell_size_rad: [1.0e-4, 1.0e-4],
+        };
+        let samples = [
+            (-95.0, -35.0, 0.0),
+            (-70.0, 40.0, 0.0),
+            (-35.0, -80.0, 0.0),
+            (22.0, 75.0, 0.0),
+            (55.0, -25.0, 0.0),
+            (105.0, 50.0, 0.0),
+        ];
+        let request = ImagingRequest {
+            geometry,
+            visibility_batches: Vec::new(),
+            gridder_mode: GridderMode::Standard,
+            plane_stokes: PlaneStokes::I,
+            weighting: WeightingMode::Briggs { robust: 0.5 },
+            reffreq_hz: 1.4e9,
+            selected_frequency_range_hz: [1.399e9, 1.401e9],
+            deconvolver: Deconvolver::Hogbom,
+            multiscale_scales: Vec::new(),
+            small_scale_bias: 0.0,
+            clean: CleanConfig {
+                niter: 4,
+                gain: 0.2,
+                minor_cycle_length: 2,
+                ..CleanConfig::default()
+            },
+            clean_mask: None,
+            initial_model: None,
+            w_term_mode: WTermMode::None,
+            w_project_planes: None,
+            compatibility: CompatibilityMode::CasaStandardMfs,
+        };
+        let weighted_batches = vec![point_source_visibilities(
+            &samples,
+            geometry.cell_size_rad[0],
+            geometry.image_shape,
+            (34.0, 30.0),
+            1.0,
+        )];
+        let execution_config = StandardMfsExecutionConfig {
+            fixed_tile_resident_bytes: Some(usize::MAX),
+            fixed_tile_edge: Some(16),
+            fixed_tile_center_boundary: false,
+            fixed_tile_max_live_row_blocks: 1,
+            fixed_tile_use_planned_run_blocks: false,
+            metal_grouped_input_cache: false,
+        };
+        let batch_streaming = run_standard_mfs_weighted_streaming_with_execution_config(
+            request.clone(),
+            execution_config,
+            |consumer| {
+                for batch in &weighted_batches {
+                    consumer(vec![batch.clone()])?;
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        let block_streaming =
+            run_standard_mfs_weighted_sample_block_streaming_with_execution_config(
+                request.clone(),
+                execution_config,
+                |consumer| {
+                    let mut block = Vec::<StandardMfsWeightedSample>::new();
+                    for batch in &weighted_batches {
+                        block.clear();
+                        for sample_index in 0..batch.len() {
+                            block.push(StandardMfsWeightedSample {
+                                u_lambda: batch.u_lambda[sample_index],
+                                v_lambda: batch.v_lambda[sample_index],
+                                w_lambda: batch.w_lambda[sample_index],
+                                weight: batch.weight[sample_index],
+                                sumwt_factor: batch.sumwt_factor[sample_index],
+                                gridable: batch.gridable[sample_index],
+                                visibility: batch.visibility[sample_index],
+                            });
+                        }
+                        consumer(&block)?;
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let planned_builder = StandardMfsPlannedSampleBuilder::new(geometry).unwrap();
+        let planned_streaming =
+            run_standard_mfs_planned_sample_block_streaming_with_execution_config(
+                request.clone(),
+                execution_config,
+                |consumer| {
+                    let mut block = Vec::<StandardMfsPlannedWeightedSample>::new();
+                    for batch in &weighted_batches {
+                        block.clear();
+                        for sample_index in 0..batch.len() {
+                            let sample = StandardMfsWeightedSample {
+                                u_lambda: batch.u_lambda[sample_index],
+                                v_lambda: batch.v_lambda[sample_index],
+                                w_lambda: batch.w_lambda[sample_index],
+                                weight: batch.weight[sample_index],
+                                sumwt_factor: batch.sumwt_factor[sample_index],
+                                gridable: batch.gridable[sample_index],
+                                visibility: batch.visibility[sample_index],
+                            };
+                            if let Some(planned) = planned_builder.plan_sample(sample)? {
+                                block.push(planned);
+                            }
+                        }
+                        consumer(&block)?;
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let sample_streaming = run_standard_mfs_weighted_sample_streaming_with_execution_config(
+            request,
+            execution_config,
+            |consumer| {
+                for batch in &weighted_batches {
+                    for sample_index in 0..batch.len() {
+                        consumer(StandardMfsWeightedSample {
+                            u_lambda: batch.u_lambda[sample_index],
+                            v_lambda: batch.v_lambda[sample_index],
+                            w_lambda: batch.w_lambda[sample_index],
+                            weight: batch.weight[sample_index],
+                            sumwt_factor: batch.sumwt_factor[sample_index],
+                            gridable: batch.gridable[sample_index],
+                            visibility: batch.visibility[sample_index],
+                        })?;
+                    }
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_array4_close(&block_streaming.psf, &batch_streaming.psf, 1.0e-5);
+        assert_array4_close(&block_streaming.residual, &batch_streaming.residual, 1.0e-5);
+        assert_array4_close(&block_streaming.model, &batch_streaming.model, 1.0e-5);
+        assert_array4_close(&block_streaming.image, &batch_streaming.image, 1.0e-5);
+        assert_array4_close(&planned_streaming.psf, &batch_streaming.psf, 1.0e-5);
+        assert_array4_close(
+            &planned_streaming.residual,
+            &batch_streaming.residual,
+            1.0e-5,
+        );
+        assert_array4_close(&planned_streaming.model, &batch_streaming.model, 1.0e-5);
+        assert_array4_close(&planned_streaming.image, &batch_streaming.image, 1.0e-5);
+        assert_array4_close(&sample_streaming.psf, &batch_streaming.psf, 1.0e-5);
+        assert_array4_close(
+            &sample_streaming.residual,
+            &batch_streaming.residual,
+            1.0e-5,
+        );
+        assert_array4_close(&sample_streaming.model, &batch_streaming.model, 1.0e-5);
+        assert_array4_close(&sample_streaming.image, &batch_streaming.image, 1.0e-5);
+        assert_eq!(
+            sample_streaming.diagnostics.minor_iterations,
+            batch_streaming.diagnostics.minor_iterations
+        );
+        assert_eq!(
+            sample_streaming.diagnostics.clean_stop_reason,
+            batch_streaming.diagnostics.clean_stop_reason
+        );
+    }
+
     #[test]
     fn mosaic_clean_reduces_residual_peak_and_tracks_pb_weight_image() {
         let geometry = ImageGeometry {
@@ -7578,6 +12387,7 @@ mod tests {
             &gridder,
             &model,
             &separate_psf,
+            StandardMfsExecutionConfig::default(),
             &mut separate_timings,
         )
         .unwrap();
@@ -8088,6 +12898,7 @@ mod tests {
             &gridder,
             &model,
             &psf_state,
+            StandardMfsExecutionConfig::default(),
             &mut stage_timings,
         )
         .unwrap();
@@ -8380,6 +13191,7 @@ mod tests {
             &gridder,
             &model,
             &psf_state,
+            StandardMfsExecutionConfig::default(),
             &mut stage_timings,
         )
         .unwrap();
@@ -8515,6 +13327,7 @@ mod tests {
             &gridder,
             &model,
             &psf_state,
+            StandardMfsExecutionConfig::default(),
             &mut stage_timings,
         )
         .unwrap();
@@ -8697,6 +13510,7 @@ mod tests {
             &gridder,
             &model,
             &psf_state,
+            StandardMfsExecutionConfig::default(),
             &mut stage_timings,
         )
         .unwrap();
@@ -10348,6 +15162,7 @@ mod tests {
                 &gridder,
                 &Array2::<f32>::zeros((geometry.nx(), geometry.ny())),
                 &psf,
+                StandardMfsExecutionConfig::default(),
                 &mut timings,
             )
             .unwrap();

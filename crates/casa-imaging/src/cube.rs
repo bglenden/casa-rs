@@ -784,6 +784,7 @@ fn run_clean_cube(request: &CubeImagingRequest) -> Result<CubeImagingResult, Ima
                         &gridder,
                         &model,
                         &psf_state,
+                        crate::StandardMfsExecutionConfig::default(),
                         &mut plane_stage_timings,
                     )?;
                     let multiscale_state =

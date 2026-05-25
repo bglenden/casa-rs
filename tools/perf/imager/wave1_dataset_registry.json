@@ -46,6 +46,7 @@
       "selected_modes": [
         "standard-mfs-dirty-control",
         "standard-mfs-clean-current",
+        "standard-mfs-clean-niter2",
         "standard-cube-line",
         "mtmfs-wideband-sentinel"
       ],

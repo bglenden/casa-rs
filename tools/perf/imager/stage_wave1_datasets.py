@@ -330,12 +330,15 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
     is_mtmfs = mode_id.startswith("mtmfs")
     deconvolver = "mtmfs" if is_mtmfs else ("multiscale" if is_clean else "hogbom")
     channels = workload_channel_count(dataset, mode_id, specmode)
-    if dataset["tier"] == "small":
+    if mode_id.endswith("-niter2"):
+        niter = 2 if is_clean else 0
+    elif dataset["tier"] == "small":
         niter = 25 if is_clean else 0
     elif dataset["tier"] == "medium":
         niter = 100 if is_clean else 0
     else:
         niter = 250 if is_clean else 0
+    minor_cycle_length = niter if is_clean else 2
     return {
         "id": f"{dataset['id']}-{mode_id}",
         "mode_id": mode_id,
@@ -362,6 +365,7 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
             "nterms": 2 if is_mtmfs else 1,
             "scales": [0, 5, 15] if deconvolver == "multiscale" else "",
             "niter": niter,
+            "minor_cycle_length": minor_cycle_length,
             "wterm": "none",
         },
         "run": {
@@ -369,12 +373,17 @@ def build_workload_manifest(dataset: dict[str, Any], mode_id: str) -> dict[str, 
             "run_label": "warm",
             "storage_label": dataset["storage_label"],
         },
-        "comparison": {
-            "products": [".image.tt0", ".residual.tt0", ".psf.tt0"]
-            if is_mtmfs
-            else [".image", ".residual", ".psf"]
-        },
+        "comparison": {"products": comparison_products_for_mode(is_clean, is_mtmfs)},
     }
+
+
+def comparison_products_for_mode(is_clean: bool, is_mtmfs: bool) -> list[str]:
+    if is_mtmfs:
+        return [".image.tt0", ".residual.tt0", ".psf.tt0"]
+    products = [".image", ".residual", ".psf"]
+    if is_clean:
+        products.append(".model")
+    return products
 
 
 def workload_channel_count(dataset: dict[str, Any], mode_id: str, specmode: str) -> int:

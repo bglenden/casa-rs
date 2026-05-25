@@ -21,6 +21,25 @@ num-complex.workspace = true
 rustfft.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6.4", default-features = false }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
+objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "MTLAllocation",
+    "MTLBuffer",
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLCommandQueue",
+    "MTLComputeCommandEncoder",
+    "MTLComputePipeline",
+    "MTLDevice",
+    "MTLLibrary",
+    "MTLResource",
+    "MTLTypes",
+    "block2",
+    "objc2-core-foundation",
+] }
+
 [dev-dependencies]
 casa-test-support = { path = "../casa-test-support" }
 serial_test = "3"

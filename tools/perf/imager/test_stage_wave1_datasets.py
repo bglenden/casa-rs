@@ -100,7 +100,57 @@ class StageWave1DatasetsTest(unittest.TestCase):
         self.assertIsNone(workload["imaging"].get("phasecenter_field"))
         self.assertEqual("mtmfs", workload["imaging"]["deconvolver"])
         self.assertEqual(2, workload["imaging"]["nterms"])
-        self.assertEqual([".image.tt0", ".residual.tt0", ".psf.tt0"], workload["comparison"]["products"])
+        self.assertEqual(
+            [".image.tt0", ".residual.tt0", ".psf.tt0"],
+            workload["comparison"]["products"],
+        )
+
+    def test_clean_workload_compares_model_product(self) -> None:
+        spec = stage.select_datasets(
+            self.registry,
+            dataset_ids=["wave1-vla-single-medium"],
+            tiers=None,
+            instruments=None,
+        )
+        dataset = stage.build_plan(
+            self.registry,
+            spec,
+            self.data_root,
+            allow_non_external_large_root=False,
+        )["datasets"][0]
+
+        workload = stage.build_workload_manifest(dataset, "standard-mfs-clean-current")
+
+        self.assertEqual(
+            [".image", ".residual", ".psf", ".model"],
+            workload["comparison"]["products"],
+        )
+        self.assertEqual(100, workload["imaging"]["niter"])
+        self.assertEqual(100, workload["imaging"]["minor_cycle_length"])
+
+    def test_niter2_clean_workload_is_shallow_diagnostic(self) -> None:
+        spec = stage.select_datasets(
+            self.registry,
+            dataset_ids=["wave1-vla-single-medium"],
+            tiers=None,
+            instruments=None,
+        )
+        dataset = stage.build_plan(
+            self.registry,
+            spec,
+            self.data_root,
+            allow_non_external_large_root=False,
+        )["datasets"][0]
+
+        workload = stage.build_workload_manifest(dataset, "standard-mfs-clean-niter2")
+
+        self.assertEqual("clean", workload["imaging"]["mode"])
+        self.assertEqual(2, workload["imaging"]["niter"])
+        self.assertEqual(2, workload["imaging"]["minor_cycle_length"])
+        self.assertEqual(
+            [".image", ".residual", ".psf", ".model"],
+            workload["comparison"]["products"],
+        )
 
     def test_large_tier_policy_rejects_multiple_large_datasets(self) -> None:
         registry = copy.deepcopy(self.registry)

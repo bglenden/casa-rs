@@ -101,7 +101,7 @@ fn trace_streamed_tiled_writes() -> bool {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct SharedTileKey {
-    table_path: PathBuf,
+    table_id: u64,
     dm_seq_nr: u32,
     cube_idx: usize,
     target_col_idx: usize,
@@ -120,6 +120,8 @@ struct SharedTileCacheState {
     explicit_budget: Option<usize>,
     bytes_used: usize,
     clock: u64,
+    next_table_id: u64,
+    table_ids: std::collections::HashMap<PathBuf, u64>,
     entries: std::collections::HashMap<SharedTileKey, SharedTileEntry>,
 }
 
@@ -130,6 +132,8 @@ impl SharedTileCacheState {
             explicit_budget: None,
             bytes_used: 0,
             clock: 0,
+            next_table_id: 1,
+            table_ids: std::collections::HashMap::new(),
             entries: std::collections::HashMap::new(),
         }
     }
@@ -154,10 +158,22 @@ impl SharedTileCacheState {
 
     fn reset_for_tests(&mut self) {
         self.entries.clear();
+        self.table_ids.clear();
         self.bytes_used = 0;
         self.clock = 0;
+        self.next_table_id = 1;
         self.explicit_budget = None;
         self.budget_bytes = table_cache_budget_from_env();
+    }
+
+    fn table_id(&mut self, table_path: &Path) -> u64 {
+        if let Some(id) = self.table_ids.get(table_path) {
+            return *id;
+        }
+        let id = self.next_table_id;
+        self.next_table_id = self.next_table_id.wrapping_add(1).max(1);
+        self.table_ids.insert(table_path.to_path_buf(), id);
+        id
     }
 
     fn insert(&mut self, key: SharedTileKey, data: Arc<[u8]>) -> Arc<[u8]> {
@@ -197,6 +213,7 @@ impl SharedTileCacheState {
 
 static SHARED_TILE_CACHE: LazyLock<Mutex<SharedTileCacheState>> =
     LazyLock::new(|| Mutex::new(SharedTileCacheState::new()));
+const TILE_READ_SESSION_RECENT_TILE_COUNT: usize = 8;
 
 fn table_cache_budget_from_env() -> usize {
     std::env::var(TABLE_CACHE_BUDGET_ENV)
@@ -246,12 +263,16 @@ pub(crate) fn shared_tile_cache_entry_count() -> usize {
 
 #[cfg(test)]
 fn shared_tile_cache_entry_count_for_table(table_path: &Path) -> usize {
-    SHARED_TILE_CACHE
+    let cache = SHARED_TILE_CACHE
         .lock()
-        .expect("shared tile cache lock poisoned")
+        .expect("shared tile cache lock poisoned");
+    let Some(table_id) = cache.table_ids.get(table_path).copied() else {
+        return 0;
+    };
+    cache
         .entries
         .keys()
-        .filter(|key| key.table_path == table_path)
+        .filter(|key| key.table_id == table_id)
         .count()
 }
 
@@ -260,8 +281,11 @@ pub(crate) fn invalidate_shared_tile_cache_for_table(table_path: &Path) {
         .lock()
         .expect("shared tile cache lock poisoned");
     let mut freed_bytes = 0usize;
+    let Some(table_id) = cache.table_ids.remove(table_path) else {
+        return;
+    };
     cache.entries.retain(|key, entry| {
-        let keep = key.table_path != table_path;
+        let keep = key.table_id != table_id;
         if !keep {
             freed_bytes += entry.bytes;
         }
@@ -1095,28 +1119,14 @@ fn decode_array_value(
         }
         CasacoreDataType::TpComplex => {
             // Complex = (float, float) pairs
-            let floats = if big_endian {
-                read_f32_slice_be(raw, nelem * 2)
-            } else {
-                read_f32_slice_le(raw, nelem * 2)
-            };
-            let vals: Vec<Complex32> = (0..nelem)
-                .map(|i| Complex32::new(floats[2 * i], floats[2 * i + 1]))
-                .collect();
+            let vals = decode_complex32_values(raw, nelem, big_endian);
             ArrayValue::Complex32(
                 ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
             )
         }
         CasacoreDataType::TpDComplex => {
-            let doubles = if big_endian {
-                read_f64_slice_be(raw, nelem * 2)
-            } else {
-                read_f64_slice_le(raw, nelem * 2)
-            };
-            let vals: Vec<Complex64> = (0..nelem)
-                .map(|i| Complex64::new(doubles[2 * i], doubles[2 * i + 1]))
-                .collect();
+            let vals = decode_complex64_values(raw, nelem, big_endian);
             ArrayValue::Complex64(
                 ArrayD::from_shape_vec(IxDyn(shape).f(), vals)
                     .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))?,
@@ -1129,6 +1139,46 @@ fn decode_array_value(
         }
     };
     Ok(Value::Array(av))
+}
+
+fn decode_complex32_values(raw: &[u8], nelem: usize, big_endian: bool) -> Vec<Complex32> {
+    let mut values = Vec::with_capacity(nelem);
+    for chunk in raw[..nelem * 8].chunks_exact(8) {
+        values.push(decode_complex32_scalar(chunk, big_endian));
+    }
+    values
+}
+
+fn decode_complex32_scalar(raw: &[u8], big_endian: bool) -> Complex32 {
+    let re = if big_endian {
+        f32::from_be_bytes(raw[0..4].try_into().expect("exact f32 bytes"))
+    } else {
+        f32::from_le_bytes(raw[0..4].try_into().expect("exact f32 bytes"))
+    };
+    let im = if big_endian {
+        f32::from_be_bytes(raw[4..8].try_into().expect("exact f32 bytes"))
+    } else {
+        f32::from_le_bytes(raw[4..8].try_into().expect("exact f32 bytes"))
+    };
+    Complex32::new(re, im)
+}
+
+fn decode_complex64_values(raw: &[u8], nelem: usize, big_endian: bool) -> Vec<Complex64> {
+    let mut values = Vec::with_capacity(nelem);
+    for chunk in raw[..nelem * 16].chunks_exact(16) {
+        let re = if big_endian {
+            f64::from_be_bytes(chunk[0..8].try_into().expect("exact f64 bytes"))
+        } else {
+            f64::from_le_bytes(chunk[0..8].try_into().expect("exact f64 bytes"))
+        };
+        let im = if big_endian {
+            f64::from_be_bytes(chunk[8..16].try_into().expect("exact f64 bytes"))
+        } else {
+            f64::from_le_bytes(chunk[8..16].try_into().expect("exact f64 bytes"))
+        };
+        values.push(Complex64::new(re, im));
+    }
+    values
 }
 
 /// Encode a `Value::Array` into raw bytes in the specified byte order.
@@ -6209,10 +6259,24 @@ fn write_tiled_file_tile(
 
 #[derive(Default)]
 struct TileReadSession {
+    table_id: Option<u64>,
     files: std::collections::HashMap<u32, std::fs::File>,
+    recent_tiles: Vec<(SharedTileKey, Arc<[u8]>)>,
 }
 
 impl TileReadSession {
+    fn table_id(&mut self, table_path: &Path) -> u64 {
+        if let Some(id) = self.table_id {
+            return id;
+        }
+        let mut cache = SHARED_TILE_CACHE
+            .lock()
+            .expect("shared tile cache lock poisoned");
+        let id = cache.table_id(table_path);
+        self.table_id = Some(id);
+        id
+    }
+
     fn file(
         &mut self,
         table_path: &Path,
@@ -6230,6 +6294,28 @@ impl TileReadSession {
             }
         }
     }
+
+    fn recent_tile(&self, key: &SharedTileKey) -> Option<Arc<[u8]>> {
+        self.recent_tiles
+            .iter()
+            .find_map(|(recent_key, data)| (recent_key == key).then(|| Arc::clone(data)))
+    }
+
+    fn remember_tile(&mut self, key: SharedTileKey, data: Arc<[u8]>) {
+        if let Some(position) = self
+            .recent_tiles
+            .iter()
+            .position(|(recent_key, _)| recent_key == &key)
+        {
+            let entry = self.recent_tiles.remove(position);
+            self.recent_tiles.push(entry);
+            return;
+        }
+        if self.recent_tiles.len() >= TILE_READ_SESSION_RECENT_TILE_COUNT {
+            self.recent_tiles.remove(0);
+        }
+        self.recent_tiles.push((key, data));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6246,18 +6332,23 @@ fn load_shared_column_tile(
     tile_index: usize,
     session: &mut TileReadSession,
 ) -> Result<Arc<[u8]>, StorageError> {
+    let table_id = session.table_id(table_path);
     let key = SharedTileKey {
-        table_path: table_path.to_path_buf(),
+        table_id,
         dm_seq_nr,
         cube_idx,
         target_col_idx,
         tile_index,
     };
+    if let Some(hit) = session.recent_tile(&key) {
+        return Ok(hit);
+    }
     if let Some(hit) = SHARED_TILE_CACHE
         .lock()
         .expect("shared tile cache lock poisoned")
         .get(&key)
     {
+        session.remember_tile(key, Arc::clone(&hit));
         return Ok(hit);
     }
 
@@ -6289,9 +6380,12 @@ fn load_shared_column_tile(
         .lock()
         .expect("shared tile cache lock poisoned");
     if let Some(hit) = cache.get(&key) {
+        session.remember_tile(key, Arc::clone(&hit));
         return Ok(hit);
     }
-    Ok(cache.insert(key, data))
+    let cached = cache.insert(key.clone(), data);
+    session.remember_tile(key, Arc::clone(&cached));
+    Ok(cached)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6549,6 +6643,26 @@ fn decode_selected_cube_row_2d_channel_range_from_shared_tiles(
             "2-D channel-range tiled read found zero-width channel tile".to_string(),
         ));
     }
+    if matches!(dt, CasacoreDataType::TpComplex | CasacoreDataType::TpBool) {
+        return decode_selected_cube_row_2d_channel_range_typed_from_shared_tiles(
+            table_path,
+            dm_seq_nr,
+            header,
+            cube_idx,
+            cube,
+            target_col_idx,
+            col_desc,
+            dt,
+            elem_size,
+            selected,
+            channel_start,
+            channel_count,
+            corr_count,
+            tile_corr_count,
+            tile_channel_count,
+            session,
+        );
+    }
     let row_tile = selected.pos_in_cube / cube.tile_shape[cell_ndim];
     let row_in_tile = selected.pos_in_cube % cube.tile_shape[cell_ndim];
     let row_tile_nelem: usize = cell_tile_shape.iter().product();
@@ -6617,6 +6731,157 @@ fn decode_selected_cube_row_2d_channel_range_from_shared_tiles(
             "tiled array column {} decoded as non-array value {:?}",
             col_desc.col_name,
             other.kind()
+        ))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_selected_cube_row_2d_channel_range_typed_from_shared_tiles(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    cube_idx: usize,
+    cube: &TsmCubeInfo,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    selected: SelectedCubeRow,
+    channel_start: usize,
+    channel_count: usize,
+    corr_count: usize,
+    tile_corr_count: usize,
+    tile_channel_count: usize,
+    session: &mut TileReadSession,
+) -> Result<Option<ArrayValue>, StorageError> {
+    let channel_end = channel_start + channel_count;
+    let cell_ndim = cube.cube_shape.len().saturating_sub(1);
+    let cell_shape = &cube.cube_shape[..cell_ndim];
+    let cell_tile_shape = &cube.tile_shape[..cell_ndim];
+    let row_tile = selected.pos_in_cube / cube.tile_shape[cell_ndim];
+    let row_in_tile = selected.pos_in_cube % cube.tile_shape[cell_ndim];
+    let row_tile_nelem: usize = cell_tile_shape.iter().product();
+    let tiles_per_dim: Vec<usize> = cube
+        .cube_shape
+        .iter()
+        .zip(cube.tile_shape.iter())
+        .map(|(&shape, &tile)| shape.div_ceil(tile))
+        .collect();
+    let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
+    let (bucket_size, col_offsets) = compute_tile_layout(&header.col_data_types, &cube.tile_shape);
+    let first_channel_tile = channel_start / tile_channel_count;
+    let last_channel_tile = (channel_end.saturating_sub(1)) / tile_channel_count;
+
+    match dt {
+        CasacoreDataType::TpComplex => {
+            let mut values = vec![Complex32::new(0.0, 0.0); corr_count * channel_count];
+            for channel_tile in first_channel_tile..=last_channel_tile {
+                let tile_channel_start = channel_tile * tile_channel_count;
+                let actual_tile_channels =
+                    std::cmp::min(tile_channel_count, cell_shape[1] - tile_channel_start);
+                let overlap_start = std::cmp::max(channel_start, tile_channel_start);
+                let overlap_end =
+                    std::cmp::min(channel_end, tile_channel_start + actual_tile_channels);
+                if overlap_start >= overlap_end {
+                    continue;
+                }
+
+                let full_tile_pos = [0usize, channel_tile, row_tile];
+                let tile_index: usize = full_tile_pos
+                    .iter()
+                    .zip(tile_grid_strides.iter())
+                    .map(|(pos, stride)| pos * stride)
+                    .sum();
+                let tile = load_shared_column_tile(
+                    table_path,
+                    dm_seq_nr,
+                    header,
+                    cube_idx,
+                    cube,
+                    target_col_idx,
+                    bucket_size,
+                    col_offsets[target_col_idx],
+                    dt,
+                    tile_index,
+                    session,
+                )?;
+                let src_start = row_in_tile * row_tile_nelem * elem_size;
+                let src_end = src_start + row_tile_nelem * elem_size;
+                let tile_row = &tile[src_start..src_end];
+
+                for channel in overlap_start..overlap_end {
+                    let src_channel = channel - tile_channel_start;
+                    let dst_channel = channel - channel_start;
+                    for corr in 0..corr_count {
+                        let src_elem = corr + src_channel * tile_corr_count;
+                        let dst_elem = corr + dst_channel * corr_count;
+                        let src_byte = src_elem * elem_size;
+                        values[dst_elem] = decode_complex32_scalar(
+                            &tile_row[src_byte..src_byte + elem_size],
+                            header.big_endian,
+                        );
+                    }
+                }
+            }
+            ArrayD::from_shape_vec(IxDyn(&[corr_count, channel_count]).f(), values)
+                .map(ArrayValue::Complex32)
+                .map(Some)
+                .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))
+        }
+        CasacoreDataType::TpBool => {
+            let mut values = vec![false; corr_count * channel_count];
+            for channel_tile in first_channel_tile..=last_channel_tile {
+                let tile_channel_start = channel_tile * tile_channel_count;
+                let actual_tile_channels =
+                    std::cmp::min(tile_channel_count, cell_shape[1] - tile_channel_start);
+                let overlap_start = std::cmp::max(channel_start, tile_channel_start);
+                let overlap_end =
+                    std::cmp::min(channel_end, tile_channel_start + actual_tile_channels);
+                if overlap_start >= overlap_end {
+                    continue;
+                }
+
+                let full_tile_pos = [0usize, channel_tile, row_tile];
+                let tile_index: usize = full_tile_pos
+                    .iter()
+                    .zip(tile_grid_strides.iter())
+                    .map(|(pos, stride)| pos * stride)
+                    .sum();
+                let tile = load_shared_column_tile(
+                    table_path,
+                    dm_seq_nr,
+                    header,
+                    cube_idx,
+                    cube,
+                    target_col_idx,
+                    bucket_size,
+                    col_offsets[target_col_idx],
+                    dt,
+                    tile_index,
+                    session,
+                )?;
+                let src_start = row_in_tile * row_tile_nelem * elem_size;
+                let src_end = src_start + row_tile_nelem * elem_size;
+                let tile_row = &tile[src_start..src_end];
+
+                for channel in overlap_start..overlap_end {
+                    let src_channel = channel - tile_channel_start;
+                    let dst_channel = channel - channel_start;
+                    for corr in 0..corr_count {
+                        let src_elem = corr + src_channel * tile_corr_count;
+                        let dst_elem = corr + dst_channel * corr_count;
+                        values[dst_elem] = tile_row[src_elem * elem_size] != 0;
+                    }
+                }
+            }
+            ArrayD::from_shape_vec(IxDyn(&[corr_count, channel_count]).f(), values)
+                .map(ArrayValue::Bool)
+                .map(Some)
+                .map_err(|e| StorageError::FormatMismatch(format!("array shape: {e}")))
+        }
+        other => Err(StorageError::FormatMismatch(format!(
+            "typed 2-D channel-range tiled read does not support {other:?} for column {}",
+            col_desc.col_name
         ))),
     }
 }
