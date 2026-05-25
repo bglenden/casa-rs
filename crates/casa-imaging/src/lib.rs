@@ -6867,13 +6867,7 @@ fn run_multiscale_cotton_schwab(
         }
         residual = refresh_residual(model, stage_timings)?;
         let multiscale_refresh_started = Instant::now();
-        multiscale_state = build_multiscale_state(
-            &residual,
-            &psf_state.psf,
-            &scales,
-            request.small_scale_bias,
-            request.clean_mask.as_ref(),
-        );
+        refresh_multiscale_dirty_conv_scales(&mut multiscale_state, &residual);
         stage_timings.multiscale_scale_refresh += multiscale_refresh_started.elapsed();
         major_cycles += 1;
         residual_needs_refresh = false;
@@ -6894,15 +6888,6 @@ fn run_multiscale_cotton_schwab(
     }
     if residual_needs_refresh {
         residual = refresh_residual(model, stage_timings)?;
-        let multiscale_refresh_started = Instant::now();
-        let _refreshed_multiscale_state = build_multiscale_state(
-            &residual,
-            &psf_state.psf,
-            &scales,
-            request.small_scale_bias,
-            request.clean_mask.as_ref(),
-        );
-        stage_timings.multiscale_scale_refresh += multiscale_refresh_started.elapsed();
         major_cycles += 1;
     }
 

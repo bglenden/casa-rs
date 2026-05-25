@@ -3092,6 +3092,18 @@ stream total from `10.368s` to `9.387s`. Core moved from `7.497s` to `7.717s`
 in this run due to Metal dispatch noise, so this is retained for the frontend
 allocation/data-flow improvement rather than as a kernel-stage win.
 
+High-reward deconvolution cleanup: the multiscale Cotton-Schwab loop now keeps
+the static multiscale state across major cycles and refreshes only the
+residual-dependent dirty scale images after a residual refresh. The previous
+path rebuilt scale kernels, scale masks, and PSF scale convolutions even though
+those are invariant for a fixed PSF and scale list. The retained artifact is
+`target/imperformance-wave2/metal-initial-dirty-20260525/grouped-initial-dirty-reuse-multiscale-static-niter150-cycleniter50.log`.
+Against the borrowed-prefill run, frontend moved from `24.757s` to `22.724s`
+(`8.2%`), core from `7.717s` to `5.599s` (`27.4%`), and
+`multiscale_scale_refresh` from `2.002s` to `0.168s`. Peak RSS stayed
+essentially flat at `8.85 GiB`. This is retained as a structural correctness-
+preserving cleanup of invariant deconvolver state, not a Metal-specific change.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
