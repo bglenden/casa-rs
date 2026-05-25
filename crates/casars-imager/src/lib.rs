@@ -1004,6 +1004,7 @@ pub fn run_ms_imaging_essentials_read_probe_from_config(config: &CliConfig) -> R
         "rows_per_s": rows_read as f64 / total_seconds,
         "samples_per_s": samples_read as f64 / total_seconds,
         "timings_ms": {
+            "columns_wall": timings.columns_wall.as_secs_f64() * 1000.0,
             "data_column": timings.data_column.as_secs_f64() * 1000.0,
             "flag_column": timings.flag_column.as_secs_f64() * 1000.0,
             "weight_column": timings.weight_column.as_secs_f64() * 1000.0,
@@ -7993,6 +7994,7 @@ impl MsImagingEssentialsBlock {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct MsImagingEssentialsReadTimings {
+    columns_wall: Duration,
     data_column: Duration,
     flag_column: Duration,
     weight_column: Duration,
@@ -8003,15 +8005,11 @@ struct MsImagingEssentialsReadTimings {
 
 impl MsImagingEssentialsReadTimings {
     fn total(self) -> Duration {
-        self.data_column
-            .saturating_add(self.flag_column)
-            .saturating_add(self.weight_column)
-            .saturating_add(self.weight_spectrum)
-            .saturating_add(self.uvw_column)
-            .saturating_add(self.adapt_rows)
+        self.columns_wall.saturating_add(self.adapt_rows)
     }
 
     fn add(&mut self, other: Self) {
+        self.columns_wall += other.columns_wall;
         self.data_column += other.data_column;
         self.flag_column += other.flag_column;
         self.weight_column += other.weight_column;
@@ -8118,6 +8116,26 @@ fn take_required_array(
         .ok_or_else(|| format!("{column_name} data missing for selected row {row_index}"))
 }
 
+fn ms_imaging_read_parallel_columns_enabled() -> bool {
+    env::var("CASA_RS_MS_IMAGING_READ_THREADS")
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            if matches!(
+                normalized.as_str(),
+                "" | "0" | "1" | "false" | "no" | "off" | "serial"
+            ) {
+                return false;
+            }
+            normalized == "auto"
+                || normalized == "parallel"
+                || normalized
+                    .parse::<usize>()
+                    .map(|threads| threads > 1)
+                    .unwrap_or(true)
+        })
+        .unwrap_or(true)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn read_ms_imaging_essentials_block(
     ms: &MeasurementSet,
@@ -8133,58 +8151,183 @@ fn read_ms_imaging_essentials_block(
         .collect::<Vec<_>>();
     let mut timings = MsImagingEssentialsReadTimings::default();
 
-    let started = Instant::now();
-    let data_column = match channel_read_range {
-        Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
-            ms,
-            data_column_kind,
-            &selected_row_indices,
-            range.start,
-            range.count,
-        )?,
-        None => SelectedMainDataSource::load_uncached(ms, data_column_kind, &selected_row_indices)?,
-    };
-    timings.data_column = started.elapsed();
+    let columns_started = Instant::now();
+    let has_weight_spectrum = WeightSpectrumColumn::new(ms.main_table()).is_ok();
+    let (data_column, flag_column, weight_column, weight_spectrum, selected_uvw) =
+        if ms_imaging_read_parallel_columns_enabled() {
+            std::thread::scope(|scope| {
+                let data_handle = scope.spawn(|| {
+                    let started = Instant::now();
+                    let column = match channel_read_range {
+                        Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
+                            ms,
+                            data_column_kind,
+                            &selected_row_indices,
+                            range.start,
+                            range.count,
+                        )?,
+                        None => SelectedMainDataSource::load_uncached(
+                            ms,
+                            data_column_kind,
+                            &selected_row_indices,
+                        )?,
+                    };
+                    Ok::<_, String>((column, started.elapsed()))
+                });
+                let flag_handle = scope.spawn(|| {
+                    let started = Instant::now();
+                    let column = match channel_read_range {
+                        Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                            ms,
+                            "FLAG",
+                            &selected_row_indices,
+                            range.start,
+                            range.count,
+                        )?,
+                        None => SelectedMainArrayColumn::load_uncached(
+                            ms,
+                            "FLAG",
+                            &selected_row_indices,
+                        )?,
+                    };
+                    Ok::<_, String>((column, started.elapsed()))
+                });
+                let weight_handle = scope.spawn(|| {
+                    let started = Instant::now();
+                    let column = SelectedMainArrayColumn::load_uncached(
+                        ms,
+                        "WEIGHT",
+                        &selected_row_indices,
+                    )?;
+                    Ok::<_, String>((column, started.elapsed()))
+                });
+                let weight_spectrum_handle = has_weight_spectrum.then(|| {
+                    scope.spawn(|| {
+                        let started = Instant::now();
+                        let column = match channel_read_range {
+                            Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                                ms,
+                                "WEIGHT_SPECTRUM",
+                                &selected_row_indices,
+                                range.start,
+                                range.count,
+                            )?,
+                            None => SelectedMainArrayColumn::load_uncached(
+                                ms,
+                                "WEIGHT_SPECTRUM",
+                                &selected_row_indices,
+                            )?,
+                        };
+                        Ok::<_, String>((column, started.elapsed()))
+                    })
+                });
+                let uvw_handle = scope.spawn(|| {
+                    let started = Instant::now();
+                    let column = SelectedMainArrayColumn::load(ms, "UVW", &selected_row_indices)?;
+                    Ok::<_, String>((column, started.elapsed()))
+                });
 
-    let started = Instant::now();
-    let flag_column = match channel_read_range {
-        Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
-            ms,
-            "FLAG",
-            &selected_row_indices,
-            range.start,
-            range.count,
-        )?,
-        None => SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?,
-    };
-    timings.flag_column = started.elapsed();
+                let (data_column, elapsed) = data_handle
+                    .join()
+                    .map_err(|_| "DATA column reader panicked".to_string())??;
+                timings.data_column = elapsed;
+                let (flag_column, elapsed) = flag_handle
+                    .join()
+                    .map_err(|_| "FLAG column reader panicked".to_string())??;
+                timings.flag_column = elapsed;
+                let (weight_column, elapsed) = weight_handle
+                    .join()
+                    .map_err(|_| "WEIGHT column reader panicked".to_string())??;
+                timings.weight_column = elapsed;
+                let weight_spectrum = match weight_spectrum_handle {
+                    Some(handle) => {
+                        let (column, elapsed) = handle
+                            .join()
+                            .map_err(|_| "WEIGHT_SPECTRUM column reader panicked".to_string())??;
+                        timings.weight_spectrum = elapsed;
+                        Some(column)
+                    }
+                    None => None,
+                };
+                let (selected_uvw, elapsed) = uvw_handle
+                    .join()
+                    .map_err(|_| "UVW column reader panicked".to_string())??;
+                timings.uvw_column = elapsed;
+                Ok::<_, String>((
+                    data_column,
+                    flag_column,
+                    weight_column,
+                    weight_spectrum,
+                    selected_uvw,
+                ))
+            })?
+        } else {
+            let started = Instant::now();
+            let data_column = match channel_read_range {
+                Some(range) => SelectedMainDataSource::load_2d_channel_range_uncached(
+                    ms,
+                    data_column_kind,
+                    &selected_row_indices,
+                    range.start,
+                    range.count,
+                )?,
+                None => SelectedMainDataSource::load_uncached(
+                    ms,
+                    data_column_kind,
+                    &selected_row_indices,
+                )?,
+            };
+            timings.data_column = started.elapsed();
 
-    let started = Instant::now();
-    let weight_column =
-        SelectedMainArrayColumn::load_uncached(ms, "WEIGHT", &selected_row_indices)?;
-    timings.weight_column = started.elapsed();
+            let started = Instant::now();
+            let flag_column = match channel_read_range {
+                Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                    ms,
+                    "FLAG",
+                    &selected_row_indices,
+                    range.start,
+                    range.count,
+                )?,
+                None => SelectedMainArrayColumn::load_uncached(ms, "FLAG", &selected_row_indices)?,
+            };
+            timings.flag_column = started.elapsed();
 
-    let started = Instant::now();
-    let weight_spectrum = WeightSpectrumColumn::new(ms.main_table())
-        .ok()
-        .map(|_| match channel_read_range {
-            Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
-                ms,
-                "WEIGHT_SPECTRUM",
-                &selected_row_indices,
-                range.start,
-                range.count,
-            ),
-            None => {
-                SelectedMainArrayColumn::load_uncached(ms, "WEIGHT_SPECTRUM", &selected_row_indices)
-            }
-        })
-        .transpose()?;
-    timings.weight_spectrum = started.elapsed();
+            let started = Instant::now();
+            let weight_column =
+                SelectedMainArrayColumn::load_uncached(ms, "WEIGHT", &selected_row_indices)?;
+            timings.weight_column = started.elapsed();
 
-    let started = Instant::now();
-    let selected_uvw = SelectedMainArrayColumn::load(ms, "UVW", &selected_row_indices)?;
-    timings.uvw_column = started.elapsed();
+            let started = Instant::now();
+            let weight_spectrum = has_weight_spectrum
+                .then(|| match channel_read_range {
+                    Some(range) => SelectedMainArrayColumn::load_2d_channel_range_uncached(
+                        ms,
+                        "WEIGHT_SPECTRUM",
+                        &selected_row_indices,
+                        range.start,
+                        range.count,
+                    ),
+                    None => SelectedMainArrayColumn::load_uncached(
+                        ms,
+                        "WEIGHT_SPECTRUM",
+                        &selected_row_indices,
+                    ),
+                })
+                .transpose()?;
+            timings.weight_spectrum = started.elapsed();
+
+            let started = Instant::now();
+            let selected_uvw = SelectedMainArrayColumn::load(ms, "UVW", &selected_row_indices)?;
+            timings.uvw_column = started.elapsed();
+            (
+                data_column,
+                flag_column,
+                weight_column,
+                weight_spectrum,
+                selected_uvw,
+            )
+        };
+    timings.columns_wall = columns_started.elapsed();
 
     let started = Instant::now();
     let SelectedMainDataSource::Single(data_column) = data_column;

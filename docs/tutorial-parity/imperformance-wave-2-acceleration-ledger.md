@@ -3115,6 +3115,25 @@ Against the multiscale-state reuse run, frontend moved from `22.724s` to
 `0.515s` to `0.468s`, and residual degrid/grid from `3.156s` to `2.866s`.
 Peak RSS remained flat at about `8.88 GiB`.
 
+MS read structural cleanup: standard-MFS imaging essentials now read independent
+MAIN array columns concurrently by default. The path still uses the existing
+MS/Table storage managers and persistent layout unchanged; it only changes the
+read/prepare scheduling for `DATA`, `FLAG`, `WEIGHT`, optional
+`WEIGHT_SPECTRUM`, and `UVW`. `CASA_RS_MS_IMAGING_READ_THREADS=1` (or
+`serial`/`off`) forces the old serial read order for comparisons.
+
+The raw read probe on the medium 64-channel selection moved column-read wall
+time from `3.609s` to `1.465s`; full probe wall moved from `11.367s` to
+`9.218s`. In the retained heavy workload artifact
+`target/imperformance-wave2/ms-read-parallel-20260525/heavy-parallel-read.log`,
+the density pass reported `get_ms_values_ms=1.698s` versus `3.708s` in the
+forced-serial artifact
+`target/imperformance-wave2/ms-read-parallel-20260525/heavy-serial-read.log`.
+End-to-end heavy frontend time moved from the previous retained `22.087s` to
+`19.668s` (`11.0%`), with `prepare_plane_input` moving from `12.729s` to
+`10.394s` and `get_ms_values_ms` from `7.439s` to `5.109s`. Peak RSS stayed
+within the same envelope at about `9.55 GiB`.
+
 Rejected high-upside follow-ups:
 `grouped-initial-dirty-prealloc-metal-cache-niter150-cycleniter50.log`
 preallocated the large Metal cache vectors. It reduced `routed_consume` only
