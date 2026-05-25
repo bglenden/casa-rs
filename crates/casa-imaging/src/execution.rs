@@ -9300,13 +9300,32 @@ const _: () = {
 impl<'a> StandardMfsMetalExecutor<'a> {
     pub(crate) fn new_with_resident_bytes(
         gridder: &'a StandardGridder,
+        resident_bytes: Option<usize>,
+    ) -> Result<Self, ImagingError> {
+        Self::new_with_options(gridder, resident_bytes, false)
+    }
+
+    pub(crate) fn new_with_initial_dirty_grouped(
+        gridder: &'a StandardGridder,
+        resident_bytes: Option<usize>,
+    ) -> Result<Self, ImagingError> {
+        Self::new_with_options(gridder, resident_bytes, true)
+    }
+
+    fn new_with_options(
+        gridder: &'a StandardGridder,
         _resident_bytes: Option<usize>,
+        enable_initial_dirty_grouped: bool,
     ) -> Result<Self, ImagingError> {
         let partition = standard_mfs_tile_partition_for_gridder(gridder)?;
         Ok(Self {
             gridder,
             partition,
-            backend: MetalDirtyBackend::new()?,
+            backend: if enable_initial_dirty_grouped {
+                MetalDirtyBackend::new_with_initial_dirty_grouped(true)?
+            } else {
+                MetalDirtyBackend::new()?
+            },
         })
     }
 
@@ -9430,13 +9449,43 @@ impl<'a> StandardMfsMetalExecutor<'a> {
             .begin_grouped_input_cache_fill(self.gridder, weighting_plan)
     }
 
+    pub(crate) fn begin_grouped_initial_dirty_accumulation(
+        &self,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<MetalInitialDirtyGroupedState, ImagingError> {
+        self.backend
+            .begin_grouped_initial_dirty_state(self.gridder, weighting_plan)
+    }
+
+    pub(crate) fn append_grouped_initial_dirty_run(
+        &self,
+        state: &mut MetalInitialDirtyGroupedState,
+        routed_run: &StandardMfsRoutedVisibilityRun,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<(), ImagingError> {
+        self.backend
+            .append_grouped_initial_dirty_run(state, routed_run, weighting_plan)
+    }
+
+    pub(crate) fn finish_grouped_initial_dirty_accumulation(
+        &self,
+        state: MetalInitialDirtyGroupedState,
+        cache: &mut StandardMfsMetalGroupedInputCache,
+        psf_grid: &mut Array2<Complex64>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
+        self.backend
+            .finish_grouped_initial_dirty_state(state, cache, psf_grid, residual_grid)
+    }
+
     pub(crate) fn append_grouped_input_cache_run(
         &self,
         fill: &mut StandardMfsMetalGroupedInputCacheFill,
         routed_run: &StandardMfsRoutedVisibilityRun,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
     ) -> Result<(), ImagingError> {
         self.backend
-            .append_grouped_input_cache_run(routed_run, fill)
+            .append_grouped_input_cache_run(routed_run, fill, weighting_plan)
     }
 
     pub(crate) fn finish_grouped_input_cache_fill(
@@ -9515,7 +9564,7 @@ struct MetalResidualRowRunDesc {
     u_m: f32,
     v_m: f32,
     sumwt_factor: f32,
-    _pad0: f32,
+    w_m: f32,
     lane_offset: u32,
     lane_count: u32,
     data_offset: u32,
@@ -9551,6 +9600,30 @@ struct MetalResidualGroupedLane {
     residual_im: f32,
     grid_weight: f32,
     _pad0: f32,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct MetalInitialDirtyGroupedLane {
+    center_x: u32,
+    center_y: u32,
+    x_weight_base: u32,
+    y_weight_base: u32,
+    dirty_re: f32,
+    dirty_im: f32,
+    grid_weight: f32,
+    dirty_valid: f32,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct MetalInitialDirtyRunAccum {
+    sumwt: f32,
+    max_abs_w_lambda: f32,
+    gridded: u32,
+    skipped: u32,
 }
 
 #[cfg(target_os = "macos")]
@@ -10052,11 +10125,32 @@ struct MetalResidualGroupedCachedBuffers {
 }
 
 #[cfg(target_os = "macos")]
+type MetalCommandBuffer =
+    objc2::rc::Retained<objc2::runtime::ProtocolObject<dyn objc2_metal::MTLCommandBuffer>>;
+
+#[cfg(target_os = "macos")]
+struct MetalInitialDirtyGroupedPendingDispatch {
+    command_buffer: MetalCommandBuffer,
+    _run: MetalBuffer,
+    _lane: MetalBuffer,
+    _data: MetalBuffer,
+    _flag: MetalBuffer,
+    _weight: MetalBuffer,
+    _group_desc: MetalBuffer,
+    _lane_ref: MetalBuffer,
+    _grouped_lane: MetalBuffer,
+    _run_accum: MetalBuffer,
+    _params: MetalBuffer,
+    metrics: MetalResidualGroupedChunkMetrics,
+}
+
+#[cfg(target_os = "macos")]
 #[derive(Debug, Default)]
 pub(crate) struct StandardMfsMetalGroupedInputCache {
     key: Option<MetalResidualGroupedInputCacheKey>,
     chunks: Vec<MetalResidualGroupedCachedChunk>,
     accumulation: StandardMfsTiledResidualAccumulation,
+    dirty_accumulation: Option<StandardMfsDirtyAccumulation>,
     host_bytes: usize,
 }
 
@@ -10071,6 +10165,7 @@ impl StandardMfsMetalGroupedInputCache {
         key: MetalResidualGroupedInputCacheKey,
         chunks: Vec<MetalResidualGroupedCachedChunk>,
         accumulation: StandardMfsTiledResidualAccumulation,
+        dirty_accumulation: Option<StandardMfsDirtyAccumulation>,
     ) {
         self.host_bytes = chunks
             .iter()
@@ -10084,6 +10179,7 @@ impl StandardMfsMetalGroupedInputCache {
         self.key = Some(key);
         self.chunks = chunks;
         self.accumulation = accumulation;
+        self.dirty_accumulation = dirty_accumulation;
     }
 }
 
@@ -10110,6 +10206,84 @@ pub(crate) struct StandardMfsMetalGroupedInputCacheFill {
     chunks: Vec<MetalResidualGroupedCachedChunk>,
     chunk: MetalResidualGroupedRowRunChunk,
     accumulation: StandardMfsTiledResidualAccumulation,
+    dirty_accumulation: StandardMfsDirtyAccumulation,
+    collect_dirty_accumulation: bool,
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) struct MetalInitialDirtyGroupedState {
+    fill: StandardMfsMetalGroupedInputCacheFill,
+    density: MetalBuffer,
+    tap_weights: MetalBuffer,
+    psf_re: MetalBuffer,
+    psf_im: MetalBuffer,
+    dirty_re: MetalBuffer,
+    dirty_im: MetalBuffer,
+    pending: Vec<MetalInitialDirtyGroupedPendingDispatch>,
+    storage_options: objc2_metal::MTLResourceOptions,
+    append_grouped_row_run: Duration,
+    dirty_accumulation: Duration,
+    chunk_finalize_dispatch: Duration,
+}
+
+#[cfg(target_os = "macos")]
+fn grouped_row_run_params_from_fill(
+    fill: &StandardMfsMetalGroupedInputCacheFill,
+) -> Result<MetalResidualRowRunParams, ImagingError> {
+    Ok(MetalResidualRowRunParams {
+        run_count: u32::try_from(fill.chunk.row_runs.runs.len()).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run chunk has too many runs".to_string(),
+            )
+        })?,
+        max_lane_count: u32::try_from(fill.chunk.row_runs.max_lane_count).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run chunk has too many lanes per run".to_string(),
+            )
+        })?,
+        grid_width: u32::try_from(fill.grid_width).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run grid width exceeds u32".to_string(),
+            )
+        })?,
+        grid_height: u32::try_from(fill.grid_height).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run grid height exceeds u32".to_string(),
+            )
+        })?,
+        oversampling: u32::try_from(fill.oversampling).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run oversampling exceeds u32".to_string(),
+            )
+        })?,
+        tap_weight_count: u32::try_from(fill.tap_weight_count).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run tap table exceeds u32".to_string(),
+            )
+        })?,
+        weighting_mode: fill.weighting_mode,
+        density_convention: fill.density_convention,
+        density_width: u32::try_from(fill.density_width).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run density width exceeds u32".to_string(),
+            )
+        })?,
+        density_height: u32::try_from(fill.density_height).map_err(|_| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal grouped row-run density height exceeds u32".to_string(),
+            )
+        })?,
+        diagnostic_mode: 0,
+        _pad0: 0,
+        du_lambda: fill.du_lambda,
+        dv_lambda: fill.dv_lambda,
+        density_center_x: fill.density_center_x,
+        density_center_y: fill.density_center_y,
+        density_u_scale: fill.density_u_scale,
+        density_v_scale: fill.density_v_scale,
+        briggs_f2: fill.briggs_f2,
+        _pad1: 0.0,
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -10272,11 +10446,32 @@ struct MetalDirtyBackend {
     residual_row_run_grouped_accumulate_pipeline: objc2::rc::Retained<
         objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
     >,
+    initial_dirty_grouped_prepare_pipeline: Option<
+        objc2::rc::Retained<
+            objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+        >,
+    >,
+    initial_dirty_grouped_accumulate_pipeline: Option<
+        objc2::rc::Retained<
+            objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+        >,
+    >,
+    initial_dirty_grouped_run_accum_pipeline: Option<
+        objc2::rc::Retained<
+            objc2::runtime::ProtocolObject<dyn objc2_metal::MTLComputePipelineState>,
+        >,
+    >,
 }
 
 #[cfg(target_os = "macos")]
 impl MetalDirtyBackend {
     fn new() -> Result<Self, ImagingError> {
+        Self::new_with_initial_dirty_grouped(false)
+    }
+
+    fn new_with_initial_dirty_grouped(
+        enable_initial_dirty_grouped: bool,
+    ) -> Result<Self, ImagingError> {
         use objc2_metal::{
             MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary, MTLResourceOptions,
         };
@@ -10378,6 +10573,81 @@ impl MetalDirtyBackend {
             .map_err(|error| {
                 metal_error("create residual row-run grouped accumulate pipeline", error)
             })?;
+        let (
+            initial_dirty_grouped_prepare_pipeline,
+            initial_dirty_grouped_accumulate_pipeline,
+            initial_dirty_grouped_run_accum_pipeline,
+        ) = if enable_initial_dirty_grouped {
+            let initial_dirty_grouped_prepare_function_name =
+                objc2_foundation::NSString::from_str("initial_dirty_psf_row_run_grouped_prepare");
+            let initial_dirty_grouped_prepare_function = library
+                    .newFunctionWithName(&initial_dirty_grouped_prepare_function_name)
+                    .ok_or_else(|| {
+                        ImagingError::Unsupported(
+                            "standard MFS backend 'metal-row-run-grouped' initial dirty/PSF prepare shader entry point was not found"
+                                .to_string(),
+                        )
+                    })?;
+            let initial_dirty_grouped_prepare_pipeline = device
+                .newComputePipelineStateWithFunction_error(&initial_dirty_grouped_prepare_function)
+                .map_err(|error| {
+                    metal_error(
+                        "create initial dirty/PSF row-run grouped prepare pipeline",
+                        error,
+                    )
+                })?;
+            let initial_dirty_grouped_accumulate_function_name =
+                objc2_foundation::NSString::from_str(
+                    "initial_dirty_psf_row_run_grouped_accumulate",
+                );
+            let initial_dirty_grouped_accumulate_function = library
+                    .newFunctionWithName(&initial_dirty_grouped_accumulate_function_name)
+                    .ok_or_else(|| {
+                        ImagingError::Unsupported(
+                            "standard MFS backend 'metal-row-run-grouped' initial dirty/PSF accumulate shader entry point was not found"
+                                .to_string(),
+                        )
+                    })?;
+            let initial_dirty_grouped_accumulate_pipeline = device
+                .newComputePipelineStateWithFunction_error(
+                    &initial_dirty_grouped_accumulate_function,
+                )
+                .map_err(|error| {
+                    metal_error(
+                        "create initial dirty/PSF row-run grouped accumulate pipeline",
+                        error,
+                    )
+                })?;
+            let initial_dirty_grouped_run_accum_function_name =
+                objc2_foundation::NSString::from_str(
+                    "initial_dirty_psf_row_run_grouped_accumulate_runs",
+                );
+            let initial_dirty_grouped_run_accum_function = library
+                    .newFunctionWithName(&initial_dirty_grouped_run_accum_function_name)
+                    .ok_or_else(|| {
+                        ImagingError::Unsupported(
+                            "standard MFS backend 'metal-row-run-grouped' initial dirty/PSF run-accumulation shader entry point was not found"
+                                .to_string(),
+                        )
+                    })?;
+            let initial_dirty_grouped_run_accum_pipeline = device
+                .newComputePipelineStateWithFunction_error(
+                    &initial_dirty_grouped_run_accum_function,
+                )
+                .map_err(|error| {
+                    metal_error(
+                        "create initial dirty/PSF row-run grouped run-accumulation pipeline",
+                        error,
+                    )
+                })?;
+            (
+                Some(initial_dirty_grouped_prepare_pipeline),
+                Some(initial_dirty_grouped_accumulate_pipeline),
+                Some(initial_dirty_grouped_run_accum_pipeline),
+            )
+        } else {
+            (None, None, None)
+        };
         let _ = MTLResourceOptions::StorageModeShared;
         Ok(Self {
             device,
@@ -10388,6 +10658,9 @@ impl MetalDirtyBackend {
             residual_row_run_diagnostic_pipeline,
             residual_row_run_grouped_prepare_pipeline,
             residual_row_run_grouped_accumulate_pipeline,
+            initial_dirty_grouped_prepare_pipeline,
+            initial_dirty_grouped_accumulate_pipeline,
+            initial_dirty_grouped_run_accum_pipeline,
         })
     }
 
@@ -11462,7 +11735,7 @@ impl MetalDirtyBackend {
             if let (Some(cache), Some(cached_chunks)) = (input_cache, cached_chunks) {
                 timings.input_cache_fill = true;
                 timings.input_cache_chunks = cached_chunks.len();
-                cache.replace(cache_key, cached_chunks, accumulation);
+                cache.replace(cache_key, cached_chunks, accumulation, None);
                 timings.input_cache_host_bytes = cache.host_bytes;
             }
         }
@@ -11538,10 +11811,552 @@ impl MetalDirtyBackend {
         Ok(accumulation)
     }
 
+    fn begin_grouped_initial_dirty_state(
+        &self,
+        gridder: &StandardGridder,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<MetalInitialDirtyGroupedState, ImagingError> {
+        use objc2_metal::MTLDevice;
+
+        let [grid_width, grid_height] = gridder.grid_shape();
+        let cell_count = grid_width.checked_mul(grid_height).ok_or_else(|| {
+            ImagingError::InvalidRequest(
+                "standard MFS Metal grouped initial dirty grid is too large".to_string(),
+            )
+        })?;
+        let fill =
+            self.begin_grouped_input_cache_fill_for_initial_dirty(gridder, weighting_plan)?;
+        let storage_options = objc2_metal::MTLResourceOptions::StorageModeShared;
+        let reweight_plan = weighting_plan.reweight_plan()?;
+        let density_dummy = [0.0_f32];
+        let density_values = match reweight_plan {
+            StandardMfsStreamingReweightPlan::Natural => density_dummy.as_slice(),
+            StandardMfsStreamingReweightPlan::Uniform { density, .. }
+            | StandardMfsStreamingReweightPlan::Briggs { density, .. } => {
+                density.as_slice_memory_order().ok_or_else(|| {
+                    ImagingError::InvalidRequest(
+                        "standard MFS Metal grouped initial dirty density grid must be contiguous"
+                            .to_string(),
+                    )
+                })?
+            }
+        };
+        let density = self.buffer_from_slice(density_values, storage_options)?;
+        let tap_weights =
+            self.buffer_from_slice(gridder.normalized_tap_weights(), storage_options)?;
+        let grid_bytes = cell_count
+            .checked_mul(std::mem::size_of::<u32>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped initial dirty grid buffer is too large".to_string(),
+                )
+            })?;
+        let psf_re = self
+            .device
+            .newBufferWithLength_options(grid_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS Metal grouped initial dirty could not allocate PSF real grid"
+                        .to_string(),
+                )
+            })?;
+        let psf_im = self
+            .device
+            .newBufferWithLength_options(grid_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS Metal grouped initial dirty could not allocate PSF imaginary grid"
+                        .to_string(),
+                )
+            })?;
+        let dirty_re = self
+            .device
+            .newBufferWithLength_options(grid_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS Metal grouped initial dirty could not allocate dirty real grid"
+                        .to_string(),
+                )
+            })?;
+        let dirty_im = self
+            .device
+            .newBufferWithLength_options(grid_bytes, storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS Metal grouped initial dirty could not allocate dirty imaginary grid"
+                        .to_string(),
+                )
+            })?;
+        Ok(MetalInitialDirtyGroupedState {
+            fill,
+            density,
+            tap_weights,
+            psf_re,
+            psf_im,
+            dirty_re,
+            dirty_im,
+            pending: Vec::new(),
+            storage_options,
+            append_grouped_row_run: Duration::ZERO,
+            dirty_accumulation: Duration::ZERO,
+            chunk_finalize_dispatch: Duration::ZERO,
+        })
+    }
+
+    fn append_grouped_initial_dirty_run(
+        &self,
+        state: &mut MetalInitialDirtyGroupedState,
+        routed_run: &StandardMfsRoutedVisibilityRun,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<(), ImagingError> {
+        if !state.fill.chunk.is_empty()
+            && state
+                .fill
+                .chunk
+                .row_runs
+                .logical_lanes
+                .saturating_add(routed_run.len())
+                > state.fill.chunk_lane_capacity
+        {
+            self.finish_grouped_initial_dirty_chunk(state)?;
+        }
+        let append_started = Instant::now();
+        self.append_metal_residual_grouped_row_run(
+            routed_run,
+            &state.fill.partition,
+            &mut state.fill.accumulation,
+            &mut state.fill.chunk,
+        )?;
+        state.append_grouped_row_run += append_started.elapsed();
+        let _ = weighting_plan;
+        if state.fill.chunk.row_runs.logical_lanes >= state.fill.chunk_lane_capacity {
+            self.finish_grouped_initial_dirty_chunk(state)?;
+        }
+        Ok(())
+    }
+
+    fn finish_grouped_initial_dirty_chunk(
+        &self,
+        state: &mut MetalInitialDirtyGroupedState,
+    ) -> Result<(), ImagingError> {
+        if state.fill.chunk.is_empty() {
+            return Ok(());
+        }
+        let started = Instant::now();
+        state.fill.chunk.finalize_groups(&state.fill.partition)?;
+        let params = grouped_row_run_params_from_fill(&state.fill)?;
+        state.fill.chunk.lane_group_ids.clear();
+        state.fill.chunk.group_counts.clear();
+        let finalized_chunk = std::mem::replace(
+            &mut state.fill.chunk,
+            MetalResidualGroupedRowRunChunk::new(state.fill.partition.tile_count()),
+        );
+        let metrics = MetalResidualGroupedChunkMetrics::from_chunk(&finalized_chunk);
+        state.fill.chunks.push(MetalResidualGroupedCachedChunk {
+            params,
+            metrics,
+            host: Some(finalized_chunk),
+            buffers: None,
+        });
+        let cached = state
+            .fill
+            .chunks
+            .last()
+            .expect("chunk was just pushed into grouped initial dirty state");
+        let pending = self.dispatch_initial_dirty_grouped_chunk_async(cached, state)?;
+        state.pending.push(pending);
+        state.chunk_finalize_dispatch += started.elapsed();
+        Ok(())
+    }
+
+    fn dispatch_initial_dirty_grouped_chunk_async(
+        &self,
+        cached: &MetalResidualGroupedCachedChunk,
+        state: &MetalInitialDirtyGroupedState,
+    ) -> Result<MetalInitialDirtyGroupedPendingDispatch, ImagingError> {
+        use std::slice;
+
+        use objc2_metal::{
+            MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+            MTLComputePipelineState, MTLDevice, MTLResourceOptions, MTLSize,
+        };
+
+        let Some(host) = cached.host.as_ref() else {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS Metal grouped initial dirty cache chunk has no host input payload"
+                    .to_string(),
+            ));
+        };
+        if host.is_empty() || host.group_descs.is_empty() {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS Metal grouped initial dirty cannot dispatch an empty grouped chunk"
+                    .to_string(),
+            ));
+        }
+        let storage_options = MTLResourceOptions::StorageModeShared;
+        let run = self.buffer_from_slice_no_copy(&host.row_runs.runs, storage_options)?;
+        let lane = self.buffer_from_slice_no_copy(&host.row_runs.lanes, storage_options)?;
+        let data = self.buffer_from_slice_no_copy(&host.row_runs.data, storage_options)?;
+        let flag = self.buffer_from_slice_no_copy(&host.row_runs.flags, storage_options)?;
+        let weight = self.buffer_from_slice_no_copy(&host.row_runs.weights, storage_options)?;
+        let group_desc = self.buffer_from_slice_no_copy(&host.group_descs, storage_options)?;
+        let lane_ref = self.buffer_from_slice_no_copy(&host.lane_refs, storage_options)?;
+        let grouped_lane_bytes = host
+            .row_runs
+            .lanes
+            .len()
+            .checked_mul(std::mem::size_of::<MetalInitialDirtyGroupedLane>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped initial dirty lane buffer is too large".to_string(),
+                )
+            })?;
+        let grouped_lane = self
+            .device
+            .newBufferWithLength_options(grouped_lane_bytes, state.storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS Metal grouped initial dirty could not allocate lane buffer"
+                        .to_string(),
+                )
+            })?;
+        let run_accum_bytes = host
+            .row_runs
+            .runs
+            .len()
+            .checked_mul(std::mem::size_of::<MetalInitialDirtyRunAccum>())
+            .ok_or_else(|| {
+                ImagingError::InvalidRequest(
+                    "standard MFS Metal grouped initial dirty run accumulation buffer is too large"
+                        .to_string(),
+                )
+            })?;
+        let run_accum = self
+            .device
+            .newBufferWithLength_options(run_accum_bytes, state.storage_options)
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS Metal grouped initial dirty could not allocate run accumulation buffer"
+                        .to_string(),
+                )
+            })?;
+        let params =
+            self.buffer_from_slice(slice::from_ref(&cached.params), state.storage_options)?;
+        let prepare_pipeline = self
+            .initial_dirty_grouped_prepare_pipeline
+            .as_ref()
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS Metal grouped initial dirty prepare pipeline is not enabled"
+                        .to_string(),
+                )
+            })?;
+        let accumulate_pipeline = self
+            .initial_dirty_grouped_accumulate_pipeline
+            .as_ref()
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS Metal grouped initial dirty accumulate pipeline is not enabled"
+                        .to_string(),
+                )
+            })?;
+        let run_accum_pipeline = self
+            .initial_dirty_grouped_run_accum_pipeline
+            .as_ref()
+            .ok_or_else(|| {
+                ImagingError::Unsupported(
+                    "standard MFS Metal grouped initial dirty run accumulation pipeline is not enabled"
+                        .to_string(),
+                )
+            })?;
+        let command_buffer = self.queue.commandBuffer().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS Metal grouped initial dirty could not create a command buffer"
+                    .to_string(),
+            )
+        })?;
+        let encoder = command_buffer.computeCommandEncoder().ok_or_else(|| {
+            ImagingError::Unsupported(
+                "standard MFS Metal grouped initial dirty could not create a compute encoder"
+                    .to_string(),
+            )
+        })?;
+        encoder.setComputePipelineState(prepare_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&run), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&lane), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&data), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(&flag), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(&weight), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(&state.density), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(&grouped_lane), 0, 6);
+            encoder.setBuffer_offset_atIndex(Some(&params), 0, 7);
+            encoder.setBuffer_offset_atIndex(Some(&state.tap_weights), 0, 8);
+        }
+        let prepare_thread_width = prepare_pipeline.threadExecutionWidth().max(1);
+        let prepare_max_threads = prepare_pipeline.maxTotalThreadsPerThreadgroup().max(1);
+        let prepare_group_width = prepare_thread_width
+            .min(cached.params.max_lane_count as usize)
+            .max(1);
+        let prepare_group_height = (prepare_max_threads / prepare_group_width)
+            .max(1)
+            .min(cached.params.run_count as usize)
+            .max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: cached.params.max_lane_count as usize,
+                height: cached.params.run_count as usize,
+                depth: 1,
+            },
+            MTLSize {
+                width: prepare_group_width,
+                height: prepare_group_height,
+                depth: 1,
+            },
+        );
+        encoder.setComputePipelineState(run_accum_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&run), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&lane), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&data), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(&flag), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(&weight), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(&state.density), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(&run_accum), 0, 6);
+            encoder.setBuffer_offset_atIndex(Some(&params), 0, 7);
+        }
+        let run_accum_thread_width = run_accum_pipeline.threadExecutionWidth().max(1);
+        let run_accum_max_threads = run_accum_pipeline.maxTotalThreadsPerThreadgroup().max(1);
+        let run_accum_group_width = run_accum_thread_width
+            .min(cached.params.run_count as usize)
+            .min(run_accum_max_threads)
+            .max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: cached.params.run_count as usize,
+                height: 1,
+                depth: 1,
+            },
+            MTLSize {
+                width: run_accum_group_width,
+                height: 1,
+                depth: 1,
+            },
+        );
+        encoder.setComputePipelineState(accumulate_pipeline);
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&grouped_lane), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&group_desc), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&lane_ref), 0, 2);
+            encoder.setBuffer_offset_atIndex(Some(&state.psf_re), 0, 3);
+            encoder.setBuffer_offset_atIndex(Some(&state.psf_im), 0, 4);
+            encoder.setBuffer_offset_atIndex(Some(&state.dirty_re), 0, 5);
+            encoder.setBuffer_offset_atIndex(Some(&state.dirty_im), 0, 6);
+            encoder.setBuffer_offset_atIndex(Some(&params), 0, 7);
+            encoder.setBuffer_offset_atIndex(Some(&state.tap_weights), 0, 8);
+        }
+        let accumulate_width = cached.metrics.max_halo_cells.max(1);
+        let accumulate_height = cached.metrics.group_descs.max(1);
+        let accumulate_thread_width = accumulate_pipeline.threadExecutionWidth().max(1);
+        let accumulate_max_threads = accumulate_pipeline.maxTotalThreadsPerThreadgroup().max(1);
+        let accumulate_group_width = accumulate_thread_width.min(accumulate_width).max(1);
+        let accumulate_group_height = (accumulate_max_threads / accumulate_group_width)
+            .max(1)
+            .min(accumulate_height)
+            .max(1);
+        encoder.dispatchThreads_threadsPerThreadgroup(
+            MTLSize {
+                width: accumulate_width,
+                height: accumulate_height,
+                depth: 1,
+            },
+            MTLSize {
+                width: accumulate_group_width,
+                height: accumulate_group_height,
+                depth: 1,
+            },
+        );
+        encoder.endEncoding();
+        command_buffer.commit();
+        Ok(MetalInitialDirtyGroupedPendingDispatch {
+            command_buffer,
+            _run: run,
+            _lane: lane,
+            _data: data,
+            _flag: flag,
+            _weight: weight,
+            _group_desc: group_desc,
+            _lane_ref: lane_ref,
+            _grouped_lane: grouped_lane,
+            _run_accum: run_accum,
+            _params: params,
+            metrics: cached.metrics,
+        })
+    }
+
+    fn finish_grouped_initial_dirty_state(
+        &self,
+        mut state: MetalInitialDirtyGroupedState,
+        cache: &mut StandardMfsMetalGroupedInputCache,
+        psf_grid: &mut Array2<Complex64>,
+        residual_grid: &mut Array2<Complex64>,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
+        use std::slice;
+
+        use objc2_metal::{MTLBuffer, MTLCommandBuffer, MTLCommandBufferStatus};
+
+        self.finish_grouped_initial_dirty_chunk(&mut state)?;
+        let wait_started = Instant::now();
+        let mut gpu = Duration::ZERO;
+        let mut kernel = Duration::ZERO;
+        let mut chunks = 0usize;
+        let mut runs = 0usize;
+        let mut logical_lanes = 0usize;
+        let mut group_descs = 0usize;
+        let mut dirty_accumulation = StandardMfsDirtyAccumulation::default();
+        for pending in state.pending.drain(..) {
+            pending.command_buffer.waitUntilCompleted();
+            if pending.command_buffer.status() == MTLCommandBufferStatus::Error {
+                let message = pending
+                    .command_buffer
+                    .error()
+                    .map(|error| format!("{error:?}"))
+                    .unwrap_or_else(|| "unknown Metal command buffer error".to_string());
+                return Err(ImagingError::Unsupported(format!(
+                    "standard MFS Metal grouped initial dirty command failed: {message}"
+                )));
+            }
+            let gpu_start = pending.command_buffer.GPUStartTime();
+            let gpu_end = pending.command_buffer.GPUEndTime();
+            if gpu_start.is_finite() && gpu_end.is_finite() && gpu_end > gpu_start {
+                gpu += Duration::from_secs_f64(gpu_end - gpu_start);
+            }
+            let kernel_start = pending.command_buffer.kernelStartTime();
+            let kernel_end = pending.command_buffer.kernelEndTime();
+            if kernel_start.is_finite() && kernel_end.is_finite() && kernel_end > kernel_start {
+                kernel += Duration::from_secs_f64(kernel_end - kernel_start);
+            }
+            chunks = chunks.saturating_add(1);
+            runs = runs.saturating_add(pending.metrics.runs);
+            logical_lanes = logical_lanes.saturating_add(pending.metrics.logical_lanes);
+            group_descs = group_descs.saturating_add(pending.metrics.group_descs);
+            let run_accum = unsafe {
+                slice::from_raw_parts(
+                    pending
+                        ._run_accum
+                        .contents()
+                        .as_ptr()
+                        .cast::<MetalInitialDirtyRunAccum>(),
+                    pending.metrics.runs,
+                )
+            };
+            for record in run_accum {
+                let sumwt = f64::from(record.sumwt);
+                dirty_accumulation.normalization_sumwt += sumwt;
+                dirty_accumulation.reported_sumwt += sumwt;
+                dirty_accumulation.gridded_samples = dirty_accumulation
+                    .gridded_samples
+                    .saturating_add(record.gridded as usize);
+                dirty_accumulation.skipped_samples = dirty_accumulation
+                    .skipped_samples
+                    .saturating_add(record.skipped as usize);
+                dirty_accumulation.max_abs_w_lambda = dirty_accumulation
+                    .max_abs_w_lambda
+                    .max(f64::from(record.max_abs_w_lambda));
+            }
+        }
+        let wait = wait_started.elapsed();
+        let [grid_width, grid_height] = [state.fill.grid_width, state.fill.grid_height];
+        let cell_count = grid_width.saturating_mul(grid_height);
+        let psf_re = unsafe {
+            slice::from_raw_parts(state.psf_re.contents().as_ptr().cast::<u32>(), cell_count)
+        };
+        let psf_im = unsafe {
+            slice::from_raw_parts(state.psf_im.contents().as_ptr().cast::<u32>(), cell_count)
+        };
+        let dirty_re = unsafe {
+            slice::from_raw_parts(state.dirty_re.contents().as_ptr().cast::<u32>(), cell_count)
+        };
+        let dirty_im = unsafe {
+            slice::from_raw_parts(state.dirty_im.contents().as_ptr().cast::<u32>(), cell_count)
+        };
+        for (((psf_cell, &re_bits), &im_bits), ((dirty_cell, &dirty_re_bits), &dirty_im_bits)) in
+            psf_grid
+                .as_slice_memory_order_mut()
+                .expect("standard MFS Metal grouped initial PSF grid should be contiguous")
+                .iter_mut()
+                .zip(psf_re)
+                .zip(psf_im)
+                .zip(
+                    residual_grid
+                        .as_slice_memory_order_mut()
+                        .expect(
+                            "standard MFS Metal grouped initial dirty grid should be contiguous",
+                        )
+                        .iter_mut()
+                        .zip(dirty_re)
+                        .zip(dirty_im),
+                )
+        {
+            *psf_cell = Complex64::new(
+                f64::from(f32::from_bits(re_bits)),
+                f64::from(f32::from_bits(im_bits)),
+            );
+            *dirty_cell = Complex64::new(
+                f64::from(f32::from_bits(dirty_re_bits)),
+                f64::from(f32::from_bits(dirty_im_bits)),
+            );
+        }
+        let accumulation = dirty_accumulation;
+        cache.replace(
+            state.fill.key,
+            state.fill.chunks,
+            state.fill.accumulation,
+            Some(dirty_accumulation),
+        );
+        if profile::standard_mfs_profile_detail_enabled() {
+            eprintln!(
+                "standard_mfs_metal_row_run_grouped_initial_dirty chunks={} runs={} logical_lanes={} group_descs={} dispatch_wait_ms={:.3} dispatch_gpu_ms={:.3} dispatch_kernel_ms={:.3} input_cache_host_bytes={}",
+                chunks,
+                runs,
+                logical_lanes,
+                group_descs,
+                profile::millis(wait),
+                profile::millis(gpu),
+                profile::millis(kernel),
+                cache.host_bytes,
+            );
+            eprintln!(
+                "standard_mfs_metal_row_run_grouped_initial_dirty_detail append_grouped_row_run_ms={:.3} dirty_accumulation_ms={:.3} chunk_finalize_dispatch_ms={:.3}",
+                profile::millis(state.append_grouped_row_run),
+                profile::millis(state.dirty_accumulation),
+                profile::millis(state.chunk_finalize_dispatch),
+            );
+        }
+        Ok(accumulation)
+    }
+
     fn begin_grouped_input_cache_fill(
         &self,
         gridder: &StandardGridder,
         weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<StandardMfsMetalGroupedInputCacheFill, ImagingError> {
+        self.begin_grouped_input_cache_fill_with_dirty_accumulation(gridder, weighting_plan, false)
+    }
+
+    fn begin_grouped_input_cache_fill_for_initial_dirty(
+        &self,
+        gridder: &StandardGridder,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<StandardMfsMetalGroupedInputCacheFill, ImagingError> {
+        self.begin_grouped_input_cache_fill_with_dirty_accumulation(gridder, weighting_plan, true)
+    }
+
+    fn begin_grouped_input_cache_fill_with_dirty_accumulation(
+        &self,
+        gridder: &StandardGridder,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+        collect_dirty_accumulation: bool,
     ) -> Result<StandardMfsMetalGroupedInputCacheFill, ImagingError> {
         let [grid_width, grid_height] = gridder.grid_shape();
         let reweight_plan = weighting_plan.reweight_plan()?;
@@ -11633,6 +12448,8 @@ impl MetalDirtyBackend {
             density_v_scale: density_params.v_scale as f32,
             chunks: Vec::new(),
             accumulation: StandardMfsTiledResidualAccumulation::default(),
+            dirty_accumulation: StandardMfsDirtyAccumulation::default(),
+            collect_dirty_accumulation,
         })
     }
 
@@ -11640,6 +12457,7 @@ impl MetalDirtyBackend {
         &self,
         routed_run: &StandardMfsRoutedVisibilityRun,
         fill: &mut StandardMfsMetalGroupedInputCacheFill,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
     ) -> Result<(), ImagingError> {
         if !fill.chunk.is_empty()
             && fill
@@ -11657,10 +12475,192 @@ impl MetalDirtyBackend {
             &mut fill.accumulation,
             &mut fill.chunk,
         )?;
+        if fill.collect_dirty_accumulation {
+            let accumulation =
+                Self::dirty_accumulation_from_routed_run(routed_run, weighting_plan)?;
+            fill.dirty_accumulation.add(accumulation);
+        }
         if fill.chunk.row_runs.logical_lanes >= fill.chunk_lane_capacity {
             self.finish_grouped_input_cache_chunk(fill)?;
         }
         Ok(())
+    }
+
+    fn dirty_accumulation_from_routed_run(
+        routed_run: &StandardMfsRoutedVisibilityRun,
+        weighting_plan: &StandardMfsStreamingWeightingPlan,
+    ) -> Result<StandardMfsDirtyAccumulation, ImagingError> {
+        if routed_run.is_empty() {
+            return Ok(StandardMfsDirtyAccumulation::default());
+        }
+        let row = routed_run.row.as_ref();
+        let mut accumulation = StandardMfsDirtyAccumulation::default();
+        if !row.gridable {
+            accumulation.skipped_samples = accumulation
+                .skipped_samples
+                .saturating_add(routed_run.len());
+            return Ok(accumulation);
+        }
+        if row.weight_spectrum.is_some() {
+            return Err(ImagingError::Unsupported(
+                "standard MFS initial dirty backend 'metal-row-run-grouped' does not yet support WEIGHT_SPECTRUM"
+                    .to_string(),
+            ));
+        }
+        let corr_count = row.data.shape().first().copied().unwrap_or(0);
+        let local_channel_count = row.data.shape().get(1).copied().unwrap_or(0);
+        if row.flag.shape() != [corr_count, local_channel_count] {
+            return Err(ImagingError::InvalidRequest(
+                "standard MFS Metal grouped initial dirty FLAG shape differs from DATA shape"
+                    .to_string(),
+            ));
+        }
+        if row.weight.len() < corr_count {
+            return Err(ImagingError::InvalidRequest(format!(
+                "standard MFS Metal grouped initial dirty WEIGHT has {} correlations but DATA has {corr_count}",
+                row.weight.len()
+            )));
+        }
+        let sumwt_factor = match row.polarization {
+            StandardMfsVisibilityPolarization::Explicit { sumwt_factor, .. }
+            | StandardMfsVisibilityPolarization::CollapsedPair { sumwt_factor, .. } => sumwt_factor,
+        };
+        if !(sumwt_factor.is_finite() && sumwt_factor > 0.0) {
+            accumulation.skipped_samples = accumulation
+                .skipped_samples
+                .saturating_add(routed_run.len());
+            return Ok(accumulation);
+        }
+        for source_slot in routed_run.source_slot_range.clone() {
+            let source_channel = *row.source_channel_indices.get(source_slot).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "standard MFS grouped initial dirty source slot {source_slot} is out of bounds"
+                ))
+            })?;
+            let local_channel = source_channel.checked_sub(row.channel_origin).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "standard MFS grouped initial dirty source channel {source_channel} precedes loaded origin {}",
+                    row.channel_origin
+                ))
+            })?;
+            if local_channel >= local_channel_count {
+                return Err(ImagingError::InvalidRequest(format!(
+                    "standard MFS grouped initial dirty local channel {local_channel} exceeds row channel count {local_channel_count}"
+                )));
+            }
+            let lambda_scale = *row.channel_lambda_scales.get(source_slot).ok_or_else(|| {
+                ImagingError::InvalidRequest(format!(
+                    "standard MFS grouped initial dirty lambda slot {source_slot} is out of bounds"
+                ))
+            })?;
+            let u_lambda = row.uvw_m[0] * lambda_scale;
+            let v_lambda = row.uvw_m[1] * lambda_scale;
+            let w_lambda = row.uvw_m[2] * lambda_scale;
+            accumulation.max_abs_w_lambda = accumulation.max_abs_w_lambda.max(w_lambda.abs());
+            let natural_weight = match row.polarization {
+                StandardMfsVisibilityPolarization::Explicit { corr_index, .. } => {
+                    if *row.flag.get((corr_index, local_channel)).ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "standard MFS grouped initial dirty FLAG index [{corr_index}, {source_channel}] is out of bounds"
+                        ))
+                    })? {
+                        accumulation.skipped_samples += 1;
+                        continue;
+                    }
+                    *row.weight.get(corr_index).ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "standard MFS grouped initial dirty WEIGHT correlation {corr_index} is out of bounds"
+                        ))
+                    })?
+                }
+                StandardMfsVisibilityPolarization::CollapsedPair {
+                    first_corr_index,
+                    second_corr_index,
+                    transform,
+                    ..
+                } => {
+                    let first_flagged =
+                        *row.flag
+                            .get((first_corr_index, local_channel))
+                            .ok_or_else(|| {
+                                ImagingError::InvalidRequest(format!(
+                                    "standard MFS grouped initial dirty FLAG index [{first_corr_index}, {source_channel}] is out of bounds"
+                                ))
+                            })?;
+                    let second_flagged =
+                        *row.flag
+                            .get((second_corr_index, local_channel))
+                            .ok_or_else(|| {
+                                ImagingError::InvalidRequest(format!(
+                                    "standard MFS grouped initial dirty FLAG index [{second_corr_index}, {source_channel}] is out of bounds"
+                                ))
+                            })?;
+                    if first_flagged || second_flagged {
+                        accumulation.skipped_samples += 1;
+                        continue;
+                    }
+                    let first_visibility =
+                        *row.data
+                            .get((first_corr_index, local_channel))
+                            .ok_or_else(|| {
+                                ImagingError::InvalidRequest(format!(
+                                    "standard MFS grouped initial dirty DATA index [{first_corr_index}, {source_channel}] is out of bounds"
+                                ))
+                            })?;
+                    let second_visibility =
+                        *row.data
+                            .get((second_corr_index, local_channel))
+                            .ok_or_else(|| {
+                                ImagingError::InvalidRequest(format!(
+                                    "standard MFS grouped initial dirty DATA index [{second_corr_index}, {source_channel}] is out of bounds"
+                                ))
+                            })?;
+                    let visibility = collapse_standard_mfs_pair_visibility(
+                        first_visibility,
+                        second_visibility,
+                        transform,
+                    );
+                    if !(visibility.re.is_finite() && visibility.im.is_finite()) {
+                        accumulation.skipped_samples += 1;
+                        continue;
+                    }
+                    let first_weight = *row.weight.get(first_corr_index).ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "standard MFS grouped initial dirty WEIGHT correlation {first_corr_index} is out of bounds"
+                        ))
+                    })?;
+                    let second_weight = *row.weight.get(second_corr_index).ok_or_else(|| {
+                        ImagingError::InvalidRequest(format!(
+                            "standard MFS grouped initial dirty WEIGHT correlation {second_corr_index} is out of bounds"
+                        ))
+                    })?;
+                    if !(first_weight.is_finite()
+                        && first_weight > 0.0
+                        && second_weight.is_finite()
+                        && second_weight > 0.0)
+                    {
+                        accumulation.skipped_samples += 1;
+                        continue;
+                    }
+                    0.5 * (first_weight + second_weight)
+                }
+            };
+            if !(natural_weight.is_finite() && natural_weight > 0.0) {
+                accumulation.skipped_samples += 1;
+                continue;
+            }
+            let final_weight = weighting_plan.weight_sample(u_lambda, v_lambda, natural_weight)?;
+            let grid_weight = final_weight * sumwt_factor;
+            if !(grid_weight.is_finite() && grid_weight > 0.0) {
+                accumulation.skipped_samples += 1;
+                continue;
+            }
+            let grid_weight = f64::from(grid_weight);
+            accumulation.normalization_sumwt += grid_weight;
+            accumulation.reported_sumwt += grid_weight;
+            accumulation.gridded_samples += 1;
+        }
+        Ok(accumulation)
     }
 
     fn finish_grouped_input_cache_fill(
@@ -11669,7 +12669,10 @@ impl MetalDirtyBackend {
         cache: &mut StandardMfsMetalGroupedInputCache,
     ) -> Result<(), ImagingError> {
         self.finish_grouped_input_cache_chunk(&mut fill)?;
-        cache.replace(fill.key, fill.chunks, fill.accumulation);
+        let dirty_accumulation = fill
+            .collect_dirty_accumulation
+            .then_some(fill.dirty_accumulation);
+        cache.replace(fill.key, fill.chunks, fill.accumulation, dirty_accumulation);
         Ok(())
     }
 
@@ -11875,7 +12878,7 @@ impl MetalDirtyBackend {
             u_m: row.uvw_m[0] as f32,
             v_m: row.uvw_m[1] as f32,
             sumwt_factor,
-            _pad0: 0.0,
+            w_m: row.uvw_m[2] as f32,
             lane_offset: u32::try_from(lane_offset).map_err(|_| {
                 ImagingError::InvalidRequest(
                     "standard MFS Metal row-run lane offset exceeds u32".to_string(),
@@ -12942,7 +13945,7 @@ struct RowRunDesc {
     float u_m;
     float v_m;
     float sumwt_factor;
-    float _pad0;
+    float w_m;
     uint lane_offset;
     uint lane_count;
     uint data_offset;
@@ -12972,6 +13975,24 @@ struct GroupedLane {
     float residual_im;
     float grid_weight;
     float _pad0;
+};
+
+struct InitialDirtyGroupedLane {
+    uint center_x;
+    uint center_y;
+    uint x_weight_base;
+    uint y_weight_base;
+    float dirty_re;
+    float dirty_im;
+    float grid_weight;
+    float dirty_valid;
+};
+
+struct InitialDirtyRunAccum {
+    float sumwt;
+    float max_abs_w_lambda;
+    uint gridded;
+    uint skipped;
 };
 
 struct GroupedTileDesc {
@@ -13072,6 +14093,304 @@ static inline float2 row_run_collapse_pair(float2 first, float2 second, uint tra
         return float2(difference.y, -difference.x) * 0.5f;
     }
     return (first + second) * 0.5f;
+}
+
+kernel void initial_dirty_psf_row_run_grouped_prepare(
+    device const RowRunDesc *runs [[buffer(0)]],
+    device const RowRunLane *lanes [[buffer(1)]],
+    device const float2 *data [[buffer(2)]],
+    device const uchar *flags [[buffer(3)]],
+    device const float *weights [[buffer(4)]],
+    device const float *density [[buffer(5)]],
+    device InitialDirtyGroupedLane *grouped_lanes [[buffer(6)]],
+    constant RowRunParams &params [[buffer(7)]],
+    device const float *tap_weights [[buffer(8)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const uint lane_index = gid.x;
+    const uint run_index = gid.y;
+    if (run_index >= params.run_count || lane_index >= params.max_lane_count) {
+        return;
+    }
+    const RowRunDesc run = runs[run_index];
+    if (lane_index >= run.lane_count) {
+        return;
+    }
+    const RowRunLane lane = lanes[run.lane_offset + lane_index];
+    const uint output_index = run.lane_offset + lane_index;
+    InitialDirtyGroupedLane output;
+    output.center_x = lane.center_x;
+    output.center_y = lane.center_y;
+    output.x_weight_base = 0u;
+    output.y_weight_base = 0u;
+    output.dirty_re = 0.0f;
+    output.dirty_im = 0.0f;
+    output.grid_weight = 0.0f;
+    output.dirty_valid = 0.0f;
+    grouped_lanes[output_index] = output;
+
+    const float u_lambda = run.u_m * lane.lambda_scale;
+    const float v_lambda = run.v_m * lane.lambda_scale;
+
+    float natural_weight;
+    float2 visibility = float2(0.0f, 0.0f);
+    float dirty_valid = 0.0f;
+    if (run.polarization_mode == 0u) {
+        if (run.corr0 >= run.corr_count) {
+            return;
+        }
+        const uint index = run.corr0 * run.lane_count + lane_index;
+        if (flags[run.flag_offset + index] != 0) {
+            return;
+        }
+        const float2 observed = data[run.data_offset + index];
+        if (isfinite(observed.x) && isfinite(observed.y)) {
+            visibility = observed;
+            dirty_valid = 1.0f;
+        }
+        natural_weight = weights[run.weight_offset + run.corr0];
+    } else {
+        if (run.corr0 >= run.corr_count || run.corr1 >= run.corr_count) {
+            return;
+        }
+        const uint first_index = run.corr0 * run.lane_count + lane_index;
+        const uint second_index = run.corr1 * run.lane_count + lane_index;
+        if (flags[run.flag_offset + first_index] != 0 ||
+            flags[run.flag_offset + second_index] != 0) {
+            return;
+        }
+        const float2 first_visibility = data[run.data_offset + first_index];
+        const float2 second_visibility = data[run.data_offset + second_index];
+        visibility = row_run_collapse_pair(first_visibility, second_visibility, run.transform);
+        if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
+            return;
+        }
+        dirty_valid = 1.0f;
+        const float first_weight = weights[run.weight_offset + run.corr0];
+        const float second_weight = weights[run.weight_offset + run.corr1];
+        if (!(isfinite(first_weight) && first_weight > 0.0f &&
+              isfinite(second_weight) && second_weight > 0.0f)) {
+            return;
+        }
+        natural_weight = 0.5f * (first_weight + second_weight);
+    }
+    if (!(isfinite(natural_weight) && natural_weight > 0.0f &&
+          isfinite(run.sumwt_factor) && run.sumwt_factor > 0.0f)) {
+        return;
+    }
+
+    float final_weight = natural_weight;
+    if (params.weighting_mode != 0u) {
+        float cell_density = 0.0f;
+        if (!row_run_density_lookup(u_lambda, v_lambda, params, density, cell_density)) {
+            return;
+        }
+        if (params.weighting_mode == 1u) {
+            final_weight = natural_weight / cell_density;
+        } else {
+            final_weight = natural_weight / (params.briggs_f2 * cell_density + 1.0f);
+        }
+    }
+    const float grid_weight = final_weight * run.sumwt_factor;
+    if (!(isfinite(grid_weight) && grid_weight > 0.0f)) {
+        return;
+    }
+
+    const float grid_x = u_lambda / params.du_lambda + float(params.grid_width) * 0.5f;
+    const float grid_y = -v_lambda / params.dv_lambda + float(params.grid_height) * 0.5f;
+    if (!isfinite(grid_x) || !isfinite(grid_y)) {
+        return;
+    }
+    const int center_x = int(lane.center_x);
+    const int center_y = int(lane.center_y);
+    const int start_x = center_x - STANDARD_MFS_SUPPORT;
+    const int start_y = center_y - STANDARD_MFS_SUPPORT;
+    if (start_x < 0 || start_y < 0 ||
+        center_x + STANDARD_MFS_SUPPORT >= int(params.grid_width) ||
+        center_y + STANDARD_MFS_SUPPORT >= int(params.grid_height)) {
+        return;
+    }
+    const int offset_x = round_half_away_from_zero((float(center_x) - grid_x) * float(params.oversampling));
+    const int offset_y = round_half_away_from_zero((float(center_y) - grid_y) * float(params.oversampling));
+    const int half_oversampling = int(params.oversampling / 2u);
+    const int x_weight_index = offset_x + half_oversampling;
+    const int y_weight_index = offset_y + half_oversampling;
+    if (x_weight_index < 0 || y_weight_index < 0 ||
+        x_weight_index >= int(params.tap_weight_count) ||
+        y_weight_index >= int(params.tap_weight_count)) {
+        return;
+    }
+
+    output.x_weight_base = uint(x_weight_index) * STANDARD_MFS_TAP_COUNT;
+    output.y_weight_base = uint(y_weight_index) * STANDARD_MFS_TAP_COUNT;
+    output.dirty_re = visibility.x;
+    output.dirty_im = visibility.y;
+    output.grid_weight = grid_weight;
+    output.dirty_valid = dirty_valid;
+    grouped_lanes[output_index] = output;
+}
+
+kernel void initial_dirty_psf_row_run_grouped_accumulate_runs(
+    device const RowRunDesc *runs [[buffer(0)]],
+    device const RowRunLane *lanes [[buffer(1)]],
+    device const float2 *data [[buffer(2)]],
+    device const uchar *flags [[buffer(3)]],
+    device const float *weights [[buffer(4)]],
+    device const float *density [[buffer(5)]],
+    device InitialDirtyRunAccum *run_accum [[buffer(6)]],
+    constant RowRunParams &params [[buffer(7)]],
+    uint run_index [[thread_position_in_grid]]
+) {
+    if (run_index >= params.run_count) {
+        return;
+    }
+    const RowRunDesc run = runs[run_index];
+    InitialDirtyRunAccum output;
+    output.sumwt = 0.0f;
+    output.max_abs_w_lambda = 0.0f;
+    output.gridded = 0u;
+    output.skipped = 0u;
+
+    if (!(isfinite(run.sumwt_factor) && run.sumwt_factor > 0.0f)) {
+        output.skipped = run.lane_count;
+        run_accum[run_index] = output;
+        return;
+    }
+
+    for (uint lane_index = 0u; lane_index < run.lane_count; ++lane_index) {
+        const RowRunLane lane = lanes[run.lane_offset + lane_index];
+        const float u_lambda = run.u_m * lane.lambda_scale;
+        const float v_lambda = run.v_m * lane.lambda_scale;
+        const float w_lambda = run.w_m * lane.lambda_scale;
+        output.max_abs_w_lambda = max(output.max_abs_w_lambda, fabs(w_lambda));
+
+        float natural_weight;
+        if (run.polarization_mode == 0u) {
+            if (run.corr0 >= run.corr_count) {
+                output.skipped += 1u;
+                continue;
+            }
+            const uint index = run.corr0 * run.lane_count + lane_index;
+            if (flags[run.flag_offset + index] != 0) {
+                output.skipped += 1u;
+                continue;
+            }
+            natural_weight = weights[run.weight_offset + run.corr0];
+        } else {
+            if (run.corr0 >= run.corr_count || run.corr1 >= run.corr_count) {
+                output.skipped += 1u;
+                continue;
+            }
+            const uint first_index = run.corr0 * run.lane_count + lane_index;
+            const uint second_index = run.corr1 * run.lane_count + lane_index;
+            if (flags[run.flag_offset + first_index] != 0 ||
+                flags[run.flag_offset + second_index] != 0) {
+                output.skipped += 1u;
+                continue;
+            }
+            const float2 first_visibility = data[run.data_offset + first_index];
+            const float2 second_visibility = data[run.data_offset + second_index];
+            const float2 visibility =
+                row_run_collapse_pair(first_visibility, second_visibility, run.transform);
+            if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
+                output.skipped += 1u;
+                continue;
+            }
+            const float first_weight = weights[run.weight_offset + run.corr0];
+            const float second_weight = weights[run.weight_offset + run.corr1];
+            if (!(isfinite(first_weight) && first_weight > 0.0f &&
+                  isfinite(second_weight) && second_weight > 0.0f)) {
+                output.skipped += 1u;
+                continue;
+            }
+            natural_weight = 0.5f * (first_weight + second_weight);
+        }
+
+        if (!(isfinite(natural_weight) && natural_weight > 0.0f)) {
+            output.skipped += 1u;
+            continue;
+        }
+
+        float final_weight = natural_weight;
+        if (params.weighting_mode != 0u) {
+            float cell_density = 0.0f;
+            if (!row_run_density_lookup(u_lambda, v_lambda, params, density, cell_density)) {
+                output.skipped += 1u;
+                continue;
+            }
+            if (params.weighting_mode == 1u) {
+                final_weight = natural_weight / cell_density;
+            } else {
+                final_weight = natural_weight / (params.briggs_f2 * cell_density + 1.0f);
+            }
+        }
+        const float grid_weight = final_weight * run.sumwt_factor;
+        if (!(isfinite(grid_weight) && grid_weight > 0.0f)) {
+            output.skipped += 1u;
+            continue;
+        }
+        output.sumwt += grid_weight;
+        output.gridded += 1u;
+    }
+
+    run_accum[run_index] = output;
+}
+
+kernel void initial_dirty_psf_row_run_grouped_accumulate(
+    device const InitialDirtyGroupedLane *grouped_lanes [[buffer(0)]],
+    device const GroupedTileDesc *group_descs [[buffer(1)]],
+    device const uint *lane_refs [[buffer(2)]],
+    device atomic_uint *psf_re [[buffer(3)]],
+    device atomic_uint *psf_im [[buffer(4)]],
+    device atomic_uint *dirty_re [[buffer(5)]],
+    device atomic_uint *dirty_im [[buffer(6)]],
+    constant RowRunParams &params [[buffer(7)]],
+    device const float *tap_weights [[buffer(8)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    const GroupedTileDesc desc = group_descs[gid.y];
+    const uint cell_index = gid.x;
+    const uint halo_cell_count = desc.halo_width * desc.halo_height;
+    if (cell_index >= halo_cell_count) {
+        return;
+    }
+    const uint local_x = cell_index / desc.halo_height;
+    const uint local_y = cell_index - local_x * desc.halo_height;
+    const int global_x = int(desc.halo_x0 + local_x);
+    const int global_y = int(desc.halo_y0 + local_y);
+    float psf_sum = 0.0f;
+    float dirty_sum_re = 0.0f;
+    float dirty_sum_im = 0.0f;
+    for (uint ref_index = 0; ref_index < desc.ref_count; ++ref_index) {
+        const uint lane_index = lane_refs[desc.ref_offset + ref_index];
+        const InitialDirtyGroupedLane lane = grouped_lanes[lane_index];
+        if (!(isfinite(lane.grid_weight) && lane.grid_weight > 0.0f)) {
+            continue;
+        }
+        const int tap_x = global_x - (int(lane.center_x) - STANDARD_MFS_SUPPORT);
+        const int tap_y = global_y - (int(lane.center_y) - STANDARD_MFS_SUPPORT);
+        if (tap_x < 0 || tap_x >= int(STANDARD_MFS_TAP_COUNT) ||
+            tap_y < 0 || tap_y >= int(STANDARD_MFS_TAP_COUNT)) {
+            continue;
+        }
+        const float weighted_tap =
+            tap_weights[lane.x_weight_base + uint(tap_x)] *
+            tap_weights[lane.y_weight_base + uint(tap_y)] *
+            lane.grid_weight;
+        psf_sum += weighted_tap;
+        if (lane.dirty_valid > 0.0f) {
+            dirty_sum_re += lane.dirty_re * weighted_tap;
+            dirty_sum_im += lane.dirty_im * weighted_tap;
+        }
+    }
+    const uint cell = uint(global_x) * params.grid_height + uint(global_y);
+    if (psf_sum != 0.0f) {
+        atomic_add_float(&psf_re[cell], psf_sum);
+    }
+    if (dirty_sum_re != 0.0f || dirty_sum_im != 0.0f) {
+        atomic_add_float(&dirty_re[cell], dirty_sum_re);
+        atomic_add_float(&dirty_im[cell], dirty_sum_im);
+    }
 }
 
 kernel void grid_dirty_tile_cell_owner(
@@ -13357,6 +14676,8 @@ kernel void residual_refresh_row_run_grouped_prepare(
     output._pad0 = 0.0f;
     grouped_lanes[output_index] = output;
 
+    const bool psf_only_mode = params.diagnostic_mode == 5u;
+    const bool dirty_only_mode = params.diagnostic_mode == 6u;
     const float u_lambda = run.u_m * lane.lambda_scale;
     const float v_lambda = run.v_m * lane.lambda_scale;
 
@@ -13370,9 +14691,13 @@ kernel void residual_refresh_row_run_grouped_prepare(
         if (flags[run.flag_offset + index] != 0) {
             return;
         }
-        visibility = data[run.data_offset + index];
-        if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
-            return;
+        if (psf_only_mode) {
+            visibility = float2(1.0f, 0.0f);
+        } else {
+            visibility = data[run.data_offset + index];
+            if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
+                return;
+            }
         }
         natural_weight = weights[run.weight_offset + run.corr0];
     } else {
@@ -13390,6 +14715,9 @@ kernel void residual_refresh_row_run_grouped_prepare(
         visibility = row_run_collapse_pair(first_visibility, second_visibility, run.transform);
         if (!isfinite(visibility.x) || !isfinite(visibility.y)) {
             return;
+        }
+        if (psf_only_mode) {
+            visibility = float2(1.0f, 0.0f);
         }
         const float first_weight = weights[run.weight_offset + run.corr0];
         const float second_weight = weights[run.weight_offset + run.corr1];
@@ -13449,22 +14777,29 @@ kernel void residual_refresh_row_run_grouped_prepare(
     const uint y_weight_base = uint(y_weight_index) * STANDARD_MFS_TAP_COUNT;
     float predicted_re = 0.0f;
     float predicted_im = 0.0f;
-    for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
-        int x = start_x + int(dx);
-        float wx = tap_weights[x_weight_base + dx];
-        for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
-            int y = start_y + int(dy);
-            float tap_weight = wx * tap_weights[y_weight_base + dy];
-            uint cell = uint(x) * params.grid_height + uint(y);
-            predicted_re += model_re[cell] * tap_weight;
-            predicted_im += model_im[cell] * tap_weight;
+    if (!psf_only_mode && !dirty_only_mode) {
+        for (uint dx = 0; dx < STANDARD_MFS_TAP_COUNT; dx++) {
+            int x = start_x + int(dx);
+            float wx = tap_weights[x_weight_base + dx];
+            for (uint dy = 0; dy < STANDARD_MFS_TAP_COUNT; dy++) {
+                int y = start_y + int(dy);
+                float tap_weight = wx * tap_weights[y_weight_base + dy];
+                uint cell = uint(x) * params.grid_height + uint(y);
+                predicted_re += model_re[cell] * tap_weight;
+                predicted_im += model_im[cell] * tap_weight;
+            }
         }
     }
 
     output.x_weight_base = x_weight_base;
     output.y_weight_base = y_weight_base;
-    output.residual_re = visibility.x - predicted_re;
-    output.residual_im = visibility.y - predicted_im;
+    if (psf_only_mode) {
+        output.residual_re = 1.0f;
+        output.residual_im = 0.0f;
+    } else {
+        output.residual_re = visibility.x - predicted_re;
+        output.residual_im = visibility.y - predicted_im;
+    }
     output.grid_weight = grid_weight;
     grouped_lanes[output_index] = output;
 }

@@ -2954,6 +2954,63 @@ Rejected follow-up chunk/kernel screens:
 Decision: retain cached-hit no-copy Metal buffers as the routine grouped-cache
 dispatch path. Keep `group_tile_edge=1` and the 16M lane chunk default.
 
+### Metal Initial Dirty/PSF Screen
+
+Artifacts:
+
+```text
+target/imperformance-wave2/metal-initial-dirty-20260525/current-control-after-gated-pipelines-niter150-cycleniter50.log
+target/imperformance-wave2/metal-initial-dirty-20260525/grouped-initial-dirty-fused-gated-niter150-cycleniter50.log
+target/imperformance-wave2/metal-initial-dirty-20260525/grouped-initial-dirty-gpu-run-accum-niter150-cycleniter50.log
+```
+
+This screen adds the explicit opt-in
+`CASA_RS_STANDARD_MFS_INITIAL_DIRTY_BACKEND=metal-row-run-grouped`. The path
+uses the same grouped row-run work units as Metal residual refresh and fuses
+initial dirty and PSF gridding into one grouped Metal dispatch while filling the
+grouped input cache for later residual refreshes. The default CPU fixed-tile
+initial dirty/PSF path remains unchanged.
+
+The first measurement attempt omitted `--minor-cycle-length 50` and therefore
+ran 76 major cycles instead of the comparable 4-cycle niter-150 screen; that
+artifact is rejected as a bad-command timing. The corrected screen uses the
+same medium 64-channel, 1024-pixel, Briggs, multiscale `niter=150`,
+`minor-cycle-length=50`, 4 CPU grid threads, center-quadrant fixed tiles, and
+`CASA_RS_STANDARD_MFS_RESIDUAL_BACKEND=metal-row-run-grouped`.
+
+| screen | frontend total | core | prepare | PSF grid | residual degrid/grid | major refresh | real | max RSS | peak footprint |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CPU initial dirty, grouped residual cache | 31.349s | 18.420s | 18.643s | 4.934s | 9.686s | 4.888s | 31.53s | 9.55 GB | 9.55 GB |
+| Metal initial dirty, CPU scalar accumulation | 30.893s | 18.063s | 19.958s | 5.735s | 8.608s | 3.030s | 31.08s | 9.51 GB | 13.43 GB |
+| Metal initial dirty, GPU run scalar reduction | 30.597s | 17.634s | 19.257s | 5.451s | 8.414s | 3.122s | 31.83s | 9.55 GB | 13.31 GB |
+
+The GPU run-reduction version moves initial dirty scalar bookkeeping
+(`sumwt`, gridded/skipped counts, and `max_abs_w_lambda`) out of the CPU
+producer loop and into a compact per-run Metal reduction. The detailed profile
+for the retained experiment reports:
+
+```text
+standard_mfs_metal_row_run_grouped_initial_dirty_detail \
+  append_grouped_row_run_ms=2459.327 \
+  dirty_accumulation_ms=0.000 \
+  chunk_finalize_dispatch_ms=580.162
+```
+
+That removes the previous `~1.68s` CPU dirty-accumulation lane loop. The
+overall corrected-screen movement versus CPU initial dirty is still modest:
+frontend improves by `0.751s` (`2.4%`), core by `0.786s` (`4.3%`), residual
+degrid/grid by `1.272s` (`13.1%`), and major refresh by `1.766s` (`36.1%`).
+The initial dirty/PSF stage itself remains dominated by MS data reads and
+host-side grouped row-run construction, so this is not yet a default-on Mac
+backend.
+
+Decision: retain as an explicit experimental backend seam, not the default.
+The GPU scalar reduction is architecturally useful because it removes duplicated
+producer-side lane semantics and keeps the initial-dirty path aligned with the
+future Metal backend contract. Default selection waits for a larger end-to-end
+gain or for a follow-up that avoids the separate initial dirty data/routing
+pass entirely.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
