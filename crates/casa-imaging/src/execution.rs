@@ -15254,6 +15254,9 @@ kernel void residual_refresh_row_run_grouped_accumulate(
     const uint local_y = cell_index - local_x * desc.halo_height;
     const int global_x = int(desc.halo_x0 + local_x);
     const int global_y = int(desc.halo_y0 + local_y);
+    const bool exact_center_group =
+        desc.halo_width == STANDARD_MFS_TAP_COUNT &&
+        desc.halo_height == STANDARD_MFS_TAP_COUNT;
     float sum_re = 0.0f;
     float sum_im = 0.0f;
     for (uint ref_index = 0; ref_index < desc.ref_count; ++ref_index) {
@@ -15262,11 +15265,18 @@ kernel void residual_refresh_row_run_grouped_accumulate(
         if (!(isfinite(lane.grid_weight) && lane.grid_weight > 0.0f)) {
             continue;
         }
-        const int tap_x = global_x - (int(lane.center_x) - STANDARD_MFS_SUPPORT);
-        const int tap_y = global_y - (int(lane.center_y) - STANDARD_MFS_SUPPORT);
-        if (tap_x < 0 || tap_x >= int(STANDARD_MFS_TAP_COUNT) ||
-            tap_y < 0 || tap_y >= int(STANDARD_MFS_TAP_COUNT)) {
-            continue;
+        int tap_x;
+        int tap_y;
+        if (exact_center_group) {
+            tap_x = int(local_x);
+            tap_y = int(local_y);
+        } else {
+            tap_x = global_x - (int(lane.center_x) - STANDARD_MFS_SUPPORT);
+            tap_y = global_y - (int(lane.center_y) - STANDARD_MFS_SUPPORT);
+            if (tap_x < 0 || tap_x >= int(STANDARD_MFS_TAP_COUNT) ||
+                tap_y < 0 || tap_y >= int(STANDARD_MFS_TAP_COUNT)) {
+                continue;
+            }
         }
         const float tap_weight =
             tap_weights[lane.x_weight_base + uint(tap_x)] *

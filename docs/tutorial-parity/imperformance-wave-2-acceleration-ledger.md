@@ -3104,6 +3104,17 @@ Against the borrowed-prefill run, frontend moved from `24.757s` to `22.724s`
 essentially flat at `8.85 GiB`. This is retained as a structural correctness-
 preserving cleanup of invariant deconvolver state, not a Metal-specific change.
 
+Metal grouped accumulate cleanup: the grouped Metal accumulate kernel now takes
+a fast path for exact-center groups, which are the default
+`group_tile_edge=1` shape. In that case every halo cell maps directly to one
+tap coordinate, so the per-lane tap bounds arithmetic can be skipped while the
+generic grouped path remains for larger grouping. The retained artifact is
+`target/imperformance-wave2/metal-initial-dirty-20260525/grouped-initial-dirty-exact-center-accum-niter150-cycleniter50.log`.
+Against the multiscale-state reuse run, frontend moved from `22.724s` to
+`22.087s` (`2.8%`), core from `5.599s` to `5.239s` (`6.4%`), PSF grid from
+`0.515s` to `0.468s`, and residual degrid/grid from `3.156s` to `2.866s`.
+Peak RSS remained flat at about `8.88 GiB`.
+
 ## Reproduction
 
 Regenerate the Wave 2 medium manifests:
